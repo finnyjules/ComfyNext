@@ -2,6 +2,7 @@
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
+import { fetchObjectInfo, getWidgetDefs } from '~/composables/useVueNodes'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
@@ -10,8 +11,8 @@ const props = defineProps<{
   workflow: any
 }>()
 
-const { nodes, edges, convertFromLiteGraph, convertToLiteGraph } = useVueNodes()
-const { onConnect, addEdges, fitView } = useVueFlow()
+const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes()
+const { onConnect, addEdges, fitView, project } = useVueFlow()
 
 // Load workflow when prop changes
 watch(
@@ -32,6 +33,60 @@ onConnect((params) => {
     type: 'comfy',
     data: { dataType: '*' },
   }])
+})
+
+// Listen for addNode events from NodeSearchDialog
+function handleAddNode(e: Event) {
+  const detail = (e as CustomEvent<{ nodeType: string }>).detail
+  const { nodeType } = detail
+
+  // Get viewport center for placement
+  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const newId = String(Date.now())
+  const info = objectInfo.value[nodeType]
+  const widgetDefs = getWidgetDefs(nodeType)
+
+  nodes.value.push({
+    id: newId,
+    type: 'comfy',
+    position: { x: center.x, y: center.y },
+    data: {
+      nodeType,
+      title: info?.display_name || nodeType,
+      inputs: (info?.input?.required
+        ? Object.entries(info.input.required as Record<string, any>)
+            .filter(([_, spec]: [string, any]) => {
+              const specArr = Array.isArray(spec) ? spec : [spec]
+              // Non-widget inputs (types like IMAGE, MODEL, etc.) become ports
+              return !Array.isArray(specArr[0]) && !['INT', 'FLOAT', 'STRING', 'BOOLEAN'].includes(String(specArr[0]))
+            })
+            .map(([name, spec]: [string, any]) => ({
+              name,
+              type: Array.isArray(spec) ? String(spec[0]) : String(spec),
+              link: null,
+            }))
+        : []),
+      outputs: (info?.output || []).map((type: string, i: number) => ({
+        name: info?.output_name?.[i] || type,
+        type,
+        links: null,
+      })),
+      widgetsValues: widgetDefs.map((w: any) => w.default ?? null),
+      widgetDefs,
+      properties: {},
+      mode: 0,
+      size: [220, 120],
+    },
+  } as any)
+}
+
+onMounted(() => {
+  window.addEventListener('comfynext:addNode', handleAddNode)
+  // Fetch object_info on mount so widget defs are available
+  fetchObjectInfo()
+})
+onUnmounted(() => {
+  window.removeEventListener('comfynext:addNode', handleAddNode)
 })
 
 // Expose serialization for Run button
