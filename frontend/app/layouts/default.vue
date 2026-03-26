@@ -255,12 +255,24 @@ watch(vueNodesEnabled, async (enabled) => {
   if (tab.type !== 'project') return
 
   if (enabled) {
-    // Switching TO Vue mode: save workflow from iframe before it's removed from DOM
-    // (watch runs pre-flush, so iframe is still in DOM at this point)
-    if (sharedIframeReady && !savedWorkflows[tab.id]) {
-      const workflow = await getWorkflowFromIframe()
-      if (workflow) savedWorkflows[tab.id] = workflow
+    // Ensure workflow data exists for Vue canvas
+    if (!savedWorkflows[tab.id]) {
+      // Try iframe first (still in DOM during pre-flush)
+      if (sharedIframeReady) {
+        const wf = await getWorkflowFromIframe()
+        if (wf) savedWorkflows[tab.id] = wf
+      }
+      // Fall back to history API (tab always has promptId from history)
+      if (!savedWorkflows[tab.id] && tab.promptId) {
+        const wf = await fetchWorkflowFromHistory(tab.promptId)
+        if (wf) savedWorkflows[tab.id] = wf
+      }
+      if (!savedWorkflows[tab.id]) {
+        savedWorkflows[tab.id] = BLANK_WORKFLOW
+      }
     }
+    // Reset guard so loadWorkflowForTab doesn't skip
+    currentProjectTabId = null
     await loadWorkflowForTab(tab)
   }
 })
