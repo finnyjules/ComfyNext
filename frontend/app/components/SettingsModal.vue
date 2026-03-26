@@ -175,7 +175,10 @@ const localSettingsCache = ref<Record<string, string>>({})
 function getSettingValue(id: string, fallback?: any) {
   const def = Object.values(settingsByCategory).flat().find((s) => s.id === id)
   if (def?.local) {
-    return localSettingsCache.value[id] ?? getLocalSetting(id) ?? fallback ?? ''
+    const raw = localSettingsCache.value[id] ?? getLocalSetting(id) ?? fallback ?? ''
+    // Local settings are stored as strings — parse booleans for toggle types
+    if (def.type === 'toggle') return raw === 'true' || raw === true
+    return raw
   }
   return settings.value[id] ?? fallback
 }
