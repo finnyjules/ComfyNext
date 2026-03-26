@@ -150,7 +150,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="w-full h-full bg-[#0a0a0a]">
+  <div class="w-full h-full">
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
@@ -200,7 +200,9 @@ defineExpose({
   border: none;
 }
 
-/* Background color set on parent div, not here — otherwise it covers the SVG dot pattern */
+.vue-node-canvas {
+  background-color: #0a0a0a;
+}
 
 /* Connection line while dragging */
 .vue-node-canvas .vue-flow__connection-line path {
