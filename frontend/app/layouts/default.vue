@@ -116,55 +116,14 @@ async function runVueWorkflow() {
   const workflow = vueCanvasRef.value.getWorkflow()
   if (!workflow?.nodes?.length) return
 
-  // Build the prompt object from workflow nodes
-  const prompt: Record<string, any> = {}
-  for (const node of workflow.nodes) {
-    const inputs: Record<string, any> = {}
-    // Map inputs from links and widget values
-    if (node.inputs) {
-      for (const inp of node.inputs) {
-        if (inp.link != null) {
-          // Find the link to get source node and slot
-          const link = workflow.links.find((l: any) => (Array.isArray(l) ? l[0] : l.id) === inp.link)
-          if (link) {
-            const linkArr = Array.isArray(link) ? link : Object.values(link)
-            inputs[inp.name] = [String(linkArr[1]), linkArr[2]]
-          }
-        }
-      }
-    }
-    // Map widget values
-    if (node.widgets_values) {
-      // Use object_info to map values to input names
-      const info = await fetch(`/object_info/${node.type}`).then(r => r.json()).catch(() => null)
-      const reqInputs = info?.[node.type]?.input?.required || {}
-      let widgetIdx = 0
-      for (const [name, spec] of Object.entries(reqInputs)) {
-        if (inputs[name] !== undefined) continue // already connected
-        if (widgetIdx < node.widgets_values.length) {
-          inputs[name] = node.widgets_values[widgetIdx]
-          widgetIdx++
-        }
-      }
-    }
-    prompt[String(node.id)] = {
-      class_type: node.type,
-      inputs,
-    }
-  }
-
-  try {
-    const tab = activeTab.value
-    updateTabStatus(tab.id, 'running', 0)
-    await fetch('/prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, extra_data: { extra_pnginfo: { workflow } } }),
-    })
-  }
-  catch (err) {
-    console.error('[VueNodes] Failed to queue prompt:', err)
-  }
+  // Load the workflow into the iframe and let ComfyUI handle execution natively.
+  // The iframe is always loaded (v-show hidden in Vue mode) so bridge events
+  // (progress, execution_complete) flow back to the frontend.
+  sendLoadWorkflow(workflow)
+  // Wait a tick for the iframe to process the workflow
+  await new Promise(r => setTimeout(r, 500))
+  // Tell the iframe to queue the prompt (same as clicking Run in LiteGraph)
+  sendToActiveProjectIframe('queuePrompt')
 }
 
 // Stop/interrupt the current ComfyUI execution
@@ -989,10 +948,10 @@ function handleBridgeMessage(event: MessageEvent) {
           </button>
         </div>
 
-        <!-- LiteGraph iframe (when Modern node design disabled) -->
+        <!-- LiteGraph iframe (always loaded for execution; hidden in Vue mode) -->
         <div
-          v-if="!vueNodesEnabled && tabs.some((t) => t.type === 'project')"
-          v-show="activeTab.type === 'project'"
+          v-if="tabs.some((t) => t.type === 'project')"
+          v-show="!vueNodesEnabled && activeTab.type === 'project'"
           data-tab-id="comfyui-shared"
           class="absolute inset-0 overflow-hidden"
         >
