@@ -110,6 +110,63 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
   }
 }
 
+// Run workflow from Vue canvas (bypasses iframe, POSTs directly to ComfyUI)
+async function runVueWorkflow() {
+  if (!vueCanvasRef.value?.getWorkflow) return
+  const workflow = vueCanvasRef.value.getWorkflow()
+  if (!workflow?.nodes?.length) return
+
+  // Build the prompt object from workflow nodes
+  const prompt: Record<string, any> = {}
+  for (const node of workflow.nodes) {
+    const inputs: Record<string, any> = {}
+    // Map inputs from links and widget values
+    if (node.inputs) {
+      for (const inp of node.inputs) {
+        if (inp.link != null) {
+          // Find the link to get source node and slot
+          const link = workflow.links.find((l: any) => (Array.isArray(l) ? l[0] : l.id) === inp.link)
+          if (link) {
+            const linkArr = Array.isArray(link) ? link : Object.values(link)
+            inputs[inp.name] = [String(linkArr[1]), linkArr[2]]
+          }
+        }
+      }
+    }
+    // Map widget values
+    if (node.widgets_values) {
+      // Use object_info to map values to input names
+      const info = await fetch(`/object_info/${node.type}`).then(r => r.json()).catch(() => null)
+      const reqInputs = info?.[node.type]?.input?.required || {}
+      let widgetIdx = 0
+      for (const [name, spec] of Object.entries(reqInputs)) {
+        if (inputs[name] !== undefined) continue // already connected
+        if (widgetIdx < node.widgets_values.length) {
+          inputs[name] = node.widgets_values[widgetIdx]
+          widgetIdx++
+        }
+      }
+    }
+    prompt[String(node.id)] = {
+      class_type: node.type,
+      inputs,
+    }
+  }
+
+  try {
+    const tab = activeTab.value
+    updateTabStatus(tab.id, 'running', 0)
+    await fetch('/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, extra_data: { extra_pnginfo: { workflow } } }),
+    })
+  }
+  catch (err) {
+    console.error('[VueNodes] Failed to queue prompt:', err)
+  }
+}
+
 // Single shared ComfyUI iframe — all project tabs share one iframe
 const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
 const savedWorkflows = reactive<Record<string, any>>({}) // tabId → workflow JSON
@@ -252,26 +309,21 @@ watch(activeTabId, async (newId, oldId) => {
 // When Vue mode is toggled, transfer the workflow between iframe ↔ Vue canvas
 watch(vueNodesEnabled, async (enabled) => {
   const tab = activeTab.value
+  console.log('[VueNodes toggle]', { enabled, tabType: tab.type, tabId: tab.id, promptId: tab.promptId, hasSaved: !!savedWorkflows[tab.id] })
   if (tab.type !== 'project') return
 
   if (enabled) {
-    // Ensure workflow data exists for Vue canvas
-    if (!savedWorkflows[tab.id]) {
-      // Try iframe first (still in DOM during pre-flush)
-      if (sharedIframeReady) {
-        const wf = await getWorkflowFromIframe()
-        if (wf) savedWorkflows[tab.id] = wf
-      }
-      // Fall back to history API (tab always has promptId from history)
-      if (!savedWorkflows[tab.id] && tab.promptId) {
-        const wf = await fetchWorkflowFromHistory(tab.promptId)
-        if (wf) savedWorkflows[tab.id] = wf
-      }
-      if (!savedWorkflows[tab.id]) {
-        savedWorkflows[tab.id] = BLANK_WORKFLOW
-      }
+    // ALWAYS fetch fresh — don't trust cache (may be BLANK_WORKFLOW from earlier failure)
+    if (tab.promptId) {
+      console.log('[VueNodes] fetching from history:', tab.promptId)
+      const wf = await fetchWorkflowFromHistory(tab.promptId)
+      console.log('[VueNodes] history returned:', wf ? `${wf.nodes?.length} nodes` : 'null')
+      if (wf) savedWorkflows[tab.id] = wf
     }
-    // Reset guard so loadWorkflowForTab doesn't skip
+    if (!savedWorkflows[tab.id]) {
+      savedWorkflows[tab.id] = BLANK_WORKFLOW
+    }
+    console.log('[VueNodes] savedWorkflows set:', savedWorkflows[tab.id]?.nodes?.length, 'nodes')
     currentProjectTabId = null
     await loadWorkflowForTab(tab)
   }
@@ -846,13 +898,22 @@ function handleBridgeMessage(event: MessageEvent) {
           </button>
         </div>
 
-        <!-- Right side: credits + running count -->
+        <!-- Right side: credits + run + running count -->
         <div class="flex items-center gap-2 pr-4 shrink-0">
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
             @click="openAddCredits"
           >
             <span class="text-xs font-medium text-white/70">{{ credits !== null ? `${credits.toLocaleString()} credits` : '— credits' }}</span>
+          </button>
+          <!-- Run button (Vue mode — replaces iframe's native Run button) -->
+          <button
+            v-if="vueNodesEnabled && activeTab.type === 'project'"
+            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 rounded-full px-4 py-1.5 cursor-pointer transition-colors"
+            @click="runVueWorkflow"
+          >
+            <Play class="size-3 text-white fill-white" />
+            <span class="text-xs font-semibold text-white">Run</span>
           </button>
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
