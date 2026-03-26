@@ -80,13 +80,65 @@ function handleAddNode(e: Event) {
   } as any)
 }
 
+// Listen for execution progress from bridge (via postMessage)
+function handleBridgeMessage(event: MessageEvent) {
+  if (event.data?.type !== 'comfynext-bridge') return
+
+  const { event: evt, node, progress: prog } = event.data
+
+  if (evt === 'executing') {
+    // Clear all running states, set new running node
+    for (const n of nodes.value) {
+      if (n.data.running) {
+        n.data = { ...n.data, running: false }
+      }
+    }
+    if (node) {
+      const target = nodes.value.find((n) => n.id === String(node))
+      if (target) {
+        target.data = { ...target.data, running: true, error: false }
+      }
+    }
+  }
+
+  if (evt === 'progress') {
+    // Update progress on the currently running node
+    const running = nodes.value.find((n) => n.data.running)
+    if (running && prog) {
+      const pct = Math.round((prog.value / prog.max) * 100)
+      running.data = { ...running.data, progress: pct }
+    }
+  }
+
+  if (evt === 'execution_error') {
+    // Mark the errored node
+    if (node) {
+      const target = nodes.value.find((n) => n.id === String(node))
+      if (target) {
+        target.data = { ...target.data, running: false, error: true }
+      }
+    }
+  }
+
+  if (evt === 'execution_complete') {
+    // Clear all running/progress states
+    for (const n of nodes.value) {
+      if (n.data.running || n.data.progress) {
+        n.data = { ...n.data, running: false, progress: undefined }
+      }
+    }
+  }
+}
+
 onMounted(() => {
   window.addEventListener('comfynext:addNode', handleAddNode)
+  window.addEventListener('message', handleBridgeMessage)
   // Fetch object_info on mount so widget defs are available
   fetchObjectInfo()
 })
 onUnmounted(() => {
   window.removeEventListener('comfynext:addNode', handleAddNode)
+  window.removeEventListener('message', handleBridgeMessage)
 })
 
 // Expose serialization for Run button
