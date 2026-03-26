@@ -3,6 +3,8 @@ import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
 import { fetchObjectInfo, getWidgetDefs } from '~/composables/useVueNodes'
+import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
+import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
@@ -18,8 +20,10 @@ const { onConnect, addEdges, fitView, project } = useVueFlow()
 watch(
   () => props.workflow,
   (wf) => {
+    console.log('[VueNodeCanvas] workflow watcher fired:', wf ? `${wf.nodes?.length} nodes, ${wf.links?.length} links` : 'undefined/null')
     if (wf) {
       convertFromLiteGraph(wf)
+      console.log('[VueNodeCanvas] after convert:', nodes.value.length, 'vue nodes,', edges.value.length, 'vue edges')
       nextTick(() => fitView({ padding: 0.2 }))
     }
   },
@@ -152,8 +156,8 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: resolveComponent('VueCanvasComfyNode') as any }"
-      :edge-types="{ comfy: resolveComponent('VueCanvasComfyEdge') as any }"
+      :node-types="{ comfy: markRaw(ComfyNode) }"
+      :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :snap-to-grid="true"
       :snap-grid="[16, 16]"
