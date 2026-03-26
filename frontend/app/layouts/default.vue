@@ -112,14 +112,20 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 
 // Run workflow from Vue canvas (bypasses iframe, POSTs directly to ComfyUI)
 async function runVueWorkflow() {
+  console.log('[VueNodes Run] clicked, ref:', !!vueCanvasRef.value, 'hasGetWorkflow:', !!vueCanvasRef.value?.getWorkflow)
   if (!vueCanvasRef.value?.getWorkflow) return
   const workflow = vueCanvasRef.value.getWorkflow()
+  console.log('[VueNodes Run] workflow:', workflow?.nodes?.length, 'nodes,', workflow?.links?.length, 'links')
   if (!workflow?.nodes?.length) return
+  console.log('[VueNodes Run] sending to iframe...')
+
+  // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
+  const plainWorkflow = JSON.parse(JSON.stringify(workflow))
 
   // Strategy: load workflow into iframe, then queue via two methods:
   // 1. Try bridge queuePrompt (native, handles everything)
   // 2. Fallback: POST to /prompt API directly using iframe's graph serialization
-  sendLoadWorkflow(workflow)
+  sendLoadWorkflow(plainWorkflow)
 
   // Wait for iframe to process the loaded workflow
   await new Promise(r => setTimeout(r, 800))
