@@ -494,7 +494,7 @@ app.registerExtension({
     }
 
     // Listen for postMessage commands from the parent ComfyNext wrapper
-    window.addEventListener("message", (event) => {
+    window.addEventListener("message", async (event) => {
       if (!event.data || event.data.type !== "comfynext") return;
 
       const { action } = event.data;
