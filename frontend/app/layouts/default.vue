@@ -112,7 +112,7 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 
 // Single shared ComfyUI iframe — all project tabs share one iframe
 const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
-const savedWorkflows: Record<string, any> = {} // tabId → workflow JSON
+const savedWorkflows = reactive<Record<string, any>>({}) // tabId → workflow JSON
 let sharedIframeReady = false
 const iframeReady = ref(false) // reactive for template
 const vueCanvasRef = ref<any>(null)
@@ -170,15 +170,40 @@ async function loadWorkflowForTab(tab: any) {
   if (currentProjectTabId === tab.id && savedWorkflows[tab.id]) return // already loaded
 
   const saved = savedWorkflows[tab.id]
-  if (saved) {
-    sendLoadWorkflow(saved)
-  }
-  else if (tab.promptId) {
-    const workflow = await fetchWorkflowFromHistory(tab.promptId)
-    sendLoadWorkflow(workflow || BLANK_WORKFLOW)
+
+  if (vueNodesEnabled.value) {
+    // Vue mode: store workflow directly (no iframe needed)
+    if (!saved) {
+      if (tab.promptId) {
+        const workflow = await fetchWorkflowFromHistory(tab.promptId)
+        savedWorkflows[tab.id] = workflow || BLANK_WORKFLOW
+      }
+      else if (tab.workflowId) {
+        // Try to load from recent workflows API
+        try {
+          const res = await fetch(`/api/workflows/${tab.workflowId}`)
+          const data = await res.json()
+          savedWorkflows[tab.id] = data?.workflow || BLANK_WORKFLOW
+        }
+        catch { savedWorkflows[tab.id] = BLANK_WORKFLOW }
+      }
+      else {
+        savedWorkflows[tab.id] = BLANK_WORKFLOW
+      }
+    }
   }
   else {
-    sendLoadWorkflow(BLANK_WORKFLOW)
+    // LiteGraph mode: send to iframe
+    if (saved) {
+      sendLoadWorkflow(saved)
+    }
+    else if (tab.promptId) {
+      const workflow = await fetchWorkflowFromHistory(tab.promptId)
+      sendLoadWorkflow(workflow || BLANK_WORKFLOW)
+    }
+    else {
+      sendLoadWorkflow(BLANK_WORKFLOW)
+    }
   }
   currentProjectTabId = tab.id
 }
@@ -201,15 +226,21 @@ async function onSharedIframeLoad(event: Event) {
 
 // Save/restore workflows when switching between tabs
 watch(activeTabId, async (newId, oldId) => {
-  if (!sharedIframeReady) return
-
   const oldTab = tabs.value.find((t) => t.id === oldId)
   const newTab = tabs.value.find((t) => t.id === newId)
 
   // Save current workflow when leaving a project tab
   if (oldTab?.type === 'project') {
-    const workflow = await getWorkflowFromIframe()
-    if (workflow) savedWorkflows[oldTab.id] = workflow
+    if (vueNodesEnabled.value) {
+      // Vue mode: serialize from Vue canvas
+      if (vueCanvasRef.value?.getWorkflow) {
+        savedWorkflows[oldTab.id] = vueCanvasRef.value.getWorkflow()
+      }
+    }
+    else if (sharedIframeReady) {
+      const workflow = await getWorkflowFromIframe()
+      if (workflow) savedWorkflows[oldTab.id] = workflow
+    }
   }
 
   // Restore workflow when entering a project tab
@@ -384,7 +415,12 @@ const groupedHistory = computed(() => {
 })
 
 // Listen for bridge messages from ComfyUI iframes
-onMounted(() => {
+onMounted(async () => {
+  // Vue mode: load workflow for the active project tab immediately (no iframe needed)
+  if (vueNodesEnabled.value && activeTab.value.type === 'project') {
+    await loadWorkflowForTab(activeTab.value)
+  }
+
   // Debug: log ALL postMessages to find bridge issues
   window.addEventListener('message', (e) => {
     if (e.data?.type === 'comfynext-bridge') {
