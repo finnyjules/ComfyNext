@@ -249,6 +249,13 @@ watch(activeTabId, async (newId, oldId) => {
   }
 })
 
+// When Vue mode is toggled on, load the workflow for the active project tab
+watch(vueNodesEnabled, async (enabled) => {
+  if (enabled && activeTab.value.type === 'project') {
+    await loadWorkflowForTab(activeTab.value)
+  }
+})
+
 // ComfyUI sidebar width and tab bar height to crop via CSS
 const COMFY_SIDEBAR_W = 0
 const COMFY_TABBAR_H = 0

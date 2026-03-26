@@ -5,6 +5,7 @@ import {
 
 const { settingsOpen, closeSettings } = useSettingsModal()
 const { getLocalSetting, setLocalSetting } = useLocalSettings()
+const { reloadSetting: reloadVueNodesSetting } = useVueNodesEnabled()
 
 // Settings data
 const settings = ref<Record<string, any>>({})
@@ -184,6 +185,18 @@ function saveLocalSetting(id: string, value: string) {
   setLocalSetting(id, value)
 }
 
+function handleToggle(setting: SettingDef) {
+  const newVal = !getSettingValue(setting.id, false)
+  if (setting.local) {
+    saveLocalSetting(setting.id, String(newVal))
+  }
+  else {
+    saveSetting(setting.id, newVal)
+  }
+  // Directly update the VueNodes composable ref (bypasses fragile event chain)
+  if (setting.id === 'Comfy.VueNodes.Enabled') reloadVueNodesSetting()
+}
+
 function handleSelectChange(setting: SettingDef, rawValue: string) {
   // Match against option values to preserve original type (number vs string)
   const match = setting.options?.find((o) => String(o.value) === rawValue)
@@ -263,7 +276,7 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                   v-if="setting.type === 'toggle'"
                   class="relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0"
                   :class="getSettingValue(setting.id, false) ? 'bg-blue-500' : 'bg-[#3a3a3a]'"
-                  @click="setting.local ? saveLocalSetting(setting.id, String(!getSettingValue(setting.id, false))) : saveSetting(setting.id, !getSettingValue(setting.id, false))"
+                  @click="handleToggle(setting)"
                 >
                   <div
                     class="absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform"
