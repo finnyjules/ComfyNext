@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BezierEdge } from '@vue-flow/core'
+import { BezierEdge, Position } from '@vue-flow/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 const props = defineProps<{
@@ -8,8 +8,8 @@ const props = defineProps<{
   sourceY: number
   targetX: number
   targetY: number
-  sourcePosition: string
-  targetPosition: string
+  sourcePosition: Position
+  targetPosition: Position
   data: { dataType: string }
   selected: boolean
 }>()

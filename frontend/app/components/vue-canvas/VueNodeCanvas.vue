@@ -89,12 +89,12 @@ function handleBridgeMessage(event: MessageEvent) {
   if (evt === 'executing') {
     // Clear all running states, set new running node
     for (const n of nodes.value) {
-      if (n.data.running) {
+      if (n.data?.running) {
         n.data = { ...n.data, running: false }
       }
     }
     if (node) {
-      const target = nodes.value.find((n) => n.id === String(node))
+      const target = (nodes.value as any[]).find((n: any) => n.id === String(node))
       if (target) {
         target.data = { ...target.data, running: true, error: false }
       }
@@ -103,7 +103,7 @@ function handleBridgeMessage(event: MessageEvent) {
 
   if (evt === 'progress') {
     // Update progress on the currently running node
-    const running = nodes.value.find((n) => n.data.running)
+    const running = (nodes.value as any[]).find((n: any) => n.data?.running)
     if (running && prog) {
       const pct = Math.round((prog.value / prog.max) * 100)
       running.data = { ...running.data, progress: pct }
@@ -113,7 +113,7 @@ function handleBridgeMessage(event: MessageEvent) {
   if (evt === 'execution_error') {
     // Mark the errored node
     if (node) {
-      const target = nodes.value.find((n) => n.id === String(node))
+      const target = (nodes.value as any[]).find((n: any) => n.id === String(node))
       if (target) {
         target.data = { ...target.data, running: false, error: true }
       }
@@ -123,7 +123,7 @@ function handleBridgeMessage(event: MessageEvent) {
   if (evt === 'execution_complete') {
     // Clear all running/progress states
     for (const n of nodes.value) {
-      if (n.data.running || n.data.progress) {
+      if (n.data?.running || n.data?.progress) {
         n.data = { ...n.data, running: false, progress: undefined }
       }
     }
