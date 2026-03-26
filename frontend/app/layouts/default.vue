@@ -249,10 +249,19 @@ watch(activeTabId, async (newId, oldId) => {
   }
 })
 
-// When Vue mode is toggled on, load the workflow for the active project tab
+// When Vue mode is toggled, transfer the workflow between iframe ↔ Vue canvas
 watch(vueNodesEnabled, async (enabled) => {
-  if (enabled && activeTab.value.type === 'project') {
-    await loadWorkflowForTab(activeTab.value)
+  const tab = activeTab.value
+  if (tab.type !== 'project') return
+
+  if (enabled) {
+    // Switching TO Vue mode: save workflow from iframe before it's removed from DOM
+    // (watch runs pre-flush, so iframe is still in DOM at this point)
+    if (sharedIframeReady && !savedWorkflows[tab.id]) {
+      const workflow = await getWorkflowFromIframe()
+      if (workflow) savedWorkflows[tab.id] = workflow
+    }
+    await loadWorkflowForTab(tab)
   }
 })
 
