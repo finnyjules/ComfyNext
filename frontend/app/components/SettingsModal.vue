@@ -263,7 +263,7 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                   v-if="setting.type === 'toggle'"
                   class="relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0"
                   :class="getSettingValue(setting.id, false) ? 'bg-blue-500' : 'bg-[#3a3a3a]'"
-                  @click="saveSetting(setting.id, !getSettingValue(setting.id, false))"
+                  @click="setting.local ? saveLocalSetting(setting.id, String(!getSettingValue(setting.id, false))) : saveSetting(setting.id, !getSettingValue(setting.id, false))"
                 >
                   <div
                     class="absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform"

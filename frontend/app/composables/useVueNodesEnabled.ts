@@ -1,4 +1,5 @@
 const vueNodesEnabled = ref(false)
+let listenerRegistered = false
 
 export function useVueNodesEnabled() {
   function load() {
@@ -7,7 +8,8 @@ export function useVueNodesEnabled() {
   }
 
   // Listen for storage changes (from settings modal)
-  if (import.meta.client) {
+  if (import.meta.client && !listenerRegistered) {
+    listenerRegistered = true
     window.addEventListener('storage', (e) => {
       if (e.key === 'comfynext:Comfy.VueNodes.Enabled') load()
     })
