@@ -2,7 +2,7 @@
 import {
   House, X, Plus, Play, Check, Minus, ExternalLink, AlertCircle,
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles,
-  ZoomIn, ZoomOut, Maximize2, Map, Globe,
+  ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight,
 } from 'lucide-vue-next'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -164,6 +164,16 @@ async function runVueWorkflow() {
   }
   catch (err) {
     console.error('[VueNodes] Failed to queue prompt:', err)
+  }
+}
+
+// Stop/interrupt the current ComfyUI execution
+async function stopVueWorkflow() {
+  try {
+    await fetch('/interrupt', { method: 'POST' })
+  }
+  catch (err) {
+    console.error('[VueNodes] Failed to interrupt:', err)
   }
 }
 
@@ -906,15 +916,6 @@ function handleBridgeMessage(event: MessageEvent) {
           >
             <span class="text-xs font-medium text-white/70">{{ credits !== null ? `${credits.toLocaleString()} credits` : '— credits' }}</span>
           </button>
-          <!-- Run button (Vue mode — replaces iframe's native Run button) -->
-          <button
-            v-if="vueNodesEnabled && activeTab.type === 'project'"
-            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 rounded-full px-4 py-1.5 cursor-pointer transition-colors"
-            @click="runVueWorkflow"
-          >
-            <Play class="size-3 text-white fill-white" />
-            <span class="text-xs font-semibold text-white">Run</span>
-          </button>
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
             @click="toggleQueue"
@@ -958,6 +959,34 @@ function handleBridgeMessage(event: MessageEvent) {
             ref="vueCanvasRef"
             :workflow="savedWorkflows[activeTab.id] || undefined"
           />
+        </div>
+
+        <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
+        <div
+          v-if="vueNodesEnabled && activeTab.type === 'project'"
+          class="absolute top-3 right-3 flex items-center gap-1.5 z-10"
+        >
+          <button
+            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
+            @click="runVueWorkflow"
+          >
+            <Play class="size-3.5 text-white fill-white" />
+            <span class="text-sm font-semibold text-white">Run</span>
+          </button>
+          <button
+            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
+            title="Stop"
+            @click="stopVueWorkflow"
+          >
+            <Square class="size-3.5 text-white/70 fill-white/70" />
+          </button>
+          <div class="w-px h-5 bg-white/10" />
+          <button
+            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
+            title="Toggle right panel"
+          >
+            <PanelRight class="size-4 text-white/70" />
+          </button>
         </div>
 
         <!-- LiteGraph iframe (when Modern node design disabled) -->
