@@ -112,12 +112,9 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 
 // Run workflow from Vue canvas (bypasses iframe, POSTs directly to ComfyUI)
 async function runVueWorkflow() {
-  console.log('[VueNodes Run] clicked, ref:', !!vueCanvasRef.value, 'hasGetWorkflow:', !!vueCanvasRef.value?.getWorkflow)
   if (!vueCanvasRef.value?.getWorkflow) return
   const workflow = vueCanvasRef.value.getWorkflow()
-  console.log('[VueNodes Run] workflow:', workflow?.nodes?.length, 'nodes,', workflow?.links?.length, 'links')
   if (!workflow?.nodes?.length) return
-  console.log('[VueNodes Run] sending to iframe...')
 
   // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
   const plainWorkflow = JSON.parse(JSON.stringify(workflow))
@@ -327,21 +324,17 @@ watch(activeTabId, async (newId, oldId) => {
 // When Vue mode is toggled, transfer the workflow between iframe ↔ Vue canvas
 watch(vueNodesEnabled, async (enabled) => {
   const tab = activeTab.value
-  console.log('[VueNodes toggle]', { enabled, tabType: tab.type, tabId: tab.id, promptId: tab.promptId, hasSaved: !!savedWorkflows[tab.id] })
   if (tab.type !== 'project') return
 
   if (enabled) {
     // ALWAYS fetch fresh — don't trust cache (may be BLANK_WORKFLOW from earlier failure)
     if (tab.promptId) {
-      console.log('[VueNodes] fetching from history:', tab.promptId)
       const wf = await fetchWorkflowFromHistory(tab.promptId)
-      console.log('[VueNodes] history returned:', wf ? `${wf.nodes?.length} nodes` : 'null')
       if (wf) savedWorkflows[tab.id] = wf
     }
     if (!savedWorkflows[tab.id]) {
       savedWorkflows[tab.id] = BLANK_WORKFLOW
     }
-    console.log('[VueNodes] savedWorkflows set:', savedWorkflows[tab.id]?.nodes?.length, 'nodes')
     currentProjectTabId = null
     await loadWorkflowForTab(tab)
   }

@@ -20,10 +20,8 @@ const { onConnect, addEdges, fitView, project } = useVueFlow()
 watch(
   () => props.workflow,
   (wf) => {
-    console.log('[VueNodeCanvas] workflow watcher fired:', wf ? `${wf.nodes?.length} nodes, ${wf.links?.length} links` : 'undefined/null')
     if (wf) {
       convertFromLiteGraph(wf)
-      console.log('[VueNodeCanvas] after convert:', nodes.value.length, 'vue nodes,', edges.value.length, 'vue edges')
       nextTick(() => fitView({ padding: 0.2 }))
     }
   },
@@ -202,9 +200,7 @@ defineExpose({
   border: none;
 }
 
-.vue-node-canvas .vue-flow__background {
-  background-color: #0a0a0a;
-}
+/* Background color set on parent div, not here — otherwise it covers the SVG dot pattern */
 
 /* Connection line while dragging */
 .vue-node-canvas .vue-flow__connection-line path {
