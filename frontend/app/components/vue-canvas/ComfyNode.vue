@@ -77,6 +77,17 @@ const isBypassed = computed(() => props.data.mode === 4)
         :label="input.name"
       />
     </div>
+
+    <!-- Widgets -->
+    <div v-if="data.widgetDefs?.length" class="border-t border-[#2a2a2a] py-1.5 flex flex-col gap-1">
+      <VueCanvasComfyNodeWidget
+        v-for="(widget, i) in data.widgetDefs"
+        :key="widget.name"
+        :widget-def="widget"
+        :model-value="data.widgetsValues?.[i]"
+        @update:model-value="data.widgetsValues[i] = $event"
+      />
+    </div>
   </div>
 </template>
 
