@@ -116,14 +116,57 @@ async function runVueWorkflow() {
   const workflow = vueCanvasRef.value.getWorkflow()
   if (!workflow?.nodes?.length) return
 
-  // Load the workflow into the iframe and let ComfyUI handle execution natively.
-  // The iframe is always loaded (v-show hidden in Vue mode) so bridge events
-  // (progress, execution_complete) flow back to the frontend.
+  // Strategy: load workflow into iframe, then queue via two methods:
+  // 1. Try bridge queuePrompt (native, handles everything)
+  // 2. Fallback: POST to /prompt API directly using iframe's graph serialization
   sendLoadWorkflow(workflow)
-  // Wait a tick for the iframe to process the workflow
-  await new Promise(r => setTimeout(r, 500))
-  // Tell the iframe to queue the prompt (same as clicking Run in LiteGraph)
+
+  // Wait for iframe to process the loaded workflow
+  await new Promise(r => setTimeout(r, 800))
+
+  // Try bridge first (requires ComfyUI restart after bridge update)
   sendToActiveProjectIframe('queuePrompt')
+
+  // Also try getting the prompt from the iframe and POSTing directly
+  // This works even without the bridge update
+  try {
+    const iframe = getSharedIframe()
+    if (iframe?.contentWindow) {
+      // Ask the iframe to serialize its graph as a prompt
+      const promptData = await new Promise<any>((resolve) => {
+        let resolved = false
+        const handler = (event: MessageEvent) => {
+          if (resolved) return
+          if (event.data?.type === 'comfynext-bridge' && event.data?.event === 'prompt_data') {
+            resolved = true
+            window.removeEventListener('message', handler)
+            resolve(event.data.prompt)
+          }
+        }
+        window.addEventListener('message', handler)
+        iframe.contentWindow!.postMessage({ type: 'comfynext', action: 'getPrompt' }, '*')
+        // Timeout: if bridge doesn't support getPrompt, the queuePrompt action should have already worked
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true
+            window.removeEventListener('message', handler)
+            resolve(null)
+          }
+        }, 2000)
+      })
+
+      if (promptData) {
+        await fetch('/prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(promptData),
+        })
+      }
+    }
+  }
+  catch (err) {
+    console.error('[VueNodes] runVueWorkflow fallback error:', err)
+  }
 }
 
 // Stop/interrupt the current ComfyUI execution

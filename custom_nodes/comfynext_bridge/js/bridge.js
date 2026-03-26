@@ -924,6 +924,21 @@ app.registerExtension({
         }
       }
 
+      if (action === "getPrompt") {
+        // Serialize the current graph into the format needed for /prompt API
+        try {
+          if (window.app?.graphToPrompt) {
+            const result = await window.app.graphToPrompt();
+            postToParent({ event: "prompt_data", prompt: result });
+          } else {
+            postToParent({ event: "prompt_data", prompt: null });
+          }
+        } catch (e) {
+          console.error("[ComfyNext Bridge] getPrompt error:", e);
+          postToParent({ event: "prompt_data", prompt: null });
+        }
+      }
+
       if (action === "openSettings") {
         if (window.comfyAPI?.settings?.ComfySettingsDialog) {
           const dialog = window.comfyAPI.settings.ComfySettingsDialog;
