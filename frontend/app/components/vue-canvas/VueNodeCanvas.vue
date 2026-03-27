@@ -185,7 +185,7 @@ defineExpose({
       enter-from-class="opacity-0"
       leave-to-class="opacity-0"
     >
-      <div v-if="isRunning" class="canvas-sweep" />
+      <div v-if="isRunning" class="canvas-sweep" aria-hidden="true" />
     </Transition>
   </div>
 </template>
@@ -225,28 +225,23 @@ defineExpose({
   stroke-dasharray: 5;
 }
 
-/* Running sweep — only the dots illuminate, not the space between them */
+/* Running sweep — subtle glow that only brightens the dots via screen blend */
 .canvas-sweep {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 1;
-  /* Bright sweep gradient */
+  z-index: 0; /* below nodes (nodes are z-index auto / stacking context) */
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(129, 140, 248, 0.5) 20%,
-    rgba(165, 180, 252, 0.8) 35%,
-    rgba(129, 140, 248, 0.5) 50%,
-    transparent 65%
+    rgba(129, 140, 248, 0.04) 15%,
+    rgba(129, 140, 248, 0.08) 30%,
+    rgba(129, 140, 248, 0.04) 45%,
+    transparent 60%
   );
   background-size: 200% 100%;
   animation: canvas-sweep-move 3s ease-in-out infinite;
-  /* Mask to dot grid — gradient only shows through at dot positions */
-  -webkit-mask-image: radial-gradient(circle 2px at center, black 0%, transparent 100%);
-  mask-image: radial-gradient(circle 2px at center, black 0%, transparent 100%);
-  -webkit-mask-size: 24px 24px;
-  mask-size: 24px 24px;
+  mix-blend-mode: screen; /* only brightens existing bright pixels (the dots) */
 }
 
 @keyframes canvas-sweep-move {
