@@ -154,6 +154,9 @@ defineExpose({
 
 <template>
   <div class="w-full h-full relative">
+    <!-- Dot grid behind everything -->
+    <VueCanvasAnimatedDotGrid :running="isRunning" />
+
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
@@ -175,9 +178,6 @@ defineExpose({
         :mask-color="'rgba(0, 0, 0, 0.6)'"
       />
     </VueFlow>
-
-    <!-- Custom dot grid with per-dot sweep animation -->
-    <VueCanvasAnimatedDotGrid :running="isRunning" />
   </div>
 </template>
 

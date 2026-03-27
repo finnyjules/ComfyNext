@@ -56,7 +56,7 @@ function draw() {
 
   // Update sweep position when running
   if (props.running) {
-    sweepX += 0.004 * sweepDirection
+    sweepX += 0.012 * sweepDirection
     if (sweepX > 1.3) {
       sweepX = -0.3
     }
