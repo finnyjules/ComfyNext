@@ -143,6 +143,9 @@ onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
 })
 
+// Track whether any node is currently running (for background animation)
+const isRunning = computed(() => (nodes.value as any[]).some((n: any) => n.data?.running))
+
 // Expose serialization for Run button
 defineExpose({
   getWorkflow: convertToLiteGraph,
@@ -150,7 +153,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="w-full h-full">
+  <div class="w-full h-full relative">
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
@@ -173,6 +176,16 @@ defineExpose({
         :mask-color="'rgba(0, 0, 0, 0.6)'"
       />
     </VueFlow>
+
+    <!-- Running sweep: illuminates dots left-to-right while workflow executes -->
+    <Transition
+      enter-active-class="transition-opacity duration-500"
+      leave-active-class="transition-opacity duration-700"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div v-if="isRunning" class="canvas-sweep" />
+    </Transition>
   </div>
 </template>
 
@@ -209,5 +222,29 @@ defineExpose({
   stroke: #818cf8;
   stroke-width: 2;
   stroke-dasharray: 5;
+}
+
+/* Running sweep overlay — illuminates dots left to right */
+.canvas-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(129, 140, 248, 0.06) 15%,
+    rgba(129, 140, 248, 0.12) 30%,
+    rgba(129, 140, 248, 0.06) 45%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: canvas-sweep-move 3s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+
+@keyframes canvas-sweep-move {
+  0% { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
 }
 </style>
