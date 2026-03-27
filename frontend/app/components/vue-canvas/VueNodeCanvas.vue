@@ -86,7 +86,8 @@ function handleAddNode(e: Event) {
 function handleBridgeMessage(event: MessageEvent) {
   if (event.data?.type !== 'comfynext-bridge') return
 
-  const { event: evt, node, progress: prog } = event.data
+  const { event: evt, node_id, node, percent, progress: prog } = event.data
+  const nodeId = node_id || node // bridge sends node_id, normalize
 
   if (evt === 'executing') {
     // Clear all running states, set new running node
@@ -95,8 +96,8 @@ function handleBridgeMessage(event: MessageEvent) {
         n.data = { ...n.data, running: false }
       }
     }
-    if (node) {
-      const target = (nodes.value as any[]).find((n: any) => n.id === String(node))
+    if (nodeId) {
+      const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
         target.data = { ...target.data, running: true, error: false }
       }
@@ -106,16 +107,16 @@ function handleBridgeMessage(event: MessageEvent) {
   if (evt === 'progress') {
     // Update progress on the currently running node
     const running = (nodes.value as any[]).find((n: any) => n.data?.running)
-    if (running && prog) {
-      const pct = Math.round((prog.value / prog.max) * 100)
-      running.data = { ...running.data, progress: pct }
+    if (running) {
+      // Bridge sends percent directly, or prog.value/prog.max
+      const pct = percent ?? (prog ? Math.round((prog.value / prog.max) * 100) : undefined)
+      if (pct !== undefined) running.data = { ...running.data, progress: pct }
     }
   }
 
   if (evt === 'execution_error') {
-    // Mark the errored node
-    if (node) {
-      const target = (nodes.value as any[]).find((n: any) => n.id === String(node))
+    if (nodeId) {
+      const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
         target.data = { ...target.data, running: false, error: true }
       }
