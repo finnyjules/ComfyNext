@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { VueFlow, useVueFlow } from '@vue-flow/core'
-import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
 import { fetchObjectInfo, getWidgetDefs } from '~/composables/useVueNodes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
@@ -170,7 +169,6 @@ defineExpose({
       class="vue-node-canvas"
       fit-view-on-init
     >
-      <Background :gap="24" :size="2" color="rgba(255, 255, 255, 0.12)" variant="dots" />
       <MiniMap
         class="!bg-[#1a1a1a] !border-[#2a2a2a]"
         :node-color="() => '#2a2a2a'"
@@ -178,15 +176,8 @@ defineExpose({
       />
     </VueFlow>
 
-    <!-- Running sweep: illuminates dots left-to-right while workflow executes -->
-    <Transition
-      enter-active-class="transition-opacity duration-500"
-      leave-active-class="transition-opacity duration-700"
-      enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
-    >
-      <div v-if="isRunning" class="canvas-sweep" aria-hidden="true" />
-    </Transition>
+    <!-- Custom dot grid with per-dot sweep animation -->
+    <VueCanvasAnimatedDotGrid :running="isRunning" />
   </div>
 </template>
 
@@ -225,27 +216,4 @@ defineExpose({
   stroke-dasharray: 5;
 }
 
-/* Running sweep — subtle glow that only brightens the dots via screen blend */
-.canvas-sweep {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0; /* below nodes (nodes are z-index auto / stacking context) */
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(129, 140, 248, 0.04) 15%,
-    rgba(129, 140, 248, 0.08) 30%,
-    rgba(129, 140, 248, 0.04) 45%,
-    transparent 60%
-  );
-  background-size: 200% 100%;
-  animation: canvas-sweep-move 3s ease-in-out infinite;
-  mix-blend-mode: screen; /* only brightens existing bright pixels (the dots) */
-}
-
-@keyframes canvas-sweep-move {
-  0% { background-position: 200% 0; }
-  100% { background-position: -100% 0; }
-}
 </style>
