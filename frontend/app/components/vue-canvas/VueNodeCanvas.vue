@@ -153,7 +153,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="w-full h-full relative">
+  <div class="w-full h-full relative bg-[#0a0a0a]">
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" />
 
@@ -206,7 +206,7 @@ defineExpose({
 }
 
 .vue-node-canvas {
-  background-color: #0a0a0a;
+  background-color: transparent;
 }
 
 /* Connection line while dragging */
