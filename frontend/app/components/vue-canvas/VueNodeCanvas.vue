@@ -166,7 +166,7 @@ defineExpose({
       class="vue-node-canvas"
       fit-view-on-init
     >
-      <Background :gap="64" :size="1.5" color="rgba(255, 255, 255, 0.08)" variant="dots" />
+      <Background :gap="24" :size="2" color="rgba(255, 255, 255, 0.12)" variant="dots" />
       <MiniMap
         class="!bg-[#1a1a1a] !border-[#2a2a2a]"
         :node-color="() => '#2a2a2a'"
