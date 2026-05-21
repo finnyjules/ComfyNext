@@ -632,6 +632,48 @@ app.registerExtension({
         }
       }
 
+      if (action === "toggleRightPanel") {
+        try {
+          const vueApp = document.getElementById("vue-app");
+          const pinia = vueApp?.__vue_app__?.config?.globalProperties?.$pinia;
+          if (pinia?._s) {
+            const commandStore = pinia._s.get("command");
+            // Try known command IDs for right panel toggle
+            const cmdIds = [
+              "Workspace.ToggleWorkflowOverview",
+              "Workspace.ToggleBottomPanel",
+              "Workspace.ToggleSidebarTab.workflow-overview",
+            ];
+            for (const cmdId of cmdIds) {
+              let cmd = null;
+              if (commandStore?.commands) {
+                if (typeof commandStore.commands.get === "function") {
+                  cmd = commandStore.commands.get(cmdId);
+                } else if (Array.isArray(commandStore.commands)) {
+                  cmd = commandStore.commands.find((c) => c.id === cmdId);
+                }
+              }
+              if (cmd) {
+                if (typeof cmd.execute === "function") cmd.execute();
+                else if (typeof cmd.function === "function") cmd.function();
+                console.log("[ComfyNext Bridge] toggleRightPanel: executed", cmdId);
+                return;
+              }
+            }
+            // Last resort: list all commands to help debug
+            if (commandStore?.commands) {
+              const allCmds = typeof commandStore.commands.keys === "function"
+                ? [...commandStore.commands.keys()]
+                : commandStore.commands.map?.((c) => c.id) || [];
+              const matching = allCmds.filter((id) => /panel|overview|right|bottom|splitter/i.test(id));
+              console.log("[ComfyNext Bridge] toggleRightPanel: no match. Candidates:", matching);
+            }
+          }
+        } catch (e) {
+          console.warn("[ComfyNext Bridge] toggleRightPanel error:", e);
+        }
+      }
+
       if (action === "addNodeAtCenter") {
         try {
           const canvas = getCanvas();
@@ -939,6 +981,19 @@ app.registerExtension({
         }
       }
 
+      if (action === "getClientId") {
+        // Return the ComfyUI API's WebSocket client ID so the parent can
+        // include it in direct /prompt POSTs and receive execution events.
+        try {
+          const api = window.comfyAPI?.api?.api || window.app?.api;
+          const clientId = api?.clientId || api?.initialClientId || null;
+          postToParent({ event: "client_id", clientId });
+        } catch (e) {
+          console.error("[ComfyNext Bridge] getClientId error:", e);
+          postToParent({ event: "client_id", clientId: null });
+        }
+      }
+
       if (action === "openSettings") {
         if (window.comfyAPI?.settings?.ComfySettingsDialog) {
           const dialog = window.comfyAPI.settings.ComfySettingsDialog;
@@ -982,8 +1037,22 @@ app.registerExtension({
     }
 
     // Track execution progress
+    // Track which prompt has already sent execution_complete to the parent —
+    // Comfy fires both `execution_error` AND `executing(null)` on failure,
+    // and both would map to execution_complete without this dedupe, leaking
+    // a second event past the parent's silent-toast suppression.
+    let currentPromptId = null;
+    let completedPromptId = null;
+    function sendComplete() {
+      if (completedPromptId !== null && completedPromptId === currentPromptId) return;
+      completedPromptId = currentPromptId;
+      postToParent({ event: "execution_complete", prompt_id: currentPromptId });
+    }
+
     api.addEventListener("execution_start", (evt) => {
-      postToParent({ event: "execution_start", prompt_id: evt.detail?.prompt_id });
+      currentPromptId = evt.detail?.prompt_id ?? null;
+      completedPromptId = null;
+      postToParent({ event: "execution_start", prompt_id: currentPromptId });
     });
 
     api.addEventListener("progress", (evt) => {
@@ -994,7 +1063,7 @@ app.registerExtension({
 
     api.addEventListener("executing", (evt) => {
       if (evt.detail === null) {
-        postToParent({ event: "execution_complete" });
+        sendComplete();
       } else {
         // Forward which node is currently executing
         postToParent({
@@ -1006,8 +1075,28 @@ app.registerExtension({
       }
     });
 
+    // Forward node execution results (contains output images)
+    api.addEventListener("executed", (evt) => {
+      const detail = evt.detail;
+      if (detail) {
+        postToParent({
+          event: "executed",
+          node: detail.node,
+          output: detail.output,
+        });
+      }
+    });
+
     api.addEventListener("execution_error", () => {
-      postToParent({ event: "execution_complete" });
+      sendComplete();
+    });
+
+    api.addEventListener("gate_paused", (evt) => {
+      postToParent({
+        event: "gate_paused",
+        node_id: evt.detail?.node_id,
+        prompt_id: evt.detail?.prompt_id,
+      });
     });
 
     // Fetch credit balance via Pinia store with correct conversion

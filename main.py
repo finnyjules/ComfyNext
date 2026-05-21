@@ -251,6 +251,7 @@ def prompt_worker(q, server_instance):
         cache_type = execution.CacheType.NONE
 
     e = execution.PromptExecutor(server_instance, cache_type=cache_type, cache_args={ "lru" : args.cache_lru, "ram" : args.cache_ram } )
+    server_instance.prompt_executor = e
     last_gc_collect = 0
     need_gc = False
     gc_collect_interval = 10.0

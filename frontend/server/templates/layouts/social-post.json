@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "id": "social-post",
+  "name": "Social Post",
+  "aspects": {
+    "1x1": {
+      "w": 1080,
+      "h": 1080,
+      "label": "Square (Instagram)"
+    },
+    "9x16": {
+      "w": 1080,
+      "h": 1920,
+      "label": "Vertical (Story / Reel)"
+    },
+    "16x9": {
+      "w": 1920,
+      "h": 1080,
+      "label": "Horizontal (YouTube)"
+    }
+  },
+  "defaultAspect": "1x1",
+  "background": {
+    "fill": "{{ brand.primary }}"
+  },
+  "elements": [
+    {
+      "id": "hero",
+      "type": "image",
+      "role": "HERO",
+      "anchor": "top-left",
+      "offset": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "w": "100%",
+        "h": "62%"
+      },
+      "style": {
+        "fit": "cover"
+      },
+      "content": "{{ props.hero }}",
+      "overrides": {
+        "9x16": {
+          "size": {
+            "w": "100%",
+            "h": "70%"
+          }
+        },
+        "16x9": {
+          "anchor": "top-left",
+          "size": {
+            "w": "55%",
+            "h": "100%"
+          }
+        }
+      }
+    },
+    {
+      "id": "headline",
+      "type": "text",
+      "role": "HEADLINE",
+      "anchor": "bottom-left",
+      "offset": {
+        "x": "6%",
+        "y": "16%"
+      },
+      "size": {
+        "w": "88%",
+        "h": "auto"
+      },
+      "style": {
+        "fontFamily": "Inter",
+        "fontSize": 84,
+        "fontWeight": 700,
+        "color": "{{ brand.foreground }}",
+        "align": "left",
+        "lineHeight": 1.05
+      },
+      "content": "{{ props.headline }}",
+      "overrides": {
+        "9x16": {
+          "offset": {
+            "x": "6%",
+            "y": "20%"
+          },
+          "style": {
+            "fontSize": 96,
+            "align": "left"
+          }
+        },
+        "16x9": {
+          "anchor": "middle-right",
+          "offset": {
+            "x": "6%",
+            "y": "0%"
+          },
+          "size": {
+            "w": "38%",
+            "h": "auto"
+          },
+          "style": {
+            "fontSize": 72
+          }
+        }
+      }
+    },
+    {
+      "id": "subhead",
+      "type": "text",
+      "role": "SUBHEAD",
+      "anchor": "bottom-left",
+      "offset": {
+        "x": "6%",
+        "y": "8%"
+      },
+      "size": {
+        "w": "70%",
+        "h": "auto"
+      },
+      "style": {
+        "fontFamily": "Inter",
+        "fontSize": 32,
+        "fontWeight": 400,
+        "color": "{{ brand.foreground }}",
+        "align": "left",
+        "lineHeight": 1.3
+      },
+      "content": "{{ props.subhead }}",
+      "overrides": {
+        "16x9": {
+          "anchor": "middle-right",
+          "offset": {
+            "x": "6%",
+            "y": "18%"
+          },
+          "size": {
+            "w": "38%",
+            "h": "auto"
+          }
+        }
+      }
+    },
+    {
+      "id": "logo",
+      "type": "shape",
+      "shape": "rect",
+      "role": "LOGO_PLACEHOLDER",
+      "anchor": "bottom-right",
+      "offset": {
+        "x": "4%",
+        "y": "4%"
+      },
+      "size": {
+        "w": "10%",
+        "h": "5%"
+      },
+      "style": {
+        "fill": "{{ brand.accent }}",
+        "borderRadius": 6
+      }
+    }
+  ]
+}

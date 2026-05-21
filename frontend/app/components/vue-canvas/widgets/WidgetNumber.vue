@@ -5,7 +5,7 @@ defineEmits<{ 'update:modelValue': [value: number] }>()
 <template>
   <input
     type="number"
-    class="w-full bg-[#2a2a2a] border border-[#3a3a3a] rounded-md px-2 py-1 text-[10px] text-white/80 text-center focus:outline-none focus:border-white/20 [&::-webkit-inner-spin-button]:appearance-none"
+    class="w-full bg-white/5 border border-white/10 rounded px-2 h-7 text-[11px] text-foreground text-center outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] transition-[color,box-shadow] [&::-webkit-inner-spin-button]:appearance-none"
     :value="modelValue"
     :min="min"
     :max="max"

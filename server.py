@@ -1004,6 +1004,96 @@ class PromptServer():
 
             return web.Response(status=200)
 
+        @routes.post("/gate/resume")
+        async def post_gate_resume(request):
+            """Resume execution after a Gate node has paused.
+
+            Actions:
+              - continue: Open the gate and run downstream.
+              - redo: Re-run the upstream stage (with seed increment).
+              - restart: Re-run the entire workflow from scratch.
+            """
+            json_data = await request.json()
+            node_id = json_data.get("node_id")
+            prompt_id = json_data.get("prompt_id")
+            action = json_data.get("action")  # "continue" | "redo" | "restart"
+
+            if not node_id or not prompt_id or action not in ("continue", "redo", "restart"):
+                logging.warning(f"[Gate] bad resume params: {json_data!r}")
+                return web.json_response({"error": "Missing or invalid parameters"}, status=400)
+
+            from comfy_extras.nodes_gate import gate_prompt_context
+
+            from_pause = json_data.get("from_pause", False)
+
+            ctx = gate_prompt_context.get(prompt_id)
+            if not ctx:
+                return web.json_response({"error": "No paused gate context for this prompt"}, status=404)
+
+            import copy
+            prompt = copy.deepcopy(ctx["prompt"])
+            extra_data = copy.deepcopy(ctx["extra_data"])
+
+            if action == "continue":
+                # Always bypass the gate — pass data through to downstream.
+                if node_id in prompt and "inputs" in prompt[node_id]:
+                    prompt[node_id]["inputs"]["bypass"] = True
+
+            elif action == "redo":
+                # Re-run upstream with bumped seeds, gate stays active.
+                if node_id in prompt and "inputs" in prompt[node_id]:
+                    prompt[node_id]["inputs"]["bypass"] = False
+                upstream_stage = self._get_upstream_stage(prompt, node_id)
+                for uid in upstream_stage:
+                    node_data = prompt.get(uid, {})
+                    inputs = node_data.get("inputs", {})
+                    for key, value in inputs.items():
+                        if key in ("seed", "noise_seed") and isinstance(value, int):
+                            inputs[key] = value + 1
+
+            elif action == "restart":
+                if node_id in prompt and "inputs" in prompt[node_id]:
+                    prompt[node_id]["inputs"]["bypass"] = False
+
+            new_prompt_id = str(uuid.uuid4())
+
+            if action == "continue" and from_pause:
+                # Resuming from a paused gate — no cache clearing needed.
+                # The gate's output changes from ExecutionBlocker to actual data,
+                # which naturally invalidates downstream caches.
+                pass
+            elif action == "continue" and not from_pause:
+                # Iterating after workflow completed — clear only gate + downstream
+                # caches so they re-execute, but keep upstream cached.
+                downstream = self._get_downstream_nodes(prompt, node_id)
+                self._clear_cache_for_nodes(downstream | {node_id})
+            else:
+                # redo/restart: full cache reset
+                if hasattr(self, 'prompt_executor') and self.prompt_executor:
+                    self.prompt_executor.reset()
+
+            # Validate and re-queue
+            valid = await execution.validate_prompt(new_prompt_id, prompt, None)
+            if valid[0]:
+                outputs_to_execute = valid[2]
+                sensitive = {}
+                for sensitive_val in execution.SENSITIVE_EXTRA_DATA_KEYS:
+                    if sensitive_val in extra_data:
+                        sensitive[sensitive_val] = extra_data.pop(sensitive_val)
+                self.prompt_queue.put((self.number, new_prompt_id, prompt, extra_data, outputs_to_execute, sensitive))
+                self.number += 1
+
+                # Keep gate_prompt_context so the user can re-trigger
+                # from the gate after execution completes (iterate workflow).
+                # Update it with the new prompt_id so subsequent resumes work.
+                ctx_data = gate_prompt_context.pop(prompt_id, None)
+                if ctx_data:
+                    gate_prompt_context[new_prompt_id] = ctx_data
+
+                return web.json_response({"prompt_id": new_prompt_id})
+            else:
+                return web.json_response({"error": valid[1]}, status=400)
+
         @routes.post("/free")
         async def post_free(request):
             json_data = await request.json()
@@ -1031,6 +1121,80 @@ class PromptServer():
     async def setup(self):
         timeout = aiohttp.ClientTimeout(total=None) # no timeout
         self.client_session = aiohttp.ClientSession(timeout=timeout)
+
+    def _get_upstream_stage(self, prompt, gate_node_id):
+        """Walk backwards from a gate node to find all nodes in its upstream stage.
+
+        Returns the set of node IDs between this gate and the previous gate
+        (or the start of the workflow). Stops traversal at other gate nodes.
+        """
+        from comfy_execution.graph_utils import is_link
+        upstream = set()
+        visited = set()
+        queue = []
+
+        # Start from the gate's direct inputs
+        gate_inputs = prompt.get(gate_node_id, {}).get("inputs", {})
+        for value in gate_inputs.values():
+            if is_link(value):
+                queue.append(str(value[0]))
+
+        while queue:
+            nid = queue.pop()
+            if nid in visited:
+                continue
+            visited.add(nid)
+
+            node_data = prompt.get(nid, {})
+            # Stop at other gate nodes — they mark the boundary of the previous stage
+            if node_data.get("class_type") == "ComfyGateNode":
+                continue
+
+            upstream.add(nid)
+
+            # Continue traversal through this node's inputs
+            for value in node_data.get("inputs", {}).values():
+                if is_link(value):
+                    queue.append(str(value[0]))
+
+        return upstream
+
+    def _get_downstream_nodes(self, prompt, gate_node_id):
+        """Walk forward from a gate node to find all downstream node IDs."""
+        from comfy_execution.graph_utils import is_link
+        downstream = set()
+        visited = set()
+        queue = [gate_node_id]
+
+        while queue:
+            nid = queue.pop()
+            if nid in visited:
+                continue
+            visited.add(nid)
+
+            # Find all nodes whose inputs reference nid
+            for other_id, node_data in prompt.items():
+                if other_id in visited:
+                    continue
+                for val in node_data.get("inputs", {}).values():
+                    if is_link(val) and str(val[0]) == nid:
+                        downstream.add(other_id)
+                        queue.append(other_id)
+                        break
+
+        return downstream
+
+    def _clear_cache_for_nodes(self, node_ids):
+        """Delete cache entries for specific nodes, keeping all others."""
+        if not hasattr(self, 'prompt_executor') or not self.prompt_executor:
+            return
+        for cache in self.prompt_executor.caches.all:
+            if not hasattr(cache, 'cache_key_set') or not cache.initialized:
+                continue
+            for nid in node_ids:
+                cache_key = cache.cache_key_set.get_data_key(nid)
+                if cache_key is not None and cache_key in cache.cache:
+                    del cache.cache[cache_key]
 
     def add_routes(self):
         self.user_manager.add_routes(self.routes)

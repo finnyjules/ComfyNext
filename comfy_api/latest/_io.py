@@ -1758,6 +1758,10 @@ class _ComfyNodeBaseInternal(_ComfyNodeInternal):
             return "EXECUTE_NORMALIZED_ASYNC"
         return "EXECUTE_NORMALIZED"
 
+    # Sentinel used when an ExecutionBlocker has a None message (silent block).
+    # We can't store None in block_execution because None means "no block".
+    _SILENT_BLOCK_SENTINEL = ""
+
     @final
     @classmethod
     def EXECUTE_NORMALIZED(cls, *args, **kwargs) -> NodeOutput:
@@ -1771,7 +1775,8 @@ class _ComfyNodeBaseInternal(_ComfyNodeInternal):
         elif isinstance(to_return, dict):
             to_return = NodeOutput.from_dict(to_return)
         elif isinstance(to_return, ExecutionBlocker):
-            to_return = NodeOutput(block_execution=to_return.message)
+            msg = to_return.message if to_return.message is not None else cls._SILENT_BLOCK_SENTINEL
+            to_return = NodeOutput(block_execution=msg)
         else:
             raise Exception(f"Invalid return type from node: {type(to_return)}")
         if to_return.expand is not None and not cls.SCHEMA.enable_expand:
@@ -1791,7 +1796,8 @@ class _ComfyNodeBaseInternal(_ComfyNodeInternal):
         elif isinstance(to_return, dict):
             to_return = NodeOutput.from_dict(to_return)
         elif isinstance(to_return, ExecutionBlocker):
-            to_return = NodeOutput(block_execution=to_return.message)
+            msg = to_return.message if to_return.message is not None else cls._SILENT_BLOCK_SENTINEL
+            to_return = NodeOutput(block_execution=msg)
         else:
             raise Exception(f"Invalid return type from node: {type(to_return)}")
         if to_return.expand is not None and not cls.SCHEMA.enable_expand:

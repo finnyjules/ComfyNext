@@ -382,6 +382,11 @@ def get_output_from_returns(return_values, obj):
                     result = tuple([ExecutionBlocker(r.block_execution)] * len(obj.RETURN_TYPES))
                 results.append(result)
                 subgraph_results.append((None, result))
+            elif r.block_execution is not None:
+                # V3 node returned only a block (no result, no expand) — e.g. ExecutionBlocker
+                result = tuple([ExecutionBlocker(r.block_execution)] * len(obj.RETURN_TYPES))
+                results.append(result)
+                subgraph_results.append((None, result))
         else:
             if isinstance(r, ExecutionBlocker):
                 r = tuple([r] * len(obj.RETURN_TYPES))
@@ -500,7 +505,7 @@ async def execute(server, dynprompt, caches, current_item, extra_data, executed,
                     return (ExecutionResult.PENDING, None, None)
 
             def execution_block_cb(block):
-                if block.message is not None:
+                if block.message is not None and block.message != "":
                     mes = {
                         "prompt_id": prompt_id,
                         "node_id": unique_id,
@@ -590,6 +595,24 @@ async def execute(server, dynprompt, caches, current_item, extra_data, executed,
         cache_entry = CacheEntry(ui=ui_outputs.get(unique_id), outputs=output_data)
         execution_list.cache_update(unique_id, cache_entry)
         await caches.outputs.set(unique_id, cache_entry)
+
+        # Detect Gate node pause: the gate returns ExecutionBlocker(None) directly,
+        # which propagates into output_data as [[ExecutionBlocker(None)]].
+        # When the gate is bypassed it returns the actual data (no ExecutionBlocker).
+        if class_type == "ComfyGateNode" and output_data and any(
+            isinstance(v, ExecutionBlocker)
+            for slot in output_data
+            for v in (slot if isinstance(slot, (list, tuple)) else [slot])
+        ):
+            from comfy_extras.nodes_gate import gate_prompt_context
+            gate_prompt_context[prompt_id] = {
+                "prompt": dynprompt.original_prompt,
+                "extra_data": extra_data,
+            }
+            server.send_sync("gate_paused", {
+                "node_id": unique_id,
+                "prompt_id": prompt_id,
+            }, server.client_id)
 
     except comfy.model_management.InterruptProcessingException as iex:
         logging.info("Processing interrupted")

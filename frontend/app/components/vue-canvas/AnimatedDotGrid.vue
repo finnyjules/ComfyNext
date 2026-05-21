@@ -19,7 +19,7 @@ const { viewport } = useVueFlow()
 
 let animFrame = 0
 let sweepX = -0.3 // normalized 0-1 sweep position across viewport
-let sweepDirection = 1
+let rainbowOffset = 0 // horizontal scroll offset for rainbow
 
 function draw() {
   const canvas = canvasRef.value
@@ -56,10 +56,11 @@ function draw() {
 
   // Update sweep position when running
   if (props.running) {
-    sweepX += 0.012 * sweepDirection
+    sweepX += 0.007
     if (sweepX > 1.3) {
       sweepX = -0.3
     }
+    rainbowOffset += 0.003 // slow horizontal scroll for rainbow
   } else {
     // Fade sweep offscreen when stopped
     sweepX = -0.5
@@ -85,12 +86,10 @@ function draw() {
       ctx.beginPath()
       ctx.arc(x, y, r, 0, Math.PI * 2)
       if (alpha > baseAlpha) {
-        // Glowing dot: indigo tint
+        // Rainbow tint based on horizontal position + scrolling offset
         const t = (alpha - baseAlpha) / (glowAlpha - baseAlpha)
-        const rr = Math.round(255 * (1 - t) + 129 * t)
-        const gg = Math.round(255 * (1 - t) + 140 * t)
-        const bb = Math.round(255 * (1 - t) + 248 * t)
-        ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha})`
+        const hue = ((x / w) + rainbowOffset) * 360 % 360
+        ctx.fillStyle = `hsla(${hue}, 80%, 75%, ${alpha * t + baseAlpha * (1 - t)})`
       } else {
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
       }

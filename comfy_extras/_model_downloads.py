@@ -1,0 +1,224 @@
+"""Shared model-bundle registry + SSE download endpoint used by the toolbox.
+
+Each ML node file (`nodes_face.py`, `nodes_bg_remove.py`, …) registers one
+bundle at import time, declaring which files it needs on disk and where to
+fetch them. The toolbox calls a single set of endpoints regardless of which
+bundle is involved.
+"""
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import json
+import os
+import queue
+import threading
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from typing import Any
+
+
+# A single file inside a bundle. We track size + url-list (mirrors) per file
+# so a dead URL doesn't break a bundle, and a status probe is just a stat call.
+@dataclasses.dataclass
+class ModelFile:
+    name: str
+    path: str
+    size: int                       # expected size in bytes; used for verification
+    urls: list[str]                 # mirrors, tried in order
+
+
+# A logical bundle (= what's behind one toolbox card). May contain multiple
+# files. May also have a `prepare_fn` that runs *after* downloads finish — e.g.
+# trigger insightface's own auto-download of the buffalo_l package.
+@dataclasses.dataclass
+class ModelBundle:
+    key: str                        # toolbox-visible id, e.g. 'faceswap'
+    label: str                      # shown in the progress toast
+    files: list[ModelFile]
+    prepare_fn: Callable[[], None] | None = None
+
+
+_REGISTRY: dict[str, ModelBundle] = {}
+
+
+def register_bundle(bundle: ModelBundle) -> None:
+    _REGISTRY[bundle.key] = bundle
+
+
+def get_bundle(key: str) -> ModelBundle | None:
+    return _REGISTRY.get(key)
+
+
+def bundle_status(key: str) -> dict:
+    """{ready: bool, missing: [{name, size}], total_size}"""
+    bundle = _REGISTRY.get(key)
+    if bundle is None:
+        return {"ready": False, "missing": [], "total_size": 0, "error": f"unknown bundle '{key}'"}
+    missing = [
+        {"name": f.name, "size": f.size}
+        for f in bundle.files
+        if not (os.path.isfile(f.path) and os.path.getsize(f.path) == f.size)
+    ]
+    return {
+        "ready": len(missing) == 0,
+        "missing": missing,
+        "total_size": sum(f.size for f in bundle.files),
+        "label": bundle.label,
+    }
+
+
+def _download_file(file: ModelFile, progress_cb: Callable[[int, int], None]) -> None:
+    """Stream `file` to disk trying each mirror in order. Raises only if all fail."""
+    os.makedirs(os.path.dirname(file.path), exist_ok=True)
+    tmp_path = file.path + ".part"
+    errors: list[str] = []
+
+    for url in file.urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ComfyNext/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp, open(tmp_path, "wb") as f:
+                total = int(resp.headers.get("Content-Length") or file.size)
+                downloaded = 0
+                chunk = 1 << 20  # 1 MiB
+                while True:
+                    buf = resp.read(chunk)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    downloaded += len(buf)
+                    progress_cb(downloaded, total)
+            os.replace(tmp_path, file.path)
+            return
+        except (urllib.error.URLError, OSError) as e:
+            errors.append(f"{url.split('/')[2]}: {e}")
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+    raise RuntimeError(f"All mirrors failed for {file.name}:\n  - " + "\n  - ".join(errors))
+
+
+# Optional: per-bundle in-process loaders cache. Nodes can stash their loaded
+# model objects here keyed by bundle.key + ':' + role so multiple node instances
+# share one initialization.
+_LOADER_CACHE: dict[str, Any] = {}
+
+
+def loader_cache() -> dict[str, Any]:
+    return _LOADER_CACHE
+
+
+# ---------------------------------------------------------------------------
+# HTTP routes — generic. Registered once on first import.
+# ---------------------------------------------------------------------------
+
+try:
+    from aiohttp import web
+
+    from server import PromptServer
+
+    _routes_registered = False
+
+    def _register_routes() -> None:
+        global _routes_registered
+        if _routes_registered:
+            return
+        _routes_registered = True
+
+        @PromptServer.instance.routes.get("/comfynext/models/status")
+        async def _status_route(request):
+            key = request.query.get("key", "")
+            return web.json_response(bundle_status(key))
+
+        @PromptServer.instance.routes.get("/comfynext/models/download")
+        async def _download_route(request):
+            """SSE stream of `data: {phase, file, downloaded, total}` lines."""
+            key = request.query.get("key", "")
+            response = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+            await response.prepare(request)
+
+            async def send(payload: dict) -> None:
+                await response.write(f"data: {json.dumps(payload)}\n\n".encode())
+
+            bundle = _REGISTRY.get(key)
+            if bundle is None:
+                await send({"phase": "error", "message": f"Unknown model bundle '{key}'"})
+                return response
+
+            await send({"phase": "start", "label": bundle.label})
+
+            try:
+                status = bundle_status(key)
+                missing_names = {m["name"] for m in status["missing"]}
+
+                # Run each missing file's download in a thread so the SSE loop
+                # can pump progress without blocking aiohttp's event loop.
+                for file in bundle.files:
+                    if file.name not in missing_names:
+                        continue
+                    await send({"phase": "downloading", "file": file.name, "downloaded": 0, "total": file.size})
+                    q: queue.Queue = queue.Queue()
+                    error_box: list[BaseException] = []
+
+                    def worker(f=file, q_=q, eb=error_box):
+                        try:
+                            _download_file(f, lambda d, t: q_.put(("p", d, t)))
+                            q_.put(("done", 0, 0))
+                        except BaseException as e:
+                            eb.append(e)
+                            q_.put(("err", 0, 0))
+
+                    threading.Thread(target=worker, daemon=True).start()
+
+                    while True:
+                        try:
+                            kind, d, t = q.get(timeout=0.05)
+                        except queue.Empty:
+                            await asyncio.sleep(0.05)
+                            continue
+                        if kind == "p":
+                            await send({"phase": "downloading", "file": file.name, "downloaded": d, "total": t})
+                        elif kind == "err":
+                            await send({"phase": "error", "message": str(error_box[0]) if error_box else "download failed"})
+                            return response
+                        else:
+                            break
+
+                if bundle.prepare_fn is not None:
+                    await send({"phase": "preparing", "file": bundle.label})
+                    # Run in a thread too; some preparers download more files.
+                    err_box: list[BaseException] = []
+
+                    def prep():
+                        try:
+                            bundle.prepare_fn()
+                        except BaseException as e:
+                            err_box.append(e)
+
+                    t = threading.Thread(target=prep, daemon=True)
+                    t.start()
+                    while t.is_alive():
+                        await asyncio.sleep(0.1)
+                    if err_box:
+                        await send({"phase": "error", "message": str(err_box[0])})
+                        return response
+
+                await send({"phase": "done"})
+            except BaseException as e:
+                await send({"phase": "error", "message": str(e)})
+            return response
+
+    _register_routes()
+
+except ImportError:
+    pass

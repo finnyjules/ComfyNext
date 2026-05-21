@@ -1,0 +1,246 @@
+<script setup lang="ts">
+import { SkipBack, RotateCcw, Play, Pause } from 'lucide-vue-next'
+import { getTypeColor } from '~/composables/useVueNodes'
+
+const props = defineProps<{
+  id: string
+  data: {
+    nodeType: string
+    title: string
+    inputs: { name: string; type: string; link: number | null }[]
+    outputs: { name: string; type: string; links: number[] | null }[]
+    widgetsValues: any[]
+    widgetDefs?: any[]
+    properties: Record<string, any>
+    mode: number
+    paused?: boolean
+    promptId?: string
+    running?: boolean
+    error?: boolean
+  }
+}>()
+
+// bypass is the first widget value (index 0, matching the "bypass" Boolean input)
+const isBypassed = computed(() => !!props.data.widgetsValues?.[0])
+
+const accentColor = computed(() => {
+  const firstOutput = props.data.outputs?.[0]
+  if (firstOutput) return getTypeColor(firstOutput.type)
+  const firstInput = props.data.inputs?.[0]
+  if (firstInput) return getTypeColor(firstInput.type)
+  return '#6b7280'
+})
+
+const borderColorLeft = computed(() => {
+  const firstInput = props.data.inputs?.[0]
+  return firstInput ? getTypeColor(firstInput.type) : '#ffffff'
+})
+const borderColorRight = computed(() => {
+  const firstOutput = props.data.outputs?.[0]
+  return firstOutput ? getTypeColor(firstOutput.type) : '#ffffff'
+})
+
+function toggleBypass() {
+  const vals = props.data.widgetsValues
+  if (vals) vals[0] = !vals[0]
+}
+
+async function resumeGate(action: 'continue' | 'redo' | 'restart') {
+  const fromPause = !!props.data.paused
+  props.data.paused = false
+  try {
+    const res = await $fetch<{ prompt_id?: string }>('/gate/resume', {
+      method: 'POST',
+      body: {
+        node_id: props.id,
+        prompt_id: props.data.promptId,
+        action,
+        from_pause: fromPause,
+      },
+    })
+    // Update promptId so subsequent clicks use the new prompt context
+    if (res?.prompt_id) {
+      props.data.promptId = res.prompt_id
+    }
+  } catch (err: any) {
+    console.error('[Gate] Resume failed:', err?.data || err?.message || err)
+  }
+}
+</script>
+
+<template>
+  <div
+    class="gate-node rounded-xl border border-white/10 w-[260px] select-none backdrop-blur-sm"
+    :class="{
+      'ring-2 ring-red-500': data.error,
+      'opacity-60': isBypassed,
+    }"
+    :data-running="data.running || data.paused || undefined"
+    :style="{
+      '--border-color-left': borderColorLeft,
+      '--border-color-right': borderColorRight,
+    } as any"
+  >
+    <!-- Title bar (matches ComfyNode) -->
+    <div
+      class="flex items-center gap-2 px-3 py-2 border-b border-white/5"
+      :style="{ background: `linear-gradient(135deg, ${accentColor}15 0%, transparent 60%)` }"
+    >
+      <div class="size-2 rounded-full shrink-0" :style="{ backgroundColor: accentColor }" />
+      <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.title || 'Gate' }}</span>
+    </div>
+
+    <!-- Ports section (matches ComfyNode) -->
+    <div class="py-2 flex flex-col gap-0.5 bg-black/15 shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)] relative">
+      <div
+        v-for="i in Math.max(data.inputs.length, data.outputs.length)"
+        :key="i"
+        class="flex items-center justify-between"
+      >
+        <VueCanvasComfyNodePort
+          v-if="data.inputs[i - 1]"
+          :id="`input-${i - 1}`"
+          type="target"
+          position="left"
+          :data-type="data.inputs[i - 1].type"
+          :label="data.inputs[i - 1].name"
+        />
+        <span v-else class="flex-1" />
+        <VueCanvasComfyNodePort
+          v-if="data.outputs[i - 1]"
+          :id="`output-${i - 1}`"
+          type="source"
+          position="right"
+          :data-type="data.outputs[i - 1].type"
+          :label="data.outputs[i - 1].name"
+        />
+        <span v-else class="flex-1" />
+      </div>
+
+      <!-- Horizontal line from input to output -->
+      <div class="absolute inset-x-0 top-1/2 h-px bg-white/10" />
+      <!-- Live status indicator overlaid on the line -->
+      <div
+        class="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 flex items-center justify-center size-7 rounded-full bg-[#1a1a1a] border border-white/10 transition-colors"
+        :class="{
+          'text-white/30': isBypassed,
+          'text-red-500': !isBypassed && data.paused,
+          'text-white/50': !isBypassed && !data.paused,
+          'animate-pulse': data.paused,
+        }"
+      >
+        <Play v-if="isBypassed" class="size-3.5" :fill="'currentColor'" />
+        <Pause v-else class="size-3.5" :fill="'currentColor'" />
+      </div>
+    </div>
+
+    <!-- Bypass toggle + action buttons -->
+    <div class="flex flex-col gap-2.5 px-2 py-2.5 border-t border-[#2a2a2a]">
+      <!-- Toggle row: single Bypass label -->
+      <div class="flex items-center justify-between px-1 nopan nodrag">
+        <span class="text-xs text-white/60 tracking-[0.12px]">Bypass</span>
+        <button
+          class="relative w-9 h-5 rounded-full cursor-pointer transition-colors shrink-0"
+          :class="isBypassed ? 'bg-emerald-500' : 'bg-zinc-700'"
+          @click="toggleBypass"
+        >
+          <div
+            class="absolute top-1/2 -translate-y-1/2 size-3.5 rounded-full bg-white shadow-md transition-transform"
+            :class="isBypassed ? 'left-[17px]' : 'left-[3px]'"
+          />
+        </button>
+      </div>
+
+      <!-- Action buttons (only while paused) -->
+      <div v-if="data.paused && !isBypassed" class="flex items-center gap-1.5 nopan nodrag">
+        <button
+          class="gate-btn flex items-center justify-center gap-1.5 flex-1 h-9 rounded bg-zinc-800 text-white/80 shadow-sm cursor-pointer hover:bg-zinc-700 transition-colors text-[11px] font-medium"
+          data-tooltip="Re-run from the start"
+          @click="resumeGate('restart')"
+        >
+          <SkipBack class="size-3.5" />
+          <span>Restart</span>
+        </button>
+        <button
+          class="gate-btn flex items-center justify-center gap-1.5 flex-1 h-9 rounded bg-zinc-800 text-white/80 shadow-sm cursor-pointer hover:bg-zinc-700 transition-colors text-[11px] font-medium"
+          data-tooltip="Redo last step"
+          @click="resumeGate('redo')"
+        >
+          <RotateCcw class="size-3.5" />
+          <span>Redo</span>
+        </button>
+        <button
+          class="gate-btn flex items-center justify-center gap-1.5 flex-1 h-9 rounded bg-emerald-500 text-white shadow-sm cursor-pointer hover:bg-emerald-600 transition-colors text-[11px] font-semibold"
+          data-tooltip="Continue downstream"
+          @click="resumeGate('continue')"
+        >
+          <Play class="size-3.5" :fill="'currentColor'" />
+          <span>Continue</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.gate-node {
+  background: linear-gradient(180deg, #252525 0%, #1e1e1e 100%);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Sweeping glow border when running/paused */
+.gate-node[data-running] {
+  --border-left: var(--border-color-left, #fff);
+  --border-right: var(--border-color-right, #fff);
+  border-color: transparent;
+}
+
+.gate-node[data-running]::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(to right, var(--border-left), var(--border-right));
+  -webkit-mask:
+    conic-gradient(from var(--sweep-angle), transparent 0%, white 6%, white 18%, transparent 26%),
+    linear-gradient(white 0 0) content-box,
+    linear-gradient(white 0 0);
+  -webkit-mask-composite: source-in, xor;
+  mask:
+    conic-gradient(from var(--sweep-angle), transparent 0%, white 6%, white 18%, transparent 26%),
+    linear-gradient(white 0 0) content-box,
+    linear-gradient(white 0 0);
+  mask-composite: intersect, exclude;
+  animation: border-sweep 2s linear infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* CSS-only tooltips — avoids Reka UI pointer-event interference with VueFlow */
+.gate-btn {
+  position: relative;
+}
+.gate-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #18181b;
+  color: #fafafa;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 50;
+}
+.gate-btn:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+</style>

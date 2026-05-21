@@ -256,6 +256,43 @@ class VideoSlice(io.ComfyNode):
         )
 
 
+class PreviewVideo(io.ComfyNode):
+    """Preview a video directly inside the node, saving to a temp directory."""
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="PreviewVideo",
+            display_name="Preview Video",
+            category="image/video",
+            description="Previews a video inside the node.",
+            inputs=[
+                io.Video.Input("video", tooltip="The video to preview."),
+            ],
+            outputs=[
+                io.Video.Output(display_name="video", tooltip="Pass-through of the input video."),
+            ],
+            is_output_node=True,
+        )
+
+    @classmethod
+    def execute(cls, video: Input.Video) -> io.NodeOutput:
+        # Save to temp directory for preview
+        width, height = video.get_dimensions()
+        full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
+            "preview_video",
+            folder_paths.get_temp_directory(),
+            width,
+            height,
+        )
+        file = f"{filename}_{counter:05}_.mp4"
+        video.save_to(os.path.join(full_output_folder, file))
+
+        return io.NodeOutput(
+            video,
+            ui=ui.PreviewVideo([ui.SavedResult(file, subfolder, io.FolderType.temp)]),
+        )
+
+
 class VideoExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
@@ -266,6 +303,7 @@ class VideoExtension(ComfyExtension):
             GetVideoComponents,
             LoadVideo,
             VideoSlice,
+            PreviewVideo,
         ]
 
 async def comfy_entrypoint() -> VideoExtension:

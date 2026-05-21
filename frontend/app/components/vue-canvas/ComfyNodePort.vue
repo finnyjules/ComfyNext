@@ -8,16 +8,29 @@ const props = defineProps<{
   position: 'left' | 'right'
   dataType: string
   label: string
+  tooltip?: string
 }>()
 
 const color = computed(() => getTypeColor(props.dataType))
 const handlePosition = computed(() =>
   props.position === 'left' ? Position.Left : Position.Right,
 )
+
+function toTitleCase(str: string): string {
+  return str
+    .split(/[_\s]+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+
+const displayLabel = computed(() => toTitleCase(props.label))
 </script>
 
 <template>
-  <div class="flex items-center gap-1.5 h-6 relative" :class="position === 'right' ? 'flex-row-reverse' : ''">
+  <div
+    class="flex items-center h-6 relative"
+    :class="position === 'right' ? 'flex-row-reverse pr-3' : 'pl-3'"
+  >
     <Handle
       :id="id"
       :type="type"
@@ -25,10 +38,11 @@ const handlePosition = computed(() =>
       class="!w-2.5 !h-2.5 !rounded-full !border-2 !bg-[#1a1a1a]"
       :style="{ borderColor: color }"
     />
-    <span class="text-[10px] text-white/50 leading-none whitespace-nowrap">{{ label }}</span>
     <span
       class="text-[9px] leading-none px-1 py-0.5 rounded"
+      :class="tooltip ? 'cursor-help' : ''"
       :style="{ color, backgroundColor: color + '15' }"
-    >{{ dataType }}</span>
+      :title="tooltip || undefined"
+    >{{ displayLabel }}</span>
   </div>
 </template>

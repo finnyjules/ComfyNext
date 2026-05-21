@@ -1688,6 +1688,9 @@ class PreviewImage(SaveImage):
         self.prefix_append = "_temp_" + ''.join(random.choice("abcdefghijklmnopqrstupvxyz") for x in range(5))
         self.compress_level = 1
 
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+
     SEARCH_ALIASES = ["preview", "preview image", "show image", "view image", "display image", "image viewer"]
 
     @classmethod
@@ -1696,6 +1699,11 @@ class PreviewImage(SaveImage):
                     {"images": ("IMAGE", ), },
                 "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
                 }
+
+    def save_images(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+        result = super().save_images(images, filename_prefix, prompt, extra_pnginfo)
+        result["result"] = (images,)
+        return result
 
 class LoadImage:
     @classmethod
@@ -2437,6 +2445,44 @@ async def init_builtin_extra_nodes():
         "nodes_audio_encoder.py",
         "nodes_rope.py",
         "nodes_logic.py",
+        "nodes_gate.py",
+        "nodes_adjust_color.py",
+        "nodes_adjust_brightness_contrast.py",
+        "nodes_adjust_exposure.py",
+        "nodes_adjust_curves.py",
+        "nodes_adjust_levels.py",
+        "nodes_blur.py",
+        "nodes_tone_extras.py",
+        "nodes_color_filters.py",
+        "nodes_sharpen_noise.py",
+        "nodes_geometry.py",
+        "nodes_distortion.py",
+        "nodes_stylize.py",
+        "nodes_composite.py",
+        "nodes_glsl_lens.py",
+        "nodes_glsl_stylize.py",
+        "nodes_glsl_generative.py",
+        "nodes_glsl_distortion.py",
+        "nodes_glsl_grading.py",
+        "nodes_glsl_atmosphere.py",
+        "nodes_glsl_fractal.py",
+        "nodes_glsl_lab.py",
+        "nodes_glsl_unicorn.py",
+        "nodes_video_effects.py",
+        "nodes_audio_effects.py",
+        "nodes_audio_ml.py",
+        "nodes_face.py",
+        "nodes_bg_remove.py",
+        "nodes_upscale.py",
+        "nodes_audio_denoise.py",
+        "nodes_frame_interp.py",
+        "nodes_smart_layout.py",
+        "nodes_compositor.py",
+        "nodes_timeline.py",
+        "nodes_text.py",
+        "nodes_video_pro.py",
+        "nodes_matte.py",
+        "nodes_matte_ml.py",
         "nodes_resolution.py",
         "nodes_nop.py",
         "nodes_kandinsky5.py",

@@ -4,8 +4,9 @@ defineEmits<{ 'update:modelValue': [value: boolean] }>()
 </script>
 <template>
   <button
+    data-slot="toggle"
     class="relative w-8 h-4 rounded-full transition-colors cursor-pointer"
-    :class="modelValue ? 'bg-[#818cf8]' : 'bg-[#3a3a3a]'"
+    :class="modelValue ? 'bg-primary' : 'bg-input'"
     @click="$emit('update:modelValue', !modelValue)"
   >
     <div

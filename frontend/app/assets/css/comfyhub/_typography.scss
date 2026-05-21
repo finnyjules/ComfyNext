@@ -1,0 +1,241 @@
+// PP Neue Montreal — display / general use
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Hairline.otf') format('opentype');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-HairlineItalic.otf') format('opentype');
+  font-weight: 100;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-LightItalic.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Book.otf') format('opentype');
+  font-weight: 350;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-BookItalic.otf') format('opentype');
+  font-weight: 350;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Italic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-MediumItalic.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Semibold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-SemiboldItalic.otf') format('opentype');
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Extrabold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-ExtraboldItalic.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Extrabold.otf') format('opentype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-ExtraboldItalic.otf') format('opentype');
+  font-weight: 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-Black.otf') format('opentype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal';
+  src: url('/fonts/NeueMontreal/PPNeueMontreal-BlackItalic.otf') format('opentype');
+  font-weight: 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+// PP Neue Montreal Text — optimized for small body copy
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-LightItalic.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-Book.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-BookItalic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP Neue Montreal Text';
+  src: url('/fonts/NeueMontreal/PPNeueMontrealText-BoldItalic.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ABC ROM';
+  src: url('/fonts/ABCROM-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ABC ROM';
+  src: url('/fonts/ABCROM-BlackItalic.otf') format('opentype');
+  font-weight: 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ABC ROM';
+  src: url('/fonts/ABCROM-HeavyItalic.otf') format('opentype');
+  font-weight: 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+h1 { font-size: $text-5xl; }
+h2 { font-size: $text-4xl; }
+h3 { font-size: $text-3xl; }
+h4 { font-size: $text-2xl; }
+h5 { font-size: $text-xl; }
+h6 { font-size: $text-lg; }
+
+@include respond-below('md') {
+  h1 { font-size: $text-4xl; }
+  h2 { font-size: $text-3xl; }
+  h3 { font-size: $text-2xl; }
+  h4 { font-size: $text-xl; }
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, $color-primary-light, $color-secondary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+small, .text-sm {
+  font-size: $text-sm;
+}
+
+.text-xs {
+  font-size: $text-xs;
+}
+
+.text-lg {
+  font-size: $text-lg;
+}
+
+.text-muted {
+  color: $color-text-tertiary;
+}
+
+code, pre {
+  font-family: $font-mono;
+  font-size: $text-sm;
+}
+
+strong, b {
+  font-weight: $weight-semibold;
+}
