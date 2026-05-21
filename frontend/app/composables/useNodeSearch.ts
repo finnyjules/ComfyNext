@@ -1,3 +1,5 @@
+import { NODE_DESCRIPTIONS } from '~/lib/nodeDescriptions'
+
 type NodeSource = 'core' | 'essentials' | 'partner' | 'extensions'
 
 interface NodeType {
@@ -96,7 +98,7 @@ export function useNodeSearch() {
         types.push({
           name,
           displayName: info.display_name || name,
-          description: info.description || '',
+          description: info.description || NODE_DESCRIPTIONS[name] || '',
           category: info.category || '',
           source: classifySource(info.python_module || ''),
           inputs,
@@ -124,24 +126,28 @@ export function useNodeSearch() {
     nodeSearchOpen.value = false
   }
 
-  function addNode(nodeType: string) {
+  function addNode(
+    nodeType: string,
+    opts: { widgetOverrides?: Record<string, unknown> } = {},
+  ) {
     // Check if Vue nodes mode is active
     const { vueNodesEnabled } = useVueNodesEnabled()
     if (vueNodesEnabled.value) {
       // Dispatch custom event for Vue canvas to handle
       window.dispatchEvent(new CustomEvent('comfynext:addNode', {
-        detail: { nodeType },
+        detail: { nodeType, widgetOverrides: opts.widgetOverrides },
       }))
       closeNodeSearch()
       return
     }
 
-    // LiteGraph mode — existing iframe postMessage
+    // LiteGraph mode — existing iframe postMessage. Widget overrides aren't
+    // wired through the bridge yet; LiteGraph mode falls back to a plain add.
     const container = document.querySelector('[data-tab-id]')
     const iframe = container?.querySelector('iframe') as HTMLIFrameElement | null
     if (iframe?.contentWindow) {
       iframe.contentWindow.postMessage(
-        { type: 'comfynext', action: 'addNodeAtCenter', nodeType },
+        { type: 'comfynext', action: 'addNodeAtCenter', nodeType, widgetOverrides: opts.widgetOverrides },
         '*',
       )
     }

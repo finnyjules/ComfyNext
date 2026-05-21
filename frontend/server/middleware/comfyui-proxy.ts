@@ -17,10 +17,14 @@ const PROXY_PREFIXES = [
   '/view',
   '/upload',
   '/object_info',
+  '/global_subgraphs',
+  '/gate',
+  '/comfynext',
 ]
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
-const NITRO_API_PATHS = ['/api/explain']
+const NITRO_API_PATHS = ['/api/explain', '/api/render-template', '/api/lora-preview']
+const NITRO_API_PREFIXES = ['/api/templates', '/api/cloud-train']
 const NITRO_ROUTE_PREFIXES = ['/view', '/history']
 
 export default defineEventHandler(async (event) => {
@@ -28,6 +32,7 @@ export default defineEventHandler(async (event) => {
 
   // Skip proxying for Nitro's own API routes and server routes
   if (NITRO_API_PATHS.some((p) => path === p || path.startsWith(p + '?'))) return
+  if (NITRO_API_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))) return
   if (NITRO_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '?') || path.startsWith(p + '/'))) return
 
   for (const prefix of PROXY_PREFIXES) {
@@ -36,7 +41,12 @@ export default defineEventHandler(async (event) => {
       const backendPath = path.startsWith('/comfyui')
         ? path.replace(/^\/comfyui/, '') || '/'
         : path
-      return proxyRequest(event, `${COMFY_BACKEND}${backendPath}`)
+      // Override the Origin header so ComfyUI's origin-check middleware
+      // sees host == origin (both 127.0.0.1:8188) instead of blocking the
+      // Nuxt dev-server port (3000) with a 403.
+      return proxyRequest(event, `${COMFY_BACKEND}${backendPath}`, {
+        fetchOptions: { headers: { origin: COMFY_BACKEND } },
+      })
     }
   }
 })

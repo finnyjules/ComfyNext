@@ -31,16 +31,23 @@ export interface LiteGraphWorkflow {
 
 // Type color map (same palette as NodeSearchDialog.vue lines 66-76)
 export const TYPE_COLORS: Record<string, string> = {
-  MODEL: '#c084fc',
-  CLIP: '#facc15',
-  IMAGE: '#60a5fa',
-  LATENT: '#f472b6',
-  VAE: '#f87171',
-  CONDITIONING: '#fb923c',
-  MASK: '#34d399',
-  INT: '#94a3b8',
-  FLOAT: '#94a3b8',
-  STRING: '#94a3b8',
+  // Media types
+  IMAGE: '#60a5fa',       // Blue
+  VIDEO: '#4ade80',       // Green
+  AUDIO: '#f472b6',       // Pink
+  '3D': '#fb923c',        // Orange
+  MESH: '#fb923c',        // Orange (alias for 3D)
+  // Pipeline types
+  MODEL: '#c084fc',       // Purple
+  CLIP: '#facc15',        // Yellow
+  LATENT: '#a78bfa',      // Light purple
+  VAE: '#f87171',         // Red
+  CONDITIONING: '#fbbf24', // Amber
+  MASK: '#34d399',        // Emerald
+  // Scalar types
+  INT: '#94a3b8',         // Slate
+  FLOAT: '#94a3b8',       // Slate
+  STRING: '#94a3b8',      // Slate
 }
 
 export function getTypeColor(type: string): string {
@@ -51,8 +58,8 @@ export function getTypeColor(type: string): string {
 const objectInfo = ref<Record<string, any>>({})
 let objectInfoFetched = false
 
-export async function fetchObjectInfo() {
-  if (objectInfoFetched) return objectInfo.value
+export async function fetchObjectInfo(force = false) {
+  if (objectInfoFetched && !force) return objectInfo.value
   try {
     const data = await $fetch<Record<string, any>>('/object_info')
     objectInfo.value = data
@@ -63,28 +70,117 @@ export async function fetchObjectInfo() {
   return objectInfo.value
 }
 
+// Widget types that appear as interactive controls (not connection ports)
+const WIDGET_TYPES = new Set(['INT', 'FLOAT', 'STRING', 'BOOLEAN', 'COMBO'])
+
+function isWidgetType(type: string): boolean {
+  return WIDGET_TYPES.has(type)
+}
+
+export function getInputTooltip(nodeType: string, inputName: string): string | undefined {
+  const groups = objectInfo.value[nodeType]?.input
+  if (!groups) return undefined
+  for (const group of ['required', 'optional'] as const) {
+    const spec = groups[group]?.[inputName]
+    if (Array.isArray(spec) && spec[1] && typeof spec[1].tooltip === 'string') {
+      return spec[1].tooltip
+    }
+  }
+  return undefined
+}
+
 export function getWidgetDefs(nodeType: string): any[] {
   const info = objectInfo.value[nodeType]
   if (!info?.input?.required) return []
   const defs: any[] = []
-  for (const [name, spec] of Object.entries(info.input.required as Record<string, any>)) {
-    const specArr = Array.isArray(spec) ? spec : [spec]
-    const type = Array.isArray(specArr[0]) ? 'COMBO' : String(specArr[0])
-    const options = Array.isArray(specArr[0]) ? specArr[0] : undefined
-    const config = specArr[1] || {}
-    defs.push({ name, type, options, ...config })
-  }
-  // Also check optional inputs
-  if (info?.input?.optional) {
-    for (const [name, spec] of Object.entries(info.input.optional as Record<string, any>)) {
+
+  function processInputGroup(group: Record<string, any>) {
+    for (const [name, spec] of Object.entries(group)) {
       const specArr = Array.isArray(spec) ? spec : [spec]
       const type = Array.isArray(specArr[0]) ? 'COMBO' : String(specArr[0])
       const options = Array.isArray(specArr[0]) ? specArr[0] : undefined
       const config = specArr[1] || {}
+
+      // Skip port-type inputs — they're rendered as handles, not widgets.
+      if (!isWidgetType(type)) continue
+      // `forceInput: true` flips a would-be widget into a connectable socket.
+      // We treat it the same as a port-type here so the Vue node renders an
+      // input handle instead of a widget control. Standard ComfyUI behaviour.
+      if (config.forceInput) continue
+
       defs.push({ name, type, options, ...config })
+
+      // Seed-type INT inputs have an extra "control_after_generate" value
+      // in LiteGraph's widgets_values. Add a hidden placeholder to keep
+      // widgetDefs aligned with widgetsValues.
+      if (type === 'INT' && config.control_after_generate) {
+        defs.push({ name: `${name}_control`, type: 'SEED_CONTROL', hidden: true })
+      }
     }
   }
+
+  processInputGroup(info.input.required)
+  if (info?.input?.optional) {
+    processInputGroup(info.input.optional)
+  }
   return defs
+}
+
+// Subgraph detection: UUID-style node types reference a subgraph definition
+export function isSubgraphType(type: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(type)
+}
+
+// Convert a subgraph definition (from workflow.definitions.subgraphs[]) to LiteGraphWorkflow
+export function subgraphToLiteGraph(sg: any): LiteGraphWorkflow {
+  const nodes: LiteGraphNode[] = [...(sg.nodes || [])]
+
+  // Inject synthetic input node: one output port per subgraph input
+  if (sg.inputNode && sg.inputs?.length) {
+    const b = sg.inputNode.bounding || [0, 0, 180, 200] // [x, y, w, h]
+    nodes.push({
+      id: sg.inputNode.id ?? -10,
+      type: '__subgraph_input__',
+      pos: [b[0], b[1]] as [number, number],
+      size: [b[2], b[3]] as [number, number],
+      title: 'Inputs',
+      outputs: sg.inputs.map((inp: any) => ({
+        name: inp.label || inp.name,
+        type: inp.type,
+        links: inp.linkIds || [],
+      })),
+      inputs: [],
+    })
+  }
+
+  // Inject synthetic output node: one input port per subgraph output
+  if (sg.outputNode && sg.outputs?.length) {
+    const b = sg.outputNode.bounding || [800, 0, 140, 100]
+    nodes.push({
+      id: sg.outputNode.id ?? -20,
+      type: '__subgraph_output__',
+      pos: [b[0], b[1]] as [number, number],
+      size: [b[2], b[3]] as [number, number],
+      title: 'Outputs',
+      inputs: sg.outputs.map((out: any) => ({
+        name: out.label || out.name,
+        type: out.type,
+        link: out.linkIds?.[0] ?? null,
+      })),
+      outputs: [],
+    })
+  }
+
+  return {
+    last_node_id: sg.state?.lastNodeId ?? 0,
+    last_link_id: sg.state?.lastLinkId ?? 0,
+    nodes,
+    links: sg.links || [],
+    groups: sg.groups || [],
+    config: sg.config || {},
+    extra: sg.extra || {},
+    version: 0.4,
+  }
 }
 
 // Use simplified types to avoid Vue Flow's deep recursive generics (TS2589)
@@ -96,27 +192,103 @@ export function useVueNodes() {
   const edges = ref<VueFlowEdge[]>([])
   let lastWorkflow: LiteGraphWorkflow | null = null
 
-  function convertFromLiteGraph(workflow: LiteGraphWorkflow) {
+  function convertFromLiteGraph(workflow: LiteGraphWorkflow, definitions?: { subgraphs?: any[] }) {
     lastWorkflow = workflow
 
-    nodes.value = workflow.nodes.map((lgNode) => ({
-      id: String(lgNode.id),
-      type: 'comfy',
-      position: { x: lgNode.pos[0], y: lgNode.pos[1] },
-      data: {
-        nodeType: lgNode.type,
-        title: lgNode.title || lgNode.type,
-        inputs: lgNode.inputs || [],
-        outputs: lgNode.outputs || [],
-        widgetsValues: lgNode.widgets_values || [],
-        widgetDefs: getWidgetDefs(lgNode.type),
-        properties: lgNode.properties || {},
-        mode: lgNode.mode ?? 0,
-        color: lgNode.color,
-        bgcolor: lgNode.bgcolor,
-        size: lgNode.size,
-      },
-    })) as VueFlowNode[]
+    // Build a lookup map for subgraph definitions
+    const subgraphDefs = new Map<string, any>()
+    if (definitions?.subgraphs) {
+      for (const sg of definitions.subgraphs) {
+        if (sg.id) subgraphDefs.set(sg.id, sg)
+      }
+    }
+
+    nodes.value = workflow.nodes.map((lgNode) => {
+      // Subgraph I/O boundary nodes (synthetic, injected by subgraphToLiteGraph)
+      if (lgNode.type === '__subgraph_input__' || lgNode.type === '__subgraph_output__') {
+        return {
+          id: String(lgNode.id),
+          type: 'subgraph-io',
+          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          data: {
+            nodeType: lgNode.type,
+            title: lgNode.title || (lgNode.type === '__subgraph_input__' ? 'Inputs' : 'Outputs'),
+            inputs: lgNode.inputs || [],
+            outputs: lgNode.outputs || [],
+            isInput: lgNode.type === '__subgraph_input__',
+            size: lgNode.size,
+          },
+        }
+      }
+
+      // Note / MarkdownNote nodes get a dedicated type with their text content
+      if (lgNode.type === 'Note' || lgNode.type === 'MarkdownNote') {
+        const noteText = lgNode.widgets_values?.[0] || ''
+        return {
+          id: String(lgNode.id),
+          type: 'note',
+          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          data: {
+            nodeType: lgNode.type,
+            title: lgNode.title || 'Note',
+            text: noteText,
+            color: lgNode.color,
+            bgcolor: lgNode.bgcolor,
+            size: lgNode.size,
+          },
+        }
+      }
+
+      // Gate nodes get a dedicated component
+      if (lgNode.type === 'ComfyGateNode') {
+        return {
+          id: String(lgNode.id),
+          type: 'gate',
+          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          data: {
+            nodeType: lgNode.type,
+            title: lgNode.title || 'Gate',
+            inputs: lgNode.inputs || [],
+            outputs: lgNode.outputs || [],
+            widgetsValues: lgNode.widgets_values || [],
+            widgetDefs: getWidgetDefs(lgNode.type),
+            properties: lgNode.properties || {},
+            mode: lgNode.mode ?? 0,
+            paused: false,
+            promptId: null,
+          },
+        }
+      }
+
+      // Enrich subgraph nodes with definition metadata
+      const sgDef = isSubgraphType(lgNode.type) ? subgraphDefs.get(lgNode.type) : null
+
+      return {
+        id: String(lgNode.id),
+        type: 'comfy',
+        position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+        data: {
+          nodeType: lgNode.type,
+          title: lgNode.title || sgDef?.name || lgNode.type,
+          category: objectInfo.value[lgNode.type]?.category || '',
+          priceBadge: objectInfo.value[lgNode.type]?.price_badge || null,
+          inputs: lgNode.inputs || [],
+          outputs: lgNode.outputs || [],
+          widgetsValues: lgNode.widgets_values || [],
+          widgetDefs: getWidgetDefs(lgNode.type),
+          properties: lgNode.properties || {},
+          mode: lgNode.mode ?? 0,
+          color: lgNode.color,
+          bgcolor: lgNode.bgcolor,
+          size: lgNode.size,
+          // Subgraph metadata
+          isSubgraph: !!sgDef,
+          subgraphName: sgDef?.name || null,
+          subgraphId: sgDef?.id || null,
+          innerNodeCount: sgDef?.nodes?.length || 0,
+        },
+      }
+    }) as VueFlowNode[]
 
     edges.value = (workflow.links || [])
       .filter((link) => link != null)
@@ -137,7 +309,11 @@ export function useVueNodes() {
   function convertToLiteGraph(): LiteGraphWorkflow {
     const base = lastWorkflow || { groups: [], config: {}, extra: {}, version: 0.4 }
 
-    const rawNodes = nodes.value as any[]
+    const rawNodes = (nodes.value as any[]).filter((n) => {
+      // Exclude synthetic subgraph I/O nodes — they're reconstructed from definitions
+      const id = Number(n.id)
+      return !(id < 0 && (n.data?.nodeType === '__subgraph_input__' || n.data?.nodeType === '__subgraph_output__'))
+    })
     const lgNodes: LiteGraphNode[] = rawNodes.map((n) => {
       const d = n.data || {}
       return {
@@ -148,7 +324,7 @@ export function useVueNodes() {
         title: d.title,
         inputs: d.inputs,
         outputs: d.outputs,
-        widgets_values: d.widgetsValues,
+        widgets_values: (d.nodeType === 'Note' || d.nodeType === 'MarkdownNote') ? [d.text || ''] : d.widgetsValues,
         properties: d.properties,
         mode: d.mode,
         color: d.color,
@@ -189,7 +365,7 @@ export function useVueNodes() {
       }
     }
 
-    return {
+    const result: any = {
       last_node_id: Math.max(0, ...lgNodes.map((n) => n.id)),
       last_link_id: linkId,
       nodes: lgNodes,
@@ -199,6 +375,11 @@ export function useVueNodes() {
       extra: base.extra,
       version: base.version,
     }
+    // Preserve definitions (subgraphs) if present in the original workflow
+    if ((base as any).definitions) {
+      result.definitions = (base as any).definitions
+    }
+    return result as LiteGraphWorkflow
   }
 
   return {
@@ -208,5 +389,7 @@ export function useVueNodes() {
     convertFromLiteGraph,
     convertToLiteGraph,
     getTypeColor,
+    isSubgraphType,
+    subgraphToLiteGraph,
   }
 }

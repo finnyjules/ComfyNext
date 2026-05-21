@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import {
   House, X, Plus, Play, Check, Minus, ExternalLink, AlertCircle,
-  MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles,
-  ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight,
+  MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles,
+  ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
 } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
+import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
+import LoraTrainerSurface from '~/components/LoraTrainerSurface.vue'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
@@ -57,6 +60,9 @@ const sidebarItems = [
   { label: 'Select', icon: MousePointer2, tool: 'select' },
   { label: 'Hand', icon: Hand, tool: 'hand' },
   { label: 'Assets', icon: LayoutGrid, tabId: 'assets' },
+  { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
+  { label: 'Generators', icon: WandSparkles, panel: 'generators' },
+  { label: 'LoRAs', icon: Library, panel: 'loras' },
   { label: 'Nodes', icon: GitFork, tabId: 'node-library' },
   { label: 'Workflows', icon: Workflow, tabId: 'workflows' },
   { label: 'Apps', icon: AppWindow, tabId: 'apps' },
@@ -67,6 +73,24 @@ const sidebarItems = [
 const activeTool = ref<string>('select')
 
 const activeSidebarItem = ref<string | null>(null)
+const vueSidebarOpen = ref(false) // tracks whether ComfyUI left sidebar panel is visible in Vue mode
+const vueNodesSidebarOpen = ref(false) // tracks whether the native Nodes sidebar is open in Vue mode
+const vueRightPanelOpen = ref(false) // tracks whether Vue right panel (Workflow Overview) is visible
+const toolboxPanelOpen = ref(false) // tracks whether the Toolbox right panel is visible
+const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is visible
+const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
+
+// Whether a sidebar item is currently the "active" one (highlighted).
+// Single source of truth for the chevron/button highlight logic — used by
+// the template instead of nested ternaries that got unreadable as we added
+// more panel types.
+function isSidebarItemActive(item: any): boolean {
+  if (item?.tool) return activeTool.value === item.tool
+  if (item?.panel === 'toolbox') return toolboxPanelOpen.value
+  if (item?.panel === 'generators') return generatorsPanelOpen.value
+  if (item?.panel === 'loras') return loraLibraryPanelOpen.value
+  return activeSidebarItem.value === item?.label
+}
 
 function toggleSidebarItem(label: string) {
   const item = sidebarItems.find((i) => i.label === label)
@@ -83,24 +107,66 @@ function toggleSidebarItem(label: string) {
     if (item.tool === 'explain') {
       activateExplain()
     }
-    else {
+    else if (!vueNodesEnabled.value) {
       sendToActiveProjectIframe('setCanvasTool', { tool: item.tool })
     }
+    // In Vue mode, Select/Hand work natively via Vue Flow
+  }
+  else if (item?.panel === 'toolbox') {
+    const wasOpen = toolboxPanelOpen.value
+    generatorsPanelOpen.value = false
+    loraLibraryPanelOpen.value = false
+    toolboxPanelOpen.value = !wasOpen
+  }
+  else if (item?.panel === 'generators') {
+    const wasOpen = generatorsPanelOpen.value
+    toolboxPanelOpen.value = false
+    loraLibraryPanelOpen.value = false
+    generatorsPanelOpen.value = !wasOpen
+  }
+  else if (item?.panel === 'loras') {
+    const wasOpen = loraLibraryPanelOpen.value
+    toolboxPanelOpen.value = false
+    generatorsPanelOpen.value = false
+    loraLibraryPanelOpen.value = !wasOpen
   }
   else if (item?.tabId) {
-    activeSidebarItem.value = activeSidebarItem.value === label ? null : label
-    sendToActiveProjectIframe('toggleSidebarTab', { tabId: item.tabId })
+    const wasActive = activeSidebarItem.value === label
+    activeSidebarItem.value = wasActive ? null : label
+
+    if (vueNodesEnabled.value) {
+      // Vue mode: use native panels where available, iframe for the rest
+      if (item.tabId === 'node-library') {
+        vueNodesSidebarOpen.value = !wasActive
+        vueSidebarOpen.value = false
+      } else {
+        vueNodesSidebarOpen.value = false
+        sendToActiveProjectIframe('toggleSidebarTab', { tabId: item.tabId })
+        vueSidebarOpen.value = !wasActive
+      }
+    } else {
+      sendToActiveProjectIframe('toggleSidebarTab', { tabId: item.tabId })
+    }
   }
 }
 
 const minimapActive = ref(false)
 
-function zoomIn() { sendToActiveProjectIframe('canvasZoom', { direction: 'in' }) }
-function zoomOut() { sendToActiveProjectIframe('canvasZoom', { direction: 'out' }) }
-function zoomReset() { sendToActiveProjectIframe('canvasZoom', { direction: 'reset' }) }
+function zoomIn() {
+  if (vueNodesEnabled.value) { vueCanvasRef.value?.zoomIn?.() }
+  else { sendToActiveProjectIframe('canvasZoom', { direction: 'in' }) }
+}
+function zoomOut() {
+  if (vueNodesEnabled.value) { vueCanvasRef.value?.zoomOut?.() }
+  else { sendToActiveProjectIframe('canvasZoom', { direction: 'out' }) }
+}
+function zoomReset() {
+  if (vueNodesEnabled.value) { vueCanvasRef.value?.fitView?.() }
+  else { sendToActiveProjectIframe('canvasZoom', { direction: 'reset' }) }
+}
 function toggleMinimap() {
   minimapActive.value = !minimapActive.value
-  sendToActiveProjectIframe('toggleMinimap')
+  if (!vueNodesEnabled.value) sendToActiveProjectIframe('toggleMinimap')
 }
 
 function sendToActiveProjectIframe(action: string, payload?: any) {
@@ -110,72 +176,46 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
   }
 }
 
-// Run workflow from Vue canvas (bypasses iframe, POSTs directly to ComfyUI)
+// Run workflow from Vue canvas — loads into bridge iframe, then queues via bridge
 async function runVueWorkflow() {
-  if (!vueCanvasRef.value?.getWorkflow) return
+  if (!vueCanvasRef.value?.getWorkflow) {
+    console.warn('[Run] no getWorkflow on vueCanvasRef')
+    return
+  }
   const workflow = vueCanvasRef.value.getWorkflow()
-  if (!workflow?.nodes?.length) return
+  if (!workflow?.nodes?.length) {
+    console.warn('[Run] workflow has no nodes')
+    return
+  }
 
   // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
   const plainWorkflow = JSON.parse(JSON.stringify(workflow))
 
-  // Strategy: load workflow into iframe, then queue via two methods:
-  // 1. Try bridge queuePrompt (native, handles everything)
-  // 2. Fallback: POST to /prompt API directly using iframe's graph serialization
+  // Stamp the tab's stable project UUID so history entries can be grouped
+  if (activeTab.value.projectUuid) {
+    plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
+  }
+
+  // Load workflow into the bridge iframe's LiteGraph, then queue
+  const iframe = getSharedIframe()
+  if (!iframe?.contentWindow) {
+    console.error('[Run] bridge iframe not found or not ready')
+    return
+  }
+  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to bridge')
   sendLoadWorkflow(plainWorkflow)
-
-  // Wait for iframe to process the loaded workflow
   await new Promise(r => setTimeout(r, 800))
-
-  // Try bridge first (requires ComfyUI restart after bridge update)
+  console.log('[Run] sending queuePrompt')
   sendToActiveProjectIframe('queuePrompt')
-
-  // Also try getting the prompt from the iframe and POSTing directly
-  // This works even without the bridge update
-  try {
-    const iframe = getSharedIframe()
-    if (iframe?.contentWindow) {
-      // Ask the iframe to serialize its graph as a prompt
-      const promptData = await new Promise<any>((resolve) => {
-        let resolved = false
-        const handler = (event: MessageEvent) => {
-          if (resolved) return
-          if (event.data?.type === 'comfynext-bridge' && event.data?.event === 'prompt_data') {
-            resolved = true
-            window.removeEventListener('message', handler)
-            resolve(event.data.prompt)
-          }
-        }
-        window.addEventListener('message', handler)
-        iframe.contentWindow!.postMessage({ type: 'comfynext', action: 'getPrompt' }, '*')
-        // Timeout: if bridge doesn't support getPrompt, the queuePrompt action should have already worked
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true
-            window.removeEventListener('message', handler)
-            resolve(null)
-          }
-        }, 2000)
-      })
-
-      if (promptData) {
-        await fetch('/prompt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(promptData),
-        })
-      }
-    }
-  }
-  catch (err) {
-    console.error('[VueNodes] runVueWorkflow fallback error:', err)
-  }
 }
 
-// Stop/interrupt the current ComfyUI execution
+// Stop/interrupt the current ComfyUI execution and clear the queue
 async function stopVueWorkflow() {
   try {
-    await fetch('/interrupt', { method: 'POST' })
+    await Promise.all([
+      fetch('/interrupt', { method: 'POST' }),
+      fetch('/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) }),
+    ])
   }
   catch (err) {
     console.error('[VueNodes] Failed to interrupt:', err)
@@ -184,7 +224,69 @@ async function stopVueWorkflow() {
 
 // Single shared ComfyUI iframe — all project tabs share one iframe
 const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
-const savedWorkflows = reactive<Record<string, any>>({}) // tabId → workflow JSON
+const WORKFLOWS_STORAGE_KEY = 'comfynext:workflows'
+
+// Restore persisted workflows from sessionStorage
+function loadPersistedWorkflows(): Record<string, any> {
+  if (import.meta.server) return {}
+  try {
+    const saved = sessionStorage.getItem(WORKFLOWS_STORAGE_KEY)
+    return saved ? JSON.parse(saved) : {}
+  }
+  catch { return {} }
+}
+
+const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → workflow JSON
+
+function persistWorkflows() {
+  if (import.meta.server) return
+  try {
+    sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(savedWorkflows))
+  }
+  catch {}
+}
+
+// Autosave: snapshot current canvas and persist to sessionStorage.
+// Only called on specific events (beforeunload, tab switch) — never on a timer.
+function autosaveCurrentWorkflow() {
+  const tab = activeTab.value
+  if (tab?.type !== 'project') return
+  if (vueNodesEnabled.value && vueCanvasRef.value?.getWorkflow) {
+    const workflow = vueCanvasRef.value.getWorkflow()
+    if (workflow && workflow.nodes?.length > 0) {
+      const raw = toRaw(savedWorkflows)
+      raw[tab.id] = workflow
+      try { sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(raw)) }
+      catch {}
+    }
+  }
+}
+
+// Prompts queued by live-run should not surface "started" / "completed" toasts.
+// The bridge synthesizes execution_complete without a prompt_id, so we can't
+// match by id. ComfyUI executes one prompt at a time, so we track a single
+// flag set at execution_start and consumed at execution_complete/error.
+const pendingLiveRuns = ref(0)
+let currentRunSilent = false
+let pendingLiveRunsResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleLiveRun() {
+  pendingLiveRuns.value++
+  // Safety: drop the counter if no execution_start arrives (e.g. queue rejected the prompt).
+  if (pendingLiveRunsResetTimer) clearTimeout(pendingLiveRunsResetTimer)
+  pendingLiveRunsResetTimer = setTimeout(() => { pendingLiveRuns.value = 0 }, 10000)
+  runVueWorkflow()
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', autosaveCurrentWorkflow)
+  window.addEventListener('comfynext:liveRun', handleLiveRun)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', autosaveCurrentWorkflow)
+  window.removeEventListener('comfynext:liveRun', handleLiveRun)
+})
 let sharedIframeReady = false
 const iframeReady = ref(false) // reactive for template
 const vueCanvasRef = ref<any>(null)
@@ -278,6 +380,20 @@ async function loadWorkflowForTab(tab: any) {
     }
   }
   currentProjectTabId = tab.id
+  persistWorkflows()
+}
+
+// Handle workflow loaded from community template
+function handleLoadTabWorkflow(e: Event) {
+  const { tabId, workflow } = (e as CustomEvent).detail
+  savedWorkflows[tabId] = workflow
+  persistWorkflows()
+  // If this tab is already active, load it now
+  const tab = tabs.value.find((t: any) => t.id === tabId)
+  if (tab && activeTabId.value === tabId) {
+    currentProjectTabId = null // force reload
+    loadWorkflowForTab(tab)
+  }
 }
 
 async function onSharedIframeLoad(event: Event) {
@@ -313,6 +429,7 @@ watch(activeTabId, async (newId, oldId) => {
       const workflow = await getWorkflowFromIframe()
       if (workflow) savedWorkflows[oldTab.id] = workflow
     }
+    persistWorkflows()
   }
 
   // Restore workflow when entering a project tab
@@ -367,6 +484,9 @@ const historyItems = ref<HistoryItem[]>([])
 
 // Per-prompt progress and executing node info from bridge events
 const promptProgress = ref<Record<string, number>>({})
+const tabNodeProgress = ref({ completed: 0, total: 0 })
+const currentRunningNode = ref('')
+const executionStartTime = ref<number | null>(null)
 const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>({})
 
 let queuePollTimer: ReturnType<typeof setInterval> | null = null
@@ -455,7 +575,12 @@ async function fetchQueueAndHistory() {
         executionTime = (endMsg[1].timestamp - startMsg[1].timestamp) / 1000
       }
       const timestamp = startMsg?.[1]?.timestamp ?? 0
-      items.push({ promptId, status, images, executionTime, timestamp })
+      // Skip live-preview entries (temp-only images from UI.PreviewImage) so
+      // the queue history panel isn't flooded by slider-drag runs.
+      const savedImages = images.filter(img => img.type !== 'temp')
+      if (savedImages.length > 0) {
+        items.push({ promptId, status, images: savedImages, executionTime, timestamp })
+      }
     }
     // Sort newest first
     items.sort((a, b) => b.timestamp - a.timestamp)
@@ -466,6 +591,12 @@ async function fetchQueueAndHistory() {
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return ''
   return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+}
+
+function queueItemProgress(_promptId: string): number {
+  // Use the active tab's progress — single source of truth
+  const tab = tabs.value.find(t => t.type === 'project' && t.status === 'running')
+  return tab?.progress ?? 0
 }
 
 function runningWorkflowName(promptId: string): string {
@@ -520,8 +651,9 @@ onMounted(async () => {
   })
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
 
-  // Also check bridge iframe loaded after delay
+  // Also check bridge iframe loaded after delay and request client ID
   setTimeout(() => {
     const bridge = document.getElementById('comfynext-bridge-iframe') as HTMLIFrameElement
     console.log('[ComfyNext] Bridge iframe check:', {
@@ -535,6 +667,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null }
 })
 
@@ -640,36 +773,100 @@ function handleBridgeMessage(event: MessageEvent) {
     if (activeProject) tabId = activeProject.id
   }
 
-  if (!tabId) return
-
   const { event: evt, percent, prompt_id, node_id } = event.data
 
+  // TEMP DEBUG: surface bridge events so we can see why the tab indicator
+  // sometimes doesn't update during a Run. Remove once the cause is found.
+  if (evt && evt !== 'progress') {
+    console.log('[bridge]', evt,
+      'tabId=', tabId,
+      'pendingLiveRuns=', pendingLiveRuns.value,
+      'currentRunSilent=', currentRunSilent,
+      'prompt_id=', prompt_id,
+      'node_id=', node_id)
+  }
+
+  if (!tabId) return
+
   if (evt === 'execution_start') {
-    updateTabStatus(tabId, 'running', 0)
-    if (prompt_id) promptProgress.value[prompt_id] = 0
+    // Claim this run as silent if a live-run is pending — must happen
+    // before any UI updates so the tab indicator can skip too.
+    if (pendingLiveRuns.value > 0) {
+      pendingLiveRuns.value--
+      currentRunSilent = true
+    } else {
+      currentRunSilent = false
+    }
+    tabNodeProgress.value = { completed: 0, total: 0 }
+    executionStartTime.value = Date.now()
+    if (prompt_id) {
+      promptProgress.value[prompt_id] = 0
+    }
+    if (!currentRunSilent) {
+      updateTabStatus(tabId, 'running', 0)
+      const tabLabel = tabs.value.find(t => t.id === tabId)?.label || 'Workflow'
+      toast('Workflow started', { description: tabLabel })
+    }
   } else if (evt === 'progress') {
-    updateTabStatus(tabId, 'running', percent)
+    if (!currentRunSilent) updateTabStatus(tabId, 'running', percent)
     if (prompt_id) promptProgress.value[prompt_id] = percent
   } else if (evt === 'executing' && node_id) {
-    // Look up node class_type from the running queue data
-    const runningItem = queueData.value.running.find((item: any) => item[1] === prompt_id)
-    const prompt = runningItem?.[2] // prompt dict
-    const nodeType = prompt?.[node_id]?.class_type ?? ''
+    // Count total nodes for coarse progress
+    tabNodeProgress.value.total++
+    // Look up display name from Vue canvas nodes
+    const vueNodes = vueCanvasRef.value?.getNodes?.() || []
+    const vueNode = vueNodes.find((n: any) => n.id === String(node_id))
+    const displayName = vueNode?.data?.title || node_id
     if (prompt_id) {
-      promptNodeInfo.value[prompt_id] = { nodeId: node_id, nodeType }
+      promptNodeInfo.value[prompt_id] = { nodeId: node_id, nodeType: displayName }
+    }
+    currentRunningNode.value = displayName
+  } else if (evt === 'executed') {
+    // Track node completion for coarse progress
+    tabNodeProgress.value.completed++
+    const np = tabNodeProgress.value
+    if (np.total > 0) {
+      const coarsePct = Math.round((np.completed / np.total) * 100)
+      if (!currentRunSilent) updateTabStatus(tabId, 'running', coarsePct)
+      if (prompt_id) promptProgress.value[prompt_id] = coarsePct
     }
   } else if (evt === 'execution_complete') {
-    updateTabStatus(tabId, 'done')
+    const elapsed = executionStartTime.value
+      ? ((Date.now() - executionStartTime.value) / 1000).toFixed(1)
+      : null
+    tabNodeProgress.value = { completed: 0, total: 0 }
+    currentRunningNode.value = ''
+    executionStartTime.value = null
     if (prompt_id) {
       delete promptProgress.value[prompt_id]
       delete promptNodeInfo.value[prompt_id]
     }
+    const wasSilent = currentRunSilent
+    currentRunSilent = false
+    if (!wasSilent) {
+      updateTabStatus(tabId, 'done')
+      const tabLabel = tabs.value.find(t => t.id === tabId)?.label || 'Workflow'
+      toast.success('Workflow completed', {
+        description: elapsed ? `${tabLabel} — ${elapsed}s` : tabLabel,
+      })
+      // Reset to idle after a brief moment
+      setTimeout(() => {
+        updateTabStatus(tabId!, 'idle')
+      }, 3000)
+    }
     // Refresh history if queue panel is open
     if (queueOpen.value) fetchQueueAndHistory()
-    // Reset to idle after a brief moment
-    setTimeout(() => {
-      updateTabStatus(tabId!, 'idle')
-    }, 3000)
+  } else if (evt === 'execution_error') {
+    if (!currentRunSilent) updateTabStatus(tabId, 'idle')
+    tabNodeProgress.value = { completed: 0, total: 0 }
+    currentRunningNode.value = ''
+    executionStartTime.value = null
+    const wasSilent = currentRunSilent
+    currentRunSilent = false
+    if (!wasSilent) {
+      const nodeName = event.data.node_type || event.data.node_id || 'Unknown node'
+      toast.error('Workflow failed', { description: nodeName })
+    }
   }
 }
 </script>
@@ -818,6 +1015,8 @@ function handleBridgeMessage(event: MessageEvent) {
               <House v-if="tab.type === 'home'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <Globe v-else-if="tab.type === 'community'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <Image v-else-if="tab.type === 'assets'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
+              <AppWindow v-else-if="tab.type === 'app'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
+              <Wand v-else-if="tab.type === 'train'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <!-- Project tab: status indicator -->
               <template v-else>
                 <!-- Idle: green dot -->
@@ -895,7 +1094,7 @@ function handleBridgeMessage(event: MessageEvent) {
             <X
               v-if="tab.closable"
               class="size-3.5 text-white/40 hover:text-white transition-opacity shrink-0"
-              @click.stop="closeTab(tab.id)"
+              @click.stop="() => { delete savedWorkflows[tab.id]; persistWorkflows(); closeTab(tab.id) }"
             />
           </button>
           </template>
@@ -950,25 +1149,120 @@ function handleBridgeMessage(event: MessageEvent) {
         >
           <CommunityHome />
         </div>
+        <!-- App tabs (single-purpose pages built on top of the same node engine) -->
+        <div
+          v-for="tab in tabs.filter((t) => t.type === 'app')"
+          :key="tab.id"
+          v-show="tab.id === activeTabId"
+          class="h-full"
+        >
+          <AppsFaceSwapApp v-if="tab.appId === 'face-swap'" />
+          <AppsAutoSubtitleApp v-else-if="tab.appId === 'auto-subtitle'" />
+          <AppsKaraokeMakerApp v-else-if="tab.appId === 'karaoke-maker'" />
+        </div>
+        <!-- Train LoRA tab -->
+        <div
+          v-for="tab in tabs.filter((t) => t.type === 'train')"
+          :key="tab.id"
+          v-show="tab.id === activeTabId"
+          class="h-full"
+        >
+          <LoraTrainerSurface />
+        </div>
         <!-- Vue Node Canvas (when Modern node design enabled) -->
         <div
           v-if="vueNodesEnabled && tabs.some((t) => t.type === 'project')"
           v-show="activeTab.type === 'project'"
-          class="absolute inset-0"
+          class="absolute inset-0 z-20"
         >
-          <VueCanvasVueNodeCanvas
-            ref="vueCanvasRef"
-            :workflow="savedWorkflows[activeTab.id] || undefined"
-          />
+          <!-- Canvas area (always full-width) -->
+          <div class="absolute inset-0">
+            <VueCanvasVueNodeCanvas
+              ref="vueCanvasRef"
+              :workflow="savedWorkflows[activeTab.id] || undefined"
+              :active-tool="activeTool"
+            />
+            <ExplainOverlay :vue-canvas="vueCanvasRef" />
+          </div>
+          <!-- Native Nodes sidebar (overlays canvas from left) -->
+          <Transition
+            enter-active-class="transition-transform duration-300 ease-out"
+            enter-from-class="-translate-x-full"
+            enter-to-class="translate-x-0"
+            leave-active-class="transition-transform duration-300 ease-in"
+            leave-from-class="translate-x-0"
+            leave-to-class="-translate-x-full"
+          >
+            <div v-if="vueNodesSidebarOpen" class="absolute top-0 left-0 bottom-0 w-[320px] z-30">
+              <VueCanvasNodesSidebar @close="vueNodesSidebarOpen = false; activeSidebarItem = null" />
+            </div>
+          </Transition>
         </div>
+        <!-- Workflow Overview right panel (overlays canvas) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="translate-x-full"
+        >
+          <div v-if="vueRightPanelOpen" class="absolute top-0 right-0 bottom-0 w-[350px] z-30">
+            <VueCanvasWorkflowOverview
+              :nodes="vueCanvasRef?.getNodes?.() || []"
+              @close="vueRightPanelOpen = false"
+            />
+          </div>
+        </Transition>
+        <!-- Toolbox left panel (overlays canvas) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="toolboxPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasToolboxPanel @close="toolboxPanelOpen = false" />
+          </div>
+        </Transition>
+
+        <!-- Generators left panel (mutually exclusive with Toolbox) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="generatorsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasGeneratorsPanel @close="generatorsPanelOpen = false" />
+          </div>
+        </Transition>
+
+        <!-- LoRA Library left panel (mutually exclusive with Toolbox/Generators) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="loraLibraryPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasLoRALibraryPanel @close="loraLibraryPanelOpen = false" />
+          </div>
+        </Transition>
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
         <div
           v-if="vueNodesEnabled && activeTab.type === 'project'"
-          class="absolute top-3 right-3 flex items-center gap-1.5 z-10"
+          class="absolute top-3 right-3 flex items-center gap-1.5 z-40"
         >
           <button
-            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
+            class="flex items-center gap-1.5 bg-action hover:bg-comfy-blue/80 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
             @click="runVueWorkflow"
           >
             <Play class="size-3.5 text-white fill-white" />
@@ -979,23 +1273,29 @@ function handleBridgeMessage(event: MessageEvent) {
             title="Stop"
             @click="stopVueWorkflow"
           >
-            <Square class="size-3.5 text-white/70 fill-white/70" />
+            <Square class="size-3.5 text-comfy-coral fill-comfy-coral" />
           </button>
           <div class="w-px h-5 bg-white/10" />
           <button
             class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
-            title="Toggle right panel"
+            :class="{ '!bg-[#2a2a2a] border-white/20': vueRightPanelOpen }"
+            title="Toggle workflow overview"
+            @click="vueRightPanelOpen = !vueRightPanelOpen"
           >
             <PanelRight class="size-4 text-white/70" />
           </button>
         </div>
 
-        <!-- LiteGraph iframe (always loaded for execution; hidden in Vue mode) -->
+        <!-- Toast notifications (anchored below Run bar) -->
+        <Sonner />
+
+        <!-- LiteGraph iframe (always loaded for execution; sidebar panels reused in Vue mode) -->
         <div
           v-if="tabs.some((t) => t.type === 'project')"
-          v-show="!vueNodesEnabled && activeTab.type === 'project'"
+          v-show="(!vueNodesEnabled && activeTab.type === 'project') || (vueNodesEnabled && vueSidebarOpen)"
           data-tab-id="comfyui-shared"
-          class="absolute inset-0 overflow-hidden"
+          class="absolute inset-0 overflow-hidden z-30"
+          :style="vueNodesEnabled && vueSidebarOpen ? { width: '320px', right: 'auto' } : {}"
         >
           <iframe
             src="http://127.0.0.1:8188/"
@@ -1028,7 +1328,7 @@ function handleBridgeMessage(event: MessageEvent) {
         <!-- Floating toolbar overlay (only visible on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-10"
+          class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-40"
         >
           <template v-for="(item, index) in sidebarItems" :key="item.label">
             <div
@@ -1037,11 +1337,11 @@ function handleBridgeMessage(event: MessageEvent) {
             />
             <button
               class="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-[8px] cursor-pointer transition-colors group"
-              :class="(item.tool ? activeTool === item.tool : activeSidebarItem === item.label) ? 'bg-white/10' : 'hover:bg-white/5'"
+              :class="isSidebarItemActive(item) ? 'bg-white/10' : 'hover:bg-white/5'"
               @click="toggleSidebarItem(item.label)"
             >
-              <component :is="item.icon" class="size-5 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': item.tool ? activeTool === item.tool : activeSidebarItem === item.label }" />
-              <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': item.tool ? activeTool === item.tool : activeSidebarItem === item.label }">
+              <component :is="item.icon" class="size-5 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
+              <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': isSidebarItemActive(item) }">
                 {{ item.label }}
               </span>
             </button>
@@ -1050,7 +1350,7 @@ function handleBridgeMessage(event: MessageEvent) {
         <!-- Floating zoom/map toolbar (bottom-right, only on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 right-3 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-10"
+          class="absolute bottom-3 right-3 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-50"
         >
           <button
             class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer transition-colors group hover:bg-white/5"
@@ -1113,17 +1413,17 @@ function handleBridgeMessage(event: MessageEvent) {
                   <div class="flex items-center gap-2 mb-1">
                     <div class="size-2 rounded-full bg-[#818cf8] animate-pulse shrink-0" />
                     <span class="text-xs font-medium text-white/90 truncate">{{ runningWorkflowName(item[1]) }}</span>
-                    <span class="text-xs text-white/40 ml-auto shrink-0">{{ promptProgress[item[1]] ?? 0 }}%</span>
+                    <span class="text-xs text-white/40 ml-auto shrink-0">{{ queueItemProgress(item[1]) }}%</span>
                   </div>
-                  <div v-if="promptNodeInfo[item[1]]?.nodeType" class="text-[11px] text-white/40 mb-2 ml-4 truncate">
-                    {{ promptNodeInfo[item[1]].nodeType }}
+                  <div v-if="promptNodeInfo[item[1]]?.nodeType || currentRunningNode" class="text-[11px] text-white/40 mb-2 ml-4 truncate">
+                    {{ promptNodeInfo[item[1]]?.nodeType || currentRunningNode }}
                   </div>
                   <!-- Progress bar -->
                   <div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
                     <div
-                      v-if="(promptProgress[item[1]] ?? 0) > 0"
+                      v-if="queueItemProgress(item[1]) > 0"
                       class="h-full bg-[#818cf8] rounded-full transition-all duration-300"
-                      :style="{ width: `${promptProgress[item[1]]}%` }"
+                      :style="{ width: `${queueItemProgress(item[1])}%` }"
                     />
                     <div
                       v-else
