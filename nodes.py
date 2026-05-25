@@ -1629,6 +1629,9 @@ class SaveImage:
         self.output_dir = folder_paths.get_output_directory()
         self.type = "output"
         self.prefix_append = ""
+        # Default PNG compression level — overridden per-call by the
+        # `png_compression` widget. PreviewImage flips this to 1 in its own
+        # __init__ so live previews don't pay the full deflate cost.
         self.compress_level = 4
 
     @classmethod
@@ -1636,7 +1639,14 @@ class SaveImage:
         return {
             "required": {
                 "images": ("IMAGE", {"tooltip": "The images to save."}),
-                "filename_prefix": ("STRING", {"default": "ComfyUI", "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes."})
+                "filename_prefix": ("STRING", {"default": "ComfyUI", "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes."}),
+                "format": (["png", "webp", "jpeg"], {"default": "png", "tooltip": "Output container.\n• png — lossless, embeds the workflow as pnginfo.\n• webp — much smaller; quality slider applies, or flip `lossless_webp` for perfect fidelity.\n• jpeg — universal, lossy, strips alpha; smallest files at low quality."}),
+                "quality": ("INT", {"default": 90, "min": 1, "max": 100, "tooltip": "Quality for webp/jpeg (higher = better, larger). Ignored for png."}),
+                "lossless_webp": ("BOOLEAN", {"default": False, "tooltip": "When format is webp, save in lossless mode (large files, identical to source). Has no effect for png/jpeg."}),
+                "png_compression": ("INT", {"default": 4, "min": 0, "max": 9, "tooltip": "PNG deflate level (0 = no compression / fastest, 9 = max / slowest). Quality is unaffected. Ignored for webp/jpeg."}),
+                "scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.05, "tooltip": "Resize multiplier applied before saving (1.0 = original). E.g. 0.5 halves each side, 2.0 doubles. Useful for web exports."}),
+                "max_dimension": ("INT", {"default": 0, "min": 0, "max": 16384, "tooltip": "If > 0, downscale so the longest edge ≤ this many pixels. Applied *after* `scale` and only when smaller — never upscales. 0 disables this cap."}),
+                "embed_metadata": ("BOOLEAN", {"default": True, "tooltip": "Embed the workflow JSON inside the file (png: pnginfo; webp/jpeg: EXIF UserComment). Turn off to strip metadata for sharing."}),
             },
             "hidden": {
                 "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
@@ -1653,25 +1663,109 @@ class SaveImage:
     DESCRIPTION = "Saves the input images to your ComfyUI output directory."
     SEARCH_ALIASES = ["save", "save image", "export image", "output image", "write image", "download"]
 
-    def save_images(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+    def save_images(self, images, filename_prefix="ComfyUI",
+                    format="png", quality=90, lossless_webp=False,
+                    png_compression=None, scale=1.0, max_dimension=0,
+                    embed_metadata=True, prompt=None, extra_pnginfo=None):
+        # Back-compat with subclasses (PreviewImage) that call super() without
+        # the new kwargs — fall back to the instance's compress_level.
+        if png_compression is None:
+            png_compression = self.compress_level
+
+        fmt = (format or "png").lower()
+        if fmt not in ("png", "webp", "jpeg"):
+            fmt = "png"
+        ext = "jpg" if fmt == "jpeg" else fmt
+        pil_fmt = "JPEG" if fmt == "jpeg" else fmt.upper()
+
+        # Compute output dimensions from the first image (all images in the
+        # batch share a shape — the IMAGE tensor enforces that). `scale` and
+        # `max_dimension` compose: `scale` runs first, then `max_dimension`
+        # caps the longest edge if smaller. Never upscales beyond `scale`.
+        src_h, src_w = int(images[0].shape[0]), int(images[0].shape[1])
+        out_w, out_h = src_w, src_h
+        if scale and scale > 0 and scale != 1.0:
+            out_w = max(1, int(round(src_w * scale)))
+            out_h = max(1, int(round(src_h * scale)))
+        if max_dimension and max_dimension > 0:
+            longest = max(out_w, out_h)
+            if longest > max_dimension:
+                ratio = max_dimension / longest
+                out_w = max(1, int(round(out_w * ratio)))
+                out_h = max(1, int(round(out_h * ratio)))
+
         filename_prefix += self.prefix_append
-        full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(filename_prefix, self.output_dir, images[0].shape[1], images[0].shape[0])
+        full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(filename_prefix, self.output_dir, out_w, out_h)
+        # Build a workflow-metadata JSON string once; cheaper than re-serialising
+        # per image, and identical for every frame in a batch anyway.
+        meta_payload = {}
+        if embed_metadata and not args.disable_metadata:
+            if prompt is not None:
+                meta_payload["prompt"] = json.dumps(prompt)
+            if extra_pnginfo is not None:
+                for x in extra_pnginfo:
+                    meta_payload[x] = json.dumps(extra_pnginfo[x])
+
         results = list()
         for (batch_number, image) in enumerate(images):
             i = 255. * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            metadata = None
-            if not args.disable_metadata:
-                metadata = PngInfo()
-                if prompt is not None:
-                    metadata.add_text("prompt", json.dumps(prompt))
-                if extra_pnginfo is not None:
-                    for x in extra_pnginfo:
-                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+            if (img.width, img.height) != (out_w, out_h):
+                # Lanczos is the right default for general-purpose downscaling
+                # (preserves edges better than bilinear). PIL's BICUBIC is the
+                # closest match when upscaling — we use Lanczos either way since
+                # quality > speed for an explicit save step.
+                img = img.resize((out_w, out_h), Image.Resampling.LANCZOS)
 
             filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
-            file = f"{filename_with_batch_num}_{counter:05}_.png"
-            img.save(os.path.join(full_output_folder, file), pnginfo=metadata, compress_level=self.compress_level)
+            file = f"{filename_with_batch_num}_{counter:05}_.{ext}"
+            out_path = os.path.join(full_output_folder, file)
+
+            if fmt == "png":
+                pnginfo = None
+                if meta_payload:
+                    pnginfo = PngInfo()
+                    for k, v in meta_payload.items():
+                        pnginfo.add_text(k, v)
+                img.save(out_path, pnginfo=pnginfo, compress_level=png_compression)
+            else:
+                # JPEG can't carry alpha — flatten onto white if the source has
+                # transparency, matching what every other "save as jpg" UI does.
+                save_img = img
+                if fmt == "jpeg" and save_img.mode in ("RGBA", "LA", "P"):
+                    bg = Image.new("RGB", save_img.size, (255, 255, 255))
+                    if save_img.mode == "P":
+                        save_img = save_img.convert("RGBA")
+                    bg.paste(save_img, mask=save_img.split()[-1])
+                    save_img = bg
+                save_kwargs = {}
+                if fmt == "webp":
+                    save_kwargs["quality"] = int(quality)
+                    save_kwargs["lossless"] = bool(lossless_webp)
+                    # WebP has a `method` (0-6, slower = smaller). 4 is the PIL
+                    # default and a good balance — leave it alone unless we add
+                    # a widget for it.
+                else:  # jpeg
+                    save_kwargs["quality"] = int(quality)
+                    save_kwargs["optimize"] = True  # one-pass Huffman tweak, ~5% smaller
+                    save_kwargs["progressive"] = True  # nice for web delivery
+                # WebP/JPEG metadata: stash the workflow JSON in EXIF
+                # UserComment so it survives a round-trip and tools that read
+                # EXIF can show it. Falls back gracefully when PIL/piexif isn't
+                # available for any reason.
+                if meta_payload:
+                    try:
+                        exif = img.getexif()
+                        # 0x9286 = UserComment. Encoded per EXIF spec: 8 bytes
+                        # of character-code prefix + payload. "ASCII\0\0\0" is
+                        # the universally-supported choice.
+                        comment = json.dumps(meta_payload)
+                        exif[0x9286] = b"ASCII\x00\x00\x00" + comment.encode("utf-8", errors="replace")
+                        save_kwargs["exif"] = exif.tobytes()
+                    except Exception:
+                        pass  # not all PIL builds expose exif cleanly — skip silently
+                save_img.save(out_path, format=pil_fmt, **save_kwargs)
+
             results.append({
                 "filename": file,
                 "subfolder": subfolder,
@@ -1701,7 +1795,15 @@ class PreviewImage(SaveImage):
                 }
 
     def save_images(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
-        result = super().save_images(images, filename_prefix, prompt, extra_pnginfo)
+        # Keep PreviewImage on the simple PNG/no-resize path — it's a transient
+        # preview, the new format/quality/scale knobs don't make sense here. Use
+        # kwargs so the new SaveImage signature (extra params in between) doesn't
+        # misalign positional args.
+        result = super().save_images(
+            images, filename_prefix,
+            prompt=prompt, extra_pnginfo=extra_pnginfo,
+            png_compression=self.compress_level,
+        )
         result["result"] = (images,)
         return result
 
@@ -2472,10 +2574,14 @@ async def init_builtin_extra_nodes():
         "nodes_audio_effects.py",
         "nodes_audio_ml.py",
         "nodes_face.py",
+        "nodes_face_restore.py",
         "nodes_bg_remove.py",
         "nodes_upscale.py",
         "nodes_audio_denoise.py",
         "nodes_frame_interp.py",
+        "nodes_object_remove.py",
+        "nodes_subject_track.py",
+        "nodes_lip_sync.py",
         "nodes_smart_layout.py",
         "nodes_compositor.py",
         "nodes_timeline.py",
