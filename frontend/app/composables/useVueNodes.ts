@@ -187,13 +187,24 @@ export function subgraphToLiteGraph(sg: any): LiteGraphWorkflow {
 type VueFlowNode = Node<Record<string, any>>
 type VueFlowEdge = Edge<Record<string, any>>
 
-export function useVueNodes() {
+/**
+ * Optional hook for callers that own a `useCanvasGroups()` instance. When
+ * provided, group state is round-tripped through the LiteGraph workflow's
+ * `groups` array on load / save.
+ */
+export interface GroupsBridge {
+  load: (raw: any[] | undefined | null) => void
+  export: () => any[]
+}
+
+export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
   const nodes = ref<VueFlowNode[]>([])
   const edges = ref<VueFlowEdge[]>([])
   let lastWorkflow: LiteGraphWorkflow | null = null
 
   function convertFromLiteGraph(workflow: LiteGraphWorkflow, definitions?: { subgraphs?: any[] }) {
     lastWorkflow = workflow
+    opts.groupsBridge?.load(workflow.groups)
 
     // Build a lookup map for subgraph definitions
     const subgraphDefs = new Map<string, any>()
@@ -203,13 +214,45 @@ export function useVueNodes() {
       }
     }
 
-    nodes.value = workflow.nodes.map((lgNode) => {
+    // Detect corrupted/missing positions: when every node shares the same
+    // coordinates (or pos is missing entirely), workflows persisted with
+    // empty positions stack every node at the viewport-center default. Lay
+    // them out on a grid as a fallback so the user can at least see and
+    // re-organize them. Triggered by either pattern: no pos field at all,
+    // or multiple nodes at identical coordinates.
+    function posOk(p: unknown): p is [number, number] {
+      return Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])
+    }
+    const positionKeys = new Set<string>()
+    let collisionCount = 0
+    for (const n of workflow.nodes) {
+      if (!posOk(n.pos)) continue
+      const k = `${n.pos[0]},${n.pos[1]}`
+      if (positionKeys.has(k)) collisionCount++
+      positionKeys.add(k)
+    }
+    const needsLayout = workflow.nodes.length > 1 && collisionCount >= workflow.nodes.length - 1
+    const COL_WIDTH = 320
+    const ROW_HEIGHT = 240
+    const PER_ROW = 4
+    function fallbackPos(idx: number): [number, number] {
+      const row = Math.floor(idx / PER_ROW)
+      const col = idx % PER_ROW
+      return [40 + col * COL_WIDTH, 40 + row * ROW_HEIGHT]
+    }
+
+    nodes.value = workflow.nodes.map((lgNode, idx) => {
+      // Resolve the position once so each branch below uses the safe value.
+      const safePos: [number, number] = (needsLayout || !posOk(lgNode.pos))
+        ? fallbackPos(idx)
+        : lgNode.pos as [number, number]
+      ;(lgNode as any).pos = safePos // patch so any later code paths see it too
       // Subgraph I/O boundary nodes (synthetic, injected by subgraphToLiteGraph)
       if (lgNode.type === '__subgraph_input__' || lgNode.type === '__subgraph_output__') {
         return {
           id: String(lgNode.id),
           type: 'subgraph-io',
-          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          position: { x: safePos[0], y: safePos[1] },
           data: {
             nodeType: lgNode.type,
             title: lgNode.title || (lgNode.type === '__subgraph_input__' ? 'Inputs' : 'Outputs'),
@@ -227,7 +270,7 @@ export function useVueNodes() {
         return {
           id: String(lgNode.id),
           type: 'note',
-          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          position: { x: safePos[0], y: safePos[1] },
           data: {
             nodeType: lgNode.type,
             title: lgNode.title || 'Note',
@@ -244,7 +287,7 @@ export function useVueNodes() {
         return {
           id: String(lgNode.id),
           type: 'gate',
-          position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+          position: { x: safePos[0], y: safePos[1] },
           data: {
             nodeType: lgNode.type,
             title: lgNode.title || 'Gate',
@@ -266,11 +309,12 @@ export function useVueNodes() {
       return {
         id: String(lgNode.id),
         type: 'comfy',
-        position: { x: lgNode.pos[0], y: lgNode.pos[1] },
+        position: { x: safePos[0], y: safePos[1] },
         data: {
           nodeType: lgNode.type,
           title: lgNode.title || sgDef?.name || lgNode.type,
           category: objectInfo.value[lgNode.type]?.category || '',
+          outputNode: !!objectInfo.value[lgNode.type]?.output_node,
           priceBadge: objectInfo.value[lgNode.type]?.price_badge || null,
           inputs: lgNode.inputs || [],
           outputs: lgNode.outputs || [],
@@ -370,7 +414,10 @@ export function useVueNodes() {
       last_link_id: linkId,
       nodes: lgNodes,
       links: lgLinks,
-      groups: base.groups,
+      // Groups: if a bridge is wired up the canvas owns the source of truth;
+      // otherwise pass through whatever was loaded so subgraphs that don't
+      // surface a group editor still round-trip cleanly.
+      groups: opts.groupsBridge ? opts.groupsBridge.export() : base.groups,
       config: base.config,
       extra: base.extra,
       version: base.version,

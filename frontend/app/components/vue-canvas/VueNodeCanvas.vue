@@ -2,15 +2,21 @@
 // force HMR reload
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
-import { fetchObjectInfo, getWidgetDefs, isSubgraphType, subgraphToLiteGraph } from '~/composables/useVueNodes'
+import { fetchObjectInfo, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
+import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
+import { buildFilteredWorkflow } from '~/composables/useFilteredPrompt'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
 import ComfyGateNode from '~/components/vue-canvas/ComfyGateNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
+import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes } from 'lucide-vue-next'
+import { useBlockLibrary } from '~/composables/useBlockLibrary'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
@@ -20,13 +26,46 @@ const props = defineProps<{
   activeTool?: string // 'select' | 'hand'
 }>()
 
-const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes()
+// Groups round-trip through useVueNodes via a bridge object. Methods are
+// reassigned below once useCanvasGroups is instantiated; this dance avoids
+// the circular dep (useVueNodes wants the bridge, useCanvasGroups wants
+// the nodes ref that useVueNodes creates).
+const groupsBridge = { load: (_: any[] | undefined | null) => {}, export: () => [] as any[] }
+
+const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge })
+
+const {
+  groups,
+  createGroupFromSelection,
+  nodesInGroup,
+  dragGroup,
+  resizeGroup,
+  updateGroup,
+  deleteGroup,
+  setGroups,
+  toLiteGraph: groupsToLiteGraph,
+  fromLiteGraph: groupsFromLiteGraph,
+} = useCanvasGroups(nodes as any)
+
+groupsBridge.load = (raw) => setGroups(groupsFromLiteGraph(raw))
+groupsBridge.export = () => groupsToLiteGraph()
 
 // Make the live graph available to child nodes that need to look up upstream
 // data (e.g. MaskExtractor showing its source image as a fallback preview).
 provide('vueFlowNodes', nodes)
 provide('vueFlowEdges', edges)
-const { onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut, project } = useVueFlow()
+const {
+  onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut,
+  project, removeNodes, removeEdges, viewport: vfViewport,
+} = useVueFlow()
+
+// Selection helpers — Vue Flow marks selected nodes with `selected: true`.
+function getSelectedNodeIds(): string[] {
+  return (nodes.value as any[]).filter(n => n.selected).map(n => n.id)
+}
+function getSelectedEdgeIds(): string[] {
+  return (edges.value as any[]).filter(e => e.selected).map(e => e.id)
+}
 
 // Undo / redo — snapshots nodes+edges on a short debounce. The `isRestoring`
 // guard prevents the watcher from snapshotting our own programmatic restore.
@@ -84,8 +123,16 @@ const rootWorkflow = ref<any>(null) // Full workflow with definitions
 // Handle node drop from sidebar
 async function handleDrop(event: DragEvent) {
   event.preventDefault()
+  // Block library drops carry our custom MIME type; route them first since
+  // the text/plain payload is just a fallback prefixed with "block:".
+  if (event.dataTransfer?.types.includes('application/x-comfynext-block')) {
+    tryHandleBlockDrop(event)
+    return
+  }
   const nodeType = event.dataTransfer?.getData('text/plain')
   if (!nodeType) return
+  // Defensive: ignore the text/plain fallback that block drags also emit.
+  if (nodeType.startsWith('block:')) return
 
   // Refresh schema if we don't know this node type — protects against the
   // common case of "ComfyUI was restarted with new nodes but the cache is
@@ -146,6 +193,7 @@ async function handleDrop(event: DragEvent) {
       mode: 0,
       size: [220, 120],
       category: info?.category || '',
+      outputNode: !!info?.output_node,
       priceBadge: info?.price_badge || null,
       ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
     },
@@ -287,6 +335,7 @@ async function handleAddNode(e: Event) {
       mode: 0,
       size: [220, 120],
       category: info?.category || '',
+      outputNode: !!info?.output_node,
       priceBadge: info?.price_badge || null,
       ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
     },
@@ -1086,9 +1135,392 @@ async function maybeRenderTimelines() {
 // Track whether any node is currently running (for background animation)
 const isRunning = computed(() => (nodes.value as any[]).some((n: any) => n.data?.running))
 
+// ---------------------------------------------------------------------------
+// Context menu state + actions
+// ---------------------------------------------------------------------------
+
+interface MenuState { x: number; y: number; items: MenuItem[] }
+const menu = ref<MenuState | null>(null)
+function closeMenu() { menu.value = null }
+function openMenu(x: number, y: number, items: MenuItem[]) { menu.value = { x, y, items } }
+
+// Pending target ids for filtered run — emitted to the parent layout via a
+// custom event so the existing runVueWorkflow plumbing can stay one path.
+function emitRunFiltered(targetIds: string[]) {
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds } }))
+}
+function emitRunAll() {
+  window.dispatchEvent(new CustomEvent('comfynext:runAll'))
+}
+
+// Actions that operate on a set of node ids ---------------------------------
+
+function setMode(nodeIds: string[], mode: number) {
+  const set = new Set(nodeIds)
+  for (const n of nodes.value as any[]) {
+    if (set.has(n.id)) n.data = { ...n.data, mode }
+  }
+}
+function toggleMode(nodeIds: string[], mode: number) {
+  // If ANY selected node is already at this mode, clear all to 0. Otherwise
+  // set all to the requested mode. Matches the "press Tab again to untoggle"
+  // user expectation.
+  const set = new Set(nodeIds)
+  const anyAtMode = (nodes.value as any[]).some(n => set.has(n.id) && (n.data?.mode ?? 0) === mode)
+  setMode(nodeIds, anyAtMode ? 0 : mode)
+}
+
+function duplicateNodes(nodeIds: string[]) {
+  const set = new Set(nodeIds)
+  const originals = (nodes.value as any[]).filter(n => set.has(n.id))
+  const offset = 32
+  for (const orig of originals) {
+    const newId = String(Date.now() + Math.floor(Math.random() * 1000))
+    nodes.value.push({
+      ...orig,
+      id: newId,
+      position: { x: orig.position.x + offset, y: orig.position.y + offset },
+      selected: false,
+      data: JSON.parse(JSON.stringify(orig.data || {})),
+    })
+  }
+}
+
+function deleteNodes(nodeIds: string[]) {
+  if (!nodeIds.length) return
+  removeNodes(nodeIds)
+}
+function deleteEdges(edgeIds: string[]) {
+  if (!edgeIds.length) return
+  removeEdges(edgeIds)
+}
+
+// Group actions -------------------------------------------------------------
+
+function actionGroupSelection() {
+  const ids = getSelectedNodeIds()
+  if (!ids.length) return
+  createGroupFromSelection(ids)
+}
+
+function actionRunGroup(groupId: string) {
+  const ids = nodesInGroup(groupId)
+  if (!ids.length) return
+  emitRunFiltered(ids)
+}
+
+function actionGroupModeAll(groupId: string, mode: number) {
+  const ids = nodesInGroup(groupId)
+  setMode(ids, mode)
+}
+
+// Block library — saves the group's contained nodes + internal links as a
+// reusable template that can be dragged or clicked back onto any canvas.
+const { saveBlock, getBlock } = useBlockLibrary()
+
+/**
+ * Insert a saved block at the given graph-space position. Strategy:
+ *  1. Snapshot the current canvas into LG format.
+ *  2. Assign fresh node IDs to the block's nodes (offset from last_node_id).
+ *  3. Translate each block node's position by the drop point.
+ *  4. Rebuild the block's internal links with fresh link IDs and the new
+ *     node IDs.
+ *  5. Add a new group encompassing the inserted nodes.
+ *  6. Re-run convertFromLiteGraph against the merged snapshot.
+ *
+ * Re-running the conversion is destructive (replaces nodes.value / edges.value),
+ * but the merged snapshot contains both the existing graph and the inserted
+ * block — so the user's pre-existing nodes are preserved. Selection / drag
+ * UI-state on existing nodes is cleared as a minor side effect; acceptable
+ * for v1, and the history mechanism still lets undo work.
+ */
+function insertBlock(blockId: string, position: { x: number; y: number }) {
+  const block = getBlock(blockId)
+  if (!block) return
+
+  const snapshot = convertToLiteGraph() as any
+  const baseNodeId = Math.max(0, ...(snapshot.nodes || []).map((n: any) => Number(n.id))) + 1
+  const baseLinkId = Math.max(0, ...(snapshot.links || []).map((l: any[]) => Number(l[0]))) + 1
+
+  // old block-node-id → new fresh id
+  const idMap = new Map<number, number>()
+  block.nodes.forEach((n: any, i: number) => idMap.set(Number(n.id), baseNodeId + i))
+
+  const insertedNodes = block.nodes.map((n: any) => {
+    const newId = idMap.get(Number(n.id))!
+    return {
+      ...JSON.parse(JSON.stringify(n)), // deep clone so we don't mutate the stored block
+      id: newId,
+      pos: [n.pos[0] + position.x, n.pos[1] + position.y] as [number, number],
+    }
+  })
+
+  const insertedLinks = (block.links || []).map((link: any[], i: number) => {
+    if (!Array.isArray(link) || link.length < 6) return null
+    const [, srcId, srcSlot, dstId, dstSlot, type] = link
+    const newSrc = idMap.get(Number(srcId))
+    const newDst = idMap.get(Number(dstId))
+    if (newSrc == null || newDst == null) return null
+    return [baseLinkId + i, newSrc, srcSlot, newDst, dstSlot, type]
+  }).filter(Boolean)
+
+  // Compute the group's new top-left from the inserted nodes (positions are
+  // already absolute now). Width/height come from the stored block bounds.
+  const groupOriginX = position.x
+  const groupOriginY = position.y
+  const newGroupRaw = {
+    title: block.name,
+    bounding: [groupOriginX, groupOriginY, block.bounds.width, block.bounds.height],
+    color: block.color,
+    font_size: 24,
+  }
+
+  const merged = {
+    ...snapshot,
+    nodes: [...(snapshot.nodes || []), ...insertedNodes],
+    links: [...(snapshot.links || []), ...insertedLinks],
+    groups: [...(snapshot.groups || []), newGroupRaw],
+    last_node_id: baseNodeId + block.nodes.length - 1,
+    last_link_id: baseLinkId + insertedLinks.length - 1,
+  }
+
+  convertFromLiteGraph(merged)
+}
+
+/** Drop-handler counterpart for block payloads (vs node-type strings). */
+function tryHandleBlockDrop(event: DragEvent): boolean {
+  const blockId = event.dataTransfer?.getData('application/x-comfynext-block')
+  if (!blockId) return false
+  const canvasEl = event.currentTarget as HTMLElement
+  const rect = canvasEl.getBoundingClientRect()
+  const dropPos = project({
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  })
+  insertBlock(blockId, dropPos)
+  return true
+}
+
+/** Click-to-insert at viewport center. Listens for the panel's custom event. */
+function handleInsertBlockEvent(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const blockId = detail?.blockId as string | undefined
+  if (!blockId) return
+  // Convert the screen-space viewport center into graph-space.
+  const canvasEl = document.querySelector('.vue-flow') as HTMLElement | null
+  const rect = canvasEl?.getBoundingClientRect()
+  const centerScreen = rect
+    ? { x: rect.width / 2, y: rect.height / 2 }
+    : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  const centerGraph = project(centerScreen)
+  // Anchor the block's group at the center by offsetting half its bounds.
+  const block = getBlock(blockId)
+  if (!block) return
+  insertBlock(blockId, {
+    x: centerGraph.x - block.bounds.width / 2,
+    y: centerGraph.y - block.bounds.height / 2,
+  })
+}
+onMounted(() => window.addEventListener('comfynext:insertBlock', handleInsertBlockEvent))
+onBeforeUnmount(() => window.removeEventListener('comfynext:insertBlock', handleInsertBlockEvent))
+
+function actionSaveGroupAsBlock(groupId: string) {
+  const group = groups.value.find(g => g.id === groupId)
+  if (!group) return
+  const memberIds = nodesInGroup(groupId)
+  if (!memberIds.length) {
+    if (typeof window !== 'undefined') window.alert('This group has no nodes to save.')
+    return
+  }
+  const defaultName = group.title && group.title !== 'Group' ? group.title : ''
+  const name = window.prompt('Save block as:', defaultName)
+  if (!name || !name.trim()) return
+
+  // Build a LiteGraph snapshot of just the group's contents.
+  const wf = convertToLiteGraph()
+  const memberIdSet = new Set(memberIds.map(Number))
+  const blockNodes = (wf.nodes || []).filter((n: any) => memberIdSet.has(n.id))
+  // Internal links only — drop anything that crosses the group boundary.
+  const blockLinks = (wf.links || []).filter((link: any) => {
+    if (!Array.isArray(link) || link.length < 4) return false
+    return memberIdSet.has(Number(link[1])) && memberIdSet.has(Number(link[3]))
+  })
+
+  saveBlock({
+    name: name.trim(),
+    color: group.color,
+    nodes: blockNodes,
+    links: blockLinks,
+    bounds: { width: group.width, height: group.height },
+    // Subtract this origin from each node's position so the block stores
+    // positions relative to the group's top-left corner.
+    origin: { x: group.x, y: group.y },
+  })
+}
+
+/**
+ * Toggle a mode across every node in a group: if every node is already at
+ * `mode`, reset them all to 0 (normal); otherwise set every node to `mode`.
+ * Powers the title-bar bypass/mute icons.
+ */
+function actionToggleGroupMode(groupId: string, mode: number) {
+  const ids = nodesInGroup(groupId)
+  if (!ids.length) return
+  const set = new Set(ids)
+  const allAt = (nodes.value as any[]).filter(n => set.has(n.id)).every(n => (n.data?.mode ?? 0) === mode)
+  setMode(ids, allAt ? 0 : mode)
+}
+
+/**
+ * Returns 'all' if every contained node is at `mode`, 'mixed' if some are,
+ * 'none' otherwise. Used to drive the toggle icons' active state.
+ */
+function groupModeState(groupId: string, mode: number): 'none' | 'mixed' | 'all' {
+  const ids = nodesInGroup(groupId)
+  if (!ids.length) return 'none'
+  const set = new Set(ids)
+  let on = 0
+  for (const n of nodes.value as any[]) {
+    if (set.has(n.id) && (n.data?.mode ?? 0) === mode) on++
+  }
+  if (on === 0) return 'none'
+  if (on === ids.length) return 'all'
+  return 'mixed'
+}
+
+function colorSubmenuItems(applyColor: (color: string) => void): MenuItem[] {
+  return GROUP_COLORS.map(c => ({
+    label: c,
+    swatch: c,
+    action: () => applyColor(c),
+  }))
+}
+
+// Menu builders -------------------------------------------------------------
+
+function paneMenuItems(_x: number, _y: number): MenuItem[] {
+  return [
+    { label: 'Run All', icon: Play, action: () => emitRunAll() },
+    { divider: true },
+    { label: 'Fit View', icon: Frame, action: () => fitView({ padding: 0.2 }) },
+    { label: 'Select All', icon: SquareDashedMousePointer, action: () => {
+      for (const n of nodes.value as any[]) n.selected = true
+    } },
+  ]
+}
+
+function nodeMenuItems(nodeId: string): MenuItem[] {
+  const node = (nodes.value as any[]).find(n => n.id === nodeId)
+  const mode = node?.data?.mode ?? 0
+  return [
+    { label: 'Run from Selection', icon: Play, action: () => emitRunFiltered([nodeId]) },
+    { divider: true },
+    { label: mode === 4 ? 'Un-Bypass' : 'Bypass', icon: Ban, action: () => toggleMode([nodeId], 4) },
+    { label: mode === 2 ? 'Un-Mute' : 'Mute', icon: EyeOff, action: () => toggleMode([nodeId], 2) },
+    { divider: true },
+    { label: 'Duplicate', icon: Copy, action: () => duplicateNodes([nodeId]) },
+    { label: 'Delete', icon: Trash2, danger: true, action: () => deleteNodes([nodeId]) },
+  ]
+}
+
+function selectionMenuItems(): MenuItem[] {
+  const ids = getSelectedNodeIds()
+  return [
+    { label: `Run Selection (${ids.length})`, icon: Play, action: () => emitRunFiltered(ids) },
+    { divider: true },
+    { label: 'Group Selection', icon: Group, action: () => actionGroupSelection() },
+    { divider: true },
+    { label: 'Bypass', icon: Ban, action: () => toggleMode(ids, 4) },
+    { label: 'Mute', icon: EyeOff, action: () => toggleMode(ids, 2) },
+    { divider: true },
+    { label: 'Duplicate', icon: Copy, action: () => duplicateNodes(ids) },
+    { label: 'Delete', icon: Trash2, danger: true, action: () => deleteNodes(ids) },
+  ]
+}
+
+function edgeMenuItems(edgeId: string): MenuItem[] {
+  return [
+    { label: 'Delete Edge', icon: Trash2, danger: true, action: () => deleteEdges([edgeId]) },
+  ]
+}
+
+function groupMenuItems(groupId: string): MenuItem[] {
+  const g = groups.value.find(g => g.id === groupId)
+  return [
+    { label: 'Run Group', icon: Play, action: () => actionRunGroup(groupId) },
+    { divider: true },
+    { label: 'Bypass Group Nodes', icon: Ban, action: () => actionGroupModeAll(groupId, 4) },
+    { label: 'Mute Group Nodes', icon: EyeOff, action: () => actionGroupModeAll(groupId, 2) },
+    { label: 'Reset Group Nodes', icon: PlusSquare, action: () => actionGroupModeAll(groupId, 0) },
+    { divider: true },
+    { label: 'Save as Block…', icon: Boxes, action: () => actionSaveGroupAsBlock(groupId) },
+    { divider: true },
+    {
+      label: 'Color',
+      icon: Palette,
+      children: colorSubmenuItems(c => updateGroup(groupId, { color: c })),
+    },
+    {
+      label: 'Rename',
+      icon: Edit3,
+      action: () => {
+        const newTitle = window.prompt('Group name', g?.title || 'Group')
+        if (newTitle && newTitle.trim()) updateGroup(groupId, { title: newTitle.trim() })
+      },
+    },
+    { divider: true },
+    { label: 'Delete Group', icon: Trash2, danger: true, action: () => deleteGroup(groupId) },
+  ]
+}
+
+// Event handlers ------------------------------------------------------------
+
+function handlePaneContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  openMenu(event.clientX, event.clientY, paneMenuItems(event.clientX, event.clientY))
+}
+
+function handleNodeContextMenu({ event, node }: { event: MouseEvent; node: any }) {
+  event.preventDefault()
+  event.stopPropagation()
+  // If the right-clicked node is part of a multi-selection, show selection menu.
+  const selectedIds = getSelectedNodeIds()
+  const inSelection = selectedIds.length > 1 && selectedIds.includes(node.id)
+  const items = inSelection ? selectionMenuItems() : nodeMenuItems(node.id)
+  openMenu(event.clientX, event.clientY, items)
+}
+
+function handleEdgeContextMenu({ event, edge }: { event: MouseEvent; edge: any }) {
+  event.preventDefault()
+  event.stopPropagation()
+  openMenu(event.clientX, event.clientY, edgeMenuItems(edge.id))
+}
+
+function handleSelectionContextMenu(payload: { event: MouseEvent; nodes: any[] } | MouseEvent) {
+  // Vue Flow emits `{ event, nodes }`. Guard for either shape in case a
+  // future version normalizes to MouseEvent directly.
+  const event: MouseEvent = (payload as any)?.event ?? (payload as MouseEvent)
+  event.preventDefault()
+  event.stopPropagation()
+  openMenu(event.clientX, event.clientY, selectionMenuItems())
+}
+
+function handleGroupContextMenu(groupId: string, x: number, y: number) {
+  openMenu(x, y, groupMenuItems(groupId))
+}
+
+// Build a filtered workflow snapshot from current canvas + target ids. Used
+// by the layout when it receives the runFiltered event.
+function getFilteredWorkflow(targetIds: string[]) {
+  const wf = getWorkflowWithSubgraphs()
+  if (!wf || !targetIds.length) return wf
+  return buildFilteredWorkflow(wf, targetIds)
+}
+
 // Expose methods and state for parent layout
 defineExpose({
   getWorkflow: getWorkflowWithSubgraphs,
+  getFilteredWorkflow,
   getNodes: () => nodes.value,
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
@@ -1102,6 +1534,7 @@ defineExpose({
   <div
     class="w-full h-full relative bg-[#0a0a0a]"
     @dragover.prevent
+    @contextmenu.prevent
   >
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" />
@@ -1129,6 +1562,10 @@ defineExpose({
       @drop="handleDrop"
       @dragover.prevent
       @node-double-click="handleNodeDoubleClick"
+      @pane-context-menu="handlePaneContextMenu"
+      @node-context-menu="handleNodeContextMenu"
+      @edge-context-menu="handleEdgeContextMenu"
+      @selection-context-menu="handleSelectionContextMenu"
     >
       <MiniMap
         class="!bg-[#1a1a1a] !border-[#2a2a2a] comfy-minimap"
@@ -1136,6 +1573,49 @@ defineExpose({
         :mask-color="'rgba(0, 0, 0, 0.6)'"
       />
     </VueFlow>
+
+    <!-- Group layer: lives outside VueFlow, in screen space, but applies a
+         CSS transform that mirrors VueFlow's viewport so its children
+         effectively render in graph space. Z-index sits between the dot
+         grid (behind) and the VueFlow node layer (in front). -->
+    <div
+      class="canvas-groups-layer absolute inset-0 overflow-hidden pointer-events-none"
+      style="z-index: 1"
+    >
+      <div
+        class="absolute top-0 left-0"
+        :style="{
+          transform: `translate(${vfViewport.x}px, ${vfViewport.y}px) scale(${vfViewport.zoom})`,
+          transformOrigin: '0 0',
+        }"
+      >
+        <CanvasGroupView
+          v-for="g in groups"
+          :key="g.id"
+          :group="g"
+          :bypass-state="groupModeState(g.id, 4)"
+          :mute-state="groupModeState(g.id, 2)"
+          class="pointer-events-auto"
+          @drag="(id, dx, dy) => dragGroup(id, dx, dy)"
+          @resize="(id, w, h) => resizeGroup(id, w, h)"
+          @title-edit="(id, t) => updateGroup(id, { title: t })"
+          @context-menu="handleGroupContextMenu"
+          @run="actionRunGroup"
+          @toggle-bypass="(id) => actionToggleGroupMode(id, 4)"
+          @toggle-mute="(id) => actionToggleGroupMode(id, 2)"
+          @save-as-block="actionSaveGroupAsBlock"
+        />
+      </div>
+    </div>
+
+    <!-- Context menu (floats in screen space, not graph space) -->
+    <CanvasContextMenu
+      v-if="menu"
+      :x="menu.x"
+      :y="menu.y"
+      :items="menu.items"
+      @close="closeMenu"
+    />
 
     <!-- Subgraph breadcrumb navigation -->
     <div v-if="isInsideSubgraph" class="absolute top-3 left-3 z-40">
@@ -1163,9 +1643,9 @@ defineExpose({
       />
     </Teleport>
 
-    <!-- Timeline editor modal -->
+    <!-- Timeline editor (full-screen multi-track) -->
     <Teleport to="body">
-      <VueCanvasTimelineModal
+      <VueCanvasTimelineEditor
         v-if="timelineOpenForId"
         :node-id="timelineOpenForId"
         :nodes="nodes as any[]"

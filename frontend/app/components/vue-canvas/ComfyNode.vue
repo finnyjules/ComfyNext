@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ChevronRight, Upload } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Download, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
+import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 
 const props = defineProps<{
   id: string
@@ -9,6 +10,7 @@ const props = defineProps<{
     nodeType: string
     title: string
     category?: string
+    outputNode?: boolean
     priceBadge?: { expr: string; depends_on?: any[] } | null
     inputs: { name: string; type: string; link: number | null }[]
     outputs: { name: string; type: string; links: number[] | null }[]
@@ -65,6 +67,12 @@ const borderColorRight = computed(() => {
 
 const partnerIconUrl = computed(() => getPartnerIcon(props.data.category || ''))
 
+// Toolbox icon: surfaces the Lucide icon defined in the Toolbox catalog
+// (data/toolbox-items.ts) in the node's title bar when neither a subgraph
+// icon nor a partner icon takes precedence. Falls through to nothing when
+// the node type isn't a toolbox item.
+const toolboxIcon = computed(() => TOOLBOX_NODE_ICONS[props.data.nodeType as string] || null)
+
 // Extract the minimum USD price from the price badge expression
 const priceLabel = computed(() => {
   const badge = props.data.priceBadge
@@ -81,6 +89,38 @@ const priceLabel = computed(() => {
 
 const isMuted = computed(() => props.data.mode === 2)
 const isBypassed = computed(() => props.data.mode === 4)
+
+// Per-node Run button surfaces on:
+//   1. Generator nodes (costly API calls — Replicate, BFL, OpenAI, …).
+//   2. Output nodes (anything OUTPUT_NODE=True in Python — PreviewImage,
+//      SaveImage, etc.). Treats the click as "run to here" since these are
+//      already valid sinks, sidestepping ComfyUI's "Prompt has no outputs"
+//      rejection.
+//   3. Slow local compute that takes seconds to minutes — same iteration
+//      value as a generator, just on-device. Curated allowlist below.
+//
+// Skipped on purpose: live-preview nodes (they auto-run), Load nodes (no
+// execution), Note / Subgraph IO (no execution).
+const HEAVY_LOCAL_COMPUTE = new Set<string>([
+  'FaceSwap', 'FaceRestore', 'LipSync', 'ObjectRemove',
+  'SubjectMask', 'MaskExtractor',
+])
+
+const showRunButton = computed(() => {
+  const t = props.data.nodeType
+  if (HEAVY_LOCAL_COMPUTE.has(t)) return true
+  // OUTPUT_NODE=True covers real sinks (SaveImage, PreviewImage…) but also
+  // every local image-adjust node that ships a UI preview (Blur, Sharpen,
+  // AdjustCurves, …) — those already auto-run via the live-preview pipeline,
+  // so suppress the button there.
+  if (props.data.outputNode && !LIVE_PREVIEW_NODES.has(t)) return true
+  return (props.data.category || '').startsWith('api node/')
+})
+
+function runThisNode() {
+  if (isMuted.value || isBypassed.value || props.data.running) return
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }))
+}
 
 // Live-preview node types: auto-run on widget change (debounced) so the
 // preview image refreshes without the user clicking Run.
@@ -160,6 +200,48 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // ASCII: hide everything from the node body — all controls live in the
   // "More options" right panel.
   Ascii: () => false,
+
+  // Replicate use-case nodes — hide model-specific widgets when the user
+  // selects a different model in the `model` combo. Single source of truth
+  // for which widget belongs to which model lives in MODEL_GATED_WIDGETS.
+  GenerateImageNode: (name, values, defs) => isVisibleForModel('GenerateImageNode', name, values, defs),
+  GenerateVideoNode: (name, values, defs) => isVisibleForModel('GenerateVideoNode', name, values, defs),
+}
+
+// For each use-case node, map model-gated widget names → the Model combo value
+// they belong to. If a widget appears here and the current model doesn't
+// match, the widget is hidden. Widgets NOT in this map are always visible
+// (the shared inputs at the top of each node).
+const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
+  GenerateImageNode: {
+    // Flux 1.1 Pro
+    safety_tolerance:  'Flux 1.1 Pro',
+    prompt_upsampling: 'Flux 1.1 Pro',
+    output_format:     'Flux 1.1 Pro',
+    // Ideogram V3 Turbo
+    style_type:        'Ideogram V3 Turbo',
+    magic_prompt:      'Ideogram V3 Turbo',
+  },
+  GenerateVideoNode: {
+    // Seedance 2.0
+    resolution:        'Seedance 2.0',
+    camera_fixed:      'Seedance 2.0',
+    // Veo 3 + Kling 2.1 share negative_prompt; Kling adds cfg_scale
+    negative_prompt:   ['Veo 3', 'Kling 2.1'],
+    cfg_scale:         'Kling 2.1',
+  },
+}
+
+function isVisibleForModel(nodeType: string, widgetName: string, values: any[], defs: any[]): boolean {
+  const gates = MODEL_GATED_WIDGETS[nodeType]
+  if (!gates) return true
+  const gate = gates[widgetName]
+  if (!gate) return true              // not gated → always show
+  const modelIdx = defs.findIndex(d => d.name === 'model')
+  if (modelIdx < 0) return true       // no model combo found → don't hide
+  const currentModel = values[modelIdx]
+  const allowed = Array.isArray(gate) ? gate : [gate]
+  return allowed.includes(currentModel)
 }
 
 function isWidgetVisible(widget: any): boolean {
@@ -204,7 +286,7 @@ const collapsedGroups = ref(new Set<string>([
 // plus one trailing empty slot ready to catch the next connection. The Python
 // schema declares a generous static cap (Compositor: 16, SmartLayout: 8);
 // this is purely a UI affordance to keep the node tidy.
-const DYNAMIC_GROW_NODES = new Set<string>(['Compositor', 'SmartLayout'])
+const DYNAMIC_GROW_NODES = new Set<string>(['Compositor', 'SmartLayout', 'Timeline'])
 
 // Vue Flow's edges array, provided by the canvas. Needed here (and not just
 // further down where the upstream-image helper uses it) because the dynamic-
@@ -550,11 +632,57 @@ const previewImages = computed(() => {
 const displayedImages = ref<string[]>([])
 let preloadBatch = 0
 
+// Carousel state — used by nodes that produce a set of related images
+// (SmartLayout: one PNG per aspect). Resets to 0 whenever the image set
+// changes so a fresh render always lands on the first card.
+const carouselIndex = ref(0)
+
+// Derive a human-readable label for each carousel slot. SmartLayout's preview
+// filenames embed the aspect key (live_preview_<id>_<aspect>.png) so we can
+// pluck it back out; fall back to the index when the pattern doesn't match.
+function carouselLabel(url: string, fallback: number): string {
+  const m = /live_preview_[^_]+_([^/?]+?)\.png/.exec(url)
+  if (m && m[1]) {
+    try { return decodeURIComponent(m[1]) } catch { return m[1] }
+  }
+  return String(fallback + 1)
+}
+
+// Trigger a browser download for the currently visible image. Uses a fetch
+// → blob → anchor.download pattern so the file lands with a friendly name
+// (template_<aspect>.png) even though the URL is `/view?filename=…`.
+async function downloadCarouselImage(url: string, label: string) {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const obj = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = obj
+    a.download = `smartlayout_${label}.png`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(obj)
+  } catch (err) {
+    console.error('[ComfyNode] carousel download failed:', err)
+  }
+}
+
+async function downloadAllCarouselImages(urls: string[]) {
+  for (let i = 0; i < urls.length; i++) {
+    await downloadCarouselImage(urls[i]!, carouselLabel(urls[i]!, i))
+  }
+}
+
 watch(previewImages, (urls) => {
   if (!urls || !urls.length) {
     displayedImages.value = []
+    carouselIndex.value = 0
     return
   }
+  // Snap back to the first slot so a new render set is shown from the start.
+  carouselIndex.value = 0
   // Tag this batch so a slower-completing earlier batch can't overwrite the
   // commit from a newer batch when the user drags sliders rapidly.
   const myBatch = ++preloadBatch
@@ -576,15 +704,16 @@ watch(previewImages, (urls) => {
 
 <template>
   <div
-    class="comfy-node rounded-xl border w-[260px] select-none backdrop-blur-sm"
+    class="comfy-node relative rounded-xl border w-[260px] select-none backdrop-blur-sm"
     :class="{
-      'opacity-40': isMuted,
-      'opacity-60 border-dashed': isBypassed,
+      'comfy-node--muted': isMuted,
+      'comfy-node--bypassed': isBypassed,
       'ring-2 ring-red-500': data.error,
       'border-indigo-500/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
     }"
     :data-running="data.running || undefined"
+    :data-mode="data.mode || 0"
     :style="{
       background: data.bgcolor
         ? `linear-gradient(180deg, color-mix(in srgb, ${data.bgcolor} 35%, #1a1a1a) 0%, color-mix(in srgb, ${data.bgcolor} 20%, #1a1a1a) 100%)`
@@ -593,18 +722,56 @@ watch(previewImages, (urls) => {
       '--border-color-right': borderColorRight,
     } as any"
   >
+    <!-- Mode overlay: bypass shows diagonal stripes; mute shows soft scrim -->
+    <div
+      v-if="isMuted || isBypassed"
+      class="pointer-events-none absolute inset-0 rounded-xl z-[5]"
+      :class="isBypassed ? 'comfy-node-stripes' : 'bg-black/30'"
+    />
+    <!-- Mode badge (top-right) -->
+    <div
+      v-if="isMuted || isBypassed"
+      class="pointer-events-none absolute top-1.5 right-1.5 z-[6] text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+      :class="isBypassed
+        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/30'
+        : 'bg-white/15 text-white/70 border border-white/15'"
+    >
+      {{ isBypassed ? 'Bypass' : 'Mute' }}
+    </div>
     <!-- Title bar -->
     <div
-      class="flex items-center gap-2 px-3 py-2 border-b border-white/5"
+      class="flex items-center gap-2 px-3 py-2 border-b border-white/5 rounded-t-xl"
       :style="{ background: `linear-gradient(135deg, ${accentColor}15 0%, transparent 60%)` }"
     >
-      <!-- Subgraph icon -->
+      <!-- Subgraph icon → partner icon → toolbox icon. No fallback dot:
+           if nothing resolves, the title fills the space instead. -->
       <svg v-if="data.isSubgraph" class="size-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="2" width="8" height="8" rx="1" /><rect x="14" y="2" width="8" height="8" rx="1" /><rect x="8" y="14" width="8" height="8" rx="1" />
       </svg>
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
-      <div v-else class="size-2 rounded-full shrink-0" :style="{ backgroundColor: accentColor }" />
+      <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || data.title }}</span>
+      <!-- Per-node Run: runs this node + its upstream deps via filtered queue.
+           Shows on generators, output sinks (OUTPUT_NODE=True), and heavy
+           local compute — see showRunButton above. -->
+      <button
+        v-if="showRunButton"
+        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
+        :class="(isMuted || isBypassed)
+          ? 'text-white/25 cursor-not-allowed'
+          : data.running
+            ? 'text-emerald-300 bg-emerald-400/15'
+            : 'text-white/55 hover:text-emerald-300 hover:bg-emerald-400/15'"
+        :disabled="isMuted || isBypassed || data.running"
+        :title="isMuted ? 'Node is muted'
+          : isBypassed ? 'Node is bypassed'
+          : data.running ? 'Running…'
+          : 'Run this node'"
+        @click.stop="runThisNode"
+      >
+        <Loader2 v-if="data.running" class="size-3 animate-spin" />
+        <Play v-else class="size-3" :fill="(isMuted || isBypassed) ? 'none' : 'currentColor'" />
+      </button>
       <!-- Subgraph node count badge -->
       <span
         v-if="data.isSubgraph && data.innerNodeCount"
@@ -783,6 +950,81 @@ watch(previewImages, (urls) => {
       <pre class="text-[10.5px] text-white/80 whitespace-pre-wrap break-words font-mono leading-snug max-h-[200px] overflow-auto nopan nodrag select-text">{{ data.text }}</pre>
     </div>
 
+    <!-- SmartLayout carousel: one card per rendered aspect, with prev/next
+         arrows and a download icon on the active card. Falls back to the
+         generic image branch below when the node only produced a single
+         image (single-aspect render). -->
+    <div
+      v-else-if="data.nodeType === 'SmartLayout' && displayedImages.length"
+      class="border-t border-[#2a2a2a] p-2 nopan nodrag"
+    >
+      <div class="relative">
+        <img
+          :src="displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]"
+          class="w-full rounded-lg object-contain max-h-[300px] bg-black/30"
+          loading="lazy"
+          @load="onPreviewImgLoad"
+        />
+        <!-- Download current -->
+        <button
+          class="absolute top-1.5 right-1.5 size-7 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          title="Download this image"
+          @click.stop="downloadCarouselImage(
+            displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]!,
+            carouselLabel(displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]!, carouselIndex),
+          )"
+        >
+          <Download class="size-3.5" />
+        </button>
+        <!-- Prev / Next — only when >1 image -->
+        <template v-if="displayedImages.length > 1">
+          <button
+            class="absolute top-1/2 -translate-y-1/2 left-1.5 size-7 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            title="Previous"
+            @click.stop="carouselIndex = (carouselIndex - 1 + displayedImages.length) % displayedImages.length"
+          >
+            <ChevronLeft class="size-4" />
+          </button>
+          <button
+            class="absolute top-1/2 -translate-y-1/2 right-1.5 size-7 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            title="Next"
+            @click.stop="carouselIndex = (carouselIndex + 1) % displayedImages.length"
+          >
+            <ChevronRight class="size-4" />
+          </button>
+        </template>
+      </div>
+      <!-- Bottom strip: dots (jump to image) + active label + "Save all" -->
+      <div v-if="displayedImages.length > 1" class="mt-2 flex items-center gap-2">
+        <div class="flex items-center gap-1">
+          <button
+            v-for="(_, i) in displayedImages"
+            :key="i"
+            class="size-1.5 rounded-full transition-colors cursor-pointer"
+            :class="i === Math.min(carouselIndex, displayedImages.length - 1)
+              ? 'bg-[#96b4ff]'
+              : 'bg-white/25 hover:bg-white/45'"
+            :title="carouselLabel(displayedImages[i]!, i)"
+            @click.stop="carouselIndex = i"
+          />
+        </div>
+        <span class="text-[10px] text-white/45 tabular-nums">
+          {{ carouselLabel(displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]!, carouselIndex) }}
+          <span class="text-white/25">·</span>
+          {{ Math.min(carouselIndex, displayedImages.length - 1) + 1 }}/{{ displayedImages.length }}
+        </span>
+        <span class="flex-1" />
+        <button
+          class="h-6 px-2 rounded text-[10px] text-white/65 hover:text-white bg-white/[0.06] hover:bg-white/[0.12] transition-colors cursor-pointer flex items-center gap-1"
+          title="Download all aspects as PNGs"
+          @click.stop="downloadAllCarouselImages(displayedImages)"
+        >
+          <Download class="size-3" />
+          Save all
+        </button>
+      </div>
+    </div>
+
     <!-- Media previews (images or video) -->
     <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] p-2">
       <template v-if="isVideo">
@@ -869,5 +1111,28 @@ watch(previewImages, (urls) => {
   animation: border-sweep 2s linear infinite;
   pointer-events: none;
   z-index: -1;
+}
+
+/* Muted: dimmed + desaturated. Skipped at execution time. */
+.comfy-node--muted {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+}
+
+/* Bypassed: pass-through. Faint amber accent + striped overlay rendered above. */
+.comfy-node--bypassed {
+  opacity: 0.85;
+  border-style: dashed;
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.comfy-node-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(251, 191, 36, 0.06) 0,
+    rgba(251, 191, 36, 0.06) 6px,
+    transparent 6px,
+    transparent 14px
+  );
 }
 </style>
