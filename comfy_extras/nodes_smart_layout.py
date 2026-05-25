@@ -28,7 +28,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
-from comfy_extras._live_preview import save_live_preview
+from comfy_extras._live_preview import save_live_preview_multi
 
 
 # The Comfy backend serves images via /view. Satori fetches images from URLs
@@ -330,7 +330,13 @@ class SmartLayoutNode(IO.ComfyNode):
                 ],
             ],
             outputs=[
-                IO.Image.Output(display_name="images"),
+                # `is_output_list=True` so each rendered aspect flows downstream
+                # as its own item — SaveImage iterates over the list, writing one
+                # file per aspect. This is the only way mixed-size aspects (1x1 +
+                # 9x16, etc.) can survive into a downstream IMAGE socket; the
+                # IMAGE type itself is a uniform tensor and can't pack different
+                # H×W in one batch.
+                IO.Image.Output(display_name="images", is_output_list=True),
             ],
             # `is_output_node` + `unique_id` are what let us push a live preview
             # back onto the SmartLayout node body — the canvas displays the
@@ -370,18 +376,20 @@ class SmartLayoutNode(IO.ComfyNode):
         for key in aspect_keys:
             rendered.append(_render_one(template, key, props_d, brand_d))
 
-        # Inline preview on the node body. We push the first rendered aspect —
-        # save_live_preview writes to a deterministic temp filename keyed by
-        # node id so the Vue canvas can refetch with a cache-buster.
-        preview_ui = save_live_preview(rendered[0].unsqueeze(0), str(cls.hidden.unique_id))
+        # Push *all* rendered aspects to the node-body preview so the frontend
+        # can show a carousel. Label each file by aspect key so the download
+        # buttons can name the file something the user recognises.
+        preview_ui = save_live_preview_multi(
+            [t.unsqueeze(0) for t in rendered],
+            str(cls.hidden.unique_id),
+            labels=aspect_keys,
+        )
 
-        # If every aspect produced the same H×W we can stack as a batch tensor,
-        # which is faster for downstream consumers. Otherwise return as a list
-        # so heterogeneous sizes survive intact.
-        same_shape = all(t.shape == rendered[0].shape for t in rendered)
-        if same_shape:
-            return IO.NodeOutput(torch.stack(rendered, dim=0), ui=preview_ui)
-        return IO.NodeOutput(rendered, ui=preview_ui)
+        # Always emit as a list (one [1, H, W, 3] tensor per aspect). Paired
+        # with `is_output_list=True` on the schema, this means a downstream
+        # SaveImage saves one file per aspect — mixed sizes Just Work because
+        # each item travels through the socket independently.
+        return IO.NodeOutput([t.unsqueeze(0) for t in rendered], ui=preview_ui)
 
 
 class SmartLayoutExtension(ComfyExtension):

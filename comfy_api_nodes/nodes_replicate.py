@@ -4,12 +4,36 @@ A parallel set to Comfy's official partner nodes, but pointed at Replicate
 instead of Comfy's /proxy/ infrastructure. Goal: one API token
 (REPLICATE_API_TOKEN), no Comfy billing dependency, distribution-ready.
 
-Nodes shipped here:
-- FluxLoRARemoteNode    — Flux Dev + user LoRA (resolves trained LoRA sidecar)
-- FluxProRemoteNode     — Flux 1.1 Pro image gen
-- FluxKontextRemoteNode — Flux Kontext Pro image edit
-- KlingVideoRemoteNode  — Kling 2.1 text/image-to-video
-- ClarityUpscaleRemoteNode — Clarity upscaler
+Each node targets a single best-in-class model for a specific use-case so
+the Generators panel can surface "Generate an image · Flux 1.1 Pro" style
+cards without showing redundant alternatives. Add a new entry to the
+USE_CASE_LABELS map in frontend/app/components/vue-canvas/GeneratorsPanel.vue
+when you ship a new node so the card stays use-case-first.
+
+Image
+-  FluxLoRARemoteNode         — Generate an image with your trained LoRA
+-  FluxProRemoteNode          — Generate an image · Flux 1.1 Pro (general photoreal)
+-  IdeogramV3TurboNode        — Generate an image · Ideogram V3 Turbo (typography)
+-  FluxKontextRemoteNode      — Edit an image · Flux Kontext Pro
+-  ClarityUpscaleRemoteNode   — Upscale an image · Clarity
+-  RemoveBackgroundRemoteNode — Remove background · 851-labs/background-remover
+-  RestorePhotoRemoteNode     — Restore an old photo · flux-kontext-apps/restore-image
+-  CodeformerRemoteNode       — Fix faces in a photo · CodeFormer
+-  DescribeImageRemoteNode    — Describe an image · Moondream 2
+
+Video
+-  Seedance2RemoteNode      — Generate a video · Seedance 2.0 (best general quality)
+-  Veo3RemoteNode           — Generate a video · Veo 3 (with synced audio)
+-  KlingVideoRemoteNode     — Generate a video · Kling 2.1
+-  LipsyncRemoteNode        — Sync lips to audio · sync/lipsync-2-pro
+
+Audio
+-  WhisperRemoteNode        — Transcribe audio · Whisper
+-  MusicGenRemoteNode       — Generate music · MusicGen
+-  MiniMaxSpeechRemoteNode  — Generate speech · MiniMax Speech-02 HD
+
+3D
+-  Hunyuan3DRemoteNode      — Generate a 3D model · Hunyuan3D 2
 
 All nodes route through one shared `_run_prediction` helper that handles
 auth, version lookup, polling and error mapping.
@@ -43,15 +67,67 @@ _VIDEO_POLL_DEADLINE_SEC = 30 * 60       # Kling can take several minutes
 
 
 # ---------- Auth ------------------------------------------------------------
+#
+# The token can come from any of these (in priority order):
+#   1. REPLICATE_API_TOKEN env (canonical Replicate convention)
+#   2. NUXT_REPLICATE_TOKEN env (set by Nuxt — same credential, different
+#      name historically used by the cloud-train server endpoints)
+#   3. NUXT_REPLICATE_TOKEN in frontend/.env (Nuxt loads this at boot; Python
+#      doesn't, so we read it manually as a fallback so the user only has to
+#      configure their token in one place)
+
+_TOKEN_CACHE: str | None = None
+
+
+def _read_token_from_dotenv() -> str | None:
+    """Look for NUXT_REPLICATE_TOKEN= in frontend/.env (closest to this file's
+    project root). Returns None if the file is missing or the key isn't there."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    # Walk up to project root (the dir with `frontend/`).
+    for _ in range(6):
+        candidate = os.path.join(here, "frontend", ".env")
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" not in line:
+                            continue
+                        k, _, v = line.partition("=")
+                        if k.strip() in ("NUXT_REPLICATE_TOKEN", "REPLICATE_API_TOKEN"):
+                            v = v.strip().strip('"').strip("'")
+                            if v:
+                                return v
+            except OSError:
+                pass
+            return None
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    return None
+
 
 def _get_token() -> str:
-    token = os.environ.get("REPLICATE_API_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError(
-            "REPLICATE_API_TOKEN environment variable not set. "
-            "Export it (or add to your shell profile) before starting ComfyUI."
-        )
-    return token
+    global _TOKEN_CACHE
+    if _TOKEN_CACHE:
+        return _TOKEN_CACHE
+    for env_name in ("REPLICATE_API_TOKEN", "NUXT_REPLICATE_TOKEN"):
+        token = os.environ.get(env_name, "").strip()
+        if token:
+            _TOKEN_CACHE = token
+            return token
+    token = _read_token_from_dotenv()
+    if token:
+        _TOKEN_CACHE = token
+        return token
+    raise RuntimeError(
+        "Replicate API token not found. Set REPLICATE_API_TOKEN (or "
+        "NUXT_REPLICATE_TOKEN) in your shell, or add NUXT_REPLICATE_TOKEN="
+        "<token> to frontend/.env. See https://replicate.com/account/api-tokens"
+    )
 
 
 # ---------- LoRA sidecar lookup --------------------------------------------
@@ -106,36 +182,64 @@ async def _run_prediction(
     poll_deadline_sec: int = _DEFAULT_POLL_DEADLINE_SEC,
 ) -> dict:
     """Start a Replicate prediction for `model`, poll until terminal status,
-    return the final prediction dict on success."""
+    return the final prediction dict on success.
+
+    Tries two endpoints in sequence:
+      1. POST /v1/models/{owner}/{name}/predictions (official models;
+         no version lookup needed).
+      2. If that returns 404, fall back to looking up `latest_version` and
+         POSTing to /v1/predictions with that version id (community models).
+    Also retries 429s once with the server-suggested `retry_after`.
+    """
     token = _get_token()
-    headers = {"Authorization": f"Token {token}"}
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
 
-    async with aiohttp.ClientSession() as session:
-        # Look up latest version of the model.
-        async with session.get(
-            f"{REPLICATE_API_BASE}/models/{model}",
-            headers=headers,
-        ) as r:
-            if r.status != 200:
-                raise RuntimeError(
-                    f"Could not look up {model}: HTTP {r.status} — {await r.text()}"
-                )
-            model_info = await r.json()
-        version_id = (model_info.get("latest_version") or {}).get("id")
-        if not version_id:
-            raise RuntimeError(f"No latest_version for {model}")
-
-        # Kick off prediction.
-        async with session.post(
-            f"{REPLICATE_API_BASE}/predictions",
-            headers={**headers, "Content-Type": "application/json"},
-            json={"version": version_id, "input": input_dict},
-        ) as r:
-            if r.status not in (200, 201):
+    async def _post_create(session, url, body) -> dict:
+        for attempt in range(3):
+            async with session.post(url, headers=headers, json=body) as r:
+                if r.status in (200, 201):
+                    return await r.json()
+                # 429 → wait then retry.
+                if r.status == 429 and attempt < 2:
+                    body_text = await r.text()
+                    retry_after = 5
+                    try:
+                        import json as _json
+                        retry_after = int((_json.loads(body_text).get("retry_after") or 5))
+                    except Exception:
+                        pass
+                    await asyncio.sleep(retry_after + 0.5)
+                    continue
                 raise RuntimeError(
                     f"Replicate predictions API HTTP {r.status}: {await r.text()}"
                 )
-            pred = await r.json()
+        raise RuntimeError("rate-limited; gave up after retries")
+
+    async with aiohttp.ClientSession() as session:
+        # Try model-aliased endpoint first (works for official models).
+        url_aliased = f"{REPLICATE_API_BASE}/models/{model}/predictions"
+        try:
+            pred = await _post_create(session, url_aliased, {"input": input_dict})
+        except RuntimeError as e:
+            if "HTTP 404" not in str(e):
+                raise
+            # Fall back: look up latest_version, POST to /v1/predictions.
+            async with session.get(
+                f"{REPLICATE_API_BASE}/models/{model}", headers=headers,
+            ) as r:
+                if r.status != 200:
+                    raise RuntimeError(
+                        f"Could not look up {model}: HTTP {r.status} — {await r.text()}"
+                    ) from e
+                model_info = await r.json()
+            version_id = (model_info.get("latest_version") or {}).get("id")
+            if not version_id:
+                raise RuntimeError(f"No latest_version for {model}") from e
+            pred = await _post_create(
+                session,
+                f"{REPLICATE_API_BASE}/predictions",
+                {"version": version_id, "input": input_dict},
+            )
         prediction_id = pred["id"]
 
         # Poll until done. starting → processing → succeeded/failed/canceled.
@@ -168,6 +272,109 @@ def _first_output_url(pred: dict) -> str:
     if isinstance(output, str):
         return output
     raise RuntimeError(f"Replicate returned no output (status={pred.get('status')})")
+
+
+def _all_output_urls(pred: dict) -> list[str]:
+    output = pred.get("output")
+    if isinstance(output, list):
+        return [o for o in output if isinstance(o, str)]
+    if isinstance(output, str):
+        return [output]
+    return []
+
+
+# ---------- Audio (Comfy AUDIO dict ↔ WAV data URL) ------------------------
+
+def _audio_dict_to_wav_data_url(audio, max_seconds: float | None = None) -> str:
+    """Encode a Comfy AUDIO `{waveform, sample_rate}` (mono or stereo) to a
+    base64 data URL Replicate can ingest.
+
+    Critical: PyAV's `from_ndarray` with format='s16' (packed) expects shape
+    [1, channels*samples] interleaved, while format='s16p' (planar) expects
+    [channels, samples]. We use s16p so stereo audio doesn't blow up — the
+    encoder converts planar→packed when muxing into pcm_s16le.
+
+    `max_seconds` caps the encoded duration. Replicate has a hard ~10 MB
+    payload limit on data URLs; a full song easily blows past it. Callers
+    that don't need full length (transcription, diarization, voice clone
+    demo) can pass e.g. 30 to keep things tractable.
+    """
+    import av  # type: ignore
+    waveform = audio.get("waveform") if isinstance(audio, dict) else audio.waveform  # type: ignore[attr-defined]
+    sample_rate = int(audio.get("sample_rate", 44100)) if isinstance(audio, dict) else int(audio.sample_rate)  # type: ignore[attr-defined]
+    if waveform.dim() == 3:
+        waveform = waveform[0]                # [C, S]
+    channels = int(waveform.shape[0])
+    if max_seconds is not None and max_seconds > 0:
+        max_samples = int(max_seconds * sample_rate)
+        if waveform.shape[1] > max_samples:
+            waveform = waveform[:, :max_samples]
+
+    wav_buf = io.BytesIO()
+    container = av.open(wav_buf, mode="w", format="wav")
+    stream = container.add_stream("pcm_s16le", rate=sample_rate)
+    stream.layout = "mono" if channels == 1 else "stereo"
+
+    arr = (waveform.clamp(-1, 1) * 32767.0).to(torch.int16).cpu().numpy()
+    # Ensure planar layout: [C, S], C-contiguous.
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    arr = np.ascontiguousarray(arr)
+    frame = av.AudioFrame.from_ndarray(arr, format="s16p", layout=stream.layout)
+    frame.sample_rate = sample_rate
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+    return "data:audio/wav;base64," + base64.b64encode(wav_buf.getvalue()).decode("ascii")
+
+
+# ---------- Audio download → IO.Audio dict ---------------------------------
+
+async def _download_url_to_audio_dict(url: str) -> dict:
+    """Stream-download an audio URL and decode it to Comfy's AUDIO type
+    `{waveform: [B, channels, samples] float tensor, sample_rate: int}`.
+
+    Uses PyAV (already a dependency for video) so we don't pull in torchaudio.
+    """
+    import av  # type: ignore
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            if r.status != 200:
+                raise RuntimeError(f"audio download failed: HTTP {r.status}")
+            raw = await r.read()
+
+    container = av.open(io.BytesIO(raw), mode="r")
+    try:
+        stream = container.streams.audio[0]
+    except IndexError as exc:
+        container.close()
+        raise RuntimeError("downloaded file has no audio stream") from exc
+
+    chunks: list[np.ndarray] = []
+    for frame in container.decode(stream):
+        arr = frame.to_ndarray()
+        # PyAV returns [channels, samples] for planar formats and
+        # [1, channels * samples] interleaved otherwise. Normalize to [C, S].
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        chunks.append(arr.astype(np.float32))
+    sample_rate = int(stream.rate or 44100)
+    container.close()
+
+    if not chunks:
+        raise RuntimeError("empty audio decode")
+
+    # Concatenate along the samples axis (axis=1).
+    full = np.concatenate(chunks, axis=1)
+    # Normalize: PyAV may return int16/int32 ranges; scale by max abs value.
+    peak = float(np.abs(full).max()) or 1.0
+    if peak > 1.5:  # almost certainly integer-range; scale to [-1, 1]
+        full = full / peak
+    tensor = torch.from_numpy(full).unsqueeze(0)  # [1, C, S]
+    return {"waveform": tensor, "sample_rate": sample_rate}
 
 
 # =============================================================================
@@ -587,17 +794,2010 @@ class ClarityUpscaleRemoteNode(IO.ComfyNode):
         return IO.NodeOutput(tensor)
 
 
+# =============================================================================
+# Node: Ideogram V3 Turbo (best-in-class for typography / text in images)
+# =============================================================================
+
+_IDEOGRAM_ASPECT_RATIOS = [
+    "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16",
+    "1:3", "3:1", "4:5", "5:4",
+]
+_IDEOGRAM_STYLES = ["None", "Auto", "General", "Realistic", "Design"]
+
+
+class IdeogramV3TurboNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="IdeogramV3TurboRemoteNode",
+            display_name="Ideogram V3 Turbo (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "Ideogram V3 Turbo — the strongest model for typography, posters, "
+                "and readable in-image text. ~$0.03 per image, ~5 s. Requires "
+                "REPLICATE_API_TOKEN."
+            ),
+            inputs=[
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="What to generate. Use quotes around exact text you want rendered."),
+                IO.Combo.Input("aspect_ratio", options=_IDEOGRAM_ASPECT_RATIOS, default="1:1"),
+                IO.Combo.Input("style_type", options=_IDEOGRAM_STYLES, default="None", advanced=True,
+                               tooltip="Override style; 'None' lets the model decide."),
+                IO.String.Input("magic_prompt", default="Auto", advanced=True,
+                                tooltip="Auto / On / Off — Ideogram-side prompt expansion."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.03}'),
+        )
+
+    @classmethod
+    async def execute(cls, prompt, aspect_ratio, style_type, magic_prompt, seed):
+        input_dict: dict = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "magic_prompt_option": magic_prompt,
+        }
+        if style_type and style_type != "None":
+            input_dict["style_type"] = style_type
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("ideogram-ai/ideogram-v3-turbo", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Node: Google Veo 3 (best-in-class text-to-video with synced audio)
+# =============================================================================
+
+_VEO3_ASPECT_RATIOS = ["16:9", "9:16"]
+
+
+class Veo3RemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="Veo3RemoteNode",
+            display_name="Veo 3 (Replicate)",
+            category="api node/video/Replicate",
+            description=(
+                "Google Veo 3 — flagship text-to-video with synchronized audio "
+                "(dialogue, ambient, music). 8s clips, ~$6.00 per generation. "
+                "Slow (5–10 min) and pricey, but best-in-class quality."
+            ),
+            inputs=[
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe the shot. Include camera moves, dialog in quotes for audio sync."),
+                IO.Image.Input("image", optional=True,
+                               tooltip="Optional first frame for image-to-video."),
+                IO.Combo.Input("aspect_ratio", options=_VEO3_ASPECT_RATIOS, default="16:9"),
+                IO.String.Input("negative_prompt", default="", advanced=True,
+                                tooltip="Concepts to avoid (e.g., 'low quality, blurry')."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":6.00,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, prompt, image, aspect_ratio, negative_prompt, seed):
+        input_dict: dict = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+        }
+        if image is not None:
+            input_dict["image"] = _image_tensor_to_data_url(image)
+        if negative_prompt:
+            input_dict["negative_prompt"] = negative_prompt
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction(
+            "google/veo-3",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# Node: Seedance 2.0 (currently top-ranked text/image-to-video)
+# =============================================================================
+
+_SEEDANCE_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+_SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p"]
+
+
+class Seedance2RemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="Seedance2RemoteNode",
+            display_name="Seedance 2.0 (Replicate)",
+            category="api node/video/Replicate",
+            description=(
+                "ByteDance Seedance 2.0 — currently the top-ranked text/image-"
+                "to-video model. Cinematic motion, strong prompt adherence, "
+                "stable cameras, sharp detail. 5 or 10 second clips at up to "
+                "1080p. ~$0.50–$1.50 per clip depending on resolution + duration."
+            ),
+            inputs=[
+                IO.String.Input(
+                    "prompt", multiline=True, default="",
+                    tooltip="Describe the shot. Include camera moves, mood, lighting.",
+                ),
+                IO.Image.Input(
+                    "image", optional=True,
+                    tooltip="Optional first frame — turns this into image-to-video.",
+                ),
+                IO.Combo.Input("aspect_ratio", options=_SEEDANCE_ASPECT_RATIOS, default="16:9",
+                               tooltip="Ignored when image is provided."),
+                IO.Combo.Input("resolution", options=_SEEDANCE_RESOLUTIONS, default="1080p",
+                               tooltip="Higher = sharper but more expensive."),
+                IO.Combo.Input("duration", options=["5", "10"], default="5",
+                               tooltip="Seconds. 10s ≈ 2× the cost."),
+                IO.Boolean.Input("camera_fixed", default=False, advanced=True,
+                                 tooltip="Lock the camera — useful when you only want subject motion."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(
+                expr='{"type":"usd","usd":0.50,"format":{"approximate":true}}',
+            ),
+        )
+
+    @classmethod
+    async def execute(cls, prompt, image, aspect_ratio, resolution, duration,
+                      camera_fixed, seed):
+        input_dict: dict = {
+            "prompt": prompt,
+            "resolution": resolution,
+            "duration": int(duration),
+            "camera_fixed": camera_fixed,
+            "fps": 24,
+        }
+        if image is not None:
+            input_dict["image"] = _image_tensor_to_data_url(image)
+        else:
+            input_dict["aspect_ratio"] = aspect_ratio
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction(
+            "bytedance/seedance-2.0",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# Node: Whisper (best-in-class transcription)
+# =============================================================================
+
+
+class WhisperRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="WhisperRemoteNode",
+            display_name="Whisper (Replicate)",
+            category="api node/audio/Replicate",
+            description=(
+                "OpenAI Whisper large-v3 — transcribes audio to text with "
+                "language detection. ~$0.005 per minute. Output is a plain "
+                "string; pair with a Text node to feed downstream prompts."
+            ),
+            inputs=[
+                IO.Audio.Input("audio", tooltip="Audio clip to transcribe."),
+                IO.Combo.Input(
+                    "language",
+                    options=["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ru", "ar", "hi"],
+                    default="auto",
+                    tooltip="Hint the language (or auto-detect).",
+                ),
+                IO.Boolean.Input("translate", default=False, advanced=True,
+                                 tooltip="Translate to English instead of transcribing in original language."),
+            ],
+            outputs=[IO.String.Output(display_name="transcript")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"suffix":"/min","approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, audio, language, translate):
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+        input_dict: dict = {
+            "audio": audio_url,
+            "task": "translate" if translate else "transcribe",
+        }
+        if language and language != "auto":
+            input_dict["language"] = language
+
+        pred = await _run_prediction("openai/whisper", input_dict)
+        out_payload = pred.get("output")
+        # Whisper variants return either a string or {transcription: str, segments: [...]}
+        if isinstance(out_payload, dict):
+            text = str(out_payload.get("transcription") or out_payload.get("text") or "")
+        elif isinstance(out_payload, str):
+            text = out_payload
+        else:
+            text = ""
+        return IO.NodeOutput(text)
+
+
+# =============================================================================
+# Node: MusicGen (text-to-music)
+# =============================================================================
+
+
+class MusicGenRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="MusicGenRemoteNode",
+            display_name="MusicGen (Replicate)",
+            category="api node/audio/Replicate",
+            description=(
+                "Meta MusicGen — text-to-music. Describe a mood, genre, "
+                "instruments, tempo. Mono / stereo, up to ~30s. ~$0.01–0.05 "
+                "depending on length. Output is AUDIO ready for SaveAudio."
+            ),
+            inputs=[
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe the music. e.g. 'lo-fi hip-hop, mellow piano, 80 bpm'."),
+                IO.Int.Input("duration", default=8, min=1, max=30, step=1,
+                             tooltip="Seconds."),
+                IO.Combo.Input(
+                    "model_version",
+                    options=["stereo-melody-large", "stereo-large", "melody-large", "large"],
+                    default="stereo-melody-large",
+                    advanced=True,
+                ),
+                IO.Float.Input("temperature", default=1.0, min=0.0, max=2.0, step=0.05, advanced=True),
+                IO.Float.Input("top_p", default=0.0, min=0.0, max=1.0, step=0.05, advanced=True,
+                               tooltip="0 disables top-p; uses top-k=250 instead."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Audio.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.02,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, prompt, duration, model_version, temperature, top_p, seed):
+        input_dict: dict = {
+            "prompt": prompt,
+            "duration": duration,
+            "model_version": model_version,
+            "temperature": temperature,
+            "output_format": "wav",
+            "normalization_strategy": "peak",
+        }
+        if top_p > 0:
+            input_dict["top_p"] = top_p
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("meta/musicgen", input_dict)
+        audio = await _download_url_to_audio_dict(_first_output_url(pred))
+        return IO.NodeOutput(audio)
+
+
+# =============================================================================
+# Node: MiniMax Speech-02 HD (best-in-class TTS)
+# =============================================================================
+
+_MINIMAX_VOICES = [
+    "Wise_Woman", "Friendly_Person", "Inspirational_girl", "Deep_Voice_Man",
+    "Calm_Woman", "Casual_Guy", "Lively_Girl", "Patient_Man", "Young_Knight",
+    "Determined_Man", "Lovely_Girl", "Decent_Boy", "Imposing_Manner", "Elegant_Man",
+    "Abbess", "Sweet_Girl_2", "Exuberant_Girl",
+]
+_MINIMAX_EMOTIONS = ["auto", "happy", "sad", "angry", "fearful", "disgusted", "surprised", "neutral"]
+
+
+class MiniMaxSpeechRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="MiniMaxSpeechRemoteNode",
+            display_name="MiniMax Speech-02 HD (Replicate)",
+            category="api node/audio/Replicate",
+            description=(
+                "MiniMax Speech-02 HD — natural, emotional text-to-speech across "
+                "many languages with curated voices and emotion control. ~$0.30 "
+                "per 1K characters. Output is AUDIO."
+            ),
+            inputs=[
+                IO.String.Input("text", multiline=True, default="",
+                                tooltip="What to say."),
+                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman"),
+                IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
+                IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05,
+                               tooltip="0.5 = half speed, 2.0 = double."),
+                IO.Float.Input("volume", default=1.0, min=0.1, max=10.0, step=0.1, advanced=True),
+                IO.Int.Input("pitch", default=0, min=-12, max=12, advanced=True,
+                             tooltip="Semitone offset."),
+                IO.Combo.Input(
+                    "language_boost",
+                    options=["auto", "English", "Spanish", "French", "German", "Italian",
+                            "Portuguese", "Japanese", "Korean", "Chinese", "Arabic"],
+                    default="auto",
+                    advanced=True,
+                ),
+            ],
+            outputs=[IO.Audio.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"suffix":"/1K chars","approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, text, voice_id, emotion, speed, volume, pitch, language_boost):
+        input_dict: dict = {
+            "text": text,
+            "voice_id": voice_id,
+            "speed": speed,
+            "volume": volume,
+            "pitch": pitch,
+            "sample_rate": 32000,
+            "bitrate": 128000,
+            "channel": "mono",
+            "english_normalization": True,
+        }
+        if emotion and emotion != "auto":
+            input_dict["emotion"] = emotion
+        if language_boost and language_boost != "auto":
+            input_dict["language_boost"] = language_boost
+        pred = await _run_prediction("minimax/speech-02-hd", input_dict)
+        audio = await _download_url_to_audio_dict(_first_output_url(pred))
+        return IO.NodeOutput(audio)
+
+
+# =============================================================================
+# Node: Hunyuan3D 2 (best-in-class image-to-3D)
+# =============================================================================
+
+
+class Hunyuan3DRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="Hunyuan3DRemoteNode",
+            display_name="Hunyuan3D 2 (Replicate)",
+            category="api node/3d/Replicate",
+            description=(
+                "Tencent Hunyuan3D 2 — image-to-3D. Feed a single reference "
+                "image, get back a textured GLB mesh URL. ~$0.30 per asset, "
+                "~30–60s. Output is a STRING URL (use as upload to viewer or "
+                "downstream nodes)."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="Reference image. Use a clean, well-lit subject on a neutral bg."),
+                IO.Int.Input("steps", default=50, min=20, max=100, step=5,
+                             tooltip="Inference steps for shape synthesis."),
+                IO.Float.Input("guidance_scale", default=5.5, min=1.0, max=20.0, step=0.5, advanced=True),
+                IO.Int.Input("octree_resolution", default=256, min=128, max=512, step=64, advanced=True,
+                             tooltip="Mesh resolution. Higher = denser geometry."),
+                IO.Boolean.Input("remove_background", default=True,
+                                 tooltip="Pre-process: remove the background before reconstruction."),
+                IO.Boolean.Input("texture", default=True,
+                                 tooltip="Bake textures (else returns just geometry)."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.String.Output(display_name="glb_url")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, image, steps, guidance_scale, octree_resolution,
+                      remove_background, texture, seed):
+        input_dict: dict = {
+            "image": _image_tensor_to_data_url(image),
+            "steps": steps,
+            "guidance_scale": guidance_scale,
+            "octree_resolution": octree_resolution,
+            "remove_background": remove_background,
+            "texture": texture,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction(
+            "tencent/hunyuan3d-2",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        url = _first_output_url(pred)
+        return IO.NodeOutput(url)
+
+
+# =============================================================================
+# Node: Remove background (851-labs/background-remover)
+# =============================================================================
+
+
+class RemoveBackgroundRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RemoveBackgroundRemoteNode",
+            display_name="Remove Background (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "851-labs/background-remover — fast, clean alpha-matte "
+                "background removal. ~$0.001 per image, <2s. Output is a PNG "
+                "with transparent background (the alpha channel is collapsed "
+                "to RGB by Comfy's IMAGE type, so for true transparency use "
+                "the URL output downstream)."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="Image to remove the background from."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image):
+        input_dict = {"image": _image_tensor_to_data_url(image)}
+        pred = await _run_prediction("851-labs/background-remover", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Node: Restore an old photo (flux-kontext-apps/restore-image)
+# =============================================================================
+
+
+class RestorePhotoRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RestorePhotoRemoteNode",
+            display_name="Restore Photo (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "flux-kontext-apps/restore-image — restore old, damaged, or "
+                "faded photographs. Fixes scratches, fading, mild damage; can "
+                "also colorize black-and-white. ~$0.04 per image."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="Photo to restore."),
+                IO.String.Input("safety_tolerance", default="2", advanced=True,
+                                tooltip="Flux safety: 1 strict, 6 permissive."),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04}'),
+        )
+
+    @classmethod
+    async def execute(cls, image, safety_tolerance, output_format):
+        input_dict = {
+            "input_image": _image_tensor_to_data_url(image),
+            "safety_tolerance": int(safety_tolerance) if str(safety_tolerance).isdigit() else 2,
+            "output_format": output_format,
+        }
+        pred = await _run_prediction("flux-kontext-apps/restore-image", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Node: Fix faces in a photo (sczhou/codeformer)
+# =============================================================================
+
+
+class CodeformerRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="CodeformerRemoteNode",
+            display_name="Fix Faces · CodeFormer (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "sczhou/codeformer — face-specific restoration. Sharpens, "
+                "de-blurs, and reconstructs damaged or low-res faces while "
+                "leaving the rest of the photo intact. Great for old portraits, "
+                "low-res screenshots, AI-generated faces with artifacts. "
+                "~$0.005 per image."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="Image containing faces to restore."),
+                IO.Float.Input(
+                    "codeformer_fidelity",
+                    default=0.5, min=0.0, max=1.0, step=0.05,
+                    tooltip="0 = stronger restoration (more change), 1 = more faithful (subtle).",
+                ),
+                IO.Boolean.Input("background_enhance", default=True, advanced=True,
+                                 tooltip="Also enhance the non-face background with Real-ESRGAN."),
+                IO.Boolean.Input("face_upsample", default=True, advanced=True,
+                                 tooltip="Upsample faces for higher final resolution."),
+                IO.Int.Input("upscale", default=2, min=1, max=4, step=1, advanced=True,
+                             tooltip="Final upscale factor relative to input."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image, codeformer_fidelity, background_enhance,
+                      face_upsample, upscale):
+        input_dict = {
+            "image": _image_tensor_to_data_url(image),
+            "codeformer_fidelity": codeformer_fidelity,
+            "background_enhance": background_enhance,
+            "face_upsample": face_upsample,
+            "upscale": upscale,
+        }
+        pred = await _run_prediction("sczhou/codeformer", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Node: Describe an image (lucataco/moondream2)
+# =============================================================================
+
+
+class DescribeImageRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="DescribeImageRemoteNode",
+            display_name="Describe Image · Moondream 2 (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "lucataco/moondream2 — small, fast vision-language model. "
+                "Answer any question about an image, generate captions, "
+                "describe objects, count things. ~$0.001 per query. Output is "
+                "plain text — pair with a Text node for downstream use."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="Image to describe."),
+                IO.String.Input(
+                    "prompt", multiline=True,
+                    default="Describe this image in detail.",
+                    tooltip="What to ask. e.g. 'What color is the car?' or 'Count the people.'",
+                ),
+            ],
+            outputs=[IO.String.Output(display_name="description")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, image, prompt):
+        input_dict = {
+            "image": _image_tensor_to_data_url(image),
+            "prompt": prompt,
+        }
+        pred = await _run_prediction("lucataco/moondream2", input_dict)
+        out = pred.get("output")
+        # moondream2 sometimes returns a list of tokens, sometimes a single string.
+        if isinstance(out, list):
+            text = "".join(str(x) for x in out)
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = str(out or "")
+        return IO.NodeOutput(text.strip())
+
+
+# =============================================================================
+# Node: Sync lips to audio (sync/lipsync-2-pro)
+# =============================================================================
+
+
+class LipsyncRemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="LipsyncRemoteNode",
+            display_name="Lipsync · sync.so 2-pro (Replicate)",
+            category="api node/video/Replicate",
+            description=(
+                "sync/lipsync-2-pro — drive any face's lips to match an audio "
+                "track. Feed a source video (or image for talking-portrait), "
+                "an audio clip, and get a lip-synced video out. ~$1.00 per "
+                "30s of output. Best-in-class quality."
+            ),
+            inputs=[
+                IO.String.Input(
+                    "video_url", default="",
+                    tooltip="URL of a source video showing the face. Public URL or data URL.",
+                ),
+                IO.Audio.Input("audio", tooltip="Audio track to sync the lips to."),
+                IO.Combo.Input(
+                    "sync_mode",
+                    options=["loop", "bounce", "cut_off", "silence", "remap"],
+                    default="cut_off",
+                    advanced=True,
+                    tooltip="How to handle audio shorter/longer than the video.",
+                ),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":1.00,"format":{"approximate":true,"suffix":"/30s"}}'),
+        )
+
+    @classmethod
+    async def execute(cls, video_url, audio, sync_mode):
+        # Encode audio dict → WAV data URL (same shape as Whisper does).
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+
+        if not video_url:
+            raise RuntimeError(
+                "video_url is required. Paste a public URL to the source video "
+                "(or upload it via your asset library and use that URL)."
+            )
+
+        input_dict = {
+            "video": video_url,
+            "audio": audio_url,
+            "sync_mode": sync_mode,
+        }
+        pred = await _run_prediction(
+            "sync/lipsync-2-pro",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# USE-CASE NODES
+# =============================================================================
+#
+# Single nodes per use-case with a Model dropdown inside. Shared inputs sit
+# at the top; model-specific fields live under the advanced fold and are
+# tagged in their tooltips with the model(s) they apply to. `execute()`
+# dispatches to the right Replicate model based on the `model` combo.
+#
+# The per-model classes above stay registered for workflow back-compat but
+# are deprecated — the Generators panel hides them via its DENY list.
+
+# ---- shared helpers --------------------------------------------------------
+
+def _maybe(d: dict, key: str, value, *, default_to_drop=None):
+    """Set d[key] = value, but skip if value is the default sentinel."""
+    if value == default_to_drop:
+        return
+    d[key] = value
+
+
+# =============================================================================
+# Use case: Generate an image
+# =============================================================================
+
+_IMAGE_GEN_MODELS = ["Flux 1.1 Pro", "Ideogram V3 Turbo"]
+_IMAGE_GEN_ASPECT_RATIOS = sorted(set(
+    _FLUX_PRO_ASPECT_RATIOS + _IDEOGRAM_ASPECT_RATIOS
+), key=lambda a: (a != "1:1", a))
+
+
+class GenerateImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateImageNode",
+            display_name="Generate an image",
+            category="api node/image/Replicate",
+            description=(
+                "Single entry point for image generation. Pick a model in the "
+                "Model dropdown — shared inputs above, model-specific tuning "
+                "in Advanced. ~$0.03–$0.04 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_IMAGE_GEN_MODELS, default="Flux 1.1 Pro",
+                               tooltip="Flux 1.1 Pro = top general quality. Ideogram V3 Turbo = best typography."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="What to generate."),
+                IO.Combo.Input("aspect_ratio", options=_IMAGE_GEN_ASPECT_RATIOS, default="1:1"),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+                # --- Advanced: model-specific tuning -------------------------
+                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True,
+                             tooltip="(Flux only) 1 strict, 6 permissive."),
+                IO.Boolean.Input("prompt_upsampling", default=False, advanced=True,
+                                 tooltip="(Flux only) Let the model rewrite your prompt."),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+                IO.Combo.Input("style_type", options=_IDEOGRAM_STYLES, default="None", advanced=True,
+                               tooltip="(Ideogram only) Override style; 'None' lets the model decide."),
+                IO.String.Input("magic_prompt", default="Auto", advanced=True,
+                                tooltip="(Ideogram only) Auto / On / Off — Ideogram-side prompt expansion."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.03,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, prompt, aspect_ratio, seed,
+                      safety_tolerance, prompt_upsampling, output_format,
+                      style_type, magic_prompt):
+        if model == "Flux 1.1 Pro":
+            # Flux Pro doesn't accept all the same ratios; fall back to 1:1 for
+            # ratios it doesn't support.
+            ar = aspect_ratio if aspect_ratio in _FLUX_PRO_ASPECT_RATIOS else "1:1"
+            input_dict = {
+                "prompt": prompt,
+                "aspect_ratio": ar,
+                "safety_tolerance": safety_tolerance,
+                "prompt_upsampling": prompt_upsampling,
+                "output_format": output_format,
+                "output_quality": 95,
+            }
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("black-forest-labs/flux-1.1-pro", input_dict)
+        elif model == "Ideogram V3 Turbo":
+            ar = aspect_ratio if aspect_ratio in _IDEOGRAM_ASPECT_RATIOS else "1:1"
+            input_dict = {
+                "prompt": prompt,
+                "aspect_ratio": ar,
+                "magic_prompt_option": magic_prompt,
+            }
+            if style_type and style_type != "None":
+                input_dict["style_type"] = style_type
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("ideogram-ai/ideogram-v3-turbo", input_dict)
+        else:
+            raise RuntimeError(f"unknown model: {model}")
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Edit an image
+# =============================================================================
+
+_IMAGE_EDIT_MODELS = ["Flux Kontext Pro"]
+
+
+class EditImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="EditImageNode",
+            display_name="Edit an image",
+            category="api node/image/Replicate",
+            description=(
+                "Image editing via natural language — 'remove the background', "
+                "'make her hair blue', 'add a cat'. ~$0.04 per edit."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_IMAGE_EDIT_MODELS, default="Flux Kontext Pro"),
+                IO.Image.Input("input_image", tooltip="Source image to edit."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Edit instruction in natural language."),
+                IO.Combo.Input("aspect_ratio", options=_FLUX_KONTEXT_ASPECT_RATIOS,
+                               default="match_input_image"),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True),
+                IO.Boolean.Input("prompt_upsampling", default=False, advanced=True),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, input_image, prompt, aspect_ratio, seed,
+                      safety_tolerance, prompt_upsampling, output_format):
+        input_dict = {
+            "prompt": prompt,
+            "input_image": _image_tensor_to_data_url(input_image),
+            "aspect_ratio": aspect_ratio,
+            "safety_tolerance": safety_tolerance,
+            "prompt_upsampling": prompt_upsampling,
+            "output_format": output_format,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("black-forest-labs/flux-kontext-pro", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Generate a video
+# =============================================================================
+
+_VIDEO_GEN_MODELS = ["Seedance 2.0", "Veo 3", "Kling 2.1"]
+_VIDEO_GEN_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+
+
+class GenerateVideoNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateVideoNode",
+            display_name="Generate a video",
+            category="api node/video/Replicate",
+            description=(
+                "Single entry point for text/image-to-video. Seedance 2.0 = "
+                "top quality. Veo 3 = with synced audio (pricey). Kling 2.1 = "
+                "cheap workhorse. Cost varies from ~$0.30 to ~$6 per clip."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_VIDEO_GEN_MODELS, default="Seedance 2.0"),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe the shot. Include camera moves, mood, lighting."),
+                IO.Image.Input("image", optional=True,
+                               tooltip="Optional first frame — turns this into image-to-video."),
+                IO.Combo.Input("aspect_ratio", options=_VIDEO_GEN_ASPECT_RATIOS, default="16:9",
+                               tooltip="Ignored when image is provided. Veo 3 only supports 16:9 / 9:16."),
+                IO.Combo.Input("duration", options=["5", "10"], default="5",
+                               tooltip="Seconds. (Veo 3 is fixed at 8s and ignores this.)"),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+                # --- Advanced: model-specific tuning -------------------------
+                IO.Combo.Input("resolution", options=_SEEDANCE_RESOLUTIONS, default="1080p", advanced=True,
+                               tooltip="(Seedance only) Higher = sharper, more expensive."),
+                IO.Boolean.Input("camera_fixed", default=False, advanced=True,
+                                 tooltip="(Seedance only) Lock the camera."),
+                IO.String.Input("negative_prompt", default="", advanced=True,
+                                tooltip="(Veo 3 / Kling) Concepts to avoid."),
+                IO.Float.Input("cfg_scale", default=0.5, min=0.0, max=1.0, step=0.05, advanced=True,
+                               tooltip="(Kling only) Prompt adherence vs. naturalness."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, prompt, image, aspect_ratio, duration, seed,
+                      resolution, camera_fixed, negative_prompt, cfg_scale):
+        if model == "Seedance 2.0":
+            input_dict = {
+                "prompt": prompt,
+                "resolution": resolution,
+                "duration": int(duration),
+                "camera_fixed": camera_fixed,
+                "fps": 24,
+            }
+            if image is not None:
+                input_dict["image"] = _image_tensor_to_data_url(image)
+            else:
+                input_dict["aspect_ratio"] = aspect_ratio
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("bytedance/seedance-2.0", input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+        elif model == "Veo 3":
+            ar = aspect_ratio if aspect_ratio in _VEO3_ASPECT_RATIOS else "16:9"
+            input_dict = {"prompt": prompt, "aspect_ratio": ar}
+            if image is not None:
+                input_dict["image"] = _image_tensor_to_data_url(image)
+            if negative_prompt:
+                input_dict["negative_prompt"] = negative_prompt
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("google/veo-3", input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+        elif model == "Kling 2.1":
+            input_dict = {
+                "prompt": prompt,
+                "duration": int(duration),
+                "cfg_scale": cfg_scale,
+            }
+            if negative_prompt:
+                input_dict["negative_prompt"] = negative_prompt
+            if image is not None:
+                input_dict["start_image"] = _image_tensor_to_data_url(image)
+            else:
+                input_dict["aspect_ratio"] = aspect_ratio if aspect_ratio in ("16:9", "9:16", "1:1") else "16:9"
+            pred = await _run_prediction("kwaivgi/kling-v2.1", input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+        else:
+            raise RuntimeError(f"unknown model: {model}")
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# Use case: Upscale an image
+# =============================================================================
+
+
+class UpscaleImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="UpscaleImageNode",
+            display_name="Upscale an image",
+            category="api node/image/Replicate",
+            description=(
+                "Detail-enhancing upscale via Clarity. Adds plausible detail; "
+                "not pixel-perfect. ~$0.05–0.20 per image depending on input."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Clarity"], default="Clarity"),
+                IO.Image.Input("image"),
+                IO.String.Input("prompt", multiline=True,
+                                default="masterpiece, best quality, highres",
+                                tooltip="(Clarity) Style prompt — guides invented detail."),
+                IO.Float.Input("scale_factor", default=2.0, min=1.0, max=10.0, step=0.5,
+                               tooltip="Output is scale_factor × input dimensions."),
+                IO.Float.Input("creativity", default=0.35, min=0.0, max=1.0, step=0.05, advanced=True,
+                               tooltip="(Clarity) 0 = preserve, 1 = reinvent. 0.3–0.4 is the sweet spot."),
+                IO.Float.Input("resemblance", default=0.6, min=0.0, max=3.0, step=0.05, advanced=True,
+                               tooltip="(Clarity) Higher = closer to input."),
+                IO.String.Input("negative_prompt", default="(worst quality, low quality, normal quality:2)",
+                                advanced=True),
+                IO.Int.Input("num_inference_steps", default=18, min=10, max=50, advanced=True),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.10,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt, scale_factor, creativity,
+                      resemblance, negative_prompt, num_inference_steps, seed):
+        input_dict = {
+            "image": _image_tensor_to_data_url(image),
+            "prompt": prompt,
+            "scale_factor": scale_factor,
+            "creativity": creativity,
+            "resemblance": resemblance,
+            "negative_prompt": negative_prompt,
+            "num_inference_steps": num_inference_steps,
+            "output_format": "png",
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("philz1337x/clarity-upscaler", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Remove background
+# =============================================================================
+
+
+class RemoveBackgroundNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RemoveBackgroundNode",
+            display_name="Remove background",
+            category="api node/image/Replicate",
+            description="Fast alpha-matte background removal. ~$0.001 per image.",
+            inputs=[
+                IO.Combo.Input("model", options=["851-labs/bg-remover"], default="851-labs/bg-remover"),
+                IO.Image.Input("image"),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image):
+        pred = await _run_prediction("851-labs/background-remover",
+                                     {"image": _image_tensor_to_data_url(image)})
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Restore an old photo
+# =============================================================================
+
+
+class RestorePhotoNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RestorePhotoNode",
+            display_name="Restore an old photo",
+            category="api node/image/Replicate",
+            description="Restore old, damaged, faded photos. Can colorize B&W. ~$0.04 per image.",
+            inputs=[
+                IO.Combo.Input("model", options=["Flux Kontext · Restore"], default="Flux Kontext · Restore"),
+                IO.Image.Input("image"),
+                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, safety_tolerance, output_format):
+        input_dict = {
+            "input_image": _image_tensor_to_data_url(image),
+            "safety_tolerance": safety_tolerance,
+            "output_format": output_format,
+        }
+        pred = await _run_prediction("flux-kontext-apps/restore-image", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Fix faces in a photo
+# =============================================================================
+
+
+class FixFacesNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="FixFacesNode",
+            display_name="Fix faces in a photo",
+            category="api node/image/Replicate",
+            description="Face-specific restoration — sharpens, de-blurs, reconstructs faces. ~$0.005 per image.",
+            inputs=[
+                IO.Combo.Input("model", options=["CodeFormer"], default="CodeFormer"),
+                IO.Image.Input("image"),
+                IO.Float.Input("codeformer_fidelity", default=0.5, min=0.0, max=1.0, step=0.05,
+                               tooltip="0 = stronger restoration, 1 = more faithful."),
+                IO.Boolean.Input("background_enhance", default=True, advanced=True),
+                IO.Boolean.Input("face_upsample", default=True, advanced=True),
+                IO.Int.Input("upscale", default=2, min=1, max=4, step=1, advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, codeformer_fidelity, background_enhance,
+                      face_upsample, upscale):
+        input_dict = {
+            "image": _image_tensor_to_data_url(image),
+            "codeformer_fidelity": codeformer_fidelity,
+            "background_enhance": background_enhance,
+            "face_upsample": face_upsample,
+            "upscale": upscale,
+        }
+        pred = await _run_prediction("sczhou/codeformer", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Describe an image
+# =============================================================================
+
+
+class DescribeImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="DescribeImageNode",
+            display_name="Describe an image",
+            category="api node/image/Replicate",
+            description="Vision-language model for captions, Q&A, counting. Output is text. ~$0.001 per query.",
+            inputs=[
+                IO.Combo.Input("model", options=["Moondream 2"], default="Moondream 2"),
+                IO.Image.Input("image"),
+                IO.String.Input("prompt", multiline=True,
+                                default="Describe this image in detail.",
+                                tooltip="What to ask."),
+            ],
+            outputs=[IO.String.Output(display_name="description")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt):
+        input_dict = {"image": _image_tensor_to_data_url(image), "prompt": prompt}
+        pred = await _run_prediction("lucataco/moondream2", input_dict)
+        out = pred.get("output")
+        if isinstance(out, list):
+            text = "".join(str(x) for x in out)
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = str(out or "")
+        return IO.NodeOutput(text.strip())
+
+
+# =============================================================================
+# Use case: Sync lips to audio
+# =============================================================================
+
+
+class LipsyncNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="LipsyncNode",
+            display_name="Sync lips to audio",
+            category="api node/video/Replicate",
+            description=(
+                "Drive a face's lips to match an audio track. Requires a "
+                "public URL to the source video + an audio track. ~$1 per 30s."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["sync.so 2-pro"], default="sync.so 2-pro"),
+                IO.String.Input("video_url", default="",
+                                tooltip="URL of the source video. Public URL or data URL."),
+                IO.Audio.Input("audio"),
+                IO.Combo.Input("sync_mode",
+                               options=["loop", "bounce", "cut_off", "silence", "remap"],
+                               default="cut_off", advanced=True),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":1.00,"format":{"approximate":true,"suffix":"/30s"}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, video_url, audio, sync_mode):
+        if not video_url:
+            raise RuntimeError("video_url is required (paste a public URL to the source video).")
+        # Same audio-to-WAV encoding as Whisper / old Lipsync.
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+        pred = await _run_prediction(
+            "sync/lipsync-2-pro",
+            {"video": video_url, "audio": audio_url, "sync_mode": sync_mode},
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# Use case: Transcribe audio
+# =============================================================================
+
+
+class TranscribeAudioNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="TranscribeAudioNode",
+            display_name="Transcribe audio",
+            category="api node/audio/Replicate",
+            description="Transcribe audio to text. ~$0.005 per minute.",
+            inputs=[
+                IO.Combo.Input("model", options=["Whisper"], default="Whisper"),
+                IO.Audio.Input("audio"),
+                IO.Combo.Input("language",
+                               options=["auto","en","es","fr","de","it","pt","ja","ko","zh","ru","ar","hi"],
+                               default="auto"),
+                IO.Boolean.Input("translate", default=False, advanced=True,
+                                 tooltip="Translate to English instead of transcribing in original language."),
+            ],
+            outputs=[IO.String.Output(display_name="transcript")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"suffix":"/min","approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, audio, language, translate):
+        # Reuse the original WhisperRemoteNode's logic by calling its execute.
+        return await WhisperRemoteNode.execute(audio=audio, language=language, translate=translate)
+
+
+# =============================================================================
+# Use case: Generate music
+# =============================================================================
+
+
+class GenerateMusicNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateMusicNode",
+            display_name="Generate music",
+            category="api node/audio/Replicate",
+            description="Text-to-music. ~$0.01–0.05 depending on length.",
+            inputs=[
+                IO.Combo.Input("model", options=["MusicGen"], default="MusicGen"),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe the music. e.g. 'lo-fi hip-hop, mellow piano, 80 bpm'."),
+                IO.Int.Input("duration", default=8, min=1, max=30, step=1, tooltip="Seconds."),
+                IO.Combo.Input("model_version",
+                               options=["stereo-melody-large","stereo-large","melody-large","large"],
+                               default="stereo-melody-large", advanced=True),
+                IO.Float.Input("temperature", default=1.0, min=0.0, max=2.0, step=0.05, advanced=True),
+                IO.Float.Input("top_p", default=0.0, min=0.0, max=1.0, step=0.05, advanced=True),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF),
+            ],
+            outputs=[IO.Audio.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.02,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, prompt, duration, model_version, temperature, top_p, seed):
+        return await MusicGenRemoteNode.execute(
+            prompt=prompt, duration=duration, model_version=model_version,
+            temperature=temperature, top_p=top_p, seed=seed,
+        )
+
+
+# =============================================================================
+# Use case: Generate speech
+# =============================================================================
+
+
+class GenerateSpeechNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateSpeechNode",
+            display_name="Generate speech",
+            category="api node/audio/Replicate",
+            description="Natural TTS with emotion + voice control. ~$0.30 per 1K chars.",
+            inputs=[
+                IO.Combo.Input("model", options=["MiniMax Speech-02 HD"], default="MiniMax Speech-02 HD"),
+                IO.String.Input("text", multiline=True, default="", tooltip="What to say."),
+                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman"),
+                IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
+                IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05),
+                IO.Float.Input("volume", default=1.0, min=0.1, max=10.0, step=0.1, advanced=True),
+                IO.Int.Input("pitch", default=0, min=-12, max=12, advanced=True),
+                IO.Combo.Input("language_boost",
+                               options=["auto","English","Spanish","French","German","Italian",
+                                        "Portuguese","Japanese","Korean","Chinese","Arabic"],
+                               default="auto", advanced=True),
+            ],
+            outputs=[IO.Audio.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"suffix":"/1K chars","approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, text, voice_id, emotion, speed, volume, pitch, language_boost):
+        return await MiniMaxSpeechRemoteNode.execute(
+            text=text, voice_id=voice_id, emotion=emotion, speed=speed,
+            volume=volume, pitch=pitch, language_boost=language_boost,
+        )
+
+
+# =============================================================================
+# Use case: Generate a 3D model
+# =============================================================================
+
+
+class Generate3DNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="Generate3DNode",
+            display_name="Generate a 3D model",
+            category="api node/3d/Replicate",
+            description="Image-to-3D. Output is a STRING URL to a textured GLB mesh. ~$0.30 per asset.",
+            inputs=[
+                IO.Combo.Input("model", options=["Hunyuan3D 2"], default="Hunyuan3D 2"),
+                IO.Image.Input("image"),
+                IO.Int.Input("steps", default=50, min=20, max=100, step=5),
+                IO.Float.Input("guidance_scale", default=5.5, min=1.0, max=20.0, step=0.5, advanced=True),
+                IO.Int.Input("octree_resolution", default=256, min=128, max=512, step=64, advanced=True),
+                IO.Boolean.Input("remove_background", default=True),
+                IO.Boolean.Input("texture", default=True),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF),
+            ],
+            outputs=[IO.String.Output(display_name="glb_url")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, image, steps, guidance_scale, octree_resolution,
+                      remove_background, texture, seed):
+        return await Hunyuan3DRemoteNode.execute(
+            image=image, steps=steps, guidance_scale=guidance_scale,
+            octree_resolution=octree_resolution, remove_background=remove_background,
+            texture=texture, seed=seed,
+        )
+
+
+# =============================================================================
+# Use case: Sketch to image
+# =============================================================================
+
+
+class SketchToImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="SketchToImageNode",
+            display_name="Sketch to image",
+            category="api node/image/Replicate",
+            description=(
+                "Turn a rough sketch into a finished image. Google Nano Banana "
+                "(Gemini 2.5 Flash Image) — top of Replicate's sketch-to-image "
+                "collection; very good at preserving composition from line art."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Nano Banana"], default="Nano Banana"),
+                IO.Image.Input("image", tooltip="Sketch or rough drawing."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe what the finished image should look like."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt):
+        input_dict = {
+            "prompt": prompt,
+            "image_input": [_image_tensor_to_data_url(image)],
+        }
+        pred = await _run_prediction("google/nano-banana", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Extract text from image (OCR)
+# =============================================================================
+
+
+class ExtractTextNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ExtractTextNode",
+            display_name="Extract text from image",
+            category="api node/image/Replicate",
+            description=(
+                "OCR — extract text from a photo, screenshot, or document. "
+                "ByteDance Dolphin model. ~$0.005 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["ByteDance Dolphin"], default="ByteDance Dolphin"),
+                IO.Image.Input("image"),
+            ],
+            outputs=[IO.String.Output(display_name="text")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, image):
+        # bytedance/dolphin: real field is `file` (not `image`), and the
+        # output is either markdown or json depending on output_format.
+        input_dict = {
+            "file": _image_tensor_to_data_url(image),
+            "output_format": "markdown_content",
+        }
+        pred = await _run_prediction("bytedance/dolphin", input_dict)
+        out = pred.get("output")
+        if isinstance(out, list):
+            text = "\n".join(str(x) for x in out)
+        elif isinstance(out, dict):
+            text = str(out.get("text") or out.get("markdown") or out.get("transcription") or "")
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = ""
+        return IO.NodeOutput(text.strip())
+
+
+# =============================================================================
+# Use case: Swap a face
+# =============================================================================
+
+
+# Removed: Replicate FaceSwapNode. ComfyNext ships a faster local face-swap
+# node (`FaceSwap` in comfy_extras/nodes_face.py) backed by InsightFace +
+# inswapper_128.onnx. It runs on the user's GPU, handles video batches with
+# identity tracking, and is free after the one-time model download. The
+# Replicate cloud version was redundant and slower.
+
+
+# =============================================================================
+# Use case: Find objects in an image (open-vocabulary detection)
+# =============================================================================
+
+
+class FindObjectsNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="FindObjectsNode",
+            display_name="Find objects in an image",
+            category="api node/image/Replicate",
+            description=(
+                "Open-vocabulary object detection — name what you want to find "
+                "in plain English ('car, person, traffic light') and get back "
+                "bounding boxes. Powered by YOLO-World. ~$0.005 per image. "
+                "Output is JSON: [{label, confidence, x, y, width, height}, ...]."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["YOLO-World"], default="YOLO-World"),
+                IO.Image.Input("image"),
+                IO.String.Input("query", multiline=True, default="person, car, dog",
+                                tooltip="Comma-separated list of things to look for."),
+                IO.Float.Input("confidence", default=0.25, min=0.0, max=1.0, step=0.05, advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="detections_json")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, image, query, confidence):
+        import json as _json
+        # YOLO-World fields: `input_media`, `class_names`, `score_thr`.
+        input_dict = {
+            "input_media": _image_tensor_to_data_url(image),
+            "class_names": query,
+            "score_thr":   confidence,
+        }
+        pred = await _run_prediction("zsxkib/yolo-world", input_dict)
+        out = pred.get("output")
+        # YOLO-World typically returns a dict with detections array or an annotated image URL.
+        # Surface the raw structure as JSON so downstream nodes can parse it.
+        return IO.NodeOutput(_json.dumps(out) if not isinstance(out, str) else out)
+
+
+# =============================================================================
+# Use case: Generate a consistent face
+# =============================================================================
+
+
+class ConsistentFaceNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ConsistentFaceNode",
+            display_name="Generate a consistent face",
+            category="api node/image/Replicate",
+            description=(
+                "Generate new images of the same character/face across scenes. "
+                "Feed a reference face and a new prompt — Ideogram Character "
+                "keeps identity stable while changing pose, scene, outfit. "
+                "~$0.08 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Ideogram Character"], default="Ideogram Character"),
+                IO.Image.Input("reference_image", tooltip="A clean front-on photo of the character."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="New scene/pose/outfit — e.g. 'in a sunny park, holding a coffee'."),
+                IO.Combo.Input(
+                    "aspect_ratio",
+                    options=["1:1", "16:9", "9:16", "4:3", "3:4", "16:10", "10:16"],
+                    default="1:1",
+                ),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.08,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, reference_image, prompt, aspect_ratio, seed):
+        input_dict = {
+            "prompt": prompt,
+            "character_reference_image": _image_tensor_to_data_url(reference_image),
+            "aspect_ratio": aspect_ratio,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("ideogram-ai/ideogram-character", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Generate an emoji
+# =============================================================================
+
+
+_KONTEXT_EMOJI_LORA = "https://huggingface.co/starsfriday/Kontext-Emoji-LoRA"
+_KONTEXT_EMOJI_TRIGGER = "Turn this image into the emoji style of Apple iOS system"
+_KONTEXT_ASPECT_RATIOS = [
+    "match_input_image", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3",
+]
+
+
+class GenerateEmojiNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateEmojiNode",
+            display_name="Generate an emoji",
+            category="api node/image/Replicate",
+            description=(
+                "Image-to-emoji via Flux Kontext Dev + starsfriday's Kontext "
+                "Emoji LoRA. Feed a portrait or subject photo and get an "
+                "iOS-style emoji of it. The LoRA was trained for human "
+                "figures and works best with clean, well-lit subjects. "
+                "~$0.04 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Flux Kontext Dev + Emoji LoRA"],
+                               default="Flux Kontext Dev + Emoji LoRA"),
+                IO.Image.Input("input_image",
+                               tooltip="Photo to turn into an emoji. Faces and clean subjects work best."),
+                IO.String.Input("prompt", multiline=True, default=_KONTEXT_EMOJI_TRIGGER,
+                                tooltip="Edit instruction. The default is the LoRA's trigger; "
+                                        "you can tweak it (e.g., 'sad version, iOS emoji style')."),
+                IO.Combo.Input("aspect_ratio", options=_KONTEXT_ASPECT_RATIOS,
+                               default="match_input_image"),
+                IO.Float.Input("lora_strength", default=1.0, min=0.0, max=2.0, step=0.05,
+                               tooltip="How strongly to apply the emoji LoRA. "
+                                       "1.0 = trained level; lower preserves more of the original."),
+                IO.Float.Input("guidance", default=2.5, min=0.0, max=10.0, step=0.5, advanced=True,
+                               tooltip="Prompt adherence. Kontext defaults to ~2.5 (lower than Flux Dev)."),
+                IO.Int.Input("num_inference_steps", default=30, min=10, max=50, step=5, advanced=True),
+                IO.Combo.Input("output_format", options=["png", "jpg", "webp"], default="png", advanced=True),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, input_image, prompt, aspect_ratio, lora_strength,
+                      guidance, num_inference_steps, output_format, seed):
+        input_dict = {
+            "input_image":   _image_tensor_to_data_url(input_image),
+            "prompt":        (prompt or _KONTEXT_EMOJI_TRIGGER).strip(),
+            "aspect_ratio":  aspect_ratio,
+            "lora_weights":  _KONTEXT_EMOJI_LORA,
+            "lora_strength": lora_strength,
+            "guidance":      guidance,
+            "num_inference_steps": num_inference_steps,
+            "output_format": output_format,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("black-forest-labs/flux-kontext-dev-lora", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Generate an anime image
+# =============================================================================
+
+
+class GenerateAnimeNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateAnimeNode",
+            display_name="Generate an anime image",
+            category="api node/image/Replicate",
+            description=(
+                "Anime-style image gen — Animagine XL. Stronger for anime "
+                "aesthetics than general-purpose models. ~$0.01 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Animagine XL"], default="Animagine XL"),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Describe the scene/character. Booru tags work well."),
+                IO.String.Input("negative_prompt", default="lowres, bad anatomy, bad hands, text, error",
+                                advanced=True),
+                IO.Int.Input("width",  default=1024, min=512, max=1536, step=64),
+                IO.Int.Input("height", default=1024, min=512, max=1536, step=64),
+                IO.Int.Input("num_inference_steps", default=28, min=10, max=50, advanced=True),
+                IO.Float.Input("guidance_scale", default=7.0, min=1.0, max=20.0, step=0.5, advanced=True),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.01,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, prompt, negative_prompt, width, height,
+                      num_inference_steps, guidance_scale, seed):
+        input_dict = {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "width": width,
+            "height": height,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("charlesmccarthy/animagine-xl", input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Enhance a video (upscale / restore)
+# =============================================================================
+
+
+class EnhanceVideoNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="EnhanceVideoNode",
+            display_name="Enhance a video",
+            category="api node/video/Replicate",
+            description=(
+                "Upscale + denoise + sharpen video. Topaz Video Upscale is "
+                "industry-grade. ~$0.50–$2.00 per clip depending on length."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Topaz Video Upscale"], default="Topaz Video Upscale"),
+                IO.String.Input("video_url", default="",
+                                tooltip="Public URL of the source video (or data URL)."),
+                IO.Combo.Input("target_resolution",
+                               options=["720p", "1080p", "4k"],
+                               default="1080p"),
+                IO.Combo.Input("fps", options=["original", "30", "60"], default="original", advanced=True,
+                               tooltip="Resample frame rate. 'original' keeps source fps (Topaz default 60)."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":1.00,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, video_url, target_resolution, fps):
+        if not video_url:
+            raise RuntimeError("video_url is required.")
+        input_dict = {
+            "video": video_url,
+            "target_resolution": target_resolution,
+        }
+        if fps != "original":
+            input_dict["target_fps"] = int(fps)
+        pred = await _run_prediction(
+            "topazlabs/video-upscale",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
+# Use case: Describe a video
+# =============================================================================
+
+
+class DescribeVideoNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="DescribeVideoNode",
+            display_name="Describe a video",
+            category="api node/video/Replicate",
+            description=(
+                "Send a video and a question, get back text. Powered by "
+                "Google Gemini 2.5 Flash via Replicate's proxy. Useful for "
+                "captions, summaries, content analysis. ~$0.01 per request."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Gemini 2.5 Flash"], default="Gemini 2.5 Flash"),
+                IO.String.Input("video_url", default="",
+                                tooltip="Public URL of the video to describe."),
+                IO.String.Input("prompt", multiline=True,
+                                default="Describe this video in detail.",
+                                tooltip="What to ask. e.g. 'Summarize in one sentence.'"),
+            ],
+            outputs=[IO.String.Output(display_name="description")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.01,"format":{"approximate":true}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, video_url, prompt):
+        if not video_url:
+            raise RuntimeError("video_url is required.")
+        # google/gemini-2.5-flash accepts media as `videos: [url]` (array).
+        input_dict = {
+            "prompt": prompt,
+            "videos": [video_url],
+        }
+        pred = await _run_prediction(
+            "google/gemini-2.5-flash",
+            input_dict,
+            poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        out = pred.get("output")
+        if isinstance(out, list):
+            text = "".join(str(x) for x in out)
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = str(out or "")
+        return IO.NodeOutput(text.strip())
+
+
+# =============================================================================
+# Use case: Clone a singing voice (RVC)
+# =============================================================================
+
+
+_RVC_PRESET_VOICES = [
+    "Squidward", "MrKrabs", "Plankton", "Drake", "Vader", "Trump", "Biden",
+    "Obama", "Guitar", "Voilin", "CUSTOM",
+]
+
+
+class CloneSingingVoiceNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="CloneSingingVoiceNode",
+            display_name="Clone a singing voice",
+            category="api node/audio/Replicate",
+            description=(
+                "Re-sing a song in a different voice using RVC (Retrieval-"
+                "based Voice Conversion). Pick a preset voice or paste a URL "
+                "to a custom .zip RVC model. ~$0.02 per minute."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Realistic Voice Cloning (RVC)"],
+                               default="Realistic Voice Cloning (RVC)"),
+                IO.Audio.Input("audio", tooltip="Song to re-sing (clean vocals preferred)."),
+                IO.Combo.Input("rvc_model", options=_RVC_PRESET_VOICES, default="Squidward",
+                               tooltip="Pre-trained voice. Choose CUSTOM to use a downloaded model."),
+                IO.String.Input("custom_rvc_model_url", default="", advanced=True,
+                                tooltip="URL to a .zip RVC model. Only used when rvc_model='CUSTOM'."),
+                IO.Combo.Input("pitch_change",
+                               options=["no-change", "male-to-female", "female-to-male"],
+                               default="no-change",
+                               tooltip="Octave shift preset based on the original singer's gender."),
+                IO.Int.Input("pitch_shift_semitones", default=0, min=-12, max=12, advanced=True,
+                             tooltip="Additional semitone shift on top of the gender preset."),
+                IO.Combo.Input("pitch_detection_algorithm",
+                               options=["rmvpe", "mangio-crepe"],
+                               default="rmvpe", advanced=True),
+                IO.Combo.Input("output_format", options=["mp3", "wav"], default="wav", advanced=True),
+            ],
+            outputs=[IO.Audio.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.02,"format":{"approximate":true,"suffix":"/min"}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, audio, rvc_model, custom_rvc_model_url,
+                      pitch_change, pitch_shift_semitones, pitch_detection_algorithm,
+                      output_format):
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+
+        input_dict = {
+            "song_input":                audio_url,
+            "rvc_model":                 rvc_model,
+            "pitch_change":              pitch_change,
+            "pitch_change_all":          float(pitch_shift_semitones),
+            "pitch_detection_algorithm": pitch_detection_algorithm,
+            "output_format":             output_format,
+        }
+        if rvc_model == "CUSTOM" and custom_rvc_model_url:
+            input_dict["custom_rvc_model_download_url"] = custom_rvc_model_url
+        pred = await _run_prediction("zsxkib/realistic-voice-cloning", input_dict)
+        audio_out = await _download_url_to_audio_dict(_first_output_url(pred))
+        return IO.NodeOutput(audio_out)
+
+
+# =============================================================================
+# Use case: Identify speakers in audio (diarization + transcription)
+# =============================================================================
+
+
+class IdentifySpeakersNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="IdentifySpeakersNode",
+            display_name="Identify speakers in audio",
+            category="api node/audio/Replicate",
+            description=(
+                "Transcribe + label who said what. Returns a JSON array of "
+                "segments: [{start, end, speaker, text}]. Useful for podcasts, "
+                "interviews, meetings. ~$0.05 per audio minute."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Whisper Diarization"], default="Whisper Diarization"),
+                IO.Audio.Input("audio"),
+                IO.Int.Input("num_speakers", default=0, min=0, max=20, step=1,
+                             tooltip="0 = auto-detect. Set explicitly if you know."),
+                IO.Combo.Input("language",
+                               options=["auto","en","es","fr","de","it","pt","ja","ko","zh","ru","ar","hi"],
+                               default="auto", advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="segments_json")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true,"suffix":"/min"}}'),
+        is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, audio, num_speakers, language):
+        import json as _json
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+
+        input_dict = {"file": audio_url}
+        if num_speakers > 0:
+            input_dict["num_speakers"] = num_speakers
+        if language and language != "auto":
+            input_dict["language"] = language
+        pred = await _run_prediction("thomasmol/whisper-diarization", input_dict)
+        out_payload = pred.get("output")
+        return IO.NodeOutput(_json.dumps(out_payload) if not isinstance(out_payload, str) else out_payload)
+
+
+# =============================================================================
+# Use case: Chat with an LLM
+# =============================================================================
+#
+# Multi-model node — pick a frontier LLM and get text out. Each provider
+# uses slightly different input field names so execute() dispatches per
+# model, normalizing the shared inputs (prompt, system, temperature) to
+# whatever Replicate's wrapper expects.
+
+_CHAT_LLM_MODELS = ["GPT-5", "Claude 4.5 Sonnet", "Gemini 3 Flash"]
+
+
+class ChatLLMNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ChatLLMNode",
+            display_name="Chat with an LLM",
+            category="api node/text/Replicate",
+            description=(
+                "Send a prompt to a frontier LLM via Replicate. GPT-5 = top "
+                "general quality. Claude 4.5 Sonnet = thoughtful long-form. "
+                "Gemini 3 Flash = fastest + cheapest. Output is plain text — "
+                "wire downstream as a prompt for image/video gen, or as final."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_CHAT_LLM_MODELS, default="Gemini 3 Flash",
+                               tooltip="GPT-5: top quality. Claude: long-form reasoning. Gemini Flash: fastest + cheapest."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="What to ask. Plain text — model-specific formatting handled internally."),
+                IO.String.Input("system_prompt", multiline=True, default="", advanced=True,
+                                tooltip="Optional system instruction. e.g. 'You are a concise copywriter.'"),
+                IO.Float.Input("temperature", default=1.0, min=0.0, max=2.0, step=0.05, advanced=True),
+                IO.Int.Input("max_tokens", default=1024, min=1, max=8192, step=64, advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="response")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, prompt, system_prompt, temperature, max_tokens):
+        if model == "GPT-5":
+            input_dict = {"prompt": prompt, "temperature": temperature, "max_completion_tokens": max_tokens}
+            if system_prompt: input_dict["system_prompt"] = system_prompt
+            slug = "openai/gpt-5"
+        elif model == "Claude 4.5 Sonnet":
+            input_dict = {"prompt": prompt, "temperature": temperature, "max_tokens": max_tokens}
+            if system_prompt: input_dict["system_prompt"] = system_prompt
+            slug = "anthropic/claude-4.5-sonnet"
+        elif model == "Gemini 3 Flash":
+            input_dict = {"prompt": prompt, "temperature": temperature, "max_output_tokens": max_tokens}
+            if system_prompt: input_dict["system_instruction"] = system_prompt
+            slug = "google/gemini-3-flash"
+        else:
+            raise RuntimeError(f"unknown model: {model}")
+        pred = await _run_prediction(slug, input_dict)
+        out = pred.get("output")
+        # LLMs typically stream tokens — Replicate gathers them into a list of strings.
+        if isinstance(out, list):
+            text = "".join(str(x) for x in out)
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = str(out or "")
+        return IO.NodeOutput(text.strip())
+
+
+# =============================================================================
+# Use case: Improve a prompt
+# =============================================================================
+#
+# Specialized prompt-engineering helper: takes the user's plain-English
+# image or video idea and rewrites it as a detailed prompt that image/video
+# models respond to better. Uses GPT-5-nano — small, cheap, fast.
+
+_IMPROVE_PROMPT_SYSTEM_BASE = (
+    "You are a prompt engineer for diffusion {kind} generation models. "
+    "Rewrite the user's idea into a concrete, vivid, descriptive {kind} prompt. "
+    "Include: subject, action, setting, lighting, camera/style, mood. "
+    "Keep it under 80 words. No preamble, no explanation — output ONLY the "
+    "improved prompt, nothing else."
+)
+
+
+class ImprovePromptNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ImprovePromptNode",
+            display_name="Improve a prompt",
+            category="api node/text/Replicate",
+            description=(
+                "Rewrite a rough idea into a detailed prompt that image/video "
+                "models respond to. Adds composition, lighting, style hints. "
+                "Uses GPT-5-nano (fast + cheap, ~$0.001/call)."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["GPT-5 nano"], default="GPT-5 nano"),
+                IO.String.Input("idea", multiline=True, default="",
+                                tooltip="Your rough idea, plain English. e.g. 'a cat on a skateboard'."),
+                IO.Combo.Input("target", options=["image", "video"], default="image",
+                               tooltip="Tunes the rewrite for image vs video output."),
+            ],
+            outputs=[IO.String.Output(display_name="improved_prompt")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, model, idea, target):
+        system = _IMPROVE_PROMPT_SYSTEM_BASE.format(kind=target)
+        input_dict = {
+            "prompt": idea,
+            "system_prompt": system,
+            "temperature": 0.7,
+            "max_completion_tokens": 200,
+        }
+        pred = await _run_prediction("openai/gpt-5-nano", input_dict)
+        out = pred.get("output")
+        if isinstance(out, list):
+            text = "".join(str(x) for x in out)
+        elif isinstance(out, str):
+            text = out
+        else:
+            text = str(out or "")
+        return IO.NodeOutput(text.strip())
+
+
 # ---------- Extension registration -----------------------------------------
 
 class ReplicateExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[IO.ComfyNode]]:
         return [
-            FluxLoRARemoteNode,
+            # ─── Use-case nodes (the user-facing surface) ───
+            # Image — generation
+            FluxLoRARemoteNode,         # Generate an image with your LoRA — kept separate
+            GenerateImageNode,          # Generate an image · Flux Pro / Ideogram
+            GenerateAnimeNode,          # Generate an anime image · Animagine XL
+            GenerateEmojiNode,          # Generate an emoji · Flux Kontext Emoji
+            ConsistentFaceNode,         # Generate a consistent face · Ideogram Character
+            SketchToImageNode,          # Sketch to image · Nano Banana
+            # Image — manipulation
+            EditImageNode,              # Edit an image · Flux Kontext
+            UpscaleImageNode,           # Upscale an image · Clarity
+            RemoveBackgroundNode,       # Remove background · 851-labs/bg-remover
+            RestorePhotoNode,           # Restore an old photo · Flux Kontext Restore
+            FixFacesNode,               # Fix faces in a photo · CodeFormer
+            # Image — analysis
+            DescribeImageNode,          # Describe an image · Moondream 2
+            ExtractTextNode,            # Extract text from image (OCR) · Dolphin
+            FindObjectsNode,            # Find objects in an image · YOLO-World
+            # Video
+            GenerateVideoNode,          # Generate a video · Seedance / Veo 3 / Kling
+            EnhanceVideoNode,           # Enhance a video · Topaz
+            DescribeVideoNode,          # Describe a video · Gemini 2.5 Flash
+            LipsyncNode,                # Sync lips to audio · sync.so 2-pro
+            # Audio
+            TranscribeAudioNode,        # Transcribe audio · Whisper
+            IdentifySpeakersNode,       # Identify speakers in audio · Whisper Diarization
+            GenerateMusicNode,          # Generate music · MusicGen
+            GenerateSpeechNode,         # Generate speech · MiniMax Speech-02 HD
+            CloneSingingVoiceNode,      # Clone a singing voice · RVC
+            # 3D
+            Generate3DNode,             # Generate a 3D model · Hunyuan3D 2
+            # Text / LLM
+            ChatLLMNode,                # Chat with an LLM · GPT-5 / Claude / Gemini
+            ImprovePromptNode,          # Improve a prompt · GPT-5 nano
+
+            # ─── Per-model nodes (deprecated — kept for workflow back-compat) ───
+            # Hidden from the Generators panel via its DEPRECATED_NODES list.
             FluxProRemoteNode,
+            IdeogramV3TurboNode,
             FluxKontextRemoteNode,
-            KlingVideoRemoteNode,
             ClarityUpscaleRemoteNode,
+            RemoveBackgroundRemoteNode,
+            RestorePhotoRemoteNode,
+            CodeformerRemoteNode,
+            DescribeImageRemoteNode,
+            Seedance2RemoteNode,
+            Veo3RemoteNode,
+            KlingVideoRemoteNode,
+            LipsyncRemoteNode,
+            WhisperRemoteNode,
+            MusicGenRemoteNode,
+            MiniMaxSpeechRemoteNode,
+            Hunyuan3DRemoteNode,
         ]
 
 

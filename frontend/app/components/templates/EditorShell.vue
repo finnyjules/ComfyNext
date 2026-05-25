@@ -1,6 +1,19 @@
 <script setup lang="ts">
 /** Editor surface that owns the live `useTemplateEditor` state. */
-import { Check, Loader2, Plus, RefreshCcw, Save, Image as ImageIcon, Square, Type as TypeIcon } from 'lucide-vue-next'
+import { Check, Loader2, Plus, Save, X as XIcon, Image as ImageIcon, Square, Type as TypeIcon } from 'lucide-vue-next'
+
+// Template fonts: import the @fontsource CSS for every family we register on
+// the server. Co-located here (rather than globally) so the woff/woff2 files
+// only get loaded when the editor actually mounts. Keep this list in lockstep
+// with `shared/template-fonts.ts` — both sides need to agree.
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/700.css'
+import '@fontsource/space-grotesk/400.css'
+import '@fontsource/space-grotesk/700.css'
+import '@fontsource/playfair-display/400.css'
+import '@fontsource/playfair-display/700.css'
+import '@fontsource/bebas-neue/400.css'
+import '@fontsource/anton/400.css'
 
 import type { ImageElement, ShapeElement, Template, TextElement } from '~~/server/templates/schema'
 
@@ -23,6 +36,22 @@ const emit = defineEmits<{ save: [layout: Template] }>()
 
 const ctx = useTemplateEditor(props.initial)
 provide('templateEditor', ctx)
+
+// Walk every text element (incl. per-aspect overrides) and inject a Google
+// Fonts <link> for any family that isn't in the curated set. Re-runs when the
+// template changes — covers freshly loaded layouts and live font picks.
+const { ensure: ensureGoogleFont } = useGoogleFontPreview()
+watch(() => ctx.template.value, (tpl) => {
+  for (const elt of tpl.elements) {
+    if (elt.type !== 'text') continue
+    const fam = (elt as any).style?.fontFamily
+    if (fam) ensureGoogleFont(fam)
+    for (const ov of Object.values((elt as any).overrides ?? {})) {
+      const ovFam = (ov as any)?.style?.fontFamily
+      if (ovFam) ensureGoogleFont(ovFam)
+    }
+  }
+}, { immediate: true, deep: true })
 
 // Seed the composable's sample placeholders from the parent. We keep the
 // composable's existing defaults for any role the parent didn't override, so
@@ -65,10 +94,18 @@ const {
   template, currentAspect, aspect, defaultAspect, editingOverride,
   selectedId, selectedElement,
   dirty, saving, saveError, sampleProps, sampleBrand,
-  addElement, deleteElement, setAspect, save,
+  addElement, deleteElement, setAspect, addAspect, removeAspect, save,
 } = ctx
 
 const aspectKeys = computed(() => Object.keys(template.value.aspects))
+
+const showAspectPicker = ref(false)
+const addAspectBtnRef = ref<HTMLButtonElement>()
+
+function handleAddAspect(key: string, spec: import('~~/server/templates/schema').AspectSpec) {
+  addAspect(key, spec)
+  showAspectPicker.value = false
+}
 
 // True when the selected element has an override for `aspectKey`, used to
 // flag aspect tabs with a small dot so the designer sees at a glance which
@@ -142,24 +179,56 @@ function addShape() {
 
       <!-- Aspect tabs -->
       <div class="flex items-center gap-1 ml-4">
-        <button
+        <!-- Each tab is a div wrapper (avoids nested-button HTML violation) -->
+        <div
           v-for="key in aspectKeys"
           :key="key"
-          class="relative h-8 px-3 rounded-md text-[12px] tabular-nums transition-colors cursor-pointer"
-          :class="currentAspect === key
-            ? 'bg-white/10 text-white font-medium'
-            : 'text-white/55 hover:bg-white/[0.04] hover:text-white/85'"
-          :title="(template.aspects[key].label || key) + (key === defaultAspect ? '  (default — edits write to base)' : '  (edits write to override)')"
-          @click="setAspect(key)"
+          class="relative flex items-center rounded-md transition-colors"
+          :class="currentAspect === key ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
         >
-          {{ key }}
-          <!-- Override indicator: visible when the selected element has any
-               override stored for this aspect. -->
-          <span
-            v-if="aspectHasOverrideForSelection(key)"
-            class="absolute top-1 right-1 size-1.5 rounded-full bg-[#96b4ff]"
-          />
+          <button
+            class="h-8 pl-3 text-[12px] tabular-nums transition-colors cursor-pointer flex items-center gap-1.5"
+            :class="[
+              currentAspect === key ? 'text-white font-medium' : 'text-white/55 hover:text-white/85',
+              aspectKeys.length > 1 && currentAspect === key ? 'pr-1' : 'pr-3',
+            ]"
+            :title="(template.aspects[key].label || key) + ' — ' + template.aspects[key].w + '×' + template.aspects[key].h + (key === defaultAspect ? '  (default)' : '  (override)')"
+            @click="setAspect(key)"
+          >
+            {{ template.aspects[key].label || key }}
+            <span
+              v-if="aspectHasOverrideForSelection(key)"
+              class="size-1.5 rounded-full bg-[#96b4ff] shrink-0"
+            />
+          </button>
+          <!-- Delete button — only on the active tab, only when 2+ aspects exist -->
+          <button
+            v-if="aspectKeys.length > 1 && currentAspect === key"
+            class="h-8 px-1.5 text-white/30 hover:text-white/70 transition-colors cursor-pointer"
+            title="Remove this layout"
+            @click="removeAspect(key)"
+          >
+            <XIcon class="size-3" />
+          </button>
+        </div>
+
+        <!-- Add layout button -->
+        <button
+          ref="addAspectBtnRef"
+          class="h-8 px-2 rounded-md text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer flex items-center"
+          title="Add a layout"
+          @click="showAspectPicker = !showAspectPicker"
+        >
+          <Plus class="size-3.5" />
         </button>
+
+        <TemplatesAspectPicker
+          v-if="showAspectPicker"
+          :existing-keys="aspectKeys"
+          :trigger-ref="addAspectBtnRef ?? null"
+          @add="handleAddAspect"
+          @close="showAspectPicker = false"
+        />
       </div>
 
       <div class="flex-1" />
@@ -201,17 +270,28 @@ function addShape() {
       </div>
     </div>
 
-    <!-- Body -->
+    <!-- Body — Figma-style layout: layers left (permanent), canvas middle,
+         properties right (visible only when an element is selected). Mirrors
+         the Compositor's per-layer-always-visible pattern. -->
     <div class="flex-1 flex min-h-0">
+      <!-- Layers panel (always visible) -->
+      <div class="w-[260px] shrink-0 border-r border-white/[0.06] bg-[#0e0e10] overflow-y-auto">
+        <TemplatesLayersPanel />
+      </div>
+
       <!-- Canvas pane -->
       <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
         <TemplatesEditorCanvas />
       </div>
 
-      <!-- Right panel -->
-      <div class="w-[320px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10] overflow-y-auto">
-        <TemplatesPropertyPanel v-if="selectedElement" />
-        <TemplatesLayersPanel v-else />
+      <!-- Property panel (only when an element is selected). `overflow-hidden`
+           on the wrapper keeps any wide control from bleeding over the canvas;
+           the inner panel handles its own vertical scroll. -->
+      <div
+        v-if="selectedElement"
+        class="w-[280px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10] overflow-hidden"
+      >
+        <TemplatesPropertyPanel />
       </div>
     </div>
   </div>

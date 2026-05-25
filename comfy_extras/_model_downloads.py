@@ -32,12 +32,18 @@ class ModelFile:
 # A logical bundle (= what's behind one toolbox card). May contain multiple
 # files. May also have a `prepare_fn` that runs *after* downloads finish — e.g.
 # trigger insightface's own auto-download of the buffalo_l package.
+#
+# `ready_check_fn`, if set, overrides the default "all files exist on disk"
+# check. Useful when the bundle is managed by an opaque cache (faster-whisper,
+# demucs etc.) and we can't enumerate filenames up front — the check just
+# pings the library: "do you have what you need?".
 @dataclasses.dataclass
 class ModelBundle:
     key: str                        # toolbox-visible id, e.g. 'faceswap'
     label: str                      # shown in the progress toast
     files: list[ModelFile]
     prepare_fn: Callable[[], None] | None = None
+    ready_check_fn: Callable[[], bool] | None = None
 
 
 _REGISTRY: dict[str, ModelBundle] = {}
@@ -52,19 +58,47 @@ def get_bundle(key: str) -> ModelBundle | None:
 
 
 def bundle_status(key: str) -> dict:
-    """{ready: bool, missing: [{name, size}], total_size}"""
+    """{ready: bool, missing: [{name, size}], total_size}
+
+    A file is considered present if it exists AND either (a) its size matches
+    the declared `size`, or (b) `size <= 0` meaning we didn't know the exact
+    byte count when registering the bundle and a non-empty file is enough.
+    """
     bundle = _REGISTRY.get(key)
     if bundle is None:
         return {"ready": False, "missing": [], "total_size": 0, "error": f"unknown bundle '{key}'"}
+
+    def _present(f: ModelFile) -> bool:
+        if not os.path.isfile(f.path):
+            return False
+        actual = os.path.getsize(f.path)
+        if f.size > 0:
+            return actual == f.size
+        return actual > 0  # unknown size — accept any non-empty download
+
+    # Library-managed bundles (whisper, demucs) override the file check with
+    # a callback. If it returns True we trust it — nothing left to download.
+    if bundle.ready_check_fn is not None:
+        try:
+            if bundle.ready_check_fn():
+                return {
+                    "ready": True,
+                    "missing": [],
+                    "total_size": sum(max(f.size, 0) for f in bundle.files),
+                    "label": bundle.label,
+                }
+        except Exception:
+            pass  # treat probe failure as not-ready; the download path will handle it
+
     missing = [
         {"name": f.name, "size": f.size}
         for f in bundle.files
-        if not (os.path.isfile(f.path) and os.path.getsize(f.path) == f.size)
+        if not _present(f)
     ]
     return {
         "ready": len(missing) == 0,
         "missing": missing,
-        "total_size": sum(f.size for f in bundle.files),
+        "total_size": sum(max(f.size, 0) for f in bundle.files),
         "label": bundle.label,
     }
 

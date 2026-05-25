@@ -205,6 +205,29 @@ export function useTemplateEditor(initial: Template) {
     if (template.value.aspects[key]) currentAspect.value = key
   }
 
+  function addAspect(key: string, spec: AspectSpec) {
+    template.value.aspects = { ...template.value.aspects, [key]: spec }
+    currentAspect.value = key
+    dirty.value = true
+  }
+
+  function removeAspect(key: string) {
+    const keys = Object.keys(template.value.aspects)
+    if (keys.length <= 1) return
+    const rest: Record<string, AspectSpec> = {}
+    for (const k of keys) if (k !== key) rest[k] = template.value.aspects[k]
+    template.value.aspects = rest
+    if (template.value.defaultAspect === key) template.value.defaultAspect = Object.keys(rest)[0]
+    if (currentAspect.value === key) currentAspect.value = Object.keys(rest)[0]
+    // Clean up orphaned element overrides for the removed aspect
+    template.value.elements = template.value.elements.map((el) => {
+      if (!el.overrides?.[key]) return el
+      const { [key]: _, ...restOv } = el.overrides
+      return { ...el, overrides: Object.keys(restOv).length ? restOv : undefined } as LayoutElement
+    })
+    dirty.value = true
+  }
+
   async function save() {
     saving.value = true
     saveError.value = null
@@ -235,7 +258,7 @@ export function useTemplateEditor(initial: Template) {
     patchElement, patchEffective,
     clearOverrideField, clearOverrideStyleField, clearAllOverrides,
     hasOverride, hasStyleOverride,
-    addElement, deleteElement, moveElement, moveElementTo, setAspect, save,
+    addElement, deleteElement, moveElement, moveElementTo, setAspect, addAspect, removeAspect, save,
   }
 }
 

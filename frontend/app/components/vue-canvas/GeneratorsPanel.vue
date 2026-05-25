@@ -144,6 +144,7 @@ async function loadPartnerNodes() {
     for (const [nodeType, node] of Object.entries(info)) {
       const cat = (node?.category || '') as string
       if (!cat.startsWith('api node/')) continue
+      if (DEPRECATED_NODES.has(nodeType)) continue  // hidden but still loadable in old workflows
       const parts = cat.split('/')
       // Shape: api node / <domain> / <provider>
       const domain = parts[1] as Domain | undefined
@@ -416,6 +417,78 @@ const DOMAIN_FALLBACK_ICON: Record<Domain, any> = {
 function providerIcon(provider: string, domain: Domain): any {
   return PROVIDER_ICONS[provider] ?? DOMAIN_FALLBACK_ICON[domain]
 }
+
+// -- Use-case rendering -----------------------------------------------------
+//
+// Cards default to model-name-first ("Flux 1.1 Pro"), but for any node listed
+// in USE_CASE_BY_NODE we render the *use case* as the primary title with the
+// model as a smaller subheader. Keep this map in sync when new generator
+// nodes ship — entries are keyed by node_id (the Python class's node_id).
+
+const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
+  // Replicate (BYOK) — new use-case nodes
+  // Image — generation
+  FluxLoRARemoteNode:      { useCase: 'Generate an image with your LoRA', model: 'Flux Dev + LoRA' },
+  GenerateImageNode:       { useCase: 'Generate an image',         model: 'Flux Pro / Ideogram' },
+  GenerateAnimeNode:       { useCase: 'Generate an anime image',   model: 'Animagine XL' },
+  GenerateEmojiNode:       { useCase: 'Generate an emoji',         model: 'Flux Kontext + Emoji LoRA' },
+  ConsistentFaceNode:      { useCase: 'Generate a consistent face', model: 'Ideogram Character' },
+  SketchToImageNode:       { useCase: 'Sketch to image',           model: 'Nano Banana' },
+  // Image — manipulation
+  EditImageNode:           { useCase: 'Edit an image',             model: 'Flux Kontext Pro' },
+  UpscaleImageNode:        { useCase: 'Upscale an image',          model: 'Clarity' },
+  RemoveBackgroundNode:    { useCase: 'Remove background',         model: '851-labs/bg-remover' },
+  RestorePhotoNode:        { useCase: 'Restore an old photo',      model: 'Flux Kontext · Restore' },
+  FixFacesNode:            { useCase: 'Fix faces in a photo',      model: 'CodeFormer' },
+  // Replicate FaceSwap removed — the local FaceSwap node (InsightFace, in
+  // comfy_extras/nodes_face.py) is faster, supports video, and is free.
+  // Image — analysis
+  DescribeImageNode:       { useCase: 'Describe an image',         model: 'Moondream 2' },
+  ExtractTextNode:         { useCase: 'Extract text from image',   model: 'ByteDance Dolphin (OCR)' },
+  FindObjectsNode:         { useCase: 'Find objects in an image',  model: 'YOLO-World' },
+  // Video
+  GenerateVideoNode:       { useCase: 'Generate a video',          model: 'Seedance / Veo 3 / Kling' },
+  EnhanceVideoNode:        { useCase: 'Enhance a video',           model: 'Topaz' },
+  DescribeVideoNode:       { useCase: 'Describe a video',          model: 'Gemini 2.5 Flash' },
+  LipsyncNode:             { useCase: 'Sync lips to audio',        model: 'sync.so 2-pro' },
+  // Audio
+  TranscribeAudioNode:     { useCase: 'Transcribe audio',          model: 'Whisper' },
+  IdentifySpeakersNode:    { useCase: 'Identify speakers in audio', model: 'Whisper Diarization' },
+  GenerateMusicNode:       { useCase: 'Generate music',            model: 'MusicGen' },
+  GenerateSpeechNode:      { useCase: 'Generate speech',           model: 'MiniMax Speech-02 HD' },
+  CloneSingingVoiceNode:   { useCase: 'Clone a singing voice',     model: 'RVC' },
+  // 3D
+  Generate3DNode:          { useCase: 'Generate a 3D model',       model: 'Hunyuan3D 2' },
+  // Text / LLM
+  ChatLLMNode:             { useCase: 'Chat with an LLM',          model: 'GPT-5 / Claude / Gemini' },
+  ImprovePromptNode:       { useCase: 'Improve a prompt',          model: 'GPT-5 nano' },
+}
+
+// Per-model classes are still registered server-side for back-compat with
+// any saved workflows that reference them, but they're hidden from the
+// Generators panel — the use-case nodes above are now the front door.
+const DEPRECATED_NODES = new Set<string>([
+  'FluxProRemoteNode',
+  'IdeogramV3TurboRemoteNode',
+  'FluxKontextRemoteNode',
+  'ClarityUpscaleRemoteNode',
+  'RemoveBackgroundRemoteNode',
+  'RestorePhotoRemoteNode',
+  'CodeformerRemoteNode',
+  'DescribeImageRemoteNode',
+  'Seedance2RemoteNode',
+  'Veo3RemoteNode',
+  'KlingVideoRemoteNode',
+  'LipsyncRemoteNode',
+  'WhisperRemoteNode',
+  'MusicGenRemoteNode',
+  'MiniMaxSpeechRemoteNode',
+  'Hunyuan3DRemoteNode',
+])
+
+function useCaseFor(item: PartnerNode): { useCase: string; model: string } | null {
+  return USE_CASE_BY_NODE[item.nodeType] ?? null
+}
 </script>
 
 <template>
@@ -565,7 +638,17 @@ function providerIcon(provider: string, domain: Domain): any {
               />
               <component v-else :is="providerIcon(item.provider, section.domain)" class="size-3.5" :stroke-width="1.75" />
             </div>
-            <span class="text-[11px] text-white/70 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5">
+            <!-- Use-case-first label when the node is in the map; falls back
+                 to the cleaned model name for partner nodes we haven't mapped. -->
+            <template v-if="useCaseFor(item)">
+              <span class="text-[11px] text-white/85 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5">
+                {{ useCaseFor(item)!.useCase }}
+              </span>
+              <span class="text-[9px] text-white/40 group-hover:text-white/55 text-center leading-tight transition-colors line-clamp-1 px-0.5 -mt-1">
+                {{ useCaseFor(item)!.model }}
+              </span>
+            </template>
+            <span v-else class="text-[11px] text-white/70 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5">
               {{ item.label.replace(item.provider, '').replace(/^[ :·-]+/, '') || item.label }}
             </span>
           </button>
@@ -602,8 +685,12 @@ function providerIcon(provider: string, domain: Domain): any {
             <component v-else :is="providerIcon(hoveredItem.provider, activeDomain)" class="size-3.5" :stroke-width="1.75" />
           </div>
           <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-white/90 truncate">{{ hoveredItem.label }}</span>
-            <span class="text-[10px] uppercase tracking-[0.08em] text-white/40">{{ hoveredItem.provider }}</span>
+            <span class="text-sm font-semibold text-white/90 truncate">
+              {{ useCaseFor(hoveredItem)?.useCase ?? hoveredItem.label }}
+            </span>
+            <span class="text-[10px] uppercase tracking-[0.08em] text-white/40">
+              {{ useCaseFor(hoveredItem) ? `${useCaseFor(hoveredItem)!.model} · ${hoveredItem.provider}` : hoveredItem.provider }}
+            </span>
           </div>
         </div>
         <p v-if="hoveredItem.description" class="text-xs text-white/60 leading-relaxed">{{ hoveredItem.description }}</p>

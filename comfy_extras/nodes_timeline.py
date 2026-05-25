@@ -9,8 +9,10 @@ the canvas size (matching the Compositor convention).
 """
 from __future__ import annotations
 
+import json
 import os
 import time
+import uuid
 from fractions import Fraction
 
 import numpy as np
@@ -22,6 +24,12 @@ import folder_paths
 from comfy_api.latest import ComfyExtension, IO
 from comfy_extras._live_preview import save_live_preview
 from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, _transform
+
+
+# Maximum clip ports preallocated on the Timeline node. The frontend's
+# dynamic-grow logic only renders "connected + 1 trailing empty" so the user
+# sees a clean node until they wire more clips.
+_MAX_CLIPS = 16
 
 
 def _hex_rgb(s: str, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
@@ -63,7 +71,7 @@ class TimelineNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
         inputs = []
-        for i in range(1, 5):
+        for i in range(1, _MAX_CLIPS + 1):
             inputs.extend(_clip_inputs(i, optional=(i > 1)))
         # Audio file picker — lists audio files in input/ plus a blank entry
         # so the user can opt out. Used only by the FFmpeg-direct renderer.
@@ -103,7 +111,7 @@ class TimelineNode(IO.ComfyNode):
     def execute(cls, **kwargs) -> IO.NodeOutput:
         # Gather connected layers.
         layers = []
-        for i in range(1, 5):
+        for i in range(1, _MAX_CLIPS + 1):
             clip = kwargs.get(f"clip{i}")
             if clip is None:
                 continue
@@ -275,7 +283,67 @@ def _decoded_frame_at(av_container, video_stream, target_sec: float):
     return last
 
 
-def render_timeline_to_file(state: dict, output_dir: str) -> dict:
+def _adapt_edit_state(state: dict) -> dict:
+    """If `state` is an EditState (version: 1 with tracks[]), flatten it into
+    the legacy `{fps, canvas_*, clips: [...]}` shape that render_timeline_to_file
+    expects. Pass-through anything else.
+
+    Audio clips are extracted: the first audio clip becomes `audio_path` for
+    compatibility with the existing single-track audio mux. Multi-track audio
+    mixing is a future improvement.
+    """
+    if state.get("version") != 1:
+        return state
+
+    canvas = state.get("canvas", {})
+    out = {
+        "fps":           int(canvas.get("fps", 30)),
+        "canvas_width":  int(canvas.get("width", 1280)),
+        "canvas_height": int(canvas.get("height", 720)),
+        "bg_color":      canvas.get("bg_color", "#000000"),
+        "total_frames":  int(state.get("total_frames", 0)),
+        "output_basename": state.get("output_basename") or "timeline",
+        "clips":         [],
+    }
+
+    audio_path = state.get("audio_path")
+    for track in state.get("tracks", []):
+        if track.get("muted"):
+            continue
+        for clip in track.get("clips", []):
+            kind = clip.get("kind")
+            if kind == "workflow":
+                # WorkflowClip pixels come from graph ports — only the
+                # in-graph execute() path can render them. Skip for the
+                # FFmpeg render.
+                continue
+            if kind == "audio":
+                if not audio_path:
+                    audio_path = clip.get("path") or clip.get("asset_path")
+                continue
+            out["clips"].append({
+                "kind":        kind,
+                "path":        clip.get("path") or clip.get("asset_path"),
+                "start_frame": int(clip.get("start_frame", 0)),
+                "length":      int(clip.get("length", 30)),
+                "in_frame":    int(clip.get("in_frame", 0)),
+                "x":           float(clip.get("x", 0)),
+                "y":           float(clip.get("y", 0)),
+                "rotation":    float(clip.get("rotation", 0)),
+                "scale":       float(clip.get("scale", 1)),
+                "opacity":     float(clip.get("opacity", 1)),
+                "blend":       str(clip.get("blend", "normal")),
+                "fade_in":     int(clip.get("fade_in", 0)),
+                "fade_out":    int(clip.get("fade_out", 0)),
+                "text":        clip.get("text"),
+            })
+
+    if audio_path:
+        out["audio_path"] = audio_path
+    return out
+
+
+def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict:
     """Render the edit `state` to a video file in `output_dir`. Returns metadata.
 
     `state` shape:
@@ -321,15 +389,16 @@ def render_timeline_to_file(state: dict, output_dir: str) -> dict:
     for c in state.get("clips", []):
         kind = str(c.get("kind") or ("image" if c.get("is_image") else "video"))
         entry = {
-            "kind":   kind,
-            "start":  int(c.get("start_frame", 0)),
-            "length": int(c.get("length", 30)),
-            "x":      float(c.get("x", 0)),
-            "y":      float(c.get("y", 0)),
-            "rot":    float(c.get("rotation", 0)),
-            "scl":    float(c.get("scale", 1)),
-            "op":     float(c.get("opacity", 1)),
-            "blend":  str(c.get("blend", "normal")),
+            "kind":     kind,
+            "start":    int(c.get("start_frame", 0)),
+            "length":   int(c.get("length", 30)),
+            "in_frame": int(c.get("in_frame", 0)),
+            "x":        float(c.get("x", 0)),
+            "y":        float(c.get("y", 0)),
+            "rot":      float(c.get("rotation", 0)),
+            "scl":      float(c.get("scale", 1)),
+            "op":       float(c.get("opacity", 1)),
+            "blend":    str(c.get("blend", "normal")),
             "fade_in":  int(c.get("fade_in", 0)),
             "fade_out": int(c.get("fade_out", 0)),
         }
@@ -417,7 +486,7 @@ def render_timeline_to_file(state: dict, output_dir: str) -> dict:
             else:  # video
                 vs = L["stream"]
                 container = L["container"]
-                local_sec = local_f / fps
+                local_sec = (local_f + L.get("in_frame", 0)) / fps
                 clip_dur = L.get("duration")
                 if clip_dur is not None and clip_dur > 0:
                     src_sec = local_sec % clip_dur
@@ -442,6 +511,10 @@ def render_timeline_to_file(state: dict, output_dir: str) -> dict:
         av_frame = av.VideoFrame.from_ndarray(out_frame_arr, format="rgb24")
         for packet in out_stream.encode(av_frame):
             out.mux(packet)
+
+        if progress is not None:
+            try: progress(f + 1, total_frames)
+            except Exception: pass
 
     # Flush encoder.
     for packet in out_stream.encode():
@@ -490,6 +563,66 @@ try:
     from aiohttp import web
     import asyncio
 
+    # Streaming variant: NDJSON progress events while the render runs, plus
+    # a final "result" line with the file metadata. Same JSON body as the
+    # non-streaming endpoint.
+    @PromptServer.instance.routes.post("/comfynext/render_timeline_stream")
+    async def _render_timeline_stream_route(request):
+        try:
+            state = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+
+        input_dir = folder_paths.get_input_directory()
+        output_dir = folder_paths.get_output_directory()
+        if state.get("version") == 1:
+            state = _adapt_edit_state(state)
+        for c in state.get("clips", []):
+            p = c.get("path")
+            if p and not os.path.isabs(p):
+                c["path"] = os.path.join(input_dir, p)
+        if state.get("audio_path") and not os.path.isabs(state["audio_path"]):
+            state["audio_path"] = os.path.join(input_dir, state["audio_path"])
+
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def progress(current: int, total: int):
+            # Called from the executor thread — bounce to the event loop.
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "progress", "current": current, "total": total})
+
+        async def run_render():
+            try:
+                result = await loop.run_in_executor(
+                    None, lambda: render_timeline_to_file(state, output_dir, progress)
+                )
+                # `result` already contains `type: "output"` (asset listing
+                # convention). Use a distinct wrapper key so the frontend can
+                # tell apart a progress tick from the final payload.
+                await q.put({"type": "result", "result": result})
+            except Exception as e:
+                import traceback
+                await q.put({"type": "error", "error": str(e), "trace": traceback.format_exc()})
+            finally:
+                await q.put({"type": "done"})
+
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-store"},
+        )
+        await resp.prepare(request)
+        render_task = asyncio.create_task(run_render())
+        try:
+            while True:
+                msg = await q.get()
+                if msg.get("type") == "done":
+                    break
+                await resp.write((json.dumps(msg) + "\n").encode("utf-8"))
+        finally:
+            await render_task  # ensure cleanup
+        await resp.write_eof()
+        return resp
+
     @PromptServer.instance.routes.post("/comfynext/render_timeline")
     async def _render_timeline_route(request):
         try:
@@ -497,9 +630,15 @@ try:
         except Exception as e:
             return web.json_response({"error": f"bad json: {e}"}, status=400)
 
-        # Resolve clip paths: accept either absolute paths or filenames under input/.
         input_dir = folder_paths.get_input_directory()
         output_dir = folder_paths.get_output_directory()
+
+        # Accept the new EditState (version: 1, tracks[]) by flattening to the
+        # legacy shape before path resolution + render.
+        if state.get("version") == 1:
+            state = _adapt_edit_state(state)
+
+        # Resolve clip paths: accept either absolute paths or filenames under input/.
         for c in state.get("clips", []):
             p = c.get("path")
             if p and not os.path.isabs(p):
@@ -561,6 +700,341 @@ try:
         except Exception as e:
             return web.json_response({"error": str(e), "items": []}, status=500)
         # Newest first.
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+        return web.json_response({"items": items})
+
+    # ── Asset library ──────────────────────────────────────────────────────
+    #
+    # Asset records live in user/timeline_assets.json. Each asset points at a
+    # path on disk (typically under input/) along with cached metadata (kind,
+    # duration, dimensions). The new TimelineEditor drags from this library.
+
+    def _assets_file() -> str:
+        user_dir = folder_paths.get_user_directory()
+        os.makedirs(user_dir, exist_ok=True)
+        return os.path.join(user_dir, "timeline_assets.json")
+
+    def _load_assets() -> list:
+        p = _assets_file()
+        if not os.path.exists(p):
+            return []
+        try:
+            with open(p, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def _save_assets(assets: list):
+        with open(_assets_file(), "w") as f:
+            json.dump(assets, f, indent=2)
+
+    def _probe_media(path: str) -> dict:
+        ext = os.path.splitext(path)[1].lower()
+        info = {"duration_sec": None, "width": None, "height": None}
+        video_exts = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}
+        image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        audio_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
+        if ext in video_exts:
+            info["kind"] = "video"
+            try:
+                import av
+                c = av.open(path, mode="r")
+                vs = c.streams.video[0]
+                info["width"], info["height"] = vs.width, vs.height
+                if vs.duration and vs.time_base:
+                    info["duration_sec"] = float(vs.duration * vs.time_base)
+                c.close()
+            except Exception:
+                pass
+        elif ext in image_exts:
+            info["kind"] = "image"
+            try:
+                img = PILImage.open(path)
+                info["width"], info["height"] = img.size
+                img.close()
+            except Exception:
+                pass
+        elif ext in audio_exts:
+            info["kind"] = "audio"
+            try:
+                import av
+                c = av.open(path, mode="r")
+                a = c.streams.audio[0]
+                if a.duration and a.time_base:
+                    info["duration_sec"] = float(a.duration * a.time_base)
+                c.close()
+            except Exception:
+                pass
+        else:
+            info["kind"] = "video"
+        return info
+
+    @PromptServer.instance.routes.get("/comfynext/assets")
+    async def _assets_list_route(_request):
+        return web.json_response({"assets": _load_assets()})
+
+    @PromptServer.instance.routes.post("/comfynext/asset_import")
+    async def _asset_import_route(request):
+        try:
+            body = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+        path = body.get("path")
+        if not path:
+            return web.json_response({"error": "missing 'path'"}, status=400)
+        input_dir = folder_paths.get_input_directory()
+        if not os.path.isabs(path):
+            path = os.path.join(input_dir, path)
+        if not os.path.exists(path):
+            return web.json_response({"error": f"not found: {path}"}, status=404)
+
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(None, _probe_media, path)
+
+        assets = _load_assets()
+        existing = next((a for a in assets if a["path"] == path), None)
+        if existing:
+            return web.json_response({"asset": existing, "created": False})
+
+        asset = {
+            "id": str(uuid.uuid4()),
+            "path": path,
+            "kind": info["kind"],
+            "name": os.path.basename(path),
+            "duration_sec": info["duration_sec"],
+            "width":  info["width"],
+            "height": info["height"],
+            "thumbnail_path": None,
+            "waveform_path":  None,
+        }
+        assets.append(asset)
+        _save_assets(assets)
+        return web.json_response({"asset": asset, "created": True})
+
+    @PromptServer.instance.routes.delete("/comfynext/assets/{asset_id}")
+    async def _asset_delete_route(request):
+        asset_id = request.match_info["asset_id"]
+        assets = [a for a in _load_assets() if a["id"] != asset_id]
+        _save_assets(assets)
+        return web.json_response({"ok": True})
+
+    # ── Thumbnails ─────────────────────────────────────────────────────────
+    #
+    # Generates N evenly-spaced thumbnails for a video asset (or one
+    # thumbnail for an image). Returned as base64 PNG strings the frontend
+    # can drop straight into a CSS background-image. Cached on disk in
+    # user/timeline_thumbs/<asset_id>/<count>.json so repeated requests are
+    # cheap.
+
+    def _thumb_cache_dir() -> str:
+        user_dir = folder_paths.get_user_directory()
+        d = os.path.join(user_dir, "timeline_thumbs")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _thumb_height_px() -> int:
+        return 48  # source-strip thumbnail height in px; width derived from aspect
+
+    def _gen_thumbnails(asset_path: str, count: int) -> list[str]:
+        """Return `count` base64 PNG thumbnails. For images, returns one entry."""
+        import base64
+        from io import BytesIO
+
+        ext = os.path.splitext(asset_path)[1].lower()
+        thumb_h = _thumb_height_px()
+
+        if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            try:
+                img = PILImage.open(asset_path).convert("RGB")
+                w, h = img.size
+                tw = max(1, int(round(w * thumb_h / h)))
+                img = img.resize((tw, thumb_h), PILImage.BILINEAR)
+                buf = BytesIO()
+                img.save(buf, format="PNG", optimize=True)
+                return ["data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()]
+            except Exception:
+                return []
+
+        # Video path: seek to evenly-spaced timestamps.
+        try:
+            import av
+            c = av.open(asset_path, mode="r")
+            vs = c.streams.video[0]
+            tb = vs.time_base
+            dur_pts = vs.duration or 0
+            dur_sec = float(dur_pts * tb) if tb else 0.0
+            if dur_sec <= 0:
+                # Try container duration as fallback (in microseconds).
+                dur_sec = float((c.duration or 0) / 1_000_000.0)
+            if dur_sec <= 0:
+                c.close()
+                return []
+
+            out: list[str] = []
+            step = dur_sec / max(1, count)
+            for i in range(count):
+                t = step * (i + 0.5)  # center each thumb in its slice
+                target_pts = int(t / float(tb))
+                try:
+                    c.seek(max(0, target_pts), stream=vs, any_frame=False, backward=True)
+                except Exception:
+                    pass
+                frame = None
+                for f in c.decode(vs):
+                    frame = f
+                    if f.pts is not None and f.pts >= target_pts:
+                        break
+                if frame is None:
+                    continue
+                pil = PILImage.fromarray(frame.to_ndarray(format="rgb24"))
+                w, h = pil.size
+                tw = max(1, int(round(w * thumb_h / h)))
+                pil = pil.resize((tw, thumb_h), PILImage.BILINEAR)
+                buf = BytesIO()
+                pil.save(buf, format="PNG", optimize=True)
+                out.append("data:image/png;base64," + base64.b64encode(buf.getvalue()).decode())
+            c.close()
+            return out
+        except Exception:
+            return []
+
+    @PromptServer.instance.routes.get("/comfynext/asset_thumbnails")
+    async def _asset_thumbs_route(request):
+        asset_id = request.query.get("asset_id")
+        try:
+            count = max(1, min(20, int(request.query.get("count", "5"))))
+        except ValueError:
+            count = 5
+        if not asset_id:
+            return web.json_response({"error": "missing asset_id"}, status=400)
+
+        cache_dir = _thumb_cache_dir()
+        cache_file = os.path.join(cache_dir, f"{asset_id}.{count}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    return web.json_response(json.load(f))
+            except Exception:
+                pass
+
+        asset = next((a for a in _load_assets() if a["id"] == asset_id), None)
+        if not asset:
+            return web.json_response({"error": "asset not found"}, status=404)
+
+        loop = asyncio.get_event_loop()
+        thumbs = await loop.run_in_executor(None, _gen_thumbnails, asset["path"], count)
+        payload = {"thumbnails": thumbs, "asset_id": asset_id, "count": count}
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(payload, f)
+        except Exception:
+            pass
+        return web.json_response(payload)
+
+    # ── Waveforms ─────────────────────────────────────────────────────────
+    #
+    # One-shot peak generator for audio assets. Returns N normalized peaks
+    # in [0, 1], one per pixel-bucket. Cached on disk like thumbnails.
+
+    def _gen_waveform_peaks(asset_path: str, bucket_count: int) -> list[float]:
+        try:
+            import av
+            c = av.open(asset_path, mode="r")
+            a = c.streams.audio[0]
+            # Decode all samples into a flat ndarray, take absolute max per bucket.
+            samples = []
+            for frame in c.decode(a):
+                arr = frame.to_ndarray()
+                # Mix to mono if multi-channel.
+                if arr.ndim == 2:
+                    arr = arr.mean(axis=0) if arr.shape[0] <= 8 else arr.mean(axis=1)
+                samples.append(np.abs(arr).astype(np.float32))
+            c.close()
+            if not samples:
+                return []
+            flat = np.concatenate(samples)
+            # Normalize.
+            peak = float(flat.max()) or 1.0
+            flat /= peak
+            # Bucket.
+            n = max(1, bucket_count)
+            chunk = max(1, len(flat) // n)
+            buckets = []
+            for i in range(n):
+                start = i * chunk
+                end = (i + 1) * chunk if i < n - 1 else len(flat)
+                if start >= len(flat):
+                    buckets.append(0.0)
+                    continue
+                buckets.append(float(flat[start:end].max()))
+            return buckets
+        except Exception:
+            return []
+
+    @PromptServer.instance.routes.get("/comfynext/asset_waveform")
+    async def _asset_waveform_route(request):
+        asset_id = request.query.get("asset_id")
+        try:
+            buckets = max(16, min(2048, int(request.query.get("buckets", "256"))))
+        except ValueError:
+            buckets = 256
+        if not asset_id:
+            return web.json_response({"error": "missing asset_id"}, status=400)
+
+        cache_file = os.path.join(_thumb_cache_dir(), f"wave_{asset_id}.{buckets}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    return web.json_response(json.load(f))
+            except Exception:
+                pass
+
+        asset = next((a for a in _load_assets() if a["id"] == asset_id), None)
+        if not asset:
+            return web.json_response({"error": "asset not found"}, status=404)
+
+        loop = asyncio.get_event_loop()
+        peaks = await loop.run_in_executor(None, _gen_waveform_peaks, asset["path"], buckets)
+        payload = {"peaks": peaks, "asset_id": asset_id, "buckets": buckets}
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(payload, f)
+        except Exception:
+            pass
+        return web.json_response(payload)
+
+    # ── Input dir listing ──────────────────────────────────────────────────
+    #
+    # The "Input Files" pane in the editor uses this to enumerate media files
+    # the user can drag into the timeline as assets.
+
+    @PromptServer.instance.routes.get("/comfynext/input_listing")
+    async def _input_listing_route(_request):
+        input_dir = folder_paths.get_input_directory()
+        items: list[dict] = []
+        try:
+            for fname in os.listdir(input_dir):
+                if fname.startswith("."):
+                    continue
+                full = os.path.join(input_dir, fname)
+                if not os.path.isfile(full):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in _MEDIA_EXTS:
+                    continue
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                items.append({
+                    "filename": fname,
+                    "path": full,
+                    "type": "input",
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                })
+        except Exception as e:
+            return web.json_response({"error": str(e), "items": []}, status=500)
         items.sort(key=lambda x: x["mtime"], reverse=True)
         return web.json_response({"items": items})
 except Exception:

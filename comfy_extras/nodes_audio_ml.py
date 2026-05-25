@@ -1,21 +1,104 @@
-"""ML-backed audio nodes (Whisper).
+"""ML-backed audio nodes (Whisper, Demucs).
 
 Kept separate from `nodes_audio_effects.py` so the effects file stays
-dependency-free. This file requires `faster-whisper`.
+dependency-free. Whisper/Demucs are managed by their own caching libraries,
+so the bundle registration uses `ready_check_fn` instead of explicit file URLs.
 """
 from __future__ import annotations
 
 import io as _io
+import os
 
 import numpy as np
 import torch
 import torchaudio
 from typing_extensions import override
 
+import folder_paths
 from comfy_api.latest import ComfyExtension, IO
+
+from comfy_extras._model_downloads import ModelBundle, register_bundle
 
 
 _WHISPER_CACHE: dict[str, object] = {}
+
+# Route Whisper + Demucs downloads to predictable subdirectories under
+# `models/` so users can find the weights, swap them, etc.
+_WHISPER_CACHE_DIR = os.path.join(folder_paths.models_dir, "whisper")
+_DEMUCS_CACHE_DIR = os.path.join(folder_paths.models_dir, "demucs")
+os.makedirs(_WHISPER_CACHE_DIR, exist_ok=True)
+os.makedirs(_DEMUCS_CACHE_DIR, exist_ok=True)
+
+# The toolbox card pre-installs the small default (`base` for Whisper, `htdemucs`
+# for Demucs). Larger Whisper models / alternate Demucs variants still
+# auto-download on first use of that combo box value.
+_WHISPER_DEFAULT_SIZE = "base"
+_DEMUCS_DEFAULT_MODEL = "htdemucs"
+
+
+def _whisper_ready() -> bool:
+    """True iff the default Whisper model directory has snapshot files on disk."""
+    cache_root = os.path.join(_WHISPER_CACHE_DIR, f"models--Systran--faster-whisper-{_WHISPER_DEFAULT_SIZE}")
+    if not os.path.isdir(cache_root):
+        return False
+    snapshots = os.path.join(cache_root, "snapshots")
+    if not os.path.isdir(snapshots):
+        return False
+    for rev in os.listdir(snapshots):
+        rev_dir = os.path.join(snapshots, rev)
+        if os.path.isfile(os.path.join(rev_dir, "model.bin")):
+            return True
+    return False
+
+
+def _demucs_ready() -> bool:
+    """True iff the default Demucs model is in the torch hub cache."""
+    # Demucs uses torch.hub by default, which honours TORCH_HOME / XDG_CACHE_HOME.
+    # We set TORCH_HOME to our models/demucs at prepare time, so look there first,
+    # then fall back to the standard locations for users who already have it.
+    candidates = [
+        os.path.join(_DEMUCS_CACHE_DIR, "hub", "checkpoints"),
+        os.path.expanduser("~/.cache/torch/hub/checkpoints"),
+    ]
+    for d in candidates:
+        if os.path.isdir(d) and any(f.endswith(".th") for f in os.listdir(d)):
+            return True
+    return False
+
+
+def _prepare_whisper() -> None:
+    """Force-download the default faster-whisper model into our cache dir."""
+    from faster_whisper import WhisperModel
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+    WhisperModel(_WHISPER_DEFAULT_SIZE, device=device, compute_type=compute_type,
+                 download_root=_WHISPER_CACHE_DIR)
+
+
+def _prepare_demucs() -> None:
+    """Force-download the default Demucs model into our cache dir."""
+    # Route torch.hub at our cache so the .th file lands somewhere predictable.
+    os.environ["TORCH_HOME"] = _DEMUCS_CACHE_DIR
+    from demucs.pretrained import get_model
+    m = get_model(_DEMUCS_DEFAULT_MODEL)
+    m.eval()
+
+
+register_bundle(ModelBundle(
+    key="whisper",
+    label="Speech Transcribe",
+    files=[],                        # library-managed download — see ready_check_fn
+    prepare_fn=_prepare_whisper,
+    ready_check_fn=_whisper_ready,
+))
+
+register_bundle(ModelBundle(
+    key="demucs",
+    label="Vocal Separator",
+    files=[],
+    prepare_fn=_prepare_demucs,
+    ready_check_fn=_demucs_ready,
+))
 
 
 def _audio_to_mono16k(audio) -> np.ndarray:
@@ -93,7 +176,10 @@ class WhisperTranscribeNode(IO.ComfyNode):
             # CPU on Mac (no CUDA), int8 keeps memory + speed reasonable.
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = "float16" if device == "cuda" else "int8"
-            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            model = WhisperModel(
+                model_size, device=device, compute_type=compute_type,
+                download_root=_WHISPER_CACHE_DIR,
+            )
             _WHISPER_CACHE[key] = model
 
         samples = _audio_to_mono16k(audio)
@@ -167,6 +253,9 @@ class VocalSeparatorNode(IO.ComfyNode):
         key = f"demucs:{model}"
         sep_model = _WHISPER_CACHE.get(key)
         if sep_model is None:
+            # Use the same cache dir the toolbox card pre-populated, so we read
+            # already-downloaded weights instead of fetching them again.
+            os.environ.setdefault("TORCH_HOME", _DEMUCS_CACHE_DIR)
             sep_model = get_model(model)
             sep_model.eval()
             _WHISPER_CACHE[key] = sep_model

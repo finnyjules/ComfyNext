@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** Right-side properties panel — shown when an element is selected. */
-import { Trash2, X as XIcon } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Layers, Trash2, X as XIcon } from 'lucide-vue-next'
 
 import type { Anchor, ImageElement, LayoutElement, ShapeElement, TextElement } from '~~/server/templates/schema'
 
@@ -11,6 +11,45 @@ const {
   clearOverrideField, clearOverrideStyleField, clearAllOverrides,
   hasOverride, hasStyleOverride,
 } = ctx
+
+// SmartLayout variant context — provided by SmartLayoutEditorModal when the
+// editor is embedded for a SmartLayout node. The cycler below only renders
+// when the selected element is a `text_layer_N` with >1 wired variant.
+const variantCtx = inject<{
+  variantsByLayer: { value: Record<string, string[]> }
+  activeVariantByLayer: { value: Record<string, number> }
+} | null>('smartLayoutVariants', null)
+
+const variantsForSelected = computed<string[]>(() => {
+  if (!variantCtx || !selectedElement.value) return []
+  const id = selectedElement.value.id
+  return variantCtx.variantsByLayer.value[id] ?? []
+})
+
+const activeVariantIdx = computed<number>({
+  get() {
+    if (!variantCtx || !selectedElement.value) return 0
+    return variantCtx.activeVariantByLayer.value[selectedElement.value.id] ?? 0
+  },
+  set(v: number) {
+    if (!variantCtx || !selectedElement.value) return
+    const id = selectedElement.value.id
+    const total = variantsForSelected.value.length || 1
+    const clamped = ((v % total) + total) % total
+    variantCtx.activeVariantByLayer.value = {
+      ...variantCtx.activeVariantByLayer.value,
+      [id]: clamped,
+    }
+  },
+})
+
+function prevVariant() { activeVariantIdx.value = activeVariantIdx.value - 1 }
+function nextVariant() { activeVariantIdx.value = activeVariantIdx.value + 1 }
+
+// Google Fonts on-demand loader — wired further down (after `eff` is in
+// scope). Declaring the ensure handle up here would TDZ the watcher because
+// `immediate: true` evaluates the getter synchronously during setup.
+const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
 const ANCHORS: Anchor[] = [
   'top-left', 'top-center', 'top-right',
@@ -45,6 +84,65 @@ function updateStyle(key: string, value: any) {
   if (!selectedElement.value) return
   patchEffective(selectedElement.value.id, { style: { [key]: value } } as any)
 }
+
+function applyFontFamily(value: string) {
+  const fam = value.trim()
+  if (!fam) return
+  ensureGoogleFont(fam)
+  updateStyle('fontFamily', fam)
+}
+
+// Per-side padding / per-corner radius. Stored on the element as either a
+// single number (linked / uniform) or a 4-tuple. The UI exposes both modes
+// via a link/unlink toggle; the underlying schema accepts both. Order:
+//   padding tuple → [top, right, bottom, left]
+//   radius  tuple → [tl,  tr,    br,     bl]
+function _tuple4(v: number | number[] | undefined): [number, number, number, number] {
+  if (Array.isArray(v) && v.length === 4) return [v[0], v[1], v[2], v[3]]
+  const n = typeof v === 'number' ? v : 0
+  return [n, n, n, n]
+}
+const paddingSides = computed(() => _tuple4((eff.value as any)?.style?.padding))
+const radiusCorners = computed(() => _tuple4((eff.value as any)?.style?.backgroundRadius))
+const paddingLinked = computed(() => {
+  const v = (eff.value as any)?.style?.padding
+  return v == null || typeof v === 'number'
+})
+const radiusLinked = computed(() => {
+  const v = (eff.value as any)?.style?.backgroundRadius
+  return v == null || typeof v === 'number'
+})
+function togglePaddingLink() {
+  const sides = paddingSides.value
+  if (paddingLinked.value) {
+    // Unlink — write the current uniform value to all 4 sides.
+    updateStyle('padding', [sides[0], sides[1], sides[2], sides[3]])
+  } else {
+    // Re-link — collapse to the top value (arbitrary but predictable).
+    updateStyle('padding', sides[0])
+  }
+}
+function toggleRadiusLink() {
+  const corners = radiusCorners.value
+  if (radiusLinked.value) {
+    updateStyle('backgroundRadius', [corners[0], corners[1], corners[2], corners[3]])
+  } else {
+    updateStyle('backgroundRadius', corners[0])
+  }
+}
+function setPaddingSide(i: number, value: number) {
+  const next = paddingSides.value.slice() as [number, number, number, number]
+  next[i] = value
+  updateStyle('padding', next)
+}
+function setRadiusCorner(i: number, value: number) {
+  const next = radiusCorners.value.slice() as [number, number, number, number]
+  next[i] = value
+  updateStyle('backgroundRadius', next)
+}
+// Also ensure the font for whatever the currently selected element already
+// uses — covers loading a template that references a non-curated font.
+watch(() => (eff.value as any)?.style?.fontFamily, (fam) => ensureGoogleFont(fam), { immediate: true })
 
 function setOffset(x?: string, y?: string) {
   if (!eff.value) return
@@ -105,7 +203,7 @@ function lengthStr(v: any): string {
 </script>
 
 <template>
-  <div v-if="selectedElement && eff" class="flex flex-col">
+  <div v-if="selectedElement && eff" class="flex flex-col h-full overflow-y-auto">
     <!-- Header -->
     <div class="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
       <div class="flex flex-col">
@@ -125,6 +223,45 @@ function lengthStr(v: any): string {
       >
         <Trash2 class="size-3.5" />
       </button>
+    </div>
+
+    <!-- Variant cycler — visible when this element is wired to a TextList
+         (or any multi-entry source) via the SmartLayout's text_layer_<N>
+         socket. Picks which variant the canvas previews; the rendered
+         output at run time still fans out one image per variant. -->
+    <div
+      v-if="variantsForSelected.length > 1"
+      class="px-4 py-3 border-b border-[#96b4ff]/15 bg-[#96b4ff]/[0.04] flex flex-col gap-2"
+    >
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-[#c9d6ff]/85 font-medium">
+          <Layers class="size-3" />
+          <span>Variant {{ activeVariantIdx + 1 }} of {{ variantsForSelected.length }}</span>
+        </div>
+        <div class="flex items-center gap-0.5">
+          <button
+            class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
+            title="Previous variant"
+            @click="prevVariant"
+          >
+            <ChevronLeft class="size-3.5" />
+          </button>
+          <button
+            class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
+            title="Next variant"
+            @click="nextVariant"
+          >
+            <ChevronRight class="size-3.5" />
+          </button>
+        </div>
+      </div>
+      <div class="text-[11px] text-white/65 leading-snug italic line-clamp-3 font-mono">
+        "{{ variantsForSelected[activeVariantIdx] }}"
+      </div>
+      <div class="text-[10px] text-white/35 leading-snug">
+        Render time still produces one image per variant — this picker is just
+        for fine-tuning the layout against each version.
+      </div>
     </div>
 
     <!-- Override-mode banner: lets the user know writes will land in the
@@ -245,6 +382,16 @@ function lengthStr(v: any): string {
           @change="(e) => update('content' as any, (e.target as HTMLTextAreaElement).value)"
         />
       </label>
+      <div>
+        <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Font</div>
+          <button v-if="hasStyleOv('fontFamily')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontFamily')"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <TemplatesFontPicker
+          :model-value="(eff as any).style?.fontFamily ?? 'Inter'"
+          @update:model-value="applyFontFamily"
+        />
+      </div>
       <div class="grid grid-cols-2 gap-2">
         <label class="block">
           <div class="flex items-center gap-1.5 mb-1">
@@ -273,6 +420,33 @@ function lengthStr(v: any): string {
           </select>
         </label>
       </div>
+      <!-- Auto-fit: shrink fontSize so text fits the bbox. Treat `Size (px)`
+           above as the max; `Min size` is the floor. Same logic runs editor-
+           side (DOM measure) and server-side (opentype measure) for parity. -->
+      <div class="flex items-center justify-between gap-2">
+        <label class="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+          <input
+            type="checkbox"
+            :checked="!!(eff as any).style?.autoFit"
+            class="size-3.5 accent-[#96b4ff] cursor-pointer"
+            @change="(e) => updateStyle('autoFit', (e.target as HTMLInputElement).checked)"
+          />
+          <span class="text-[11px] text-white/70">Auto-fit to box</span>
+          <button v-if="hasStyleOv('autoFit')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click.stop.prevent="resetStyleField('autoFit')"><XIcon class="size-2.5 inline" /></button>
+        </label>
+        <label v-if="(eff as any).style?.autoFit" class="flex items-center gap-1.5 shrink-0">
+          <span class="text-[10px] text-white/45">Min</span>
+          <input
+            type="number"
+            :value="(eff as any).style?.minSize ?? 12"
+            min="6"
+            max="200"
+            class="w-14 h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            @change="(e) => updateStyle('minSize', Number((e.target as HTMLInputElement).value))"
+          />
+        </label>
+      </div>
+      <!-- Color + glyph stroke live with the other glyph-level controls. -->
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Color</div>
@@ -295,6 +469,41 @@ function lengthStr(v: any): string {
       </label>
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Glyph stroke</div>
+          <button v-if="hasStyleOv('strokeColor') || hasStyleOv('strokeWidth') || hasStyleOv('strokePlacement')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('strokeColor'); resetStyleField('strokeWidth'); resetStyleField('strokePlacement') }"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="color"
+            :value="(eff as any).style?.strokeColor ?? '#000000'"
+            class="size-8 rounded cursor-pointer bg-transparent border border-white/[0.06]"
+            @input="(e) => updateStyle('strokeColor', (e.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            :value="(eff as any).style?.strokeWidth ?? 0"
+            placeholder="Width"
+            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            @change="(e) => updateStyle('strokeWidth', Number((e.target as HTMLInputElement).value))"
+          />
+          <span class="text-[10px] text-white/35">px</span>
+        </div>
+        <div class="mt-1.5 grid grid-cols-3 gap-0.5 rounded border border-white/[0.06] p-0.5 bg-white/[0.02]">
+          <button
+            v-for="p in (['inside', 'center', 'outside'] as const)"
+            :key="p"
+            class="h-6 text-[10px] rounded transition-colors cursor-pointer capitalize"
+            :class="(((eff as any).style?.strokePlacement ?? 'center') === p)
+              ? 'bg-[#96b4ff]/25 text-white'
+              : 'text-white/55 hover:bg-white/[0.06]'"
+            @click="updateStyle('strokePlacement', p)"
+          >{{ p }}</button>
+        </div>
+      </label>
+      <label class="block">
+        <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Align</div>
           <button v-if="hasStyleOv('align')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('align')"><XIcon class="size-2.5 inline" /></button>
         </div>
@@ -308,6 +517,155 @@ function lengthStr(v: any): string {
               : 'text-white/55 hover:bg-white/[0.06]'"
             @click="updateStyle('align', a)"
           >{{ a }}</button>
+        </div>
+      </label>
+    </div>
+
+    <!-- Container — everything about the box that wraps the glyphs. Kept in
+         its own section so glyph properties above don't get tangled with
+         box-level fill/padding/border. -->
+    <div v-if="selectedElement.type === 'text'" class="px-4 py-3 border-b border-white/[0.06] flex flex-col gap-3">
+      <div class="text-[10px] uppercase tracking-[0.12em] text-white/35 font-medium">Container</div>
+      <label class="block">
+        <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Background</div>
+          <button v-if="hasStyleOv('backgroundColor')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundColor')"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="color"
+            :value="(eff as any).style?.backgroundColor ?? '#000000'"
+            class="size-8 rounded cursor-pointer bg-transparent border border-white/[0.06]"
+            @input="(e) => updateStyle('backgroundColor', (e.target as HTMLInputElement).value)"
+          />
+          <input
+            :value="(eff as any).style?.backgroundColor ?? ''"
+            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+            placeholder="transparent — type a color"
+            @change="(e) => updateStyle('backgroundColor', (e.target as HTMLInputElement).value || undefined)"
+          />
+        </div>
+      </label>
+      <div class="block">
+        <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Padding (px)</div>
+          <button class="text-[9px] text-white/45 hover:text-white px-1 py-0.5 rounded hover:bg-white/[0.06] transition-colors cursor-pointer" :title="paddingLinked ? 'Set per side' : 'Link all sides'" @click="togglePaddingLink">
+            {{ paddingLinked ? '⛓' : '⌗' }}
+          </button>
+          <button v-if="hasStyleOv('padding')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('padding')"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <input
+          v-if="paddingLinked"
+          type="number"
+          min="0"
+          :value="paddingSides[0]"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          @change="(e) => updateStyle('padding', Number((e.target as HTMLInputElement).value))"
+        />
+        <div v-else class="grid grid-cols-4 gap-1">
+          <label v-for="(side, i) in ['top','right','bottom','left']" :key="side" class="block">
+            <input
+              type="number"
+              min="0"
+              :value="paddingSides[i]"
+              :title="['Top','Right','Bottom','Left'][i]"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50"
+              @change="(e) => setPaddingSide(i, Number((e.target as HTMLInputElement).value))"
+            />
+            <!-- Tiny 3x3 square with one edge highlighted to label the side. -->
+            <div class="flex justify-center mt-1">
+              <div
+                class="size-3 border border-white/25"
+                :style="{
+                  borderTopColor:    side === 'top'    ? '#96b4ff' : undefined,
+                  borderRightColor:  side === 'right'  ? '#96b4ff' : undefined,
+                  borderBottomColor: side === 'bottom' ? '#96b4ff' : undefined,
+                  borderLeftColor:   side === 'left'   ? '#96b4ff' : undefined,
+                  borderTopWidth:    side === 'top'    ? '2px' : undefined,
+                  borderRightWidth:  side === 'right'  ? '2px' : undefined,
+                  borderBottomWidth: side === 'bottom' ? '2px' : undefined,
+                  borderLeftWidth:   side === 'left'   ? '2px' : undefined,
+                }"
+              />
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="block">
+        <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Radius (px)</div>
+          <button class="text-[9px] text-white/45 hover:text-white px-1 py-0.5 rounded hover:bg-white/[0.06] transition-colors cursor-pointer" :title="radiusLinked ? 'Set per corner' : 'Link all corners'" @click="toggleRadiusLink">
+            {{ radiusLinked ? '⛓' : '⌗' }}
+          </button>
+          <button v-if="hasStyleOv('backgroundRadius')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundRadius')"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <input
+          v-if="radiusLinked"
+          type="number"
+          min="0"
+          :value="radiusCorners[0]"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          @change="(e) => updateStyle('backgroundRadius', Number((e.target as HTMLInputElement).value))"
+        />
+        <div v-else class="grid grid-cols-4 gap-1">
+          <label v-for="(corner, i) in ['tl','tr','br','bl']" :key="corner" class="block">
+            <input
+              type="number"
+              min="0"
+              :value="radiusCorners[i]"
+              :title="['Top-left','Top-right','Bottom-right','Bottom-left'][i]"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50"
+              @change="(e) => setRadiusCorner(i, Number((e.target as HTMLInputElement).value))"
+            />
+            <!-- Tiny 3x3 square with one corner rounded, indicating which one
+                 this input controls. The other corners stay sharp. -->
+            <div class="flex justify-center mt-1">
+              <div
+                class="size-3 border border-white/55"
+                :style="{
+                  borderTopLeftRadius:     corner === 'tl' ? '6px' : '0',
+                  borderTopRightRadius:    corner === 'tr' ? '6px' : '0',
+                  borderBottomRightRadius: corner === 'br' ? '6px' : '0',
+                  borderBottomLeftRadius:  corner === 'bl' ? '6px' : '0',
+                }"
+              />
+            </div>
+          </label>
+        </div>
+      </div>
+      <label class="block">
+        <div class="flex items-center gap-1.5 mb-1">
+          <div class="text-[11px] text-white/55">Border</div>
+          <button v-if="hasStyleOv('borderColor') || hasStyleOv('borderWidth') || hasStyleOv('borderPlacement')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('borderColor'); resetStyleField('borderWidth'); resetStyleField('borderPlacement') }"><XIcon class="size-2.5 inline" /></button>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="color"
+            :value="(eff as any).style?.borderColor ?? '#000000'"
+            class="size-8 rounded cursor-pointer bg-transparent border border-white/[0.06]"
+            @input="(e) => updateStyle('borderColor', (e.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            :value="(eff as any).style?.borderWidth ?? 0"
+            placeholder="Width"
+            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            @change="(e) => updateStyle('borderWidth', Number((e.target as HTMLInputElement).value))"
+          />
+          <span class="text-[10px] text-white/35">px</span>
+        </div>
+        <div class="mt-1.5 grid grid-cols-3 gap-0.5 rounded border border-white/[0.06] p-0.5 bg-white/[0.02]">
+          <button
+            v-for="p in (['inside', 'center', 'outside'] as const)"
+            :key="p"
+            class="h-6 text-[10px] rounded transition-colors cursor-pointer capitalize"
+            :class="(((eff as any).style?.borderPlacement ?? 'center') === p)
+              ? 'bg-[#96b4ff]/25 text-white'
+              : 'text-white/55 hover:bg-white/[0.06]'"
+            @click="updateStyle('borderPlacement', p)"
+          >{{ p }}</button>
         </div>
       </label>
     </div>

@@ -40,3 +40,42 @@ def save_live_preview(image_tensor: torch.Tensor, node_id: str) -> dict:
         ],
         "animated": (False,),
     }
+
+
+def save_live_preview_multi(
+    images: list[torch.Tensor], node_id: str, labels: list[str] | None = None
+) -> dict:
+    """Save multiple preview images for a node and return a UI dict with all of them.
+
+    Used by nodes that produce a *set* of related images (e.g. SmartLayout
+    rendering one PNG per aspect ratio) where every variant matters to the
+    user. Each tensor is saved under a deterministic filename keyed by node id
+    + variant index/label so reruns overwrite their predecessors instead of
+    accumulating in temp/.
+
+    Returns the same UI shape ComfyUI expects (a list under "images") so the
+    frontend can present them however it likes — a carousel for SmartLayout,
+    a vertical strip for the default node body, etc.
+    """
+    temp_dir = folder_paths.get_temp_directory()
+    os.makedirs(temp_dir, exist_ok=True)
+
+    out_files: list[dict[str, str]] = []
+    for i, image in enumerate(images):
+        img = image[0] if image.ndim == 4 else image
+        arr = np.clip(255.0 * img.cpu().numpy(), 0, 255).astype(np.uint8)
+        # Sanitize the label so it's safe in a filename (alnum + _- only).
+        raw_label = labels[i] if labels and i < len(labels) else str(i)
+        safe_label = "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in raw_label) or str(i)
+        fname = f"live_preview_{node_id}_{safe_label}.png"
+        PILImage.fromarray(arr).save(
+            os.path.join(temp_dir, fname),
+            "PNG",
+            compress_level=1,
+        )
+        out_files.append({"filename": fname, "subfolder": "", "type": "temp"})
+
+    return {
+        "images": out_files,
+        "animated": (False,),
+    }

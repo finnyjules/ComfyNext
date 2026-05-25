@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   House, X, Plus, Play, Check, Minus, ExternalLink, AlertCircle,
-  MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles,
+  MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -64,7 +64,7 @@ const sidebarItems = [
   { label: 'Generators', icon: WandSparkles, panel: 'generators' },
   { label: 'LoRAs', icon: Library, panel: 'loras' },
   { label: 'Nodes', icon: GitFork, tabId: 'node-library' },
-  { label: 'Workflows', icon: Workflow, tabId: 'workflows' },
+  { label: 'Blocks', icon: Boxes, panel: 'blocks' },
   { label: 'Apps', icon: AppWindow, tabId: 'apps' },
   { label: 'Templates', icon: LayoutTemplate },
   { label: 'Explain', icon: Sparkles, tool: 'explain' },
@@ -79,6 +79,7 @@ const vueRightPanelOpen = ref(false) // tracks whether Vue right panel (Workflow
 const toolboxPanelOpen = ref(false) // tracks whether the Toolbox right panel is visible
 const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is visible
 const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
+const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
 
 // Whether a sidebar item is currently the "active" one (highlighted).
 // Single source of truth for the chevron/button highlight logic — used by
@@ -89,6 +90,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'toolbox') return toolboxPanelOpen.value
   if (item?.panel === 'generators') return generatorsPanelOpen.value
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
+  if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   return activeSidebarItem.value === item?.label
 }
 
@@ -128,7 +130,15 @@ function toggleSidebarItem(label: string) {
     const wasOpen = loraLibraryPanelOpen.value
     toolboxPanelOpen.value = false
     generatorsPanelOpen.value = false
+    blockLibraryPanelOpen.value = false
     loraLibraryPanelOpen.value = !wasOpen
+  }
+  else if (item?.panel === 'blocks') {
+    const wasOpen = blockLibraryPanelOpen.value
+    toolboxPanelOpen.value = false
+    generatorsPanelOpen.value = false
+    loraLibraryPanelOpen.value = false
+    blockLibraryPanelOpen.value = !wasOpen
   }
   else if (item?.tabId) {
     const wasActive = activeSidebarItem.value === label
@@ -176,13 +186,18 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
   }
 }
 
-// Run workflow from Vue canvas — loads into bridge iframe, then queues via bridge
-async function runVueWorkflow() {
+// Run workflow from Vue canvas — loads into bridge iframe, then queues via bridge.
+// When `targetIds` is provided, runs only that subset (plus upstream deps).
+// Forgiving filtering happens via buildFilteredWorkflow which mutes everything
+// outside the keep set; LiteGraph already honors mode=2 at queue time.
+async function runVueWorkflow(targetIds?: string[]) {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
     return
   }
-  const workflow = vueCanvasRef.value.getWorkflow()
+  const workflow = targetIds?.length && vueCanvasRef.value.getFilteredWorkflow
+    ? vueCanvasRef.value.getFilteredWorkflow(targetIds)
+    : vueCanvasRef.value.getWorkflow()
   if (!workflow?.nodes?.length) {
     console.warn('[Run] workflow has no nodes')
     return
@@ -202,12 +217,33 @@ async function runVueWorkflow() {
     console.error('[Run] bridge iframe not found or not ready')
     return
   }
-  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to bridge')
+  const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
+  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to bridge',
+    targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
   sendLoadWorkflow(plainWorkflow)
   await new Promise(r => setTimeout(r, 800))
   console.log('[Run] sending queuePrompt')
   sendToActiveProjectIframe('queuePrompt')
 }
+
+// Filtered-run events from the canvas context menu (Run Group, Run Selection).
+function handleRunFiltered(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const targetIds = detail?.targetIds as string[] | undefined
+  if (!targetIds?.length) return
+  runVueWorkflow(targetIds)
+}
+function handleRunAll() {
+  runVueWorkflow()
+}
+onMounted(() => {
+  window.addEventListener('comfynext:runFiltered', handleRunFiltered)
+  window.addEventListener('comfynext:runAll', handleRunAll)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
+  window.removeEventListener('comfynext:runAll', handleRunAll)
+})
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
 async function stopVueWorkflow() {
@@ -1253,6 +1289,20 @@ function handleBridgeMessage(event: MessageEvent) {
         >
           <div v-if="loraLibraryPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasLoRALibraryPanel @close="loraLibraryPanelOpen = false" />
+          </div>
+        </Transition>
+
+        <!-- Block Library left panel (mutually exclusive with the others) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="blockLibraryPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasBlockLibraryPanel @close="blockLibraryPanelOpen = false" />
           </div>
         </Transition>
 

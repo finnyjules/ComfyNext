@@ -1,0 +1,1650 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import {
+  X, Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight,
+  RotateCw, Undo2, Redo2, Plus, Trash2, Scissors, Volume2, Eye, EyeOff,
+  Lock, Unlock, Film, Music, ImageIcon, Type, Cpu,
+} from 'lucide-vue-next'
+import { useTimelineStore } from '~/composables/useTimelineStore'
+import { useAssetLibrary } from '~/composables/useAssetLibrary'
+import { usePlaybackEngine } from '~/composables/usePlaybackEngine'
+import { useClipPreview } from '~/composables/useClipPreview'
+import type { Clip, Track, BlendMode } from '~~/shared/timeline/types'
+import { computeTotalFrames } from '~~/shared/timeline/types'
+
+const props = defineProps<{
+  nodeId: string
+  nodes: any[]
+  edges: any[]
+}>()
+
+const emit = defineEmits<{ close: [] }>()
+
+const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay',
+  'soft_light', 'hard_light', 'difference', 'lighten', 'darken', 'add']
+
+const TRACK_COLORS = [
+  { bar: 'bg-violet-500/70', edge: 'bg-violet-300', ring: 'ring-violet-400', text: 'text-violet-300' },
+  { bar: 'bg-sky-500/70', edge: 'bg-sky-300', ring: 'ring-sky-400', text: 'text-sky-300' },
+  { bar: 'bg-emerald-500/70', edge: 'bg-emerald-300', ring: 'ring-emerald-400', text: 'text-emerald-300' },
+  { bar: 'bg-amber-500/70', edge: 'bg-amber-300', ring: 'ring-amber-400', text: 'text-amber-300' },
+  { bar: 'bg-rose-500/70', edge: 'bg-rose-300', ring: 'ring-rose-400', text: 'text-rose-300' },
+  { bar: 'bg-cyan-500/70', edge: 'bg-cyan-300', ring: 'ring-cyan-400', text: 'text-cyan-300' },
+]
+
+function trackColor(idx: number) {
+  return TRACK_COLORS[idx % TRACK_COLORS.length]!
+}
+
+// -- Store --
+
+const store = useTimelineStore()
+const { assets: assetsList, fetchAssets, importAsset, fetchInputFiles, getAsset, assetUrl: getAssetUrl } = useAssetLibrary()
+const { getThumbs, getWaveform, thumbVersion, waveVersion } = useClipPreview()
+
+const timeline = computed(() => props.nodes.find((n: any) => n.id === props.nodeId))
+
+// Edit state is persisted in `node.data.properties` (a free-form dict).
+// We keep the existing 4-port + flat-widget Timeline schema untouched.
+function getValue(name: string): any {
+  const props_bag = timeline.value?.data?.properties
+  if (!props_bag) return undefined
+  return props_bag[name]
+}
+function setValue(name: string, v: any) {
+  const node = timeline.value
+  if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  node.data.properties[name] = v
+}
+
+onMounted(async () => {
+  store.bind(props.nodeId, getValue, setValue)
+  await fetchAssets()
+  await loadInputFiles()
+  engine.start()
+  window.addEventListener('keydown', handleKeydown, true)
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointermove', onGlobalPointerMove)
+  window.addEventListener('pointerup', onGlobalPointerUp)
+  window.addEventListener('resize', () => { measureStrip(); clampScroll() })
+  nextTick(() => {
+    measureStrip()
+    // First-load zoom: aim for ~10 seconds of timeline visible by default.
+    // For an empty timeline (totalFrames <= 1) the "fit" math degenerates,
+    // so just pick a comfortable px-per-frame instead.
+    const fps = store.fps.value
+    const clipsExist = store.totalFrames.value > 1
+    if (clipsExist) {
+      const fitPpf = stripWidth.value / store.totalFrames.value
+      // Don't go past 8 px/frame on auto-fit — keeps short clips readable
+      // but doesn't fly to MAX_PX_PER_FRAME for tiny edits.
+      pxPerFrame.value = Math.max(0.5, Math.min(8, fitPpf))
+    } else {
+      // ~10 seconds visible at typical strip width (~900px after the headers).
+      const stripPx = Math.max(400, stripWidth.value)
+      pxPerFrame.value = Math.max(0.5, Math.min(8, stripPx / (10 * fps)))
+    }
+  })
+})
+
+onUnmounted(() => {
+  store.pause()
+  engine.destroy()
+  store.unbind()
+  window.removeEventListener('keydown', handleKeydown, true)
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointermove', onGlobalPointerMove)
+  window.removeEventListener('pointerup', onGlobalPointerUp)
+  window.removeEventListener('resize', measureStrip)
+})
+
+// -- Input files browser --
+
+const inputFiles = ref<Array<{ filename: string; path: string }>>([])
+async function loadInputFiles() {
+  const items = await fetchInputFiles()
+  inputFiles.value = items.map(i => ({ filename: i.filename, path: i.path }))
+}
+
+async function addFileToTimeline(file: { filename: string; path: string }) {
+  const asset = await importAsset(file.path)
+  if (!asset) return
+  const fps = store.fps.value
+  const lengthFrames = asset.duration_sec ? Math.round(asset.duration_sec * fps) : fps * 5
+
+  const trackKind = asset.kind === 'audio' ? 'audio' : 'video'
+  let targetTrack = store.state.value.tracks.find(t => t.kind === trackKind && !t.locked)
+  if (!targetTrack) {
+    store.addTrack(trackKind)
+    targetTrack = store.state.value.tracks[store.state.value.tracks.length - 1]
+  }
+
+  const maxEnd = targetTrack!.clips.reduce((m, c) => Math.max(m, c.start_frame + c.length), 0)
+
+  const clip: Clip = {
+    id: crypto.randomUUID(),
+    kind: asset.kind as any,
+    asset_id: asset.id,
+    start_frame: maxEnd,
+    in_frame: 0,
+    length: lengthFrames,
+    x: 0, y: 0, rotation: 0, scale: 1,
+    opacity: 1, blend: 'normal',
+    fade_in: 0, fade_out: 0,
+    volume: 1,
+  } as Clip
+
+  store.addClip(targetTrack!.id, clip)
+}
+
+// -- Playback engine --
+
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+
+// Resolve a clip to a playable preview source URL. Asset clips look up the
+// imported asset; workflow clips walk back through the graph wiring to find
+// the upstream file (LoadVideo / LoadImage). For workflow clips with no
+// resolvable source (e.g. wired to a processing node), the preview shows
+// nothing until the graph is executed.
+function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' } | null {
+  if (clip.kind === 'video' || clip.kind === 'image') {
+    const asset = getAsset((clip as any).asset_id)
+    if (!asset) return null
+    return { url: getAssetUrl(asset), kind: clip.kind }
+  }
+  if (clip.kind === 'workflow') {
+    const portIdx = (clip as any).port_index as number
+    const binding = portBindings.value.find(b => b.port_index === portIdx)
+    if (!binding) return null
+    // Look up the upstream node and read its file widget.
+    const src = props.nodes.find((n: any) => n.id === binding.upstream_id)
+    if (!src) return null
+    const type = binding.upstream_type
+    if (type === 'LoadVideo' || type === 'LoadVideoFrames') {
+      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'file') ?? 0
+      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
+      if (fname) return {
+        url: `/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`,
+        kind: 'video',
+      }
+    }
+    if (type === 'LoadImage') {
+      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'image') ?? 0
+      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
+      if (fname) return {
+        url: `/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`,
+        kind: 'image',
+      }
+    }
+    // Fallback: any node that has published an image preview (e.g. processed output).
+    if (src.data?.images?.length) return { url: String(src.data.images[0]), kind: 'image' }
+    return null
+  }
+  return null
+}
+
+const engine = usePlaybackEngine(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview)
+
+// Tick playhead in rAF
+let playRafId: number | null = null
+function playLoop() {
+  store.tickPlayhead()
+  playRafId = requestAnimationFrame(playLoop)
+}
+watch(store.isPlaying, (playing) => {
+  if (playing) {
+    if (playRafId === null) playLoop()
+  } else {
+    if (playRafId !== null) {
+      cancelAnimationFrame(playRafId)
+      playRafId = null
+    }
+  }
+})
+onUnmounted(() => { if (playRafId !== null) cancelAnimationFrame(playRafId) })
+
+// -- Strip geometry --
+//
+// The timeline strip uses two reactive values to map frame ↔ pixel:
+//   pxPerFrame  — current zoom level
+//   scrollX     — pixels scrolled from frame 0
+//
+// Coordinate model: a frame F sits at screen-x  = F * pxPerFrame - scrollX
+//                   within the strip's local space.
+// Fit-to-width and 1:1 zoom are derived; Cmd/Ctrl + wheel zooms under the
+// cursor (keeps the frame under the cursor anchored).
+
+const stripRef = ref<HTMLDivElement | null>(null)
+const stripWidth = ref(800)
+function measureStrip() {
+  if (stripRef.value) {
+    const newW = stripRef.value.clientWidth
+    if (stripWidth.value !== newW) stripWidth.value = newW
+  }
+}
+
+const TRACK_HEIGHT = 56  // taller so thumbnails/waveforms read clearly
+const TRACK_GAP = 2
+const RULER_HEIGHT = 22
+
+const MIN_PX_PER_FRAME = 0.05   // very zoomed out
+const MAX_PX_PER_FRAME = 60     // very zoomed in (60 px/frame at 30fps = 2px/ms)
+
+const pxPerFrame = ref(4)       // default: 4px per frame ≈ 120 px/sec at 30fps
+const scrollX = ref(0)
+
+function framesToPx(frames: number): number {
+  return frames * pxPerFrame.value - scrollX.value
+}
+function pxToFrames(px: number): number {
+  return (px + scrollX.value) / pxPerFrame.value
+}
+
+function clampScroll() {
+  const total = store.totalFrames.value
+  const contentW = Math.max(0, total * pxPerFrame.value)
+  const maxScroll = Math.max(0, contentW - stripWidth.value + 80) // 80px right padding
+  if (scrollX.value < 0) scrollX.value = 0
+  if (scrollX.value > maxScroll) scrollX.value = maxScroll
+}
+
+function setZoom(newPpf: number, anchorScreenX: number | null = null) {
+  const clamped = Math.max(MIN_PX_PER_FRAME, Math.min(MAX_PX_PER_FRAME, newPpf))
+  if (anchorScreenX == null) {
+    pxPerFrame.value = clamped
+  } else {
+    // Keep the frame at the cursor anchored.
+    const frameAtCursor = pxToFrames(anchorScreenX)
+    pxPerFrame.value = clamped
+    scrollX.value = frameAtCursor * pxPerFrame.value - anchorScreenX
+  }
+  clampScroll()
+}
+
+function zoomFit() {
+  const total = store.totalFrames.value
+  if (total <= 0) return
+  pxPerFrame.value = Math.max(MIN_PX_PER_FRAME, stripWidth.value / total)
+  scrollX.value = 0
+}
+
+function zoomOneToOne() {
+  // 1 frame = 1 pixel
+  pxPerFrame.value = 1
+  // Keep playhead centered if possible
+  const target = store.playheadFrame.value * pxPerFrame.value - stripWidth.value / 2
+  scrollX.value = Math.max(0, target)
+  clampScroll()
+}
+
+function zoomIn(anchor?: number) {
+  setZoom(pxPerFrame.value * 1.5, anchor ?? null)
+}
+function zoomOut(anchor?: number) {
+  setZoom(pxPerFrame.value / 1.5, anchor ?? null)
+}
+
+function onStripWheel(e: WheelEvent) {
+  // Cmd/Ctrl + wheel = zoom; Shift + wheel = pan; default = pan vertically (parent)
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    const rect = stripRef.value?.getBoundingClientRect()
+    const anchor = rect ? e.clientX - rect.left : null
+    const factor = Math.exp(-e.deltaY * 0.0015)
+    setZoom(pxPerFrame.value * factor, anchor)
+  } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    e.preventDefault()
+    scrollX.value += (e.deltaX !== 0 ? e.deltaX : e.deltaY)
+    clampScroll()
+  }
+}
+
+// Auto-scroll playhead into view during playback.
+watch(store.playheadFrame, (frame) => {
+  if (!store.isPlaying.value) return
+  const x = framesToPx(frame)
+  const margin = 80
+  if (x < margin) {
+    scrollX.value = Math.max(0, frame * pxPerFrame.value - margin)
+  } else if (x > stripWidth.value - margin) {
+    scrollX.value = frame * pxPerFrame.value - (stripWidth.value - margin)
+    clampScroll()
+  }
+})
+
+// -- Strip ticks --
+//
+// Only generate ticks for the visible frame range. Step size is chosen so
+// labels never crowd: aim for one major tick every ~80px.
+
+const visibleFrameRange = computed(() => {
+  const start = Math.max(0, Math.floor(pxToFrames(0)))
+  const end = Math.ceil(pxToFrames(stripWidth.value))
+  return { start, end }
+})
+
+// Step is chosen in SECONDS (not frames) so labels are always tidy.
+// Frame step is derived from this and clamped to >= 1 so we never iterate
+// fractional frames.
+const tickStepSec = computed(() => {
+  const pxPerSec = pxPerFrame.value * store.fps.value
+  // Targets ~80px between major ticks.
+  const targetSec = 80 / Math.max(0.01, pxPerSec)
+  const niceSteps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600]
+  for (const s of niceSteps) if (s >= targetSec) return s
+  return niceSteps[niceSteps.length - 1]!
+})
+
+const ticks = computed<{ frame: number; major: boolean; label: string }[]>(() => {
+  const { start, end } = visibleFrameRange.value
+  const fps = store.fps.value
+  const stepSec = tickStepSec.value
+  const majorFrame = Math.max(1, Math.round(stepSec * fps))
+  const minorFrame = Math.max(1, Math.round(majorFrame / 5))
+  const out: { frame: number; major: boolean; label: string }[] = []
+  const first = Math.floor(start / minorFrame) * minorFrame
+  for (let f = first; f <= end; f += minorFrame) {
+    const major = (f % majorFrame) === 0
+    let label = ''
+    if (major) {
+      const sec = f / fps
+      const m = Math.floor(sec / 60)
+      const s = sec - m * 60
+      // Precision: use 1 decimal when stepSec < 1, 0 otherwise.
+      const prec = stepSec < 1 ? 1 : 0
+      const sStr = s.toFixed(prec)
+      label = m > 0
+        ? `${m}:${sStr.padStart(prec ? 4 : 2, '0')}`
+        : (prec > 0 ? `${sStr}s` : `${sStr}s`)
+    }
+    out.push({ frame: f, major, label })
+  }
+  return out
+})
+
+// -- Track height + reorder --
+
+const MIN_TRACK_HEIGHT = 32
+const MAX_TRACK_HEIGHT = 160
+
+function trackHeight(track: Track): number {
+  return Math.max(MIN_TRACK_HEIGHT, Math.min(MAX_TRACK_HEIGHT, track.height ?? TRACK_HEIGHT))
+}
+
+// Resize: drag the bottom-edge handle of a track header.
+const resizingTrackId = ref<string | null>(null)
+let resizeStartY = 0
+let resizeStartHeight = 0
+
+function onTrackResizeStart(trackId: string, e: PointerEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  const track = store.state.value.tracks.find(t => t.id === trackId)
+  if (!track) return
+  resizingTrackId.value = trackId
+  resizeStartY = e.clientY
+  resizeStartHeight = trackHeight(track)
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onTrackResizeMove(e: PointerEvent) {
+  if (!resizingTrackId.value) return
+  const dy = e.clientY - resizeStartY
+  const newH = Math.max(MIN_TRACK_HEIGHT, Math.min(MAX_TRACK_HEIGHT, resizeStartHeight + dy))
+  const id = resizingTrackId.value
+  store.mutate(s => {
+    const t = s.tracks.find(t2 => t2.id === id)
+    if (t) t.height = newH
+  })
+}
+
+function onTrackResizeEnd() {
+  resizingTrackId.value = null
+}
+
+// Reorder: drag a track header up/down to swap with neighbours.
+const reorderingTrackId = ref<string | null>(null)
+let reorderStartY = 0
+let reorderStartIndex = 0
+
+function onTrackReorderStart(trackId: string, e: PointerEvent) {
+  // Don't start reorder from inside the resize handle.
+  const target = e.target as HTMLElement
+  if (target?.dataset?.role === 'resize') return
+  e.preventDefault()
+  reorderingTrackId.value = trackId
+  reorderStartY = e.clientY
+  reorderStartIndex = store.state.value.tracks.findIndex(t => t.id === trackId)
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onTrackReorderMove(e: PointerEvent) {
+  if (!reorderingTrackId.value) return
+  const dy = e.clientY - reorderStartY
+  const avgH = TRACK_HEIGHT + TRACK_GAP
+  const indexDelta = Math.round(dy / avgH)
+  const targetIdx = Math.max(0, Math.min(
+    store.state.value.tracks.length - 1,
+    reorderStartIndex + indexDelta
+  ))
+  const currentIdx = store.state.value.tracks.findIndex(t => t.id === reorderingTrackId.value)
+  if (currentIdx === targetIdx) return
+  store.mutate(s => {
+    const idx = s.tracks.findIndex(t => t.id === reorderingTrackId.value)
+    if (idx < 0) return
+    const [t] = s.tracks.splice(idx, 1)
+    s.tracks.splice(targetIdx, 0, t!)
+  })
+}
+
+function onTrackReorderEnd() {
+  reorderingTrackId.value = null
+}
+
+// Combined pointer-move/up listeners for both interactions.
+function onGlobalPointerMove(e: PointerEvent) {
+  if (resizingTrackId.value) onTrackResizeMove(e)
+  if (reorderingTrackId.value) onTrackReorderMove(e)
+}
+function onGlobalPointerUp() {
+  if (resizingTrackId.value) onTrackResizeEnd()
+  if (reorderingTrackId.value) onTrackReorderEnd()
+}
+
+// -- Multi-select (clip selection set) --
+//
+// `selectedClipIds` is the full set. `store.selectedClipId` mirrors the
+// "primary" selection (last-clicked) for the right-hand Inspector.
+
+const selectedClipIds = ref<Set<string>>(new Set())
+
+function selectOnly(clipId: string) {
+  selectedClipIds.value = new Set([clipId])
+  store.selectedClipId.value = clipId
+}
+
+function toggleSelect(clipId: string) {
+  const s = new Set(selectedClipIds.value)
+  if (s.has(clipId)) { s.delete(clipId) } else { s.add(clipId) }
+  selectedClipIds.value = s
+  // Keep primary selection on the most-recently toggled-in clip
+  store.selectedClipId.value = s.has(clipId) ? clipId : (s.size ? [...s][s.size - 1]! : null)
+}
+
+function clearSelection() {
+  selectedClipIds.value = new Set()
+  store.selectedClipId.value = null
+}
+
+function onClipClick(clipId: string, e: MouseEvent) {
+  if (e.shiftKey || e.metaKey || e.ctrlKey) {
+    toggleSelect(clipId)
+  } else {
+    selectOnly(clipId)
+  }
+}
+
+// -- Drag on clips + snapping --
+//
+// Snap targets (in frames):
+//   • all clip start_frame and (start_frame + length) on other tracks/clips
+//   • playhead
+//   • frame 0
+//   • major ruler ticks
+// Threshold is 8px in screen space, so it auto-scales with zoom.
+
+const SNAP_PX = 8
+
+const drag = ref<null | {
+  clipId: string
+  trackId: string
+  mode: 'move' | 'resize-right' | 'resize-left' | 'playhead'
+  startMouseX: number
+  startStart: number
+  startLength: number
+}>(null)
+
+// Active snap target visualised as a vertical guideline during drag.
+const snapGuideFrame = ref<number | null>(null)
+
+function buildSnapTargets(excludeClipId: string | null): number[] {
+  const targets: number[] = [0, store.playheadFrame.value]
+  for (const track of store.state.value.tracks) {
+    for (const clip of track.clips) {
+      if (clip.id === excludeClipId) continue
+      targets.push(clip.start_frame)
+      targets.push(clip.start_frame + clip.length)
+    }
+  }
+  // Major ticks within the visible range — gives users a "stick to second" feel.
+  const stepFrames = Math.max(1, Math.round(tickStepSec.value * store.fps.value))
+  const { start, end } = visibleFrameRange.value
+  const first = Math.floor(start / stepFrames) * stepFrames
+  for (let f = first; f <= end; f += stepFrames) targets.push(f)
+  return targets
+}
+
+function snapFrame(rawFrame: number, excludeClipId: string | null): number {
+  const targets = buildSnapTargets(excludeClipId)
+  const thresholdFrames = SNAP_PX / pxPerFrame.value
+  let best = rawFrame
+  let bestDist = thresholdFrames
+  for (const t of targets) {
+    const d = Math.abs(t - rawFrame)
+    if (d < bestDist) { bestDist = d; best = t }
+  }
+  snapGuideFrame.value = best !== rawFrame ? best : null
+  return best
+}
+
+// Snapshot of clip start-frames at drag-start for bulk-move support.
+let dragGroupStarts: Map<string, number> | null = null
+
+function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resize-right' | 'resize-left', e: PointerEvent) {
+  e.stopPropagation()
+  e.preventDefault()
+  // If the clip isn't already selected, select it (without clearing others
+  // if shift/meta is held).
+  if (!selectedClipIds.value.has(clipId)) {
+    if (e.shiftKey || e.metaKey || e.ctrlKey) toggleSelect(clipId)
+    else selectOnly(clipId)
+  } else {
+    store.selectedClipId.value = clipId  // primary
+  }
+  const clip = findClip(clipId)
+  if (!clip) return
+  drag.value = {
+    clipId, trackId, mode,
+    startMouseX: e.clientX,
+    startStart: clip.start_frame,
+    startLength: clip.length,
+  }
+  // Snapshot starts of all selected clips for bulk move.
+  if (mode === 'move' && selectedClipIds.value.size > 1) {
+    dragGroupStarts = new Map()
+    for (const track of store.state.value.tracks) {
+      for (const c of track.clips) {
+        if (selectedClipIds.value.has(c.id)) dragGroupStarts.set(c.id, c.start_frame)
+      }
+    }
+  } else {
+    dragGroupStarts = null
+  }
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onPlayheadPointerDown(e: PointerEvent) {
+  e.preventDefault()
+  drag.value = { clipId: '', trackId: '', mode: 'playhead', startMouseX: e.clientX, startStart: 0, startLength: 0 }
+  const rect = stripRef.value!.getBoundingClientRect()
+  const frame = Math.round(pxToFrames(e.clientX - rect.left))
+  store.seekFrame(frame)
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function onStripPointerDown(e: PointerEvent) {
+  if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('strip-bg')) return
+  onPlayheadPointerDown(e)
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!drag.value) return
+  const dx = e.clientX - drag.value.startMouseX
+  // Convert delta to frames using zoom only (no scroll offset for deltas).
+  const dframes = Math.round(dx / pxPerFrame.value)
+  if (drag.value.mode === 'move') {
+    const rawStart = Math.max(0, drag.value.startStart + dframes)
+    // Snap either edge (start or end), whichever is closer to a target.
+    const dur = drag.value.startLength
+    const startSnap = snapFrame(rawStart, drag.value.clipId)
+    const endSnap = snapFrame(rawStart + dur, drag.value.clipId)
+    const startDist = Math.abs(startSnap - rawStart)
+    const endDist = Math.abs(endSnap - (rawStart + dur))
+    const finalStart = startDist < endDist ? startSnap : (endSnap - dur)
+    snapGuideFrame.value = (startDist < endDist ? startSnap : endSnap)
+    if (startDist >= SNAP_PX / pxPerFrame.value && endDist >= SNAP_PX / pxPerFrame.value) snapGuideFrame.value = null
+    // Apply: either single clip, or whole selection if bulk-move is active.
+    if (dragGroupStarts && dragGroupStarts.size > 1) {
+      const realDelta = Math.max(0, finalStart) - drag.value.startStart
+      // Don't let any clip go below 0.
+      let minStart = Infinity
+      for (const [, s] of dragGroupStarts) minStart = Math.min(minStart, s)
+      const clampedDelta = Math.max(realDelta, -minStart)
+      store.mutate(s => {
+        for (const track of s.tracks) {
+          for (const c of track.clips) {
+            const orig = dragGroupStarts!.get(c.id)
+            if (orig != null) c.start_frame = orig + clampedDelta
+          }
+        }
+      })
+    } else {
+      store.updateClip(drag.value.clipId, { start_frame: Math.max(0, finalStart) })
+    }
+  } else if (drag.value.mode === 'resize-right') {
+    const rawEnd = drag.value.startStart + Math.max(1, drag.value.startLength + dframes)
+    const snapped = snapFrame(rawEnd, drag.value.clipId)
+    const newLen = Math.max(1, snapped - drag.value.startStart)
+    store.updateClip(drag.value.clipId, { length: newLen })
+  } else if (drag.value.mode === 'resize-left') {
+    const rawStart = drag.value.startStart + dframes
+    const snapped = snapFrame(rawStart, drag.value.clipId)
+    const newLen = Math.max(1, drag.value.startLength - (snapped - drag.value.startStart))
+    const newStart = drag.value.startStart + drag.value.startLength - newLen
+    store.updateClip(drag.value.clipId, { start_frame: Math.max(0, newStart), length: newLen })
+  } else if (drag.value.mode === 'playhead') {
+    const rect = stripRef.value!.getBoundingClientRect()
+    const frame = Math.round(pxToFrames(e.clientX - rect.left))
+    store.seekFrame(Math.max(0, frame))
+  }
+}
+
+function onPointerUp() {
+  drag.value = null
+  snapGuideFrame.value = null
+  dragGroupStarts = null
+}
+
+// -- HTML5 drag-and-drop from asset panel ----------------------------------
+//
+// MIME: application/x-comfynext-asset (we can't rely on text/plain since other
+// drops may set it). Payload schema:
+//   { kind: 'input-file', path, filename }     — needs import before use
+//   { kind: 'library',    asset_id }           — already in library
+//   { kind: 'port',       port_index, label }  — wired AI port
+
+interface DragPayload {
+  kind: 'input-file' | 'library' | 'port'
+  path?: string
+  filename?: string
+  asset_id?: string
+  port_index?: number
+  label?: string
+}
+
+const dragGhostFrame = ref<number | null>(null)
+const dragTargetTrackId = ref<string | null>(null)
+
+function onAssetDragStart(payload: DragPayload, e: DragEvent) {
+  if (!e.dataTransfer) return
+  e.dataTransfer.effectAllowed = 'copy'
+  e.dataTransfer.setData('application/x-comfynext-asset', JSON.stringify(payload))
+}
+
+function readDragPayload(e: DragEvent): DragPayload | null {
+  if (!e.dataTransfer) return null
+  const raw = e.dataTransfer.getData('application/x-comfynext-asset')
+  if (!raw) return null
+  try { return JSON.parse(raw) as DragPayload } catch { return null }
+}
+
+function onTrackDragOver(trackId: string, e: DragEvent) {
+  if (!e.dataTransfer) return
+  const types = Array.from(e.dataTransfer.types)
+  if (!types.includes('application/x-comfynext-asset')) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'copy'
+  const rect = stripRef.value!.getBoundingClientRect()
+  const rawFrame = Math.max(0, Math.round(pxToFrames(e.clientX - rect.left)))
+  // Snap to other clip edges + playhead while dragging in.
+  dragGhostFrame.value = snapFrame(rawFrame, null)
+  dragTargetTrackId.value = trackId
+}
+
+function onTrackDragLeave() {
+  // Don't clear immediately — sibling moves trigger leave→enter quickly.
+  // We clear on drop or drop end.
+}
+
+async function onTrackDrop(trackId: string, e: DragEvent) {
+  e.preventDefault()
+  const payload = readDragPayload(e)
+  if (!payload) return
+  const rect = stripRef.value!.getBoundingClientRect()
+  const rawFrame = Math.max(0, Math.round(pxToFrames(e.clientX - rect.left)))
+  const startFrame = dragGhostFrame.value ?? rawFrame
+  dragGhostFrame.value = null
+  dragTargetTrackId.value = null
+  snapGuideFrame.value = null
+
+  // Resolve to an asset record (importing if needed).
+  let resolvedAsset: any = null
+  if (payload.kind === 'input-file' && payload.path) {
+    resolvedAsset = await importAsset(payload.path)
+  } else if (payload.kind === 'library' && payload.asset_id) {
+    resolvedAsset = getAsset(payload.asset_id)
+  } else if (payload.kind === 'port' && payload.port_index != null) {
+    // WorkflowClip — no asset, just port index.
+    const fps = store.fps.value
+    store.addClip(trackId, {
+      id: crypto.randomUUID(),
+      kind: 'workflow',
+      port_index: payload.port_index,
+      start_frame: startFrame,
+      in_frame: 0,
+      length: fps * 5,
+      x: 0, y: 0, rotation: 0, scale: 1,
+      opacity: 1, blend: 'normal',
+      fade_in: 0, fade_out: 0,
+    } as Clip)
+    return
+  }
+
+  if (!resolvedAsset) return
+  const fps = store.fps.value
+  const lengthFrames = resolvedAsset.duration_sec ? Math.round(resolvedAsset.duration_sec * fps) : fps * 5
+  const track = store.state.value.tracks.find(t => t.id === trackId)
+  // Auto-route: if user drops an audio file onto a video track, redirect to
+  // the first audio track (creating one if needed).
+  let finalTrackId = trackId
+  if (track?.kind === 'video' && resolvedAsset.kind === 'audio') {
+    let audioTrack = store.state.value.tracks.find(t => t.kind === 'audio' && !t.locked)
+    if (!audioTrack) {
+      store.addTrack('audio')
+      audioTrack = store.state.value.tracks[store.state.value.tracks.length - 1]
+    }
+    finalTrackId = audioTrack!.id
+  } else if (track?.kind === 'audio' && (resolvedAsset.kind === 'video' || resolvedAsset.kind === 'image')) {
+    let videoTrack = store.state.value.tracks.find(t => t.kind === 'video' && !t.locked)
+    if (!videoTrack) {
+      store.addTrack('video')
+      videoTrack = store.state.value.tracks[store.state.value.tracks.length - 1]
+    }
+    finalTrackId = videoTrack!.id
+  }
+
+  store.addClip(finalTrackId, {
+    id: crypto.randomUUID(),
+    kind: resolvedAsset.kind as any,
+    asset_id: resolvedAsset.id,
+    start_frame: startFrame,
+    in_frame: 0,
+    length: lengthFrames,
+    x: 0, y: 0, rotation: 0, scale: 1,
+    opacity: 1, blend: 'normal',
+    fade_in: 0, fade_out: 0,
+    volume: 1,
+  } as Clip)
+}
+
+function findClip(id: string): Clip | undefined {
+  for (const track of store.state.value.tracks) {
+    const clip = track.clips.find(c => c.id === id)
+    if (clip) return clip
+  }
+  return undefined
+}
+
+// -- Render --
+
+const isRendering = ref(false)
+const renderResult = ref<null | { url: string; filename: string }>(null)
+const renderError = ref<string | null>(null)
+const renderProgress = ref<{ current: number; total: number } | null>(null)
+
+async function renderViaFFmpeg() {
+  if (isRendering.value) return
+  renderError.value = null
+  renderResult.value = null
+  renderProgress.value = null
+
+  const es = store.state.value
+  const assetLib = assetsList.value
+  const payload: any = JSON.parse(JSON.stringify(es))
+
+  for (const track of payload.tracks) {
+    for (const clip of track.clips) {
+      if (clip.kind === 'video' || clip.kind === 'image' || clip.kind === 'audio') {
+        const asset = assetLib.find((a: any) => a.id === clip.asset_id)
+        if (asset) clip.path = asset.path
+      }
+    }
+  }
+
+  isRendering.value = true
+  try {
+    const res = await fetch('/comfynext/render_timeline_stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+
+    // NDJSON stream: read line-by-line.
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let nl = buffer.indexOf('\n')
+      while (nl !== -1) {
+        const line = buffer.slice(0, nl).trim()
+        buffer = buffer.slice(nl + 1)
+        nl = buffer.indexOf('\n')
+        if (!line) continue
+        try {
+          const msg = JSON.parse(line)
+          if (msg.type === 'progress') {
+            renderProgress.value = { current: msg.current, total: msg.total }
+          } else if (msg.type === 'result') {
+            const filename = String(msg.result?.filename ?? '')
+            if (filename) renderResult.value = { url: `/view?${new URLSearchParams({ filename, type: 'output' })}`, filename }
+          } else if (msg.type === 'error') {
+            renderError.value = msg.error || 'render failed'
+          }
+        } catch {}
+      }
+    }
+  } catch (err: any) {
+    renderError.value = err?.message ?? 'render failed'
+  } finally {
+    isRendering.value = false
+    renderProgress.value = null
+  }
+}
+
+// -- Keyboard --
+//
+// The editor owns the keyboard while open. We register in the capture phase
+// and stopImmediatePropagation on every key — otherwise Backspace/Delete bubble
+// up to VueFlow's global listener and delete the selected Timeline node on the
+// underlying canvas. Inputs/selects still get their native behavior (we bail
+// before touching the event).
+
+function handleKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return
+
+  // Anything else: this is our keyboard.
+  e.stopImmediatePropagation()
+
+  if (e.key === 'Escape') { emit('close'); return }
+  if (e.key === ' ') { e.preventDefault(); store.togglePlay(); return }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); store.stepFrames(-1); return }
+  if (e.key === 'ArrowRight') { e.preventDefault(); store.stepFrames(1); return }
+  if (e.key === 's' && !e.metaKey && !e.ctrlKey) {
+    if (store.selectedClipId.value) {
+      e.preventDefault()
+      store.splitAtPlayhead(store.selectedClipId.value)
+    }
+    return
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault()
+    if (selectedClipIds.value.size > 1) {
+      // Bulk delete via a single mutation so undo restores everything at once.
+      const ids = new Set(selectedClipIds.value)
+      store.mutate(s => {
+        for (const track of s.tracks) {
+          track.clips = track.clips.filter(c => !ids.has(c.id))
+        }
+      })
+      clearSelection()
+    } else if (store.selectedClipId.value) {
+      if (e.metaKey || e.ctrlKey) store.rippleDelete(store.selectedClipId.value)
+      else store.removeClip(store.selectedClipId.value)
+      clearSelection()
+    }
+    return
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); store.redo(); return }
+}
+
+// -- Helpers --
+
+const selectedClipData = computed(() => store.selectedClip.value)
+
+function clipIcon(kind: string) {
+  if (kind === 'video') return Film
+  if (kind === 'audio') return Music
+  if (kind === 'image') return ImageIcon
+  if (kind === 'text') return Type
+  if (kind === 'workflow') return Cpu
+  return Film
+}
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = (sec % 60).toFixed(1)
+  return `${m}:${s.padStart(4, '0')}`
+}
+
+// -- AI ports (graph wiring) ---------------------------------------------------
+// Walk the edges to find what's connected to this Timeline node's clip ports.
+// Each becomes a "WorkflowClip" candidate the user can drop on the timeline —
+// its pixels come from upstream graph execution, not a file on disk.
+
+// Must match _MAX_CLIPS in comfy_extras/nodes_timeline.py.
+const MAX_CLIP_PORTS = 16
+
+interface PortBinding {
+  port_index: number              // 1..MAX_CLIP_PORTS
+  upstream_id: string             // upstream node id
+  upstream_type: string           // LoadVideo, LoadImage, etc.
+  preview_label: string           // human-readable hint (e.g. filename)
+  duration_frames: number | null  // best guess for the WorkflowClip length
+}
+
+const portBindings = computed<PortBinding[]>(() => {
+  const out: PortBinding[] = []
+  for (let i = 1; i <= MAX_CLIP_PORTS; i++) {
+    // The Timeline node's image inputs are positioned at indexes 0..N-1 — the
+    // canvas labels them clipN but VueFlow handles them as 'input-(N-1)'.
+    const edge = props.edges.find((e: any) =>
+      e.target === props.nodeId && e.targetHandle === `input-${i - 1}`)
+    if (!edge) continue
+    const src = props.nodes.find((n: any) => n.id === edge.source)
+    if (!src) continue
+    const type = String(src.data?.nodeType ?? '')
+
+    // Best-effort label: pull a filename from common load nodes.
+    let label = type
+    let duration: number | null = null
+    if (type === 'LoadVideo' || type === 'LoadVideoFrames') {
+      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'file') ?? 0
+      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
+      if (fname) label = String(fname)
+    } else if (type === 'LoadImage') {
+      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'image') ?? 0
+      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
+      if (fname) label = String(fname)
+      duration = 1  // single image — let the user lengthen it manually
+    }
+
+    out.push({
+      port_index: i,
+      upstream_id: src.id,
+      upstream_type: type,
+      preview_label: label,
+      duration_frames: duration,
+    })
+  }
+  return out
+})
+
+function addPortToTimeline(binding: PortBinding) {
+  const fps = store.fps.value
+  // For workflow clips we can't probe duration up front; default to 5s, the
+  // user can drag the right edge.
+  const lengthFrames = binding.duration_frames ?? fps * 5
+  let videoTrack = store.state.value.tracks.find(t => t.kind === 'video' && !t.locked)
+  if (!videoTrack) {
+    store.addTrack('video')
+    videoTrack = store.state.value.tracks[store.state.value.tracks.length - 1]
+  }
+  const maxEnd = videoTrack!.clips.reduce((m, c) => Math.max(m, c.start_frame + c.length), 0)
+  store.addClip(videoTrack!.id, {
+    id: crypto.randomUUID(),
+    kind: 'workflow',
+    port_index: binding.port_index,
+    start_frame: maxEnd,
+    in_frame: 0,
+    length: lengthFrames,
+    x: 0, y: 0, rotation: 0, scale: 1,
+    opacity: 1, blend: 'normal',
+    fade_in: 0, fade_out: 0,
+  } as Clip)
+}
+
+// -- Asset usage (how many clips reference each asset) --
+function assetUsageCount(assetId: string): number {
+  let n = 0
+  for (const track of store.state.value.tracks) {
+    for (const clip of track.clips) {
+      if ((clip as any).asset_id === assetId) n++
+    }
+  }
+  return n
+}
+
+// -- Clip preview (thumbnails / waveforms) --
+//
+// Filmstrip thumbnail count is derived from the clip's current screen width
+// so a 1-second clip gets ~1 thumb and a 30-second clip gets ~6.
+
+function clipFilmstripCount(clip: Clip): number {
+  if (clip.kind === 'image' || clip.kind === 'text') return 1
+  const widthPx = Math.max(8, clip.length * pxPerFrame.value)
+  return Math.max(1, Math.min(12, Math.floor(widthPx / 80)))
+}
+
+function clipThumbAssetId(clip: Clip): string | null {
+  if (clip.kind === 'video' || clip.kind === 'image') return (clip as any).asset_id ?? null
+  if (clip.kind === 'workflow') {
+    // Use the upstream LoadVideo's file path → asset_id is unstable so we
+    // skip thumbnails for workflow clips for now (Phase 1).
+    return null
+  }
+  return null
+}
+
+function clipThumbs(clip: Clip): string[] {
+  void thumbVersion.value  // reactivity
+  const id = clipThumbAssetId(clip)
+  if (!id) return []
+  return getThumbs(id, clipFilmstripCount(clip)) ?? []
+}
+
+const WAVEFORM_BUCKETS = 256
+function clipWaveform(clip: Clip): number[] | null {
+  void waveVersion.value
+  if (clip.kind !== 'audio') return null
+  const id = (clip as any).asset_id
+  if (!id) return null
+  return getWaveform(id, WAVEFORM_BUCKETS)
+}
+
+function waveformPath(peaks: number[], widthPx: number, heightPx: number): string {
+  if (!peaks.length || widthPx <= 0) return ''
+  // Build a symmetric polyline: top half from peaks, bottom mirror.
+  const mid = heightPx / 2
+  const n = peaks.length
+  const top: string[] = []
+  const bot: string[] = []
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * widthPx
+    const amp = peaks[i]! * (heightPx / 2)
+    top.push(`${x.toFixed(1)},${(mid - amp).toFixed(1)}`)
+    bot.push(`${x.toFixed(1)},${(mid + amp).toFixed(1)}`)
+  }
+  return `M ${top.join(' L ')} L ${bot.reverse().join(' L ')} Z`
+}
+
+// -- Asset panel tab --
+// Default to AI ports if any are wired; otherwise files. Avoids the dump-of-input/
+// surprise when the user comes from a wired graph.
+const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 0 ? 'ports' : 'files')
+</script>
+
+<template>
+  <div
+    class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center"
+    @click.self="emit('close')"
+  >
+    <div class="w-full h-full bg-[#0a0a0a] flex flex-col text-white/85 overflow-hidden">
+
+      <!-- Top bar -->
+      <div class="flex items-center gap-3 px-4 h-10 border-b border-white/10 shrink-0">
+        <span class="text-sm font-semibold tracking-tight">Timeline Editor</span>
+        <div class="w-px h-5 bg-white/10" />
+        <span class="text-[10px] text-white/40 tabular-nums">
+          {{ store.state.value.canvas.width }}×{{ store.state.value.canvas.height }}
+          · {{ store.fps.value }}fps
+        </span>
+        <div class="flex items-center gap-1 ml-2">
+          <button
+            class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+            :disabled="!store.canUndo.value"
+            title="Undo (⌘Z)"
+            @click="store.undo()"
+          ><Undo2 class="size-3.5" /></button>
+          <button
+            class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+            :disabled="!store.canRedo.value"
+            title="Redo (⌘⇧Z)"
+            @click="store.redo()"
+          ><Redo2 class="size-3.5" /></button>
+        </div>
+
+        <div class="ml-auto flex items-center gap-2">
+          <!-- Export button + inline progress fill -->
+          <button
+            class="relative overflow-hidden flex items-center gap-1.5 px-3 h-7 rounded text-xs transition-colors border border-white/10 disabled:opacity-90 min-w-[110px]"
+            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-violet-500/15 hover:bg-violet-500/25 text-violet-200'"
+            :disabled="isRendering"
+            @click="renderViaFFmpeg"
+          >
+            <!-- Progress fill -->
+            <div
+              v-if="renderProgress && renderProgress.total > 0"
+              class="absolute inset-y-0 left-0 bg-violet-400/25 transition-[width]"
+              :style="{ width: (renderProgress.current / renderProgress.total * 100).toFixed(1) + '%' }"
+            />
+            <RotateCw class="size-3 relative" :class="isRendering ? 'animate-spin' : ''" />
+            <span class="relative">
+              {{
+                isRendering
+                  ? (renderProgress ? `${Math.round(renderProgress.current / Math.max(1, renderProgress.total) * 100)}%` : 'Rendering…')
+                  : (renderResult ? 'Re-render' : 'Export')
+              }}
+            </span>
+          </button>
+          <a v-if="renderResult" :href="renderResult.url" target="_blank"
+            class="text-xs text-emerald-300 hover:text-emerald-200 underline underline-offset-2">
+            {{ renderResult.filename }}
+          </a>
+          <span v-if="renderError" class="text-xs text-amber-400 truncate max-w-[200px]">{{ renderError }}</span>
+          <button
+            class="flex items-center justify-center size-7 rounded hover:bg-white/10 transition-colors"
+            title="Close (Esc)"
+            @click="emit('close')"
+          ><X class="size-4" /></button>
+        </div>
+      </div>
+
+      <!-- Main 3-pane area -->
+      <div class="flex-1 flex min-h-0">
+
+        <!-- Left: asset library -->
+        <div class="w-56 border-r border-white/10 flex flex-col shrink-0">
+          <div class="flex border-b border-white/10">
+            <button
+              class="flex-1 px-2 py-2 text-[11px] transition-colors"
+              :class="assetTab === 'ports' ? 'text-white bg-white/5' : 'text-white/50 hover:text-white/70'"
+              @click="assetTab = 'ports'"
+            >
+              AI Ports
+              <span v-if="portBindings.length" class="ml-1 text-violet-300/80 tabular-nums">{{ portBindings.length }}</span>
+            </button>
+            <button
+              class="flex-1 px-2 py-2 text-[11px] transition-colors"
+              :class="assetTab === 'files' ? 'text-white bg-white/5' : 'text-white/50 hover:text-white/70'"
+              @click="assetTab = 'files'"
+            >Browse</button>
+            <button
+              class="flex-1 px-2 py-2 text-[11px] transition-colors"
+              :class="assetTab === 'library' ? 'text-white bg-white/5' : 'text-white/50 hover:text-white/70'"
+              @click="assetTab = 'library'"
+            >Library</button>
+          </div>
+          <div class="flex-1 overflow-y-auto p-2">
+            <template v-if="assetTab === 'ports'">
+              <div
+                v-for="binding in portBindings"
+                :key="binding.port_index"
+                class="group flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-grab active:cursor-grabbing hover:bg-violet-500/10 transition-colors"
+                draggable="true"
+                :title="`Drag onto a track — or click to append`"
+                @dragstart="(e) => onAssetDragStart({ kind: 'port', port_index: binding.port_index, label: binding.preview_label }, e)"
+                @click="addPortToTimeline(binding)"
+              >
+                <Cpu class="size-3 text-violet-300/70 shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <div class="text-white/80 truncate">Clip{{ binding.port_index }}</div>
+                  <div class="text-white/35 text-[10px] truncate">{{ binding.preview_label }}</div>
+                </div>
+                <Plus class="size-3 text-white/30 group-hover:text-violet-300 transition-colors" />
+              </div>
+              <div v-if="!portBindings.length" class="text-xs text-white/30 px-2 py-4 italic">
+                Nothing wired to a clip port yet. Drag a LoadVideo or any upstream node into the Timeline node's clip port on the canvas — the port auto-grows.
+              </div>
+            </template>
+            <template v-else-if="assetTab === 'files'">
+              <div
+                v-for="file in inputFiles"
+                :key="file.path"
+                data-testid="asset-row"
+                :data-asset-kind="'input-file'"
+                class="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-grab active:cursor-grabbing hover:bg-white/5 transition-colors"
+                draggable="true"
+                :title="file.filename + ' — drag onto a track, or click to append'"
+                @dragstart="(e) => onAssetDragStart({ kind: 'input-file', path: file.path, filename: file.filename }, e)"
+                @click="addFileToTimeline(file)"
+              >
+                <Film class="size-3 text-white/40 shrink-0" />
+                <span class="truncate">{{ file.filename }}</span>
+              </div>
+              <div v-if="!inputFiles.length" class="text-xs text-white/30 px-2 py-4 italic">
+                No media files in input/
+              </div>
+            </template>
+            <template v-else>
+              <div
+                v-for="asset in assetsList"
+                :key="asset.id"
+                class="group flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-grab active:cursor-grabbing hover:bg-white/5"
+                draggable="true"
+                :title="asset.name"
+                @dragstart="(e) => onAssetDragStart({ kind: 'library', asset_id: asset.id }, e)"
+              >
+                <component :is="clipIcon(asset.kind)" class="size-3 text-white/40 shrink-0" />
+                <span class="truncate flex-1">{{ asset.name }}</span>
+                <!-- In-use dot when this asset is on the timeline -->
+                <span
+                  v-if="assetUsageCount(asset.id) > 0"
+                  class="size-1.5 rounded-full bg-emerald-400/70 shrink-0"
+                  :title="`${assetUsageCount(asset.id)} clip${assetUsageCount(asset.id) === 1 ? '' : 's'} on timeline`"
+                />
+                <span class="text-white/30 tabular-nums text-[10px]">
+                  {{ asset.duration_sec ? formatTime(asset.duration_sec) : '' }}
+                </span>
+              </div>
+              <div v-if="!assetsList.length" class="text-xs text-white/30 px-2 py-4 italic">
+                Import files from Input Files tab.
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Center: preview canvas -->
+        <div class="flex-1 relative flex items-center justify-center overflow-hidden bg-[#080808]">
+          <canvas
+            ref="canvasRef"
+            class="max-w-full max-h-full object-contain ring-1 ring-white/5 rounded bg-black"
+            :style="{ aspectRatio: `${store.state.value.canvas.width}/${store.state.value.canvas.height}` }"
+          />
+          <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] text-white/40 tabular-nums">
+            {{ store.playheadFrame.value }} / {{ store.totalFrames.value }}f
+            · {{ formatTime(store.playhead.value) }}
+            <span v-if="store.isPlaying.value" class="ml-1 text-violet-300">▶</span>
+            <span v-else class="ml-1 text-white/25">⏸</span>
+          </div>
+        </div>
+
+        <!-- Right: inspector -->
+        <div class="w-64 border-l border-white/10 shrink-0 overflow-y-auto">
+          <div class="px-4 py-3 border-b border-white/10">
+            <h3 class="text-sm font-semibold tracking-tight">
+              {{ selectedClipData ? 'Clip' : 'Properties' }}
+            </h3>
+          </div>
+          <div v-if="selectedClipData" class="p-3 space-y-3 text-xs">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 flex items-center gap-1.5">
+              <component :is="clipIcon(selectedClipData.kind)" class="size-3" />
+              {{ selectedClipData.kind }}
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Start</div>
+                <input type="number" :value="selectedClipData.start_frame"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.updateClip(selectedClipData!.id, { start_frame: parseInt(($event.target as HTMLInputElement).value) || 0 })" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Length</div>
+                <input type="number" min="1" :value="selectedClipData.length"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.updateClip(selectedClipData!.id, { length: Math.max(1, parseInt(($event.target as HTMLInputElement).value) || 1) })" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">In point</div>
+                <input type="number" min="0" :value="selectedClipData.in_frame"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.updateClip(selectedClipData!.id, { in_frame: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+              </div>
+              <div />
+            </div>
+
+            <template v-if="selectedClipData.kind !== 'audio'">
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">X</div>
+                  <input type="number" step="0.01" :value="selectedClipData.x ?? 0"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { x: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                </div>
+                <div>
+                  <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Y</div>
+                  <input type="number" step="0.01" :value="selectedClipData.y ?? 0"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { y: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Rotation</div>
+                  <input type="number" step="1" :value="selectedClipData.rotation ?? 0"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                </div>
+                <div>
+                  <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Scale</div>
+                  <input type="number" step="0.05" :value="selectedClipData.scale ?? 1"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { scale: parseFloat(($event.target as HTMLInputElement).value) || 1 })" />
+                </div>
+              </div>
+
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Opacity</div>
+                <div class="flex items-center gap-2">
+                  <input type="range" min="0" max="1" step="0.01" :value="selectedClipData.opacity ?? 1"
+                    class="flex-1"
+                    @input="store.updateClip(selectedClipData!.id, { opacity: parseFloat(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((selectedClipData.opacity ?? 1) * 100) }}%</span>
+                </div>
+              </div>
+
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Blend</div>
+                <select :value="selectedClipData.blend ?? 'normal'"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none"
+                  @change="store.updateClip(selectedClipData!.id, { blend: ($event.target as HTMLSelectElement).value as BlendMode })">
+                  <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
+                </select>
+              </div>
+            </template>
+
+            <div v-if="selectedClipData.kind === 'audio' || selectedClipData.kind === 'video'">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Volume</div>
+              <div class="flex items-center gap-2">
+                <input type="range" min="0" max="2" step="0.01" :value="selectedClipData.volume ?? 1"
+                  class="flex-1"
+                  @input="store.updateClip(selectedClipData!.id, { volume: parseFloat(($event.target as HTMLInputElement).value) })" />
+                <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((selectedClipData.volume ?? 1) * 100) }}%</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Fade in</div>
+                <input type="number" min="0" :value="selectedClipData.fade_in ?? 0"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.updateClip(selectedClipData!.id, { fade_in: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Fade out</div>
+                <input type="number" min="0" :value="selectedClipData.fade_out ?? 0"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.updateClip(selectedClipData!.id, { fade_out: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+              </div>
+            </div>
+
+            <div class="flex gap-2 pt-2 border-t border-white/5">
+              <button
+                class="flex items-center gap-1 px-2 py-1.5 rounded text-xs bg-white/5 hover:bg-white/10 transition-colors"
+                title="Split at playhead (S)"
+                @click="store.splitAtPlayhead(selectedClipData!.id)"
+              ><Scissors class="size-3" /> Split</button>
+              <button
+                class="flex items-center gap-1 px-2 py-1.5 rounded text-xs bg-red-500/10 hover:bg-red-500/20 text-red-300 transition-colors"
+                title="Delete (Backspace)"
+                @click="store.removeClip(selectedClipData!.id)"
+              ><Trash2 class="size-3" /> Delete</button>
+            </div>
+          </div>
+          <div v-else class="p-3 space-y-3 text-xs">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Canvas</div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Width</div>
+                <input type="number" :value="store.state.value.canvas.width"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.setCanvas({ width: Math.max(16, parseInt(($event.target as HTMLInputElement).value) || 1280) })" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Height</div>
+                <input type="number" :value="store.state.value.canvas.height"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.setCanvas({ height: Math.max(16, parseInt(($event.target as HTMLInputElement).value) || 720) })" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">FPS</div>
+                <input type="number" min="1" max="120" :value="store.fps.value"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                  @change="store.setCanvas({ fps: Math.max(1, Math.min(120, parseInt(($event.target as HTMLInputElement).value) || 30)) })" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Background</div>
+                <input type="color" :value="store.state.value.canvas.bg_color"
+                  class="w-full h-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded outline-none cursor-pointer"
+                  @input="store.setCanvas({ bg_color: ($event.target as HTMLInputElement).value })" />
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-white/5 text-[10px] uppercase tracking-[0.12em] text-white/40">Stats</div>
+            <div class="flex flex-col gap-1 text-white/60 tabular-nums">
+              <div class="flex justify-between"><span class="text-white/40">Tracks</span><span>{{ store.state.value.tracks.length }}</span></div>
+              <div class="flex justify-between"><span class="text-white/40">Clips</span><span>{{ store.state.value.tracks.reduce((n, t) => n + t.clips.length, 0) }}</span></div>
+              <div class="flex justify-between"><span class="text-white/40">Duration</span><span>{{ formatTime(store.totalSec.value) }} <span class="text-white/30">· {{ store.totalFrames.value }}f</span></span></div>
+              <div class="flex justify-between"><span class="text-white/40">Zoom</span><span>{{ pxPerFrame.toFixed(2) }}x</span></div>
+            </div>
+
+            <div class="text-[10px] text-white/30 italic pt-2 border-t border-white/5">
+              Select a clip to edit its properties.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: multi-track timeline -->
+      <div class="border-t border-white/10 flex flex-col shrink-0"
+           :style="{ height: Math.max(220, store.state.value.tracks.length * (TRACK_HEIGHT + TRACK_GAP) + RULER_HEIGHT + 70) + 'px' }">
+
+        <!-- Transport bar -->
+        <div class="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 shrink-0">
+          <div class="flex items-center gap-0.5">
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/70 hover:text-white" title="Go to start" @click="store.seek(0)">
+              <ChevronsLeft class="size-3.5" />
+            </button>
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/70 hover:text-white" title="Step back (←)" @click="store.stepFrames(-1)">
+              <SkipBack class="size-3.5" />
+            </button>
+            <button class="size-7 flex items-center justify-center rounded bg-white/10 hover:bg-white/15 text-white" :title="store.isPlaying.value ? 'Pause (Space)' : 'Play (Space)'" @click="store.togglePlay()">
+              <Pause v-if="store.isPlaying.value" class="size-4" />
+              <Play v-else class="size-4 translate-x-px" />
+            </button>
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/70 hover:text-white" title="Step forward (→)" @click="store.stepFrames(1)">
+              <SkipForward class="size-3.5" />
+            </button>
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/70 hover:text-white" title="Go to end" @click="store.seek(store.totalSec.value)">
+              <ChevronsRight class="size-3.5" />
+            </button>
+          </div>
+
+          <span class="text-[10px] text-white/40 tabular-nums ml-2 min-w-[110px]">
+            {{ formatTime(store.playhead.value) }} <span class="text-white/25">·</span> {{ store.playheadFrame.value }}f
+          </span>
+
+          <!-- Zoom controls -->
+          <div class="flex items-center gap-0.5 ml-3 border-l border-white/10 pl-3">
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/60 hover:text-white text-sm" title="Zoom out" @click="zoomOut()">−</button>
+            <button class="px-2 h-6 rounded hover:bg-white/10 text-white/60 hover:text-white text-[10px] tabular-nums" :title="`Current: ${pxPerFrame.toFixed(2)} px/frame`" @click="zoomFit()">{{ Math.round(pxPerFrame * 100) / 100 }}x</button>
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/60 hover:text-white text-sm" title="Zoom in" @click="zoomIn()">+</button>
+            <button class="px-2 h-6 rounded hover:bg-white/10 text-white/60 hover:text-white text-[10px]" title="Fit timeline to width" @click="zoomFit()">Fit</button>
+          </div>
+
+          <div class="ml-auto flex items-center gap-2">
+            <button
+              class="flex items-center gap-1 px-2 h-6 rounded text-[10px] bg-white/5 hover:bg-white/10 transition-colors"
+              @click="store.addTrack('video')"
+            ><Plus class="size-3" /> Video track</button>
+            <button
+              class="flex items-center gap-1 px-2 h-6 rounded text-[10px] bg-white/5 hover:bg-white/10 transition-colors"
+              @click="store.addTrack('audio')"
+            ><Plus class="size-3" /> Audio track</button>
+          </div>
+        </div>
+
+        <!-- Track lanes -->
+        <div class="flex flex-1 min-h-0 overflow-y-auto">
+          <!-- Track headers -->
+          <div class="w-36 shrink-0 border-r border-white/10">
+            <!-- Spacer to align with ruler -->
+            <div :style="{ height: RULER_HEIGHT + 'px' }" class="border-b border-white/5" />
+            <div
+              v-for="(track, tIdx) in store.state.value.tracks"
+              :key="track.id"
+              class="relative flex items-center gap-1.5 px-2 border-b border-white/5 cursor-grab active:cursor-grabbing select-none"
+              :class="reorderingTrackId === track.id ? 'bg-white/[0.06] z-10' : ''"
+              :style="{ height: trackHeight(track) + 'px' }"
+              @pointerdown="(e) => onTrackReorderStart(track.id, e)"
+            >
+              <component :is="track.kind === 'audio' ? Music : Film" class="size-3" :class="trackColor(tIdx).text" />
+              <span class="text-[11px] truncate flex-1" :class="trackColor(tIdx).text">{{ track.name }}</span>
+              <button class="size-4 flex items-center justify-center rounded hover:bg-white/10"
+                :title="track.muted ? 'Unmute' : 'Mute'"
+                @pointerdown.stop
+                @click.stop="store.mutate(s => { const t = s.tracks.find(t2 => t2.id === track.id); if (t) t.muted = !t.muted })">
+                <component :is="track.muted ? EyeOff : Eye" class="size-2.5 text-white/40" />
+              </button>
+              <button class="size-4 flex items-center justify-center rounded hover:bg-white/10"
+                :title="track.locked ? 'Unlock' : 'Lock'"
+                @pointerdown.stop
+                @click.stop="store.mutate(s => { const t = s.tracks.find(t2 => t2.id === track.id); if (t) t.locked = !t.locked })">
+                <component :is="track.locked ? Lock : Unlock" class="size-2.5 text-white/40" />
+              </button>
+              <!-- Resize handle at bottom edge -->
+              <div
+                class="absolute left-0 right-0 bottom-0 h-1 cursor-row-resize hover:bg-white/20"
+                data-role="resize"
+                @pointerdown="(e) => onTrackResizeStart(track.id, e)"
+              />
+            </div>
+          </div>
+
+          <!-- Clip strips -->
+          <div
+            ref="stripRef"
+            class="strip-bg relative flex-1 select-none touch-none overflow-hidden"
+            @pointerdown="onStripPointerDown"
+            @wheel="onStripWheel"
+          >
+            <!-- Ruler with time labels -->
+            <div class="relative border-b border-white/10 pointer-events-none"
+                 :style="{ height: RULER_HEIGHT + 'px' }">
+              <template v-for="t in ticks" :key="`ruler-${t.frame}`">
+                <div
+                  class="absolute top-0 border-l"
+                  :class="t.major ? 'h-3 border-white/30' : 'h-1.5 border-white/15'"
+                  :style="{ left: framesToPx(t.frame) + 'px' }"
+                />
+                <div
+                  v-if="t.major && t.label"
+                  class="absolute top-2.5 text-[9px] text-white/50 tabular-nums px-0.5"
+                  :style="{ left: (framesToPx(t.frame) + 2) + 'px' }"
+                >{{ t.label }}</div>
+              </template>
+            </div>
+
+            <!-- Minor tick verticals through track lanes -->
+            <div class="absolute pointer-events-none" :style="{ top: RULER_HEIGHT + 'px', left: 0, right: 0, bottom: 0 }">
+              <template v-for="t in ticks" :key="`vtick-${t.frame}`">
+                <div
+                  v-if="t.major"
+                  class="absolute top-0 bottom-0 border-l"
+                  :class="'border-white/[0.08]'"
+                  :style="{ left: framesToPx(t.frame) + 'px' }"
+                />
+              </template>
+            </div>
+
+            <!-- Clips per track -->
+            <div
+              v-for="(track, tIdx) in store.state.value.tracks"
+              :key="track.id"
+              class="relative border-b border-white/5"
+              :class="dragTargetTrackId === track.id ? 'bg-violet-500/[0.04]' : ''"
+              :style="{ height: trackHeight(track) + 'px' }"
+              @dragover="(e) => onTrackDragOver(track.id, e)"
+              @dragleave="onTrackDragLeave"
+              @drop="(e) => onTrackDrop(track.id, e)"
+            >
+              <div
+                v-for="clip in track.clips"
+                :key="clip.id"
+                class="absolute top-1 rounded transition-shadow cursor-grab active:cursor-grabbing overflow-hidden"
+                :class="[
+                  trackColor(tIdx).bar,
+                  selectedClipIds.has(clip.id) ? `ring-2 ${trackColor(tIdx).ring} z-[2]` : '',
+                  store.selectedClipId.value === clip.id && selectedClipIds.size > 1 ? 'ring-offset-1 ring-offset-yellow-300' : '',
+                ]"
+                :style="{
+                  left: framesToPx(clip.start_frame) + 'px',
+                  width: Math.max(8, clip.length * pxPerFrame) + 'px',
+                  height: (trackHeight(track) - 8) + 'px',
+                }"
+                @pointerdown="(e) => onClipPointerDown(clip.id, track.id, 'move', e)"
+                @click.stop
+              >
+                <!-- Filmstrip backdrop (video/image clips) -->
+                <div
+                  v-if="clip.kind === 'video' || clip.kind === 'image'"
+                  class="absolute inset-0 flex overflow-hidden rounded pointer-events-none"
+                >
+                  <div
+                    v-for="(thumb, idx) in clipThumbs(clip)"
+                    :key="idx"
+                    class="h-full shrink-0 bg-cover bg-center opacity-90"
+                    :style="{
+                      backgroundImage: `url(${thumb})`,
+                      width: (clip.length * pxPerFrame / Math.max(1, clipThumbs(clip).length)) + 'px',
+                    }"
+                  />
+                </div>
+                <!-- Waveform (audio clips) -->
+                <svg
+                  v-else-if="clip.kind === 'audio' && clipWaveform(clip)"
+                  class="absolute inset-x-0 bottom-0 pointer-events-none"
+                  :width="Math.max(8, clip.length * pxPerFrame)"
+                  :height="trackHeight(track) - 8"
+                  preserveAspectRatio="none"
+                >
+                  <path
+                    :d="waveformPath(clipWaveform(clip)!, Math.max(8, clip.length * pxPerFrame), trackHeight(track) - 8)"
+                    fill="rgba(0,0,0,0.35)"
+                  />
+                </svg>
+                <!-- Tint overlay so the label stays legible -->
+                <div class="absolute inset-0 bg-gradient-to-b from-black/0 via-black/0 to-black/20 pointer-events-none rounded" />
+                <!-- Label -->
+                <div class="absolute top-0 left-0 right-0 px-2 py-0.5 flex items-center text-[10px] text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] font-medium select-none pointer-events-none truncate z-[1]">
+                  <component :is="clipIcon(clip.kind)" class="size-2.5 mr-1 opacity-80" />
+                  <span class="truncate">{{ clip.kind === 'workflow' ? `Port ${(clip as any).port_index}` : ((clip as any).asset_id ? (assetsList.find(a => a.id === (clip as any).asset_id)?.name ?? clip.kind) : clip.kind) }}</span>
+                  <span class="ml-auto text-white/70 tabular-nums shrink-0">{{ clip.length }}f</span>
+                </div>
+                <!-- Left resize handle -->
+                <div
+                  class="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize rounded-l z-10"
+                  :class="trackColor(tIdx).edge"
+                  @pointerdown.stop="(e) => onClipPointerDown(clip.id, track.id, 'resize-left', e)"
+                />
+                <!-- Right resize handle -->
+                <div
+                  class="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize rounded-r z-10"
+                  :class="trackColor(tIdx).edge"
+                  @pointerdown.stop="(e) => onClipPointerDown(clip.id, track.id, 'resize-right', e)"
+                />
+              </div>
+            </div>
+
+            <!-- Snap guideline (during clip drag) -->
+            <div
+              v-if="snapGuideFrame !== null"
+              class="absolute pointer-events-none z-[3] w-px bg-fuchsia-400/80 shadow-[0_0_4px_rgba(217,70,239,0.7)]"
+              :style="{ top: 0, bottom: 0, left: framesToPx(snapGuideFrame) + 'px' }"
+            />
+
+            <!-- Drop ghost (during asset drag-in) -->
+            <div
+              v-if="dragGhostFrame !== null"
+              class="absolute pointer-events-none z-[3] w-0.5 bg-emerald-400/80 shadow-[0_0_4px_rgba(52,211,153,0.7)]"
+              :style="{ top: RULER_HEIGHT + 'px', bottom: 0, left: framesToPx(dragGhostFrame) + 'px' }"
+            />
+
+            <!-- Playhead -->
+            <div
+              class="absolute top-0 bottom-0 w-px bg-yellow-400 pointer-events-none z-[4]"
+              :style="{ left: framesToPx(store.playheadFrame.value) + 'px' }"
+            >
+              <div class="absolute -top-px -left-1 w-2 h-2 bg-yellow-400 rotate-45" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Keyboard hint strip -->
+        <div class="flex items-center gap-3 px-4 h-6 border-t border-white/5 text-[9px] text-white/35 tabular-nums shrink-0">
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">Space</kbd> play</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">S</kbd> split</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌫</kbd> delete</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘Z</kbd> undo</span>
+          <span class="ml-auto"><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘+scroll</kbd> zoom</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⇧+scroll</kbd> pan</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

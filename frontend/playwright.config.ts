@@ -1,0 +1,31 @@
+import { defineConfig, devices } from '@playwright/test'
+
+// Tests assume both servers are already running:
+//   pnpm --dir frontend dev --port 3002
+//   python main.py --listen 127.0.0.1 --port 8188
+//
+// (We don't `webServer` either of them because the Python backend takes
+// ~60-90s to load all nodes and starting it per-run would dominate runtime.)
+
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: false,         // shared backend state — keep serial
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: 1,
+  reporter: process.env.CI ? 'line' : 'list',
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+
+  use: {
+    baseURL: 'http://127.0.0.1:3002',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    viewport: { width: 1600, height: 1000 },
+  },
+
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: 'chromium' } },
+  ],
+})
