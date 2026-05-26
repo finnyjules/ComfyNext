@@ -1,0 +1,139 @@
+/**
+ * Per-node Lucide icon mapping for generator nodes (Replicate fleet + future
+ * BYOK providers). Used by:
+ *
+ *   1. `GeneratorsPanel.vue` — to render a use-case icon on each card so
+ *      users can scan by function, not just by provider logo.
+ *   2. `ComfyNode.vue` — to show the same icon on the canvas title bar so
+ *      a dropped generator immediately tells you what it does.
+ *
+ * Keyed by Comfy `nodeType` (matches `USE_CASE_BY_NODE` in GeneratorsPanel).
+ * Add a new generator → add an entry here. No build step.
+ */
+import type { Component } from 'vue'
+import {
+  Sparkles,
+  Drama,
+  SmilePlus,
+  UserCircle,
+  PenTool,
+  Pencil,
+  Maximize2,
+  Scissors,
+  Wand2,
+  Smile,
+  MessageSquareText,
+  ScanText,
+  Crosshair,
+  Film,
+  Mic,
+  Captions,
+  Music,
+  MicVocal,
+  Box,
+  MessageCircle,
+} from 'lucide-vue-next'
+
+export const GENERATOR_NODE_ICONS: Record<string, Component> = {
+  // ----- Image · generation -----
+  FluxLoRARemoteNode:   Sparkles,
+  GenerateImageNode:    Sparkles,
+  GenerateAnimeNode:    Drama,
+  GenerateEmojiNode:    SmilePlus,
+  ConsistentFaceNode:   UserCircle,
+  SketchToImageNode:    PenTool,
+
+  // ----- Image · manipulation -----
+  EditImageNode:        Pencil,
+  UpscaleImageNode:     Maximize2,
+  RemoveBackgroundNode: Scissors,
+  RestorePhotoNode:     Wand2,
+  FixFacesNode:         Smile,
+
+  // ----- Image · analysis -----
+  DescribeImageNode:    MessageSquareText,
+  ExtractTextNode:      ScanText,
+  FindObjectsNode:      Crosshair,
+
+  // ----- Video -----
+  GenerateVideoNode:    Film,
+  EnhanceVideoNode:     Wand2,
+  DescribeVideoNode:    MessageSquareText,
+  LipsyncNode:          Mic,
+
+  // ----- Audio -----
+  TranscribeAudioNode:  Captions,
+  IdentifySpeakersNode: Mic,
+  GenerateMusicNode:    Music,
+  GenerateSpeechNode:   MicVocal,
+  CloneSingingVoiceNode: MicVocal,
+
+  // ----- 3D -----
+  Generate3DNode:       Box,
+
+  // ----- Text / LLM -----
+  ChatLLMNode:          MessageCircle,
+  ImprovePromptNode:    PenTool,
+}
+
+export function getGeneratorIcon(nodeType: string): Component | null {
+  return GENERATOR_NODE_ICONS[nodeType] ?? null
+}
+
+/**
+ * The actual *model* brand a node reaches through its API layer. Replicate
+ * is just transport — the chip should say BFL for a Flux node, Ideogram for
+ * an Ideogram node, etc. so users can tell at a glance who made the model.
+ *
+ * Brand names match the keys in the Comfy iconify set + PROVIDER_ICONS in
+ * GeneratorsPanel.vue (so existing helpers like `hasComfyBrandIcon` work).
+ *
+ * `null` = no single brand we can show (multi-model node, or the model has
+ * no widely-recognized brand mark). In that case the chip falls back to the
+ * API provider (Replicate).
+ */
+export const NODE_MODEL_BRAND: Record<string, string | null> = {
+  // ----- Image · generation -----
+  FluxLoRARemoteNode:   'BFL',                // Flux Dev + LoRA
+  GenerateImageNode:    'BFL',                // Default model is Flux Pro
+  GenerateAnimeNode:    null,                 // Animagine XL — no major brand
+  GenerateEmojiNode:    'BFL',                // Flux Kontext + Emoji LoRA
+  ConsistentFaceNode:   'Ideogram',           // Ideogram Character
+  SketchToImageNode:    'Gemini',             // Nano Banana = Google's lightweight model
+
+  // ----- Image · manipulation -----
+  EditImageNode:        'BFL',                // Flux Kontext Pro
+  UpscaleImageNode:     null,                 // Clarity — no brand
+  RemoveBackgroundNode: null,                 // 851-labs/bg-remover
+  RestorePhotoNode:     'BFL',                // Flux Kontext · Restore
+  FixFacesNode:         null,                 // CodeFormer
+
+  // ----- Image · analysis -----
+  DescribeImageNode:    null,                 // Moondream 2
+  ExtractTextNode:      'ByteDance',          // ByteDance Dolphin OCR
+  FindObjectsNode:      null,                 // YOLO-World
+
+  // ----- Video -----
+  GenerateVideoNode:    null,                 // Multi: Seedance / Veo / Kling
+  EnhanceVideoNode:     'Topaz',
+  DescribeVideoNode:    'Gemini',
+  LipsyncNode:          null,                 // sync.so 2-pro
+
+  // ----- Audio -----
+  TranscribeAudioNode:  'OpenAI',             // Whisper
+  IdentifySpeakersNode: 'OpenAI',             // Whisper Diarization
+  GenerateMusicNode:    null,                 // MusicGen (Meta — no shipped icon)
+  GenerateSpeechNode:   'MiniMax',
+  CloneSingingVoiceNode: null,                // RVC
+
+  // ----- 3D -----
+  Generate3DNode:       'Tencent',            // Hunyuan3D 2
+
+  // ----- Text / LLM -----
+  ChatLLMNode:          null,                 // Multi: GPT-5 / Claude / Gemini
+  ImprovePromptNode:    'OpenAI',             // GPT-5 nano
+}
+
+export function getModelBrand(nodeType: string): string | null {
+  return NODE_MODEL_BRAND[nodeType] ?? null
+}

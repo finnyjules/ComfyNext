@@ -253,8 +253,8 @@ async function downloadAudio() {
           @click="triggerUpload"
         >
           <Loader2 v-if="uploading" class="size-6 animate-spin" />
-          <Upload v-else class="size-6" :stroke-width="1.5" />
-          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click' }}</span>
+          <AudioWaveform v-else class="size-6" :stroke-width="1.5" />
+          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an audio file' }}</span>
         </button>
       </template>
 

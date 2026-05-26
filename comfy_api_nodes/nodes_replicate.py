@@ -1469,11 +1469,22 @@ def _maybe(d: dict, key: str, value, *, default_to_drop=None):
 # =============================================================================
 # Use case: Generate an image
 # =============================================================================
+#
+# Single node fronting the entire Replicate text-to-image fleet via a model
+# gallery UI. Schema is intentionally lean: shared widgets (model, prompt,
+# aspect_ratio, seed) plus a hidden `model_options` JSON blob that the
+# gallery edits for the active model. Per-model dispatch + input shaping
+# lives in image_models.py — adding a new model = appending an entry there.
+from comfy_api_nodes.image_models import (
+    MODELS as _IMAGE_MODELS,
+    IMAGE_MODELS_BY_ID as _IMAGE_MODELS_BY_ID,
+    ALL_ASPECT_RATIOS as _IMAGE_GEN_ASPECT_RATIOS,
+    DEFAULT_MODEL_ID as _IMAGE_DEFAULT_MODEL_ID,
+)
 
-_IMAGE_GEN_MODELS = ["Flux 1.1 Pro", "Ideogram V3 Turbo"]
-_IMAGE_GEN_ASPECT_RATIOS = sorted(set(
-    _FLUX_PRO_ASPECT_RATIOS + _IDEOGRAM_ASPECT_RATIOS
-), key=lambda a: (a != "1:1", a))
+# The combo serializes the model `id` (e.g. "flux-1.1-pro") so we can rename
+# the human-facing `label` without breaking existing workflows.
+_IMAGE_GEN_MODEL_IDS = [m.id for m in _IMAGE_MODELS]
 
 
 class GenerateImageNode(IO.ComfyNode):
@@ -1484,65 +1495,64 @@ class GenerateImageNode(IO.ComfyNode):
             display_name="Generate an image",
             category="api node/image/Replicate",
             description=(
-                "Single entry point for image generation. Pick a model in the "
-                "Model dropdown — shared inputs above, model-specific tuning "
-                "in Advanced. ~$0.03–$0.04 per image."
+                "Single entry point for image generation. Click the model "
+                "button to open the gallery — pick a model and tune its "
+                "settings without leaving the canvas."
             ),
             inputs=[
-                IO.Combo.Input("model", options=_IMAGE_GEN_MODELS, default="Flux 1.1 Pro",
-                               tooltip="Flux 1.1 Pro = top general quality. Ideogram V3 Turbo = best typography."),
+                # Marked as a model_picker so the frontend renders a launcher
+                # button (WidgetModelPicker) instead of a plain dropdown. The
+                # underlying combo still serializes a plain string id so
+                # workflows stay portable.
+                IO.Combo.Input(
+                    "model",
+                    options=_IMAGE_GEN_MODEL_IDS,
+                    default=_IMAGE_DEFAULT_MODEL_ID,
+                    tooltip="Click to choose a model from the gallery.",
+                    extra_dict={"comfynext_widget": "model_picker"},
+                ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="What to generate."),
-                IO.Combo.Input("aspect_ratio", options=_IMAGE_GEN_ASPECT_RATIOS, default="1:1"),
+                IO.Combo.Input("aspect_ratio", options=_IMAGE_GEN_ASPECT_RATIOS, default="1:1",
+                               tooltip="The active model auto-falls-back to 1:1 if it doesn't accept the picked ratio."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
-                # --- Advanced: model-specific tuning -------------------------
-                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True,
-                             tooltip="(Flux only) 1 strict, 6 permissive."),
-                IO.Boolean.Input("prompt_upsampling", default=False, advanced=True,
-                                 tooltip="(Flux only) Let the model rewrite your prompt."),
-                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
-                IO.Combo.Input("style_type", options=_IDEOGRAM_STYLES, default="None", advanced=True,
-                               tooltip="(Ideogram only) Override style; 'None' lets the model decide."),
-                IO.String.Input("magic_prompt", default="Auto", advanced=True,
-                                tooltip="(Ideogram only) Auto / On / Off — Ideogram-side prompt expansion."),
+                # Hidden JSON blob the gallery writes — per-model advanced
+                # settings. `hidden: true` flag (via extra_dict) keeps it out
+                # of the node body; old workflows without it still load and
+                # the per-model builder applies safe defaults.
+                IO.String.Input(
+                    "model_options",
+                    default="{}",
+                    multiline=False,
+                    optional=True,
+                    advanced=True,
+                    extra_dict={"hidden": True},
+                    tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
+                ),
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.03,"format":{"approximate":true}}'),
         )
 
     @classmethod
-    async def execute(cls, model, prompt, aspect_ratio, seed,
-                      safety_tolerance, prompt_upsampling, output_format,
-                      style_type, magic_prompt):
-        if model == "Flux 1.1 Pro":
-            # Flux Pro doesn't accept all the same ratios; fall back to 1:1 for
-            # ratios it doesn't support.
-            ar = aspect_ratio if aspect_ratio in _FLUX_PRO_ASPECT_RATIOS else "1:1"
-            input_dict = {
-                "prompt": prompt,
-                "aspect_ratio": ar,
-                "safety_tolerance": safety_tolerance,
-                "prompt_upsampling": prompt_upsampling,
-                "output_format": output_format,
-                "output_quality": 95,
-            }
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            pred = await _run_prediction("black-forest-labs/flux-1.1-pro", input_dict)
-        elif model == "Ideogram V3 Turbo":
-            ar = aspect_ratio if aspect_ratio in _IDEOGRAM_ASPECT_RATIOS else "1:1"
-            input_dict = {
-                "prompt": prompt,
-                "aspect_ratio": ar,
-                "magic_prompt_option": magic_prompt,
-            }
-            if style_type and style_type != "None":
-                input_dict["style_type"] = style_type
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            pred = await _run_prediction("ideogram-ai/ideogram-v3-turbo", input_dict)
-        else:
-            raise RuntimeError(f"unknown model: {model}")
+    async def execute(cls, model, prompt, aspect_ratio, seed, model_options="{}"):
+        spec = _IMAGE_MODELS_BY_ID.get(model)
+        if spec is None:
+            raise RuntimeError(
+                f"Unknown image model id: {model!r}. "
+                f"Known: {list(_IMAGE_MODELS_BY_ID)}"
+            )
+        # Tolerate empty / missing / malformed model_options — every field is
+        # optional and the per-model builder applies safe defaults.
+        try:
+            advanced = json.loads(model_options or "{}")
+            if not isinstance(advanced, dict):
+                advanced = {}
+        except json.JSONDecodeError:
+            advanced = {}
+
+        input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+        pred = await _run_prediction(spec.replicate_slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(tensor)
 

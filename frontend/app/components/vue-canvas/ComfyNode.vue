@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Download, Loader2, Play, Upload } from 'luci
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
+import { getGeneratorIcon } from '~/data/generator-icons'
 
 const props = defineProps<{
   id: string
@@ -72,6 +73,11 @@ const partnerIconUrl = computed(() => getPartnerIcon(props.data.category || ''))
 // icon nor a partner icon takes precedence. Falls through to nothing when
 // the node type isn't a toolbox item.
 const toolboxIcon = computed(() => TOOLBOX_NODE_ICONS[props.data.nodeType as string] || null)
+
+// Per-generator-node icon (Generate=Sparkles, Upscale=Maximize, …). Takes
+// precedence over the provider's partner logo so the title bar reflects
+// what the node does, not just who runs it.
+const generatorIcon = computed(() => getGeneratorIcon(props.data.nodeType as string))
 
 // Extract the minimum USD price from the price badge expression
 const priceLabel = computed(() => {
@@ -204,7 +210,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Replicate use-case nodes — hide model-specific widgets when the user
   // selects a different model in the `model` combo. Single source of truth
   // for which widget belongs to which model lives in MODEL_GATED_WIDGETS.
-  GenerateImageNode: (name, values, defs) => isVisibleForModel('GenerateImageNode', name, values, defs),
+  // GenerateImageNode no longer needs gating: model-specific advanced settings
+  // moved into the ModelGalleryModal, so the node body only ever shows the
+  // shared widgets (model picker, prompt, aspect_ratio, seed).
   GenerateVideoNode: (name, values, defs) => isVisibleForModel('GenerateVideoNode', name, values, defs),
 }
 
@@ -213,15 +221,8 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
 // match, the widget is hidden. Widgets NOT in this map are always visible
 // (the shared inputs at the top of each node).
 const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
-  GenerateImageNode: {
-    // Flux 1.1 Pro
-    safety_tolerance:  'Flux 1.1 Pro',
-    prompt_upsampling: 'Flux 1.1 Pro',
-    output_format:     'Flux 1.1 Pro',
-    // Ideogram V3 Turbo
-    style_type:        'Ideogram V3 Turbo',
-    magic_prompt:      'Ideogram V3 Turbo',
-  },
+  // GenerateImageNode entry removed — its advanced settings live in the
+  // ModelGalleryModal (per-model bag) instead of as gated widgets on the node.
   GenerateVideoNode: {
     // Seedance 2.0
     resolution:        'Seedance 2.0',
@@ -777,6 +778,10 @@ watch(previewImages, (urls) => {
       <svg v-if="data.isSubgraph" class="size-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="2" width="8" height="8" rx="1" /><rect x="14" y="2" width="8" height="8" rx="1" /><rect x="8" y="14" width="8" height="8" rx="1" />
       </svg>
+      <!-- Per-node generator icon takes precedence over provider logo: a
+           Flux Dev card and a Veo card from the same provider should read
+           differently at a glance, not as two identical Replicate clouds. -->
+      <component v-else-if="generatorIcon" :is="generatorIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || data.title }}</span>
@@ -857,6 +862,7 @@ watch(previewImages, (urls) => {
           v-if="!widget.hidden && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
           :widget-def="widget"
           :node-type="data.nodeType"
+          :node-id="id"
           :model-value="data.widgetsValues?.[i]"
           :is-fixed="isSeedFixed(widget, i)"
           @update:model-value="data.widgetsValues[i] = $event"

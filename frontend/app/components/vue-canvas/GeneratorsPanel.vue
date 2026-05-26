@@ -18,6 +18,15 @@ import {
   PenTool, Music, Cloud, Archive,
 } from 'lucide-vue-next'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import { getGeneratorIcon, getModelBrand } from '~/data/generator-icons'
+
+// Pick which brand to show on the corner chip. Replicate is just transport;
+// the chip should say BFL for a Flux node, Ideogram for an Ideogram node,
+// etc. Falls back to the actual API provider when no model brand is known
+// (multi-model nodes, indie models like CodeFormer).
+function chipProvider(item: PartnerNode): string {
+  return getModelBrand(item.nodeType) || item.provider
+}
 
 defineEmits<{ close: [] }>()
 
@@ -429,7 +438,7 @@ const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
   // Replicate (BYOK) — new use-case nodes
   // Image — generation
   FluxLoRARemoteNode:      { useCase: 'Generate an image with your LoRA', model: 'Flux Dev + LoRA' },
-  GenerateImageNode:       { useCase: 'Generate an image',         model: 'Flux Pro / Ideogram' },
+  GenerateImageNode:       { useCase: 'Generate an image',         model: 'Many models · pick in gallery' },
   GenerateAnimeNode:       { useCase: 'Generate an anime image',   model: 'Animagine XL' },
   GenerateEmojiNode:       { useCase: 'Generate an emoji',         model: 'Flux Kontext + Emoji LoRA' },
   ConsistentFaceNode:      { useCase: 'Generate a consistent face', model: 'Ideogram Character' },
@@ -625,18 +634,61 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
               class="absolute top-1 right-1 text-[9px] tabular-nums leading-none px-1 py-0.5 rounded bg-amber-500/15 text-amber-200/90 border border-amber-500/15 group-hover:bg-amber-500/25 transition-colors"
               :title="`${item.priceApprox ? '~' : ''}${item.price}${item.priceSuffix ? ' ' + item.priceSuffix : ''}${item.priceVaries ? ' (varies by settings)' : ''}`"
             >{{ item.priceApprox ? '~' : '' }}{{ item.price }}</span>
+            <!-- Main icon = per-node use-case glyph when we have one
+                 (Generate → Sparkles, Upscale → Maximize, etc.). Falls back
+                 to the provider's own icon when there's no mapping yet —
+                 so a freshly-added partner still looks reasonable. When the
+                 per-node icon takes the main slot, the provider drops into
+                 a small badge in the bottom-right corner. -->
             <div
-              class="size-7 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
-              :class="hasComfyBrandIcon(item.provider) ? 'bg-white/[0.04]' : ''"
-              :style="hasComfyBrandIcon(item.provider) ? {} : { backgroundColor: providerColor(item.provider).bg, color: providerColor(item.provider).fg }"
+              class="relative size-7 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
+              :class="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider) ? 'bg-white/[0.04]' : ''"
+              :style="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider)
+                ? {}
+                : { backgroundColor: providerColor(item.provider).bg, color: providerColor(item.provider).fg }"
               :title="item.provider"
             >
+              <component
+                v-if="getGeneratorIcon(item.nodeType)"
+                :is="getGeneratorIcon(item.nodeType)"
+                class="size-4 text-white/85"
+                :stroke-width="1.75"
+              />
               <span
-                v-if="hasComfyBrandIcon(item.provider)"
+                v-else-if="hasComfyBrandIcon(item.provider)"
                 :class="[comfyBrandIconClass(item.provider), isComfyMonoIcon(item.provider) ? 'bg-white' : '']"
                 class="size-4"
               />
-              <component v-else :is="providerIcon(item.provider, section.domain)" class="size-3.5" :stroke-width="1.75" />
+              <component
+                v-else
+                :is="providerIcon(item.provider, section.domain)"
+                class="size-3.5"
+                :stroke-width="1.75"
+              />
+
+              <!-- Provider mini-chip — only shown when the main slot is the
+                   per-node icon (otherwise the provider is already the main
+                   visual). Reflects the actual MODEL brand (BFL / Ideogram /
+                   …), not the API transport (Replicate falls back here).
+                   Same dark chip background regardless of provider so the
+                   visual weight is consistent across cards. Pulled mostly
+                   outside the main icon so it reads as a badge, not a
+                   sticker covering the glyph. -->
+              <template v-if="getGeneratorIcon(item.nodeType)">
+                <span
+                  v-if="hasComfyBrandIcon(chipProvider(item))"
+                  :class="[comfyBrandIconClass(chipProvider(item)), isComfyMonoIcon(chipProvider(item)) ? 'bg-white/85' : '']"
+                  class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1a1a1a] bg-[#1a1a1a]"
+                  :title="chipProvider(item)"
+                />
+                <span
+                  v-else
+                  class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1a1a1a] bg-[#1a1a1a] flex items-center justify-center text-white/70"
+                  :title="chipProvider(item)"
+                >
+                  <component :is="providerIcon(chipProvider(item), section.domain)" class="size-1.5" :stroke-width="2.75" />
+                </span>
+              </template>
             </div>
             <!-- Use-case-first label when the node is in the map; falls back
                  to the cleaned model name for partner nodes we haven't mapped. -->
@@ -672,17 +724,42 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
         :style="{ top: hoverPos.top + 'px', left: hoverPos.left + 'px', transform: 'translateY(-50%)' }"
       >
         <div class="flex items-center gap-2 mb-1.5">
+          <!-- Same icon treatment as the card: per-node main, provider badge. -->
           <div
-            class="size-7 rounded-md flex items-center justify-center ring-1 ring-white/10"
-            :class="hasComfyBrandIcon(hoveredItem.provider) ? 'bg-white/[0.04]' : ''"
-            :style="hasComfyBrandIcon(hoveredItem.provider) ? {} : { backgroundColor: providerColor(hoveredItem.provider).bg, color: providerColor(hoveredItem.provider).fg }"
+            class="relative size-7 rounded-md flex items-center justify-center ring-1 ring-white/10"
+            :class="getGeneratorIcon(hoveredItem.nodeType) || hasComfyBrandIcon(hoveredItem.provider) ? 'bg-white/[0.04]' : ''"
+            :style="getGeneratorIcon(hoveredItem.nodeType) || hasComfyBrandIcon(hoveredItem.provider)
+              ? {}
+              : { backgroundColor: providerColor(hoveredItem.provider).bg, color: providerColor(hoveredItem.provider).fg }"
           >
+            <component
+              v-if="getGeneratorIcon(hoveredItem.nodeType)"
+              :is="getGeneratorIcon(hoveredItem.nodeType)"
+              class="size-4 text-white/85"
+              :stroke-width="1.75"
+            />
             <span
-              v-if="hasComfyBrandIcon(hoveredItem.provider)"
+              v-else-if="hasComfyBrandIcon(hoveredItem.provider)"
               :class="[comfyBrandIconClass(hoveredItem.provider), isComfyMonoIcon(hoveredItem.provider) ? 'bg-white' : '']"
               class="size-4"
             />
             <component v-else :is="providerIcon(hoveredItem.provider, activeDomain)" class="size-3.5" :stroke-width="1.75" />
+
+            <template v-if="getGeneratorIcon(hoveredItem.nodeType)">
+              <span
+                v-if="hasComfyBrandIcon(chipProvider(hoveredItem))"
+                :class="[comfyBrandIconClass(chipProvider(hoveredItem)), isComfyMonoIcon(chipProvider(hoveredItem)) ? 'bg-white/85' : '']"
+                class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1f1f1f] bg-[#1f1f1f]"
+                :title="chipProvider(hoveredItem)"
+              />
+              <span
+                v-else
+                class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1f1f1f] bg-[#1f1f1f] flex items-center justify-center text-white/70"
+                :title="chipProvider(hoveredItem)"
+              >
+                <component :is="providerIcon(chipProvider(hoveredItem), activeDomain)" class="size-1.5" :stroke-width="2.75" />
+              </span>
+            </template>
           </div>
           <div class="flex flex-col min-w-0">
             <span class="text-sm font-semibold text-white/90 truncate">

@@ -6,13 +6,17 @@ import type { LiteGraphWorkflow, LiteGraphNode } from '~/composables/useVueNodes
  * depend on (transitively) stay active too — so users can right-click a
  * single output node and get a working subgraph automatically.
  *
- * Strategy: don't prune the JSON. Instead, set mode=2 (mute) on every node
- * that ISN'T in `keep`. LiteGraph already honors mode-2 at queue time, so
- * the bridge submits the full structure but ComfyUI's executor skips the
- * muted nodes. This avoids re-implementing dead-link rewiring.
+ * Strategy: strip nodes outside the keep set entirely (along with any links
+ * touching them). Earlier versions set `node.mode = 2` (mute) instead, which
+ * worked at queue time but persisted into the bridge's LiteGraph state — so
+ * a per-node Run on the middle sink of a fan-out would leave the other two
+ * sinks visibly muted on the live canvas afterwards. Stripping avoids that:
+ * the bridge sees only the active subgraph, never the mute flag.
+ *
+ * The keep set is built by walking upstream from targets only, so anything
+ * we strip is guaranteed not to be referenced by anything we kept. Links
+ * touching stripped nodes are removed too.
  */
-
-const NODE_MODE_MUTE = 2
 
 /** Build the set of nodes to keep (targets + all transitive upstream deps). */
 export function collectKeepSet(
@@ -54,9 +58,10 @@ export function collectKeepSet(
 }
 
 /**
- * Returns a deep-cloned workflow where any node not in `targetNodeIds` (and
- * not an upstream dep of one) is muted (mode=2). Pre-existing mode=4 (bypass)
- * is preserved within the keep set so a user's explicit bypass still applies.
+ * Returns a deep-cloned workflow with nodes outside the keep set removed
+ * entirely, along with any links that touch them. Pre-existing mode=4
+ * (bypass) on kept nodes is preserved so a user's explicit bypass still
+ * applies inside the run.
  */
 export function buildFilteredWorkflow(
   workflow: LiteGraphWorkflow,
@@ -66,13 +71,18 @@ export function buildFilteredWorkflow(
   const keep = collectKeepSet(workflow, targetIds)
 
   const cloned: LiteGraphWorkflow = JSON.parse(JSON.stringify(workflow))
-  for (const node of cloned.nodes as LiteGraphNode[]) {
-    if (!keep.has(node.id)) {
-      // Don't overwrite mode=4 (bypass) into mute — bypass needs to remain
-      // bypass so its pass-through semantics still apply; but for a node
-      // explicitly OUTSIDE the keep set, mute is what we want regardless.
-      node.mode = NODE_MODE_MUTE
-    }
+  cloned.nodes = ((cloned.nodes as LiteGraphNode[]) || []).filter(
+    (n) => keep.has(n.id),
+  )
+  // Drop links that reference a stripped node on either end. Tuple shape:
+  // [linkId, originId, originSlot, targetId, targetSlot, type]
+  if (Array.isArray(cloned.links)) {
+    cloned.links = cloned.links.filter((link: any) => {
+      if (!Array.isArray(link) || link.length < 4) return false
+      const originId = Number(link[1])
+      const targetId = Number(link[3])
+      return keep.has(originId) && keep.has(targetId)
+    })
   }
   return cloned
 }

@@ -584,6 +584,15 @@ function handleOpenSmartLayout(e: Event) {
   if (detail?.nodeId) smartLayoutOpenForId.value = String(detail.nodeId)
 }
 
+// Model gallery modal state — opened by the WidgetModelPicker launcher on
+// generator nodes ("Generate an image" today; future text/audio/video pickers
+// will share the same component if we keep the data shape generic).
+const modelGalleryOpenForId = ref<string | null>(null)
+function handleOpenModelGallery(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) modelGalleryOpenForId.value = String(detail.nodeId)
+}
+
 // Paste an image directly onto the canvas → uploads it to ComfyUI's input/
 // folder and spawns a LoadImage node with the filename pre-filled. Supports
 // clipboard image blobs (screenshots) and copied image files (from Finder/
@@ -672,6 +681,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
+  window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -685,6 +695,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
+  window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -1894,6 +1905,14 @@ defineExpose({
         @close="smartLayoutOpenForId = null"
       />
     </Teleport>
+
+    <!-- Model gallery (image generator model picker) -->
+    <VueCanvasModelGalleryModal
+      v-if="modelGalleryOpenForId"
+      :node-id="modelGalleryOpenForId"
+      :nodes="nodes as any[]"
+      @close="modelGalleryOpenForId = null"
+    />
   </div>
 </template>
 

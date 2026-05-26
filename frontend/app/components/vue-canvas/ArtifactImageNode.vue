@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, Save, Play, Download, RefreshCw } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -301,8 +301,8 @@ async function downloadImage() {
           @click="triggerUpload"
         >
           <Loader2 v-if="uploading" class="size-7 animate-spin" />
-          <Upload v-else class="size-7" :stroke-width="1.5" />
-          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click' }}</span>
+          <ImagePlus v-else class="size-7" :stroke-width="1.5" />
+          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an image' }}</span>
         </button>
       </template>
 

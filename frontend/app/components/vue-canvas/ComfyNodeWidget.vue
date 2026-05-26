@@ -1,8 +1,25 @@
 <script setup lang="ts">
 const props = defineProps<{
-  widgetDef: { name: string; type: string; options?: string[]; min?: number; max?: number; step?: number; default?: any; tooltip?: string }
+  widgetDef: {
+    name: string
+    type: string
+    options?: string[]
+    min?: number
+    max?: number
+    step?: number
+    default?: any
+    tooltip?: string
+    // Backend-provided UI hint. When set, overrides the type-based renderer
+    // pick below. Only "model_picker" is recognised today — opens the model
+    // gallery modal instead of showing a plain combo dropdown. Backend ships
+    // this via IO.Combo.Input(..., extra_dict={"comfynext_widget": "model_picker"}).
+    comfynext_widget?: string
+  }
   modelValue: any
   nodeType?: string
+  // Forwarded to widgets that dispatch global open-modal events (model_picker).
+  // The modal mount point reads detail.nodeId to know which node it's editing.
+  nodeId?: string
   // Lock state for seed widgets. When true, the pre-Run randomizer leaves
   // this seed alone. The parent (ComfyNode.vue) decides where the boolean
   // lives — widgets_values[i+1] for Comfy-standard seeds (control_after_generate)
@@ -396,7 +413,16 @@ function formatLabel(name: string): string {
 </script>
 <template>
   <div class="px-2" data-slot="comfy-node-field">
-    <template v-if="gradient">
+    <!-- Backend-marked custom widget: skip the standard label + renderer chain
+         and hand the whole slot to the model picker (it owns its own label). -->
+    <template v-if="widgetDef.comfynext_widget === 'model_picker'">
+      <VueCanvasWidgetsWidgetModelPicker
+        :model-value="modelValue"
+        :node-id="nodeId"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <template v-else-if="gradient">
       <VueCanvasWidgetsWidgetGradientSlider
         :label="formatLabel(widgetDef.name)"
         :model-value="modelValue"

@@ -3,6 +3,7 @@ import {
   House, X, Plus, Play, Check, Minus, ExternalLink, AlertCircle,
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
+  AudioWaveform, Film, Box,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Sonner } from '~/components/ui/sonner'
@@ -56,19 +57,47 @@ watch(highlightedNodeId, (nodeId, oldNodeId) => {
   }
 })
 
+// Ordered roughly along a typical session:
+//   tools → sources → make/edit → power-user → help.
+// `dividerBefore` draws a vertical separator before the item, marking
+// the boundary between groups.
 const sidebarItems = [
+  // Tools
   { label: 'Select', icon: MousePointer2, tool: 'select' },
   { label: 'Hand', icon: Hand, tool: 'hand' },
+  // Sources
+  { label: 'Add', icon: Plus, submenu: 'load', dividerBefore: true },
   { label: 'Assets', icon: LayoutGrid, tabId: 'assets' },
-  { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
-  { label: 'Generators', icon: WandSparkles, panel: 'generators' },
+  // Make + edit
+  { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
   { label: 'LoRAs', icon: Library, panel: 'loras' },
-  { label: 'Nodes', icon: GitFork, tabId: 'node-library' },
+  { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
+  // Power-user
+  { label: 'Nodes', icon: GitFork, tabId: 'node-library', dividerBefore: true },
   { label: 'Blocks', icon: Boxes, panel: 'blocks' },
-  { label: 'Apps', icon: AppWindow, tabId: 'apps' },
-  { label: 'Templates', icon: LayoutTemplate },
-  { label: 'Explain', icon: Sparkles, tool: 'explain' },
+  // Hidden for now. Re-add to restore.
+  // { label: 'Apps', icon: AppWindow, tabId: 'apps' },
+  // { label: 'Templates', icon: LayoutTemplate },
+  // Help
+  { label: 'Explain', icon: Sparkles, tool: 'explain', dividerBefore: true },
 ]
+
+// Submenu shown when "Load…" is active. Each option drops the matching
+// unified artifact node onto the canvas via the standard addNode event.
+// 3D is here as a placeholder — the Mesh artifact node isn't shipped yet,
+// so its option stays disabled until that lands.
+const loadOptions = [
+  { label: 'Image', icon: Image,          nodeType: 'Image' },
+  { label: 'Audio', icon: AudioWaveform,  nodeType: 'Audio' },
+  { label: 'Video', icon: Film,           nodeType: 'Video' },
+  { label: '3D',    icon: Box,            nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
+]
+const loadMenuOpen = ref(false)
+
+function addLoadNode(nodeType: string) {
+  window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType } }))
+  loadMenuOpen.value = false
+}
 
 const activeTool = ref<string>('select')
 
@@ -91,6 +120,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'generators') return generatorsPanelOpen.value
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
+  if (item?.submenu === 'load') return loadMenuOpen.value
   return activeSidebarItem.value === item?.label
 }
 
@@ -100,6 +130,17 @@ function toggleSidebarItem(label: string) {
     openTab({ type: 'assets', label: 'Assets' })
     return
   }
+  if (item?.submenu === 'load') {
+    // Close other open panels so the popup isn't competing with them.
+    toolboxPanelOpen.value = false
+    generatorsPanelOpen.value = false
+    loraLibraryPanelOpen.value = false
+    blockLibraryPanelOpen.value = false
+    loadMenuOpen.value = !loadMenuOpen.value
+    return
+  }
+  // Any other sidebar item closes the Load popup.
+  loadMenuOpen.value = false
   if (item?.tool) {
     // Deactivate explain if switching away
     if (activeTool.value === 'explain' && item.tool !== 'explain') {
@@ -1397,26 +1438,56 @@ function handleBridgeMessage(event: MessageEvent) {
           </Transition>
         </div>
 
+        <!-- Backdrop closes the Load popup on outside click. Sits below the
+             toolbar (z-40) but above the canvas, so clicks pass through to
+             the close handler instead of the canvas behind. -->
+        <div
+          v-if="loadMenuOpen && activeTab.type === 'project'"
+          class="absolute inset-0 z-30"
+          @click="loadMenuOpen = false"
+        />
         <!-- Floating toolbar overlay (only visible on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
           class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-40"
         >
-          <template v-for="(item, index) in sidebarItems" :key="item.label">
+          <template v-for="(item) in sidebarItems" :key="item.label">
             <div
-              v-if="index === 2 || item.label === 'Explain'"
+              v-if="item.dividerBefore"
               class="w-px h-8 bg-white/10 mx-0.5"
             />
-            <button
-              class="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-[8px] cursor-pointer transition-colors group"
-              :class="isSidebarItemActive(item) ? 'bg-white/10' : 'hover:bg-white/5'"
-              @click="toggleSidebarItem(item.label)"
-            >
-              <component :is="item.icon" class="size-5 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
-              <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': isSidebarItemActive(item) }">
-                {{ item.label }}
-              </span>
-            </button>
+            <div class="relative">
+              <button
+                class="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-[8px] cursor-pointer transition-colors group"
+                :class="isSidebarItemActive(item) ? 'bg-white/10' : 'hover:bg-white/5'"
+                @click="toggleSidebarItem(item.label)"
+              >
+                <component :is="item.icon" class="size-5 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
+                <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': isSidebarItemActive(item) }">
+                  {{ item.label }}
+                </span>
+              </button>
+              <!-- Popup anchored above the Load… button. Drops the matching
+                   unified artifact node onto the canvas. -->
+              <div
+                v-if="item.submenu === 'load' && loadMenuOpen"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 backdrop-blur-sm border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                @click.stop
+              >
+                <button
+                  v-for="opt in loadOptions"
+                  :key="opt.label"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors"
+                  :class="opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/[0.08] cursor-pointer'"
+                  :disabled="opt.disabled"
+                  @click="!opt.disabled && addLoadNode(opt.nodeType)"
+                >
+                  <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
+                  <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
+                  <span v-if="opt.hint" class="text-[9px] uppercase tracking-wider text-white/35">{{ opt.hint }}</span>
+                </button>
+              </div>
+            </div>
           </template>
         </div>
         <!-- Floating zoom/map toolbar (bottom-right, only on project tabs) -->

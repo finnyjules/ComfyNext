@@ -248,8 +248,8 @@ async function downloadVideo() {
           @click="triggerUpload"
         >
           <Loader2 v-if="uploading" class="size-7 animate-spin" />
-          <Upload v-else class="size-7" :stroke-width="1.5" />
-          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click' }}</span>
+          <Film v-else class="size-7" :stroke-width="1.5" />
+          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click a video' }}</span>
         </button>
       </template>
 
