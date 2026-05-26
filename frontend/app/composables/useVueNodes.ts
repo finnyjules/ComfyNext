@@ -112,9 +112,11 @@ export function getWidgetDefs(nodeType: string): any[] {
 
       // Seed-type INT inputs have an extra "control_after_generate" value
       // in LiteGraph's widgets_values. Add a hidden placeholder to keep
-      // widgetDefs aligned with widgetsValues.
+      // widgetDefs aligned with widgetsValues. Default to "randomize" so
+      // new generators randomize their seed on each Run — `WidgetSeed.vue`
+      // lets the user flip this to "fixed" via a lock icon.
       if (type === 'INT' && config.control_after_generate) {
-        defs.push({ name: `${name}_control`, type: 'SEED_CONTROL', hidden: true })
+        defs.push({ name: `${name}_control`, type: 'SEED_CONTROL', default: 'randomize', hidden: true })
       }
     }
   }
@@ -130,6 +132,39 @@ export function getWidgetDefs(nodeType: string): any[] {
 export function isSubgraphType(type: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(type)
 }
+
+// Maps each unified-artifact Comfy node type to the Vue Flow node component
+// that should render it. Adding a new media type (audio, video, …) means
+// one entry here + one corresponding entry in the canvas's `nodeTypes` map.
+// Legacy nodes (LoadImage / PreviewImage / SaveImage / LoadAudio / etc.)
+// stay off this map so existing workflows render as the classic node-box.
+export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
+  Image: 'artifact-image',
+  Audio: 'artifact-audio',
+  Video: 'artifact-video',
+  Text:  'artifact-text',
+}
+
+// Reverse mapping: when a node has a dangling output of one of these types,
+// the auto-materialize step drops the corresponding artifact node downstream.
+// Anything not in this map (e.g. LATENT, MASK, CONDITIONING) is left alone.
+export const ARTIFACT_NODE_FOR_OUTPUT: Record<string, string> = {
+  IMAGE:  'Image',
+  AUDIO:  'Audio',
+  VIDEO:  'Video',
+  STRING: 'Text',
+}
+
+// Single source of truth for Vue Flow component routing.
+export function getVueFlowType(nodeType: string): string {
+  if (nodeType === 'ComfyGateNode') return 'gate'
+  return ARTIFACT_NODE_COMPONENTS[nodeType] || 'comfy'
+}
+
+// Back-compat alias — older code references the image-specific set.
+export const ARTIFACT_IMAGE_NODES = new Set<string>([
+  ...Object.keys(ARTIFACT_NODE_COMPONENTS),
+])
 
 // Convert a subgraph definition (from workflow.definitions.subgraphs[]) to LiteGraphWorkflow
 export function subgraphToLiteGraph(sg: any): LiteGraphWorkflow {
@@ -308,7 +343,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
 
       return {
         id: String(lgNode.id),
-        type: 'comfy',
+        type: getVueFlowType(lgNode.type),
         position: { x: safePos[0], y: safePos[1] },
         data: {
           nodeType: lgNode.type,

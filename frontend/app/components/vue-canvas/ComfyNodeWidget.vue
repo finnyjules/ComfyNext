@@ -3,8 +3,17 @@ const props = defineProps<{
   widgetDef: { name: string; type: string; options?: string[]; min?: number; max?: number; step?: number; default?: any; tooltip?: string }
   modelValue: any
   nodeType?: string
+  // Lock state for seed widgets. When true, the pre-Run randomizer leaves
+  // this seed alone. The parent (ComfyNode.vue) decides where the boolean
+  // lives — widgets_values[i+1] for Comfy-standard seeds (control_after_generate)
+  // or node.properties.seedLocks for everything else — and presents it here
+  // as a single bool so this component doesn't have to know the split.
+  isFixed?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: any] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: any]
+  'update:isFixed': [value: boolean]
+}>()
 
 const isCombo = computed(() => Array.isArray(props.widgetDef.options) || props.widgetDef.type === 'COMBO')
 const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
@@ -412,7 +421,14 @@ function formatLabel(name: string): string {
         >?</span>
       </label>
       <VueCanvasWidgetsWidgetCombo v-if="isCombo" :options="widgetDef.options || []" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetSeed v-else-if="isSeed && isNumber" :model-value="modelValue" :max="widgetDef.max" @update:model-value="emit('update:modelValue', $event)" />
+      <VueCanvasWidgetsWidgetSeed
+        v-else-if="isSeed && isNumber"
+        :model-value="modelValue"
+        :max="widgetDef.max"
+        :is-fixed="isFixed"
+        @update:model-value="emit('update:modelValue', $event)"
+        @update:is-fixed="emit('update:isFixed', $event)"
+      />
       <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" @update:model-value="emit('update:modelValue', $event)" />
       <VueCanvasWidgetsWidgetToggle v-else-if="isToggle" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
       <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="widgetDef.name.toLowerCase().includes('text') || widgetDef.name.toLowerCase().includes('prompt')" @update:model-value="emit('update:modelValue', $event)" />

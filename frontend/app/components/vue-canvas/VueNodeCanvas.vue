@@ -2,15 +2,19 @@
 // force HMR reload
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
-import { fetchObjectInfo, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
+import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
-import { buildFilteredWorkflow } from '~/composables/useFilteredPrompt'
+import { applyVariantFanOut, buildFilteredWorkflow, collectKeepSet } from '~/composables/useFilteredPrompt'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
 import ComfyGateNode from '~/components/vue-canvas/ComfyGateNode.vue'
+import ArtifactImageNode from '~/components/vue-canvas/ArtifactImageNode.vue'
+import ArtifactTextNode from '~/components/vue-canvas/ArtifactTextNode.vue'
+import ArtifactAudioNode from '~/components/vue-canvas/ArtifactAudioNode.vue'
+import ArtifactVideoNode from '~/components/vue-canvas/ArtifactVideoNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
@@ -153,7 +157,7 @@ async function handleDrop(event: DragEvent) {
   const widgetDefs = getWidgetDefs(nodeType)
 
   // Gate nodes use a dedicated component type
-  const vueFlowType = nodeType === 'ComfyGateNode' ? 'gate' : 'comfy'
+  const vueFlowType = getVueFlowType(nodeType)
 
   nodes.value.push({
     id: newId,
@@ -283,7 +287,7 @@ async function handleAddNode(e: Event) {
   const newId = String(Date.now())
   const info = objectInfo.value[nodeType]
   const widgetDefs = getWidgetDefs(nodeType)
-  const vueFlowType = nodeType === 'ComfyGateNode' ? 'gate' : 'comfy'
+  const vueFlowType = getVueFlowType(nodeType)
 
   // Apply any name-based overrides supplied by the caller (used by the LoRA
   // Library to pre-fill `lora_url`, etc.). Widget order is whatever
@@ -437,11 +441,18 @@ function handleBridgeMessage(event: MessageEvent) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
         target.data = { ...target.data, running: true, error: false }
-        // Mark outgoing edges from this node as running
+        // Light outgoing edges from this node — but only the ones whose
+        // target is part of the current run set. A generator fanned out
+        // to multiple sinks where only one is targeted should only
+        // illuminate the active path. activeRunNodeIds is populated by
+        // getFilteredWorkflow / getWorkflow at submission time.
+        const activeSet = activeRunNodeIds.value
         for (const e of edges.value) {
-          if (e.source === String(nodeId)) {
-            e.data = { ...e.data, running: true }
-          }
+          if (e.source !== String(nodeId)) continue
+          // Empty active set = no filtering known (e.g. legacy run path);
+          // light everything as before so we don't regress that case.
+          if (activeSet.size && !activeSet.has(e.target)) continue
+          e.data = { ...e.data, running: true }
         }
       }
     }
@@ -511,6 +522,8 @@ function handleBridgeMessage(event: MessageEvent) {
         e.data = { ...e.data, running: false }
       }
     }
+    // Drop the captured run set — next Run captures fresh.
+    activeRunNodeIds.value = new Set()
   }
 
   if (evt === 'gate_paused') {
@@ -1509,18 +1522,224 @@ function handleGroupContextMenu(groupId: string, x: number, y: number) {
   openMenu(x, y, groupMenuItems(groupId))
 }
 
+// Randomize every seed widget on the live canvas state before the workflow
+// snapshot is taken. Seed widgets are detected the same way ComfyUI's bundled
+// frontend detects them — INT inputs whose schema config carries
+// `control_after_generate`. This is what `getWidgetDefs` already encodes.
+// Mutating `nodes.value` (rather than the workflow JSON) means the user
+// visibly sees the seed that's about to run, so they can pin one if they
+// want by typing into the widget (the next Run randomizes again — locking
+// is a follow-up).
+// The set of node ids actually executing in the current run. Set by the
+// getWorkflow / getFilteredWorkflow exposes right before submission, cleared
+// on execution_complete. The executing-event handler uses this to decide
+// which outgoing edges to illuminate — a generator fanned out to two sinks
+// where only one is targeted should only light that path.
+const activeRunNodeIds = ref<Set<string>>(new Set())
+
+function captureActiveRunFromTargets(targetIds: string[]) {
+  if (!targetIds.length) {
+    // Global Run — every non-muted node is part of the active run.
+    activeRunNodeIds.value = new Set(
+      (nodes.value as any[])
+        .filter((n: any) => (n.data?.mode ?? 0) !== 2)
+        .map((n: any) => String(n.id)),
+    )
+    return
+  }
+  // Filtered Run — keep set is target ids + their transitive upstream deps.
+  const wf = getWorkflowWithSubgraphs()
+  if (!wf) { activeRunNodeIds.value = new Set(); return }
+  const ids = targetIds.map(Number).filter(Number.isFinite)
+  const keep = collectKeepSet(wf, ids)
+  activeRunNodeIds.value = new Set([...keep].map(String))
+}
+
+function randomizeSeedsOnLiveState() {
+  for (const node of nodes.value as any[]) {
+    const defs = node.data?.widgetDefs as any[] | undefined
+    const values = node.data?.widgetsValues as any[] | undefined
+    if (!defs || !values) continue
+    for (let i = 0; i < defs.length; i++) {
+      const def = defs[i]
+      if (!def || def.type !== 'INT') continue
+      // Detect seed widgets uniformly: Comfy-standard ones carry the
+      // control_after_generate flag; Replicate / custom-node seeds just have
+      // "seed" in the name. We treat both as seed widgets.
+      const isComfyStandard = !!def.control_after_generate
+      const isSeed = isComfyStandard || /seed/i.test(String(def.name || ''))
+      if (!isSeed) continue
+      // Lock state lives in different slots depending on convention.
+      const fixed = isComfyStandard
+        ? values[i + 1] === 'fixed'
+        : !!node.data?.properties?.seedLocks?.[def.name]
+      if (fixed) continue
+      const max = Math.min(Number(def.max) || 2 ** 53 - 1, 2 ** 53 - 1)
+      values[i] = Math.floor(Math.random() * max)
+    }
+  }
+}
+
 // Build a filtered workflow snapshot from current canvas + target ids. Used
 // by the layout when it receives the runFiltered event.
 function getFilteredWorkflow(targetIds: string[]) {
+  randomizeSeedsOnLiveState()
+  captureActiveRunFromTargets(targetIds)
   const wf = getWorkflowWithSubgraphs()
-  if (!wf || !targetIds.length) return wf
-  return buildFilteredWorkflow(wf, targetIds)
+  if (!wf) return wf
+  const filtered = targetIds.length ? buildFilteredWorkflow(wf, targetIds) : wf
+  // Apply variant fan-out — N Image sinks on one upstream → upstream produces
+  // a batch of N, each sink slices its index. In-place mutation on the JSON
+  // snapshot; the Vue Flow display stays unchanged.
+  return applyVariantFanOut(filtered, objectInfo.value)
+}
+
+// When the user runs a node that has dangling outputs of an artifact-bearing
+// type (IMAGE / AUDIO / VIDEO / STRING), drop a fresh artifact card to its
+// right and wire the output to it. The card receives the execution result and
+// renders the preview — no need to know that PreviewImage/PreviewAudio/etc.
+// exist. Returns the original target list plus the new sink ids so the run
+// includes them.
+function materializeAutoImageSinks(targetIds: string[]): string[] {
+  if (!targetIds.length) return targetIds
+
+  // Build a schema snapshot for each artifact node type we know about, lazily.
+  // Skips types whose Comfy node hasn't been reported yet (e.g. a fresh Comfy
+  // install that doesn't have the new Audio node loaded).
+  const schemas: Record<string, {
+    inputs: any[]; outputs: any[]; widgetDefs: any[]; info: any; primaryInputIdx: number;
+  }> = {}
+  function getSchema(nodeType: string) {
+    if (schemas[nodeType]) return schemas[nodeType]
+    const info = objectInfo.value[nodeType]
+    if (!info) return null
+    const widgetDefs = getWidgetDefs(nodeType)
+    const inputs = [
+      ...Object.entries((info?.input?.required ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: false })),
+      ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: true })),
+    ]
+      .filter(({ s }) => {
+        // Same port/widget split as the regular add-node path.
+        const specArr = Array.isArray(s) ? s : [s]
+        const type = specArr[0]
+        const cfg = specArr[1] || {}
+        if (Array.isArray(type)) return false
+        if (cfg.forceInput) return true
+        return !['INT', 'FLOAT', 'STRING', 'BOOLEAN', 'COMBO'].includes(String(type))
+      })
+      .map(({ n, s, optional }) => ({
+        name: n,
+        type: Array.isArray(s) ? String(s[0]) : String(s),
+        link: null,
+        optional,
+      }))
+    const outputs = (info?.output || []).map((type: string, i: number) => ({
+      name: info?.output_name?.[i] || type,
+      type,
+      links: null,
+    }))
+    // The "primary" input is the optional pass-through port matching the
+    // artifact's medium — that's where the auto-wired upstream connects.
+    // Currently every artifact node has exactly one non-widget input; pick
+    // the first port and we're good.
+    const primaryInputIdx = inputs.length > 0 ? 0 : -1
+    if (primaryInputIdx < 0) return null
+    schemas[nodeType] = { inputs, outputs, widgetDefs, info, primaryInputIdx }
+    return schemas[nodeType]
+  }
+
+  const additional: string[] = []
+  // Snapshot the current nodes so we don't iterate over ones we just added.
+  const snapshot = [...(nodes.value as any[])]
+  // Numeric IDs only — the workflow-to-Comfy conversion parseInts the string
+  // id, so anything past a non-digit gets dropped and the executed-event echo
+  // back from Comfy won't match the Vue Flow node. Each new sink offsets from
+  // Date.now() to stay unique within this call.
+  let idSeed = Date.now()
+  // Skip nodes that are already artifact cards — they ARE the artifact.
+  const artifactNodeTypes = new Set(Object.keys(ARTIFACT_NODE_COMPONENTS))
+
+  for (const id of targetIds) {
+    const src = snapshot.find((n: any) => n.id === id)
+    if (!src) continue
+    if (artifactNodeTypes.has(src.data?.nodeType)) continue
+
+    const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
+    const srcW = (src.data?.size?.[0] ?? 220) as number
+    const srcPos = src.position || { x: 0, y: 0 }
+
+    let stacked = 0
+    for (let i = 0; i < outputs.length; i++) {
+      const outType = String(outputs[i].type).toUpperCase()
+      const artifactNodeType = ARTIFACT_NODE_FOR_OUTPUT[outType]
+      if (!artifactNodeType) continue
+      const schema = getSchema(artifactNodeType)
+      if (!schema) continue
+      // Skip if anything is already wired from this exact output handle.
+      const handle = `output-${i}`
+      const alreadyWired = (edges.value as any[]).some((e) => e.source === id && e.sourceHandle === handle)
+      if (alreadyWired) continue
+
+      const newId = String(idSeed++)
+      // Slot multi-output cases vertically so they don't overlap.
+      const position = { x: srcPos.x + srcW + 80, y: srcPos.y + stacked * 320 }
+      stacked++
+
+      nodes.value.push({
+        id: newId,
+        type: getVueFlowType(artifactNodeType),
+        position,
+        data: {
+          nodeType: artifactNodeType,
+          title: schema.info?.display_name || artifactNodeType,
+          inputs: schema.inputs.map((p) => ({ ...p })),
+          outputs: schema.outputs.map((p: any) => ({ ...p })),
+          widgetsValues: schema.widgetDefs.map((w: any) => w.default ?? null),
+          widgetDefs: schema.widgetDefs,
+          properties: {},
+          mode: 0,
+          size: [240, 280],
+          category: schema.info?.category || '',
+          outputNode: !!schema.info?.output_node,
+          priceBadge: schema.info?.price_badge || null,
+        },
+      } as any)
+
+      // Push the edge synchronously so the workflow-conversion in the very
+      // next tick sees the link. Vue Flow renders the SVG path on its own
+      // schedule — what matters here is that `edges.value` reflects the
+      // wire when `getFilteredWorkflow` reads it.
+      edges.value.push({
+        id: `e-auto-${newId}`,
+        source: id,
+        sourceHandle: handle,
+        target: newId,
+        targetHandle: `input-${schema.primaryInputIdx}`,
+        type: 'comfy',
+        data: { dataType: outType },
+      } as any)
+
+      additional.push(newId)
+    }
+  }
+
+  return additional.length ? [...targetIds, ...additional] : targetIds
 }
 
 // Expose methods and state for parent layout
 defineExpose({
-  getWorkflow: getWorkflowWithSubgraphs,
+  // Global Run path. Match the per-node Run pre-processing: randomize seeds
+  // on the live canvas state, capture the active run set (every non-muted
+  // node), then apply variant fan-out on the JSON snapshot.
+  getWorkflow: () => {
+    randomizeSeedsOnLiveState()
+    captureActiveRunFromTargets([])
+    const wf = getWorkflowWithSubgraphs()
+    if (!wf) return wf
+    return applyVariantFanOut(wf, objectInfo.value)
+  },
   getFilteredWorkflow,
+  materializeAutoImageSinks,
   getNodes: () => nodes.value,
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
@@ -1542,7 +1761,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"

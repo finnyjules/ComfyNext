@@ -108,9 +108,8 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
   {
     title: 'Source',
     items: [
-      { nodeType: 'LoadImage',    label: 'Load Image',    description: 'Load an image file from disk. Drop one onto the node to upload.', icon: ImageUp },
-      { nodeType: 'PreviewImage', label: 'Preview',       description: 'Display an image inline on the canvas — the easiest way to inspect intermediate results.', icon: Image },
-      { nodeType: 'SaveImage',    label: 'Save Image',    description: 'Save an image to the output folder as PNG.', icon: ImageDown },
+      { nodeType: 'Image', label: 'Image', description: 'Universal image artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: Image },
+      { nodeType: 'Text',  label: 'Text',  description: 'Universal text artifact. Type into the card or wire an LLM upstream; the value flows downstream.', icon: TypeIcon },
     ],
   },
   {
@@ -288,6 +287,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     domain: 'audio',
     title: 'Source',
     items: [
+      { nodeType: 'Audio',           label: 'Audio',          description: 'Universal audio artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: AudioIcon },
       { nodeType: 'LoadAudio',       label: 'Load Audio',     description: 'Load an audio file from disk.', icon: FileAudio },
       { nodeType: 'RecordAudio',     label: 'Record',         description: 'Capture audio from a microphone in the browser.', icon: Mic },
       { nodeType: 'EmptyAudio',      label: 'Empty / Silence', description: 'Generate silence of a given duration and channel count.', icon: VolumeX },
@@ -339,6 +339,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     domain: 'video',
     title: 'Source',
     items: [
+      { nodeType: 'Video',                label: 'Video',              description: 'Universal video artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: VideoIcon },
       { nodeType: 'LoadVideoFrames',      label: 'Load Video',         description: 'Load a video file and output its frames directly as an image batch — plugs straight into the Timeline.', icon: FileVideo },
       { nodeType: 'SaveVideoFrames',      label: 'Save Video',         description: 'Encode an image batch to .mp4 with optional audio. The output-side counterpart to Load Video.', icon: FileVideo },
       { nodeType: 'TextClip',             label: 'Text Clip',          description: 'Render text as a clip you can drop into a Timeline layer.', icon: TypeIcon },

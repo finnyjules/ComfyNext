@@ -257,6 +257,107 @@ class PreviewAudio(IO.ComfyNode):
     save_flac = execute  # TODO: remove
 
 
+class Audio(IO.ComfyNode):
+    """Unified `Audio` artifact node.
+
+    Mirror of the `Image` / `Text` pattern. Acts as a source when a filename
+    widget is set, as a preview/pass-through when upstream audio is wired, and
+    as an exporter when `export` is on. The artifact card UI lives in
+    `frontend/app/components/vue-canvas/ArtifactAudioNode.vue`.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = folder_paths.filter_files_content_types(
+            os.listdir(input_dir), ["audio", "video"],
+        )
+        # Empty sentinel first so the widget can stay required while still
+        # allowing "no source yet" (the upstream connection supplies it).
+        options = [""] + sorted(files)
+        return IO.Schema(
+            node_id="Audio",
+            display_name="Audio",
+            description="Unified audio artifact — load from disk, preview upstream, optionally export.",
+            search_aliases=["audio", "sound", "track", "clip", "load audio", "preview audio", "save audio"],
+            category="audio",
+            essentials_category="Audio",
+            is_output_node=True,
+            inputs=[
+                IO.Combo.Input(
+                    "audio",
+                    upload=IO.UploadType.audio,
+                    options=options,
+                    default="",
+                    tooltip="File to load when no upstream is connected. Ignored when something is wired into `source`.",
+                ),
+                IO.Boolean.Input(
+                    "export",
+                    default=False,
+                    tooltip="Also save a copy to the output directory on run. Off = preview only.",
+                ),
+                IO.String.Input("filename_prefix", default="audio/ComfyUI"),
+                IO.Combo.Input("format", options=["flac", "mp3", "opus"], default="flac"),
+                IO.Combo.Input(
+                    "quality",
+                    options=["V0", "128k", "192k", "320k"],
+                    default="V0",
+                    tooltip="Only used for mp3/opus. Ignored for flac.",
+                ),
+                IO.Audio.Input(
+                    "source",
+                    optional=True,
+                    tooltip="Upstream audio. Takes priority over the file widget.",
+                ),
+            ],
+            outputs=[IO.Audio.Output(display_name="audio")],
+            hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
+        )
+
+    @classmethod
+    def execute(cls, audio, export, filename_prefix, format, quality, source=None) -> IO.NodeOutput:
+        # Resolve source: upstream wins, then file widget. If neither, emit an
+        # empty placeholder so the workflow still validates.
+        if source is not None:
+            value = source
+        elif audio:
+            audio_path = folder_paths.get_annotated_filepath(audio)
+            waveform, sample_rate = load(audio_path)
+            value = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+        else:
+            # 1s silence placeholder — keeps the workflow happy when the card
+            # is fresh and the user hasn't picked a source yet.
+            value = {"waveform": torch.zeros((1, 1, 44100)), "sample_rate": 44100}
+            return IO.NodeOutput(value, ui={"audio": []})
+
+        # Preview always; optionally also save to the output directory when
+        # `export` is on. The Preview UI helper writes a temp file that the
+        # frontend can fetch and play.
+        ui = UI.PreviewAudio(value, cls=cls)
+        if export:
+            UI.AudioSaveHelper.get_save_audio_ui(
+                value,
+                filename_prefix=filename_prefix,
+                cls=cls,
+                format=format,
+                quality=quality,
+            )
+        return IO.NodeOutput(value, ui=ui)
+
+    @classmethod
+    def fingerprint_inputs(cls, audio, **_kwargs):
+        if not audio:
+            return ""
+        try:
+            path = folder_paths.get_annotated_filepath(audio)
+            m = hashlib.sha256()
+            with open(path, "rb") as f:
+                m.update(f.read())
+            return m.digest().hex()
+        except Exception:
+            return ""
+
+
 def f32_pcm(wav: torch.Tensor) -> torch.Tensor:
     """Convert audio to float 32 bits PCM format."""
     if wav.dtype.is_floating_point:
@@ -778,6 +879,7 @@ class AudioExtension(ComfyExtension):
             SaveAudioOpus,
             LoadAudio,
             PreviewAudio,
+            Audio,
             ConditioningStableAudio,
             RecordAudio,
             TrimAudioDuration,

@@ -293,6 +293,102 @@ class PreviewVideo(io.ComfyNode):
         )
 
 
+class Video(io.ComfyNode):
+    """Unified `Video` artifact node.
+
+    Mirror of the Image / Audio / Text pattern. Acts as a source when the
+    file widget is set, as a preview/pass-through when upstream video is
+    wired, and as an exporter when `export` is on. The artifact card UI
+    lives in `frontend/app/components/vue-canvas/ArtifactVideoNode.vue`.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = folder_paths.filter_files_content_types(files, ["video"])
+        options = [""] + sorted(files)
+        return io.Schema(
+            node_id="Video",
+            display_name="Video",
+            description="Unified video artifact — load from disk, preview upstream, optionally export.",
+            search_aliases=["video", "clip", "movie", "load video", "preview video", "save video"],
+            category="image/video",
+            essentials_category="Basics",
+            is_output_node=True,
+            inputs=[
+                io.Combo.Input(
+                    "file",
+                    options=options,
+                    default="",
+                    upload=io.UploadType.video,
+                    tooltip="File to load when no upstream is connected. Ignored when something is wired into `source`.",
+                ),
+                io.Boolean.Input(
+                    "export",
+                    default=False,
+                    tooltip="Also save a copy to the output directory on run. Off = preview only.",
+                ),
+                io.String.Input("filename_prefix", default="video/ComfyUI"),
+                io.Video.Input(
+                    "source",
+                    optional=True,
+                    tooltip="Upstream video. Takes priority over the file widget.",
+                ),
+            ],
+            outputs=[
+                io.Video.Output(display_name="video"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, file, export, filename_prefix, source=None) -> io.NodeOutput:
+        # Resolve source: upstream wins, then file widget. If neither, return
+        # the pass-through with no UI preview — the card will stay empty.
+        if source is not None:
+            video = source
+        elif file:
+            video_path = folder_paths.get_annotated_filepath(file)
+            video = InputImpl.VideoFromFile(video_path)
+        else:
+            return io.NodeOutput(None, ui={"images": []})
+
+        # Always emit a preview (same path PreviewVideo uses).
+        width, height = video.get_dimensions()
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            "preview_video",
+            folder_paths.get_temp_directory(),
+            width,
+            height,
+        )
+        preview_file = f"{filename}_{counter:05}_.mp4"
+        video.save_to(os.path.join(full_output_folder, preview_file))
+        preview_ui = ui.PreviewVideo([ui.SavedResult(preview_file, subfolder, io.FolderType.temp)])
+
+        if export:
+            # Save a permanent copy to the output dir alongside the preview.
+            out_folder, out_name, out_counter, out_sub, _ = folder_paths.get_save_image_path(
+                filename_prefix,
+                folder_paths.get_output_directory(),
+                width,
+                height,
+            )
+            out_file = f"{out_name}_{out_counter:05}_.mp4"
+            video.save_to(os.path.join(out_folder, out_file))
+
+        return io.NodeOutput(video, ui=preview_ui)
+
+    @classmethod
+    def fingerprint_inputs(cls, file, **_kwargs):
+        if not file:
+            return ""
+        try:
+            video_path = folder_paths.get_annotated_filepath(file)
+            return os.path.getmtime(video_path)
+        except Exception:
+            return ""
+
+
 class VideoExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
@@ -304,6 +400,7 @@ class VideoExtension(ComfyExtension):
             LoadVideo,
             VideoSlice,
             PreviewVideo,
+            Video,
         ]
 
 async def comfy_entrypoint() -> VideoExtension:

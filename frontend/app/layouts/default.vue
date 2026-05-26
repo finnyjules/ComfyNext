@@ -195,6 +195,21 @@ async function runVueWorkflow(targetIds?: string[]) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
     return
   }
+
+  // Auto-materialize Image sinks for any node with a dangling IMAGE output.
+  // For full-graph Run (no targetIds), every active node is a candidate; the
+  // canvas's own guards (skip Image self, skip already-wired outputs) keep
+  // this from being too aggressive. handleRunFiltered does the same dance for
+  // targeted Runs before calling this function — the global Run button skips
+  // that wrapper and calls us directly, so we have to handle it here too.
+  if (!targetIds?.length) {
+    const all = vueCanvasRef.value.getNodes?.() || []
+    const activeIds = all
+      .filter((n: any) => (n.data?.mode ?? 0) !== 2)
+      .map((n: any) => n.id)
+    vueCanvasRef.value.materializeAutoImageSinks?.(activeIds)
+  }
+
   const workflow = targetIds?.length && vueCanvasRef.value.getFilteredWorkflow
     ? vueCanvasRef.value.getFilteredWorkflow(targetIds)
     : vueCanvasRef.value.getWorkflow()
@@ -227,13 +242,20 @@ async function runVueWorkflow(targetIds?: string[]) {
 }
 
 // Filtered-run events from the canvas context menu (Run Group, Run Selection).
+// Also fired by per-node Run buttons on individual nodes. Before queueing,
+// we ask the canvas to materialize an `Image` artifact card for every
+// dangling IMAGE output among the targets — that's where the execution
+// result lands. No-op for targets whose outputs are already wired.
 function handleRunFiltered(e: Event) {
   const detail = (e as CustomEvent).detail
   const targetIds = detail?.targetIds as string[] | undefined
   if (!targetIds?.length) return
-  runVueWorkflow(targetIds)
+  const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
+  runVueWorkflow(expanded)
 }
 function handleRunAll() {
+  // Auto-sink materialization lives inside runVueWorkflow now (so the
+  // top-right Run button, which calls it directly, also benefits).
   runVueWorkflow()
 }
 onMounted(() => {

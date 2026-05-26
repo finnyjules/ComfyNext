@@ -183,6 +183,9 @@ class TextNode(IO.ComfyNode):
             description="Edit or pass through a STRING. Wire an LLM (Claude / Gemini / Whisper) into "
                         "`source`; type into `text` to override; output is the effective value.",
             category="text",
+            # Output node so the executed-event echoes `ui.text` back to the
+            # frontend — that's what populates the Text artifact card.
+            is_output_node=True,
             inputs=[
                 IO.String.Input(
                     "text",
@@ -207,7 +210,7 @@ class TextNode(IO.ComfyNode):
         # Widget content beats upstream so the user can hand-author / edit
         # without disconnecting the wire. Empty widget falls through.
         value = text if (text and text.strip()) else (source or "")
-        return IO.NodeOutput(value)
+        return IO.NodeOutput(value, ui={"text": [value]})
 
 
 class TextExtension(ComfyExtension):

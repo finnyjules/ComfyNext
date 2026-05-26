@@ -381,6 +381,35 @@ function widgetIndex(name: string): number {
   return (props.data.widgetDefs || []).findIndex((d: any) => d.name === name)
 }
 
+// Seed widget lock-state read/write. Two storage paths depending on whether
+// the widget follows Comfy's control_after_generate convention:
+//   - Standard (KSampler etc.): widgets_values[i+1] holds "fixed"/"randomize"
+//   - Non-standard (Replicate, custom): node.properties.seedLocks[name] = bool
+// Treat the two uniformly from the widget's perspective via a single bool.
+function isSeedWidgetDef(widget: any): boolean {
+  if (!widget || widget.type !== 'INT') return false
+  if (widget.control_after_generate) return true
+  return /seed/i.test(String(widget.name || ''))
+}
+function isSeedFixed(widget: any, i: number): boolean {
+  if (!isSeedWidgetDef(widget)) return false
+  if (widget.control_after_generate) {
+    return props.data.widgetsValues?.[i + 1] === 'fixed'
+  }
+  return !!(props.data.properties as any)?.seedLocks?.[widget.name]
+}
+function setSeedFixed(widget: any, i: number, fixed: boolean) {
+  if (!isSeedWidgetDef(widget)) return
+  if (widget.control_after_generate) {
+    if (!props.data.widgetsValues) return
+    props.data.widgetsValues[i + 1] = fixed ? 'fixed' : 'randomize'
+    return
+  }
+  if (!props.data.properties) (props.data as any).properties = {}
+  const locks = ((props.data.properties as any).seedLocks ??= {})
+  locks[widget.name] = fixed
+}
+
 function widgetsInGroup(title: string): any[] {
   const groups = WIDGET_GROUPS[props.data.nodeType]
   if (!groups) return []
@@ -817,14 +846,21 @@ watch(previewImages, (urls) => {
 
     <!-- Widgets (Compositor edits via its dedicated modal, so we hide its inline controls) -->
     <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline'" class="border-t border-[#2a2a2a] py-1.5 flex flex-col gap-1.5">
-      <!-- Ungrouped widgets render first -->
+      <!-- Ungrouped widgets render first. Seed widgets carry a lock state
+           that controls whether the pre-Run randomizer touches them. For
+           Comfy-standard seeds it lives at widgets_values[i+1] (the
+           control_after_generate slot); everything else stores it in
+           node.properties.seedLocks so non-standard generators (Replicate,
+           custom nodes) get the same toggle. -->
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
           v-if="!widget.hidden && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
           :widget-def="widget"
           :node-type="data.nodeType"
           :model-value="data.widgetsValues?.[i]"
+          :is-fixed="isSeedFixed(widget, i)"
           @update:model-value="data.widgetsValues[i] = $event"
+          @update:is-fixed="setSeedFixed(widget, i, $event)"
         />
       </template>
       <!-- Grouped widgets render under collapsible headers. For Compositor we
@@ -847,7 +883,9 @@ watch(previewImages, (urls) => {
             :widget-def="widget"
             :node-type="data.nodeType"
             :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
+            :is-fixed="isSeedFixed(widget, widgetIndex(widget.name))"
             @update:model-value="data.widgetsValues[widgetIndex(widget.name)] = $event"
+            @update:is-fixed="setSeedFixed(widget, widgetIndex(widget.name), $event)"
           />
         </template>
       </template>

@@ -1,10 +1,24 @@
 <script setup lang="ts">
-import { Shuffle } from 'lucide-vue-next'
-const props = defineProps<{ modelValue: any; max?: number }>()
-const emit = defineEmits<{ 'update:modelValue': [value: number] }>()
-function randomize() {
-  const limit = props.max ?? 2 ** 53
-  emit('update:modelValue', Math.floor(Math.random() * limit))
+import { Shuffle, Lock } from 'lucide-vue-next'
+
+// `modelValue` is the seed integer that goes into widgets_values. `isFixed`
+// is the lock state — when true, the pre-Run randomizer skips this seed.
+// Where that boolean lives depends on the schema: Comfy-standard seeds with
+// `control_after_generate` use widgets_values[i+1]; everything else (Replicate
+// fleet, third-party custom nodes) stores it in node.properties.seedLocks.
+// The parent (ComfyNode.vue) hides that split — we just read/write `isFixed`.
+const props = defineProps<{
+  modelValue: any
+  max?: number
+  isFixed?: boolean
+}>()
+const emit = defineEmits<{
+  'update:modelValue': [value: number]
+  'update:isFixed': [value: boolean]
+}>()
+
+function toggleMode() {
+  emit('update:isFixed', !props.isFixed)
 }
 </script>
 <template>
@@ -16,11 +30,17 @@ function randomize() {
       @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
     />
     <button
-      class="shrink-0 size-7 flex items-center justify-center rounded bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer transition-colors"
-      title="Randomize"
-      @click="randomize"
+      class="shrink-0 size-7 flex items-center justify-center rounded border cursor-pointer transition-colors"
+      :class="props.isFixed
+        ? 'bg-amber-500/15 border-amber-400/30 text-amber-200 hover:bg-amber-500/25'
+        : 'bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-accent'"
+      :title="props.isFixed
+        ? 'Fixed — seed stays put on Run. Click to switch back to random.'
+        : 'Random — Run picks a new seed each time. Click to lock the current value.'"
+      @click="toggleMode"
     >
-      <Shuffle class="size-3" />
+      <Lock v-if="props.isFixed" class="size-3" />
+      <Shuffle v-else class="size-3" />
     </button>
   </div>
 </template>
