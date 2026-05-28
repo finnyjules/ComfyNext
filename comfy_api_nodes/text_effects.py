@@ -24,6 +24,10 @@ from dataclasses import dataclass
 _TEXT_MODEL_SLUG = "ideogram-ai/ideogram-v3-turbo"
 _IDEOGRAM_V3_AR = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16"}
 
+# Image-edit model for the restyle path — used when typography is wired into the
+# node. Flux Kontext keeps the composition and repaints only the surface.
+_EDIT_MODEL_SLUG = "black-forest-labs/flux-kontext-pro"
+
 
 @dataclass(frozen=True)
 class TextEffect:
@@ -120,3 +124,46 @@ def build_edit_prompt(effect_id: str, text: str = "") -> str:
 
 def aspect_ok(ar: str) -> str:
     return ar if ar in _IDEOGRAM_V3_AR else "1:1"
+
+
+def build_text_effect_request(
+    effect_id: str,
+    text: str,
+    aspect_ratio: str,
+    seed: int = 0,
+    image_data_url: str | None = None,
+) -> tuple[str, dict]:
+    """Decide which Replicate model to call and with what inputs.
+
+    Pure dispatch — no torch, no network — so it unit-tests offline. Two modes,
+    chosen by whether an input image is wired:
+
+    - `image_data_url` set → RESTYLE via Flux Kontext: repaint the exact
+      letterforms already in the image. `text` is optional (the word lives in
+      the pixels); `aspect_ratio` is ignored in favour of the source crop.
+    - `image_data_url` None → GENERATE via Ideogram: render the word from a
+      prompt. `text` is required — raises ValueError if blank.
+
+    Unknown `effect_id` falls back to the default effect.
+    """
+    eff = EFFECTS_BY_ID.get(effect_id) or EFFECTS_BY_ID[DEFAULT_EFFECT_ID]
+    if image_data_url is not None:
+        input_dict = {
+            "prompt": build_edit_prompt(effect_id, text),
+            "input_image": image_data_url,
+            "aspect_ratio": "match_input_image",
+            "output_format": "png",
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = int(seed)
+        return _EDIT_MODEL_SLUG, input_dict
+    if not (text or "").strip():
+        raise ValueError("Enter some text to render.")
+    input_dict = {
+        "prompt": build_prompt(effect_id, text),
+        "aspect_ratio": aspect_ok(aspect_ratio),
+        "magic_prompt_option": "Off",  # we want the literal word, not an LLM rewrite
+    }
+    if seed and seed > 0:
+        input_dict["seed"] = int(seed)
+    return eff.model_slug, input_dict
