@@ -1,0 +1,493 @@
+/**
+ * Video-generation model catalog — drives the "Generate a video" node's
+ * gallery UI. Mirrors comfy_api_nodes/video_models.py (executes the actual
+ * Replicate calls). Keep `id` identical between the two — it's the dispatch
+ * key.
+ *
+ * Scope (v1): 15 curated flagships from Replicate's text-to-video collection.
+ * Models supporting both T2V and I2V are tagged with `modes: ['t2v', 'i2v']`;
+ * the node's optional image input is honored when present and the picked
+ * model supports I2V.
+ *
+ * Skipped on purpose: AnimateDiff/CogVideoX-era models (older lineage),
+ * SAM/DeOldify/super-res (not text-to-video), VEED Fabric / DreamActor
+ * (specialty avatars — better as separate "talking head" node later).
+ */
+
+export type VideoModelMode = 't2v' | 'i2v'
+
+export type VideoModelTag =
+  | 'flagship'      // best-in-class generalist
+  | 'fast'          // speed-optimized variant
+  | 'cheap'         // budget option in its family
+  | 'open-source'   // open weights
+  | 'audio'         // generates synced audio
+  | 'reference'     // accepts reference images for character consistency
+  | 'cinematic'     // film-grade aesthetic
+  | 'long'          // supports clips ≥10s
+  | '4k'            // native 1080p+
+  | 'multi-shot'    // multiple connected shots in one prediction
+  | 'lip-sync'      // takes an audio file and lip-syncs a face image to it
+
+export const VIDEO_TAG_LABELS: Record<VideoModelTag, string> = {
+  'flagship':    'Flagship',
+  'fast':        'Fast',
+  'cheap':       'Cheap',
+  'open-source': 'Open-source',
+  'audio':       'Audio out',
+  'reference':   'Reference image',
+  'cinematic':   'Cinematic',
+  'long':        '10s+',
+  '4k':          '1080p+',
+  'multi-shot':  'Multi-shot',
+  'lip-sync':    'Lip-sync',
+}
+
+export type VideoModelBrand =
+  | 'Google' | 'OpenAI' | 'Runway' | 'Kling' | 'ByteDance'
+  | 'MiniMax' | 'Wan' | 'Luma' | 'Lightricks' | 'PixVerse' | 'VEED' | 'Other'
+
+export interface VideoModelAdvancedField {
+  name: string
+  type: 'integer' | 'float' | 'boolean' | 'select' | 'string'
+  label: string
+  default: any
+  description?: string
+  options?: string[]
+  min?: number
+  max?: number
+  step?: number
+}
+
+export interface VideoModel {
+  id: string                       // dispatch key — matches Python side
+  label: string                    // 'Veo 3.1'
+  brand: VideoModelBrand
+  replicateSlug: string            // 'google/veo-3.1'
+  pitch: string                    // one-line "best for" hook
+  description?: string             // longer body for the detail pane
+  tags: VideoModelTag[]
+  modes: VideoModelMode[]          // ['t2v'] | ['i2v'] | ['t2v', 'i2v']
+  // Free-form price hint, since video pricing varies wildly by duration /
+  // resolution. The Python side enforces actual cost via Replicate.
+  priceHint: string | null         // e.g. '$0.40 / 5s' or '~$0.10–0.60'
+  aspectRatios: string[]
+  defaultAspectRatio: string
+  durations: number[]              // seconds, e.g. [5, 10]
+  defaultDuration: number
+  resolutions?: string[]           // optional, e.g. ['720p', '1080p']
+  defaultResolution?: string
+  advanced: VideoModelAdvancedField[]
+}
+
+// ---- Shared field presets --------------------------------------------------
+
+const NEG_PROMPT: VideoModelAdvancedField = {
+  name: 'negative_prompt', type: 'string', label: 'Negative prompt',
+  default: '', description: 'Concepts to avoid.',
+}
+
+const CFG_SCALE: VideoModelAdvancedField = {
+  name: 'cfg_scale', type: 'float', label: 'Prompt adherence',
+  default: 0.5, min: 0.0, max: 1.0, step: 0.05,
+  description: 'Lower = looser & more natural, higher = stricter.',
+}
+
+const CAMERA_FIXED: VideoModelAdvancedField = {
+  name: 'camera_fixed', type: 'boolean', label: 'Lock camera',
+  default: false,
+  description: 'Prevent the model from inventing camera moves.',
+}
+
+const AUDIO_GENERATION: VideoModelAdvancedField = {
+  name: 'generate_audio', type: 'boolean', label: 'Generate audio',
+  default: true,
+  description: 'Off = silent video, often faster / cheaper.',
+}
+
+// Common aspect-ratio sets.
+const WIDE_AR     = ['16:9', '9:16', '1:1']
+const STANDARD_AR = ['16:9', '9:16', '1:1', '4:3', '3:4']
+const FULL_AR     = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
+
+// ---- Catalog ---------------------------------------------------------------
+
+export const VIDEO_MODELS: VideoModel[] = [
+  // ===== Google ===========================================================
+  {
+    id: 'veo-3.1',
+    label: 'Veo 3.1',
+    brand: 'Google',
+    replicateSlug: 'google/veo-3.1',
+    pitch: 'Google\'s flagship — strong physics, native synced audio.',
+    description:
+      'Veo 3.1 produces high-fidelity 8-second clips with native audio generation '
+      + '(dialogue, ambient, foley). Excellent prompt adherence and scene coherence; '
+      + 'expensive but consistent.',
+    tags: ['flagship', 'audio', '4k', 'cinematic'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.50 / 8s',
+    aspectRatios: ['16:9', '9:16'],
+    defaultAspectRatio: '16:9',
+    durations: [8],
+    defaultDuration: 8,
+    advanced: [
+      AUDIO_GENERATION,
+      NEG_PROMPT,
+      { name: 'enhance_prompt', type: 'boolean', label: 'Enhance prompt',
+        default: true, description: 'Google\'s server-side prompt rewriter.' },
+    ],
+  },
+  {
+    id: 'veo-3.1-fast',
+    label: 'Veo 3.1 Fast',
+    brand: 'Google',
+    replicateSlug: 'google/veo-3.1-fast',
+    pitch: 'Same Veo lineage at ~3× speed; quality slightly compressed.',
+    tags: ['fast', 'audio'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.20 / 8s',
+    aspectRatios: ['16:9', '9:16'],
+    defaultAspectRatio: '16:9',
+    durations: [8],
+    defaultDuration: 8,
+    advanced: [
+      AUDIO_GENERATION,
+      NEG_PROMPT,
+    ],
+  },
+
+  // ===== OpenAI ===========================================================
+  {
+    id: 'sora-2',
+    label: 'Sora 2',
+    brand: 'OpenAI',
+    replicateSlug: 'openai/sora-2',
+    pitch: 'OpenAI flagship — synced audio, exceptional shot composition.',
+    description:
+      'Sora 2 produces highly coherent narrative clips with synchronized audio. '
+      + 'Strong on dynamic camera work and naturalistic motion. T2V only on Replicate.',
+    tags: ['flagship', 'audio', 'cinematic'],
+    modes: ['t2v'],
+    priceHint: '~$0.30 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10],
+    defaultDuration: 5,
+    advanced: [],
+  },
+  {
+    id: 'sora-2-pro',
+    label: 'Sora 2 Pro',
+    brand: 'OpenAI',
+    replicateSlug: 'openai/sora-2-pro',
+    pitch: 'Pro tier of Sora 2 — better motion, longer reach, premium price.',
+    tags: ['flagship', 'audio', 'cinematic', '4k'],
+    modes: ['t2v'],
+    priceHint: '~$0.90 / 5s',
+    aspectRatios: ['16:9', '9:16'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10],
+    defaultDuration: 5,
+    advanced: [],
+  },
+
+  // ===== Runway ===========================================================
+  {
+    id: 'runway-gen-4.5',
+    label: 'Runway Gen-4.5',
+    brand: 'Runway',
+    replicateSlug: 'runwayml/gen-4.5',
+    pitch: '#1 on the Artificial Analysis benchmark — best raw quality.',
+    description:
+      'Runway\'s newest, currently the top-ranked text-to-video on Artificial '
+      + 'Analysis. Strong physical realism and fine detail coherence; no audio yet.',
+    tags: ['flagship', 'cinematic', 'photoreal'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.80 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10],
+    defaultDuration: 5,
+    advanced: [
+      { name: 'motion', type: 'integer', label: 'Motion intensity',
+        default: 5, min: 1, max: 10,
+        description: '1 = static, 10 = chaotic.' },
+    ],
+  },
+
+  // ===== Kling (kwaivgi) ==================================================
+  {
+    id: 'kling-v3',
+    label: 'Kling Video 3.0',
+    brand: 'Kling',
+    replicateSlug: 'kwaivgi/kling-v3-video',
+    pitch: 'Up to 15s cinematic clips, native audio, multi-shot mode.',
+    description:
+      'Kling 3 supports the longest clip-lengths in the catalog (15s) and can '
+      + 'string up to 6 connected shots in a single prediction. Native audio.',
+    tags: ['flagship', 'audio', 'long', 'multi-shot', 'cinematic'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.60 / 10s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10, 15],
+    defaultDuration: 5,
+    advanced: [
+      AUDIO_GENERATION,
+      NEG_PROMPT,
+      CFG_SCALE,
+    ],
+  },
+  {
+    id: 'kling-v2.5-turbo-pro',
+    label: 'Kling v2.5 Turbo Pro',
+    brand: 'Kling',
+    replicateSlug: 'kwaivgi/kling-v2.5-turbo-pro',
+    pitch: 'Pro-tier Kling tuned for cinematic depth and reliability.',
+    tags: ['cinematic', '4k', 'reference'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.50 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10],
+    defaultDuration: 5,
+    advanced: [
+      NEG_PROMPT,
+      CFG_SCALE,
+    ],
+  },
+
+  // ===== ByteDance (Seedance) =============================================
+  {
+    id: 'seedance-2.0',
+    label: 'Seedance 2.0',
+    brand: 'ByteDance',
+    replicateSlug: 'bytedance/seedance-2.0',
+    pitch: 'Multimodal flagship — reference images, audio, character consistency.',
+    description:
+      'Seedance 2.0 accepts up to 9 reference images, 3 videos, and 3 audio '
+      + 'tracks for consistency / continuation / motion transfer. Strong general '
+      + 'quality; deepest control surface in the catalog.',
+    tags: ['flagship', 'reference', 'audio', '4k'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.60 / 5s',
+    aspectRatios: FULL_AR,
+    defaultAspectRatio: '16:9',
+    durations: [3, 5, 10, 15],
+    defaultDuration: 5,
+    resolutions: ['720p', '1080p'],
+    defaultResolution: '1080p',
+    advanced: [
+      CAMERA_FIXED,
+      { name: 'fps', type: 'select', label: 'Frame rate',
+        default: '24', options: ['24', '30'] },
+    ],
+  },
+  {
+    id: 'seedance-2.0-fast',
+    label: 'Seedance 2.0 Fast',
+    brand: 'ByteDance',
+    replicateSlug: 'bytedance/seedance-2.0-fast',
+    pitch: 'Speed-optimized Seedance 2.0 with native audio.',
+    tags: ['fast', 'audio'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.30 / 5s',
+    aspectRatios: STANDARD_AR,
+    defaultAspectRatio: '16:9',
+    durations: [3, 5, 10],
+    defaultDuration: 5,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '720p',
+    advanced: [
+      CAMERA_FIXED,
+    ],
+  },
+
+  // ===== MiniMax (Hailuo) =================================================
+  {
+    id: 'hailuo-2.3',
+    label: 'Hailuo 2.3',
+    brand: 'MiniMax',
+    replicateSlug: 'minimax/hailuo-2.3',
+    pitch: 'Reliable mid-tier — good motion, predictable cost.',
+    tags: ['cinematic'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.35 / 6s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [6, 10],
+    defaultDuration: 6,
+    resolutions: ['768p', '1080p'],
+    defaultResolution: '768p',
+    advanced: [
+      { name: 'prompt_optimizer', type: 'boolean', label: 'Prompt optimizer',
+        default: true, description: 'MiniMax\'s server-side prompt rewriter.' },
+    ],
+  },
+
+  // ===== Wan (open-source) ================================================
+  {
+    id: 'wan-2.7-t2v',
+    label: 'Wan 2.7 T2V',
+    brand: 'Wan',
+    replicateSlug: 'wan-video/wan-2.7-t2v',
+    pitch: 'Open-source flagship — 27B MoE, the best open T2V right now.',
+    tags: ['open-source', 'flagship'],
+    modes: ['t2v'],
+    priceHint: '~$0.15 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5],
+    defaultDuration: 5,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '720p',
+    advanced: [
+      NEG_PROMPT,
+      { name: 'num_frames', type: 'integer', label: 'Frame count',
+        default: 81, min: 17, max: 121, step: 4,
+        description: 'Total frames at 16 fps.' },
+    ],
+  },
+  {
+    id: 'wan-2.5-i2v-fast',
+    label: 'Wan 2.5 I2V Fast',
+    brand: 'Wan',
+    replicateSlug: 'wan-video/wan-2.5-i2v-fast',
+    pitch: 'Cheap, fast open-source image-to-video.',
+    tags: ['open-source', 'fast', 'cheap'],
+    modes: ['i2v'],
+    priceHint: '~$0.06 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5],
+    defaultDuration: 5,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '480p',
+    advanced: [
+      NEG_PROMPT,
+    ],
+  },
+
+  // ===== Luma =============================================================
+  {
+    id: 'luma-ray-2-720p',
+    label: 'Luma Ray 2 (720p)',
+    brand: 'Luma',
+    replicateSlug: 'luma/ray-2-720p',
+    pitch: 'Luma\'s flagship at 720p — smooth motion, clean aesthetics.',
+    tags: ['cinematic'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.40 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 9],
+    defaultDuration: 5,
+    advanced: [
+      { name: 'loop', type: 'boolean', label: 'Seamless loop',
+        default: false, description: 'Match the last frame to the first.' },
+    ],
+  },
+
+  // ===== Lightricks =======================================================
+  {
+    id: 'ltx-video',
+    label: 'LTX-Video',
+    brand: 'Lightricks',
+    replicateSlug: 'lightricks/ltx-video',
+    pitch: 'DiT model that renders 24 fps faster than real-time playback.',
+    tags: ['fast', 'cheap', 'open-source'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.04 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5],
+    defaultDuration: 5,
+    advanced: [
+      NEG_PROMPT,
+      { name: 'guidance_scale', type: 'float', label: 'Guidance scale',
+        default: 3.0, min: 1.0, max: 10.0, step: 0.1 },
+      { name: 'num_inference_steps', type: 'integer', label: 'Inference steps',
+        default: 30, min: 10, max: 50 },
+    ],
+  },
+
+  // ===== PixVerse =========================================================
+  {
+    id: 'pixverse-v6',
+    label: 'PixVerse v6',
+    brand: 'PixVerse',
+    replicateSlug: 'pixverse/pixverse-v6',
+    pitch: 'Synced audio + multi-shot at a friendly price.',
+    tags: ['audio', 'multi-shot', 'cheap'],
+    modes: ['t2v', 'i2v'],
+    priceHint: '~$0.20 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 8],
+    defaultDuration: 5,
+    resolutions: ['540p', '720p', '1080p'],
+    defaultResolution: '720p',
+    advanced: [
+      AUDIO_GENERATION,
+      { name: 'style', type: 'select', label: 'Style preset',
+        default: 'none', options: ['none', 'anime', 'cinematic', '3d_animation', 'comic'] },
+      NEG_PROMPT,
+    ],
+  },
+
+  // ===== VEED (talking head) ==============================================
+  {
+    id: 'fabric-1.0',
+    label: 'VEED Fabric 1.0',
+    brand: 'VEED',
+    replicateSlug: 'veed/fabric-1.0',
+    pitch: 'Lip-sync a face image to any audio track (up to 60s).',
+    description:
+      'Specialty talking-head model: feed it a portrait image and an audio '
+      + 'clip, get a lip-synced video back. Ignores prompt / aspect ratio / '
+      + 'duration — output framing matches the input image, length matches '
+      + 'the audio. Connect a LoadAudio node to the "audio" input.',
+    tags: ['lip-sync', 'reference'],
+    // Drives an image AND requires audio; we still list 'i2v' since the image
+    // is the primary visual input. The lip-sync tag is the cue that audio is
+    // also required — modal surfaces it via a dedicated chip.
+    modes: ['i2v'],
+    priceHint: '~$0.20 / 30s',
+    // Output framing matches the input image, but we need _something_ in the
+    // array for the modal's "supported aspect ratios" panel; document that
+    // the model ignores this widget.
+    aspectRatios: ['matches image'],
+    defaultAspectRatio: 'matches image',
+    durations: [60],  // hard cap from upstream; actual length = audio length
+    defaultDuration: 60,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '720p',
+    advanced: [],
+  },
+]
+
+export const VIDEO_MODELS_BY_ID: Record<string, VideoModel> = Object.fromEntries(
+  VIDEO_MODELS.map(m => [m.id, m]),
+)
+
+/** Set of every aspect ratio across all video models. */
+export const ALL_VIDEO_ASPECT_RATIOS: string[] = Array.from(
+  new Set(VIDEO_MODELS.flatMap(m => m.aspectRatios)),
+).sort((a, b) => {
+  if (a === '1:1') return -1
+  if (b === '1:1') return 1
+  return a.localeCompare(b, undefined, { numeric: true })
+})
+
+/** Set of every duration option across all video models (deduped, sorted). */
+export const ALL_VIDEO_DURATIONS: number[] = Array.from(
+  new Set(VIDEO_MODELS.flatMap(m => m.durations)),
+).sort((a, b) => a - b)
+
+/** Tags that have at least one model — drives the filter chip row. */
+export function activeVideoTagsInCatalog(): VideoModelTag[] {
+  const seen = new Set<VideoModelTag>()
+  for (const m of VIDEO_MODELS) for (const t of m.tags) seen.add(t)
+  return (Object.keys(VIDEO_TAG_LABELS) as VideoModelTag[]).filter(t => seen.has(t))
+}

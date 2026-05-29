@@ -1,6 +1,8 @@
 import { ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
-import type { EditState, Clip, Track, BlendMode } from '~~/shared/timeline/types'
+import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
+import { interpolateClipAt } from '~~/shared/timeline/interpolate'
+import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
 
 const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
   normal: 'source-over',
@@ -17,15 +19,20 @@ const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
 
 interface MediaEntry {
   clipId: string
-  kind: 'video' | 'image'
+  kind: 'video' | 'image' | 'sequence'
   el: HTMLVideoElement | HTMLImageElement
   url: string
+  /** For 'sequence': preloaded frame images, indexed by clip-local frame. */
+  frames?: HTMLImageElement[]
 }
 
 /** Result of resolving a clip to a playable preview source. */
 export interface ClipPreview {
+  /** Single source URL (video/image). For 'sequence' this is the first frame. */
   url: string
-  kind: 'video' | 'image'
+  kind: 'video' | 'image' | 'sequence'
+  /** For 'sequence': the ordered list of frame URLs to play through. */
+  urls?: string[]
 }
 
 export function usePlaybackEngine(
@@ -63,6 +70,22 @@ export function usePlaybackEngine(
       img.crossOrigin = 'anonymous'
       img.src = preview.url
       const entry: MediaEntry = { clipId: clip.id, kind: 'image', el: img, url: preview.url }
+      media.set(clip.id, entry)
+      return entry
+    }
+
+    if (preview.kind === 'sequence' && preview.urls?.length) {
+      // Preload every frame so playback can index instantly.
+      const frames = preview.urls.map(u => {
+        const im = new Image()
+        im.crossOrigin = 'anonymous'
+        im.src = u
+        return im
+      })
+      const entry: MediaEntry = {
+        clipId: clip.id, kind: 'sequence',
+        el: frames[0], url: preview.url, frames,
+      }
       media.set(clip.id, entry)
       return entry
     }
@@ -119,6 +142,26 @@ export function usePlaybackEngine(
         const endSec = (clip.start_frame + clip.length) / fps
         if (currentSec < startSec || currentSec >= endSec) continue
 
+        // Animated text clips render directly — no media element needed
+        if (clip.kind === 'title') {
+          const localFrame = (currentSec - startSec) * fps
+          ctx.save()
+          ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
+          ctx.globalAlpha = clip.opacity ?? 1
+          renderTitleClip(ctx, clip as TitleClip, localFrame, cw, ch, fps)
+          ctx.restore()
+          continue
+        }
+        if (clip.kind === 'lower_third') {
+          const localFrame = (currentSec - startSec) * fps
+          ctx.save()
+          ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
+          ctx.globalAlpha = clip.opacity ?? 1
+          renderLowerThirdClip(ctx, clip as LowerThirdClip, localFrame, cw, ch, fps)
+          ctx.restore()
+          continue
+        }
+
         const entry = ensureMedia(clip)
         if (!entry) continue
 
@@ -154,11 +197,24 @@ export function usePlaybackEngine(
           el = img
           sw = img.naturalWidth
           sh = img.naturalHeight
+        } else if (entry.kind === 'sequence' && entry.frames?.length) {
+          // Index into the frame sequence by clip-local frame, looping if the
+          // clip is longer than the source. in_frame offsets the start.
+          const seqLen = entry.frames.length
+          const localFrames = Math.floor(currentSec * fps - clip.start_frame)
+          const inFrame = clip.in_frame ?? 0
+          const idx = ((localFrames + inFrame) % seqLen + seqLen) % seqLen
+          const img = entry.frames[idx]
+          if (!img || !img.complete || img.naturalWidth === 0) continue
+          el = img
+          sw = img.naturalWidth
+          sh = img.naturalHeight
         }
 
         if (!el || sw === 0 || sh === 0) continue
 
         const localFrame = (currentSec - startSec) * fps
+        const tf = interpolateClipAt(clip, localFrame)   // keyframed or static
         let fadeAlpha = 1
         if ((clip.fade_in ?? 0) > 0 && localFrame < clip.fade_in!)
           fadeAlpha *= localFrame / clip.fade_in!
@@ -167,14 +223,14 @@ export function usePlaybackEngine(
         fadeAlpha = Math.max(0, Math.min(1, fadeAlpha))
 
         ctx.save()
-        ctx.globalAlpha = Math.max(0, Math.min(1, (clip.opacity ?? 1) * fadeAlpha))
+        ctx.globalAlpha = Math.max(0, Math.min(1, tf.opacity * fadeAlpha))
         ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
 
-        const cx = cw / 2 + (clip.x ?? 0) * cw
-        const cy = ch / 2 + (clip.y ?? 0) * ch
+        const cx = cw / 2 + tf.x * cw
+        const cy = ch / 2 + tf.y * ch
         ctx.translate(cx, cy)
-        ctx.rotate(((clip.rotation ?? 0) * Math.PI) / 180)
-        ctx.scale(clip.scale ?? 1, clip.scale ?? 1)
+        ctx.rotate((tf.rotation * Math.PI) / 180)
+        ctx.scale(tf.scale, tf.scale)
 
         const cAspect = cw / ch
         const sAspect = sw / sh

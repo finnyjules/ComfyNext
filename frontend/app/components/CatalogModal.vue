@@ -60,6 +60,18 @@ watch(() => props.selectedId, (next) => {
   if (props.open && next) focusedId.value = next
 })
 
+// If the currently-focused item drops out of the visible items list (e.g.
+// the user picked a filter that excludes it), jump focus to the first
+// still-visible item so the detail pane stays populated and the confirm
+// button has a target. Emit through `update:selectedId` so the parent
+// (and any derived state like the confirm button label) stays in sync.
+watch(() => props.items, (items) => {
+  if (!props.open || !items.length) return
+  if (!items.some(i => i.id === focusedId.value)) {
+    focusItem(items[0]!)
+  }
+})
+
 const focusedItem = computed<T | null>(() =>
   props.items.find(i => i.id === focusedId.value) ?? null,
 )
@@ -103,13 +115,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <Teleport to="body">
+    <!-- pointer-events-none on enter-from + leave-active prevents the
+         transitioning overlay from intercepting wheel / pinch / click while
+         it's animating in or out. Without this, a leaving modal that Vue 3
+         occasionally fails to fully unmount (a known Transition-inside-
+         Teleport edge case) silently absorbs pinch-zoom on the canvas
+         behind it — until a full page reload re-creates the DOM. -->
     <Transition
       enter-active-class="transition-opacity duration-150 ease-out"
-      enter-from-class="opacity-0"
+      enter-from-class="opacity-0 pointer-events-none"
       enter-to-class="opacity-100"
-      leave-active-class="transition-opacity duration-100 ease-in"
+      leave-active-class="transition-opacity duration-100 ease-in pointer-events-none"
       leave-from-class="opacity-100"
-      leave-to-class="opacity-0"
+      leave-to-class="opacity-0 pointer-events-none"
     >
       <div
         v-if="open"
@@ -137,9 +155,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </button>
           </div>
 
-          <!-- Search + filters -->
-          <div class="px-5 pt-3 pb-3 flex items-center gap-3 border-b border-white/[0.06]">
-            <div class="relative w-72 shrink-0">
+          <!-- Search row — sits on its own line so the filter row below has
+               the whole width to lay chips out without orphans. -->
+          <div class="px-5 pt-3 pb-2.5 border-b border-white/[0.06]">
+            <div class="relative max-w-md">
               <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-white/35 pointer-events-none" />
               <input
                 :value="searchQuery ?? ''"
@@ -149,7 +168,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
               />
             </div>
-            <div v-if="filters?.length" class="flex items-center gap-1 flex-wrap min-w-0">
+          </div>
+          <!-- Filter chip strip — horizontally scrollable so a long tag list
+               never wraps into orphan rows. The track has no visible
+               scrollbar; we scroll it with the wheel/trackpad. -->
+          <div v-if="filters?.length" class="px-5 py-2 border-b border-white/[0.06] overflow-x-auto scrollbar-thin">
+            <div class="flex items-center gap-1 w-max">
               <button
                 v-for="f in filters"
                 :key="f.id"

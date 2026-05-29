@@ -1515,18 +1515,28 @@ class GenerateImageNode(IO.ComfyNode):
                                 tooltip="What to generate."),
                 IO.Combo.Input("aspect_ratio", options=_IMAGE_GEN_ASPECT_RATIOS, default="1:1",
                                tooltip="The active model auto-falls-back to 1:1 if it doesn't accept the picked ratio."),
-                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
-                # Hidden JSON blob the gallery writes — per-model advanced
-                # settings. `hidden: true` flag (via extra_dict) keeps it out
-                # of the node body; old workflows without it still load and
-                # the per-model builder applies safe defaults.
+                # control_after_generate=True is REQUIRED here: ComfyUI's frontend
+                # auto-adds the seed-control widget when present, and our Vue
+                # widgetDefs use the same flag to insert a placeholder so the
+                # widgets_values array stays aligned across the bridge. Without
+                # it, every input declared AFTER `seed` is off-by-one at queue
+                # time and silently picks up the schema default.
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+                # JSON blob the gallery writes — per-model advanced settings.
+                # *Required* (not optional) because ComfyUI's frontend only
+                # auto-instantiates LiteGraph widgets for required inputs; on
+                # optional inputs, our Vue-side widgets_values update never
+                # gets a slot in graphToPrompt and the bag silently stays
+                # at the schema default. The `comfynext_widget: "internal"`
+                # hint tells the Vue node body to skip rendering it (see
+                # the widget filter in ComfyNode.vue), so users still see a
+                # clean 4-widget node.
                 IO.String.Input(
                     "model_options",
                     default="{}",
                     multiline=False,
-                    optional=True,
-                    advanced=True,
-                    extra_dict={"hidden": True},
+                    extra_dict={"comfynext_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
             ],
@@ -1552,6 +1562,14 @@ class GenerateImageNode(IO.ComfyNode):
             advanced = {}
 
         input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+        # Audit trail — surfaces which model the dispatch actually picked,
+        # so a "reve output doesn't look like reve" complaint can be confirmed
+        # or ruled out by reading the console.
+        print(
+            f"[GenerateImage] model={model!r} slug={spec.replicate_slug!r} "
+            f"input_keys={list(input_dict)} advanced={advanced}",
+            flush=True,
+        )
         pred = await _run_prediction(spec.replicate_slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(tensor)
@@ -1610,11 +1628,265 @@ class EditImageNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Rotate the camera around an image's subject
+# =============================================================================
+#
+# Purpose-built generator that asks Qwen-Image-Edit-Plus to re-render the
+# subject from a new viewpoint. There's no text prompt input — a 3-axis
+# gimbal widget on the canvas writes a {yaw, pitch, roll} JSON blob which
+# this node translates into a director-style natural-language phrase
+# ("viewed from the right side at eye level") before dispatching.
+
+from comfy_api_nodes.image_edit_models import (
+    IMAGE_EDIT_MODELS_BY_ID as _IMAGE_EDIT_MODELS_BY_ID,
+    DEFAULT_CAMERA_MODEL_ID as _CAMERA_DEFAULT_MODEL_ID,
+)
+
+
+# ---- Camera angle → English ------------------------------------------------
+#
+# Single source of truth for the phrasing. The Vue gimbal mirrors this
+# translation client-side so the user sees the same caption that will be
+# sent to the model — keep these aligned if the phrasing evolves.
+
+def _yaw_phrase(yaw_deg: float) -> str:
+    """Yaw in [-180, 180]: 0 = front, +90 = right, ±180 = directly behind."""
+    # Normalize into [-180, 180] then bucket every 45° with a 22.5° tolerance.
+    y = ((yaw_deg + 180) % 360) - 180
+    abs_y = abs(y)
+    if abs_y < 22.5:    return "the front"
+    if abs_y > 157.5:   return "directly behind"
+    if y > 0:
+        if abs_y < 67.5:    return "the front-right"
+        if abs_y < 112.5:   return "the right side"
+        return "the back-right"
+    else:
+        if abs_y < 67.5:    return "the front-left"
+        if abs_y < 112.5:   return "the left side"
+        return "the back-left"
+
+
+def _pitch_phrase(pitch_deg: float) -> str | None:
+    """Pitch in [-90, 90]: 0 = eye level, +up = high angle, -down = low angle.
+    Returns None when at eye level so the calling template can skip the clause."""
+    p = max(-90.0, min(90.0, pitch_deg))
+    if abs(p) < 7.5:
+        return None  # eye level — omit
+    if p > 0:
+        if p < 30:   return "at a slight high angle"
+        if p < 60:   return "at a high angle"
+        if p < 80:   return "from a very high angle"
+        return "nearly top-down"
+    else:
+        ap = abs(p)
+        if ap < 30:   return "at a slight low angle"
+        if ap < 60:   return "at a low angle"
+        if ap < 80:   return "from a very low angle"
+        return "nearly worm's-eye"
+
+
+def _roll_phrase(roll_deg: float) -> str | None:
+    """Roll in [-180, 180]: 0 = level, +cw = clockwise tilt."""
+    r = ((roll_deg + 180) % 360) - 180
+    ar = abs(r)
+    if ar < 5:
+        return None  # level — omit
+    direction = "clockwise" if r > 0 else "counter-clockwise"
+    if ar < 20:    return f"with the camera tilted slightly {direction}"
+    if ar < 60:    return f"with a Dutch tilt {direction}"
+    return f"with a heavy Dutch tilt {direction}"
+
+
+def _camera_to_phrase(yaw_deg: float, pitch_deg: float, roll_deg: float) -> str:
+    """Compose the director-style camera-position phrase.
+
+    Examples:
+      (0, 0, 0)      -> "viewed from the front"
+      (90, 0, 0)     -> "viewed from the right side"
+      (180, 30, 0)   -> "viewed from directly behind, at a slight high angle"
+      (-45, -30, 15) -> "viewed from the front-left, at a low angle, with the
+                         camera tilted slightly clockwise"
+    """
+    parts = [f"viewed from {_yaw_phrase(yaw_deg)}"]
+    p = _pitch_phrase(pitch_deg)
+    if p:
+        parts.append(p)
+    r = _roll_phrase(roll_deg)
+    if r:
+        parts.append(r)
+    return ", ".join(parts)
+
+
+class RotateCameraNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RotateCameraNode",
+            display_name="Rotate camera",
+            category="api node/image/Replicate",
+            description=(
+                "Re-render an image from a new viewpoint via Qwen-Image-Edit-Plus. "
+                "Drag the 3-axis gimbal to point the camera; the node translates "
+                "the angles into a director's-note prompt and dispatches. No "
+                "typing needed — the widget IS the prompt. ~$0.04 per render."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="The source image to re-frame."),
+                # Hidden JSON string carrying {"yaw":N,"pitch":N,"roll":N}.
+                # Edited via the camera_gimbal widget on the node body.
+                # Required (not optional) so ComfyUI auto-instantiates the widget.
+                IO.String.Input(
+                    "camera",
+                    default='{"yaw":0,"pitch":0,"roll":0}',
+                    multiline=False,
+                    extra_dict={"comfynext_widget": "camera_gimbal"},
+                    tooltip="3-axis camera orientation. Edited via the gimbal widget.",
+                ),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image, camera, seed):
+        # Parse the camera JSON tolerantly — if it's malformed (older workflow,
+        # manual edit) treat as the default front-view and continue.
+        try:
+            cam = json.loads(camera or "{}")
+            if not isinstance(cam, dict):
+                cam = {}
+        except json.JSONDecodeError:
+            cam = {}
+        yaw   = float(cam.get("yaw", 0) or 0)
+        pitch = float(cam.get("pitch", 0) or 0)
+        roll  = float(cam.get("roll", 0) or 0)
+
+        # Front view with no rotation = no-op; the model would just regenerate
+        # the input. Surface that explicitly so the user understands why.
+        phrase = _camera_to_phrase(yaw, pitch, roll)
+
+        spec = _IMAGE_EDIT_MODELS_BY_ID[_CAMERA_DEFAULT_MODEL_ID]
+        image_url = _image_tensor_to_data_url(image)
+        input_dict = spec.build_input(phrase, image_url, int(seed or 0), {})
+        print(
+            f"[RotateCamera] yaw={yaw:.1f} pitch={pitch:.1f} roll={roll:.1f} "
+            f"phrase={phrase!r} slug={spec.replicate_slug!r}",
+            flush=True,
+        )
+        pred = await _run_prediction(spec.replicate_slug, input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Typographic text effect
+# =============================================================================
+#
+# Type a word, pick a visual treatment (liquid chrome, holographic, brutalist
+# concrete, …) from the effect gallery, and Ideogram renders the word in that
+# style. The gallery widget live-previews the user's actual word in each
+# effect via CSS, so picking is visual.
+
+from comfy_api_nodes.text_effects import (
+    EFFECTS as _TEXT_EFFECTS,
+    DEFAULT_EFFECT_ID as _TEXT_DEFAULT_EFFECT_ID,
+    MATCH_INPUT_AR as _MATCH_INPUT_AR,
+    build_text_effect_request as _build_text_effect_request,
+)
+
+_TEXT_EFFECT_IDS = [e.id for e in _TEXT_EFFECTS]
+_TEXT_EFFECT_AR = [_MATCH_INPUT_AR, "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16"]
+
+
+class TextEffectNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="TextEffectNode",
+            display_name="Text effect",
+            category="api node/image/Replicate",
+            description=(
+                "Render a word as typographic art. Type your text, click the "
+                "effect button to pick a treatment (liquid chrome, holographic, "
+                "brutalist concrete, molten metal, …) — the gallery previews "
+                "your actual word in each style. Wire a Font Playground (or any "
+                "image) into the image input to restyle its exact letterforms "
+                "instead of generating from text. ~$0.04 per render."
+            ),
+            inputs=[
+                IO.String.Input("text", multiline=False, default="",
+                                tooltip="The word or short phrase to render."),
+                IO.Combo.Input(
+                    "effect",
+                    options=_TEXT_EFFECT_IDS,
+                    default=_TEXT_DEFAULT_EFFECT_ID,
+                    tooltip="Click to choose a treatment from the effect gallery.",
+                    extra_dict={"comfynext_widget": "text_effect_picker"},
+                ),
+                IO.Combo.Input("aspect_ratio", options=_TEXT_EFFECT_AR, default="1:1",
+                               tooltip="Output ratio — 16:9 for wordmarks, 1:1 for icons. "
+                                       "'Match input' keeps the source crop in restyle mode."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+                IO.Image.Input(
+                    "image", optional=True,
+                    tooltip="Connect a Font Playground (or any image) to restyle "
+                            "its exact letterforms instead of generating from text. "
+                            "The chosen aspect ratio still applies — pick 'Match "
+                            "input' to keep the source crop.",
+                ),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, text, effect, aspect_ratio, seed, image=None):
+        # Dispatch (which model + inputs) is pure logic in text_effects.py so it
+        # unit-tests offline; the node just does the I/O around it.
+        image_data_url = _image_tensor_to_data_url(image) if image is not None else None
+        try:
+            slug, input_dict = _build_text_effect_request(
+                effect, text, aspect_ratio, seed, image_data_url=image_data_url,
+            )
+        except ValueError as e:
+            # Surface the generate-mode "enter text" guard as a runtime error.
+            raise RuntimeError(str(e))
+        mode = "restyle" if image_data_url is not None else "generate"
+        print(
+            f"[TextEffect] mode={mode} effect={effect!r} text={text!r} "
+            f"slug={slug!r} prompt={input_dict.get('prompt')!r}",
+            flush=True,
+        )
+        pred = await _run_prediction(slug, input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
 # Use case: Generate a video
 # =============================================================================
 
-_VIDEO_GEN_MODELS = ["Seedance 2.0", "Veo 3", "Kling 2.1"]
-_VIDEO_GEN_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+# Video catalog dispatcher — mirrors the image-gen pattern. The node exposes
+# the shared inputs (model, prompt, image?, aspect_ratio, duration, seed)
+# plus a hidden `model_options` JSON blob that the video gallery writes for
+# the active model. Per-model dispatch + input shaping lives in video_models.py.
+from comfy_api_nodes.video_models import (
+    MODELS as _VIDEO_MODELS,
+    VIDEO_MODELS_BY_ID as _VIDEO_MODELS_BY_ID,
+    ALL_VIDEO_ASPECT_RATIOS as _VIDEO_GEN_ASPECT_RATIOS,
+    ALL_VIDEO_DURATIONS as _VIDEO_GEN_DURATIONS,
+    DEFAULT_VIDEO_MODEL_ID as _VIDEO_DEFAULT_MODEL_ID,
+)
+
+# Combo serializes the model `id` (e.g. "veo-3.1") so we can rename labels
+# without breaking saved workflows.
+_VIDEO_GEN_MODEL_IDS = [m.id for m in _VIDEO_MODELS]
+# Duration combo values are strings (LiteGraph combos serialize as strings);
+# the dispatcher casts back to int when calling the per-model builder.
+_VIDEO_GEN_DURATION_OPTS = [str(d) for d in _VIDEO_GEN_DURATIONS]
 
 
 class GenerateVideoNode(IO.ComfyNode):
@@ -1625,81 +1897,112 @@ class GenerateVideoNode(IO.ComfyNode):
             display_name="Generate a video",
             category="api node/video/Replicate",
             description=(
-                "Single entry point for text/image-to-video. Seedance 2.0 = "
-                "top quality. Veo 3 = with synced audio (pricey). Kling 2.1 = "
-                "cheap workhorse. Cost varies from ~$0.30 to ~$6 per clip."
+                "Single entry point for text/image-to-video. Click the model "
+                "button to open the gallery — pick from 15 models (Veo 3.1, "
+                "Sora 2, Runway Gen-4.5, Kling, Seedance, Wan, Luma, …) and "
+                "tune per-model settings without leaving the canvas."
             ),
             inputs=[
-                IO.Combo.Input("model", options=_VIDEO_GEN_MODELS, default="Seedance 2.0"),
+                IO.Combo.Input(
+                    "model",
+                    options=_VIDEO_GEN_MODEL_IDS,
+                    default=_VIDEO_DEFAULT_MODEL_ID,
+                    tooltip="Click to choose a model from the video gallery.",
+                    extra_dict={"comfynext_widget": "video_model_picker"},
+                ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="Describe the shot. Include camera moves, mood, lighting."),
                 IO.Image.Input("image", optional=True,
-                               tooltip="Optional first frame — turns this into image-to-video."),
+                               tooltip="Optional first frame — turns this into image-to-video. "
+                                       "Models tagged T2V-only ignore it. Required for "
+                                       "lip-sync models (Fabric)."),
+                IO.Audio.Input("audio", optional=True,
+                               tooltip="Optional audio clip. Required for lip-sync models "
+                                       "(Fabric). Other models ignore it."),
                 IO.Combo.Input("aspect_ratio", options=_VIDEO_GEN_ASPECT_RATIOS, default="16:9",
-                               tooltip="Ignored when image is provided. Veo 3 only supports 16:9 / 9:16."),
-                IO.Combo.Input("duration", options=["5", "10"], default="5",
-                               tooltip="Seconds. (Veo 3 is fixed at 8s and ignores this.)"),
-                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
-                # --- Advanced: model-specific tuning -------------------------
-                IO.Combo.Input("resolution", options=_SEEDANCE_RESOLUTIONS, default="1080p", advanced=True,
-                               tooltip="(Seedance only) Higher = sharper, more expensive."),
-                IO.Boolean.Input("camera_fixed", default=False, advanced=True,
-                                 tooltip="(Seedance only) Lock the camera."),
-                IO.String.Input("negative_prompt", default="", advanced=True,
-                                tooltip="(Veo 3 / Kling) Concepts to avoid."),
-                IO.Float.Input("cfg_scale", default=0.5, min=0.0, max=1.0, step=0.05, advanced=True,
-                               tooltip="(Kling only) Prompt adherence vs. naturalness."),
+                               tooltip="The active model auto-falls-back to its nearest "
+                                       "supported ratio if it doesn't accept this one."),
+                IO.Combo.Input("duration", options=_VIDEO_GEN_DURATION_OPTS, default="5",
+                               tooltip="Seconds. Remapped to the model's nearest supported value.",
+                               control_after_generate=False),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+                # JSON bag of per-model advanced settings written by the gallery.
+                # Required (not optional) for the same reason as GenerateImageNode:
+                # ComfyUI only auto-instantiates widgets for required inputs.
+                IO.String.Input(
+                    "model_options",
+                    default="{}",
+                    multiline=False,
+                    extra_dict={"comfynext_widget": "internal"},
+                    tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
+                ),
             ],
             outputs=[IO.Video.Output()],
-            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"approximate":true}}'),
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.40,"format":{"approximate":true}}'),
         )
 
+    # Legacy label → new id map. Earlier versions of this node hardcoded
+    # 3 model labels; this lets workflows saved against that schema keep
+    # running after the refactor without manual re-picking.
+    _LEGACY_MODEL_REMAP = {
+        "Seedance 2.0": "seedance-2.0",
+        "Veo 3":        "veo-3.1",        # Veo 3 retired upstream; 3.1 is the closest fit.
+        "Kling 2.1":    "kling-v2.5-turbo-pro",
+    }
+
     @classmethod
-    async def execute(cls, model, prompt, image, aspect_ratio, duration, seed,
-                      resolution, camera_fixed, negative_prompt, cfg_scale):
-        if model == "Seedance 2.0":
-            input_dict = {
-                "prompt": prompt,
-                "resolution": resolution,
-                "duration": int(duration),
-                "camera_fixed": camera_fixed,
-                "fps": 24,
-            }
-            if image is not None:
-                input_dict["image"] = _image_tensor_to_data_url(image)
-            else:
-                input_dict["aspect_ratio"] = aspect_ratio
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            pred = await _run_prediction("bytedance/seedance-2.0", input_dict,
-                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-        elif model == "Veo 3":
-            ar = aspect_ratio if aspect_ratio in _VEO3_ASPECT_RATIOS else "16:9"
-            input_dict = {"prompt": prompt, "aspect_ratio": ar}
-            if image is not None:
-                input_dict["image"] = _image_tensor_to_data_url(image)
-            if negative_prompt:
-                input_dict["negative_prompt"] = negative_prompt
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            pred = await _run_prediction("google/veo-3", input_dict,
-                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-        elif model == "Kling 2.1":
-            input_dict = {
-                "prompt": prompt,
-                "duration": int(duration),
-                "cfg_scale": cfg_scale,
-            }
-            if negative_prompt:
-                input_dict["negative_prompt"] = negative_prompt
-            if image is not None:
-                input_dict["start_image"] = _image_tensor_to_data_url(image)
-            else:
-                input_dict["aspect_ratio"] = aspect_ratio if aspect_ratio in ("16:9", "9:16", "1:1") else "16:9"
-            pred = await _run_prediction("kwaivgi/kling-v2.1", input_dict,
-                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-        else:
-            raise RuntimeError(f"unknown model: {model}")
+    async def execute(cls, model, prompt, aspect_ratio, duration, seed,
+                      model_options="{}", image=None, audio=None):
+        # Backwards-compat: remap pre-dispatcher labels to their current ids.
+        if model in cls._LEGACY_MODEL_REMAP:
+            print(
+                f"[GenerateVideo] migrating legacy model label {model!r} → "
+                f"{cls._LEGACY_MODEL_REMAP[model]!r}. Re-save the workflow to "
+                f"silence this notice.",
+                flush=True,
+            )
+            model = cls._LEGACY_MODEL_REMAP[model]
+
+        spec = _VIDEO_MODELS_BY_ID.get(model)
+        if spec is None:
+            raise RuntimeError(
+                f"Unknown video model id: {model!r}. "
+                f"Known: {list(_VIDEO_MODELS_BY_ID)}"
+            )
+
+        # Mode check: an I2V-only model requires an input image.
+        if "t2v" not in spec.modes and image is None:
+            raise RuntimeError(
+                f"Model {spec.label!r} requires an input image (image-to-video only). "
+                f"Connect an Image to the optional `image` input."
+            )
+
+        try:
+            advanced = json.loads(model_options or "{}")
+            if not isinstance(advanced, dict):
+                advanced = {}
+        except json.JSONDecodeError:
+            advanced = {}
+
+        try:
+            dur_int = int(duration)
+        except (TypeError, ValueError):
+            dur_int = spec.default_duration
+
+        image_data_url = _image_tensor_to_data_url(image) if image is not None else None
+        # 60s cap matches Fabric's max output length and keeps other models
+        # from being fed accidentally-massive uploads.
+        audio_data_url = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else None
+        input_dict = spec.build_input(prompt, aspect_ratio, dur_int, int(seed or 0),
+                                      image_data_url, audio_data_url, advanced)
+        print(
+            f"[GenerateVideo] model={model!r} slug={spec.replicate_slug!r} "
+            f"input_keys={list(input_dict)} advanced={advanced}",
+            flush=True,
+        )
+        pred = await _run_prediction(spec.replicate_slug, input_dict,
+                                     poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
         video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(video)
 
@@ -2749,6 +3052,381 @@ class ImprovePromptNode(IO.ComfyNode):
         return IO.NodeOutput(text.strip())
 
 
+# =============================================================================
+# Shared LLM dispatch — normalized inputs across provider families
+# =============================================================================
+#
+# Replicate exposes each frontier-model family with subtly different input
+# field names: OpenAI wants `max_completion_tokens`, Anthropic wants
+# `max_tokens`, Google wants `max_output_tokens` + `system_instruction`.
+# Centralizing the dispatch keeps every use-case node below tiny.
+
+_LLM_MODEL_SLUGS: dict[str, tuple[str, str]] = {
+    # alias                  -> (replicate slug,                  family)
+    "GPT-5":              ("openai/gpt-5",                "openai"),
+    "GPT-5 mini":         ("openai/gpt-5-mini",           "openai"),
+    "GPT-5 nano":         ("openai/gpt-5-nano",           "openai"),
+    "Claude 4.5 Sonnet":  ("anthropic/claude-4.5-sonnet", "anthropic"),
+    "Claude 4.5 Haiku":   ("anthropic/claude-4.5-haiku",  "anthropic"),
+    "Gemini 3 Flash":     ("google/gemini-3-flash",       "google"),
+    # DeepSeek's Replicate wrapper takes OpenAI-shaped inputs.
+    "DeepSeek R1":        ("deepseek-ai/deepseek-r1",     "openai"),
+}
+
+
+async def _run_llm(
+    model: str,
+    prompt: str,
+    *,
+    system: str = "",
+    temperature: float = 0.7,
+    max_tokens: int = 1024,
+) -> str:
+    """Run any registered chat-LLM on Replicate with normalized inputs.
+    Returns the joined text output, trimmed.
+    """
+    if model not in _LLM_MODEL_SLUGS:
+        raise RuntimeError(f"unknown LLM alias: {model}")
+    slug, family = _LLM_MODEL_SLUGS[model]
+    if family == "openai":
+        d: dict = {"prompt": prompt, "temperature": temperature, "max_completion_tokens": max_tokens}
+        if system: d["system_prompt"] = system
+    elif family == "anthropic":
+        d = {"prompt": prompt, "temperature": temperature, "max_tokens": max_tokens}
+        if system: d["system_prompt"] = system
+    elif family == "google":
+        d = {"prompt": prompt, "temperature": temperature, "max_output_tokens": max_tokens}
+        if system: d["system_instruction"] = system
+    else:
+        raise RuntimeError(f"unknown LLM family: {family}")
+    pred = await _run_prediction(slug, d)
+    out = pred.get("output")
+    if isinstance(out, list):
+        return "".join(str(x) for x in out).strip()
+    if isinstance(out, str):
+        return out.strip()
+    return str(out or "").strip()
+
+
+# =============================================================================
+# Use case: Summarize text
+# =============================================================================
+#
+# Long text in, short summary out. Defaults to the smallest+cheapest model
+# in each family because compression is a low-leverage task — paying premium
+# for it is wasteful.
+
+_SUMMARIZE_MODELS = ["Gemini 3 Flash", "GPT-5 nano", "Claude 4.5 Haiku"]
+_SUMMARIZE_LENGTHS = {
+    "1 sentence":  "Reply with a single sentence. No preamble.",
+    "Short":       "Reply with 2-3 sentences. No preamble, no bullets.",
+    "Medium":      "Reply with a 4-6 sentence paragraph. No preamble.",
+    "Bullets":     "Reply with 3-6 short bullet points. Use '-' as the bullet marker. No preamble.",
+}
+
+
+class SummarizeTextNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="SummarizeTextNode",
+            display_name="Summarize text",
+            category="api node/text/Replicate",
+            description=(
+                "Compress long text into a short summary. Wire in a transcript, "
+                "article, or any string; pick a length style; get a tight version "
+                "back. Defaults to Gemini Flash — fastest + cheapest."
+            ),
+            inputs=[
+                IO.String.Input("text", multiline=True, default="",
+                                tooltip="Source text to summarize. Plain text — formatting will be flattened."),
+                IO.Combo.Input("length", options=list(_SUMMARIZE_LENGTHS.keys()), default="Short",
+                               tooltip="Output shape: one sentence, a few, a paragraph, or bullets."),
+                IO.Combo.Input("model", options=_SUMMARIZE_MODELS, default="Gemini 3 Flash", advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="summary")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, text, length, model):
+        if not (text or "").strip():
+            return IO.NodeOutput("", ui={"text": [""]})
+        system = (
+            "You are a precise summarizer. " + _SUMMARIZE_LENGTHS[length] +
+            " Preserve key facts, names, numbers, and intent. Strip filler. "
+            "Output the summary directly — no headers like 'Summary:'."
+        )
+        result = await _run_llm(model, text, system=system, temperature=0.3, max_tokens=400)
+        return IO.NodeOutput(result, ui={"text": [result]})
+
+
+# =============================================================================
+# Use case: Translate text
+# =============================================================================
+#
+# Gemini Flash is strong + cheap on common language pairs; Claude Haiku is
+# a fallback when the user wants more nuance on idioms / tone. The "Other"
+# language option lets you free-type anything Replicate's LLMs can handle
+# (Welsh, Tagalog, Esperanto — they all work).
+
+_TRANSLATE_LANGUAGES = [
+    "English", "Spanish", "French", "German", "Italian", "Portuguese",
+    "Dutch", "Polish", "Russian", "Arabic", "Hebrew",
+    "Japanese", "Chinese (Simplified)", "Chinese (Traditional)", "Korean",
+    "Hindi", "Vietnamese", "Thai", "Turkish",
+]
+
+
+class TranslateTextNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="TranslateTextNode",
+            display_name="Translate text",
+            category="api node/text/Replicate",
+            description=(
+                "Translate text between languages. Pick the target language; "
+                "the source is auto-detected. Preserves tone and intent — "
+                "doesn't pad with explanations."
+            ),
+            inputs=[
+                IO.String.Input("text", multiline=True, default="",
+                                tooltip="Text to translate. Source language is auto-detected."),
+                IO.Combo.Input("target_language", options=_TRANSLATE_LANGUAGES, default="English",
+                               tooltip="Target language."),
+                IO.String.Input("custom_language", default="", advanced=True,
+                                tooltip="Override target language (e.g. 'Welsh', 'Catalan'). Takes precedence if non-empty."),
+            ],
+            outputs=[IO.String.Output(display_name="translation")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, text, target_language, custom_language):
+        if not (text or "").strip():
+            return IO.NodeOutput("", ui={"text": [""]})
+        target = (custom_language or "").strip() or target_language
+        system = (
+            f"You are a professional translator. Translate the user's text into {target}. "
+            "Preserve tone, register, and intent. Keep proper nouns intact unless conventionally translated. "
+            "Output ONLY the translation — no source, no explanation, no quotes around it."
+        )
+        result = await _run_llm("Gemini 3 Flash", text, system=system, temperature=0.2, max_tokens=2048)
+        return IO.NodeOutput(result, ui={"text": [result]})
+
+
+# =============================================================================
+# Use case: Rewrite in a tone
+# =============================================================================
+#
+# Style transfer for prose. Claude Haiku is the default — Anthropic models
+# tend to land tone shifts more cleanly than GPT, in our testing, without
+# inventing new content. Tone options cover the common copywriting needs.
+
+_REWRITE_MODELS = ["Claude 4.5 Haiku", "Gemini 3 Flash", "Claude 4.5 Sonnet"]
+_REWRITE_TONES = [
+    "Punchy",
+    "Concise",
+    "Formal",
+    "Casual",
+    "Friendly",
+    "Professional",
+    "Playful",
+    "Poetic",
+    "Witty",
+    "Persuasive",
+    "Plain",
+]
+_TONE_GUIDANCE: dict[str, str] = {
+    "Punchy":       "Make it punchy. Short sentences. Active verbs. Cut filler. Land a hook.",
+    "Concise":      "Tighten ruthlessly. Same meaning, half the words.",
+    "Formal":       "Make it formal and precise. Avoid contractions and colloquialisms.",
+    "Casual":       "Make it casual and conversational. Use contractions. Sound like a person, not a brand.",
+    "Friendly":     "Warm and approachable, like talking to a friend. No corporate-speak.",
+    "Professional": "Polished and business-appropriate. Confident, not stiff.",
+    "Playful":      "Lean into wordplay, light humor, gentle surprise. Don't overdo it.",
+    "Poetic":       "More lyrical. Sensory imagery, rhythm, deliberate cadence.",
+    "Witty":        "Add wit — clever turns of phrase, sharp observations. Punch up the prose.",
+    "Persuasive":   "Persuasive copy. Strong verbs, clear benefit, subtle urgency.",
+    "Plain":        "Plain English. No jargon, no buzzwords. A smart 14-year-old should follow it.",
+}
+
+
+class RewriteToneNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RewriteToneNode",
+            display_name="Rewrite in a tone",
+            category="api node/text/Replicate",
+            description=(
+                "Rewrite text in a different tone — punchy, formal, casual, "
+                "poetic, etc. — without changing the meaning. Useful for "
+                "iterating marketing copy, UX strings, or social posts."
+            ),
+            inputs=[
+                IO.String.Input("text", multiline=True, default="",
+                                tooltip="Text to rewrite."),
+                IO.Combo.Input("tone", options=_REWRITE_TONES, default="Punchy",
+                               tooltip="Target tone / register."),
+                IO.Combo.Input("model", options=_REWRITE_MODELS, default="Claude 4.5 Haiku", advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="rewritten")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.002,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, text, tone, model):
+        if not (text or "").strip():
+            return IO.NodeOutput("", ui={"text": [""]})
+        guidance = _TONE_GUIDANCE.get(tone, f"Rewrite in a {tone.lower()} tone.")
+        system = (
+            "You are a careful copy editor. Rewrite the user's text in the target tone "
+            "while preserving the original meaning, facts, and structure. " + guidance +
+            " Output ONLY the rewritten text — no preamble, no notes, no quotes."
+        )
+        result = await _run_llm(model, text, system=system, temperature=0.6, max_tokens=1024)
+        return IO.NodeOutput(result, ui={"text": [result]})
+
+
+# =============================================================================
+# Use case: Brainstorm ideas
+# =============================================================================
+#
+# Generates N variants of a prompt/idea in a single LLM call, newline-
+# separated. Pairs directly with the multi-entry Text artifact node — wire
+# the output in and each line lands in its own slot (no per-variant LLM
+# call needed). Uses GPT-5 mini: enough creative spark, modest cost.
+
+_BRAINSTORM_ANGLES: dict[str, str] = {
+    "Variations":   "Generate distinct phrasings of the same core idea — same intent, different angles, vocabulary, or focus.",
+    "Expansions":   "Each idea should extend or build on the topic — go deeper, add a twist, push the concept further.",
+    "Opposites":    "Each idea should explore an opposite, inverse, or contrarian take on the topic.",
+    "Styles":       "Each idea should reframe the topic in a different style or genre (noir, minimalist, maximalist, retro, etc.).",
+    "Audiences":    "Each idea should target a different audience or context (kids, experts, marketers, skeptics, etc.).",
+    "Free":         "Generate distinct, creative ideas related to the topic. Vary widely.",
+}
+
+
+class BrainstormIdeasNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BrainstormIdeasNode",
+            display_name="Brainstorm ideas",
+            category="api node/text/Replicate",
+            description=(
+                "Generate N distinct ideas from a topic, one per line. Wire "
+                "the output into a Text artifact and each line becomes its "
+                "own entry — perfect for fan-out across image/video runs."
+            ),
+            inputs=[
+                IO.String.Input("topic", multiline=True, default="",
+                                tooltip="The topic or starting idea. e.g. 'A poster for a coffee shop'."),
+                IO.Int.Input("count", default=3, min=2, max=12, step=1,
+                             tooltip="How many ideas to generate."),
+                IO.Combo.Input("angle", options=list(_BRAINSTORM_ANGLES.keys()), default="Variations",
+                               tooltip="How the variants should differ from each other."),
+            ],
+            outputs=[IO.String.Output(display_name="ideas")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.003,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, topic, count, angle):
+        if not (topic or "").strip():
+            return IO.NodeOutput("", ui={"text": [""]})
+        guidance = _BRAINSTORM_ANGLES.get(angle, _BRAINSTORM_ANGLES["Free"])
+        system = (
+            f"You generate exactly {count} ideas from a topic. {guidance} "
+            "Output ONLY the ideas, one per line, with no numbering, no bullets, "
+            "no preamble, no trailing commentary. Each line is a single complete idea. "
+            "No blank lines between ideas."
+        )
+        result = await _run_llm("GPT-5 mini", topic, system=system, temperature=0.9, max_tokens=600)
+        # Defensive cleanup: strip bullets / numbering the model might still emit,
+        # collapse blank lines, cap at the requested count.
+        lines: list[str] = []
+        for raw in (result or "").splitlines():
+            s = raw.strip()
+            if not s: continue
+            # Strip leading "1.", "1)", "-", "•", "*" markers.
+            while s and (s[0] in "-•*" or (len(s) >= 2 and s[0].isdigit() and s[1] in ".)")):
+                if s[0] in "-•*":
+                    s = s[1:].lstrip()
+                else:
+                    # numbered: drop up to the punctuation, then any space
+                    cut = 2
+                    while cut < len(s) and s[cut - 1].isdigit():
+                        cut += 1
+                    s = s[cut:].lstrip()
+            if s:
+                lines.append(s)
+        lines = lines[:count]
+        joined = "\n".join(lines)
+        return IO.NodeOutput(joined, ui={"text": [joined]})
+
+
+# =============================================================================
+# Use case: Think step by step
+# =============================================================================
+#
+# Reasoning-focused node — leverages DeepSeek R1 (RL-trained reasoning) or
+# a frontier model with explicit chain-of-thought prompting. By default we
+# strip the reasoning and return just the conclusion; toggle
+# `include_reasoning` to see the model's working.
+
+_REASON_MODELS = ["DeepSeek R1", "GPT-5", "Claude 4.5 Sonnet"]
+
+
+class ReasonStepByStepNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ReasonStepByStepNode",
+            display_name="Think step by step",
+            category="api node/text/Replicate",
+            description=(
+                "Ask a reasoning question — math, logic, planning, multi-step "
+                "decisions — and get a worked answer. Defaults to returning "
+                "just the conclusion; flip `include_reasoning` to see why."
+            ),
+            inputs=[
+                IO.String.Input("question", multiline=True, default="",
+                                tooltip="The question or problem. Be specific."),
+                IO.Boolean.Input("include_reasoning", default=False,
+                                 tooltip="If true, returns the full chain of thought plus the answer. Otherwise just the final answer."),
+                IO.Combo.Input("model", options=_REASON_MODELS, default="DeepSeek R1", advanced=True),
+            ],
+            outputs=[IO.String.Output(display_name="answer")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.01,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, question, include_reasoning, model):
+        if not (question or "").strip():
+            return IO.NodeOutput("", ui={"text": [""]})
+        if include_reasoning:
+            system = (
+                "You are a careful reasoner. Think step by step, showing your work clearly. "
+                "End with a line that starts with 'Answer:' followed by the final answer."
+            )
+        else:
+            system = (
+                "You are a careful reasoner. Think step by step internally, then output "
+                "ONLY the final answer — concise, direct, no preamble, no 'Answer:' prefix, "
+                "no working shown."
+            )
+        result = await _run_llm(model, question, system=system, temperature=0.4, max_tokens=2048)
+        return IO.NodeOutput(result, ui={"text": [result]})
+
+
 # ---------- Extension registration -----------------------------------------
 
 class ReplicateExtension(ComfyExtension):
@@ -2765,6 +3443,8 @@ class ReplicateExtension(ComfyExtension):
             SketchToImageNode,          # Sketch to image · Nano Banana
             # Image — manipulation
             EditImageNode,              # Edit an image · Flux Kontext
+            RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
+            TextEffectNode,             # Text effect · Ideogram v3
             UpscaleImageNode,           # Upscale an image · Clarity
             RemoveBackgroundNode,       # Remove background · 851-labs/bg-remover
             RestorePhotoNode,           # Restore an old photo · Flux Kontext Restore
@@ -2789,6 +3469,11 @@ class ReplicateExtension(ComfyExtension):
             # Text / LLM
             ChatLLMNode,                # Chat with an LLM · GPT-5 / Claude / Gemini
             ImprovePromptNode,          # Improve a prompt · GPT-5 nano
+            SummarizeTextNode,          # Summarize text · Gemini 3 Flash (default)
+            TranslateTextNode,          # Translate text · Gemini 3 Flash
+            RewriteToneNode,            # Rewrite in a tone · Claude 4.5 Haiku
+            BrainstormIdeasNode,        # Brainstorm ideas (N variants) · GPT-5 mini
+            ReasonStepByStepNode,       # Think step by step · DeepSeek R1
 
             # ─── Per-model nodes (deprecated — kept for workflow back-compat) ───
             # Hidden from the Generators panel via its DEPRECATED_NODES list.

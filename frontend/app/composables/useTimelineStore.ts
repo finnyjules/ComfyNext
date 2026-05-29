@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue'
-import type { EditState, Track, Clip, Asset } from '~~/shared/timeline/types'
+import type { EditState, Track, Clip, Asset, Keyframe } from '~~/shared/timeline/types'
 import { createDefaultEditState, computeTotalFrames } from '~~/shared/timeline/types'
+import { interpolateClipAt, type ClipTransform } from '~~/shared/timeline/interpolate'
 
 const MAX_UNDO = 100
 
@@ -206,6 +207,91 @@ export function useTimelineStore() {
     mutate(s => { Object.assign(s.canvas, patch) })
   }
 
+  // -- Keyframes --
+
+  // Playhead position within a clip, in clip-local frames (clamped to the clip).
+  function clipLocalFrame(clip: Clip): number {
+    return Math.max(0, Math.min(playheadFrame.value - clip.start_frame, Math.max(0, clip.length - 1)))
+  }
+
+  // Add (or update) a keyframe at the playhead, capturing the clip's current
+  // transform — its static scalars, or the interpolated value if already keyed.
+  function addKeyframe(clipId: string) {
+    mutate(s => {
+      for (const track of s.tracks) {
+        const clip = track.clips.find(c => c.id === clipId)
+        if (!clip) continue
+        const lf = clipLocalFrame(clip)
+        const kf: Keyframe = { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
+        if (!clip.keyframes) clip.keyframes = []
+        const i = clip.keyframes.findIndex(k => k.frame === lf)
+        if (i >= 0) clip.keyframes[i] = { ...clip.keyframes[i], ...kf }
+        else clip.keyframes.push(kf)
+        clip.keyframes.sort((a, b) => a.frame - b.frame)
+        return
+      }
+    })
+  }
+
+  function removeKeyframeAt(clipId: string, frame: number) {
+    mutate(s => {
+      for (const track of s.tracks) {
+        const clip = track.clips.find(c => c.id === clipId)
+        if (!clip?.keyframes) continue
+        clip.keyframes = clip.keyframes.filter(k => k.frame !== frame)
+        if (!clip.keyframes.length) delete clip.keyframes
+        return
+      }
+    })
+  }
+
+  function moveKeyframe(clipId: string, fromFrame: number, toFrame: number) {
+    mutate(s => {
+      for (const track of s.tracks) {
+        const clip = track.clips.find(c => c.id === clipId)
+        const k = clip?.keyframes?.find(kf => kf.frame === fromFrame)
+        if (!clip || !k) continue
+        k.frame = Math.max(0, Math.min(Math.round(toFrame), Math.max(0, clip.length - 1)))
+        clip.keyframes!.sort((a, b) => a.frame - b.frame)
+        return
+      }
+    })
+  }
+
+  function setKeyframeEase(clipId: string, frame: number, ease: Keyframe['ease']) {
+    mutate(s => {
+      for (const track of s.tracks) {
+        const k = track.clips.find(c => c.id === clipId)?.keyframes?.find(kf => kf.frame === frame)
+        if (k) { k.ease = ease; return }
+      }
+    })
+  }
+
+  // Transform edit that respects keyframes: when the clip is keyframed, write to
+  // (or create) the keyframe at the playhead; otherwise edit the static scalars.
+  // Transform controls call this instead of updateClip.
+  function updateClipTransform(clipId: string, patch: Partial<ClipTransform>) {
+    mutate(s => {
+      for (const track of s.tracks) {
+        const clip = track.clips.find(c => c.id === clipId)
+        if (!clip) continue
+        if (clip.keyframes && clip.keyframes.length) {
+          const lf = clipLocalFrame(clip)
+          let k = clip.keyframes.find(kf => kf.frame === lf)
+          if (!k) {
+            k = { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
+            clip.keyframes.push(k)
+            clip.keyframes.sort((a, b) => a.frame - b.frame)
+          }
+          Object.assign(k, patch)
+        } else {
+          Object.assign(clip, patch)
+        }
+        return
+      }
+    })
+  }
+
   // -- Playback transport --
 
   let playStartedAt = 0
@@ -285,6 +371,12 @@ export function useTimelineStore() {
     splitAtPlayhead,
     rippleDelete,
     setCanvas,
+    clipLocalFrame,
+    addKeyframe,
+    removeKeyframeAt,
+    moveKeyframe,
+    setKeyframeEase,
+    updateClipTransform,
 
     play,
     pause,

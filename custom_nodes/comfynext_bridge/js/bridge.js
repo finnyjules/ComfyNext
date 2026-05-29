@@ -538,6 +538,26 @@ app.registerExtension({
         }
       }
 
+      // Force a credits refresh — used after a run finishes so the canvas
+      // status bar can show the run's cost without waiting for the next
+      // 60s polling tick. fetchCredits() handles the Pinia round-trip.
+      if (action === "refreshCredits") {
+        (async () => {
+          try {
+            const vueApp = document.getElementById("vue-app");
+            const pinia = vueApp?.__vue_app__?.config?.globalProperties?.$pinia;
+            const authStore = pinia?._s?.get("firebaseAuth");
+            if (authStore?.fetchBalance) {
+              await authStore.fetchBalance();
+            }
+          } catch (e) {
+            console.warn("[ComfyNext Bridge] refreshCredits error:", e);
+          }
+          fetchCredits();
+        })();
+        return;
+      }
+
       if (action === "purchaseCredits") {
         (async () => {
           try {
@@ -1087,7 +1107,21 @@ app.registerExtension({
       }
     });
 
-    api.addEventListener("execution_error", () => {
+    api.addEventListener("execution_error", (evt) => {
+      // Forward the actual error so the canvas can red-ring the failed node
+      // and the layout can show a useful toast (was previously collapsing
+      // into a generic "complete" event, hiding API failures like
+      // Replicate's E005 content-moderation rejections).
+      const detail = evt.detail || {};
+      postToParent({
+        event: "execution_error",
+        node_id: detail.node_id || detail.node || null,
+        node_type: detail.node_type || null,
+        exception_message: detail.exception_message || detail.message || null,
+        exception_type: detail.exception_type || null,
+        traceback: Array.isArray(detail.traceback) ? detail.traceback.join("") : detail.traceback,
+      });
+      // Still tell the layout the queue is done so spinners clear.
       sendComplete();
     });
 

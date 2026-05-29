@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import {
   X, Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight,
   RotateCw, Undo2, Redo2, Plus, Trash2, Scissors, Volume2, Eye, EyeOff,
-  Lock, Unlock, Film, Music, ImageIcon, Type, Cpu,
+  Lock, Unlock, Film, Music, ImageIcon, Type, Cpu, Diamond,
 } from 'lucide-vue-next'
 import { useTimelineStore } from '~/composables/useTimelineStore'
 import { useAssetLibrary } from '~/composables/useAssetLibrary'
@@ -11,6 +11,7 @@ import { usePlaybackEngine } from '~/composables/usePlaybackEngine'
 import { useClipPreview } from '~/composables/useClipPreview'
 import type { Clip, Track, BlendMode } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
+import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 
 const props = defineProps<{
   nodeId: string
@@ -149,7 +150,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 // the upstream file (LoadVideo / LoadImage). For workflow clips with no
 // resolvable source (e.g. wired to a processing node), the preview shows
 // nothing until the graph is executed.
-function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' } | null {
+function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' | 'sequence'; urls?: string[] } | null {
   if (clip.kind === 'video' || clip.kind === 'image') {
     const asset = getAsset((clip as any).asset_id)
     if (!asset) return null
@@ -177,6 +178,22 @@ function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' 
       if (fname) return {
         url: `/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`,
         kind: 'image',
+      }
+    }
+    // KineticType stores a full frame sequence in its params JSON. Return all
+    // frames as a 'sequence' so the playback engine animates through them
+    // (frame 0 of a fade-in is invisible, so a single static frame looks blank).
+    if (type === 'KineticType') {
+      const pIdx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'params') ?? -1
+      if (pIdx >= 0) {
+        try {
+          const p = JSON.parse(src.data?.widgetsValues?.[pIdx] || '{}')
+          if (Array.isArray(p.rendered) && p.rendered.length > 0) {
+            const urls = p.rendered.map((fn: string) =>
+              `/view?${new URLSearchParams({ filename: String(fn), type: 'input' })}`)
+            return { url: urls[0], kind: 'sequence', urls }
+          }
+        } catch { /* fall through */ }
       }
     }
     // Fallback: any node that has published an image preview (e.g. processed output).
@@ -591,6 +608,20 @@ function onStripPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (kfDrag.value) {
+    const clip = findClip(kfDrag.value.clipId)
+    if (!clip) return
+    const dframes = Math.round((e.clientX - kfDrag.value.startMouseX) / pxPerFrame.value)
+    if (dframes !== 0) kfDrag.value.moved = true
+    const target = Math.max(0, Math.min(kfDrag.value.startFrame + dframes, Math.max(0, clip.length - 1)))
+    if (target !== kfDrag.value.fromFrame) {
+      store.moveKeyframe(kfDrag.value.clipId, kfDrag.value.fromFrame, target)
+      kfDrag.value.fromFrame = target
+      // Keep the playhead glued to the keyframe while retiming.
+      store.seekFrame(clip.start_frame + target)
+    }
+    return
+  }
   if (!drag.value) return
   const dx = e.clientX - drag.value.startMouseX
   // Convert delta to frames using zoom only (no scroll offset for deltas).
@@ -643,9 +674,58 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp() {
+  if (kfDrag.value) {
+    // A click (no drag) parks the playhead on the keyframe.
+    if (!kfDrag.value.moved) {
+      const clip = findClip(kfDrag.value.clipId)
+      if (clip) seekToKeyframe(clip, kfDrag.value.fromFrame)
+    }
+    kfDrag.value = null
+    return
+  }
   drag.value = null
   snapGuideFrame.value = null
   dragGroupStarts = null
+}
+
+// -- Keyframe diamonds (selected clip) -------------------------------------
+//
+// Diamonds live on the selected clip's bar, positioned at clip-local frames.
+// Click a diamond to park the playhead on it; drag to retime it. Dragging
+// reuses the global pointer listeners (onPointerMove/onPointerUp).
+
+const kfDrag = ref<null | {
+  clipId: string
+  fromFrame: number      // current frame of the keyframe being dragged
+  startMouseX: number
+  startFrame: number     // frame at drag-start
+  moved: boolean
+}>(null)
+
+function onKeyframePointerDown(clipId: string, frame: number, e: PointerEvent) {
+  e.stopPropagation()
+  e.preventDefault()
+  kfDrag.value = { clipId, fromFrame: frame, startMouseX: e.clientX, startFrame: frame, moved: false }
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function seekToKeyframe(clip: Clip, localFrame: number) {
+  store.seekFrame(clip.start_frame + localFrame)
+}
+
+// Display the clip's transform AT THE PLAYHEAD: interpolated when keyframed,
+// static scalars otherwise. Keeps the inspector honest as the playhead moves
+// across keyframes, and ensures edits land on the right keyframe.
+const displayTransform = computed(() => {
+  const c = selectedClipData.value
+  if (!c) return null
+  return interpolateClipAt(c, store.clipLocalFrame(c))
+})
+
+// Round for display so lerped values don't render as 0.30000000000004.
+function r(n: number, d = 2): number {
+  const p = 10 ** d
+  return Math.round(n * p) / p
 }
 
 // -- HTML5 drag-and-drop from asset panel ----------------------------------
@@ -955,6 +1035,16 @@ const portBindings = computed<PortBinding[]>(() => {
       const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
       if (fname) label = String(fname)
       duration = 1  // single image — let the user lengthen it manually
+    } else if (type === 'KineticType') {
+      // Read frame count + text from the params JSON widget
+      const pIdx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'params') ?? -1
+      if (pIdx >= 0) {
+        try {
+          const p = JSON.parse(src.data?.widgetsValues?.[pIdx] || '{}')
+          if (p.text) label = `"${p.text}"`
+          if (Array.isArray(p.rendered) && p.rendered.length > 0) duration = p.rendered.length
+        } catch { /* ignore */ }
+      }
     }
 
     out.push({
@@ -1279,40 +1369,40 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               <div class="grid grid-cols-2 gap-2">
                 <div>
                   <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">X</div>
-                  <input type="number" step="0.01" :value="selectedClipData.x ?? 0"
+                  <input type="number" step="0.01" :value="r(displayTransform?.x ?? 0, 3)"
                     class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                    @change="store.updateClip(selectedClipData!.id, { x: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                    @change="store.updateClipTransform(selectedClipData!.id, { x: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
                 </div>
                 <div>
                   <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Y</div>
-                  <input type="number" step="0.01" :value="selectedClipData.y ?? 0"
+                  <input type="number" step="0.01" :value="r(displayTransform?.y ?? 0, 3)"
                     class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                    @change="store.updateClip(selectedClipData!.id, { y: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                    @change="store.updateClipTransform(selectedClipData!.id, { y: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
                 </div>
               </div>
 
               <div class="grid grid-cols-2 gap-2">
                 <div>
                   <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Rotation</div>
-                  <input type="number" step="1" :value="selectedClipData.rotation ?? 0"
+                  <input type="number" step="1" :value="r(displayTransform?.rotation ?? 0, 1)"
                     class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                    @change="store.updateClip(selectedClipData!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+                    @change="store.updateClipTransform(selectedClipData!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
                 </div>
                 <div>
                   <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Scale</div>
-                  <input type="number" step="0.05" :value="selectedClipData.scale ?? 1"
+                  <input type="number" step="0.05" :value="r(displayTransform?.scale ?? 1, 3)"
                     class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                    @change="store.updateClip(selectedClipData!.id, { scale: parseFloat(($event.target as HTMLInputElement).value) || 1 })" />
+                    @change="store.updateClipTransform(selectedClipData!.id, { scale: parseFloat(($event.target as HTMLInputElement).value) || 1 })" />
                 </div>
               </div>
 
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Opacity</div>
                 <div class="flex items-center gap-2">
-                  <input type="range" min="0" max="1" step="0.01" :value="selectedClipData.opacity ?? 1"
+                  <input type="range" min="0" max="1" step="0.01" :value="displayTransform?.opacity ?? 1"
                     class="flex-1"
-                    @input="store.updateClip(selectedClipData!.id, { opacity: parseFloat(($event.target as HTMLInputElement).value) })" />
-                  <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((selectedClipData.opacity ?? 1) * 100) }}%</span>
+                    @input="store.updateClipTransform(selectedClipData!.id, { opacity: parseFloat(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((displayTransform?.opacity ?? 1) * 100) }}%</span>
                 </div>
               </div>
 
@@ -1323,6 +1413,46 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   @change="store.updateClip(selectedClipData!.id, { blend: ($event.target as HTMLSelectElement).value as BlendMode })">
                   <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
                 </select>
+              </div>
+
+              <!-- Keyframes: animate the transform over the clip's life. -->
+              <div class="pt-2 border-t border-white/5">
+                <div class="flex items-center justify-between mb-1.5">
+                  <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Keyframes</div>
+                  <button
+                    class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 transition-colors"
+                    title="Add / update keyframe at playhead"
+                    @click="store.addKeyframe(selectedClipData!.id)"
+                  ><Diamond class="size-2.5" /> Add</button>
+                </div>
+                <div v-if="selectedClipData.keyframes?.length" class="space-y-1">
+                  <div
+                    v-for="kf in selectedClipData.keyframes"
+                    :key="kf.frame"
+                    class="flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors"
+                    :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'bg-violet-500/20' : 'bg-white/[0.03] hover:bg-white/[0.07]'"
+                    @click="seekToKeyframe(selectedClipData!, kf.frame)"
+                  >
+                    <Diamond class="size-2.5 shrink-0"
+                      :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'text-violet-300' : 'text-white/40'" />
+                    <span class="w-9 tabular-nums text-white/70">{{ kf.frame }}f</span>
+                    <select :value="kf.ease ?? 'linear'"
+                      class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/80 outline-none text-[10px]"
+                      @click.stop
+                      @change="store.setKeyframeEase(selectedClipData!.id, kf.frame, ($event.target as HTMLSelectElement).value as any)">
+                      <option value="linear">linear</option>
+                      <option value="easeInOut">ease</option>
+                    </select>
+                    <button class="size-4 flex items-center justify-center rounded hover:bg-red-500/20 text-white/40 hover:text-red-300 shrink-0"
+                      title="Remove keyframe"
+                      @click.stop="store.removeKeyframeAt(selectedClipData!.id, kf.frame)">
+                      <Trash2 class="size-2.5" />
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="text-[10px] text-white/30 italic leading-snug">
+                  Transform is static. Add a keyframe to animate position, scale, rotation &amp; opacity.
+                </div>
               </div>
             </template>
 
@@ -1608,6 +1738,21 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   :class="trackColor(tIdx).edge"
                   @pointerdown.stop="(e) => onClipPointerDown(clip.id, track.id, 'resize-right', e)"
                 />
+                <!-- Keyframe diamonds (selected clip) — click to seek, drag to retime -->
+                <div
+                  v-if="selectedClipIds.has(clip.id) && clip.keyframes?.length"
+                  class="absolute left-0 right-0 bottom-0 h-2.5 pointer-events-none z-20"
+                >
+                  <div
+                    v-for="kf in clip.keyframes"
+                    :key="kf.frame"
+                    class="absolute bottom-px size-2 rotate-45 border border-black/50 shadow-sm pointer-events-auto cursor-grab active:cursor-grabbing -translate-x-1/2"
+                    :class="store.playheadFrame.value - clip.start_frame === kf.frame ? 'bg-yellow-300' : 'bg-violet-100 hover:bg-white'"
+                    :style="{ left: (kf.frame * pxPerFrame) + 'px' }"
+                    :title="`Keyframe @ ${kf.frame}f · drag to retime, click to seek`"
+                    @pointerdown.stop="(e) => onKeyframePointerDown(clip.id, kf.frame, e)"
+                  />
+                </div>
               </div>
             </div>
 

@@ -28,6 +28,14 @@ _IDEOGRAM_V3_AR = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "
 # node. Flux Kontext keeps the composition and repaints only the surface.
 _EDIT_MODEL_SLUG = "black-forest-labs/flux-kontext-pro"
 
+# Output ratios Flux Kontext Pro accepts (besides "match_input_image"). The node
+# also offers 16:10/10:16, which Kontext rejects — those, and the explicit
+# "Match input" choice, fall back to preserving the source crop.
+_EDIT_AR = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+
+# Sentinel combo value: in restyle mode, keep the input image's own crop.
+MATCH_INPUT_AR = "Match input"
+
 
 @dataclass(frozen=True)
 class TextEffect:
@@ -126,6 +134,14 @@ def aspect_ok(ar: str) -> str:
     return ar if ar in _IDEOGRAM_V3_AR else "1:1"
 
 
+def edit_aspect(ar: str) -> str:
+    """Output ratio for the restyle (image-edit) path. 'Match input' — or any
+    ratio Flux Kontext doesn't accept — keeps the source crop; otherwise the
+    chosen ratio wins, so the Aspect ratio control behaves the same in both
+    modes."""
+    return ar if ar in _EDIT_AR else "match_input_image"
+
+
 def build_text_effect_request(
     effect_id: str,
     text: str,
@@ -140,7 +156,8 @@ def build_text_effect_request(
 
     - `image_data_url` set → RESTYLE via Flux Kontext: repaint the exact
       letterforms already in the image. `text` is optional (the word lives in
-      the pixels); `aspect_ratio` is ignored in favour of the source crop.
+      the pixels); `aspect_ratio` sets the output ratio, or keeps the source
+      crop when it's "Match input" (or a ratio Kontext can't take).
     - `image_data_url` None → GENERATE via Ideogram: render the word from a
       prompt. `text` is required — raises ValueError if blank.
 
@@ -151,7 +168,7 @@ def build_text_effect_request(
         input_dict = {
             "prompt": build_edit_prompt(effect_id, text),
             "input_image": image_data_url,
-            "aspect_ratio": "match_input_image",
+            "aspect_ratio": edit_aspect(aspect_ratio),
             "output_format": "png",
         }
         if seed and seed > 0:

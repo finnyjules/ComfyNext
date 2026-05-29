@@ -19,6 +19,16 @@ export interface CanvasGroup {
   width: number
   height: number
   color: string
+  // Collapsed groups shrink to a title-bar-only pill and hide their member
+  // nodes from the canvas. `expandedSize` remembers pre-collapse dimensions
+  // so toggling expand restores the original shape exactly.
+  collapsed?: boolean
+  expandedSize?: { width: number; height: number }
+  // Lightweight workflow status. Drives a chip in the title bar; null = no chip.
+  status?: 'wip' | 'stable' | 'broken' | 'archived' | null
+  // Locked groups disable drag/resize and prevent member-node mutation. Used
+  // to protect branches that are known-good while experimenting elsewhere.
+  locked?: boolean
 }
 
 // Swatch palette — matches the curated type-color palette so groups visually
@@ -157,8 +167,12 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
   function dragGroup(groupId: string, dx: number, dy: number) {
     const g = groups.value.find(g => g.id === groupId)
     if (!g) return
+    if (g.locked) return
     // Snapshot membership BEFORE we move, so the spatial test is consistent.
-    const memberIds = new Set(nodesInGroup(groupId))
+    // Collapsed groups use their pre-collapse footprint for the test, so the
+    // (hidden) members travel with the pill — keeping them positioned correctly
+    // when the group is later expanded.
+    const memberIds = new Set(g.collapsed ? nodesInExpandedBounds(g) : nodesInGroup(groupId))
     g.x += dx
     g.y += dy
     for (const n of nodesRef.value as VueFlowNode[]) {
@@ -167,12 +181,91 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
     }
   }
 
+  /** Helper: spatial test against a group's expanded footprint (for collapsed groups). */
+  function nodesInExpandedBounds(g: CanvasGroup): string[] {
+    const w = g.expandedSize?.width ?? g.width
+    const h = g.expandedSize?.height ?? g.height
+    const ids: string[] = []
+    for (const n of nodesRef.value as VueFlowNode[]) {
+      const measured = resolvedDimensions(n)
+      const c = nodeCenter({ ...(n as NodeWithSize), dimensions: measured ?? undefined })
+      if (pointInRect(c.x, c.y, g.x, g.y, w, h)) ids.push(n.id)
+    }
+    return ids
+  }
+
+  // Collapsed dimensions: just a pill, no body. Width is wide enough to fit
+  // title + node-count badge + action buttons; height is exactly the title bar.
+  const COLLAPSED_WIDTH = 260
+  const COLLAPSED_HEIGHT = TITLE_BAR_HEIGHT
+
+  /**
+   * Toggle a group between collapsed (pill, members hidden) and expanded.
+   * On collapse we snapshot current dimensions so expand restores them exactly.
+   * Member-node hiding is handled by the canvas (see `hiddenNodeIdsByGroups`).
+   */
+  function toggleCollapse(groupId: string) {
+    const g = groups.value.find(g => g.id === groupId)
+    if (!g) return
+    if (g.collapsed) {
+      // Restore — fall back to a sensible default if expandedSize is missing
+      // (e.g. for groups loaded as collapsed from disk).
+      const w = g.expandedSize?.width ?? Math.max(300, g.width)
+      const h = g.expandedSize?.height ?? Math.max(200, g.height)
+      g.collapsed = false
+      g.width = w
+      g.height = h
+    } else {
+      g.expandedSize = { width: g.width, height: g.height }
+      g.collapsed = true
+      g.width = COLLAPSED_WIDTH
+      g.height = COLLAPSED_HEIGHT
+    }
+  }
+
+  /**
+   * Returns the set of node IDs that should be hidden because they're inside
+   * a collapsed group. Computed against the CURRENT node positions, so a node
+   * that drifts out of a collapsed group's (now tiny) bounds will reappear —
+   * which is the right behavior since collapsed groups shrink to a pill.
+   *
+   * To avoid that surprise, we compute membership against `expandedSize` for
+   * collapsed groups, treating them as if they were still at their pre-collapse
+   * footprint for hide-membership purposes only.
+   */
+  function hiddenNodeIdsByGroups(): Set<string> {
+    const hidden = new Set<string>()
+    for (const g of groups.value) {
+      if (!g.collapsed) continue
+      const w = g.expandedSize?.width ?? g.width
+      const h = g.expandedSize?.height ?? g.height
+      for (const n of nodesRef.value as VueFlowNode[]) {
+        const measured = resolvedDimensions(n)
+        const c = nodeCenter({ ...(n as NodeWithSize), dimensions: measured ?? undefined })
+        if (pointInRect(c.x, c.y, g.x, g.y, w, h)) hidden.add(n.id)
+      }
+    }
+    return hidden
+  }
+
   function resizeGroup(groupId: string, width: number, height: number) {
     const g = groups.value.find(g => g.id === groupId)
     if (!g) return
+    if (g.locked) return
+    if (g.collapsed) return // pill is fixed-size; user can expand to resize
     // Don't shrink below a usable minimum.
     g.width = Math.max(120, width)
     g.height = Math.max(TITLE_BAR_HEIGHT + 40, height)
+  }
+
+  function setStatus(groupId: string, status: CanvasGroup['status']) {
+    updateGroup(groupId, { status })
+  }
+
+  function toggleLock(groupId: string) {
+    const g = groups.value.find(g => g.id === groupId)
+    if (!g) return
+    g.locked = !g.locked
   }
 
   function updateGroup(groupId: string, patch: Partial<CanvasGroup>) {
@@ -203,6 +296,16 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
       bounding: [g.x, g.y, g.width, g.height],
       color: g.color,
       font_size: 24,
+      // ComfyNext-specific extensions. LiteGraph/ComfyUI ignore unknown fields,
+      // so storing them directly on the group object is safe and keeps the
+      // group as the single source of truth (no sidecar to keep in sync).
+      // The `id` field is critical: it lets annotations reference groups by a
+      // stable key that survives save/load cycles.
+      cnext_id: g.id,
+      cnext_collapsed: g.collapsed || undefined,
+      cnext_expanded_size: g.expandedSize || undefined,
+      cnext_status: g.status || undefined,
+      cnext_locked: g.locked || undefined,
     }))
   }
 
@@ -210,14 +313,26 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
     if (!Array.isArray(raw)) return []
     return raw.map((g, idx) => {
       const b = Array.isArray(g.bounding) ? g.bounding : [0, 0, 200, 120]
+      // Prefer a persisted id so annotation attachments survive; only mint a
+      // fresh one for groups that predate this field.
+      const id = (typeof g.cnext_id === 'string' && g.cnext_id) ? g.cnext_id : newId() + `_${idx}`
+      const collapsed = !!g.cnext_collapsed
+      const expandedSize = (g.cnext_expanded_size && typeof g.cnext_expanded_size.width === 'number')
+        ? { width: Number(g.cnext_expanded_size.width), height: Number(g.cnext_expanded_size.height) }
+        : undefined
+      const status = (['wip', 'stable', 'broken', 'archived'].includes(g.cnext_status)) ? g.cnext_status : null
       return {
-        id: newId() + `_${idx}`,
+        id,
         title: typeof g.title === 'string' ? g.title : 'Group',
         x: Number(b[0]) || 0,
         y: Number(b[1]) || 0,
         width: Number(b[2]) || 200,
         height: Number(b[3]) || 120,
         color: typeof g.color === 'string' ? g.color : GROUP_COLORS[idx % GROUP_COLORS.length]!,
+        collapsed,
+        expandedSize,
+        status,
+        locked: !!g.cnext_locked,
       }
     })
   }
@@ -232,6 +347,10 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
     deleteGroup,
     setGroups,
     clear,
+    toggleCollapse,
+    hiddenNodeIdsByGroups,
+    setStatus,
+    toggleLock,
     toLiteGraph,
     fromLiteGraph,
     // Exposed for testing

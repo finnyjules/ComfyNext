@@ -28,6 +28,7 @@ const props = defineProps<{
     images?: string[]
     audios?: string[]
     animated?: boolean
+    errorMessage?: string | null
     // Subgraph metadata
     isSubgraph?: boolean
     subgraphName?: string | null
@@ -481,10 +482,6 @@ function openAsciiOptions() {
   window.dispatchEvent(new CustomEvent('comfynext:openAsciiOptions', { detail: { nodeId: props.id } }))
 }
 
-function openTimelineEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openTimeline', { detail: { nodeId: props.id } }))
-}
-
 function openCrossfadeEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openCrossfade', { detail: { nodeId: props.id } }))
 }
@@ -817,6 +814,17 @@ watch(previewImages, (urls) => {
       >{{ priceLabel }}</span>
     </div>
 
+    <!-- Inline error banner — persists until the next successful run on
+         this node. Toasts disappear; this keeps the failure reason visible
+         next to the node that actually failed. -->
+    <div
+      v-if="data.error && data.errorMessage"
+      class="px-3 py-1.5 bg-red-500/15 border-b border-red-500/20 text-[10.5px] text-red-200 leading-snug max-h-[80px] overflow-auto nopan nodrag select-text"
+      :title="data.errorMessage"
+    >
+      {{ data.errorMessage }}
+    </div>
+
     <!-- Ports: inputs left, outputs right, same row.
          For dynamic-grow nodes (Compositor, SmartLayout) we iterate over
          visibleInputIndices so non-contiguous "always show + grow group"
@@ -859,7 +867,7 @@ watch(previewImages, (urls) => {
            custom nodes) get the same toggle. -->
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
-          v-if="!widget.hidden && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
+          v-if="!widget.hidden && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
           :widget-def="widget"
           :node-type="data.nodeType"
           :node-id="id"
@@ -917,16 +925,6 @@ watch(previewImages, (urls) => {
       </button>
     </div>
 
-    <!-- Timeline: open the timeline editor modal -->
-    <div v-if="data.nodeType === 'Timeline'" class="px-2 pb-2 nopan nodrag">
-      <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
-        @click="openTimelineEditor"
-      >
-        Open timeline
-      </button>
-    </div>
-
     <!-- Crossfade: open the visual editor modal -->
     <div v-if="data.nodeType === 'VideoCrossfade'" class="px-2 pb-2 nopan nodrag">
       <button
@@ -970,11 +968,6 @@ watch(previewImages, (urls) => {
               : 'Upload video' }}
         </span>
       </button>
-    </div>
-
-    <!-- Timeline: live animated preview (separate from the image-blob path). -->
-    <div v-if="data.nodeType === 'Timeline'" class="border-t border-[#2a2a2a] p-2">
-      <VueCanvasTimelineNodePreview :node-id="id" />
     </div>
 
     <!-- Audio previews (PreviewAudio, SaveAudio*, etc.) -->

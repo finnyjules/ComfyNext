@@ -19,6 +19,74 @@ import {
   IMAGE_MODELS, IMAGE_MODELS_BY_ID, TAG_LABELS, activeTagsInCatalog,
   type ImageModel, type ImageModelTag, type ImageModelAdvancedField,
 } from '~/data/image-models'
+import { BRAND_COLORS, getBrandIcon } from '~/data/brand-icons'
+
+// -- Replicate cover image fetch + cache -----------------------------------
+//
+// Each model's card uses Replicate's official `cover_image_url` when we can
+// fetch it. Cached in localStorage for a week so a remount doesn't refetch.
+// Negative results (no cover available) are cached too so we don't keep
+// retrying empty models.
+// Same pattern as LoRALibraryPanel — see its loadPreviewCache for prior art.
+
+interface CoverCacheEntry {
+  url: string | null
+  fetchedAt: number
+}
+const COVER_CACHE_KEY = 'image-models.coverCache.v1'
+const COVER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+const coverUrls = ref<Record<string, string | null>>({})
+const coverLoading = ref<Set<string>>(new Set())
+
+function loadCoverCache(): Record<string, CoverCacheEntry> {
+  try {
+    const raw = localStorage.getItem(COVER_CACHE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+function saveCoverCache(cache: Record<string, CoverCacheEntry>) {
+  try { localStorage.setItem(COVER_CACHE_KEY, JSON.stringify(cache)) } catch {}
+}
+
+async function fetchCover(slug: string) {
+  if (coverLoading.value.has(slug)) return
+  if (slug in coverUrls.value) return
+  coverLoading.value.add(slug)
+  try {
+    const res = await fetch(`/api/replicate-cover?slug=${encodeURIComponent(slug)}`)
+    if (!res.ok) {
+      coverUrls.value = { ...coverUrls.value, [slug]: null }
+      return
+    }
+    const data = await res.json() as { url: string | null }
+    coverUrls.value = { ...coverUrls.value, [slug]: data.url }
+    const cache = loadCoverCache()
+    cache[slug] = { url: data.url, fetchedAt: Date.now() }
+    saveCoverCache(cache)
+  } catch {
+    coverUrls.value = { ...coverUrls.value, [slug]: null }
+  } finally {
+    coverLoading.value.delete(slug)
+  }
+}
+
+function seedCoversFromCache() {
+  const cache = loadCoverCache()
+  const now = Date.now()
+  const seeded: Record<string, string | null> = {}
+  const toFetch: string[] = []
+  for (const m of IMAGE_MODELS) {
+    const c = cache[m.replicateSlug]
+    if (c && (now - c.fetchedAt) < COVER_CACHE_TTL_MS) {
+      seeded[m.replicateSlug] = c.url
+    } else {
+      toFetch.push(m.replicateSlug)
+    }
+  }
+  coverUrls.value = seeded
+  for (const slug of toFetch) fetchCover(slug)
+}
 
 const props = defineProps<{
   nodeId: string
@@ -91,7 +159,10 @@ function loadDraftFor(modelId: string | null) {
   draftOptions.value = modelId ? getModelOptions(modelId) : {}
 }
 
-onMounted(() => loadDraftFor(currentModelId.value))
+onMounted(() => {
+  loadDraftFor(currentModelId.value)
+  seedCoversFromCache()
+})
 // Re-seed when the node we're attached to changes (e.g. the modal is reused
 // across different nodes via the same mount point).
 watch(() => props.nodeId, () => loadDraftFor(currentModelId.value))
@@ -138,26 +209,12 @@ const TAG_ICONS: Record<ImageModelTag, any> = {
   'multi-image': Layers,
 }
 
-// -- Brand → swatch (deterministic, falls back to hash) ----------------------
-
-const BRAND_COLORS: Record<string, string> = {
-  'BFL':          '#ff6b8b',
-  'Google':       '#4796ff',
-  'OpenAI':       '#10a37f',
-  'ByteDance':    '#26a6ff',
-  'Ideogram':     '#a86bff',
-  'Recraft':      '#ffb84d',
-  'Stability AI': '#ff8a4d',
-  'Alibaba':      '#ff7a3d',
-  'Tencent':      '#48a8ff',
-  'xAI':          '#cccccc',
-  'Pruna':        '#9b6bff',
-  'Meta':         '#3d7aff',
-  'Other':        '#888',
-}
+// Brand colors + icons live in ~/data/brand-icons (single source of truth
+// shared with the launcher widget). `brandHue` is the thin lookup wrapper
+// the templates below use.
 
 function brandHue(brand: string): string {
-  return BRAND_COLORS[brand] ?? '#888'
+  return (BRAND_COLORS as Record<string, string>)[brand] ?? '#888'
 }
 
 function priceLabel(p: number | null): string {
@@ -215,28 +272,34 @@ const focusedModel = computed<ImageModel | null>(() =>
   >
     <!-- Card -->
     <template #card="{ item, focused }">
-      <!-- Thumbnail strip / brand swatch -->
+      <!-- Thumbnail: Replicate cover image when fetched, brand wordmark
+           swatch underneath until it loads / on failure. -->
       <div
         class="aspect-[16/10] w-full relative overflow-hidden"
-        :style="!(item as ImageModel).thumb
-          ? { background: `linear-gradient(135deg, ${brandHue((item as ImageModel).brand)}33 0%, ${brandHue((item as ImageModel).brand)}11 60%, transparent 100%)` }
-          : {}"
+        :style="{ background: `linear-gradient(135deg, ${brandHue((item as ImageModel).brand)}33 0%, ${brandHue((item as ImageModel).brand)}11 60%, transparent 100%)` }"
       >
-        <img
-          v-if="(item as ImageModel).thumb"
-          :src="(item as ImageModel).thumb"
-          class="absolute inset-0 w-full h-full object-cover transition-transform duration-500"
-          :class="focused ? 'scale-105' : 'group-hover:scale-105'"
-          loading="lazy"
-        />
-        <!-- Brand wordmark when no thumb -->
+        <!-- Brand wordmark sits behind the cover so the card stays visually
+             populated while the cover image is in-flight or absent. -->
         <div
-          v-else
           class="absolute inset-0 flex items-center justify-center text-[28px] font-bold tracking-tight select-none"
           :style="{ color: brandHue((item as ImageModel).brand) }"
         >
           {{ (item as ImageModel).brand }}
         </div>
+        <img
+          v-if="coverUrls[(item as ImageModel).replicateSlug]"
+          :src="coverUrls[(item as ImageModel).replicateSlug]!"
+          class="absolute inset-0 w-full h-full object-cover transition-transform duration-500"
+          :class="focused ? 'scale-105' : 'group-hover:scale-105'"
+          loading="lazy"
+          referrerpolicy="no-referrer"
+        />
+        <!-- Top vignette darkens the cover image just enough that the price
+             badge stays legible no matter what's behind it. -->
+        <div
+          v-if="coverUrls[(item as ImageModel).replicateSlug]"
+          class="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/45 to-transparent pointer-events-none"
+        />
         <!-- Price badge -->
         <span
           v-if="(item as ImageModel).pricePerImage != null"
@@ -245,9 +308,24 @@ const focusedModel = computed<ImageModel | null>(() =>
       </div>
       <!-- Body -->
       <div class="px-3 pt-2.5 pb-3 flex flex-col gap-1.5">
-        <div class="flex items-baseline gap-1.5 min-w-0">
-          <span class="text-[13px] font-semibold text-white/90 truncate">{{ (item as ImageModel).label }}</span>
-          <span class="text-[10px] text-white/35 uppercase tracking-[0.06em] shrink-0">{{ (item as ImageModel).brand }}</span>
+        <div class="flex flex-col gap-1 min-w-0">
+          <span class="text-[13px] font-semibold text-white/90 truncate leading-tight">{{ (item as ImageModel).label }}</span>
+          <!-- Brand chip: neutral pill with the brand icon as a leading bullet.
+               Color icons keep their baked-in gradients; mono icons fall in
+               with the muted text tone so the chip reads as one unit. -->
+          <span
+            class="self-start inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.08em] font-medium px-1.5 py-0.5 rounded leading-none bg-white/[0.05] text-white/55"
+          >
+            <span
+              v-if="getBrandIcon((item as ImageModel).brand)"
+              :class="getBrandIcon((item as ImageModel).brand)!.cssClass"
+              :style="getBrandIcon((item as ImageModel).brand)!.style === 'mono'
+                ? { backgroundColor: 'rgba(255,255,255,0.55)' }
+                : undefined"
+              class="size-2.5"
+            />
+            {{ (item as ImageModel).brand }}
+          </span>
         </div>
         <p class="text-[11px] leading-snug text-white/55 line-clamp-2 min-h-[2.4em]">
           {{ (item as ImageModel).pitch }}
@@ -267,18 +345,40 @@ const focusedModel = computed<ImageModel | null>(() =>
 
     <!-- Detail pane -->
     <template #detail="{ item }">
-      <div class="p-5 space-y-5">
+      <div class="space-y-5">
+        <!-- Cover hero — when available, gives a big preview of the model's
+             aesthetic so the user can pick by vibe, not just spec sheet. -->
+        <div
+          v-if="coverUrls[(item as ImageModel).replicateSlug]"
+          class="relative aspect-[16/10] w-full overflow-hidden"
+          :style="{ background: `linear-gradient(135deg, ${brandHue((item as ImageModel).brand)}33 0%, ${brandHue((item as ImageModel).brand)}11 60%, transparent 100%)` }"
+        >
+          <img
+            :src="coverUrls[(item as ImageModel).replicateSlug]!"
+            class="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+          />
+          <div class="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#1b1b1b] via-[#1b1b1b]/55 to-transparent pointer-events-none" />
+        </div>
+        <div class="p-5 space-y-5" :class="coverUrls[(item as ImageModel).replicateSlug] ? '-mt-5 relative z-10' : ''">
         <!-- Header -->
         <div>
           <div class="flex items-center gap-2 mb-1">
             <span class="text-sm font-semibold text-white/95">{{ (item as ImageModel).label }}</span>
             <span
-              class="text-[10px] uppercase tracking-[0.08em] font-medium px-1.5 py-0.5 rounded"
-              :style="{
-                color: brandHue((item as ImageModel).brand),
-                background: `${brandHue((item as ImageModel).brand)}1f`,
-              }"
-            >{{ (item as ImageModel).brand }}</span>
+              class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.08em] font-medium px-1.5 py-0.5 rounded bg-white/[0.06] text-white/65"
+            >
+              <span
+                v-if="getBrandIcon((item as ImageModel).brand)"
+                :class="getBrandIcon((item as ImageModel).brand)!.cssClass"
+                :style="getBrandIcon((item as ImageModel).brand)!.style === 'mono'
+                  ? { backgroundColor: 'rgba(255,255,255,0.7)' }
+                  : undefined"
+                class="size-3 inline-block"
+              />
+              {{ (item as ImageModel).brand }}
+            </span>
           </div>
           <p class="text-[11.5px] text-white/65 leading-relaxed">
             {{ (item as ImageModel).description ?? (item as ImageModel).pitch }}
@@ -389,6 +489,7 @@ const focusedModel = computed<ImageModel | null>(() =>
               {{ ar }}
             </span>
           </div>
+        </div>
         </div>
       </div>
     </template>

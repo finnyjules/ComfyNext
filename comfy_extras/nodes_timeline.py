@@ -32,6 +32,58 @@ from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, 
 _MAX_CLIPS = 16
 
 
+def _ease(t: float, ease) -> float:
+    # Mirror of shared/timeline/interpolate.ts applyEase: smoothstep for
+    # easeInOut, linear otherwise.
+    return t * t * (3.0 - 2.0 * t) if ease == "easeInOut" else t
+
+
+def _interp_transform(static: dict, keyframes, local_frame: float) -> dict:
+    """Python mirror of shared/timeline/interpolate.ts `interpolateClipAt`.
+
+    `static` supplies x/y/rotation/scale/opacity fallbacks (the clip's static
+    scalars). `keyframes` is an optional list of
+    {frame, x, y, rotation, scale, opacity, ease}. With no keyframes we return
+    the static transform; otherwise we lerp between the bracketing keyframes so
+    the editor preview, FFmpeg export, and node run all agree.
+    """
+    base = {
+        "x":        float(static.get("x", 0.0)),
+        "y":        float(static.get("y", 0.0)),
+        "rotation": float(static.get("rotation", 0.0)),
+        "scale":    float(static.get("scale", 1.0)),
+        "opacity":  float(static.get("opacity", 1.0)),
+    }
+    if not keyframes:
+        return base
+
+    def _snap(k: dict) -> dict:
+        return {
+            "x":        float(k.get("x", base["x"])),
+            "y":        float(k.get("y", base["y"])),
+            "rotation": float(k.get("rotation", base["rotation"])),
+            "scale":    float(k.get("scale", base["scale"])),
+            "opacity":  float(k.get("opacity", base["opacity"])),
+        }
+
+    kfs = sorted(keyframes, key=lambda k: k.get("frame", 0))
+    if local_frame <= kfs[0].get("frame", 0):
+        return _snap(kfs[0])
+    last = kfs[-1]
+    if local_frame >= last.get("frame", 0):
+        return _snap(last)
+    for i in range(len(kfs) - 1):
+        a, b = kfs[i], kfs[i + 1]
+        fa = a.get("frame", 0)
+        fb = b.get("frame", 0)
+        if fa <= local_frame <= fb:
+            span = fb - fa
+            t = _ease((local_frame - fa) / span, a.get("ease")) if span > 0 else 0.0
+            sa, sb = _snap(a), _snap(b)
+            return {k: sa[k] + (sb[k] - sa[k]) * t for k in sa}
+    return _snap(last)
+
+
 def _hex_rgb(s: str, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
     s = s.strip().lstrip("#")
     if len(s) == 3:
@@ -42,6 +94,52 @@ def _hex_rgb(s: str, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
         return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0, int(s[4:6], 16) / 255.0)
     except ValueError:
         return fallback
+
+
+def _load_pil_image(path):
+    """Open an image clip's source as RGB PIL. Resolves bare filenames under
+    input/. Returns None if missing/unreadable."""
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(folder_paths.get_input_directory(), path)
+    if not os.path.exists(path):
+        return None
+    try:
+        return PILImage.open(path).convert("RGB")
+    except Exception:
+        return None
+
+
+def _pil_to_tensor(pil: "PILImage.Image", device, dtype) -> "torch.Tensor":
+    """RGB PIL → [1, H, W, 3] float tensor in [0,1] on the target device/dtype."""
+    arr = np.asarray(pil.convert("RGB"), dtype=np.float32) / 255.0  # [H, W, 3]
+    return torch.from_numpy(arr).unsqueeze(0).to(device=device, dtype=dtype)
+
+
+def _render_text_clip_pil(clip: dict, W: int, H: int):
+    """Render a text clip's nested config to a PIL image (mirrors the FFmpeg
+    export path). Returns None if the text renderer is unavailable."""
+    try:
+        from comfy_extras.nodes_text import render_text_to_pil
+    except Exception:
+        return None
+    t = clip.get("text") or {}
+    try:
+        return render_text_to_pil(
+            text=str(t.get("text", "")),
+            width=int(t.get("width", W)),
+            height=int(t.get("height", H)),
+            font_size=int(t.get("font_size", 72)),
+            color=str(t.get("color", "#ffffff")),
+            bg_color=str(t.get("bg_color", "#000000")),
+            align=str(t.get("align", "center")),
+            v_align=str(t.get("v_align", "middle")),
+            padding=float(t.get("padding", 0.06)),
+            line_spacing=float(t.get("line_spacing", 1.2)),
+        )
+    except Exception:
+        return None
 
 
 def _clip_inputs(idx: int, optional: bool):
@@ -95,6 +193,14 @@ class TimelineNode(IO.ComfyNode):
                           tooltip="Optional soundtrack mixed in on Render."),
             IO.Int.Input("preview_frame", default=-1, min=-1, max=10000, step=1,
                         tooltip="Which frame to save for live preview. -1 = middle of timeline."),
+            # Editor state (tracks, clips, keyframes) as a JSON string. The Vue
+            # editor stores this on the node and the frontend injects it at
+            # submit. When present it DRIVES the render (keyframed transforms,
+            # multi-track order); when absent we fall back to the legacy flat
+            # clip{i}_* widgets. Never shown on the node — the Timeline body
+            # renders the editor button + preview, not the raw widget list.
+            IO.String.Input("edit_state", default="", optional=True, multiline=True,
+                           tooltip="Editor timeline state (auto-populated at submit)."),
         ])
         return IO.Schema(
             node_id="Timeline",
@@ -109,6 +215,20 @@ class TimelineNode(IO.ComfyNode):
 
     @classmethod
     def execute(cls, **kwargs) -> IO.NodeOutput:
+        # Prefer the editor's rich edit_state (tracks, clips, keyframes) when
+        # the frontend injected it at submit. This is what makes node-run agree
+        # with the editor preview and the FFmpeg export. Absent/blank → fall
+        # back to the legacy flat clip{i}_* widget path below (back-compat for
+        # graphs wired without the editor).
+        raw_state = kwargs.get("edit_state")
+        if raw_state:
+            try:
+                state = json.loads(raw_state) if isinstance(raw_state, str) else raw_state
+            except Exception:
+                state = None
+            if isinstance(state, dict) and state.get("version") == 1:
+                return cls._execute_edit_state(kwargs, state)
+
         # Gather connected layers.
         layers = []
         for i in range(1, _MAX_CLIPS + 1):
@@ -192,6 +312,125 @@ class TimelineNode(IO.ComfyNode):
             pf = total // 2
         preview = output[pf:pf + 1]
         return IO.NodeOutput(output, ui=save_live_preview(preview, str(cls.hidden.unique_id)))
+
+    @classmethod
+    def _execute_edit_state(cls, kwargs: dict, state: dict) -> IO.NodeOutput:
+        """Render from the editor's EditState (version 1). Resolves each clip
+        to a source tensor and composites frame-by-frame with keyframed
+        transforms — the same math as the editor preview and FFmpeg export.
+
+        Pixel sources by clip kind:
+          • workflow → wired tensor at clip{port_index}
+          • image    → file on disk (input/ or absolute path)
+          • text     → rendered via nodes_text.render_text_to_pil
+        Video/audio asset clips are export-path content (decode-from-disk),
+        so they're skipped here; wire them through LoadVideo → port to use
+        them on node-run.
+        """
+        canvas = state.get("canvas", {})
+        fps = max(1, int(canvas.get("fps", 30)))
+        cw = max(1, int(canvas.get("width", 1280)))
+        ch = max(1, int(canvas.get("height", 720)))
+        bg_rgb = _hex_rgb(str(canvas.get("bg_color", "#000000")))
+
+        # Composite where the wired data lives (first wired clip's device/dtype);
+        # disk/text sources get moved there. Default CPU float32.
+        device, dtype = torch.device("cpu"), torch.float32
+        for i in range(1, _MAX_CLIPS + 1):
+            t = kwargs.get(f"clip{i}")
+            if t is not None:
+                device, dtype = t.device, t.dtype
+                break
+
+        # Resolve renderable clips to source tensors. Track order = paint order
+        # (later tracks on top), matching the preview/export.
+        layers: list[dict] = []
+        skipped = 0
+        for track in state.get("tracks", []):
+            if track.get("muted") or track.get("kind") == "audio":
+                continue
+            for clip in track.get("clips", []):
+                kind = clip.get("kind")
+                src = None
+                if kind == "workflow":
+                    t = kwargs.get(f"clip{int(clip.get('port_index', 0) or 0)}")
+                    if t is not None:
+                        src = t.to(device=device, dtype=dtype)
+                elif kind == "image":
+                    pil = _load_pil_image(clip.get("path") or clip.get("asset_path"))
+                    if pil is not None:
+                        src = _pil_to_tensor(pil, device, dtype)
+                elif kind == "text":
+                    pil = _render_text_clip_pil(clip, cw, ch)
+                    if pil is not None:
+                        src = _pil_to_tensor(pil, device, dtype)
+                # else: video/audio asset → export-path only.
+                if src is None:
+                    skipped += 1
+                    continue
+                layers.append({
+                    "src":       src,
+                    "start":     int(clip.get("start_frame", 0)),
+                    "length":    max(1, int(clip.get("length", 30))),
+                    "in_frame":  int(clip.get("in_frame", 0)),
+                    "blend":     str(clip.get("blend", "normal")),
+                    "fade_in":   int(clip.get("fade_in", 0)),
+                    "fade_out":  int(clip.get("fade_out", 0)),
+                    "static":    {
+                        "x": float(clip.get("x", 0.0)), "y": float(clip.get("y", 0.0)),
+                        "rotation": float(clip.get("rotation", 0.0)),
+                        "scale": float(clip.get("scale", 1.0)),
+                        "opacity": float(clip.get("opacity", 1.0)),
+                    },
+                    "keyframes": clip.get("keyframes"),
+                })
+
+        total = int(state.get("total_frames", 0) or 0)
+        if total <= 0:
+            total = max((L["start"] + L["length"] for L in layers), default=1)
+        total = max(1, total)
+
+        bg = torch.tensor(bg_rgb, device=device, dtype=dtype).view(1, 1, 1, 3)
+        output = bg.expand(total, ch, cw, 3).clone()  # [T, H, W, 3]
+
+        for L in layers:
+            src = L["src"]
+            src_T = max(1, src.shape[0])
+            length, start = L["length"], L["start"]
+            gt_start = max(0, start)
+            gt_end = min(total, start + length)
+            if gt_end <= gt_start:
+                continue
+            fi, fo = L["fade_in"], L["fade_out"]
+            for gt in range(gt_start, gt_end):
+                local_t = gt - start
+                ct = (local_t + L["in_frame"]) % src_T
+
+                tf = _interp_transform(L["static"], L["keyframes"], local_t)
+
+                frame = src[ct:ct + 1].permute(0, 3, 1, 2)
+                frame = _fit_to_canvas(frame, ch, cw)
+                rgb, alpha = _transform(frame, tf["x"], tf["y"], tf["rotation"], tf["scale"])
+
+                # Fade math matches the editor preview + FFmpeg export exactly
+                # (not the legacy clip{i}_* path's off-by-one), so all three
+                # render the same ramp.
+                fade = 1.0
+                if fi > 0 and local_t < fi:
+                    fade *= local_t / fi
+                if fo > 0 and local_t > length - fo:
+                    fade *= (length - local_t) / fo
+                fade = max(0.0, min(1.0, fade))
+
+                a = (alpha * tf["opacity"] * fade).clamp(0.0, 1.0)
+                base = output[gt:gt + 1].permute(0, 3, 1, 2)
+                blended = _blend(base, rgb, L["blend"])
+                result = base * (1.0 - a) + blended * a
+                output[gt] = result.permute(0, 2, 3, 1).squeeze(0)
+
+        output = output.clamp(0.0, 1.0)
+        pf = total // 2
+        return IO.NodeOutput(output, ui=save_live_preview(output[pf:pf + 1], str(cls.hidden.unique_id)))
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +575,7 @@ def _adapt_edit_state(state: dict) -> dict:
                 "fade_in":     int(clip.get("fade_in", 0)),
                 "fade_out":    int(clip.get("fade_out", 0)),
                 "text":        clip.get("text"),
+                "keyframes":   clip.get("keyframes"),
             })
 
     if audio_path:
@@ -401,6 +641,7 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
             "blend":    str(c.get("blend", "normal")),
             "fade_in":  int(c.get("fade_in", 0)),
             "fade_out": int(c.get("fade_out", 0)),
+            "keyframes": c.get("keyframes"),
         }
         if kind == "text":
             # Text clips have no file backing — pre-render once into a PIL image.
@@ -500,8 +741,11 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
                     continue
                 src_pil = PILImage.fromarray(frame.to_ndarray(format="rgb24"))
 
-            rgb, alpha = _transform_and_alpha(src_pil, W, H, L["x"], L["y"], L["rot"], L["scl"])
-            a = alpha * L["op"] * fade
+            # Keyframed transform at this clip-local frame (static if none).
+            static = {"x": L["x"], "y": L["y"], "rotation": L["rot"], "scale": L["scl"], "opacity": L["op"]}
+            tf = _interp_transform(static, L.get("keyframes"), local_f)
+            rgb, alpha = _transform_and_alpha(src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"])
+            a = alpha * tf["opacity"] * fade
             blended = _blend_np(canvas, rgb, L["blend"])
             canvas = canvas * (1.0 - a) + blended * a
 

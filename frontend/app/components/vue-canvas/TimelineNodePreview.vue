@@ -41,7 +41,7 @@ function getWidget(name: string): any {
   return i >= 0 ? wv[i] : undefined
 }
 
-function resolveSource(slot: number): { url: string; kind: 'video' | 'image' } | null {
+function resolveSource(slot: number): { url: string; kind: 'video' | 'image' | 'sequence'; urls?: string[] } | null {
   if (!injectedEdges?.value || !injectedNodes?.value) return null
   const edge = injectedEdges.value.find((e: any) =>
     e.target === props.nodeId && e.targetHandle === `input-${slot - 1}`)
@@ -63,6 +63,20 @@ function resolveSource(slot: number): { url: string; kind: 'video' | 'image' } |
       return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'image' }
     }
   }
+  // KineticType: full rendered frame sequence stored in its params JSON.
+  if (type === 'KineticType') {
+    const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
+    if (pIdx >= 0) {
+      try {
+        const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
+        if (Array.isArray(p.rendered) && p.rendered.length > 0) {
+          const urls = p.rendered.map((fn: string) =>
+            `/view?${new URLSearchParams({ filename: String(fn), type: 'input' })}`)
+          return { url: urls[0], kind: 'sequence', urls }
+        }
+      } catch { /* ignore */ }
+    }
+  }
   // TextClip / any upstream node already exposing its rendered output → use its
   // first image (which the existing live preview pipeline already populates).
   if (src?.data?.images?.length) {
@@ -80,12 +94,46 @@ interface PreviewLayer {
   opacity: number; blend: string
   fadeIn: number; fadeOut: number
   srcUrl: string | null
-  srcKind: 'video' | 'image' | null
+  srcKind: 'video' | 'image' | 'sequence' | null
+  srcUrls?: string[]    // for sequence sources (KineticType frames)
+  inFrame: number
 }
 
 const layers = computed<PreviewLayer[]>(() => {
   const n = node.value
   if (!n) return []
+
+  // Prefer the editor's edit_state — clips added via the Timeline editor live
+  // here as `workflow` clips with real timing. The legacy clip{i}_* widgets are
+  // only populated when wiring without the editor.
+  const rawState = n.data?.properties?.edit_state
+  if (rawState) {
+    try {
+      const st = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
+      if (st?.version === 1 && Array.isArray(st.tracks)) {
+        const out: PreviewLayer[] = []
+        for (const track of st.tracks) {
+          if (track.muted || track.kind === 'audio') continue
+          for (const clip of track.clips || []) {
+            if (clip.kind !== 'workflow') continue
+            const src = resolveSource(Number(clip.port_index ?? 0))
+            out.push({
+              slot: Number(clip.port_index ?? 0),
+              start: Number(clip.start_frame ?? 0), length: Number(clip.length ?? 30),
+              x: Number(clip.x ?? 0), y: Number(clip.y ?? 0),
+              rotation: Number(clip.rotation ?? 0), scale: Number(clip.scale ?? 1),
+              opacity: Number(clip.opacity ?? 1), blend: String(clip.blend ?? 'normal'),
+              fadeIn: Number(clip.fade_in ?? 0), fadeOut: Number(clip.fade_out ?? 0),
+              inFrame: Number(clip.in_frame ?? 0),
+              srcUrl: src?.url ?? null, srcKind: src?.kind ?? null, srcUrls: src?.urls,
+            })
+          }
+        }
+        if (out.length) return out
+      }
+    } catch { /* fall through to legacy */ }
+  }
+
   const out: PreviewLayer[] = []
   for (let i = 1; i <= 4; i++) {
     const edge = injectedEdges?.value?.find((e: any) =>
@@ -104,8 +152,10 @@ const layers = computed<PreviewLayer[]>(() => {
       blend:    String(getWidget(`clip${i}_blend`)    ?? 'normal'),
       fadeIn:   Number(getWidget(`clip${i}_fade_in`)  ?? 0),
       fadeOut:  Number(getWidget(`clip${i}_fade_out`) ?? 0),
+      inFrame:  0,
       srcUrl:   src?.url ?? null,
       srcKind:  src?.kind ?? null,
+      srcUrls:  src?.urls,
     })
   }
   return out
@@ -121,6 +171,10 @@ const bgColor = computed(() => String(getWidget('bg_color') ?? '#000000'))
 // Per-slot media elements, owned by this component.
 const videos: Record<number, HTMLVideoElement> = {}
 const images: Record<number, HTMLImageElement> = {}
+// Per-slot frame sequences (KineticType): preloaded image arrays + the url
+// signature used to detect when a re-bake changed the frame list.
+const sequences: Record<number, HTMLImageElement[]> = {}
+const sequenceKeys: Record<number, string> = {}
 
 function ensureVideo(slot: number, url: string): HTMLVideoElement {
   let v = videos[slot]
@@ -154,17 +208,34 @@ function ensureImage(slot: number, url: string): HTMLImageElement {
   return img
 }
 
+/** Preload a frame sequence for a slot (idempotent — only rebuilds when the
+ *  url list changes, e.g. after a re-bake). */
+function ensureSequence(slot: number, urls: string[]) {
+  const key = `${urls.length}:${urls[0] ?? ''}`
+  if (sequenceKeys[slot] === key && sequences[slot]) return
+  sequenceKeys[slot] = key
+  sequences[slot] = urls.map(u => {
+    const im = new Image()
+    im.crossOrigin = 'anonymous'
+    im.src = u
+    return im
+  })
+}
+
 watch(layers, (curr) => {
   const liveVideos = new Set<number>()
   const liveImages = new Set<number>()
+  const liveSequences = new Set<number>()
   for (const L of curr) {
-    if (!L.srcUrl) continue
-    if (L.srcKind === 'video') {
+    if (L.srcKind === 'video' && L.srcUrl) {
       liveVideos.add(L.slot)
       ensureVideo(L.slot, L.srcUrl)
-    } else if (L.srcKind === 'image') {
+    } else if (L.srcKind === 'image' && L.srcUrl) {
       liveImages.add(L.slot)
       ensureImage(L.slot, L.srcUrl)
+    } else if (L.srcKind === 'sequence' && L.srcUrls?.length) {
+      liveSequences.add(L.slot)
+      ensureSequence(L.slot, L.srcUrls)
     }
   }
   for (const k of Object.keys(videos).map(Number)) {
@@ -174,9 +245,10 @@ watch(layers, (curr) => {
     }
   }
   for (const k of Object.keys(images).map(Number)) {
-    if (!liveImages.has(k)) {
-      delete images[k]
-    }
+    if (!liveImages.has(k)) delete images[k]
+  }
+  for (const k of Object.keys(sequences).map(Number)) {
+    if (!liveSequences.has(k)) { delete sequences[k]; delete sequenceKeys[k] }
   }
 }, { immediate: true, deep: true })
 
@@ -199,6 +271,10 @@ function refreshCanvasSize() {
     } else if (L.srcKind === 'image') {
       const img = images[L.slot]
       if (img && img.complete) { w = img.naturalWidth; h = img.naturalHeight }
+    } else if (L.srcKind === 'sequence') {
+      const seq = sequences[L.slot]
+      const first = seq?.find(im => im.complete && im.naturalWidth > 0)
+      if (first) { w = first.naturalWidth; h = first.naturalHeight }
     }
     if (w > 0 && h > 0) {
       const max = 320
@@ -255,6 +331,17 @@ function drawOnce() {
       const img = images[L.slot]
       if (!img || !img.complete || img.naturalWidth === 0) continue
       if (!active) continue
+      media = img
+      srcW = img.naturalWidth; srcH = img.naturalHeight
+    } else if (L.srcKind === 'sequence') {
+      const seq = sequences[L.slot]
+      if (!seq?.length) continue
+      if (!active) continue
+      // Index into the frame sequence by clip-local frame, looping.
+      const localFrame = Math.floor((playheadSec.value - startSec) * FPS.value)
+      const idx = ((localFrame + L.inFrame) % seq.length + seq.length) % seq.length
+      const img = seq[idx]
+      if (!img || !img.complete || img.naturalWidth === 0) continue
       media = img
       srcW = img.naturalWidth; srcH = img.naturalHeight
     } else {

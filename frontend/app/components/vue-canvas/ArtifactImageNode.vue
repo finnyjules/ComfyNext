@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw, Lock, LockOpen } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -196,6 +196,55 @@ async function downloadImage() {
     console.error('[ArtifactImage] download failed:', err)
   }
 }
+
+// Lock state: pin this image so upstream re-execution is skipped. We copy
+// the current preview into the input directory and point the file widget
+// at it; the canvas's workflow-build step then drops incoming edges to
+// this node, so collectKeepSet stops walking upstream here.
+const isLocked = computed(() => !!(props.data.properties as any)?.locked)
+const locking = ref(false)
+
+async function lockArtifact() {
+  const url = displayedUrl.value
+  if (!url || locking.value) return
+  locking.value = true
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const ext = blob.type === 'image/png' ? 'png'
+      : blob.type === 'image/jpeg' ? 'jpg'
+      : blob.type === 'image/webp' ? 'webp' : 'png'
+    // Deterministic name so re-lock doesn't proliferate files.
+    const filename = `locked_${props.id}.${ext}`
+    const fd = new FormData()
+    fd.append('image', new File([blob], filename, { type: blob.type }))
+    fd.append('overwrite', 'true')
+    const up = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!up.ok) throw new Error(`upload returned ${up.status}`)
+    const json = await up.json()
+    const name = json?.name ?? filename
+    const idx = imageWidgetIdx.value
+    if (idx >= 0 && props.data.widgetsValues) {
+      props.data.widgetsValues[idx] = name
+    }
+    const def = props.data.widgetDefs?.find((d: any) => d.name === 'image')
+    if (def && Array.isArray(def.options) && !def.options.includes(name)) {
+      def.options.push(name)
+    }
+    if (!props.data.properties) (props.data as any).properties = {}
+    ;(props.data.properties as any).locked = true
+  } catch (err) {
+    console.error('[ArtifactImage] lock failed:', err)
+  } finally {
+    locking.value = false
+  }
+}
+
+function unlockArtifact() {
+  if (!props.data.properties) return
+  ;(props.data.properties as any).locked = false
+}
 </script>
 
 <template>
@@ -204,6 +253,7 @@ async function downloadImage() {
     :class="{
       'artifact-image--muted': isMuted,
       'artifact-image--bypassed': isBypassed,
+      'artifact-image--locked': isLocked,
     }"
     :data-running="data.running || undefined"
     :style="{ '--port-color': imageColor } as any"
@@ -256,7 +306,7 @@ async function downloadImage() {
             {{ filenameLabel || (hasUpstream ? 'Preview' : 'Image') }}
           </span>
           <button
-            v-if="!hasUpstream"
+            v-if="!hasUpstream && !isLocked"
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
             :disabled="uploading"
             title="Replace image"
@@ -271,6 +321,19 @@ async function downloadImage() {
             @click.stop="downloadImage"
           >
             <Download class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
+            :class="isLocked
+              ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
+              : 'text-white/45 hover:text-white/85 hover:bg-white/[0.08]'"
+            :disabled="locking"
+            :title="isLocked ? 'Locked — pinned, upstream will be skipped on next Run. Click to unlock.' : 'Lock — pin this image so upstream generators don\'t re-run.'"
+            @click.stop="isLocked ? unlockArtifact() : lockArtifact()"
+          >
+            <Loader2 v-if="locking" class="size-3 animate-spin" />
+            <Lock v-else-if="isLocked" class="size-2.5" />
+            <LockOpen v-else class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
@@ -361,5 +424,13 @@ async function downloadImage() {
 .artifact-image--bypassed .artifact-frame {
   border-style: dashed;
   border-color: rgba(251, 191, 36, 0.35);
+}
+.artifact-image--locked .artifact-frame {
+  /* Amber tint to match the seed-lock toggle's visual language — same
+     "frozen / pinned" signal across the canvas. */
+  box-shadow:
+    0 0 0 1px rgba(251, 191, 36, 0.4),
+    0 4px 16px rgba(0, 0, 0, 0.4);
+  border-color: rgba(251, 191, 36, 0.25);
 }
 </style>

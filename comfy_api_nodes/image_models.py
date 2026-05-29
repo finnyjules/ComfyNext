@@ -10,6 +10,11 @@ The dispatch key is the model `id` — keep it identical across both files.
 Adding a model: append an entry to MODELS below, write its `build_input`
 function, then mirror the entry in the TS catalog. No other code change
 needed — GenerateImageNode picks up the new entry via IMAGE_MODELS_BY_ID.
+
+Scope (v1): models that accept a standard `aspect_ratio` string parameter.
+Models with `width/height`, `size`/`resolution` enums only, or non-standard
+text-input names (Wan 2.7, HiDream, SANA, SDXL, Z-Image, Riverflow, …) are
+out of v1 — they need a different node-side aspect-ratio control.
 """
 from __future__ import annotations
 
@@ -33,22 +38,28 @@ class ImageModel:
     build_input: ModelInputBuilder
 
 
-# ---------- Per-model builders ----------------------------------------------
-#
-# Each builder is a small, pure function — easy to test, easy to add. Keep
-# them stateless; share Replicate-friendly normalization (aspect-ratio
-# fallbacks, seed gating) inline rather than via shared mutable state.
-
+# ---------- Advanced bag helpers --------------------------------------------
 
 def _opt_int(advanced: dict, key: str, default: int) -> int:
-    """Read an int from the advanced bag, tolerating string serialization."""
     v = advanced.get(key, default)
-    if isinstance(v, bool):  # bool is subclass of int — guard explicitly
+    if isinstance(v, bool):
         return int(v)
     if isinstance(v, (int, float)):
         return int(v)
     try:
         return int(str(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _opt_float(advanced: dict, key: str, default: float) -> float:
+    v = advanced.get(key, default)
+    if isinstance(v, bool):
+        return float(v)
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(str(v))
     except (TypeError, ValueError):
         return default
 
@@ -67,65 +78,610 @@ def _opt_str(advanced: dict, key: str, default: str) -> str:
     return str(v) if v is not None else default
 
 
-# Aspect-ratio whitelists per upstream model. Kept here so each builder
-# can fall back to a sensible 1:1 when the caller asks for a ratio the
-# model doesn't accept (e.g. the gallery presented the union of all
-# supported ratios but the chosen model only takes a subset).
-_FLUX_1_1_PRO_AR = {
-    "1:1", "16:9", "3:2", "2:3", "4:5", "5:4", "3:4", "4:3", "9:16",
-}
-_IDEOGRAM_V3_AR = {
-    "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16", "1:3", "3:1",
-}
+def _maybe_set_seed(inp: dict, seed: int) -> None:
+    if seed and seed > 0:
+        inp["seed"] = seed
 
 
-def _build_flux_1_1_pro(prompt: str, aspect_ratio: str, seed: int, advanced: dict) -> dict:
-    inp: dict[str, Any] = {
+def _ar_or(advanced_ar_set: set[str], aspect_ratio: str, fallback: str = "1:1") -> str:
+    return aspect_ratio if aspect_ratio in advanced_ar_set else fallback
+
+
+# ---------- Common aspect-ratio sets ----------------------------------------
+
+_FLUX_PRO_AR  = {"1:1", "16:9", "3:2", "2:3", "4:5", "5:4", "3:4", "4:3", "9:16"}
+_FLUX_DEV_AR  = {"1:1", "16:9", "21:9", "3:2", "2:3", "4:5", "5:4", "3:4", "4:3", "9:16", "9:21"}
+_FLUX_2_AR    = {"1:1", "16:9", "3:2", "2:3", "4:5", "5:4", "9:16", "3:4", "4:3"}
+_FLUX_KLEIN_AR = {"1:1", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "21:9", "9:21"}
+_FLUX_ULTRA_AR = {"21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "9:21"}
+_IDEOGRAM_V2_AR = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16", "3:1", "1:3"}
+_IDEOGRAM_V3_AR = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "16:10", "10:16", "1:3", "3:1", "1:2", "2:1", "4:5", "5:4"}
+_GOOGLE_AR    = {"1:1", "16:9", "9:16", "4:3", "3:4"}
+_NANO_BANANA_AR = {"1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"}
+_NANO_BANANA_PRO_AR = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}
+_SEEDREAM_AR  = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"}
+_RECRAFT_AR   = {"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "1:2", "2:1"}
+_SD35_AR      = {"1:1", "16:9", "21:9", "3:2", "2:3", "4:5", "5:4", "9:16", "9:21"}
+_PHOTON_AR    = {"1:1", "3:4", "4:3", "9:16", "16:9", "9:21", "21:9"}
+_BRIA_AR      = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"}
+_MINIMAX_AR   = {"1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"}
+_QWEN_AR      = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+_OPENAI_AR    = {"1:1", "3:2", "2:3"}
+_HUNYUAN_AR   = {"1:1", "16:9", "21:9", "3:2", "2:3", "4:5", "5:4", "3:4", "4:3", "9:16", "9:21"}
+_GROK_AR      = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2"}
+_WAN22_AR     = {"1:1", "16:9", "9:16", "4:3", "3:4", "21:9"}
+_PIMAGE_AR    = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+_REVE_AR      = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+
+
+# ---------- Per-model builders ----------------------------------------------
+#
+# Each builder is a small, pure function. Read shared params + advanced bag,
+# produce the dict to send to Replicate. Default values mirror the TS catalog
+# so the UI and execution agree on what a "default" run looks like.
+
+# ===== BFL ==================================================================
+
+def _b_flux_1_1_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
         "prompt": prompt,
-        "aspect_ratio": aspect_ratio if aspect_ratio in _FLUX_1_1_PRO_AR else "1:1",
-        "safety_tolerance": _opt_int(advanced, "safety_tolerance", 2),
-        "prompt_upsampling": _opt_bool(advanced, "prompt_upsampling", False),
-        "output_format": _opt_str(advanced, "output_format", "png"),
+        "aspect_ratio": _ar_or(_FLUX_PRO_AR, ar),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "prompt_upsampling": _opt_bool(adv, "prompt_upsampling", False),
+        "output_format": _opt_str(adv, "output_format", "png"),
         "output_quality": 95,
     }
-    if seed and seed > 0:
-        inp["seed"] = seed
+    _maybe_set_seed(inp, seed)
     return inp
 
 
-def _build_ideogram_v3_turbo(prompt: str, aspect_ratio: str, seed: int, advanced: dict) -> dict:
-    inp: dict[str, Any] = {
+def _b_flux_1_1_pro_ultra(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
         "prompt": prompt,
-        "aspect_ratio": aspect_ratio if aspect_ratio in _IDEOGRAM_V3_AR else "1:1",
-        "magic_prompt_option": _opt_str(advanced, "magic_prompt", "Auto"),
+        "aspect_ratio": _ar_or(_FLUX_ULTRA_AR, ar),
+        "raw": _opt_bool(adv, "raw", False),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
     }
-    style = _opt_str(advanced, "style_type", "None")
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_PRO_AR, ar),
+        "guidance": _opt_float(adv, "guidance", 3.0),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "prompt_upsampling": _opt_bool(adv, "prompt_upsampling", False),
+        "output_format": _opt_str(adv, "output_format", "png"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
+        "num_inference_steps": _opt_int(adv, "num_inference_steps", 28),
+        "guidance": _opt_float(adv, "guidance", 3.5),
+        "megapixels": _opt_str(adv, "megapixels", "1"),
+        "go_fast": _opt_bool(adv, "go_fast", True),
+        "num_outputs": 1,
+        "output_format": _opt_str(adv, "output_format", "png"),
+        "output_quality": 95,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
+        "num_inference_steps": _opt_int(adv, "num_inference_steps", 4),
+        "megapixels": _opt_str(adv, "megapixels", "1"),
+        "go_fast": _opt_bool(adv, "go_fast", True),
+        "num_outputs": 1,
+        "output_format": _opt_str(adv, "output_format", "png"),
+        "output_quality": 95,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_2_max(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "1 MP"),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_2_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "1 MP"),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_2_flex(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "1 MP"),
+        "steps": _opt_int(adv, "steps", 30),
+        "guidance": _opt_float(adv, "guidance", 4.5),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "prompt_upsampling": _opt_bool(adv, "prompt_upsampling", True),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_flux_2_klein(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_KLEIN_AR, ar),
+        "output_megapixels": _opt_str(adv, "output_megapixels", "1"),
+        "go_fast": _opt_bool(adv, "go_fast", False),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Google ===============================================================
+
+def _b_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_NANO_BANANA_PRO_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "2K"),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+        "safety_filter_level": _opt_str(adv, "safety_filter_level", "block_only_high"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_NANO_BANANA_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "1K"),
+        "google_search": _opt_bool(adv, "google_search", False),
+        "image_search": _opt_bool(adv, "image_search", False),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_imagen_generic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_GOOGLE_AR, ar),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+        "safety_filter_level": _opt_str(adv, "safety_filter_level", "block_only_high"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Ideogram =============================================================
+
+def _b_ideogram_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_IDEOGRAM_V3_AR, ar),
+        "magic_prompt_option": _opt_str(adv, "magic_prompt", "Auto"),
+    }
+    style = _opt_str(adv, "style_type", "None")
     if style and style != "None":
         inp["style_type"] = style
-    if seed and seed > 0:
-        inp["seed"] = seed
+    _maybe_set_seed(inp, seed)
     return inp
 
 
-# ---------- Catalog ---------------------------------------------------------
+def _b_ideogram_v2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_IDEOGRAM_V2_AR, ar),
+        "style_type": _opt_str(adv, "style_type", "Auto"),
+        "magic_prompt_option": _opt_str(adv, "magic_prompt", "Auto"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== ByteDance ============================================================
+
+def _b_seedream_45(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
+        "size": _opt_str(adv, "size", "2K"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
+        "size": _opt_str(adv, "size", "2K"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_seedream_4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
+        "size": _opt_str(adv, "size", "2K"),
+        "enhance_prompt": _opt_bool(adv, "enhance_prompt", False),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_seedream_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
+        "guidance_scale": _opt_float(adv, "guidance_scale", 2.5),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Recraft ==============================================================
+#
+# Recraft V4 family doesn't take an `aspect_ratio` parameter directly — it
+# uses a `size` enum with a "Not set" sentinel that falls back to that.
+# To keep the gallery UI consistent (one aspect-ratio combo for all models),
+# we send `aspect_ratio` directly; Replicate's Recraft API also accepts the
+# enum form, so this works. If a future Recraft model rejects it we'll
+# switch to a per-model size map then.
+
+def _b_recraft_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_recraft_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
+        "style": _opt_str(adv, "style", "any"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_recraft_v3_svg(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
+        "style": _opt_str(adv, "style", "any"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Stability AI =========================================================
+
+def _b_sd35_family(prompt: str, ar: str, seed: int, adv: dict, *, cfg_default: float) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SD35_AR, ar),
+        "cfg": _opt_float(adv, "cfg", cfg_default),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+    }
+    negp = _opt_str(adv, "negative_prompt", "")
+    if negp:
+        inp["negative_prompt"] = negp
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_sd35_large(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    return _b_sd35_family(prompt, ar, seed, adv, cfg_default=5.0)
+
+
+def _b_sd35_large_turbo(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    return _b_sd35_family(prompt, ar, seed, adv, cfg_default=1.0)
+
+
+def _b_sd35_medium(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    return _b_sd35_family(prompt, ar, seed, adv, cfg_default=5.0)
+
+
+# ===== OpenAI ===============================================================
+
+def _b_gpt_image_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_OPENAI_AR, ar),
+        "quality": _opt_str(adv, "quality", "auto"),
+        "background": _opt_str(adv, "background", "auto"),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "number_of_images": 1,
+    }
+    # OpenAI ignores `seed` historically — we send it anyway and the
+    # endpoint silently drops it if unsupported.
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_gpt_image_15(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_OPENAI_AR, ar),
+        "quality": _opt_str(adv, "quality", "auto"),
+        "background": _opt_str(adv, "background", "auto"),
+        "input_fidelity": _opt_str(adv, "input_fidelity", "low"),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "number_of_images": 1,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Alibaba ==============================================================
+
+def _b_qwen_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_QWEN_AR, ar),
+        "guidance": _opt_float(adv, "guidance", 3.0),
+        "num_inference_steps": _opt_int(adv, "num_inference_steps", 30),
+        "enhance_prompt": _opt_bool(adv, "enhance_prompt", False),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "go_fast": True,
+    }
+    negp = _opt_str(adv, "negative_prompt", "")
+    if negp:
+        inp["negative_prompt"] = negp
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Tencent ==============================================================
+
+def _b_hunyuan_image_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_HUNYUAN_AR, ar),
+        "go_fast": _opt_bool(adv, "go_fast", True),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "output_quality": 95,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== xAI ==================================================================
+
+def _b_grok_imagine(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_GROK_AR, ar),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Pruna ================================================================
+
+def _b_flux_fast(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
+        "guidance": _opt_float(adv, "guidance", 3.5),
+        "num_inference_steps": _opt_int(adv, "num_inference_steps", 28),
+        "speed_mode": _opt_str(adv, "speed_mode", "Extra Juiced"),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_p_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_PIMAGE_AR, ar),
+        "prompt_upsampling": _opt_bool(adv, "prompt_upsampling", False),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_wan22_pruna(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_WAN22_AR, ar),
+        "megapixels": _opt_int(adv, "megapixels", 2),
+        "juiced": _opt_bool(adv, "juiced", False),
+        "output_format": _opt_str(adv, "output_format", "jpg"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Bria =================================================================
+
+def _b_bria_fibo(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_BRIA_AR, ar),
+        "guidance_scale": _opt_int(adv, "guidance_scale", 4),
+    }
+    negp = _opt_str(adv, "negative_prompt", "")
+    if negp:
+        inp["negative_prompt"] = negp
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_bria_image_32(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_BRIA_AR, ar),
+        "guidance_scale": _opt_float(adv, "guidance_scale", 4.0),
+        "prompt_enhancement": _opt_bool(adv, "prompt_enhancement", False),
+        "enhance_image": _opt_bool(adv, "enhance_image", False),
+    }
+    negp = _opt_str(adv, "negative_prompt", "")
+    if negp:
+        inp["negative_prompt"] = negp
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Luma =================================================================
+
+def _b_photon(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_PHOTON_AR, ar),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== MiniMax ==============================================================
+
+def _b_minimax_image_01(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_MINIMAX_AR, ar),
+        "prompt_optimizer": _opt_bool(adv, "prompt_optimizer", True),
+        "number_of_images": 1,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ===== Reve =================================================================
+
+def _b_reve_create(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # Reve defaults aspect_ratio to 3:2; mirror that fallback so a 1:1 request
+    # (when the user hasn't touched the combo) still lands on a ratio Reve
+    # accepts. The gallery's catalog declares 3:2 as the default too.
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_REVE_AR, ar, fallback="3:2"),
+        "version": _opt_str(adv, "version", "latest"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# ---------- Catalog (mirrors image-models.ts order) -------------------------
 
 MODELS: list[ImageModel] = [
-    ImageModel(
-        id="flux-1.1-pro",
-        label="Flux 1.1 Pro",
-        brand="BFL",
-        replicate_slug="black-forest-labs/flux-1.1-pro",
-        aspect_ratios=sorted(_FLUX_1_1_PRO_AR),
-        build_input=_build_flux_1_1_pro,
-    ),
-    ImageModel(
-        id="ideogram-v3-turbo",
-        label="Ideogram V3 Turbo",
-        brand="Ideogram",
-        replicate_slug="ideogram-ai/ideogram-v3-turbo",
-        aspect_ratios=sorted(_IDEOGRAM_V3_AR),
-        build_input=_build_ideogram_v3_turbo,
-    ),
+    # BFL ---------------------------------------------------------------------
+    ImageModel("flux-1.1-pro",       "Flux 1.1 Pro",        "BFL", "black-forest-labs/flux-1.1-pro",       sorted(_FLUX_PRO_AR),  _b_flux_1_1_pro),
+    ImageModel("flux-1.1-pro-ultra", "Flux 1.1 Pro Ultra",  "BFL", "black-forest-labs/flux-1.1-pro-ultra", sorted(_FLUX_ULTRA_AR), _b_flux_1_1_pro_ultra),
+    ImageModel("flux-pro",           "Flux Pro",            "BFL", "black-forest-labs/flux-pro",           sorted(_FLUX_PRO_AR),  _b_flux_pro),
+    ImageModel("flux-dev",           "Flux Dev",            "BFL", "black-forest-labs/flux-dev",           sorted(_FLUX_DEV_AR),  _b_flux_dev),
+    ImageModel("flux-schnell",       "Flux Schnell",        "BFL", "black-forest-labs/flux-schnell",       sorted(_FLUX_DEV_AR),  _b_flux_schnell),
+    ImageModel("flux-2-max",         "Flux 2 Max",          "BFL", "black-forest-labs/flux-2-max",         sorted(_FLUX_2_AR),    _b_flux_2_max),
+    ImageModel("flux-2-pro",         "Flux 2 Pro",          "BFL", "black-forest-labs/flux-2-pro",         sorted(_FLUX_2_AR),    _b_flux_2_pro),
+    ImageModel("flux-2-flex",        "Flux 2 Flex",         "BFL", "black-forest-labs/flux-2-flex",        sorted(_FLUX_2_AR),    _b_flux_2_flex),
+    ImageModel("flux-2-klein-4b",    "Flux 2 Klein 4B",     "BFL", "black-forest-labs/flux-2-klein-4b",    sorted(_FLUX_KLEIN_AR), _b_flux_2_klein),
+
+    # Google ------------------------------------------------------------------
+    ImageModel("nano-banana-pro",    "Nano Banana Pro",     "Google", "google/nano-banana-pro",            sorted(_NANO_BANANA_PRO_AR), _b_nano_banana_pro),
+    ImageModel("nano-banana-2",      "Nano Banana 2",       "Google", "google/nano-banana-2",              sorted(_NANO_BANANA_AR),     _b_nano_banana_2),
+    ImageModel("imagen-4-ultra",     "Imagen 4 Ultra",      "Google", "google/imagen-4-ultra",             sorted(_GOOGLE_AR),          _b_imagen_generic),
+    ImageModel("imagen-4",           "Imagen 4",            "Google", "google/imagen-4",                   sorted(_GOOGLE_AR),          _b_imagen_generic),
+    ImageModel("imagen-4-fast",      "Imagen 4 Fast",       "Google", "google/imagen-4-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
+    ImageModel("imagen-3",           "Imagen 3",            "Google", "google/imagen-3",                   sorted(_GOOGLE_AR),          _b_imagen_generic),
+    ImageModel("imagen-3-fast",      "Imagen 3 Fast",       "Google", "google/imagen-3-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
+
+    # Ideogram ----------------------------------------------------------------
+    ImageModel("ideogram-v3-quality",  "Ideogram V3 Quality",  "Ideogram", "ideogram-ai/ideogram-v3-quality",  sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
+    ImageModel("ideogram-v3-balanced", "Ideogram V3 Balanced", "Ideogram", "ideogram-ai/ideogram-v3-balanced", sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
+    ImageModel("ideogram-v3-turbo",    "Ideogram V3 Turbo",    "Ideogram", "ideogram-ai/ideogram-v3-turbo",    sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
+    ImageModel("ideogram-v2",          "Ideogram V2",          "Ideogram", "ideogram-ai/ideogram-v2",          sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
+    ImageModel("ideogram-v2a-turbo",   "Ideogram V2A Turbo",   "Ideogram", "ideogram-ai/ideogram-v2a-turbo",   sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
+
+    # ByteDance ---------------------------------------------------------------
+    ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45),
+    ImageModel("seedream-5-lite",    "Seedream 5 Lite",     "ByteDance", "bytedance/seedream-5-lite",       sorted(_SEEDREAM_AR), _b_seedream_5_lite),
+    ImageModel("seedream-4",         "Seedream 4",          "ByteDance", "bytedance/seedream-4",            sorted(_SEEDREAM_AR), _b_seedream_4),
+    ImageModel("seedream-3",         "Seedream 3",          "ByteDance", "bytedance/seedream-3",            sorted(_SEEDREAM_AR), _b_seedream_3),
+
+    # Recraft -----------------------------------------------------------------
+    ImageModel("recraft-v4-pro",     "Recraft V4 Pro",      "Recraft", "recraft-ai/recraft-v4-pro",         sorted(_RECRAFT_AR), _b_recraft_v4),
+    ImageModel("recraft-v4-pro-svg", "Recraft V4 Pro SVG",  "Recraft", "recraft-ai/recraft-v4-pro-svg",     sorted(_RECRAFT_AR), _b_recraft_v4),
+    ImageModel("recraft-v4",         "Recraft V4",          "Recraft", "recraft-ai/recraft-v4",             sorted(_RECRAFT_AR), _b_recraft_v4),
+    ImageModel("recraft-v4-svg",     "Recraft V4 SVG",      "Recraft", "recraft-ai/recraft-v4-svg",         sorted(_RECRAFT_AR), _b_recraft_v4),
+    ImageModel("recraft-v3",         "Recraft V3",          "Recraft", "recraft-ai/recraft-v3",             sorted(_RECRAFT_AR), _b_recraft_v3),
+    ImageModel("recraft-v3-svg",     "Recraft V3 SVG",      "Recraft", "recraft-ai/recraft-v3-svg",         sorted(_RECRAFT_AR), _b_recraft_v3_svg),
+
+    # Stability AI ------------------------------------------------------------
+    ImageModel("stable-diffusion-3.5-large",       "Stable Diffusion 3.5 Large",       "Stability AI", "stability-ai/stable-diffusion-3.5-large",       sorted(_SD35_AR), _b_sd35_large),
+    ImageModel("stable-diffusion-3.5-large-turbo", "Stable Diffusion 3.5 Large Turbo", "Stability AI", "stability-ai/stable-diffusion-3.5-large-turbo", sorted(_SD35_AR), _b_sd35_large_turbo),
+    ImageModel("stable-diffusion-3.5-medium",      "Stable Diffusion 3.5 Medium",      "Stability AI", "stability-ai/stable-diffusion-3.5-medium",      sorted(_SD35_AR), _b_sd35_medium),
+
+    # OpenAI ------------------------------------------------------------------
+    ImageModel("gpt-image-2",        "GPT Image 2",         "OpenAI", "openai/gpt-image-2",                 sorted(_OPENAI_AR), _b_gpt_image_2),
+    ImageModel("gpt-image-1.5",      "GPT Image 1.5",       "OpenAI", "openai/gpt-image-1.5",               sorted(_OPENAI_AR), _b_gpt_image_15),
+
+    # Alibaba -----------------------------------------------------------------
+    ImageModel("qwen-image",         "Qwen Image",          "Alibaba", "qwen/qwen-image",                   sorted(_QWEN_AR), _b_qwen_image),
+
+    # Tencent -----------------------------------------------------------------
+    ImageModel("hunyuan-image-3",    "Hunyuan Image 3",     "Tencent", "tencent/hunyuan-image-3",           sorted(_HUNYUAN_AR), _b_hunyuan_image_3),
+
+    # xAI ---------------------------------------------------------------------
+    ImageModel("grok-imagine",       "Grok Imagine",        "xAI", "xai/grok-imagine-image",                sorted(_GROK_AR), _b_grok_imagine),
+
+    # Pruna -------------------------------------------------------------------
+    ImageModel("flux-fast",          "Flux Fast (Pruna)",   "Pruna", "prunaai/flux-fast",                   sorted(_FLUX_DEV_AR), _b_flux_fast),
+    ImageModel("p-image",            "P-Image",             "Pruna", "prunaai/p-image",                     sorted(_PIMAGE_AR),   _b_p_image),
+    ImageModel("wan-2.2-image-pruna", "Wan 2.2 Image (Pruna)", "Pruna", "prunaai/wan-2.2-image",            sorted(_WAN22_AR),    _b_wan22_pruna),
+
+    # Bria --------------------------------------------------------------------
+    ImageModel("bria-fibo",          "Bria Fibo",           "Bria", "bria/fibo",                            sorted(_BRIA_AR), _b_bria_fibo),
+    ImageModel("bria-image-3.2",     "Bria Image 3.2",      "Bria", "bria/image-3.2",                       sorted(_BRIA_AR), _b_bria_image_32),
+
+    # Luma --------------------------------------------------------------------
+    ImageModel("photon",             "Photon",              "Luma", "luma/photon",                          sorted(_PHOTON_AR), _b_photon),
+    ImageModel("photon-flash",       "Photon Flash",        "Luma", "luma/photon-flash",                    sorted(_PHOTON_AR), _b_photon),
+
+    # MiniMax -----------------------------------------------------------------
+    ImageModel("minimax-image-01",   "MiniMax Image 01",    "MiniMax", "minimax/image-01",                  sorted(_MINIMAX_AR), _b_minimax_image_01),
+
+    # Reve --------------------------------------------------------------------
+    ImageModel("reve-create",        "Reve Create",         "Reve",    "reve/create",                       sorted(_REVE_AR),    _b_reve_create),
 ]
 
 IMAGE_MODELS_BY_ID: dict[str, ImageModel] = {m.id: m for m in MODELS}

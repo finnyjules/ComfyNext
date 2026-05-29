@@ -1,0 +1,188 @@
+<script setup lang="ts">
+/**
+ * FontPicker — searchable font chooser for the Font Playground. Trigger button
+ * opens an inline panel (clip-safe inside a node) listing the curated Featured
+ * variable fonts plus the full Google catalog (lazy-loaded on first open and
+ * filtered as you type). Emits a `pick` the widget turns into playground state.
+ */
+import { VARIABLE_FONTS, type VariableFont } from '~/data/variable-fonts'
+import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
+import { onClickOutside } from '@vueuse/core'
+
+const props = defineProps<{
+  selectedKey: string   // 'var:<id>' or 'goog:<family>' — highlights the active row
+  label: string         // current font name shown on the trigger
+  sublabel?: string     // 'Variable' | 'Google'
+}>()
+const emit = defineEmits<{
+  pick: [payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont }]
+}>()
+
+const LIMIT = 60
+
+const root = ref<HTMLElement | null>(null)
+const searchEl = ref<HTMLInputElement | null>(null)
+const open = ref(false)
+const query = ref('')
+const catalog = ref<GoogleFont[]>([])
+const loading = ref(false)
+
+onClickOutside(root, () => { if (open.value) close() })
+
+function toggle() {
+  open.value = !open.value
+  if (!open.value) return
+  query.value = ''
+  nextTick(() => searchEl.value?.focus())
+  if (!catalog.value.length) {
+    loading.value = true
+    loadGoogleCatalog().then(list => { catalog.value = list }).finally(() => { loading.value = false })
+  }
+}
+function close() { open.value = false; query.value = '' }
+
+const q = computed(() => query.value.trim().toLowerCase())
+
+const featured = computed(() => {
+  if (!q.value) return VARIABLE_FONTS
+  return VARIABLE_FONTS.filter(f =>
+    f.label.toLowerCase().includes(q.value) || f.family.toLowerCase().includes(q.value))
+})
+
+const googleMatches = computed(() => {
+  if (!q.value) return catalog.value
+  const starts: GoogleFont[] = [], has: GoogleFont[] = []
+  for (const f of catalog.value) {
+    const fam = f.family.toLowerCase()
+    if (fam.startsWith(q.value)) starts.push(f)
+    else if (fam.includes(q.value)) has.push(f)
+  }
+  return [...starts, ...has]
+})
+const googleShown = computed(() => googleMatches.value.slice(0, LIMIT))
+
+function pickVariable(f: VariableFont) { emit('pick', { source: 'variable', id: f.id }); close() }
+function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f }); close() }
+</script>
+
+<template>
+  <div ref="root" class="fp nopan nodrag">
+    <button type="button" class="fp__trigger" @click="toggle">
+      <span class="fp__trigger-label">{{ label }}</span>
+      <span v-if="sublabel" class="fp__trigger-tag">{{ sublabel }}</span>
+      <span class="fp__caret" :class="{ 'fp__caret--open': open }">▾</span>
+    </button>
+
+    <div v-if="open" class="fp__panel">
+      <input
+        ref="searchEl"
+        v-model="query"
+        class="fp__search"
+        placeholder="Search fonts…"
+      />
+      <div class="fp__list">
+        <template v-if="featured.length">
+          <div class="fp__group">Featured</div>
+          <button
+            v-for="f in featured"
+            :key="'v' + f.id"
+            type="button"
+            class="fp__row"
+            :class="{ 'fp__row--sel': selectedKey === 'var:' + f.id }"
+            @click="pickVariable(f)"
+          >
+            <span class="fp__row-name">{{ f.label }}</span>
+            <span class="fp__row-meta">{{ f.category }}</span>
+          </button>
+        </template>
+
+        <div class="fp__group">
+          Google Fonts
+          <span v-if="loading" class="fp__hint">loading…</span>
+          <span v-else-if="catalog.length" class="fp__hint">{{ googleMatches.length }}</span>
+        </div>
+        <button
+          v-for="f in googleShown"
+          :key="'g' + f.family"
+          type="button"
+          class="fp__row"
+          :class="{ 'fp__row--sel': selectedKey === 'goog:' + f.family }"
+          @click="pickGoogle(f)"
+        >
+          <span class="fp__row-name">{{ f.family }}</span>
+          <span class="fp__row-meta">{{ f.axes.length ? 'variable' : f.category }}</span>
+        </button>
+
+        <div v-if="!loading && googleMatches.length > googleShown.length" class="fp__more">
+          +{{ googleMatches.length - googleShown.length }} more — keep typing to narrow
+        </div>
+        <div v-if="!loading && q && !featured.length && !googleMatches.length" class="fp__more">
+          No fonts match “{{ query }}”.
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.fp { position: relative; width: 100%; }
+.fp__trigger {
+  width: 100%;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.92);
+  cursor: pointer;
+}
+.fp__trigger:hover { border-color: rgba(255,255,255,0.25); }
+.fp__trigger-label { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp__trigger-tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: rgba(199,210,254,0.85); background: rgba(129,140,248,0.18);
+  padding: 1px 5px; border-radius: 4px;
+}
+.fp__caret { color: rgba(255,255,255,0.45); transition: transform 0.15s; }
+.fp__caret--open { transform: rotate(180deg); }
+
+.fp__panel {
+  margin-top: 5px;
+  background: #161616;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.fp__search {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.92);
+  outline: none;
+}
+.fp__search:focus { border-color: rgba(129,140,248,0.5); }
+.fp__list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
+.fp__group {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: rgba(255,255,255,0.4);
+  padding: 6px 4px 3px;
+  position: sticky; top: 0; background: #161616;
+}
+.fp__hint { text-transform: none; letter-spacing: 0; color: rgba(255,255,255,0.3); }
+.fp__row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 5px 7px; border-radius: 5px;
+  background: none; border: none; cursor: pointer; text-align: left;
+}
+.fp__row:hover { background: rgba(255,255,255,0.07); }
+.fp__row--sel { background: rgba(129,140,248,0.2); }
+.fp__row-name { font-size: 12px; color: rgba(255,255,255,0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp__row-meta { font-size: 9.5px; color: rgba(255,255,255,0.4); flex-shrink: 0; }
+.fp__more { font-size: 10px; color: rgba(255,255,255,0.35); padding: 6px 7px; }
+</style>

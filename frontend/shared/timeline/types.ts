@@ -26,6 +26,15 @@ export interface Track {
   clips: Clip[]
 }
 
+/** A keyframe is a full transform snapshot at a clip-local frame. When a clip
+ *  has keyframes, they drive x/y/rotation/scale/opacity over time (interpolated);
+ *  absent ⇒ the static scalars on the clip are used (back-compat). */
+export interface Keyframe {
+  frame: number
+  x: number; y: number; rotation: number; scale: number; opacity: number
+  ease?: 'linear' | 'easeInOut'
+}
+
 export interface BaseClip {
   id: string
   kind: string
@@ -43,6 +52,8 @@ export interface BaseClip {
   volume?: number
   audio_fade_in?: number
   audio_fade_out?: number
+  /** Animation keyframes (clip-local frames). Present ⇒ transform animates. */
+  keyframes?: Keyframe[]
 }
 
 export interface VideoClip extends BaseClip {
@@ -81,7 +92,44 @@ export interface WorkflowClip extends BaseClip {
   port_index: number
 }
 
-export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip
+// ── Animated typography clips (GSAP-driven) ─────────────────────────────────
+
+export interface TitleSpec {
+  text: string
+  font_family: string
+  font_weight: number
+  font_size: number        // normalized to canvas height (0..1)
+  color: string
+  animation_in: string     // kinetic preset id (e.g. 'stagger-up')
+  animation_out: string    // kinetic preset id for exit (e.g. 'fade-out-up')
+  hold_frames: number      // frames to hold between in and out animations
+  stagger: number          // seconds between animation units
+  ease: string             // GSAP ease string
+}
+
+export interface TitleClip extends BaseClip {
+  kind: 'title'
+  title: TitleSpec
+}
+
+export type LowerThirdStyle = 'bar' | 'minimal' | 'boxed'
+
+export interface LowerThirdSpec {
+  name: string             // primary text (e.g. speaker name)
+  subtitle: string         // secondary text (e.g. job title)
+  style: LowerThirdStyle
+  accent_color: string     // bar/accent color
+  text_color: string
+  animation_in: 'slide-right' | 'slide-up' | 'fade' | 'wipe'
+  hold_frames: number
+}
+
+export interface LowerThirdClip extends BaseClip {
+  kind: 'lower_third'
+  lower_third: LowerThirdSpec
+}
+
+export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip
 
 export interface Asset {
   id: string

@@ -12,6 +12,7 @@ import pytest
 from comfy_api_nodes.text_effects import (
     EFFECTS_BY_ID,
     DEFAULT_EFFECT_ID,
+    MATCH_INPUT_AR,
     build_prompt,
     build_edit_prompt,
     build_text_effect_request,
@@ -35,9 +36,29 @@ def test_restyle_mode_uses_flux_kontext():
         "liquid-chrome", "", "16:9", seed=0, image_data_url="DATA_URL")
     assert slug == _EDIT_MODEL_SLUG == "black-forest-labs/flux-kontext-pro"
     assert inp["input_image"] == "DATA_URL"
-    assert inp["aspect_ratio"] == "match_input_image"
+    # The chosen ratio is honoured (no longer forced to match_input_image).
+    assert inp["aspect_ratio"] == "16:9"
     assert inp["output_format"] == "png"
     assert inp["prompt"] == build_edit_prompt("liquid-chrome", "")
+
+
+def test_restyle_honours_chosen_aspect_ratio():
+    _, square = build_text_effect_request(
+        "liquid-chrome", "", "1:1", seed=0, image_data_url="DATA_URL")
+    assert square["aspect_ratio"] == "1:1"
+
+
+def test_restyle_match_input_keeps_source_crop():
+    _, inp = build_text_effect_request(
+        "liquid-chrome", "", MATCH_INPUT_AR, seed=0, image_data_url="DATA_URL")
+    assert inp["aspect_ratio"] == "match_input_image"
+
+
+def test_restyle_unsupported_ratio_falls_back_to_match_input():
+    # 16:10 is a valid generate ratio but not a Flux Kontext one.
+    _, inp = build_text_effect_request(
+        "liquid-chrome", "", "16:10", seed=0, image_data_url="DATA_URL")
+    assert inp["aspect_ratio"] == "match_input_image"
 
 
 def test_generate_requires_text_but_restyle_does_not():

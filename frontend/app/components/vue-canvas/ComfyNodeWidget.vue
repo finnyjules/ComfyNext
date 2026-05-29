@@ -414,11 +414,61 @@ function formatLabel(name: string): string {
 <template>
   <div class="px-2" data-slot="comfy-node-field">
     <!-- Backend-marked custom widget: skip the standard label + renderer chain
-         and hand the whole slot to the model picker (it owns its own label). -->
-    <template v-if="widgetDef.comfynext_widget === 'model_picker'">
+         and hand the whole slot to the model picker (it owns its own label).
+         `video_model_picker` is the same widget pointed at the video catalog. -->
+    <template v-if="widgetDef.comfynext_widget === 'model_picker' || widgetDef.comfynext_widget === 'video_model_picker' || widgetDef.comfynext_widget === 'text_effect_picker'">
       <VueCanvasWidgetsWidgetModelPicker
         :model-value="modelValue"
         :node-id="nodeId"
+        :kind="widgetDef.comfynext_widget === 'video_model_picker' ? 'video' : widgetDef.comfynext_widget === 'text_effect_picker' ? 'text_effect' : 'image'"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- 3-axis camera gimbal: drives RotateCameraNode. The widget owns its
+         own label and produces a JSON string {yaw,pitch,roll}. `nodeId` is
+         forwarded so the widget can look up the connected image and render
+         it inside the gimbal as a reference plane. -->
+    <template v-else-if="widgetDef.comfynext_widget === 'camera_gimbal'">
+      <VueCanvasWidgetsWidgetCameraGimbal
+        :model-value="modelValue"
+        :node-id="nodeId"
+        :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- Variable-font playground: drives RenderType. Owns its full UI and
+         produces a JSON state blob (font, axes, colors, uploaded filename). -->
+    <template v-else-if="widgetDef.comfynext_widget === 'font_playground'">
+      <VueCanvasWidgetsWidgetFontPlayground
+        :model-value="modelValue"
+        :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- Kinetic Typography: animated text with GSAP SplitText. Produces a
+         JSON state blob (text, preset, font, animation params, frame filenames). -->
+    <template v-else-if="widgetDef.comfynext_widget === 'kinetic_type'">
+      <VueCanvasWidgetsWidgetKineticType
+        :model-value="modelValue"
+        :node-id="nodeId"
+        :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- Text Mask: renders text as a B&W clipping mask. Same font infra
+         as Font Playground, always white-on-black (or inverted). -->
+    <template v-else-if="widgetDef.comfynext_widget === 'text_mask'">
+      <VueCanvasWidgetsWidgetTextMask
+        :model-value="modelValue"
+        :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- Text on Path: renders text along an arc/circle/wave/curve. -->
+    <template v-else-if="widgetDef.comfynext_widget === 'text_on_path'">
+      <VueCanvasWidgetsWidgetTextOnPath
+        :model-value="modelValue"
+        :label="formatLabel(widgetDef.name)"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>

@@ -213,9 +213,8 @@ function isVideo(filename: string): boolean {
     </div>
 
     <!-- Section 2b: Apps — polished, single-purpose surfaces built on the node engine.
-         Distinct from "Starter workflows" below: apps you RUN, workflows you EDIT.
-         Hidden — set v-if="true" to bring this section back. -->
-    <div v-if="false">
+         Distinct from "Starter workflows" below: apps you RUN, workflows you EDIT. -->
+    <div>
       <div class="flex justify-between items-center mb-1">
         <h2 class="text-[20px] font-medium text-white tracking-[0.2px]">
           Apps
@@ -375,9 +374,8 @@ function isVideo(filename: string): boolean {
     </div>
 
     <!-- Section 4: Starter workflows — pre-built graphs that open in the canvas
-         for power users to inspect and customize. Sibling to Apps above.
-         Hidden — set v-if="true" to bring this section back. -->
-    <div v-if="false">
+         for power users to inspect and customize. Sibling to Apps above. -->
+    <div>
       <div class="flex justify-between items-center mb-1">
         <h2 class="text-[20px] font-medium text-white tracking-[0.2px]">
           Starter workflows

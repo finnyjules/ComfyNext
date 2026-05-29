@@ -471,6 +471,11 @@ const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
   // Text / LLM
   ChatLLMNode:             { useCase: 'Chat with an LLM',          model: 'GPT-5 / Claude / Gemini' },
   ImprovePromptNode:       { useCase: 'Improve a prompt',          model: 'GPT-5 nano' },
+  SummarizeTextNode:       { useCase: 'Summarize text',            model: 'Gemini 3 Flash' },
+  TranslateTextNode:       { useCase: 'Translate text',            model: 'Gemini 3 Flash' },
+  RewriteToneNode:         { useCase: 'Rewrite in a tone',         model: 'Claude 4.5 Haiku' },
+  BrainstormIdeasNode:     { useCase: 'Brainstorm ideas',          model: 'GPT-5 mini' },
+  ReasonStepByStepNode:    { useCase: 'Think step by step',        model: 'DeepSeek R1' },
 }
 
 // Per-model classes are still registered server-side for back-compat with

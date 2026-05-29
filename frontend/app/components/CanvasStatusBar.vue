@@ -1,0 +1,160 @@
+<script setup lang="ts">
+/**
+ * Status bar that sits at the top-center of the canvas while a workflow is
+ * running, and briefly summarizes the last result after it finishes. Replaces
+ * the "Workflow started" / "Workflow completed" / "Workflow failed" toasts —
+ * one place to look at the state of the run instead of stacked floaters.
+ *
+ * States:
+ *   - idle:    component renders nothing
+ *   - running: spinner + node name + N/total + elapsed
+ *   - success: green check + duration (auto-clears after a few seconds)
+ *   - error:   red icon + node + message + dismiss (persists until cleared)
+ */
+import { CheckCircle2, Loader2, AlertCircle, X, Square } from 'lucide-vue-next'
+
+export type RunResult =
+  // `cost` is the Comfy-credits delta (used for native nodes that hit Comfy's
+  // billing). `usd` is the Replicate dollar estimate (used when the run hit
+  // the user's own Replicate account — their balance, not Comfy's). The two
+  // are mutually exclusive: a run is either Replicate-billed or Comfy-billed.
+  // Both can be omitted when we couldn't determine cost (free, local, unknown).
+  | {
+      kind: 'success'; durationMs: number; at: number;
+      cost?: number | null;
+      usd?: number | null;
+      usdApproximate?: boolean;
+    }
+  | { kind: 'error'; nodeName: string; message: string; at: number }
+
+const props = defineProps<{
+  running: boolean
+  currentNode: string
+  progress: { completed: number; total: number }
+  percent: number
+  startedAt: number | null
+  lastResult: RunResult | null
+}>()
+
+const emit = defineEmits<{
+  stop: []
+  dismissResult: []
+}>()
+
+// Tick once a second so the elapsed time stays live without the parent
+// having to push updates.
+const now = ref(Date.now())
+let tickId: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  tickId = setInterval(() => { now.value = Date.now() }, 1000)
+})
+onBeforeUnmount(() => {
+  if (tickId) clearInterval(tickId)
+})
+
+const elapsedSec = computed(() => {
+  if (!props.startedAt) return 0
+  return Math.max(0, (now.value - props.startedAt) / 1000)
+})
+
+function fmtSec(s: number): string {
+  if (s < 10) return `${s.toFixed(1)}s`
+  if (s < 60) return `${Math.round(s)}s`
+  const m = Math.floor(s / 60)
+  const rest = Math.round(s - m * 60)
+  return `${m}m ${rest}s`
+}
+
+const view = computed<'running' | 'success' | 'error' | null>(() => {
+  if (props.running) return 'running'
+  if (props.lastResult?.kind === 'error') return 'error'
+  if (props.lastResult?.kind === 'success') return 'success'
+  return null
+})
+</script>
+
+<template>
+  <Transition
+    enter-active-class="transition-all duration-200 ease-out"
+    enter-from-class="opacity-0 -translate-y-1"
+    enter-to-class="opacity-100 translate-y-0"
+    leave-active-class="transition-all duration-150 ease-in"
+    leave-from-class="opacity-100"
+    leave-to-class="opacity-0 -translate-y-1"
+  >
+    <div
+      v-if="view"
+      class="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-[640px] px-3 py-1.5 rounded-full bg-[#1a1a1a]/95 backdrop-blur-sm border shadow-lg"
+      :class="{
+        'border-white/10': view === 'running',
+        'border-emerald-500/30': view === 'success',
+        'border-red-500/35': view === 'error',
+      }"
+    >
+      <!-- Running -->
+      <template v-if="view === 'running'">
+        <Loader2 class="size-3.5 shrink-0 animate-spin text-comfy-blue" />
+        <span class="text-[12px] text-white/85 truncate max-w-[280px]" :title="currentNode">
+          {{ currentNode || 'Starting…' }}
+        </span>
+        <span v-if="progress.total > 0" class="text-[11px] text-white/45 tabular-nums shrink-0">
+          {{ progress.completed }}/{{ progress.total }}
+        </span>
+        <span v-if="percent > 0 && percent < 100" class="text-[11px] text-white/40 tabular-nums shrink-0">
+          {{ percent }}%
+        </span>
+        <span class="text-[11px] text-white/45 tabular-nums shrink-0">
+          {{ fmtSec(elapsedSec) }}
+        </span>
+        <button
+          class="ml-1 shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-comfy-coral hover:bg-white/[0.08] transition-colors cursor-pointer"
+          title="Stop"
+          @click="emit('stop')"
+        >
+          <Square class="size-2.5" fill="currentColor" />
+        </button>
+      </template>
+
+      <!-- Success -->
+      <template v-else-if="view === 'success' && lastResult?.kind === 'success'">
+        <CheckCircle2 class="size-3.5 shrink-0 text-emerald-400" />
+        <span class="text-[12px] text-white/85">
+          Done in {{ fmtSec(lastResult.durationMs / 1000) }}
+        </span>
+        <!-- Cost. Prefer USD (Replicate BYOK) — the user's Replicate
+             balance is dollar-based and doesn't move Comfy's credit balance.
+             Fall back to credits (Comfy native). Both hidden when zero/unknown
+             so local-only runs don't read like "free!" advertising. -->
+        <span
+          v-if="typeof lastResult.usd === 'number' && lastResult.usd > 0"
+          class="text-[11px] text-white/45 tabular-nums shrink-0"
+        >
+          · {{ lastResult.usdApproximate ? '~' : '' }}${{ lastResult.usd.toFixed(lastResult.usd >= 1 ? 2 : 3) }}
+        </span>
+        <span
+          v-else-if="typeof lastResult.cost === 'number' && lastResult.cost > 0"
+          class="text-[11px] text-white/45 tabular-nums shrink-0"
+        >
+          · −{{ lastResult.cost.toLocaleString() }} credits
+        </span>
+      </template>
+
+      <!-- Error -->
+      <template v-else-if="view === 'error' && lastResult?.kind === 'error'">
+        <AlertCircle class="size-3.5 shrink-0 text-red-400" />
+        <span class="text-[12px] text-white/85 shrink-0">{{ lastResult.nodeName }} failed</span>
+        <span
+          class="text-[11px] text-red-200/85 truncate"
+          :title="lastResult.message"
+        >— {{ lastResult.message }}</span>
+        <button
+          class="ml-1 shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+          title="Dismiss"
+          @click="emit('dismissResult')"
+        >
+          <X class="size-3" />
+        </button>
+      </template>
+    </div>
+  </Transition>
+</template>

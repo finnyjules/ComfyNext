@@ -61,7 +61,7 @@ import {
 // `regular`; pass `weight="regular"` at the render site if needed.
 import { PhSelectionForeground } from '@phosphor-icons/vue'
 
-export type Domain = 'image' | 'audio' | 'video' | '3d'
+export type Domain = 'image' | 'text' | 'audio' | 'video' | '3d'
 
 // Toolbox-visible id for a model bundle (declared server-side via
 // _model_downloads.register_bundle). Add new keys here as we ship new ML nodes.
@@ -92,6 +92,7 @@ export interface ToolboxSection {
 // so the same surface = the same hue across the app.
 export const TOOLBOX_DOMAINS: { id: Domain; label: string; icon: Component; color: string }[] = [
   { id: 'image', label: 'Image', icon: ImageDomainIcon, color: '#96b4ff' },
+  { id: 'text',  label: 'Text',  icon: TypeIcon,        color: '#f5c842' },
   { id: 'audio', label: 'Audio', icon: AudioIcon,       color: '#ff99f7' },
   { id: 'video', label: 'Video', icon: VideoIcon,       color: '#54f4cf' },
   { id: '3d',    label: '3D',    icon: BoxIcon,         color: '#ffb984' },
@@ -109,7 +110,6 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Source',
     items: [
       { nodeType: 'Image', label: 'Image', description: 'Universal image artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: Image },
-      { nodeType: 'Text',  label: 'Text',  description: 'Universal text artifact. Type into the card or wire an LLM upstream; the value flows downstream.', icon: TypeIcon },
     ],
   },
   {
@@ -195,9 +195,8 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
       { nodeType: 'ApplyMask', label: 'Apply Mask', description: 'Multiply the image by a mask (white = keep, black = remove).', icon: Image },
       { nodeType: 'ThresholdMask', label: 'Threshold Mask', description: 'Build a mask from image luminance above a threshold.', icon: ImageOff },
       { nodeType: 'ColorRangeMask', label: 'Color Range', description: 'Build a mask from pixels matching a target color.', icon: Pipette },
-      { nodeType: 'Compositor', label: 'Compositor', description: 'Stack up to 4 image layers with transform, opacity, and blend.', icon: Layers2 },
-      { nodeType: 'SmartLayout', label: 'Smart Layout', description: 'Compose a layout visually and render it across one or more aspect ratios. Edit on the canvas via the “Edit layout” button.', icon: LayoutTemplate },
-      { nodeType: 'Text', label: 'Text', description: 'Editable text passthrough. Wire an LLM (Claude / Gemini / Whisper) into it, view and tweak the value, send downstream into SmartLayout’s text_layers or anywhere else expecting a STRING.', icon: TypeIcon },
+      { nodeType: 'Compositor', label: 'Frame', description: 'An artboard on your canvas — drop in images, add text and shapes, wire in generations, then composite. Outputs a single image, like a Photoshop/Figma frame.', icon: Frame },
+      { nodeType: 'SmartLayout', label: 'Smart Layout', description: 'Compose a layout visually and render it across one or more aspect ratios. Edit on the canvas via the "Edit layout" button.', icon: LayoutTemplate },
       { nodeType: 'MatteGrowShrink', label: 'Grow / Shrink', description: 'Dilate or erode a mask, with optional feathering.', icon: ExpandIcon },
       { nodeType: 'MergeAlpha', label: 'Merge Alpha', description: 'Combine an image with a mask into an RGBA image.', icon: LayersPlus },
       { nodeType: 'MaskByText', label: 'Mask by Text', description: 'Generate a mask from a text prompt describing the area (CLIPSeg).', icon: TypeIcon },
@@ -281,6 +280,52 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
       { nodeType: 'UpscaleImage', label: 'Upscale 2×', description: 'Real-ESRGAN 2× upscale. Doubles each dimension while sharpening detail. Downloads ~64 MB on first use.', icon: Maximize, requiresModels: 'upscale' },
     ],
   },
+  {
+    title: 'Create',
+    items: [
+      { nodeType: 'RotateCameraNode', label: 'Rotate Camera',   description: 'Re-render an image from a new viewpoint with a 3-axis camera gimbal. Powered by Qwen-Image-Edit. Cloud, ~$0.04.', icon: Camera },
+    ],
+  },
+
+  // ---------- Text domain ----------
+  {
+    domain: 'text',
+    title: 'Source',
+    items: [
+      { nodeType: 'Text', label: 'Text', description: 'Universal text artifact. Type into the card or wire an LLM upstream; the value flows downstream into any node expecting a STRING.', icon: TypeIcon },
+    ],
+  },
+  {
+    domain: 'text',
+    title: 'Typography',
+    items: [
+      { nodeType: 'RenderType',      label: 'Font Playground', description: 'Render a word in a real variable font — drag weight, width, slant and other axes live. Local render, no AI, no cost.', icon: TypeIcon },
+      { nodeType: 'TextOnPath',      label: 'Text on Path',    description: 'Render text along an arc, circle, wave, or curve — each char follows the path. Local render, no cost.', icon: Spline },
+      { nodeType: 'TextMask',        label: 'Text Mask',       description: 'Use text as a clipping mask — type shows through to the image behind it. Local render, no cost.', icon: TypeIcon },
+    ],
+  },
+  {
+    domain: 'text',
+    title: 'Motion',
+    items: [
+      { nodeType: 'KineticType',     label: 'Kinetic Type',    description: 'Animated text — type a word, pick a motion preset (stagger, wave, scramble, elastic…), get a frame sequence. GSAP-powered, local, no cost.', icon: Film },
+    ],
+  },
+  {
+    domain: 'text',
+    title: 'Effects',
+    items: [
+      { nodeType: 'TextEffectNode',  label: 'Text Effect',     description: 'Type a word, pick a treatment (liquid chrome, holographic, brutalist, molten…) — Ideogram renders it as typographic art. Cloud, ~$0.04.', icon: Sparkles },
+    ],
+  },
+  {
+    domain: 'text',
+    title: 'Video',
+    items: [
+      { nodeType: 'TextClip',        label: 'Text Clip',       description: 'Render text as a clip you can drop into a Timeline layer.', icon: TypeIcon },
+      { nodeType: 'CaptionTrack',    label: 'Captions',        description: 'Burn timed captions onto a clip. One line per caption.', icon: MessageSquare },
+    ],
+  },
 
   // ---------- Audio domain ----------
   {
@@ -342,7 +387,6 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
       { nodeType: 'Video',                label: 'Video',              description: 'Universal video artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: VideoIcon },
       { nodeType: 'LoadVideoFrames',      label: 'Load Video',         description: 'Load a video file and output its frames directly as an image batch — plugs straight into the Timeline.', icon: FileVideo },
       { nodeType: 'SaveVideoFrames',      label: 'Save Video',         description: 'Encode an image batch to .mp4 with optional audio. The output-side counterpart to Load Video.', icon: FileVideo },
-      { nodeType: 'TextClip',             label: 'Text Clip',          description: 'Render text as a clip you can drop into a Timeline layer.', icon: TypeIcon },
       { nodeType: 'AudioWaveform',        label: 'Audio Waveform',     description: 'Visualize audio as bars, waves, dots, or a radial spectrum — drop into the Timeline.', icon: AudioLines },
     ],
   },
@@ -386,7 +430,6 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Composite',
     items: [
       { nodeType: 'ChromaKey',            label: 'Chroma Key',         description: 'Knock out a key color (green/blue screen) and emit a soft mask.', icon: Sparkle },
-      { nodeType: 'CaptionTrack',         label: 'Captions',           description: 'Burn timed captions onto a clip. One line per caption.', icon: MessageSquare },
     ],
   },
   {
@@ -401,6 +444,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     domain: 'video',
     title: 'Generate',
     items: [
+      { nodeType: 'GenerateVideoNode',    label: 'Generate Video',     description: 'Text or image to video — 16 models (Veo 3.1, Sora 2, Runway, Kling, Seedance, Wan, Fabric…) picked in the gallery. Cloud.', icon: Film },
       { nodeType: 'AnimatedNoise',        label: 'Animated Noise',     description: 'Generate a clip of evolving value noise — pans, breathes, or swirls.', icon: Hourglass },
     ],
   },
