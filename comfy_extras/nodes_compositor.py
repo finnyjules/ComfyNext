@@ -33,6 +33,18 @@ def _blend(base: torch.Tensor, top: torch.Tensor, mode: str) -> torch.Tensor:
     return b
 
 
+def _resize_to(t: torch.Tensor, canvas_h: int, canvas_w: int) -> torch.Tensor:
+    """Stretch a (b, c, h, w) tensor to exactly canvas size (no aspect padding).
+
+    Used for the alpha overlay, which is authored client-side at the canvas
+    resolution and must map 1:1 — stretching (rather than aspect-fit padding)
+    avoids any pad-polarity ambiguity in the companion mask.
+    """
+    if t.shape[-2:] == (canvas_h, canvas_w):
+        return t
+    return F.interpolate(t, size=(canvas_h, canvas_w), mode="bilinear", align_corners=False)
+
+
 def _fit_to_canvas(layer: torch.Tensor, canvas_h: int, canvas_w: int) -> torch.Tensor:
     """Resize a layer to fit within canvas while preserving aspect, centered."""
     b, c, h, w = layer.shape
@@ -84,6 +96,68 @@ def _transform(layer: torch.Tensor, x_off: float, y_off: float, rotation: float,
     return rgb, alpha
 
 
+def _prep_layer(layer: dict, canvas_h: int, canvas_w: int):
+    """Resolve a gathered layer to (rgb, alpha) at canvas resolution.
+
+    `alpha` folds together geometric coverage (from the transform), the layer's
+    opacity, and — when present — a per-pixel mask. Baked text/shape layers are
+    authored at canvas resolution with an identity transform, so for them the
+    fit/transform are no-ops and `alpha` is just `opacity * (1 - mask)`. Wired
+    image layers carry no mask, so `alpha` is geometric coverage * opacity,
+    exactly as before.
+    """
+    t = layer["image"].permute(0, 3, 1, 2)
+    # Normalize channel count. Upstream IMAGE tensors are usually 3-channel RGB,
+    # but some nodes emit RGBA (4ch, e.g. text/shape renders that keep their
+    # transparency) or single-channel grayscale. Mixing a 4ch layer with the
+    # 3ch running composite throws "tensor a (4) must match tensor b (3)". Carry
+    # any embedded alpha as a 4th channel through fit+transform so it warps with
+    # the image, then split it off and fold it into coverage below.
+    c = t.shape[1]
+    if c == 1:
+        t = t.repeat(1, 3, 1, 1)
+    elif c == 2:  # gray + alpha
+        t = torch.cat([t[:, :1].repeat(1, 3, 1, 1), t[:, 1:2]], dim=1)
+    t = _fit_to_canvas(t, canvas_h, canvas_w)  # no-op when already canvas-sized
+    out, geo = _transform(t, layer["x"], layer["y"], layer["rot"], layer["scl"])
+    rgb = out[:, :3, :, :]
+    a = (geo * layer["op"]).clamp(0.0, 1.0)
+    if out.shape[1] >= 4:  # fold the image's own alpha into coverage
+        a = (a * out[:, 3:4, :, :].clamp(0.0, 1.0)).clamp(0.0, 1.0)
+    mask = layer.get("mask")
+    if mask is not None:
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0)
+        if mask.dim() == 3:
+            mask = mask.unsqueeze(1)
+        mask = _resize_to(mask.to(rgb.dtype), canvas_h, canvas_w)
+        a = (a * (1.0 - mask)).clamp(0.0, 1.0)  # MASK is 1 - alpha
+    return rgb, a
+
+
+def _composite_layers(layers: list[dict], canvas_h: int, canvas_w: int) -> torch.Tensor:
+    """Composite gathered layers onto a canvas, ordered by ascending z.
+
+    Stable sort, so equal/default z preserves the order layers were gathered in
+    (slot order). The lowest layer lands on implicit black; each subsequent
+    layer blends over the running result, its alpha folding in opacity and any
+    per-pixel mask. Returns a (b, 3, canvas_h, canvas_w) tensor. With no layers
+    it returns a black canvas (an explicit-size artboard with nothing wired).
+    """
+    ordered = sorted(layers, key=lambda l: l["z"])
+    result = None
+    for layer in ordered:
+        rgb, a = _prep_layer(layer, canvas_h, canvas_w)
+        if result is None:
+            result = rgb * a
+        else:
+            blended = _blend(result, rgb, layer["blend"])
+            result = result * (1.0 - a) + blended * a
+    if result is None:
+        result = torch.zeros(1, 3, canvas_h, canvas_w)
+    return result
+
+
 def _layer_inputs(idx: int, optional: bool):
     """Build the per-layer input declarations for layer N."""
     return [
@@ -109,6 +183,39 @@ class CompositorNode(IO.ComfyNode):
         inputs = []
         for i in range(1, _MAX_LAYERS + 1):
             inputs.extend(_layer_inputs(i, optional=(i > 1)))
+        # Explicit artboard size. When both > 0 the canvas is exactly this size
+        # and every layer (including layer 1) is fit into it; 0 = size from
+        # layer 1 (backward compatible). Lets a Frame have a fixed size with no
+        # base image.
+        inputs.append(IO.Int.Input("width", optional=True, default=0, min=0, max=8192,
+                                   tooltip="Artboard width in px. 0 = size from layer 1."))
+        inputs.append(IO.Int.Input("height", optional=True, default=0, min=0, max=8192,
+                                   tooltip="Artboard height in px. 0 = size from layer 1."))
+        # Per-layer stacking order — composite order is by ascending z, not slot.
+        # This lets any layer (wired image or baked text/shape) sit above or
+        # below any other. Declared optional and AFTER width/height so workflows
+        # saved against the older schema realign by appending: their existing
+        # widget positions don't shift. Default z = slot index, so an untouched
+        # graph composites in slot order exactly as before.
+        for i in range(1, _MAX_LAYERS + 1):
+            inputs.append(IO.Float.Input(f"layer{i}_z", optional=True, default=float(i),
+                                         min=-1000.0, max=1000.0, step=1.0,
+                                         tooltip="Stacking order; lower = further back."))
+        # Per-layer alpha mask (MASK port). Baked text/shape layers are injected
+        # at a chosen z with their per-pixel alpha here, so they interleave with
+        # wired layers instead of always landing on top. Declared after every
+        # image port so layer1..16 keep input indices 0..15.
+        for i in range(1, _MAX_LAYERS + 1):
+            inputs.append(IO.Mask.Input(f"layer{i}_mask", optional=True,
+                                        tooltip="Per-pixel alpha for layer N (LoadImage MASK = 1 - alpha)."))
+        # Alpha overlay: text/shape layers authored in the editor are baked
+        # client-side into one RGBA image at canvas resolution and fed here.
+        # The mask carries per-pixel transparency (LoadImage's MASK output,
+        # which is 1 - alpha). Always composited last, on top of every layer.
+        inputs.append(IO.Image.Input("overlay", optional=True,
+                                     tooltip="Text/shape overlay, composited on top with per-pixel alpha."))
+        inputs.append(IO.Mask.Input("overlay_mask", optional=True,
+                                    tooltip="Alpha for the overlay (LoadImage MASK = 1 - alpha)."))
         return IO.Schema(
             node_id="Compositor",
             display_name="Compositor",
@@ -138,30 +245,55 @@ class CompositorNode(IO.ComfyNode):
                 "scl": float(kwargs.get(f"layer{i}_scale", 1.0)),
                 "op":  float(kwargs.get(f"layer{i}_opacity", 1.0)),
                 "blend": kwargs.get(f"layer{i}_blend", "normal"),
+                "z":   float(kwargs.get(f"layer{i}_z", float(i))),
+                "mask": kwargs.get(f"layer{i}_mask"),
             })
 
-        if not layers:
-            # Nothing connected — return a tiny black image.
+        width = int(kwargs.get("width", 0) or 0)
+        height = int(kwargs.get("height", 0) or 0)
+        explicit = width > 0 and height > 0
+
+        if not layers and not explicit:
+            # Nothing connected and no explicit size — return a tiny black image.
             blank = torch.zeros(1, 16, 16, 3)
             return IO.NodeOutput(blank, ui=save_live_preview(blank, str(cls.hidden.unique_id)))
 
-        base = layers[0]["image"]
-        _, ch, cw, _ = base.shape
-        canvas_h, canvas_w = ch, cw
+        if explicit:
+            canvas_h, canvas_w = height, width
+        else:
+            _, ch, cw, _ = layers[0]["image"].shape
+            canvas_h, canvas_w = ch, cw
 
-        # Render the base layer (still subject to its own transform).
-        b1 = base.permute(0, 3, 1, 2)
-        rgb, alpha = _transform(b1, layers[0]["x"], layers[0]["y"], layers[0]["rot"], layers[0]["scl"])
-        # Start composite: base on a black canvas modulated by its own opacity.
-        result = rgb * (alpha * layers[0]["op"])
+        # Composite by ascending z. Canvas size still follows the lowest *slot*
+        # (layers[0]) above, so reordering depth never resizes the artboard.
+        result = _composite_layers(layers, canvas_h, canvas_w)
 
-        for layer in layers[1:]:
-            t = layer["image"].permute(0, 3, 1, 2)
-            t = _fit_to_canvas(t, canvas_h, canvas_w)
-            top_rgb, top_alpha = _transform(t, layer["x"], layer["y"], layer["rot"], layer["scl"])
-            a = (top_alpha * layer["op"]).clamp(0.0, 1.0)
-            blended = _blend(result, top_rgb, layer["blend"])
-            result = result * (1.0 - a) + blended * a
+        # Alpha overlay (text/shapes) — always on top, straight per-pixel alpha.
+        overlay = kwargs.get("overlay")
+        if overlay is not None:
+            o = _resize_to(overlay.permute(0, 3, 1, 2), canvas_h, canvas_w)
+            # Coerce overlay to 3-channel RGB; if it carries its own alpha (RGBA),
+            # fold it into the composite alpha below so it can't collide with the
+            # 3-channel result.
+            embedded_a = None
+            if o.shape[1] == 1:
+                o = o.repeat(1, 3, 1, 1)
+            elif o.shape[1] >= 4:
+                embedded_a = o[:, 3:4, :, :].clamp(0.0, 1.0)
+                o = o[:, :3, :, :]
+            mask = kwargs.get("overlay_mask")
+            if mask is not None:
+                if mask.dim() == 2:
+                    mask = mask.unsqueeze(0)
+                if mask.dim() == 3:
+                    mask = mask.unsqueeze(1)
+                mask = _resize_to(mask.to(result.dtype), canvas_h, canvas_w)
+                a = (1.0 - mask).clamp(0.0, 1.0)  # MASK is 1 - alpha
+            else:
+                a = torch.ones(o.shape[0], 1, canvas_h, canvas_w, dtype=result.dtype, device=result.device)
+            if embedded_a is not None:
+                a = (a * _resize_to(embedded_a.to(result.dtype), canvas_h, canvas_w)).clamp(0.0, 1.0)
+            result = result * (1.0 - a) + o.to(result.dtype) * a
 
         out = result.permute(0, 2, 3, 1).clamp(0.0, 1.0)
         return IO.NodeOutput(out, ui=save_live_preview(out, str(cls.hidden.unique_id)))

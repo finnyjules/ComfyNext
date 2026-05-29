@@ -6,7 +6,9 @@ import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, ge
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
-import { applyVariantFanOut, buildFilteredWorkflow, collectKeepSet } from '~/composables/useFilteredPrompt'
+import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
+import { applyArtifactLocks, applyVariantFanOut, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
+import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -15,11 +17,18 @@ import ArtifactImageNode from '~/components/vue-canvas/ArtifactImageNode.vue'
 import ArtifactTextNode from '~/components/vue-canvas/ArtifactTextNode.vue'
 import ArtifactAudioNode from '~/components/vue-canvas/ArtifactAudioNode.vue'
 import ArtifactVideoNode from '~/components/vue-canvas/ArtifactVideoNode.vue'
+import ArtifactFrameNode from '~/components/vue-canvas/ArtifactFrameNode.vue'
+import ArtifactTimelineNode from '~/components/vue-canvas/ArtifactTimelineNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
+import StickyAnnotation from '~/components/vue-canvas/StickyAnnotation.vue'
+import ChecklistAnnotationView from '~/components/vue-canvas/ChecklistAnnotation.vue'
+import PinImageAnnotationView from '~/components/vue-canvas/PinImageAnnotation.vue'
+import PinResultAnnotationView from '~/components/vue-canvas/PinResultAnnotation.vue'
+import ArrowsLayer, { type ResolvedArrow } from '~/components/vue-canvas/ArrowsLayer.vue'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
-import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes } from 'lucide-vue-next'
+import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes, ChevronsUpDown, ChevronsDownUp, Lock, Unlock, Flag, StickyNote, ListChecks, Image as ImageIcon, ArrowRight } from 'lucide-vue-next'
 import { useBlockLibrary } from '~/composables/useBlockLibrary'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -35,8 +44,10 @@ const props = defineProps<{
 // the circular dep (useVueNodes wants the bridge, useCanvasGroups wants
 // the nodes ref that useVueNodes creates).
 const groupsBridge = { load: (_: any[] | undefined | null) => {}, export: () => [] as any[] }
+// Same dance for annotations — they live under workflow.extra.comfynext.
+const annotationsBridge = { load: (_: unknown) => {}, export: () => ({}) as unknown }
 
-const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge })
+const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge, annotationsBridge })
 
 const {
   groups,
@@ -47,12 +58,38 @@ const {
   updateGroup,
   deleteGroup,
   setGroups,
+  toggleCollapse: toggleGroupCollapse,
+  hiddenNodeIdsByGroups,
+  setStatus: setGroupStatus,
+  toggleLock: toggleGroupLock,
   toLiteGraph: groupsToLiteGraph,
   fromLiteGraph: groupsFromLiteGraph,
 } = useCanvasGroups(nodes as any)
 
 groupsBridge.load = (raw) => setGroups(groupsFromLiteGraph(raw))
 groupsBridge.export = () => groupsToLiteGraph()
+
+const {
+  annotations,
+  createSticky,
+  createChecklist,
+  createImagePin,
+  createResultPin,
+  createArrow,
+  update: updateAnnotation,
+  move: moveAnnotation,
+  resize: resizeAnnotation,
+  remove: removeAnnotation,
+  removeForGroup: removeAnnotationsForGroup,
+  dragGroupAttached: dragGroupAttachedAnnotations,
+  setGroupAttachment,
+  setAll: setAnnotations,
+  exportToExtra: annotationsExportToExtra,
+  loadFromExtra: annotationsLoadFromExtra,
+} = useCanvasAnnotations(nodes as any)
+
+annotationsBridge.load = (raw) => annotationsLoadFromExtra(raw)
+annotationsBridge.export = () => annotationsExportToExtra()
 
 // Make the live graph available to child nodes that need to look up upstream
 // data (e.g. MaskExtractor showing its source image as a fallback preview).
@@ -86,6 +123,344 @@ function scheduleSnapshot() {
 }
 
 watch([nodes, edges], scheduleSnapshot, { deep: true })
+
+// Sync node `hidden` flag with collapsed-group membership. Vue Flow honors
+// `hidden: true` by removing the node from layout AND auto-hiding any edges
+// that touch it, which is exactly what we want when a group folds.
+//
+// We diff before assigning so we don't trigger an unnecessary update on every
+// tick — the watch is deep on `groups` (collapse toggles) and `nodes`
+// (positions change → membership can change).
+watch(
+  [groups, () => (nodes.value as any[]).map(n => `${n.id}:${n.position.x},${n.position.y}`).join('|')],
+  () => {
+    const hidden = hiddenNodeIdsByGroups()
+    for (const n of nodes.value as any[]) {
+      const shouldHide = hidden.has(n.id)
+      if (!!n.hidden !== shouldHide) n.hidden = shouldHide
+    }
+  },
+  { deep: true, immediate: true },
+)
+
+// Memoized member counts for collapsed groups so we don't re-walk all nodes
+// from inside the template on every render.
+const groupMemberCounts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {}
+  for (const g of groups.value) {
+    counts[g.id] = nodesInGroup(g.id).length
+  }
+  return counts
+})
+
+// Set of collapsed group IDs for cheap membership checks during render.
+const collapsedGroupIds = computed<Set<string>>(() => {
+  const s = new Set<string>()
+  for (const g of groups.value) if (g.collapsed) s.add(g.id)
+  return s
+})
+
+// Annotations to render: skip non-arrow annotations whose attached group is
+// currently collapsed (so they vanish along with their group's contents).
+// Arrows handle this implicitly via endpoint resolution — a collapsed group
+// still has coordinates, so arrows continue to render to the pill.
+const visibleAnnotations = computed(() => {
+  return annotations.value.filter(a => {
+    if (a.kind === 'arrow') return true
+    if (!a.attachedToGroup) return true
+    return !collapsedGroupIds.value.has(a.attachedToGroup)
+  })
+})
+
+// AABB-style hit test: is a point inside any group's rect? Returns the
+// containing group's id, preferring the LAST one in the array (top of z-order).
+function groupAtPoint(x: number, y: number): string | null {
+  for (let i = groups.value.length - 1; i >= 0; i--) {
+    const g = groups.value[i]!
+    // Use expanded bounds for collapsed groups so an annotation dragged onto
+    // the pill still recognizes the underlying group as a drop target.
+    const w = g.collapsed ? (g.expandedSize?.width ?? g.width) : g.width
+    const h = g.collapsed ? (g.expandedSize?.height ?? g.height) : g.height
+    if (x >= g.x && x <= g.x + w && y >= g.y && y <= g.y + h) return g.id
+  }
+  return null
+}
+
+/**
+ * Wrap moveAnnotation so that, after the move, we check whether the
+ * annotation's new center lies inside a group. If yes, attach it. If it
+ * moved OUT of its previously-attached group's bounds, detach.
+ *
+ * This gives FigJam-like behavior: drop a sticky onto a frame and it
+ * "belongs" to the frame, including moving and hiding with it.
+ */
+function moveAnnotationWithAttach(id: string, dx: number, dy: number) {
+  moveAnnotation(id, dx, dy)
+  const a = annotations.value.find(x => x.id === id)
+  if (!a || a.kind === 'arrow') return
+  const cx = a.x + a.width / 2
+  const cy = a.y + a.height / 2
+  const containing = groupAtPoint(cx, cy)
+  if (containing && a.attachedToGroup !== containing) {
+    setGroupAttachment(id, containing)
+  } else if (!containing && a.attachedToGroup) {
+    setGroupAttachment(id, null)
+  }
+}
+
+// ---- Arrow rendering + creation -------------------------------------------
+//
+// Arrow endpoints reference groups, annotations, or free points. We resolve
+// each to a graph-space (x, y) and pass the list to ArrowsLayer. Resolution
+// runs reactively so endpoints follow their referenced object on drag.
+
+function resolveEndpoint(ep: ArrowEndpoint): { x: number; y: number } | null {
+  if (ep.kind === 'point') return { x: ep.x, y: ep.y }
+  if (ep.kind === 'group') {
+    const g = groups.value.find(g => g.id === ep.id)
+    if (!g) return null
+    // Anchor on the title-bar center — it's the only consistent attach point
+    // whether the group is collapsed (pill) or expanded.
+    return { x: g.x + g.width / 2, y: g.y + 14 }
+  }
+  if (ep.kind === 'annotation') {
+    const a = annotations.value.find(a => a.id === ep.id)
+    if (!a || a.kind === 'arrow') return null
+    return { x: a.x + a.width / 2, y: a.y + a.height / 2 }
+  }
+  return null
+}
+
+const resolvedArrows = computed<ResolvedArrow[]>(() => {
+  const out: ResolvedArrow[] = []
+  for (const a of annotations.value) {
+    if (a.kind !== 'arrow') continue
+    const from = resolveEndpoint(a.from)
+    const to = resolveEndpoint(a.to)
+    // Drop arrows with a dangling endpoint — they'd render at (0,0) otherwise.
+    // The composable's remove paths already clean these up, but this is a
+    // belt-and-suspenders guard against half-loaded state.
+    if (!from || !to) continue
+    out.push({
+      id: a.id,
+      fromX: from.x, fromY: from.y,
+      toX: to.x, toY: to.y,
+      label: a.label,
+      color: a.color ?? '#a78bfa',
+      curveOffset: a.curveOffset ?? 0,
+      thickness: a.thickness ?? 2.5,
+      source: a,
+    })
+  }
+  return out
+})
+
+// Pending arrow: when set, the next click on a pane / group / annotation
+// resolves the `to` endpoint and commits the arrow. ESC cancels.
+const pendingArrowFrom = ref<ArrowEndpoint | null>(null)
+const pendingArrowCursor = ref<{ x: number; y: number } | null>(null)
+
+function beginArrowFromGroup(groupId: string) {
+  pendingArrowFrom.value = { kind: 'group', id: groupId }
+  pendingArrowCursor.value = null
+}
+
+function beginArrowFromPoint(x: number, y: number) {
+  pendingArrowFrom.value = { kind: 'point', x, y }
+  pendingArrowCursor.value = { x, y }
+}
+
+function cancelPendingArrow() {
+  pendingArrowFrom.value = null
+  pendingArrowCursor.value = null
+}
+
+function completePendingArrow(to: ArrowEndpoint) {
+  if (!pendingArrowFrom.value) return
+  // Don't draw an arrow to the same endpoint it came from.
+  const from = pendingArrowFrom.value
+  const sameGroup = from.kind === 'group' && to.kind === 'group' && from.id === to.id
+  const sameAnno = from.kind === 'annotation' && to.kind === 'annotation' && from.id === to.id
+  if (sameGroup || sameAnno) { cancelPendingArrow(); return }
+  createArrow({ from, to })
+  cancelPendingArrow()
+}
+
+// Live preview of the pending arrow — follows the mouse until the user clicks
+// the second endpoint. Rendered as a faint extra entry in resolvedArrows.
+const previewArrow = computed<ResolvedArrow | null>(() => {
+  if (!pendingArrowFrom.value || !pendingArrowCursor.value) return null
+  const from = resolveEndpoint(pendingArrowFrom.value)
+  if (!from) return null
+  return {
+    id: '__pending__',
+    fromX: from.x, fromY: from.y,
+    toX: pendingArrowCursor.value.x, toY: pendingArrowCursor.value.y,
+    color: '#a78bfa',
+    curveOffset: 0,
+    thickness: 2.5,
+    source: { id: '__pending__', kind: 'arrow', from: pendingArrowFrom.value, to: { kind: 'point', x: 0, y: 0 } },
+  }
+})
+
+const allRenderedArrows = computed<ResolvedArrow[]>(() => {
+  if (previewArrow.value) return [...resolvedArrows.value, previewArrow.value]
+  return resolvedArrows.value
+})
+
+// ---- Arrow selection + editing -------------------------------------------
+
+const selectedArrowId = ref<string | null>(null)
+
+function selectArrow(id: string) {
+  selectedArrowId.value = id
+}
+function clearArrowSelection() {
+  selectedArrowId.value = null
+}
+
+// Endpoint drag from ArrowsLayer: handle is reporting graph-space coords.
+// We convert the endpoint to a free point (detaching from any group/annotation
+// it was anchored to). The user can always redraw to re-anchor.
+function onArrowEndpointDrag(id: string, which: 'from' | 'to', x: number, y: number) {
+  const arrow = annotations.value.find(a => a.id === id && a.kind === 'arrow')
+  if (!arrow) return
+  const next = { kind: 'point' as const, x, y }
+  if (which === 'from') updateAnnotation(id, { from: next } as any)
+  else updateAnnotation(id, { to: next } as any)
+}
+
+// Curve handle drag: compute perpendicular offset from the from→to line and
+// store it. The arrow path automatically picks up the new curve.
+function onArrowCurveDrag(id: string, x: number, y: number) {
+  const arrow = annotations.value.find(a => a.id === id && a.kind === 'arrow') as
+    Extract<typeof annotations.value[number], { kind: 'arrow' }> | undefined
+  if (!arrow) return
+  const from = resolveEndpoint(arrow.from)
+  const to = resolveEndpoint(arrow.to)
+  if (!from || !to) return
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dist = Math.hypot(dx, dy)
+  if (dist < 1) return
+  const mx = (from.x + to.x) / 2
+  const my = (from.y + to.y) / 2
+  const perpX = -dy / dist
+  const perpY = dx / dist
+  // Scalar projection of (drag - mid) onto the perpendicular axis.
+  const offset = (x - mx) * perpX + (y - my) * perpY
+  updateAnnotation(id, { curveOffset: offset } as any)
+}
+
+// Inline style toolbar position — placed above the selected arrow's curve
+// midpoint, in screen coordinates (so it doesn't scale with zoom, stays
+// readable). Returns null when there's no selection.
+const selectedArrowToolbarPos = computed<{ left: number; top: number; color: string; thickness: number } | null>(() => {
+  if (!selectedArrowId.value) return null
+  const a = resolvedArrows.value.find(x => x.id === selectedArrowId.value)
+  if (!a) return null
+  // Curve midpoint in graph space, then transform to screen.
+  const dx = a.toX - a.fromX
+  const dy = a.toY - a.fromY
+  const dist = Math.hypot(dx, dy) || 1
+  const mx = (a.fromX + a.toX) / 2
+  const my = (a.fromY + a.toY) / 2
+  const px = -dy / dist
+  const py = dx / dist
+  const cx = mx + px * a.curveOffset
+  const cy = my + py * a.curveOffset
+  const zoom = vfViewport.value.zoom || 1
+  const screenX = cx * zoom + vfViewport.value.x
+  const screenY = cy * zoom + vfViewport.value.y
+  return { left: screenX, top: screenY - 44, color: a.color, thickness: a.thickness }
+})
+
+const ARROW_PALETTE = ['#a78bfa', '#60a5fa', '#4ade80', '#fbbf24', '#f472b6', '#f87171', '#94a3b8', '#ffffff']
+const ARROW_THICKNESSES = [1.5, 2.5, 4]
+
+function setSelectedArrowColor(c: string) {
+  if (!selectedArrowId.value) return
+  updateAnnotation(selectedArrowId.value, { color: c } as any)
+}
+function setSelectedArrowThickness(t: number) {
+  if (!selectedArrowId.value) return
+  updateAnnotation(selectedArrowId.value, { thickness: t } as any)
+}
+function editSelectedArrowLabel() {
+  if (!selectedArrowId.value) return
+  const arrow = annotations.value.find(a => a.id === selectedArrowId.value && a.kind === 'arrow') as any
+  const next = window.prompt('Arrow label', arrow?.label || '')
+  if (next !== null) updateAnnotation(selectedArrowId.value, { label: next.trim() || undefined } as any)
+}
+function deleteSelectedArrow() {
+  if (!selectedArrowId.value) return
+  removeAnnotation(selectedArrowId.value)
+  selectedArrowId.value = null
+}
+
+// Global keyboard: ESC cancels pending arrow; S/C/A spawn annotations at
+// the cursor (or viewport center if cursor unknown). All shortcuts bail when
+// focus is on a text input so they don't intercept typing in node widgets.
+let lastMouseClient: { x: number; y: number } | null = null
+function trackMouseClient(e: MouseEvent) { lastMouseClient = { x: e.clientX, y: e.clientY } }
+
+function isTypingTarget(): boolean {
+  const ae = document.activeElement
+  if (!(ae instanceof Element)) return false
+  return !!(ae.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+    || ae.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))
+}
+
+function onGlobalKey(e: KeyboardEvent) {
+  // ESC: cancel pending arrow first, then clear arrow selection if any.
+  if (e.key === 'Escape') {
+    if (pendingArrowFrom.value) {
+      cancelPendingArrow()
+      e.preventDefault()
+      return
+    }
+    if (selectedArrowId.value) {
+      clearArrowSelection()
+      e.preventDefault()
+      return
+    }
+  }
+  // Delete / Backspace removes the selected arrow. Skip when typing so we
+  // don't eat text-editing keystrokes.
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedArrowId.value && !isTypingTarget()) {
+    deleteSelectedArrow()
+    e.preventDefault()
+    return
+  }
+  // The rest are creation shortcuts — skip when typing or when modifier keys
+  // are held (Cmd/Ctrl combos belong to undo/redo etc.).
+  if (isTypingTarget()) return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+
+  // Spawn at cursor location, or viewport center if we haven't seen a mouse
+  // event yet this session.
+  const screen = lastMouseClient ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  const spawn = project(screen)
+
+  if (e.key === 's' || e.key === 'S') {
+    createSticky({ x: spawn.x, y: spawn.y })
+    e.preventDefault()
+  } else if (e.key === 'c' || e.key === 'C') {
+    createChecklist({ x: spawn.x, y: spawn.y })
+    e.preventDefault()
+  } else if (e.key === 'a' || e.key === 'A') {
+    beginArrowFromPoint(spawn.x, spawn.y)
+    e.preventDefault()
+  }
+}
+onMounted(() => {
+  window.addEventListener('keydown', onGlobalKey)
+  window.addEventListener('mousemove', trackMouseClient)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKey)
+  window.removeEventListener('mousemove', trackMouseClient)
+})
 
 async function applyHistoryState(state: { nodes: any[], edges: any[] } | null) {
   if (!state) return
@@ -505,8 +880,25 @@ function handleBridgeMessage(event: MessageEvent) {
     if (nodeId) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
-        target.data = { ...target.data, running: false, error: true }
+        // Persist the exception message on the node so the error stays
+        // visible (red ring + inline chip) until the next successful run
+        // on this node — toasts disappear, this doesn't.
+        target.data = {
+          ...target.data,
+          running: false,
+          error: true,
+          errorMessage: event.data.exception_message || null,
+        }
       }
+    }
+  }
+
+  // On any successful executing event, clear stale error state for the node
+  // that's about to run — the previous failure is no longer relevant.
+  if (evt === 'executing' && nodeId) {
+    const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
+    if (target?.data?.error) {
+      target.data = { ...target.data, error: false, errorMessage: null }
     }
   }
 
@@ -555,6 +947,52 @@ function handleOpenCompositor(e: Event) {
   if (detail?.nodeId) compositorOpenForId.value = String(detail.nodeId)
 }
 
+// Kinetic Typography modal state.
+const kineticTypeOpenForId = ref<string | null>(null)
+function handleOpenKineticType(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) kineticTypeOpenForId.value = String(detail.nodeId)
+}
+
+// Images dropped onto a Frame become owned image layers (LocalLayer kind
+// 'image') — uploaded, sized to their aspect, appended to the frame's layers.
+// They flow through the same overlay bake/inject path as text & shapes.
+async function handleFrameDropImage(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const nodeId = detail?.nodeId
+  const files: FileList | undefined = detail?.files
+  if (!nodeId || !files?.length) return
+  const node = (nodes.value as any[]).find(n => n.id === String(nodeId))
+  if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  const existing: any[] = Array.isArray(node.data.properties.comfynext_localLayers)
+    ? node.data.properties.comfynext_localLayers : []
+  const added: any[] = []
+  for (const file of Array.from(files)) {
+    if (!file.type.startsWith('image/')) continue
+    try {
+      const ts = Date.now()
+      const safe = `frame_${ts}_${(file.name || 'image.png').replace(/[^\w.-]+/g, '_')}`
+      const fd = new FormData()
+      fd.append('image', new File([file], safe, { type: file.type }))
+      fd.append('overwrite', 'true')
+      const res = await fetch('/upload/image', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(`upload ${res.status}`)
+      const name = (await res.json())?.name || safe
+      const aspect = await new Promise<number>((resolve) => {
+        const im = new Image()
+        im.onload = () => resolve(im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1)
+        im.onerror = () => resolve(1)
+        im.src = `/view?${new URLSearchParams({ filename: name, type: 'input' })}`
+      })
+      added.push(createImageLayer(name, aspect))
+    } catch (err) {
+      console.error('[Frame] image drop failed:', err)
+    }
+  }
+  if (added.length) node.data.properties.comfynext_localLayers = [...existing, ...added]
+}
+
 // ASCII options drawer state.
 const asciiOpenForId = ref<string | null>(null)
 function handleOpenAscii(e: Event) {
@@ -585,12 +1023,19 @@ function handleOpenSmartLayout(e: Event) {
 }
 
 // Model gallery modal state — opened by the WidgetModelPicker launcher on
-// generator nodes ("Generate an image" today; future text/audio/video pickers
-// will share the same component if we keep the data shape generic).
+// generator nodes. Each gallery has its own open-state ref so two distinct
+// modals (image vs video) don't share mount lifecycle; the dispatcher reads
+// `detail.kind` and flips the right one.
 const modelGalleryOpenForId = ref<string | null>(null)
+const videoModelGalleryOpenForId = ref<string | null>(null)
+const textEffectGalleryOpenForId = ref<string | null>(null)
 function handleOpenModelGallery(e: Event) {
   const detail = (e as CustomEvent).detail
-  if (detail?.nodeId) modelGalleryOpenForId.value = String(detail.nodeId)
+  const nodeId = detail?.nodeId ? String(detail.nodeId) : null
+  if (!nodeId) return
+  if (detail?.kind === 'video') videoModelGalleryOpenForId.value = nodeId
+  else if (detail?.kind === 'text_effect') textEffectGalleryOpenForId.value = nodeId
+  else modelGalleryOpenForId.value = nodeId
 }
 
 // Paste an image directly onto the canvas → uploads it to ComfyUI's input/
@@ -673,15 +1118,48 @@ async function handlePaste(e: ClipboardEvent) {
   }))
 }
 
+// Annotate-toolbar dispatcher: the floating toolbar fires `addAnnotation` and
+// the canvas owns the spawn position and per-kind logic. We deliberately
+// IGNORE the last-cursor position here — when the user clicks the toolbar
+// their cursor is *at the toolbar* (bottom-center of the screen), which
+// would spawn annotations directly under the toolbar button, where they're
+// invisible. Always spawn at the visible center of the canvas instead, so
+// every toolbar click produces a visible artifact.
+function handleAddAnnotationEvent(event: Event) {
+  const detail = (event as CustomEvent).detail
+  const kind = detail?.kind
+  if (!kind) return
+  const screenCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  const spawn = project(screenCenter)
+  if (kind === 'sticky') createSticky({ x: spawn.x - 100, y: spawn.y - 100 })
+  else if (kind === 'checklist') createChecklist({ x: spawn.x - 130, y: spawn.y - 110 })
+  else if (kind === 'image') promptImagePin(spawn.x - 120, spawn.y - 120)
+  else if (kind === 'arrow') {
+    // One-shot: drop a default-length horizontal arrow centered on the viewport.
+    // Two-click "draw arrow" mode is still available via the pane context
+    // menu, keyboard A, or "Draw Arrow From Here…" on a group — that mode
+    // matters for connecting specific things, but for the toolbar it's more
+    // useful to just get a visible arrow you can right-click to edit/delete.
+    const half = 120
+    createArrow({
+      from: { kind: 'point', x: spawn.x - half, y: spawn.y },
+      to:   { kind: 'point', x: spawn.x + half, y: spawn.y },
+    })
+  }
+}
+
 onMounted(() => {
   window.addEventListener('comfynext:addNode', handleAddNode)
+  window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.addEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
+  window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -689,13 +1167,16 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.removeEventListener('comfynext:addNode', handleAddNode)
+  window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.removeEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
+  window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -783,12 +1264,14 @@ function collectCompositorLayers(node: any): any[] {
   return out
 }
 
-async function renderComposite(layers: any[]): Promise<string> {
+async function renderComposite(layers: any[], frameDims: { w: number; h: number } | null = null): Promise<string> {
   const images = await Promise.all(layers.map(l => loadImage(l.url)))
-  // Canvas dims follow layer 1 (the base).
-  const base = images[0]
   const maxDim = 512
-  const aspect = base.naturalWidth / base.naturalHeight
+  // Canvas aspect: explicit artboard dims win; else follow layer 1; else square.
+  let aspect: number
+  if (frameDims && frameDims.w > 0 && frameDims.h > 0) aspect = frameDims.w / frameDims.h
+  else if (images[0]) aspect = images[0].naturalWidth / images[0].naturalHeight
+  else aspect = 1
   let w: number, h: number
   if (aspect >= 1) { w = maxDim; h = Math.round(maxDim / aspect) }
   else            { h = maxDim; w = Math.round(maxDim * aspect) }
@@ -822,6 +1305,11 @@ async function renderComposite(layers: any[]): Promise<string> {
     ctx.restore()
   }
 
+  // Local layers (text/shapes/images) are NOT baked here — the Frame renders
+  // them as a live, interactive overlay on top of this wired composite, and the
+  // submit path bakes them via `bakeOverlay`. This keeps `data.images` the
+  // wired-only background so inline editing never double-draws.
+
   return new Promise<string>((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) return reject(new Error('toBlob returned null'))
@@ -832,6 +1320,15 @@ async function renderComposite(layers: any[]): Promise<string> {
 
 async function renderOneCompositor(node: any) {
   const layers = collectCompositorLayers(node)
+  // Explicit artboard dims (width/height widgets), if set.
+  const defs = node.data?.widgetDefs as any[] | undefined
+  const wv = node.data?.widgetsValues as any[] | undefined
+  const wi = defs?.findIndex((d: any) => d.name === 'width') ?? -1
+  const hi = defs?.findIndex((d: any) => d.name === 'height') ?? -1
+  const fw = wi >= 0 ? Number(wv?.[wi]) || 0 : 0
+  const fh = hi >= 0 ? Number(wv?.[hi]) || 0 : 0
+  const frameDims = (fw > 0 && fh > 0) ? { w: fw, h: fh } : null
+  // Wired-only composite — locals are the Frame's live overlay.
   if (!layers.length) {
     const oldUrl = compositorPreviewUrls.get(node.id)
     if (oldUrl) URL.revokeObjectURL(oldUrl)
@@ -842,7 +1339,7 @@ async function renderOneCompositor(node: any) {
   const token = (compositorRenderTokens.get(node.id) || 0) + 1
   compositorRenderTokens.set(node.id, token)
   try {
-    const url = await renderComposite(layers)
+    const url = await renderComposite(layers, frameDims)
     if (compositorRenderTokens.get(node.id) !== token) {
       URL.revokeObjectURL(url)
       return
@@ -868,6 +1365,9 @@ function compositorSnapshot(node: any) {
     const src = (nodes.value as any[]).find((n: any) => n.id === edge.source)
     return src?.data?.images?.[0] ?? src?.data?.widgetsValues?.[0] ?? null
   })
+  // Locals (text/shape/image) are NOT part of this snapshot: they don't affect
+  // the wired-only `data.images`, and the Frame renders them live itself —
+  // keeping them out avoids a wired re-render on every drag frame.
   return { id: node.id, widgets: [...(node.data.widgetsValues as any[])], inputs: inputs.map(i => i.link), sources }
 }
 
@@ -906,6 +1406,182 @@ watch(
   { immediate: true },
 )
 
+// At submit time, realise each Frame's unified z-order stack into the backend
+// graph. Wired image layers carry a `layer{N}_z` matching their stack depth;
+// runs of local text/shape layers are baked into RGBA, uploaded, and injected
+// into spare `layer{N}` slots (IMAGE + MASK) at the same depth — so a shape
+// dragged *below* a wired image renders below it, matching the live preview.
+// (The legacy always-on-top `overlay` input is left untouched; the backend
+// still honours it for back-compat, but we no longer populate it.)
+// Mutates `workflow` in place; called by the layout right before queueing.
+async function injectCompositorOverlays(workflow: any): Promise<void> {
+  if (!workflow?.nodes?.length) return
+  const compositors = (workflow.nodes as any[]).filter(n => n.type === 'Compositor')
+  for (const comp of compositors) {
+    if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
+    if (!liveNode) continue
+    if (!Array.isArray(comp.inputs)) comp.inputs = []
+
+    const locals = (comp.properties?.comfynext_localLayers as LocalLayer[] | undefined) ?? []
+
+    // Reconcile the saved stack order against what's actually present — the
+    // exact reconciliation the Frame renders with. Keys: `w:<slot>` (0-based
+    // connected image port) and `l:<id>` (local layer). Order is bottom→top.
+    const connectedSlots: number[] = []
+    for (let s = 0; s < 16; s++) {
+      const port = comp.inputs.find((p: any) => p?.name === `layer${s + 1}`)
+      if (port?.link != null) connectedSlots.push(s)
+    }
+    const presentKeys = [
+      ...connectedSlots.map(s => `w:${s}`),
+      ...locals.map(l => `l:${l.id}`),
+    ]
+    if (!presentKeys.length) continue
+    const present = new Set(presentKeys)
+    const saved = (comp.properties?.comfynext_stackOrder as string[] | undefined) ?? []
+    const kept = saved.filter(k => present.has(k))
+    const keptSet = new Set(kept)
+    const order = [...kept, ...presentKeys.filter(k => !keptSet.has(k))]
+
+    // Bake resolution mirrors the Frame's aspect: explicit artboard dims win,
+    // else the lowest wired layer's native size, else a square default (a
+    // locals-only frame with no preset). Only needed when there are locals.
+    let W = 0, H = 0
+    if (locals.length) {
+      const defs = liveNode.data?.widgetDefs as any[] | undefined
+      const wv = liveNode.data?.widgetsValues as any[] | undefined
+      const wi = defs?.findIndex((d: any) => d.name === 'width') ?? -1
+      const hi = defs?.findIndex((d: any) => d.name === 'height') ?? -1
+      const fw = wi >= 0 ? Number(wv?.[wi]) || 0 : 0
+      const fh = hi >= 0 ? Number(wv?.[hi]) || 0 : 0
+      if (fw > 0 && fh > 0) {
+        W = fw; H = fh
+      } else {
+        const imgLayers = collectCompositorLayers(liveNode)
+        if (imgLayers.length) {
+          try {
+            const baseImg = await loadImage(imgLayers[0].url)
+            W = baseImg.naturalWidth || 1024
+            H = baseImg.naturalHeight || 1024
+          } catch { /* fall through to square default */ }
+        }
+        if (!(W > 0 && H > 0)) { W = 1024; H = 1024 }
+      }
+      await ensureLayerFonts(locals, W)
+      await ensureLayerImages(locals)
+    }
+
+    const localById = new Map(locals.map(l => [l.id, l] as [string, LocalLayer]))
+    const usedSlots = new Set<number>(connectedSlots) // wired slots are taken
+
+    // Bake one contiguous run of local layers into a spare slot at depth `z`.
+    const injectRun = async (run: LocalLayer[], z: number) => {
+      if (!run.length || !(W > 0 && H > 0)) return
+      const blob = await bakeOverlay(run, W, H)
+      if (!blob) return
+      let slot = -1
+      for (let s = 0; s < 16; s++) { if (!usedSlots.has(s)) { slot = s; break } }
+      if (slot < 0) { console.warn('[compositor] no spare layer slot for local run'); return }
+      usedSlots.add(slot)
+
+      const file = new File([blob], `comfynext_local_${comp.id}_${slot}_${Date.now()}.png`, { type: 'image/png' })
+      const fd = new FormData()
+      fd.append('image', file)
+      fd.append('overwrite', 'true')
+      let name: string
+      try {
+        const res = await fetch('/upload/image', { method: 'POST', body: fd })
+        if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
+        name = (await res.json())?.name || file.name
+      } catch (err) {
+        console.error('[compositor local] upload failed:', err)
+        return
+      }
+
+      // Resolve / create the layer{N} image + layer{N}_mask ports.
+      let imgIdx = comp.inputs.findIndex((p: any) => p?.name === `layer${slot + 1}`)
+      if (imgIdx < 0) { comp.inputs.push({ name: `layer${slot + 1}`, type: 'IMAGE', link: null }); imgIdx = comp.inputs.length - 1 }
+      let maskIdx = comp.inputs.findIndex((p: any) => p?.name === `layer${slot + 1}_mask`)
+      if (maskIdx < 0) { comp.inputs.push({ name: `layer${slot + 1}_mask`, type: 'MASK', link: null }); maskIdx = comp.inputs.length - 1 }
+
+      const loadId = (workflow.last_node_id || 0) + 1
+      workflow.last_node_id = loadId
+      const imgLink = (workflow.last_link_id || 0) + 1
+      const maskLink = imgLink + 1
+      workflow.last_link_id = maskLink
+
+      workflow.nodes.push({
+        id: loadId,
+        type: 'LoadImage',
+        pos: [(comp.pos?.[0] ?? 0) - 280, (comp.pos?.[1] ?? 0) + slot * 60],
+        size: [220, 280],
+        flags: {},
+        mode: 0,
+        inputs: [],
+        outputs: [
+          { name: 'IMAGE', type: 'IMAGE', links: [imgLink], slot_index: 0 },
+          { name: 'MASK', type: 'MASK', links: [maskLink], slot_index: 1 },
+        ],
+        properties: {},
+        widgets_values: [name, 'image'],
+      })
+      comp.inputs[imgIdx].link = imgLink
+      comp.inputs[maskIdx].link = maskLink
+      workflow.links.push([imgLink, loadId, 0, comp.id, imgIdx, 'IMAGE'])
+      workflow.links.push([maskLink, loadId, 1, comp.id, maskIdx, 'MASK'])
+
+      // Identity transform (the bake is already canvas-space) + this run's depth.
+      setNamedWidget(comp, `layer${slot + 1}_x`, 0, objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_y`, 0, objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_rotation`, 0, objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_scale`, 1, objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_opacity`, 1, objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_blend`, 'normal', objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_z`, z, objectInfo.value)
+    }
+
+    // Walk bottom→top: stamp each wired layer's z, accumulating contiguous local
+    // runs and flushing them (at the run's bottom depth) when a wired layer or
+    // the end interrupts the run. Stack index = z, so all depths are distinct.
+    let run: LocalLayer[] = []
+    let runZ = 0
+    const flush = async () => { if (run.length) { await injectRun(run, runZ); run = [] } }
+    for (let zi = 0; zi < order.length; zi++) {
+      const key = order[zi]
+      if (key.startsWith('w:')) {
+        await flush()
+        const slot = Number(key.slice(2))
+        setNamedWidget(comp, `layer${slot + 1}_z`, zi, objectInfo.value)
+      } else {
+        const layer = localById.get(key.slice(2))
+        if (layer) { if (!run.length) runZ = zi; run.push(layer) }
+      }
+    }
+    await flush()
+  }
+}
+
+// Inject each Timeline node's editor state (tracks, clips, keyframes) into its
+// hidden `edit_state` widget so the backend render matches the editor preview
+// and FFmpeg export — keyframed transforms included. The editor already
+// persists this JSON on the node (data.properties.edit_state); we just copy it
+// into widgets_values at submit. No-op until the backend exposes the
+// `edit_state` input in object_info (requires a ComfyUI restart after the
+// schema change).
+function injectTimelineEditState(workflow: any): void {
+  if (!workflow?.nodes?.length) return
+  const timelines = (workflow.nodes as any[]).filter(n => n.type === 'Timeline')
+  for (const tl of timelines) {
+    if ((tl.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    const liveNode = (nodes.value as any[]).find(n => n.id === String(tl.id))
+    const raw = liveNode?.data?.properties?.edit_state ?? tl.properties?.edit_state
+    if (!raw) continue
+    const json = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    setNamedWidget(tl, 'edit_state', json, objectInfo.value)
+  }
+}
+
 // ── Client-side Timeline preview ────────────────────────────────────────────
 // Mirrors the Compositor pattern but for video sources: each connected clip
 // has a hidden <video>; we seek each one to the timeline's middle frame and
@@ -920,7 +1596,10 @@ let timelineRendering = false
 let timelineDirty = false
 let timelineRafHandle = 0
 
-function getTimelineClipUrl(node: any, slot: number): string | null {
+/** Resolve a Timeline clip port (slot = port_index, 1-based) to a preview
+ *  source. Handles video sources (LoadVideo) and image-sequence sources
+ *  (KineticType — returns a mid-sequence frame, guaranteed visible). */
+function getTimelineClipSource(node: any, slot: number): { url: string; kind: 'video' | 'image' } | null {
   const edge = (edges.value as any[]).find((e: any) =>
     e.target === node.id && e.targetHandle === `input-${slot - 1}`)
   if (!edge) return null
@@ -930,22 +1609,65 @@ function getTimelineClipUrl(node: any, slot: number): string | null {
   if (type === 'LoadVideoFrames' || type === 'LoadVideo') {
     const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
     const filename = src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0]
-    if (filename) return `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`
+    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'video' }
+  }
+  if (type === 'KineticType') {
+    const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
+    if (pIdx >= 0) {
+      try {
+        const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
+        if (Array.isArray(p.rendered) && p.rendered.length > 0) {
+          // Mid-sequence frame — visible for fade/slide presets where frame 0 is empty.
+          const mid = p.rendered[Math.floor(p.rendered.length / 2)]
+          return { url: `/view?${new URLSearchParams({ filename: String(mid), type: 'input' })}`, kind: 'image' }
+        }
+      } catch { /* ignore */ }
+    }
   }
   return null
 }
 
 function collectTimelineLayers(node: any): any[] {
+  // Prefer the editor's edit_state (workflow clips with real timing) — this is
+  // where clips added via the Timeline editor live. Fall back to the legacy
+  // flat clip{i}_* widgets for graphs wired without the editor.
+  const rawState = node.data?.properties?.edit_state
+  if (rawState) {
+    try {
+      const state = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
+      if (state?.version === 1 && Array.isArray(state.tracks)) {
+        const out: any[] = []
+        for (const track of state.tracks) {
+          if (track.muted || track.kind === 'audio') continue
+          for (const clip of track.clips || []) {
+            if (clip.kind !== 'workflow') continue
+            const source = getTimelineClipSource(node, Number(clip.port_index ?? 0))
+            if (!source) continue
+            out.push({
+              slot: clip.port_index, url: source.url, srcKind: source.kind,
+              start: Number(clip.start_frame ?? 0), length: Number(clip.length ?? 30),
+              x: Number(clip.x ?? 0), y: Number(clip.y ?? 0),
+              rot: Number(clip.rotation ?? 0), scl: Number(clip.scale ?? 1),
+              op: Number(clip.opacity ?? 1), blend: String(clip.blend ?? 'normal'),
+              fadeIn: Number(clip.fade_in ?? 0), fadeOut: Number(clip.fade_out ?? 0),
+            })
+          }
+        }
+        if (out.length) return out
+      }
+    } catch { /* fall through to legacy */ }
+  }
+
   const defs = node.data?.widgetDefs as any[]
   const wv = node.data?.widgetsValues as any[]
   if (!defs || !wv) return []
   const idx = (name: string) => defs.findIndex((d: any) => d.name === name)
   const out: any[] = []
   for (let i = 1; i <= 4; i++) {
-    const url = getTimelineClipUrl(node, i)
-    if (!url) continue
+    const source = getTimelineClipSource(node, i)
+    if (!source) continue
     out.push({
-      slot: i, url,
+      slot: i, url: source.url, srcKind: source.kind,
       start:   Number(wv[idx(`clip${i}_start`)]    ?? 0),
       length:  Number(wv[idx(`clip${i}_length`)]   ?? 30),
       x:       Number(wv[idx(`clip${i}_x`)]        ?? 0),
@@ -959,6 +1681,17 @@ function collectTimelineLayers(node: any): any[] {
     })
   }
   return out
+}
+
+/** Load an image source for the timeline preview (parallels loadVideoForPreview). */
+function loadImageForPreview(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image load failed'))
+    img.src = url
+  })
 }
 
 function loadVideoForPreview(key: string, url: string): Promise<HTMLVideoElement> {
@@ -1022,26 +1755,35 @@ async function renderTimeline(node: any, layers: any[]): Promise<string | null> 
   const previewFrame = Math.floor(total / 2)
   const bgColor = String(wv[idx('bg_color')] ?? '#000000')
 
-  // Load all clip videos in parallel, then seek to this layer's local time.
-  const videos: HTMLVideoElement[] = await Promise.all(
-    layers.map(L => loadVideoForPreview(`${node.id}-${L.slot}`, L.url)),
+  // Load each layer's source — video (seeked to its local time) or image.
+  const els: (HTMLVideoElement | HTMLImageElement | null)[] = await Promise.all(
+    layers.map(async (L) => {
+      try {
+        if (L.srcKind === 'image') return await loadImageForPreview(L.url)
+        const v = await loadVideoForPreview(`${node.id}-${L.slot}`, L.url)
+        const inWindow = previewFrame >= L.start && previewFrame < L.start + L.length
+        if (inWindow) {
+          const localSec = (previewFrame - L.start) / TIMELINE_FPS
+          const dur = v.duration
+          if (isFinite(dur) && dur > 0) await seekVideo(v, ((localSec % dur) + dur) % dur)
+        }
+        return v
+      } catch { return null }
+    }),
   )
-  await Promise.all(layers.map((L, i) => {
-    const v = videos[i]!
-    const inWindow = previewFrame >= L.start && previewFrame < L.start + L.length
-    if (!inWindow) return Promise.resolve()
-    const localSec = (previewFrame - L.start) / TIMELINE_FPS
-    const dur = v.duration
-    if (!isFinite(dur) || dur <= 0) return Promise.resolve()
-    const t = ((localSec % dur) + dur) % dur
-    return seekVideo(v, t)
-  }))
 
-  // Canvas size from the first valid video, scaled down for thumbnail use.
-  const ref = videos.find(v => v.videoWidth > 0)
+  const dimsOf = (el: HTMLVideoElement | HTMLImageElement | null): [number, number] => {
+    if (!el) return [0, 0]
+    if (el instanceof HTMLVideoElement) return [el.videoWidth, el.videoHeight]
+    return [el.naturalWidth, el.naturalHeight]
+  }
+
+  // Canvas size from the first valid source, scaled down for thumbnail use.
+  const ref = els.find(el => dimsOf(el)[0] > 0)
   if (!ref) return null
+  const [rw, rh] = dimsOf(ref)
   const maxDim = 384
-  const aspect = ref.videoWidth / ref.videoHeight
+  const aspect = rw / rh
   const w = aspect >= 1 ? maxDim : Math.round(maxDim * aspect)
   const h = aspect >= 1 ? Math.round(maxDim / aspect) : maxDim
 
@@ -1054,8 +1796,9 @@ async function renderTimeline(node: any, layers: any[]): Promise<string | null> 
 
   for (let i = 0; i < layers.length; i++) {
     const L = layers[i]!
-    const v = videos[i]!
-    if (!v.videoWidth) continue
+    const el = els[i]
+    const [sw, sh] = dimsOf(el)
+    if (!el || sw === 0) continue
     if (previewFrame < L.start || previewFrame >= L.start + L.length) continue
 
     // Fade
@@ -1072,7 +1815,7 @@ async function renderTimeline(node: any, layers: any[]): Promise<string | null> 
     ctx.globalCompositeOperation = BLEND_MAP[L.blend] || 'source-over'
     // Object-contain fit (matches backend `_fit_to_canvas`).
     const cAspect = w / h
-    const vAspect = v.videoWidth / v.videoHeight
+    const vAspect = sw / sh
     let fitW: number, fitH: number
     if (vAspect > cAspect) { fitW = w; fitH = w / vAspect }
     else                   { fitH = h; fitW = h * vAspect }
@@ -1081,7 +1824,7 @@ async function renderTimeline(node: any, layers: any[]): Promise<string | null> 
     ctx.translate(cx, cy)
     ctx.rotate((L.rot * Math.PI) / 180)
     ctx.scale(L.scl, L.scl)
-    try { ctx.drawImage(v, -fitW / 2, -fitH / 2, fitW, fitH) } catch {}
+    try { ctx.drawImage(el, -fitW / 2, -fitH / 2, fitW, fitH) } catch {}
     ctx.restore()
   }
 
@@ -1133,9 +1876,24 @@ function timelineSnapshot(node: any) {
       const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
       return src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0] ?? null
     }
+    // KineticType (and similar) store rendered frames in params JSON — track
+    // the rendered count + first filename so a re-bake invalidates the preview.
+    if (src?.data?.nodeType === 'KineticType') {
+      const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
+      if (pIdx >= 0) {
+        try {
+          const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
+          const r = Array.isArray(p.rendered) ? p.rendered : []
+          return `kt:${r.length}:${r[0] ?? ''}`
+        } catch { /* ignore */ }
+      }
+    }
     return src?.data?.images?.[0] ?? null
   })
-  return { id: node.id, widgets: [...(node.data.widgetsValues as any[])], inputs: inputs.map(i => i.link), sources }
+  // Include edit_state so adding/moving clips in the editor triggers a refresh.
+  const editState = node.data?.properties?.edit_state
+  const editKey = typeof editState === 'string' ? editState : (editState ? JSON.stringify(editState) : '')
+  return { id: node.id, widgets: [...(node.data.widgetsValues as any[])], inputs: inputs.map(i => i.link), sources, editKey }
 }
 
 async function maybeRenderTimelines() {
@@ -1422,9 +2180,36 @@ function colorSubmenuItems(applyColor: (color: string) => void): MenuItem[] {
 
 // Menu builders -------------------------------------------------------------
 
-function paneMenuItems(_x: number, _y: number): MenuItem[] {
+function paneMenuItems(x: number, y: number): MenuItem[] {
+  // Convert click coords (screen space) to graph space so spawned annotations
+  // land where the user clicked, not at viewport origin.
+  const spawn = project({ x, y })
   return [
     { label: 'Run All', icon: Play, action: () => emitRunAll() },
+    { divider: true },
+    {
+      label: 'Add Sticky Note',
+      icon: StickyNote,
+      action: () => createSticky({ x: spawn.x, y: spawn.y }),
+      shortcut: 'S',
+    },
+    {
+      label: 'Add Checklist',
+      icon: ListChecks,
+      action: () => createChecklist({ x: spawn.x, y: spawn.y }),
+      shortcut: 'C',
+    },
+    {
+      label: 'Add Image Pin…',
+      icon: ImageIcon,
+      action: () => promptImagePin(spawn.x, spawn.y),
+    },
+    {
+      label: 'Add Arrow',
+      icon: ArrowRight,
+      action: () => beginArrowFromPoint(spawn.x, spawn.y),
+      shortcut: 'A',
+    },
     { divider: true },
     { label: 'Fit View', icon: Frame, action: () => fitView({ padding: 0.2 }) },
     { label: 'Select All', icon: SquareDashedMousePointer, action: () => {
@@ -1433,18 +2218,94 @@ function paneMenuItems(_x: number, _y: number): MenuItem[] {
   ]
 }
 
+// Prompts the user for an image file, reads it as a data URL, then creates
+// an image pin at the given graph-space coordinate.
+function promptImagePin(x: number, y: number) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        createImagePin({ x, y, src: reader.result, caption: file.name })
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+  input.click()
+}
+
 function nodeMenuItems(nodeId: string): MenuItem[] {
   const node = (nodes.value as any[]).find(n => n.id === nodeId)
   const mode = node?.data?.mode ?? 0
-  return [
+  const items: MenuItem[] = [
     { label: 'Run from Selection', icon: Play, action: () => emitRunFiltered([nodeId]) },
     { divider: true },
     { label: mode === 4 ? 'Un-Bypass' : 'Bypass', icon: Ban, action: () => toggleMode([nodeId], 4) },
     { label: mode === 2 ? 'Un-Mute' : 'Mute', icon: EyeOff, action: () => toggleMode([nodeId], 2) },
     { divider: true },
+  ]
+  // For artifact image nodes that have a rendered image, offer pinning the
+  // result to the canvas. The pin captures whatever metadata is visible on
+  // the node at pin time — seed/prompt/model — by walking upstream.
+  if (node?.type === 'artifact-image' && (node.data?.images?.[0] || node.data?.widgetsValues?.[0])) {
+    items.push({
+      label: 'Pin Result to Canvas',
+      icon: ImageIcon,
+      action: () => actionPinResultToCanvas(nodeId),
+    })
+    items.push({ divider: true })
+  }
+  items.push(
     { label: 'Duplicate', icon: Copy, action: () => duplicateNodes([nodeId]) },
     { label: 'Delete', icon: Trash2, danger: true, action: () => deleteNodes([nodeId]) },
-  ]
+  )
+  return items
+}
+
+/**
+ * Pin a generated image from an artifact-image node onto the canvas. Walks
+ * upstream edges looking for a sampler-shaped node to capture seed/prompt/
+ * model metadata. Falls back gracefully if the upstream isn't a recognized
+ * generator — caption can be added by the user.
+ */
+function actionPinResultToCanvas(nodeId: string) {
+  const node = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!node) return
+  const src = node.data?.images?.[0]
+    || (node.data?.widgetsValues?.[0]
+      ? `/view?${new URLSearchParams({ filename: String(node.data.widgetsValues[0]), type: 'input' })}`
+      : '')
+  if (!src) return
+
+  // Best-effort metadata harvest from immediate upstream nodes.
+  const metadata: Record<string, any> = { sourceNodeId: nodeId }
+  const upstream = (edges.value as any[]).filter(e => e.target === nodeId)
+  for (const edge of upstream) {
+    const srcNode = (nodes.value as any[]).find(n => n.id === edge.source)
+    if (!srcNode) continue
+    const t = srcNode.data?.nodeType || srcNode.type
+    const w = srcNode.data?.widgetsValues || []
+    if (/Sampler/i.test(t)) {
+      // Comfy KSampler positions: seed, control, steps, cfg, sampler, scheduler, denoise
+      if (typeof w[0] === 'number') metadata.seed = w[0]
+      if (typeof w[2] === 'number') metadata.steps = w[2]
+      if (typeof w[3] === 'number') metadata.cfg = w[3]
+    } else if (/CheckpointLoader|UNETLoader/i.test(t)) {
+      if (typeof w[0] === 'string') metadata.model = w[0]
+    } else if (/CLIPTextEncode/i.test(t)) {
+      // Prefer the first prompt found (positive is usually wired first).
+      if (typeof w[0] === 'string' && !metadata.prompt) metadata.prompt = w[0]
+    }
+  }
+
+  // Drop the pin to the right of the source node so it doesn't overlap.
+  const spawnX = (node.position?.x ?? 0) + (node.dimensions?.width ?? 280) + 40
+  const spawnY = (node.position?.y ?? 0)
+  createResultPin({ x: spawnX, y: spawnY, src, metadata })
 }
 
 function selectionMenuItems(): MenuItem[] {
@@ -1468,14 +2329,67 @@ function edgeMenuItems(edgeId: string): MenuItem[] {
   ]
 }
 
+// Wrap dragGroup so annotations attached to the group travel with it.
+// Splitting this out keeps the composable agnostic of annotations.
+function onDragGroup(groupId: string, dx: number, dy: number) {
+  dragGroup(groupId, dx, dy)
+  dragGroupAttachedAnnotations(groupId, dx, dy)
+}
+
+// Wrap deleteGroup so the group's attached annotations don't outlive it
+// as floating orphans.
+const deleteGroupWithAnnotations = (groupId: string) => {
+  removeAnnotationsForGroup(groupId)
+  deleteGroup(groupId)
+}
+
+function statusSubmenuItems(groupId: string): MenuItem[] {
+  // Tiny dot swatches communicate the chip color so the menu mirrors the chip.
+  const opts: { value: CanvasGroup['status']; label: string; swatch: string }[] = [
+    { value: null,       label: 'No status', swatch: 'transparent' },
+    { value: 'wip',      label: 'WIP',       swatch: '#fbbf24' },
+    { value: 'stable',   label: 'Stable',    swatch: '#4ade80' },
+    { value: 'broken',   label: 'Broken',    swatch: '#f87171' },
+    { value: 'archived', label: 'Archived',  swatch: '#94a3b8' },
+  ]
+  return opts.map(o => ({
+    label: o.label,
+    swatch: o.swatch,
+    action: () => setGroupStatus(groupId, o.value),
+  }))
+}
+
 function groupMenuItems(groupId: string): MenuItem[] {
   const g = groups.value.find(g => g.id === groupId)
+  const collapsed = !!g?.collapsed
+  const locked = !!g?.locked
   return [
     { label: 'Run Group', icon: Play, action: () => actionRunGroup(groupId) },
     { divider: true },
-    { label: 'Bypass Group Nodes', icon: Ban, action: () => actionGroupModeAll(groupId, 4) },
-    { label: 'Mute Group Nodes', icon: EyeOff, action: () => actionGroupModeAll(groupId, 2) },
-    { label: 'Reset Group Nodes', icon: PlusSquare, action: () => actionGroupModeAll(groupId, 0) },
+    {
+      label: collapsed ? 'Expand Group' : 'Collapse Group',
+      icon: collapsed ? ChevronsUpDown : ChevronsDownUp,
+      action: () => toggleGroupCollapse(groupId),
+    },
+    {
+      label: locked ? 'Unlock Group' : 'Lock Group',
+      icon: locked ? Unlock : Lock,
+      action: () => toggleGroupLock(groupId),
+    },
+    {
+      label: 'Status',
+      icon: Flag,
+      children: statusSubmenuItems(groupId),
+    },
+    {
+      label: 'Draw Arrow From Here…',
+      icon: ArrowRight,
+      action: () => beginArrowFromGroup(groupId),
+    },
+    { divider: true },
+    { label: 'Bypass Group Nodes', icon: Ban, action: () => actionGroupModeAll(groupId, 4), disabled: locked },
+    { label: 'Mute Group Nodes', icon: EyeOff, action: () => actionGroupModeAll(groupId, 2), disabled: locked },
+    { label: 'Reset Group Nodes', icon: PlusSquare, action: () => actionGroupModeAll(groupId, 0), disabled: locked },
     { divider: true },
     { label: 'Save as Block…', icon: Boxes, action: () => actionSaveGroupAsBlock(groupId) },
     { divider: true },
@@ -1491,9 +2405,10 @@ function groupMenuItems(groupId: string): MenuItem[] {
         const newTitle = window.prompt('Group name', g?.title || 'Group')
         if (newTitle && newTitle.trim()) updateGroup(groupId, { title: newTitle.trim() })
       },
+      disabled: locked,
     },
     { divider: true },
-    { label: 'Delete Group', icon: Trash2, danger: true, action: () => deleteGroup(groupId) },
+    { label: 'Delete Group', icon: Trash2, danger: true, action: () => deleteGroupWithAnnotations(groupId), disabled: locked },
   ]
 }
 
@@ -1530,7 +2445,68 @@ function handleSelectionContextMenu(payload: { event: MouseEvent; nodes: any[] }
 }
 
 function handleGroupContextMenu(groupId: string, x: number, y: number) {
+  // If an arrow draw is in progress, prefer completing it on the group rather
+  // than opening the context menu — the user's intent is clearly the arrow.
+  if (pendingArrowFrom.value) {
+    completePendingArrow({ kind: 'group', id: groupId })
+    return
+  }
   openMenu(x, y, groupMenuItems(groupId))
+}
+
+// Click on the empty canvas. Two responsibilities, in priority order:
+//   1. If we're drawing an arrow, commit the `to` endpoint as a free point.
+//   2. Otherwise, clear any active arrow selection (so the user can dismiss
+//      the inline toolbar by clicking empty space).
+function handlePaneClick(event: MouseEvent) {
+  if (pendingArrowFrom.value) {
+    const pos = project({ x: event.clientX, y: event.clientY })
+    completePendingArrow({ kind: 'point', x: pos.x, y: pos.y })
+    return
+  }
+  if (selectedArrowId.value) clearArrowSelection()
+}
+
+// Track cursor in graph space while an arrow is pending so the preview path
+// follows the mouse. Wired via a window listener that's only active while
+// drawing — keeps the mousemove cost zero when no arrow is in flight.
+function trackPendingArrowCursor(event: MouseEvent) {
+  if (!pendingArrowFrom.value) return
+  const pos = project({ x: event.clientX, y: event.clientY })
+  pendingArrowCursor.value = { x: pos.x, y: pos.y }
+}
+watch(pendingArrowFrom, (next, prev) => {
+  if (next && !prev) window.addEventListener('mousemove', trackPendingArrowCursor)
+  else if (!next && prev) window.removeEventListener('mousemove', trackPendingArrowCursor)
+})
+
+// Arrow context menu — small set: edit label, change color, delete.
+function handleArrowContextMenu(arrowId: string, x: number, y: number) {
+  const arrow = annotations.value.find(a => a.id === arrowId && a.kind === 'arrow') as
+    Extract<typeof annotations.value[number], { kind: 'arrow' }> | undefined
+  if (!arrow) return
+  const ARROW_COLORS = ['#94a3b8', '#a78bfa', '#60a5fa', '#f472b6', '#fbbf24', '#4ade80']
+  openMenu(x, y, [
+    {
+      label: 'Edit Label…',
+      icon: Edit3,
+      action: () => {
+        const next = window.prompt('Arrow label', arrow.label || '')
+        if (next !== null) updateAnnotation(arrowId, { label: next.trim() || undefined } as any)
+      },
+    },
+    {
+      label: 'Color',
+      icon: Palette,
+      children: ARROW_COLORS.map(c => ({
+        label: c,
+        swatch: c,
+        action: () => updateAnnotation(arrowId, { color: c } as any),
+      })),
+    },
+    { divider: true },
+    { label: 'Delete Arrow', icon: Trash2, danger: true, action: () => removeAnnotation(arrowId) },
+  ])
 }
 
 // Randomize every seed widget on the live canvas state before the workflow
@@ -1598,11 +2574,48 @@ function getFilteredWorkflow(targetIds: string[]) {
   captureActiveRunFromTargets(targetIds)
   const wf = getWorkflowWithSubgraphs()
   if (!wf) return wf
-  const filtered = targetIds.length ? buildFilteredWorkflow(wf, targetIds) : wf
-  // Apply variant fan-out — N Image sinks on one upstream → upstream produces
-  // a batch of N, each sink slices its index. In-place mutation on the JSON
-  // snapshot; the Vue Flow display stays unchanged.
+  // Realign widget values against the current schema FIRST — workflows
+  // saved against an older schema may have shifted positional slots,
+  // which would land e.g. camera_fixed's `false` in resolution's combo
+  // slot and break validation. Everything downstream assumes aligned data.
+  const aligned = realignWidgetValues(wf, objectInfo.value)
+  // Then locks drop upstream links so collectKeepSet walks a graph where
+  // locked artifacts look like leaves.
+  const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
+  const filtered = targetIds.length ? buildFilteredWorkflow(unlocked, targetIds) : unlocked
   return applyVariantFanOut(filtered, objectInfo.value)
+}
+
+// One-time-per-session schema refresh, then heal any drifted Compositor nodes.
+// The frontend fetches /object_info once at mount; if that happened before the
+// backend finished registering the Compositor's Phase-B inputs (per-layer z +
+// mask), the cached schema is stale — z-injection silently no-ops (setNamedWidget
+// can't find layerN_z, so the unified stack order never reaches the backend) and
+// realign aligns arrays to the wrong width. Force one fresh fetch before the
+// first run, then realign every live Compositor against the real schema.
+let schemaForcedOnce = false
+async function refreshSchema() {
+  if (!schemaForcedOnce) {
+    schemaForcedOnce = true
+    await fetchObjectInfo(true)
+  }
+  healCompositorNodes()
+}
+
+// Realign each live Compositor's widgetDefs + widgets_values to the current
+// schema, in place, so the editor, overlay injection, and submit all read the
+// same aligned data. Reuses realignWidgetValues, which pads length drift and
+// resets a provably-scrambled array (a number in a blend combo) to defaults.
+function healCompositorNodes() {
+  const freshDefs = getWidgetDefs('Compositor')
+  if (!freshDefs.length) return
+  for (const n of nodes.value as any[]) {
+    if (n.data?.nodeType !== 'Compositor') continue
+    const cur = Array.isArray(n.data.widgetsValues) ? [...n.data.widgetsValues] : []
+    const mini = { nodes: [{ id: 1, type: 'Compositor', widgets_values: cur }], links: [] }
+    const out = realignWidgetValues(mini as any, objectInfo.value)
+    n.data = { ...n.data, widgetDefs: freshDefs, widgetsValues: out.nodes[0].widgets_values }
+  }
 }
 
 // When the user runs a node that has dangling outputs of an artifact-bearing
@@ -1734,22 +2747,176 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     }
   }
 
-  return additional.length ? [...targetIds, ...additional] : targetIds
+  // Also expand targets to include EXISTING wired artifact sinks downstream
+  // of each target. Without this, clicking Run on a generator that's already
+  // wired to a sink runs the generator but never invites its sink into the
+  // keep set — so the sink's preview never fires. With this, the gesture
+  // means "run this AND show me the result", which is what users expect.
+  const downstream: string[] = []
+  for (const id of [...targetIds, ...additional]) {
+    for (const e of edges.value as any[]) {
+      if (String(e.source) !== id) continue
+      const targetNode = (nodes.value as any[]).find((n: any) => n.id === e.target)
+      if (!targetNode) continue
+      if (!artifactNodeTypes.has(targetNode.data?.nodeType)) continue
+      if (downstream.includes(targetNode.id)) continue
+      if (targetIds.includes(targetNode.id)) continue
+      downstream.push(targetNode.id)
+    }
+  }
+
+  const expanded = [...targetIds, ...additional, ...downstream]
+  return expanded.length === targetIds.length ? targetIds : expanded
+}
+
+/**
+ * Drop a "start graph" onto an empty canvas — used by the Get Started modal
+ * after the user picks a (from, to, model) combo. When `sourceNodeType` is
+ * given, a matching artifact card lands to the left of the generator and is
+ * wired into it via the first input port whose type matches the source's
+ * primary output. Otherwise just the generator is placed (prompt-only path).
+ *
+ * Positions are absolute canvas coords — fitView at the end frames whatever
+ * we just dropped, so the user doesn't have to zoom around.
+ */
+function materializeStartGraph(opts: { sourceNodeType?: string; generatorNodeType: string }) {
+  const genInfo = objectInfo.value[opts.generatorNodeType]
+  if (!genInfo) return
+
+  const buildNodeData = (nodeType: string) => {
+    const info = objectInfo.value[nodeType]
+    if (!info) return null
+    const widgetDefs = getWidgetDefs(nodeType)
+    const inputs = [
+      ...Object.entries((info?.input?.required ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: false })),
+      ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: true })),
+    ]
+      .filter(({ s }) => {
+        const specArr = Array.isArray(s) ? s : [s]
+        const type = specArr[0]
+        const cfg = specArr[1] || {}
+        if (Array.isArray(type)) return false
+        if (cfg.forceInput) return true
+        return !['INT', 'FLOAT', 'STRING', 'BOOLEAN', 'COMBO'].includes(String(type))
+      })
+      .map(({ n, s, optional }) => ({
+        name: n,
+        type: Array.isArray(s) ? String(s[0]) : String(s),
+        link: null,
+        optional,
+      }))
+    const outputs = (info?.output || []).map((type: string, i: number) => ({
+      name: info?.output_name?.[i] || type,
+      type,
+      links: null,
+    }))
+    return {
+      info, widgetDefs, inputs, outputs,
+    }
+  }
+
+  let idSeed = Date.now()
+  const sourceId = opts.sourceNodeType ? String(idSeed++) : null
+  const generatorId = String(idSeed++)
+
+  const sourceData = opts.sourceNodeType ? buildNodeData(opts.sourceNodeType) : null
+  const generatorData = buildNodeData(opts.generatorNodeType)
+  if (!generatorData) return
+
+  // Pick canvas-coord positions. Left source, right generator. If no source,
+  // generator sits roughly centered.
+  const sourceX = 80
+  const generatorX = sourceId ? 420 : 200
+
+  if (sourceId && sourceData) {
+    nodes.value.push({
+      id: sourceId,
+      type: getVueFlowType(opts.sourceNodeType!),
+      position: { x: sourceX, y: 80 },
+      data: {
+        nodeType: opts.sourceNodeType,
+        title: sourceData.info?.display_name || opts.sourceNodeType,
+        inputs: sourceData.inputs,
+        outputs: sourceData.outputs,
+        widgetsValues: sourceData.widgetDefs.map((w: any) => w.default ?? null),
+        widgetDefs: sourceData.widgetDefs,
+        properties: {},
+        mode: 0,
+        size: [240, 280],
+        category: sourceData.info?.category || '',
+        outputNode: !!sourceData.info?.output_node,
+      },
+    } as any)
+  }
+
+  nodes.value.push({
+    id: generatorId,
+    type: getVueFlowType(opts.generatorNodeType),
+    position: { x: generatorX, y: 80 },
+    data: {
+      nodeType: opts.generatorNodeType,
+      title: generatorData.info?.display_name || opts.generatorNodeType,
+      inputs: generatorData.inputs,
+      outputs: generatorData.outputs,
+      widgetsValues: generatorData.widgetDefs.map((w: any) => w.default ?? null),
+      widgetDefs: generatorData.widgetDefs,
+      properties: {},
+      mode: 0,
+      size: [220, 120],
+      category: generatorData.info?.category || '',
+      outputNode: !!generatorData.info?.output_node,
+      priceBadge: generatorData.info?.price_badge || null,
+    },
+  } as any)
+
+  // Wire source → generator on the first matching type pair (e.g. source IMAGE
+  // output to generator's first IMAGE input).
+  if (sourceId && sourceData) {
+    const srcPrimary = sourceData.outputs.findIndex(
+      (o: any) => /^(IMAGE|AUDIO|VIDEO|STRING)$/i.test(String(o.type)),
+    )
+    if (srcPrimary >= 0) {
+      const srcType = String(sourceData.outputs[srcPrimary].type).toUpperCase()
+      const genInputIdx = generatorData.inputs.findIndex(
+        (i: any) => String(i.type).toUpperCase() === srcType,
+      )
+      if (genInputIdx >= 0) {
+        edges.value.push({
+          id: `e-start-${generatorId}`,
+          source: sourceId,
+          sourceHandle: `output-${srcPrimary}`,
+          target: generatorId,
+          targetHandle: `input-${genInputIdx}`,
+          type: 'comfy',
+          data: { dataType: srcType },
+        } as any)
+      }
+    }
+  }
+
+  // Frame what we just dropped.
+  nextTick(() => fitView({ padding: 0.3 }))
 }
 
 // Expose methods and state for parent layout
 defineExpose({
-  // Global Run path. Match the per-node Run pre-processing: randomize seeds
-  // on the live canvas state, capture the active run set (every non-muted
-  // node), then apply variant fan-out on the JSON snapshot.
+  materializeStartGraph,
+  // Global Run path. Match the per-node Run pre-processing: realign widget
+  // values, randomize seeds on the live canvas state, capture the active run
+  // set, apply locks, then variant fan-out on the JSON snapshot.
   getWorkflow: () => {
     randomizeSeedsOnLiveState()
     captureActiveRunFromTargets([])
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf
-    return applyVariantFanOut(wf, objectInfo.value)
+    const aligned = realignWidgetValues(wf, objectInfo.value)
+    const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
+    return applyVariantFanOut(unlocked, objectInfo.value)
   },
   getFilteredWorkflow,
+  refreshSchema,
+  injectCompositorOverlays,
+  injectTimelineEditState,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
   getEdges: () => edges.value,
@@ -1761,8 +2928,14 @@ defineExpose({
 </script>
 
 <template>
+  <!-- tabindex="-1" makes the canvas root programmatically focusable. After
+       a Run, the layout calls `.focus()` here to pull focus out of the
+       hidden bridge iframe (which, on macOS, can otherwise capture pinch-
+       zoom gestures for itself). focus:outline-none keeps the focus ring
+       invisible; we only need the focus state for event routing, not UI. -->
   <div
-    class="w-full h-full relative bg-[#0a0a0a]"
+    class="vue-node-canvas-root w-full h-full relative bg-[#0a0a0a] focus:outline-none"
+    tabindex="-1"
     @dragover.prevent
     @contextmenu.prevent
   >
@@ -1772,7 +2945,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
@@ -1796,6 +2969,7 @@ defineExpose({
       @node-context-menu="handleNodeContextMenu"
       @edge-context-menu="handleEdgeContextMenu"
       @selection-context-menu="handleSelectionContextMenu"
+      @pane-click="handlePaneClick"
     >
       <MiniMap
         class="!bg-[#1a1a1a] !border-[#2a2a2a] comfy-minimap"
@@ -1825,8 +2999,9 @@ defineExpose({
           :group="g"
           :bypass-state="groupModeState(g.id, 4)"
           :mute-state="groupModeState(g.id, 2)"
+          :member-count="groupMemberCounts[g.id]"
           class="pointer-events-auto"
-          @drag="(id, dx, dy) => dragGroup(id, dx, dy)"
+          @drag="(id, dx, dy) => onDragGroup(id, dx, dy)"
           @resize="(id, w, h) => resizeGroup(id, w, h)"
           @title-edit="(id, t) => updateGroup(id, { title: t })"
           @context-menu="handleGroupContextMenu"
@@ -1834,8 +3009,141 @@ defineExpose({
           @toggle-bypass="(id) => actionToggleGroupMode(id, 4)"
           @toggle-mute="(id) => actionToggleGroupMode(id, 2)"
           @save-as-block="actionSaveGroupAsBlock"
+          @toggle-collapse="(id) => toggleGroupCollapse(id)"
+          @toggle-lock="(id) => toggleGroupLock(id)"
         />
       </div>
+    </div>
+
+    <!-- Annotations layer: stickies, checklists, pins, arrows. Sits ABOVE the
+         groups layer (so a sticky pinned to a group reads as "on top of" it)
+         but BELOW Vue Flow's node layer (so nodes always win for click priority
+         on the executable graph). Same viewport-transform trick as groups. -->
+    <div
+      class="canvas-annotations-layer absolute inset-0 overflow-hidden pointer-events-none"
+      style="z-index: 2"
+    >
+      <div
+        class="absolute top-0 left-0"
+        :style="{
+          transform: `translate(${vfViewport.x}px, ${vfViewport.y}px) scale(${vfViewport.zoom})`,
+          transformOrigin: '0 0',
+        }"
+      >
+        <template v-for="a in visibleAnnotations" :key="a.id">
+          <StickyAnnotation
+            v-if="a.kind === 'sticky'"
+            :annotation="(a as any)"
+            @drag="(id, dx, dy) => moveAnnotationWithAttach(id, dx, dy)"
+            @resize="(id, w, h) => resizeAnnotation(id, w, h)"
+            @update="(id, patch) => updateAnnotation(id, patch as any)"
+            @remove="(id) => removeAnnotation(id)"
+          />
+          <ChecklistAnnotationView
+            v-else-if="a.kind === 'checklist'"
+            :annotation="(a as any)"
+            @drag="(id, dx, dy) => moveAnnotationWithAttach(id, dx, dy)"
+            @resize="(id, w, h) => resizeAnnotation(id, w, h)"
+            @update="(id, patch) => updateAnnotation(id, patch as any)"
+            @remove="(id) => removeAnnotation(id)"
+          />
+          <PinImageAnnotationView
+            v-else-if="a.kind === 'pin-image'"
+            :annotation="(a as any)"
+            @drag="(id, dx, dy) => moveAnnotationWithAttach(id, dx, dy)"
+            @resize="(id, w, h) => resizeAnnotation(id, w, h)"
+            @update="(id, patch) => updateAnnotation(id, patch as any)"
+            @remove="(id) => removeAnnotation(id)"
+          />
+          <PinResultAnnotationView
+            v-else-if="a.kind === 'pin-result'"
+            :annotation="(a as any)"
+            @drag="(id, dx, dy) => moveAnnotationWithAttach(id, dx, dy)"
+            @resize="(id, w, h) => resizeAnnotation(id, w, h)"
+            @update="(id, patch) => updateAnnotation(id, patch as any)"
+            @remove="(id) => removeAnnotation(id)"
+          />
+        </template>
+
+        <!-- Arrows: rendered into the same transformed layer so the dashed
+             stroke scales naturally with zoom and endpoints stay anchored. -->
+        <ArrowsLayer
+          :arrows="allRenderedArrows"
+          :selected-id="selectedArrowId"
+          @context-menu="(id, x, y) => handleArrowContextMenu(id, x, y)"
+          @select="(id) => selectArrow(id)"
+          @endpoint-drag="(id, which, x, y) => onArrowEndpointDrag(id, which, x, y)"
+          @curve-drag="(id, x, y) => onArrowCurveDrag(id, x, y)"
+        />
+      </div>
+    </div>
+
+    <!-- Pending-arrow status hint: appears while the user is drawing an arrow.
+         Compact, top-center, dismissable with ESC (handled globally). -->
+    <div
+      v-if="pendingArrowFrom"
+      class="absolute top-3 left-1/2 -translate-x-1/2 z-50 px-3 py-1.5 rounded-full text-xs font-medium pointer-events-none"
+      style="background: rgba(167, 139, 250, 0.95); color: rgb(20, 23, 28);"
+    >
+      Click target to complete arrow · ESC to cancel
+    </div>
+
+    <!-- Inline style toolbar for the selected arrow. Positioned at the curve
+         midpoint in screen coords so it doesn't scale with zoom — readable
+         at any zoom level. The pop floats above the arrow with a small caret. -->
+    <div
+      v-if="selectedArrowToolbarPos"
+      class="arrow-style-toolbar absolute z-50 flex items-center gap-1 px-1.5 py-1 rounded-[10px] bg-[#1a1a1a]/95 border border-[#2a2a2a] shadow-xl backdrop-blur-sm"
+      :style="{
+        left: `${selectedArrowToolbarPos.left}px`,
+        top: `${selectedArrowToolbarPos.top}px`,
+        transform: 'translateX(-50%)',
+      }"
+      @pointerdown.stop
+      @click.stop
+    >
+      <!-- Color swatches -->
+      <button
+        v-for="c in ARROW_PALETTE"
+        :key="c"
+        type="button"
+        class="arrow-style-toolbar__swatch"
+        :class="{ 'arrow-style-toolbar__swatch--active': selectedArrowToolbarPos.color.toLowerCase() === c.toLowerCase() }"
+        :style="{ background: c }"
+        :title="c"
+        @click="setSelectedArrowColor(c)"
+      />
+      <div class="w-px h-5 bg-white/10 mx-0.5" />
+      <!-- Thickness -->
+      <button
+        v-for="t in ARROW_THICKNESSES"
+        :key="t"
+        type="button"
+        class="arrow-style-toolbar__thickness"
+        :class="{ 'arrow-style-toolbar__thickness--active': Math.abs(selectedArrowToolbarPos.thickness - t) < 0.1 }"
+        :title="`Thickness ${t}`"
+        @click="setSelectedArrowThickness(t)"
+      >
+        <span :style="{ height: `${t}px`, background: selectedArrowToolbarPos.color }" />
+      </button>
+      <div class="w-px h-5 bg-white/10 mx-0.5" />
+      <!-- Label + delete -->
+      <button
+        type="button"
+        class="arrow-style-toolbar__btn"
+        title="Edit label"
+        @click="editSelectedArrowLabel"
+      >
+        <Edit3 class="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        class="arrow-style-toolbar__btn arrow-style-toolbar__btn--danger"
+        title="Delete arrow"
+        @click="deleteSelectedArrow"
+      >
+        <Trash2 class="w-3.5 h-3.5" />
+      </button>
     </div>
 
     <!-- Context menu (floats in screen space, not graph space) -->
@@ -1860,6 +3168,16 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="compositorOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Kinetic Typography editor modal -->
+    <Teleport to="body">
+      <VueCanvasKineticTypeModal
+        v-if="kineticTypeOpenForId"
+        :node-id="kineticTypeOpenForId"
+        :nodes="nodes as any[]"
+        @close="kineticTypeOpenForId = null"
       />
     </Teleport>
 
@@ -1913,6 +3231,22 @@ defineExpose({
       :nodes="nodes as any[]"
       @close="modelGalleryOpenForId = null"
     />
+
+    <!-- Video model gallery — opened from the GenerateVideoNode launcher. -->
+    <VueCanvasVideoModelGalleryModal
+      v-if="videoModelGalleryOpenForId"
+      :node-id="videoModelGalleryOpenForId"
+      :nodes="nodes as any[]"
+      @close="videoModelGalleryOpenForId = null"
+    />
+
+    <!-- Text effect gallery — opened from the TextEffectNode launcher. -->
+    <VueCanvasTextEffectGalleryModal
+      v-if="textEffectGalleryOpenForId"
+      :node-id="textEffectGalleryOpenForId"
+      :nodes="nodes as any[]"
+      @close="textEffectGalleryOpenForId = null"
+    />
   </div>
 </template>
 
@@ -1959,6 +3293,68 @@ defineExpose({
   margin-bottom: 0 !important;
   border-radius: 12px !important;
   overflow: hidden;
+}
+
+/* Floating style toolbar shown above the currently-selected arrow. */
+.arrow-style-toolbar__swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: transform 80ms, box-shadow 80ms;
+}
+.arrow-style-toolbar__swatch:hover {
+  transform: scale(1.12);
+}
+.arrow-style-toolbar__swatch--active {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
+}
+
+/* Thickness button: a horizontal bar at the chosen thickness. Subtle, but
+   matches what the bar will look like when applied. */
+.arrow-style-toolbar__thickness {
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 80ms;
+}
+.arrow-style-toolbar__thickness:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.arrow-style-toolbar__thickness--active {
+  background: rgba(255, 255, 255, 0.14);
+}
+.arrow-style-toolbar__thickness > span {
+  display: block;
+  width: 16px;
+  border-radius: 2px;
+}
+
+.arrow-style-toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+}
+.arrow-style-toolbar__btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+.arrow-style-toolbar__btn--danger:hover {
+  background: rgba(220, 38, 38, 0.3);
+  color: rgb(254, 202, 202);
 }
 
 </style>

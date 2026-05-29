@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { Image as ImageIcon, X, MousePointer2, Hand, GripVertical } from 'lucide-vue-next'
+import {
+  Image as ImageIcon, X, MousePointer2,
+  Type, Square, Circle, Minus, Trash2,
+  AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown,
+} from 'lucide-vue-next'
+import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
+import {
+  type TextLayer, type RectLayer, type EllipseLayer,
+  drawLocalLayer, ensureLayerFonts, ensureLayerImages,
+} from '~/composables/useCompositorLayers'
+import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 
 const props = defineProps<{
   nodeId: string
@@ -9,15 +19,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
+const { ensure: ensureGoogleFont } = useGoogleFontPreview()
+
 const PROPS_PER_LAYER = ['x', 'y', 'rotation', 'scale', 'opacity', 'blend'] as const
 const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light',
                      'hard_light', 'difference', 'lighten', 'darken', 'add']
-const CSS_BLEND: Record<string, string> = {
-  normal: 'normal', multiply: 'multiply', screen: 'screen', overlay: 'overlay',
-  soft_light: 'soft-light', hard_light: 'hard-light',
-  difference: 'difference', lighten: 'lighten', darken: 'darken',
-  add: 'plus-lighter',
-}
+const FONT_NAMES = TEMPLATE_FONTS.map(f => f.name)
 
 const compositor = computed(() => props.nodes.find((n: any) => n.id === props.nodeId))
 
@@ -30,6 +37,7 @@ function getNodeImageUrl(node: any): string | null {
   return null
 }
 
+// ── Wired image layers (connected to the Compositor's slots) ────────────────
 interface Layer {
   slot: number
   url: string
@@ -76,23 +84,35 @@ function setLayerProp(slot: number, prop: string, value: any) {
   if (idx >= 0) node.data.widgetsValues[idx] = value
 }
 
-const selectedSlot = ref<number | null>(null)
-const selected = computed(() => layers.value.find(l => l.slot === selectedSlot.value) ?? null)
-
-const CANVAS_SIZE = 720
-const canvasDisplay = { w: CANVAS_SIZE, h: CANVAS_SIZE }
-
-// Track each layer's natural image dimensions so handles align with the
-// visible image rectangle (object-contain fit), not the canvas rectangle.
+// ── Canvas sizing — match the artboard/base aspect so positions are exact ───
 const naturalDims = ref<Record<number, { w: number; h: number }>>({})
-
 function onImageLoad(slot: number, e: Event) {
   const img = e.target as HTMLImageElement
-  naturalDims.value = {
-    ...naturalDims.value,
-    [slot]: { w: img.naturalWidth, h: img.naturalHeight },
-  }
+  naturalDims.value = { ...naturalDims.value, [slot]: { w: img.naturalWidth, h: img.naturalHeight } }
 }
+const baseAspect = computed(() => {
+  const node = compositor.value
+  const defs = node?.data?.widgetDefs as any[] | undefined
+  const wv = node?.data?.widgetsValues as any[] | undefined
+  if (defs && wv) {
+    const wi = defs.findIndex((d: any) => d.name === 'width')
+    const hi = defs.findIndex((d: any) => d.name === 'height')
+    const fw = wi >= 0 ? Number(wv[wi]) || 0 : 0
+    const fh = hi >= 0 ? Number(wv[hi]) || 0 : 0
+    if (fw > 0 && fh > 0) return fw / fh
+  }
+  const base = layers.value[0]
+  if (!base) return 1
+  const d = naturalDims.value[base.slot]
+  return d && d.h ? d.w / d.h : 1
+})
+const canvasDisplay = reactive({ w: 720, h: 720 })
+watchEffect(() => {
+  const a = baseAspect.value || 1
+  const MAX = 760
+  if (a >= 1) { canvasDisplay.w = MAX; canvasDisplay.h = Math.round(MAX / a) }
+  else { canvasDisplay.h = MAX; canvasDisplay.w = Math.round(MAX * a) }
+})
 
 function fitSize(slot: number) {
   const dims = naturalDims.value[slot]
@@ -102,123 +122,138 @@ function fitSize(slot: number) {
   if (iAspect > cAspect) return { w: canvasDisplay.w, h: canvasDisplay.w / iAspect }
   return { w: canvasDisplay.h * iAspect, h: canvasDisplay.h }
 }
-
-// Layer center in canvas-screen coords.
 function layerCenter(layer: Layer) {
-  return {
-    x: canvasDisplay.w / 2 + layer.x * canvasDisplay.w,
-    y: canvasDisplay.h / 2 + layer.y * canvasDisplay.h,
-  }
+  return { x: canvasDisplay.w / 2 + layer.x * canvasDisplay.w, y: canvasDisplay.h / 2 + layer.y * canvasDisplay.h }
 }
 
-// 4 corners + rotation handle in canvas-screen coords, accounting for rotation+scale.
+const canvasRef = ref<HTMLDivElement | null>(null)
+function canvasRect(): DOMRect | null { return canvasRef.value?.getBoundingClientRect() ?? null }
+
+// ── Local-layer editing engine (shared with the Frame node) ─────────────────
+const editor = useLocalLayerEditor({
+  node: () => compositor.value,
+  dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
+  getRect: () => canvasRect(),
+})
+const {
+  localLayers, setLocal, deleteLocal, selectLocal,
+  selectedId: selectedLocalId, selected: selectedLocal,
+  editingId, editingLayer, beginEdit, endEdit,
+  boxPx, handlePositions: localHandlePositions,
+  startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown,
+  onCanvasPointerDown, onCanvasDblClick,
+  addText, addRect, addEllipse, addLine, addImageFromFile,
+} = editor
+
+// ── Selection: image slot OR local layer, mutually exclusive ────────────────
+const selectedSlot = ref<number | null>(null)
+const selected = computed(() => layers.value.find(l => l.slot === selectedSlot.value) ?? null)
+function selectImage(slot: number) { selectedSlot.value = slot }
+watch(selectedLocalId, (id) => { if (id != null) selectedSlot.value = null })
+watch(selectedSlot, (s) => { if (s != null) selectLocal(null) })
+
+// ── Unified z-order stack (mirrors ArtifactFrameNode's model) ───────────────
+// Keys: `w:<slot>` for a wired image, `l:<id>` for a local layer. Persisted on
+// the node as `comfynext_stackOrder`; array order is bottom→top. This is the
+// single source of truth for depth — any layer can sit above or below any other.
+type StackKey = string
+function wiredKey(slot: number): StackKey { return `w:${slot}` }
+function localKey(id: string): StackKey { return `l:${id}` }
+
+const presentKeys = computed<StackKey[]>(() => [
+  ...layers.value.map(l => wiredKey(l.slot)),
+  ...localLayers.value.map(l => localKey(l.id)),
+])
+const stackKeys = computed<StackKey[]>(() => {
+  const saved = ((compositor.value?.data?.properties as any)?.comfynext_stackOrder as StackKey[]) ?? []
+  const present = new Set(presentKeys.value)
+  const kept = saved.filter((k: string) => present.has(k))
+  const keptSet = new Set(kept)
+  return [...kept, ...presentKeys.value.filter(k => !keptSet.has(k))]
+})
+function moveStackZ(key: StackKey, dir: -1 | 1) {
+  const arr = [...stackKeys.value]
+  const i = arr.findIndex(k => k === key)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= arr.length) return
+  ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  const node = compositor.value
+  if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  ;(node.data.properties as any).comfynext_stackOrder = arr
+}
+function resolveStackKey(key: StackKey): { type: 'wired'; layer: Layer } | { type: 'local'; layer: any } | null {
+  if (key.startsWith('w:')) {
+    const slot = Number(key.slice(2))
+    const layer = layers.value.find(l => l.slot === slot)
+    return layer ? { type: 'wired', layer } : null
+  }
+  const id = key.slice(2)
+  const layer = localLayers.value.find((l: any) => l.id === id)
+  return layer ? { type: 'local', layer } : null
+}
+const selectedStackKey = computed<StackKey | null>(() => {
+  if (selectedLocalId.value) return localKey(selectedLocalId.value)
+  if (selectedSlot.value != null) return wiredKey(selectedSlot.value)
+  return null
+})
+// Pre-resolved stack for the sidebar list (top-first).
+const resolvedStack = computed(() =>
+  [...stackKeys.value].reverse().map(key => {
+    const r = resolveStackKey(key)
+    return r ? { key, ...r } : null
+  }).filter(Boolean) as { key: StackKey; type: 'wired' | 'local'; layer: any }[],
+)
+
+// Shared corner/rotation-handle geometry for a rotated box centered at (cx, cy).
+function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number, scale = 1) {
+  const rad = (rotationDeg * Math.PI) / 180
+  const cosA = Math.cos(rad), sinA = Math.sin(rad)
+  const transform = (dx: number, dy: number) => ({ x: cx + dx * cosA - dy * sinA, y: cy + dx * sinA + dy * cosA })
+  return {
+    tl: transform(-hw, -hh), tr: transform(hw, -hh), br: transform(hw, hh), bl: transform(-hw, hh),
+    rot: transform(0, -hh - 30 / Math.max(scale, 0.1)), topCenter: transform(0, -hh), center: { x: cx, y: cy },
+  }
+}
 const handlePositions = computed(() => {
   const layer = selected.value
   if (!layer) return null
   const { w: fitW, h: fitH } = fitSize(layer.slot)
   const c = layerCenter(layer)
-  const hw = (fitW / 2) * layer.scale
-  const hh = (fitH / 2) * layer.scale
-  const rad = (layer.rotation * Math.PI) / 180
-  const cosA = Math.cos(rad), sinA = Math.sin(rad)
-  const transform = (dx: number, dy: number) => ({
-    x: c.x + dx * cosA - dy * sinA,
-    y: c.y + dx * sinA + dy * cosA,
-  })
-  return {
-    tl: transform(-hw, -hh),
-    tr: transform(hw, -hh),
-    br: transform(hw, hh),
-    bl: transform(-hw, hh),
-    // Rotation handle: 30px above the top-center, in the layer's rotated frame
-    rot: transform(0, -hh - 30 / Math.max(layer.scale, 0.1)),
-    topCenter: transform(0, -hh),
-    center: c,
-  }
+  return boxHandles(c.x, c.y, (fitW / 2) * layer.scale, (fitH / 2) * layer.scale, layer.rotation, layer.scale)
 })
 
-// ── Drag / scale / rotate interactions ────────────────────────────────────
-
-interface DragMove {
-  type: 'move'
-  slot: number
-  startMouseX: number; startMouseY: number
-  startX: number; startY: number
-}
-interface DragScale {
-  type: 'scale'
-  slot: number
-  startMouseX: number; startMouseY: number
-  startScale: number
-  centerX: number; centerY: number
-  startDist: number
-}
-interface DragRotate {
-  type: 'rotate'
-  slot: number
-  startAngle: number
-  startRotation: number
-  centerX: number; centerY: number
-}
+// ── Image-layer drag / scale / rotate (wired slot transforms) ───────────────
+interface DragMove { type: 'move'; slot: number; startMouseX: number; startMouseY: number; startX: number; startY: number }
+interface DragScale { type: 'scale'; slot: number; startScale: number; centerX: number; centerY: number; startDist: number }
+interface DragRotate { type: 'rotate'; slot: number; startAngle: number; startRotation: number; centerX: number; centerY: number }
 type Drag = DragMove | DragScale | DragRotate | null
 const drag = ref<Drag>(null)
 
 function onLayerPointerDown(slot: number, e: PointerEvent) {
-  e.preventDefault()
-  e.stopPropagation()
-  selectedSlot.value = slot
+  e.preventDefault(); e.stopPropagation()
+  selectImage(slot)
   const layer = layers.value.find(l => l.slot === slot)
   if (!layer) return
-  drag.value = {
-    type: 'move', slot,
-    startMouseX: e.clientX, startMouseY: e.clientY,
-    startX: layer.x, startY: layer.y,
-  }
+  drag.value = { type: 'move', slot, startMouseX: e.clientX, startMouseY: e.clientY, startX: layer.x, startY: layer.y }
   attachPointerListeners()
 }
-
 function onScalePointerDown(e: PointerEvent) {
   e.preventDefault(); e.stopPropagation()
-  const layer = selected.value
-  if (!layer) return
+  const layer = selected.value; const r = canvasRect()
+  if (!layer || !r) return
   const c = layerCenter(layer)
-  const r = canvasRect()
-  if (!r) return
-  const mx = e.clientX - r.left
-  const my = e.clientY - r.top
-  drag.value = {
-    type: 'scale', slot: layer.slot,
-    startMouseX: e.clientX, startMouseY: e.clientY,
-    startScale: layer.scale,
-    centerX: c.x, centerY: c.y,
-    startDist: Math.hypot(mx - c.x, my - c.y),
-  }
+  drag.value = { type: 'scale', slot: layer.slot, startScale: layer.scale, centerX: c.x, centerY: c.y, startDist: Math.hypot(e.clientX - r.left - c.x, e.clientY - r.top - c.y) }
   attachPointerListeners()
 }
-
 function onRotatePointerDown(e: PointerEvent) {
   e.preventDefault(); e.stopPropagation()
-  const layer = selected.value
-  if (!layer) return
+  const layer = selected.value; const r = canvasRect()
+  if (!layer || !r) return
   const c = layerCenter(layer)
-  const r = canvasRect()
-  if (!r) return
-  const mx = e.clientX - r.left
-  const my = e.clientY - r.top
-  drag.value = {
-    type: 'rotate', slot: layer.slot,
-    startAngle: Math.atan2(my - c.y, mx - c.x),
-    startRotation: layer.rotation,
-    centerX: c.x, centerY: c.y,
-  }
+  drag.value = { type: 'rotate', slot: layer.slot, startAngle: Math.atan2(e.clientY - r.top - c.y, e.clientX - r.left - c.x), startRotation: layer.rotation, centerX: c.x, centerY: c.y }
   attachPointerListeners()
 }
-
-const canvasRef = ref<HTMLDivElement | null>(null)
-function canvasRect(): DOMRect | null {
-  return canvasRef.value?.getBoundingClientRect() ?? null
-}
-
 function onPointerMove(e: PointerEvent) {
   const d = drag.value
   if (!d) return
@@ -228,160 +263,164 @@ function onPointerMove(e: PointerEvent) {
     setLayerProp(d.slot, 'x', clamp(d.startX + dx, -1.5, 1.5))
     setLayerProp(d.slot, 'y', clamp(d.startY + dy, -1.5, 1.5))
   } else if (d.type === 'scale') {
-    const r = canvasRect()
-    if (!r) return
-    const mx = e.clientX - r.left
-    const my = e.clientY - r.top
-    const dist = Math.hypot(mx - d.centerX, my - d.centerY)
-    const ratio = d.startDist > 0 ? dist / d.startDist : 1
-    setLayerProp(d.slot, 'scale', clamp(d.startScale * ratio, 0.1, 3.0))
+    const r = canvasRect(); if (!r) return
+    const dist = Math.hypot(e.clientX - r.left - d.centerX, e.clientY - r.top - d.centerY)
+    setLayerProp(d.slot, 'scale', clamp(d.startScale * (d.startDist > 0 ? dist / d.startDist : 1), 0.1, 3.0))
   } else if (d.type === 'rotate') {
-    const r = canvasRect()
-    if (!r) return
-    const mx = e.clientX - r.left
-    const my = e.clientY - r.top
-    const angle = Math.atan2(my - d.centerY, mx - d.centerX)
-    const delta = ((angle - d.startAngle) * 180) / Math.PI
-    let rot = d.startRotation + delta
+    const r = canvasRect(); if (!r) return
+    const angle = Math.atan2(e.clientY - r.top - d.centerY, e.clientX - r.left - d.centerX)
+    let rot = d.startRotation + ((angle - d.startAngle) * 180) / Math.PI
     while (rot > 180) rot -= 360
     while (rot < -180) rot += 360
     setLayerProp(d.slot, 'rotation', rot)
   }
 }
-
-function onPointerUp() {
-  drag.value = null
-  detachPointerListeners()
-}
-
+function onPointerUp() { drag.value = null; detachPointerListeners() }
 function attachPointerListeners() {
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp, { once: true })
 }
-function detachPointerListeners() {
-  window.removeEventListener('pointermove', onPointerMove)
-}
-
+function detachPointerListeners() { window.removeEventListener('pointermove', onPointerMove) }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
+// ── Canvas pointer routing: local layers first, then image slots ────────────
+function onCanvasPointerDownCapture(e: PointerEvent) {
+  if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
+  onCanvasPointerDown(e) // hit → select local + start move (+ stops propagation); miss → deselect local, fall through to <img>
+}
+function onCanvasDblClickCapture(e: MouseEvent) { onCanvasDblClick(e) }
 function onCanvasClick(e: MouseEvent) {
-  if (e.target === canvasRef.value) selectedSlot.value = null
+  if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
 }
 
-// ── Layer reordering ───────────────────────────────────────────────────────
-// Display list is top-to-bottom (slot 4 first by default). We move the entry
-// at position `fromIdx` to `toIdx` in that list, then re-derive slot order
-// from the result, permuting both widget values and edge target handles so
-// the image + its transform travel together.
+// ── Text editing: focus the inline textarea when editing starts ─────────────
+const editRef = ref<HTMLTextAreaElement | null>(null)
+watch(editingId, (id) => { if (id) nextTick(() => { editRef.value?.focus(); editRef.value?.select() }) })
+const editingStyle = computed(() => {
+  const l = editingLayer.value
+  if (!l) return {}
+  const box = boxPx(l)
+  return {
+    left: l.x * canvasDisplay.w + 'px', top: l.y * canvasDisplay.h + 'px',
+    width: Math.max(box.w + 8, 40) + 'px', height: Math.max(box.h + 6, 24) + 'px',
+    transform: `translate(-50%, -50%) rotate(${l.rotation}deg)`,
+    fontFamily: /\s/.test(l.fontFamily) ? `"${l.fontFamily}", sans-serif` : `${l.fontFamily}, sans-serif`,
+    fontWeight: String(l.fontWeight), fontSize: l.fontSize * canvasDisplay.w + 'px',
+    lineHeight: String(l.lineHeight), color: l.color, textAlign: l.align as any,
+    opacity: String(l.opacity), caretColor: l.color,
+  }
+})
 
-const reversedLayers = computed(() => [...layers.value].reverse())
+// ── Unified stack canvas (wired + local layers in z-order → WYSIWYG) ────────
+// Mirrors the Frame's `renderStack`: one canvas draws everything interleaved by
+// the unified stackKeys, so a local shape can sit below a wired image.
+const _BLEND_OP: Record<string, GlobalCompositeOperation> = {
+  normal: 'source-over', multiply: 'multiply', screen: 'screen', overlay: 'overlay',
+  soft_light: 'soft-light', hard_light: 'hard-light', difference: 'difference',
+  lighten: 'lighten', darken: 'darken', add: 'lighter',
+}
+// Cache loaded wired-image HTMLImageElements for canvas drawing.
+const wiredImageEls = ref<Record<number, HTMLImageElement>>({})
+function onWiredImageReady(slot: number, img: HTMLImageElement) {
+  if (img.complete && img.naturalWidth) wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
+}
+function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
+  const img = wiredImageEls.value[layer.slot]
+  if (!img || !img.complete || !img.naturalWidth) return
+  // Fit the image into the canvas preserving aspect (same as fitSize), then
+  // apply the layer's CSS-space transform (translate %, rotate, scale).
+  const cAspect = W / H, iAspect = img.naturalWidth / img.naturalHeight
+  let fitW: number, fitH: number
+  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
+  const cx = W / 2 + layer.x * W, cy = H / 2 + layer.y * H
+  ctx.save()
+  ctx.globalAlpha = clamp(layer.opacity, 0, 1)
+  ctx.globalCompositeOperation = _BLEND_OP[layer.blend] ?? 'source-over'
+  ctx.translate(cx, cy)
+  if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
+  ctx.scale(layer.scale, layer.scale)
+  ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
+  ctx.restore()
+}
 
-const draggingSlot = ref<number | null>(null)
-const dragOverIdx = ref<number | null>(null)
+const overlayCanvas = ref<HTMLCanvasElement | null>(null)
+function renderStack() {
+  const cv = overlayCanvas.value
+  if (!cv) return
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+  cv.width = Math.max(1, Math.round(W * dpr))
+  cv.height = Math.max(1, Math.round(H * dpr))
+  const ctx = cv.getContext('2d')!
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, W, H)
+  for (const key of stackKeys.value) {
+    const r = resolveStackKey(key)
+    if (!r) continue
+    if (r.type === 'wired') { drawWiredLayer(ctx, r.layer as Layer, W, H); continue }
+    if (r.layer.id === editingId.value) continue
+    drawLocalLayer(ctx, r.layer, W, H)
+  }
+}
+watch(
+  () => [
+    JSON.stringify(localLayers.value), editingId.value,
+    canvasDisplay.w, canvasDisplay.h,
+    JSON.stringify(layers.value), JSON.stringify(stackKeys.value),
+    Object.keys(wiredImageEls.value).length,
+  ] as const,
+  async () => {
+    for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
+    await ensureLayerFonts(localLayers.value, canvasDisplay.w)
+    await ensureLayerImages(localLayers.value)
+    renderStack()
+  },
+  { immediate: true },
+)
 
-function onLayerDragStart(slot: number, e: DragEvent) {
-  draggingSlot.value = slot
-  e.dataTransfer?.setData('text/plain', String(slot))
-  e.dataTransfer && (e.dataTransfer.effectAllowed = 'move')
-}
-function onLayerDragOver(idx: number, e: DragEvent) {
-  e.preventDefault()
-  dragOverIdx.value = idx
-  e.dataTransfer && (e.dataTransfer.dropEffect = 'move')
-}
-function onLayerDragLeave() {
-  dragOverIdx.value = null
-}
-function onLayerDrop(toIdx: number) {
-  const fromSlot = draggingSlot.value
-  draggingSlot.value = null
-  dragOverIdx.value = null
-  if (fromSlot == null) return
-  const display = reversedLayers.value
-  const fromIdx = display.findIndex(l => l.slot === fromSlot)
-  if (fromIdx < 0 || fromIdx === toIdx) return
-  reorderDisplay(fromIdx, toIdx)
-}
-
-function reorderDisplay(fromIdx: number, toIdx: number) {
+// ── Property-panel helpers ───────────────────────────────────────────────────
+// Sizes read in true output px when the artboard has an explicit resolution
+// (so the number is stable regardless of display/zoom); else fall back to the
+// editor-canvas width.
+const outWidth = computed(() => {
   const node = compositor.value
-  if (!node) return
-  const defs = node.data.widgetDefs as any[]
-  const wv = node.data.widgetsValues as any[]
-  const widgetIdx = (slot: number, prop: string) =>
-    defs.findIndex((d: any) => d.name === `layer${slot}_${prop}`)
+  const defs = node?.data?.widgetDefs as any[] | undefined
+  const wv = node?.data?.widgetsValues as any[] | undefined
+  const wi = defs?.findIndex((d: any) => d.name === 'width') ?? -1
+  const w = wi >= 0 ? Number(wv?.[wi]) || 0 : 0
+  return w || canvasDisplay.w
+})
+function pxW(norm: number) { return Math.round(norm * outWidth.value) }
+function setSizePx(id: string, key: string, px: number) { setLocal(id, { [key]: Math.max(0, px) / outWidth.value }) }
+function toggleFill(l: RectLayer | EllipseLayer) { setLocal(l.id, { fill: l.fill && l.fill !== 'none' ? 'none' : '#3b82f6' }) }
+function kindIcon(kind: string) {
+  return kind === 'text' ? Type : kind === 'rect' ? Square
+    : kind === 'ellipse' ? Circle : kind === 'image' ? ImageIcon : Minus
+}
 
-  // Current display order (top→bottom) of slot numbers
-  const displaySlots = reversedLayers.value.map(l => l.slot)
-  // Insert the dragged entry at the target position
-  const [moved] = displaySlots.splice(fromIdx, 1)
-  displaySlots.splice(toIdx, 0, moved)
-  // Convert back to compositor slot order (slot 1 = bottom in our schema,
-  // which is the LAST entry in display top→bottom order)
-  const newSlotOrder = [...displaySlots].reverse()
-
-  // Snapshot every connected slot's payload so we can shuffle without races.
-  // Each entry is { sourceSlot, transform, edgeId }
-  type Snap = { transform: Record<string, any>; edgeId: string | null }
-  const snapshot: Record<number, Snap> = {}
-  for (const oldSlot of displaySlots) {  // only the connected ones
-    const transform: Record<string, any> = {}
-    for (const prop of PROPS_PER_LAYER) {
-      transform[prop] = wv[widgetIdx(oldSlot, prop)]
-    }
-    const edge = props.edges.find((e: any) =>
-      e.target === props.nodeId && e.targetHandle === `input-${oldSlot - 1}`)
-    snapshot[oldSlot] = { transform, edgeId: edge?.id ?? null }
-  }
-
-  // Apply: for each NEW slot position, take payload from the source slot it
-  // should now hold. newSlotOrder[k] is the OLD slot that goes to NEW slot
-  // index k+1 from the BOTTOM. Build mapping new_slot → old_slot.
-  // newSlotOrder is bottom-to-top: index 0 = bottom (slot 1).
-  for (let k = 0; k < newSlotOrder.length; k++) {
-    const oldSlot = newSlotOrder[k]
-    const newSlot = 4 - (displaySlots.length - 1 - k) // map display position back to compositor slot
-    // Hmm, that's confusing — simpler: if we have N connected layers and they
-    // should keep occupying slots 1..N in their new order, then newSlot is k+1
-    // counting from the bottom. But we need a stable mapping that doesn't
-    // collide with disconnected slots. Easiest: shuffle within the SET of
-    // currently-occupied slots, preserving which slots are filled.
-  }
-
-  // Simpler, correct algorithm:
-  //  - Connected slots stay connected; we permute within the set of occupied slots.
-  //  - sourceSlots = displaySlots (the OLD order, still listing which slots have layers)
-  //  - targetSlots = same set, but assigning each old slot's data to a new slot
-  //    based on the user's new ordering.
-  // Read the new ordering from `displaySlots` (after splice): display position k
-  // (top-to-bottom) should hold what was in OLD slot displaySlots[k].
-  // The set of OCCUPIED slots (before/after reorder) is the same: occupied = sourceSlots sorted.
-  const occupied = Object.keys(snapshot).map(Number).sort((a, b) => b - a) // top→bottom
-  // occupied[k] is the slot that holds display position k after reorder.
-  // We want display position k to now contain data from OLD slot displaySlots[k].
-  for (let k = 0; k < occupied.length; k++) {
-    const newSlot = occupied[k]
-    const sourceSlot = displaySlots[k]
-    const snap = snapshot[sourceSlot]
-    // Write widget values
-    for (const prop of PROPS_PER_LAYER) {
-      wv[widgetIdx(newSlot, prop)] = snap.transform[prop]
-    }
-    // Move the edge to point at newSlot's input handle
-    if (snap.edgeId) {
-      const edge = props.edges.find((e: any) => e.id === snap.edgeId)
-      if (edge) edge.targetHandle = `input-${newSlot - 1}`
-    }
-  }
-  // If the selected layer was one of the moved ones, keep selection by slot
-  // (which now holds different data — that's the intent, the selection follows
-  // the VISUAL position, not the layer image. So pick the slot at the same
-  // display position as before, which is `toIdx`).
-  selectedSlot.value = occupied[toIdx]
+// ── Add an image layer from the toolbar ─────────────────────────────────────
+const imageInputRef = ref<HTMLInputElement | null>(null)
+function triggerAddImage() { imageInputRef.value?.click() }
+async function onAddImageFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) { try { await addImageFromFile(file) } catch (err) { console.error('[Compositor] add image failed:', err) } }
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  const ae = document.activeElement
+  const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
+  if (e.key === 'Escape') {
+    if (editingId.value) { endEdit(); return }
+    if (typing) return
+    emit('close')
+    return
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing) {
+    e.preventDefault()
+    deleteLocal(selectedLocalId.value)
+  }
 }
 onMounted(() => window.addEventListener('keydown', handleKeydown))
 onUnmounted(() => {
@@ -403,37 +442,40 @@ onUnmounted(() => {
       </div>
       <div class="p-3 flex-1 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
-        <div class="text-xs text-white/60 px-1 py-1 flex items-center gap-1.5">
-          <span class="text-white/40">#</span>
-          <span>Canvas</span>
-        </div>
-        <div
-          v-for="(layer, idx) in reversedLayers"
-          :key="layer.slot"
-          draggable="true"
-          class="group flex items-center gap-2 pl-5 pr-2 py-1.5 rounded cursor-pointer transition-colors relative"
-          :class="[
-            selectedSlot === layer.slot ? 'bg-white/10' : 'hover:bg-white/[0.04]',
-            draggingSlot === layer.slot ? 'opacity-40' : '',
-          ]"
-          @click="selectedSlot = layer.slot"
-          @dragstart="onLayerDragStart(layer.slot, $event)"
-          @dragover="onLayerDragOver(idx, $event)"
-          @dragleave="onLayerDragLeave"
-          @drop="onLayerDrop(idx)"
-          @dragend="draggingSlot = null; dragOverIdx = null"
-        >
-          <!-- Drop indicator line -->
+
+        <!-- Unified z-order stack (top-first, same model as the Frame) -->
+        <template v-for="item in resolvedStack" :key="item.key">
           <div
-            v-if="dragOverIdx === idx && draggingSlot != null && draggingSlot !== layer.slot"
-            class="absolute -top-px left-0 right-0 h-0.5 bg-yellow-400"
-          />
-          <GripVertical class="size-3 text-white/30 group-hover:text-white/60 shrink-0" />
-          <ImageIcon class="size-3.5 text-white/60 shrink-0" />
-          <span class="text-sm">Layer {{ layer.slot }}</span>
-        </div>
-        <div v-if="!layers.length" class="text-xs text-white/30 px-1 py-2 italic">
-          Connect images to the Compositor's layer ports.
+            v-if="item.type === 'local'"
+            class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
+            :class="selectedLocalId === item.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+            @click="selectLocal(item.layer.id)"
+            @dblclick="item.layer.kind === 'text' && beginEdit(item.layer.id)"
+          >
+            <component :is="kindIcon(item.layer.kind)" class="size-3.5 text-white/60 shrink-0" />
+            <span class="text-sm truncate flex-1">
+              {{ item.layer.kind === 'text' ? (item.layer.text?.split('\n')[0] || 'Text') : item.layer.kind }}
+            </span>
+            <button
+              class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition"
+              title="Delete"
+              @click.stop="deleteLocal(item.layer.id)"
+            >
+              <Trash2 class="size-3.5" />
+            </button>
+          </div>
+          <div
+            v-else
+            class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
+            :class="selectedSlot === item.layer.slot ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+            @click="selectImage(item.layer.slot)"
+          >
+            <ImageIcon class="size-3.5 text-white/60 shrink-0" />
+            <span class="text-sm">Layer {{ item.layer.slot }}</span>
+          </div>
+        </template>
+        <div v-if="!layers.length && !localLayers.length" class="text-xs text-white/30 px-1 py-2 italic">
+          Connect images to the Compositor's layer ports, or add text/shapes below.
         </div>
       </div>
     </div>
@@ -453,7 +495,11 @@ onUnmounted(() => {
         class="relative bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5"
         :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         @click="onCanvasClick"
+        @pointerdown.capture="onCanvasPointerDownCapture"
+        @dblclick.capture="onCanvasDblClickCapture"
       >
+        <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
+             The unified stack canvas below handles all visual rendering. -->
         <img
           v-for="layer in layers"
           :key="layer.slot"
@@ -462,15 +508,35 @@ onUnmounted(() => {
           class="absolute inset-0 w-full h-full object-contain origin-center select-none touch-none"
           :style="{
             transform: `translate(${layer.x * 100}%, ${layer.y * 100}%) rotate(${layer.rotation}deg) scale(${layer.scale})`,
-            opacity: layer.opacity,
-            mixBlendMode: CSS_BLEND[layer.blend] || 'normal',
+            opacity: 0,
             cursor: drag?.type === 'move' && drag.slot === layer.slot ? 'grabbing' : 'grab',
+            zIndex: 10,
           }"
-          @load="onImageLoad(layer.slot, $event)"
+          @load="(e: Event) => { onImageLoad(layer.slot, e); onWiredImageReady(layer.slot, e.target as HTMLImageElement) }"
           @pointerdown="onLayerPointerDown(layer.slot, $event)"
         />
 
-        <!-- Selection / handles overlay -->
+        <!-- Unified stack canvas: wired + local layers in z-order (WYSIWYG) -->
+        <canvas
+          ref="overlayCanvas"
+          class="absolute inset-0 pointer-events-none"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
+        />
+
+        <!-- Inline text editor -->
+        <textarea
+          v-if="editingLayer"
+          ref="editRef"
+          :value="editingLayer.text"
+          class="absolute bg-transparent outline-none resize-none overflow-hidden border border-dashed border-yellow-400/70 px-0.5 nopan nodrag"
+          :style="editingStyle"
+          @input="setLocal(editingLayer!.id, { text: ($event.target as HTMLTextAreaElement).value })"
+          @blur="endEdit"
+          @keydown.escape.prevent="endEdit"
+          @pointerdown.stop
+        />
+
+        <!-- Image-layer selection / handles -->
         <svg
           v-if="handlePositions"
           class="absolute inset-0 w-full h-full pointer-events-none"
@@ -478,118 +544,302 @@ onUnmounted(() => {
         >
           <polygon
             :points="`${handlePositions.tl.x},${handlePositions.tl.y} ${handlePositions.tr.x},${handlePositions.tr.y} ${handlePositions.br.x},${handlePositions.br.y} ${handlePositions.bl.x},${handlePositions.bl.y}`"
-            fill="none"
-            stroke="#facc15"
-            stroke-width="2"
-            vector-effect="non-scaling-stroke"
+            fill="none" stroke="#facc15" stroke-width="2" vector-effect="non-scaling-stroke"
           />
           <line
             :x1="handlePositions.topCenter.x" :y1="handlePositions.topCenter.y"
             :x2="handlePositions.rot.x" :y2="handlePositions.rot.y"
-            stroke="#facc15"
-            stroke-width="2"
-            vector-effect="non-scaling-stroke"
+            stroke="#facc15" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
         <template v-if="handlePositions">
-          <!-- Corner scale handles -->
           <div
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="corner"
+            data-handle
             class="absolute size-2.5 bg-white border border-yellow-400 cursor-nwse-resize"
-            :style="{
-              left: handlePositions[corner].x + 'px',
-              top: handlePositions[corner].y + 'px',
-              transform: 'translate(-50%, -50%)',
-            }"
+            :style="{ left: handlePositions[corner].x + 'px', top: handlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onScalePointerDown($event)"
           />
-          <!-- Rotation handle -->
           <div
+            data-handle
             class="absolute size-3 rounded-full bg-yellow-400 cursor-grab border-2 border-[#1a1a1a]"
-            :style="{
-              left: handlePositions.rot.x + 'px',
-              top: handlePositions.rot.y + 'px',
-              transform: 'translate(-50%, -50%)',
-            }"
+            :style="{ left: handlePositions.rot.x + 'px', top: handlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onRotatePointerDown($event)"
+          />
+        </template>
+
+        <!-- Local-layer selection / handles -->
+        <svg
+          v-if="localHandlePositions && !editingId"
+          class="absolute inset-0 w-full h-full pointer-events-none"
+          :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
+        >
+          <polygon
+            :points="`${localHandlePositions.tl.x},${localHandlePositions.tl.y} ${localHandlePositions.tr.x},${localHandlePositions.tr.y} ${localHandlePositions.br.x},${localHandlePositions.br.y} ${localHandlePositions.bl.x},${localHandlePositions.bl.y}`"
+            fill="none" stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"
+          />
+          <line
+            :x1="localHandlePositions.topCenter.x" :y1="localHandlePositions.topCenter.y"
+            :x2="localHandlePositions.rot.x" :y2="localHandlePositions.rot.y"
+            stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"
+          />
+        </svg>
+        <template v-if="localHandlePositions && !editingId">
+          <div
+            v-for="corner in ['tl', 'tr', 'br', 'bl']"
+            :key="'l-' + corner"
+            data-handle
+            class="absolute size-2.5 bg-white border border-cyan-400 cursor-nwse-resize"
+            :style="{ left: localHandlePositions[corner].x + 'px', top: localHandlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
+            @pointerdown="onLocalScalePointerDown($event)"
+          />
+          <div
+            data-handle
+            class="absolute size-3 rounded-full bg-cyan-400 cursor-grab border-2 border-[#1a1a1a]"
+            :style="{ left: localHandlePositions.rot.x + 'px', top: localHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
+            @pointerdown="onLocalRotatePointerDown($event)"
           />
         </template>
       </div>
 
       <!-- Bottom toolbar -->
       <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
-        <button class="flex items-center justify-center size-8 rounded-[8px] bg-yellow-400/90 text-black cursor-pointer">
+        <button class="flex items-center justify-center size-8 rounded-[8px] bg-yellow-400/90 text-black cursor-pointer" title="Select">
           <MousePointer2 class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/5 text-white/60 cursor-not-allowed opacity-40" disabled>
-          <Hand class="size-4" />
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
+          <Type class="size-4" />
         </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
+          <Square class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
+          <Circle class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
+          <Minus class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
+          <ImageIcon class="size-4" />
+        </button>
+        <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
       </div>
     </div>
 
     <!-- Right sidebar: properties -->
     <div class="w-72 border-l border-white/10 shrink-0 flex flex-col">
-      <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-        <ImageIcon class="size-3.5 text-white/60" />
-        <span class="text-sm font-medium">{{ selected ? `Layer ${selected.slot}` : 'No selection' }}</span>
-      </div>
-      <div v-if="selected" class="p-4 flex flex-col gap-4 overflow-y-auto">
-        <div>
-          <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Position</div>
-          <div class="flex gap-2">
-            <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
-              <span class="text-xs text-white/40">X</span>
-              <input type="number" step="0.01" :value="selected.x.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                @input="setLayerProp(selected.slot, 'x', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-            </label>
-            <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
-              <span class="text-xs text-white/40">Y</span>
-              <input type="number" step="0.01" :value="selected.y.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                @input="setLayerProp(selected.slot, 'y', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-            </label>
+      <!-- Local-layer properties -->
+      <template v-if="selectedLocal">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <component :is="kindIcon(selectedLocal.kind)" class="size-3.5 text-white/60" />
+          <span class="text-sm font-medium capitalize">{{ selectedLocal.kind }}</span>
+          <div class="ml-auto flex items-center gap-1">
+            <button class="text-white/40 hover:text-white/80 p-1" title="Bring forward" @click="moveStackZ(localKey(selectedLocal.id), 1)"><ArrowUp class="size-3.5" /></button>
+            <button class="text-white/40 hover:text-white/80 p-1" title="Send backward" @click="moveStackZ(localKey(selectedLocal.id), -1)"><ArrowDown class="size-3.5" /></button>
+            <button class="text-white/40 hover:text-red-400 p-1" title="Delete" @click="deleteLocal(selectedLocal.id)"><Trash2 class="size-3.5" /></button>
           </div>
         </div>
+        <div class="p-4 flex flex-col gap-4 overflow-y-auto">
+          <!-- Text controls -->
+          <template v-if="selectedLocal.kind === 'text'">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Text</div>
+              <textarea
+                :value="(selectedLocal as any).text" rows="2"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none resize-none"
+                @input="setLocal(selectedLocal!.id, { text: ($event.target as HTMLTextAreaElement).value })"
+              />
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Font</div>
+              <select :value="(selectedLocal as any).fontFamily"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                @change="setLocal(selectedLocal!.id, { fontFamily: ($event.target as HTMLSelectElement).value })">
+                <option v-for="f in FONT_NAMES" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Size</div>
+                <input type="number" min="1" :value="pxW((selectedLocal as any).fontSize)"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setSizePx(selectedLocal!.id, 'fontSize', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Style</div>
+                <div class="flex gap-1">
+                  <button class="flex-1 flex items-center justify-center bg-[#1a1a1a] border border-[#2a2a2a] rounded py-1.5"
+                    :class="(selectedLocal as any).fontWeight === 700 ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                    @click="setLocal(selectedLocal!.id, { fontWeight: (selectedLocal as any).fontWeight === 700 ? 400 : 700 })">
+                    <Bold class="size-3.5" />
+                  </button>
+                  <button v-for="a in (['left','center','right'] as const)" :key="a"
+                    class="flex-1 flex items-center justify-center bg-[#1a1a1a] border border-[#2a2a2a] rounded py-1.5"
+                    :class="(selectedLocal as any).align === a ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                    @click="setLocal(selectedLocal!.id, { align: a })">
+                    <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : AlignRight" class="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
+                <input type="color" :value="(selectedLocal as any).color"
+                  class="w-full h-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
+                  @input="setLocal(selectedLocal!.id, { color: ($event.target as HTMLInputElement).value })" />
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Outline</div>
+                <div class="flex gap-1.5 items-center">
+                  <input type="color" :value="(selectedLocal as any).strokeColor"
+                    class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
+                    @input="setLocal(selectedLocal!.id, { strokeColor: ($event.target as HTMLInputElement).value })" />
+                  <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+                </div>
+              </div>
+            </div>
+          </template>
 
-        <div>
-          <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Rotation</div>
-          <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
-            <input type="number" step="1" :value="selected.rotation.toFixed(1)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-              @input="setLayerProp(selected.slot, 'rotation', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-            <span class="text-xs text-white/40">°</span>
-          </div>
-        </div>
+          <!-- Rect / ellipse controls -->
+          <template v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse'">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Fill</div>
+              <div class="flex gap-1.5 items-center">
+                <input type="color" :value="(selectedLocal as any).fill === 'none' ? '#3b82f6' : (selectedLocal as any).fill"
+                  class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
+                  @input="setLocal(selectedLocal!.id, { fill: ($event.target as HTMLInputElement).value })" />
+                <button class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs"
+                  :class="(selectedLocal as any).fill === 'none' ? 'text-yellow-400' : 'text-white/60'"
+                  @click="toggleFill(selectedLocal as any)">
+                  {{ (selectedLocal as any).fill === 'none' ? 'No fill' : 'Filled' }}
+                </button>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Stroke</div>
+              <div class="flex gap-1.5 items-center">
+                <input type="color" :value="(selectedLocal as any).stroke || '#ffffff'"
+                  class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
+                  @input="setLocal(selectedLocal!.id, { stroke: ($event.target as HTMLInputElement).value })" />
+                <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              </div>
+            </div>
+            <div v-if="selectedLocal.kind === 'rect'">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Corner radius</div>
+              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).radius)"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setSizePx(selectedLocal!.id, 'radius', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+            </div>
+          </template>
 
-        <div>
-          <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Scale</div>
-          <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
-            <input type="number" step="0.05" min="0.1" max="3" :value="selected.scale.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-              @input="setLayerProp(selected.slot, 'scale', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
-            <span class="text-xs text-white/40">×</span>
-          </div>
-        </div>
+          <!-- Line controls -->
+          <template v-if="selectedLocal.kind === 'line'">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
+              <input type="color" :value="(selectedLocal as any).stroke"
+                class="w-full h-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
+                @input="setLocal(selectedLocal!.id, { stroke: ($event.target as HTMLInputElement).value })" />
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Thickness</div>
+              <input type="number" min="1" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
+            </div>
+          </template>
 
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Opacity</div>
-            <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
-              <input type="number" min="0" max="100" step="1" :value="Math.round(selected.opacity * 100)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                @input="setLayerProp(selected.slot, 'opacity', Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)))" />
-              <span class="text-xs text-white/40">%</span>
+          <!-- Common: rotation + opacity -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Rotation</div>
+              <input type="number" step="1" :value="Math.round(selectedLocal.rotation)"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setLocal(selectedLocal!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Opacity</div>
+              <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
+                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setLocal(selectedLocal!.id, { opacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) })" />
             </div>
           </div>
-          <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Blend mode</div>
-            <select :value="selected.blend" class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
-              @change="setLayerProp(selected.slot, 'blend', ($event.target as HTMLSelectElement).value)">
-              <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
-            </select>
+        </div>
+      </template>
+
+      <!-- Image-layer properties -->
+      <template v-else>
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <ImageIcon class="size-3.5 text-white/60" />
+          <span class="text-sm font-medium">{{ selected ? `Layer ${selected.slot}` : 'No selection' }}</span>
+          <div v-if="selected" class="ml-auto flex items-center gap-1">
+            <button class="text-white/40 hover:text-white/80 p-1" title="Bring forward" @click="moveStackZ(wiredKey(selected.slot), 1)"><ArrowUp class="size-3.5" /></button>
+            <button class="text-white/40 hover:text-white/80 p-1" title="Send backward" @click="moveStackZ(wiredKey(selected.slot), -1)"><ArrowDown class="size-3.5" /></button>
           </div>
         </div>
-      </div>
-      <div v-else class="p-4 text-xs text-white/40 italic">
-        Select a layer to edit its properties.
-      </div>
+        <div v-if="selected" class="p-4 flex flex-col gap-4 overflow-y-auto">
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Position</div>
+            <div class="flex gap-2">
+              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+                <span class="text-xs text-white/40">X</span>
+                <input type="number" step="0.01" :value="selected.x.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
+                  @input="setLayerProp(selected.slot, 'x', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+                <span class="text-xs text-white/40">Y</span>
+                <input type="number" step="0.01" :value="selected.y.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
+                  @input="setLayerProp(selected.slot, 'y', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Rotation</div>
+            <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <input type="number" step="1" :value="selected.rotation.toFixed(1)" class="w-full bg-transparent text-xs text-white/90 outline-none"
+                @input="setLayerProp(selected.slot, 'rotation', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              <span class="text-xs text-white/40">°</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Scale</div>
+            <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <input type="number" step="0.05" min="0.1" max="3" :value="selected.scale.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
+                @input="setLayerProp(selected.slot, 'scale', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
+              <span class="text-xs text-white/40">×</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Opacity</div>
+              <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+                <input type="number" min="0" max="100" step="1" :value="Math.round(selected.opacity * 100)" class="w-full bg-transparent text-xs text-white/90 outline-none"
+                  @input="setLayerProp(selected.slot, 'opacity', Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)))" />
+                <span class="text-xs text-white/40">%</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Blend mode</div>
+              <select :value="selected.blend" class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                @change="setLayerProp(selected.slot, 'blend', ($event.target as HTMLSelectElement).value)">
+                <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div v-else class="p-4 text-xs text-white/40 italic">
+          Select a layer to edit its properties, or use the toolbar to add text and shapes.
+        </div>
+      </template>
     </div>
     </div>
   </div>

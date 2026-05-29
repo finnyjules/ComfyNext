@@ -3,13 +3,17 @@ import {
   House, X, Plus, Play, Check, Minus, ExternalLink, AlertCircle,
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
-  AudioWaveform, Film, Box,
+  AudioWaveform, Film, Box, Type, Frame, Clapperboard,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
 import LoraTrainerSurface from '~/components/LoraTrainerSurface.vue'
+import StartProjectModal from '~/components/StartProjectModal.vue'
+import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
+import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
@@ -72,6 +76,7 @@ const sidebarItems = [
   { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
   { label: 'LoRAs', icon: Library, panel: 'loras' },
   { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
+  { label: 'Annotate', icon: MessageSquareDashed, submenu: 'annotate' },
   // Power-user
   { label: 'Nodes', icon: GitFork, tabId: 'node-library', dividerBefore: true },
   { label: 'Blocks', icon: Boxes, panel: 'blocks' },
@@ -87,7 +92,11 @@ const sidebarItems = [
 // 3D is here as a placeholder — the Mesh artifact node isn't shipped yet,
 // so its option stays disabled until that lands.
 const loadOptions = [
+  // Composition surfaces — spatial (Frame) + temporal (Timeline) — grouped up top.
+  { label: 'Frame',    icon: Frame,        nodeType: 'Compositor' },
+  { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
+  { label: 'Text',  icon: Type,           nodeType: 'Text' },
   { label: 'Audio', icon: AudioWaveform,  nodeType: 'Audio' },
   { label: 'Video', icon: Film,           nodeType: 'Video' },
   { label: '3D',    icon: Box,            nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
@@ -97,6 +106,62 @@ const loadMenuOpen = ref(false)
 function addLoadNode(nodeType: string) {
   window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType } }))
   loadMenuOpen.value = false
+}
+
+// Annotate submenu — FigJam-style overlays on the canvas. Each option fires
+// `comfynext:addAnnotation`; VueNodeCanvas owns the spawn position and
+// per-kind logic (file picker for image, two-click flow for arrow).
+const annotateOptions = [
+  { label: 'Sticky note', icon: StickyNote, kind: 'sticky',    hint: 'S' },
+  { label: 'Checklist',   icon: ListChecks, kind: 'checklist', hint: 'C' },
+  { label: 'Image pin',   icon: Image,      kind: 'image' },
+  { label: 'Arrow',       icon: ArrowRight, kind: 'arrow',     hint: 'A' },
+]
+const annotateMenuOpen = ref(false)
+
+function addAnnotation(kind: string) {
+  window.dispatchEvent(new CustomEvent('comfynext:addAnnotation', { detail: { kind } }))
+  annotateMenuOpen.value = false
+}
+
+// "Get Started" modal: pops up once per fresh blank project. We track the
+// target tab id so the modal is bound to a single tab — switch away and it
+// disappears, switch back and it stays gone (once dismissed). Tabs that
+// open with a workflowId (recent project, community workflow) skip the
+// modal entirely.
+const startModalTabId = ref<string | null>(null)
+const seenStartModalTabIds = new Set<string>()
+
+watch(() => activeTabId.value, (id) => {
+  if (!id) { startModalTabId.value = null; return }
+  const tab = tabs.value.find((t) => t.id === id) as any
+  const isFreshBlankProject = tab?.type === 'project' && !tab?.workflowId && !seenStartModalTabIds.has(id)
+  if (isFreshBlankProject) {
+    seenStartModalTabIds.add(id)
+    startModalTabId.value = id
+  } else {
+    // Tab switch → hide the modal (without re-triggering on switch-back).
+    startModalTabId.value = null
+  }
+})
+
+function onStartModalPick(payload: { capability: Capability }) {
+  const cap = payload.capability
+  const sourceNodeType = cap.from === 'prompt'
+    ? undefined
+    : ARTIFACT_NODE_FOR_INPUT[cap.from]
+  startModalTabId.value = null
+  // Defer one tick so the modal unmounts before we touch the canvas — keeps
+  // any focus/scroll state clean and ensures the canvas is fully mounted.
+  nextTick(() => {
+    vueCanvasRef.value?.materializeStartGraph?.({
+      sourceNodeType,
+      generatorNodeType: cap.nodeType,
+    })
+  })
+}
+function onStartModalSkip() {
+  startModalTabId.value = null
 }
 
 const activeTool = ref<string>('select')
@@ -121,6 +186,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.submenu === 'load') return loadMenuOpen.value
+  if (item?.submenu === 'annotate') return annotateMenuOpen.value
   return activeSidebarItem.value === item?.label
 }
 
@@ -136,11 +202,22 @@ function toggleSidebarItem(label: string) {
     generatorsPanelOpen.value = false
     loraLibraryPanelOpen.value = false
     blockLibraryPanelOpen.value = false
+    annotateMenuOpen.value = false
     loadMenuOpen.value = !loadMenuOpen.value
     return
   }
-  // Any other sidebar item closes the Load popup.
+  if (item?.submenu === 'annotate') {
+    toolboxPanelOpen.value = false
+    generatorsPanelOpen.value = false
+    loraLibraryPanelOpen.value = false
+    blockLibraryPanelOpen.value = false
+    loadMenuOpen.value = false
+    annotateMenuOpen.value = !annotateMenuOpen.value
+    return
+  }
+  // Any other sidebar item closes both popups.
   loadMenuOpen.value = false
+  annotateMenuOpen.value = false
   if (item?.tool) {
     // Deactivate explain if switching away
     if (activeTool.value === 'explain' && item.tool !== 'explain') {
@@ -237,6 +314,15 @@ async function runVueWorkflow(targetIds?: string[]) {
     return
   }
 
+  // Ensure the cached /object_info schema is current (the mount-time fetch can
+  // predate the backend registering Compositor z/mask inputs) and heal any
+  // Compositor whose saved widget array drifted, before we build the workflow.
+  try {
+    await vueCanvasRef.value.refreshSchema?.()
+  } catch (err) {
+    console.error('[Run] schema refresh failed', err)
+  }
+
   // Auto-materialize Image sinks for any node with a dangling IMAGE output.
   // For full-graph Run (no targetIds), every active node is a candidate; the
   // canvas's own guards (skip Image self, skip already-wired outputs) keep
@@ -267,6 +353,22 @@ async function runVueWorkflow(targetIds?: string[]) {
     plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
   }
 
+  // Bake any Compositor text/shape overlays into uploaded image layers and
+  // wire them into the workflow (mutates plainWorkflow in place).
+  try {
+    await vueCanvasRef.value.injectCompositorOverlays?.(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] compositor overlay injection failed', err)
+  }
+
+  // Push each Timeline node's editor state (keyframes, multi-track clips) into
+  // its edit_state widget so node-run renders what the editor shows.
+  try {
+    vueCanvasRef.value.injectTimelineEditState?.(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] timeline edit_state injection failed', err)
+  }
+
   // Load workflow into the bridge iframe's LiteGraph, then queue
   const iframe = getSharedIframe()
   if (!iframe?.contentWindow) {
@@ -280,6 +382,20 @@ async function runVueWorkflow(targetIds?: string[]) {
   await new Promise(r => setTimeout(r, 800))
   console.log('[Run] sending queuePrompt')
   sendToActiveProjectIframe('queuePrompt')
+
+  // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
+  // iframe sometimes retains focus after the postMessage handshake, and on
+  // macOS the OS routes subsequent pinch-zoom gestures to whatever frame
+  // holds focus — meaning the Vue canvas silently loses pinch-zoom until
+  // a full reload. The canvas root carries tabindex="-1" specifically so
+  // we can pull focus here without the iframe holding on. Skip if the user
+  // is actively typing — that intent overrides ours.
+  requestAnimationFrame(() => {
+    const ae = document.activeElement
+    if (ae instanceof Element && ae.matches('input, textarea, [contenteditable]')) return
+    const root = document.querySelector('.vue-node-canvas-root') as HTMLElement | null
+    root?.focus({ preventScroll: true })
+  })
 }
 
 // Filtered-run events from the canvas context menu (Run Group, Run Selection).
@@ -287,25 +403,225 @@ async function runVueWorkflow(targetIds?: string[]) {
 // we ask the canvas to materialize an `Image` artifact card for every
 // dangling IMAGE output among the targets — that's where the execution
 // result lands. No-op for targets whose outputs are already wired.
-function handleRunFiltered(e: Event) {
+async function handleRunFiltered(e: Event) {
   const detail = (e as CustomEvent).detail
   const targetIds = detail?.targetIds as string[] | undefined
   if (!targetIds?.length) return
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
+  if (await maybeRunWithTextAutofill(expanded)) return
   runVueWorkflow(expanded)
 }
-function handleRunAll() {
+async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
   // top-right Run button, which calls it directly, also benefits).
+  if (await maybeRunWithTextAutofill(undefined)) return
   runVueWorkflow()
 }
+
+// Awaits the next `execution_complete` event from the bridge. Resolves on
+// the first one that arrives — callers must invoke this *before* queueing
+// the prompt they care about, or they'll latch onto a stale completion.
+function awaitExecutionComplete(timeoutMs = 120_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', handler)
+      reject(new Error('execution_complete timeout'))
+    }, timeoutMs)
+    function handler(event: MessageEvent) {
+      if (event.data?.type !== 'comfynext-bridge') return
+      if (event.data.event !== 'execution_complete' && event.data.event !== 'execution_error') return
+      clearTimeout(timer)
+      window.removeEventListener('message', handler)
+      resolve()
+    }
+    window.addEventListener('message', handler)
+  })
+}
+
+// Auto-fill on Run: if the workflow contains a Text artifact node whose
+// `source` input is wired AND has empty entry slots, run the workflow once
+// per empty slot — each iteration clears the text widget so the upstream
+// value flows through, then we capture the executed text into entries[i].
+// Returns true if it handled the run (caller should skip its normal path).
+let textAutofillRunning = false
+async function maybeRunWithTextAutofill(targetIds?: string[]): Promise<boolean> {
+  if (textAutofillRunning) return false
+  const canvas = vueCanvasRef.value
+  if (!canvas?.getNodes || !canvas?.getEdges) return false
+
+  const all = canvas.getNodes() as any[]
+  const edges = canvas.getEdges() as any[]
+
+  // Candidate: Text node with `source` connected + ≥1 empty slot. If the
+  // user explicitly filtered the run (Run from Selection etc.), restrict
+  // candidates to the kept set so we don't surprise them with side-effects
+  // on unrelated parts of the graph.
+  const allowed = targetIds && targetIds.length ? new Set(targetIds) : null
+  const candidates = all.filter((n: any) => {
+    if (n.data?.nodeType !== 'Text') return false
+    if (allowed && !allowed.has(n.id)) return false
+    const inputs: any[] = n.data?.inputs || []
+    const srcIdx = inputs.findIndex(i => i.name === 'source')
+    if (srcIdx < 0) return false
+    const wired = inputs[srcIdx]?.link != null
+      || edges.some(e => e.target === n.id && e.targetHandle === `input-${srcIdx}`)
+    if (!wired) return false
+    const entries: string[] = n.data?.properties?.textEntries
+      || [n.data?.widgetsValues?.[0] ?? '']
+    return entries.some(s => !(s ?? '').trim())
+  })
+  if (candidates.length === 0) return false
+
+  // Multiple candidates: pick the one with the most empty slots. Predictable
+  // and matches user intent ("the node I just added a bunch of empty rows to").
+  const target = candidates.reduce((best: any, n: any) => {
+    const empties = (n.data?.properties?.textEntries || []).filter((s: string) => !(s ?? '').trim()).length || 1
+    const bestEmpties = best ? ((best.data?.properties?.textEntries || []).filter((s: string) => !(s ?? '').trim()).length || 1) : 0
+    return empties > bestEmpties ? n : best
+  }, null as any)
+
+  const widgetDefs: any[] = target.data?.widgetDefs || []
+  const textIdx = widgetDefs.findIndex((w: any) => w?.name === 'text')
+  if (textIdx < 0) return false
+  if (!Array.isArray(target.data.widgetsValues)) target.data.widgetsValues = []
+  if (!target.data.properties) target.data.properties = {}
+  if (!Array.isArray(target.data.properties.textEntries)) {
+    // Seed entries from the legacy widget value so we always have an array
+    // to write into. Single-slot nodes still get auto-fill — the LLM result
+    // lands in entries[0], persisting what previously was an ephemeral
+    // data.text echo.
+    target.data.properties.textEntries = [target.data.widgetsValues[textIdx] ?? '']
+  }
+  const entries: string[] = target.data.properties.textEntries
+  const emptySlots: number[] = []
+  for (let i = 0; i < entries.length; i++) {
+    if (!(entries[i] ?? '').trim()) emptySlots.push(i)
+  }
+  if (emptySlots.length === 0) return false
+
+  textAutofillRunning = true
+  const origWidget = target.data.widgetsValues[textIdx]
+  // Clear the widget so the backend's `text if text else source` falls
+  // through to the upstream value for every iteration.
+  target.data.widgetsValues[textIdx] = ''
+
+  try {
+    for (let iter = 0; iter < emptySlots.length; iter++) {
+      const slotIdx = emptySlots[iter]!
+      // Reset the prior result so we can detect the new one — without this
+      // a failed iteration would silently inherit the previous text.
+      delete target.data.text
+      const completed = awaitExecutionComplete()
+      await runVueWorkflow(targetIds)
+      try {
+        await completed
+      } catch (err) {
+        console.warn('[Text autofill] await execution_complete failed:', err)
+        break
+      }
+      // Tiny grace period: the bridge's `executed` event for the Text node
+      // and the `execution_complete` are not guaranteed to arrive in order,
+      // so give the data.text writer a moment to land.
+      await new Promise(r => setTimeout(r, 80))
+      const result = target.data.text
+      if (typeof result !== 'string' || result.length === 0) {
+        await new Promise(r => setTimeout(r, 150))
+        continue
+      }
+      // Multi-line shortcut: if the upstream returned a list of items
+      // (Brainstorm-style: one per line) AND we still have multiple empty
+      // slots to fill, distribute the lines across them in one shot
+      // instead of looping. Saves N-1 LLM calls and is what the user
+      // almost certainly intended when wiring a list-returning node into
+      // an N-slot Text node.
+      const lines = result.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      const remaining = emptySlots.slice(iter)
+      if (lines.length >= 2 && remaining.length >= 2) {
+        for (let k = 0; k < remaining.length && k < lines.length; k++) {
+          entries[remaining[k]!] = lines[k]!
+        }
+        break
+      }
+      // Single-value result — assign and continue iterating.
+      // Mutate via array index so Vue's reactivity picks it up.
+      entries[slotIdx] = result
+      // Pause briefly so the bridge / queue settles between submissions.
+      await new Promise(r => setTimeout(r, 150))
+    }
+  } finally {
+    target.data.widgetsValues[textIdx] = origWidget
+    delete target.data.text
+    textAutofillRunning = false
+  }
+  return true
+}
+
+// Text-iterator run: a Text artifact node holds N entries; we want to run
+// the workflow once per entry, swapping the node's widget value before each
+// queue submission. We can't just dispatch N runFiltered events back-to-back
+// because runVueWorkflow reads the live canvas state every time — so we
+// mutate the canvas node's widget value, await the run, then move on.
+let textIteratorRunning = false
+async function handleRunTextIterator(e: Event) {
+  if (textIteratorRunning) {
+    console.warn('[Iterator] already running, ignoring re-entry')
+    return
+  }
+  const detail = (e as CustomEvent).detail as { nodeId?: string; entries?: string[] } | undefined
+  const nodeId = detail?.nodeId
+  const entries = (detail?.entries || []).filter(s => typeof s === 'string')
+  if (!nodeId || entries.length === 0) return
+  const canvas = vueCanvasRef.value
+  if (!canvas?.getNodes) return
+
+  const all = canvas.getNodes() as any[]
+  const node = all.find(n => n.id === nodeId)
+  if (!node) {
+    console.warn('[Iterator] node not found:', nodeId)
+    return
+  }
+
+  // Resolve the position of the `text` widget in this node's widget defs.
+  // We mutate widgetsValues[idx] before each run so the workflow snapshot
+  // picks up the iteration's entry value.
+  const widgetDefs: any[] = node.data?.widgetDefs || []
+  const textIdx = widgetDefs.findIndex((w: any) => w?.name === 'text')
+  if (textIdx < 0) {
+    console.warn('[Iterator] no `text` widget on node', nodeId)
+    return
+  }
+  if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
+
+  textIteratorRunning = true
+  // Stash original so we can restore on completion — otherwise the last
+  // entry would stick as the "active" widget value, which is surprising
+  // when the user goes back to single-shot Run.
+  const original = node.data.widgetsValues[textIdx]
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      node.data.widgetsValues[textIdx] = entries[i]
+      // Materialize downstream sinks before queuing — same dance as
+      // handleRunFiltered. Iterator only ever runs from this one node.
+      const expanded = canvas.materializeAutoImageSinks?.([nodeId]) ?? [nodeId]
+      await runVueWorkflow(expanded)
+      // Small breather so the bridge / queue settles before the next.
+      await new Promise(r => setTimeout(r, 250))
+    }
+  } finally {
+    node.data.widgetsValues[textIdx] = original
+    textIteratorRunning = false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('comfynext:runFiltered', handleRunFiltered)
   window.addEventListener('comfynext:runAll', handleRunAll)
+  window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
   window.removeEventListener('comfynext:runAll', handleRunAll)
+  window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
 })
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
@@ -361,12 +677,14 @@ function autosaveCurrentWorkflow() {
   }
 }
 
-// Prompts queued by live-run should not surface "started" / "completed" toasts.
-// The bridge synthesizes execution_complete without a prompt_id, so we can't
-// match by id. ComfyUI executes one prompt at a time, so we track a single
-// flag set at execution_start and consumed at execution_complete/error.
+// Prompts queued by live-run should not surface "started" / "completed" toasts
+// or the canvas status bar — slider drags would flicker that surface dozens of
+// times a second. The bridge synthesizes execution_complete without a prompt_id,
+// so we can't match by id. ComfyUI executes one prompt at a time, so we track
+// a single flag set at execution_start and consumed at execution_complete/error.
+// (Ref rather than `let` so the status bar's `running` prop can react.)
 const pendingLiveRuns = ref(0)
-let currentRunSilent = false
+const currentRunSilent = ref(false)
 let pendingLiveRunsResetTimer: ReturnType<typeof setTimeout> | null = null
 
 function handleLiveRun() {
@@ -586,10 +904,98 @@ const promptProgress = ref<Record<string, number>>({})
 const tabNodeProgress = ref({ completed: 0, total: 0 })
 const currentRunningNode = ref('')
 const executionStartTime = ref<number | null>(null)
+const currentRunProgressPct = ref(0)
+
+// Latest result for the canvas status bar. Cleared when a new run starts;
+// success auto-clears after a few seconds via the timeout below; errors
+// persist until the user dismisses or the next run starts.
+const lastRunResult = ref<RunResult | null>(null)
+let successClearTimer: ReturnType<typeof setTimeout> | null = null
+
+function setRunResult(r: RunResult | null) {
+  if (successClearTimer) { clearTimeout(successClearTimer); successClearTimer = null }
+  lastRunResult.value = r
+  if (r?.kind === 'success') {
+    successClearTimer = setTimeout(() => {
+      if (lastRunResult.value?.kind === 'success') lastRunResult.value = null
+    }, 6000)
+  }
+}
+
+// Credits accounting for the run cost display.
+//   - runStartCredits: balance at execution_start (the "before" number).
+//   - runCostDeadline: stop watching for a delta after this timestamp.
+//   - executedNodeIds: every node id that fired an `executing` event during
+//     the current run. Used to estimate the Replicate dollar cost from the
+//     price_badge of each node that ran (BYOK Replicate doesn't show up in
+//     Comfy's credit balance, so we can't use the delta there).
+// We can't know either cost synchronously — Comfy/Replicate deduct mid-run
+// and Pinia's balance only refreshes after we refetch. So at execution_complete
+// we trigger a refresh and watch `credits` until the deadline. The watch()
+// call lives further down, after `credits` is declared, to avoid TDZ.
+let runStartCredits: number | null = null
+const runCostDeadline = ref(0)
+const executedNodeIds = new Set<string>()
+
+// Tally USD cost from the price_badge of every Replicate node that ran.
+// Mirrors GeneratorsPanel.parsePrice but inlined to keep one source of nodes.
+// Returns null when no priced Replicate node ran (so the credit-delta path
+// can win for Comfy-native workflows).
+function estimateReplicateUsd(): { usd: number; approximate: boolean } | null {
+  const nodes = vueCanvasRef.value?.getNodes?.() || []
+  let usd = 0
+  let approximate = false
+  let anyPriced = false
+  for (const id of executedNodeIds) {
+    const node = nodes.find((n: any) => n.id === id)
+    const badge = node?.data?.priceBadge
+    const nodeType: string = node?.data?.type || ''
+    // Only count nodes that bill the user's Replicate account. Naming
+    // convention from comfy_api_nodes/nodes_replicate.py: classes end in
+    // "RemoteNode". This skips Comfy-native nodes that also have badges.
+    const isReplicate = nodeType.endsWith('RemoteNode')
+    if (!isReplicate || !badge?.expr) continue
+    const expr = String(badge.expr).trim()
+    // Static literal: `{"type":"usd","usd":0.04,...}`
+    try {
+      const parsed = JSON.parse(expr)
+      if (typeof parsed?.usd === 'number') {
+        usd += parsed.usd
+        anyPriced = true
+        if (parsed?.format?.approximate) approximate = true
+        continue
+      }
+    } catch { /* not JSON — try JSONata */ }
+    // Dynamic JSONata: pull the first numeric "usd": value as a floor estimate.
+    // Anything dynamic is implicitly approximate.
+    const match = expr.match(/"usd"\s*:\s*([0-9]+\.?[0-9]*)/)
+    if (match) {
+      usd += parseFloat(match[1]!)
+      anyPriced = true
+      approximate = true
+    }
+  }
+  return anyPriced ? { usd, approximate } : null
+}
+
 const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>({})
 
 let queuePollTimer: ReturnType<typeof setInterval> | null = null
 const credits = ref<number | null>(null)
+
+// Watch credits for the post-run delta. Must come after `credits` is declared.
+watch(credits, (newVal) => {
+  if (newVal == null) return
+  if (Date.now() > runCostDeadline.value) return
+  if (runStartCredits == null) return
+  const result = lastRunResult.value
+  if (result?.kind !== 'success') return
+  if (result.cost != null || result.usd != null) return // already accounted for
+  const delta = runStartCredits - newVal
+  if (delta > 0) {
+    lastRunResult.value = { ...result, cost: delta }
+  }
+})
 const userProfile = ref<{ email?: string | null, displayName?: string | null, photoURL?: string | null, uid?: string | null, providerId?: string | null } | null>(null)
 const userPopupOpen = ref(false)
 
@@ -880,7 +1286,7 @@ function handleBridgeMessage(event: MessageEvent) {
     console.log('[bridge]', evt,
       'tabId=', tabId,
       'pendingLiveRuns=', pendingLiveRuns.value,
-      'currentRunSilent=', currentRunSilent,
+      'currentRunSilent=', currentRunSilent.value,
       'prompt_id=', prompt_id,
       'node_id=', node_id)
   }
@@ -892,26 +1298,37 @@ function handleBridgeMessage(event: MessageEvent) {
     // before any UI updates so the tab indicator can skip too.
     if (pendingLiveRuns.value > 0) {
       pendingLiveRuns.value--
-      currentRunSilent = true
+      currentRunSilent.value = true
     } else {
-      currentRunSilent = false
+      currentRunSilent.value = false
     }
     tabNodeProgress.value = { completed: 0, total: 0 }
     executionStartTime.value = Date.now()
+    currentRunProgressPct.value = 0
     if (prompt_id) {
       promptProgress.value[prompt_id] = 0
     }
-    if (!currentRunSilent) {
+    // Snapshot the credits balance so we can show "−N credits" on success.
+    // Done regardless of silent so the math is right even if the user's
+    // first live-run is followed by a real Run.
+    runStartCredits = credits.value
+    executedNodeIds.clear()
+    // New run wipes any prior result from the status bar — the user wants
+    // to know about THIS run, not the last one.
+    if (!currentRunSilent.value) {
       updateTabStatus(tabId, 'running', 0)
-      const tabLabel = tabs.value.find(t => t.id === tabId)?.label || 'Workflow'
-      toast('Workflow started', { description: tabLabel })
+      setRunResult(null)
     }
   } else if (evt === 'progress') {
-    if (!currentRunSilent) updateTabStatus(tabId, 'running', percent)
+    if (!currentRunSilent.value) updateTabStatus(tabId, 'running', percent)
     if (prompt_id) promptProgress.value[prompt_id] = percent
+    if (typeof percent === 'number') currentRunProgressPct.value = percent
   } else if (evt === 'executing' && node_id) {
     // Count total nodes for coarse progress
     tabNodeProgress.value.total++
+    // Remember which nodes ran — needed for the Replicate USD cost estimate
+    // at execution_complete (BYOK runs don't move Comfy's credit balance).
+    executedNodeIds.add(String(node_id))
     // Look up display name from Vue canvas nodes
     const vueNodes = vueCanvasRef.value?.getNodes?.() || []
     const vueNode = vueNodes.find((n: any) => n.id === String(node_id))
@@ -926,28 +1343,52 @@ function handleBridgeMessage(event: MessageEvent) {
     const np = tabNodeProgress.value
     if (np.total > 0) {
       const coarsePct = Math.round((np.completed / np.total) * 100)
-      if (!currentRunSilent) updateTabStatus(tabId, 'running', coarsePct)
+      if (!currentRunSilent.value) updateTabStatus(tabId, 'running', coarsePct)
       if (prompt_id) promptProgress.value[prompt_id] = coarsePct
     }
   } else if (evt === 'execution_complete') {
-    const elapsed = executionStartTime.value
-      ? ((Date.now() - executionStartTime.value) / 1000).toFixed(1)
-      : null
+    const durationMs = executionStartTime.value
+      ? (Date.now() - executionStartTime.value)
+      : 0
+    // Detect a silent failure: complete fired but Comfy validation rejected
+    // the prompt (no executed nodes, no node ran). Don't show "success" then.
+    const validatedRun = tabNodeProgress.value.completed > 0
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null
+    currentRunProgressPct.value = 0
     if (prompt_id) {
       delete promptProgress.value[prompt_id]
       delete promptNodeInfo.value[prompt_id]
     }
-    const wasSilent = currentRunSilent
-    currentRunSilent = false
+    const wasSilent = currentRunSilent.value
+    currentRunSilent.value = false
     if (!wasSilent) {
       updateTabStatus(tabId, 'done')
-      const tabLabel = tabs.value.find(t => t.id === tabId)?.label || 'Workflow'
-      toast.success('Workflow completed', {
-        description: elapsed ? `${tabLabel} — ${elapsed}s` : tabLabel,
-      })
+      if (validatedRun && lastRunResult.value?.kind !== 'error') {
+        // Did any Replicate (BYOK, dollar-billed) node run? If yes, that's
+        // the user's true cost surface — Comfy's credit balance won't change.
+        // Otherwise, lean on the credit-delta watcher below for the number.
+        const replicate = estimateReplicateUsd()
+        setRunResult({
+          kind: 'success',
+          durationMs,
+          at: Date.now(),
+          usd: replicate?.usd ?? null,
+          usdApproximate: replicate?.approximate ?? false,
+        })
+        if (replicate) {
+          // Replicate run — don't bother chasing the credit balance.
+          runCostDeadline.value = 0
+        } else {
+          // Comfy-native run — kick off the credit refresh. Pinia's cached
+          // balance won't know about the deduction until we refetch. Two-stage
+          // refresh covers Firestore propagation latency.
+          runCostDeadline.value = Date.now() + 8000
+          sendToBridgeIframe('refreshCredits')
+          setTimeout(() => sendToBridgeIframe('refreshCredits'), 2500)
+        }
+      }
       // Reset to idle after a brief moment
       setTimeout(() => {
         updateTabStatus(tabId!, 'idle')
@@ -956,17 +1397,26 @@ function handleBridgeMessage(event: MessageEvent) {
     // Refresh history if queue panel is open
     if (queueOpen.value) fetchQueueAndHistory()
   } else if (evt === 'execution_error') {
-    if (!currentRunSilent) updateTabStatus(tabId, 'idle')
+    if (!currentRunSilent.value) updateTabStatus(tabId, 'idle')
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null
-    const wasSilent = currentRunSilent
-    currentRunSilent = false
+    currentRunProgressPct.value = 0
+    const wasSilent = currentRunSilent.value
+    currentRunSilent.value = false
     if (!wasSilent) {
       const nodeName = event.data.node_type || event.data.node_id || 'Unknown node'
-      toast.error('Workflow failed', { description: nodeName })
+      const reason = event.data.exception_message || 'Unknown error'
+      setRunResult({ kind: 'error', nodeName, message: reason, at: Date.now() })
     }
   }
+}
+
+function stopFromStatusBar() {
+  stopVueWorkflow()
+}
+function dismissRunResult() {
+  setRunResult(null)
 }
 </script>
 
@@ -1446,6 +1896,28 @@ function handleBridgeMessage(event: MessageEvent) {
           class="absolute inset-0 z-30"
           @click="loadMenuOpen = false"
         />
+        <!-- Same backdrop pattern for the Annotate popup. -->
+        <div
+          v-if="annotateMenuOpen && activeTab.type === 'project'"
+          class="absolute inset-0 z-30"
+          @click="annotateMenuOpen = false"
+        />
+        <!-- Workflow status bar: replaces the start/complete/error toasts
+             with one persistent surface for "what's the workflow doing."
+             Skipped for silent live-runs (slider previews) so the bar
+             doesn't flicker on every drag tick. -->
+        <CanvasStatusBar
+          v-if="activeTab.type === 'project'"
+          :running="executionStartTime !== null && !currentRunSilent"
+          :current-node="currentRunningNode"
+          :progress="tabNodeProgress"
+          :percent="currentRunProgressPct"
+          :started-at="executionStartTime"
+          :last-result="lastRunResult"
+          @stop="stopFromStatusBar"
+          @dismiss-result="dismissRunResult"
+        />
+
         <!-- Floating toolbar overlay (only visible on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
@@ -1474,17 +1946,36 @@ function handleBridgeMessage(event: MessageEvent) {
                 class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 backdrop-blur-sm border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
+                <template v-for="opt in loadOptions" :key="opt.label">
+                  <button
+                    class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors"
+                    :class="opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/[0.08] cursor-pointer'"
+                    :disabled="opt.disabled"
+                    @click="!opt.disabled && addLoadNode(opt.nodeType)"
+                  >
+                    <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
+                    <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
+                    <span v-if="opt.hint" class="text-[9px] uppercase tracking-wider text-white/35">{{ opt.hint }}</span>
+                  </button>
+                  <div v-if="opt.dividerAfter" class="h-px bg-white/10 mx-1 my-1" />
+                </template>
+              </div>
+              <!-- Popup anchored above the Annotate button. Each entry fires
+                   a window-level event the canvas listens for. -->
+              <div
+                v-if="item.submenu === 'annotate' && annotateMenuOpen"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[180px] bg-[#1a1a1a]/95 backdrop-blur-sm border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                @click.stop
+              >
                 <button
-                  v-for="opt in loadOptions"
+                  v-for="opt in annotateOptions"
                   :key="opt.label"
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors"
-                  :class="opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/[0.08] cursor-pointer'"
-                  :disabled="opt.disabled"
-                  @click="!opt.disabled && addLoadNode(opt.nodeType)"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                  @click="addAnnotation(opt.kind)"
                 >
                   <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
                   <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
-                  <span v-if="opt.hint" class="text-[9px] uppercase tracking-wider text-white/35">{{ opt.hint }}</span>
+                  <span v-if="opt.hint" class="text-[9px] uppercase tracking-wider text-white/40 bg-white/10 px-1.5 py-0.5 rounded">{{ opt.hint }}</span>
                 </button>
               </div>
             </div>
@@ -1647,5 +2138,13 @@ function handleBridgeMessage(event: MessageEvent) {
 
     <!-- Node search dialog (Space key) -->
     <NodeSearchDialog />
+
+    <!-- "Get Started" modal: shows once per fresh blank project. Pre-builds
+         a runnable graph from the user's intent (output × input × model). -->
+    <StartProjectModal
+      v-if="startModalTabId && activeTabId === startModalTabId"
+      @start="onStartModalPick"
+      @skip="onStartModalSkip"
+    />
   </div>
 </template>

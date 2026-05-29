@@ -100,6 +100,160 @@ export function buildSelectionWorkflow(
 }
 
 /**
+ * Realign every node's `widgets_values` array to the current schema's widget
+ * count. Without this, a node persisted from a workflow saved against an
+ * older schema (one widget added or removed since) ships a wrong-length
+ * array — values land in the wrong widget slots and Comfy rejects the
+ * prompt with errors like "Value not in list: resolution: 'False'" (the
+ * boolean from camera_fixed showing up where the resolution combo expects
+ * an option string).
+ *
+ * For each node, we walk the current schema's widget order and rebuild the
+ * array. Existing positional values that still line up are preserved;
+ * missing slots get the schema's default; extras are dropped.
+ *
+ * Length-matching arrays still get a combo-validity sweep: a slot that holds
+ * a value outside its combo's option list (e.g. a Compositor `layerN_blend`
+ * carrying the integer 0 after a mid-array schema drift) is reset to the
+ * combo default. Otherwise Comfy prunes just that node with
+ * "value_not_in_list" — the rest of the prompt succeeds, so the run reports
+ * success while the pruned node silently produces no output.
+ */
+export function realignWidgetValues(
+  workflow: LiteGraphWorkflow,
+  objectInfo: Record<string, any>,
+): LiteGraphWorkflow {
+  if (!workflow?.nodes?.length) return workflow
+  let mutated = false
+  const cloned: LiteGraphWorkflow = JSON.parse(JSON.stringify(workflow))
+
+  for (const node of cloned.nodes as LiteGraphNode[]) {
+    const info = objectInfo[node.type as string]
+    if (!info) continue
+    // Build expected widget order from the schema: required first, then
+    // optional. Skip port-type inputs and forceInput widgets — those don't
+    // occupy a slot in widgets_values.
+    const expected: { name: string; defaultValue: any; options?: any[]; control?: boolean }[] = []
+    const collect = (group: Record<string, any> | undefined) => {
+      if (!group) return
+      for (const [name, spec] of Object.entries(group)) {
+        const specArr = Array.isArray(spec) ? spec : [spec]
+        const type = specArr[0]
+        const cfg = specArr[1] || {}
+        // COMBO widget. Two on-the-wire shapes: legacy ComfyUI puts the option
+        // list directly as spec[0] (an array); v3 IO nodes (e.g. Compositor's
+        // layerN_blend) emit the string "COMBO" with options in cfg.options.
+        // Missing either shape drops the widget from the expected order and
+        // shifts every value after it — the bug that scrambled the Compositor.
+        if (Array.isArray(type) || type === 'COMBO') {
+          const options = Array.isArray(type)
+            ? type
+            : (Array.isArray(cfg.options) ? cfg.options : null)
+          expected.push({ name, defaultValue: cfg.default ?? options?.[0] ?? null, options: options ?? undefined })
+          continue
+        }
+        if (cfg.forceInput) continue
+        if (['INT', 'FLOAT', 'STRING', 'BOOLEAN'].includes(String(type))) {
+          expected.push({ name, defaultValue: cfg.default ?? null })
+          // Seed-type INT inputs carry a sibling control_after_generate slot
+          // in LiteGraph's widgets_values — preserve it so our positional
+          // mapping matches Comfy's bundled frontend.
+          if (type === 'INT' && cfg.control_after_generate) {
+            expected.push({ name: `${name}_control`, defaultValue: 'randomize', control: true })
+          }
+        }
+      }
+    }
+    collect(info?.input?.required)
+    collect(info?.input?.optional)
+
+    const current = Array.isArray(node.widgets_values) ? node.widgets_values : []
+
+    // Rebuild only when the length drifted; otherwise keep positions as-is.
+    let realigned = current
+    let changed = false
+    if (current.length !== expected.length) {
+      realigned = expected.map((e, i) =>
+        i < current.length ? current[i] : e.defaultValue,
+      )
+      changed = true
+    }
+
+    // Combo-validity sweep (runs even for length-matched arrays). A combo slot
+    // holding a value outside its option list is a strong signal the positional
+    // array is misaligned — e.g. a Float/Int landing in a blend combo after a
+    // mid-array schema drift. Left alone, Comfy prunes just that node with
+    // "value_not_in_list", so the run reports success while the node silently
+    // produces nothing.
+    const comboInvalid = expected.some(
+      (e, i) => e?.options && !e.options.includes(realigned[i]),
+    )
+    if (comboInvalid) {
+      if (node.type === 'Compositor') {
+        // The Compositor's 114-slot array can't be un-scrambled in place, so
+        // rebuild it from schema defaults. injectCompositorOverlays re-applies
+        // z from the saved stack order and bakes local layers, and width=0
+        // falls back to layer 1's native size — so a clean default array
+        // composites correctly. Custom per-layer transforms on an already-
+        // corrupt frame are unrecoverable and reset to identity.
+        realigned = expected.map((e) => e.defaultValue)
+      } else {
+        // Other node types: coerce only the offending combo slots so the rest
+        // of the (presumed-aligned) array is preserved.
+        realigned = realigned.map((v: any, i: number) => {
+          const e = expected[i]
+          return e?.options && !e.options.includes(v) ? e.defaultValue : v
+        })
+      }
+      changed = true
+    }
+
+    if (changed) {
+      node.widgets_values = realigned
+      mutated = true
+    }
+  }
+
+  return mutated ? cloned : workflow
+}
+
+/**
+ * Strip incoming links for artifact nodes the user has "locked." A locked
+ * artifact carries a frozen copy of its current preview in its file widget,
+ * so it loads from disk instead of executing the upstream chain. Removing
+ * its incoming links here means `collectKeepSet` stops walking upstream at
+ * the locked node — the upstream generators (and any paid API calls they
+ * make) get stripped from the run.
+ *
+ * `liveNodes` is the Vue Flow `nodes.value` array. We read the lock flag
+ * from `node.data.properties.locked` there so the workflow JSON (which
+ * comes from convertToLiteGraph) doesn't need its own copy of the flag —
+ * `properties` round-trips through LiteGraph naturally.
+ */
+export function applyArtifactLocks(
+  workflow: LiteGraphWorkflow,
+  liveNodes: any[],
+): LiteGraphWorkflow {
+  const lockedIds = new Set<number>()
+  for (const n of liveNodes || []) {
+    if (n?.data?.properties?.locked) {
+      const id = Number(n.id)
+      if (Number.isFinite(id)) lockedIds.add(id)
+    }
+  }
+  if (!lockedIds.size) return workflow
+  const cloned: LiteGraphWorkflow = JSON.parse(JSON.stringify(workflow))
+  if (Array.isArray(cloned.links)) {
+    cloned.links = cloned.links.filter((link: any) => {
+      if (!Array.isArray(link) || link.length < 4) return true
+      const targetId = Number(link[3])
+      return !lockedIds.has(targetId)
+    })
+  }
+  return cloned
+}
+
+/**
  * Variant fan-out: when N `Image` sinks share one upstream IMAGE output,
  * mutate the workflow JSON so the upstream produces a batch of N and each
  * sink slices a different index. The Vue Flow display stays unchanged —
@@ -170,7 +324,7 @@ export function applyVariantFanOut(
  * objectInfo to find the index of the named widget in the node type's
  * declared input order. No-op if the node type doesn't have that widget.
  */
-function setNamedWidget(
+export function setNamedWidget(
   node: LiteGraphNode,
   widgetName: string,
   value: any,
@@ -187,8 +341,11 @@ function setNamedWidget(
       const specArr = Array.isArray(spec) ? spec : [spec]
       const type = specArr[0]
       const cfg = specArr[1] || {}
-      if (Array.isArray(type)) {
-        widgetNames.push(name)  // combo types are widgets
+      // Combo widgets: legacy array-of-options OR v3 "COMBO" string. Both
+      // occupy a widgets_values slot; missing the string shape skips them and
+      // throws off every index after the combo.
+      if (Array.isArray(type) || type === 'COMBO') {
+        widgetNames.push(name)
         continue
       }
       if (cfg.forceInput) continue  // forced-port widgets aren't in widgets_values

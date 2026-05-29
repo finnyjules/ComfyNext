@@ -97,9 +97,15 @@ export function getWidgetDefs(nodeType: string): any[] {
   function processInputGroup(group: Record<string, any>) {
     for (const [name, spec] of Object.entries(group)) {
       const specArr = Array.isArray(spec) ? spec : [spec]
-      const type = Array.isArray(specArr[0]) ? 'COMBO' : String(specArr[0])
-      const options = Array.isArray(specArr[0]) ? specArr[0] : undefined
       const config = specArr[1] || {}
+      // Combo widgets arrive in two shapes: legacy ComfyUI puts the option list
+      // directly as spec[0]; v3 IO nodes emit the string "COMBO" with options in
+      // config.options. Capture options from whichever shape is present.
+      const isCombo = Array.isArray(specArr[0]) || specArr[0] === 'COMBO'
+      const type = isCombo ? 'COMBO' : String(specArr[0])
+      const options = Array.isArray(specArr[0])
+        ? specArr[0]
+        : (isCombo && Array.isArray(config.options) ? config.options : undefined)
 
       // Skip port-type inputs — they're rendered as handles, not widgets.
       if (!isWidgetType(type)) continue
@@ -143,6 +149,10 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   Audio: 'artifact-audio',
   Video: 'artifact-video',
   Text:  'artifact-text',
+  // The Compositor is presented as a first-class "Frame" artboard artifact.
+  Compositor: 'artifact-frame',
+  // The Timeline is a first-class artifact card too (live preview + editor modal).
+  Timeline: 'artifact-timeline',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,
@@ -232,7 +242,17 @@ export interface GroupsBridge {
   export: () => any[]
 }
 
-export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
+/**
+ * Optional hook for callers that own a `useCanvasAnnotations()` instance.
+ * Annotations are a ComfyNext-only concept, so they live under the
+ * `workflow.extra.comfynext` namespace where LiteGraph won't touch them.
+ */
+export interface AnnotationsBridge {
+  load: (raw: unknown) => void
+  export: () => unknown
+}
+
+export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBridge?: AnnotationsBridge } = {}) {
   const nodes = ref<VueFlowNode[]>([])
   const edges = ref<VueFlowEdge[]>([])
   let lastWorkflow: LiteGraphWorkflow | null = null
@@ -240,6 +260,9 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
   function convertFromLiteGraph(workflow: LiteGraphWorkflow, definitions?: { subgraphs?: any[] }) {
     lastWorkflow = workflow
     opts.groupsBridge?.load(workflow.groups)
+    // Annotations live under workflow.extra.comfynext — a namespaced sub-object
+    // so other tools that read `extra` for their own purposes won't collide.
+    opts.annotationsBridge?.load((workflow.extra as any)?.comfynext)
 
     // Build a lookup map for subgraph definitions
     const subgraphDefs = new Map<string, any>()
@@ -444,6 +467,16 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
       }
     }
 
+    // Merge annotations into `extra.comfynext`, preserving any sibling keys
+    // the rest of ComfyNext (or other tools) might have stashed there.
+    const baseExtra = (base.extra && typeof base.extra === 'object') ? { ...base.extra } : {}
+    if (opts.annotationsBridge) {
+      const existingCnext = (baseExtra as any).comfynext && typeof (baseExtra as any).comfynext === 'object'
+        ? (baseExtra as any).comfynext
+        : {}
+      ;(baseExtra as any).comfynext = { ...existingCnext, ...(opts.annotationsBridge.export() as object) }
+    }
+
     const result: any = {
       last_node_id: Math.max(0, ...lgNodes.map((n) => n.id)),
       last_link_id: linkId,
@@ -454,7 +487,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge } = {}) {
       // surface a group editor still round-trip cleanly.
       groups: opts.groupsBridge ? opts.groupsBridge.export() : base.groups,
       config: base.config,
-      extra: base.extra,
+      extra: baseExtra,
       version: base.version,
     }
     // Preserve definitions (subgraphs) if present in the original workflow
