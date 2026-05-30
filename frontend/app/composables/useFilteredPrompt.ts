@@ -250,6 +250,17 @@ export function applyArtifactLocks(
       return !lockedIds.has(targetId)
     })
   }
+  // Removing the links above leaves the locked nodes' input slots pointing at
+  // link ids that no longer exist. LiteGraph's serializer (graphToPrompt) walks
+  // those references and throws "No link found in parent graph for id [N] slot
+  // [S]". Null the dangling input.link refs so a locked node serializes cleanly
+  // as a leaf that loads from its frozen file widget.
+  for (const node of (cloned.nodes as LiteGraphNode[]) || []) {
+    if (!lockedIds.has(Number(node.id))) continue
+    for (const inp of (node.inputs as any[]) || []) {
+      if (inp && inp.link != null) inp.link = null
+    }
+  }
   return cloned
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Loader2, Play, Pencil, Clapperboard } from 'lucide-vue-next'
+import { Loader2, RefreshCw, Pencil, Clapperboard } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // The "Timeline" as a first-class artifact card — same visual language as the
@@ -171,7 +171,7 @@ function runThisNode() {
           @click.stop="runThisNode"
         >
           <Loader2 v-if="data.running" class="size-3 animate-spin" />
-          <Play v-else class="size-2.5" fill="currentColor" />
+          <RefreshCw v-else class="size-3" />
         </button>
       </div>
     </div>

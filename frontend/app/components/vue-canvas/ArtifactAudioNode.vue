@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, AudioWaveform, Save, Play, Download } from 'lucide-vue-next'
+import { Upload, Loader2, AudioWaveform, Save, Play, RefreshCw, Download } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Visual half of the unified `Audio` artifact node. Same state machine as
@@ -121,14 +121,17 @@ async function onFileChange(event: Event) {
   target.value = ''
 }
 
+// A drop replaces the asset whenever it's local (empty or already loaded) —
+// upstream-fed nodes get their media from the wire, so a dropped file wouldn't show.
+const canReplace = computed(() => !hasUpstream.value)
 function onDrop(event: DragEvent) {
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
   const file = event.dataTransfer?.files?.[0]
   if (file) uploadFile(file)
 }
 function onDragOver(event: DragEvent) {
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
 }
 function triggerUpload() { fileInputRef.value?.click() }
@@ -194,6 +197,14 @@ async function downloadAudio() {
       class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10 backdrop-blur-sm"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
+      <!-- File picker — always mounted so Replace works in any state. -->
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="audio/*"
+        class="hidden"
+        @change="onFileChange"
+      />
       <template v-if="audioUrl">
         <div class="px-3 pt-3 pb-2 flex items-center gap-2">
           <AudioWaveform :size="18" class="text-white/55 shrink-0" :stroke-width="1.5" />
@@ -217,6 +228,16 @@ async function downloadAudio() {
             {{ filenameLabel || (hasUpstream ? 'Audio (upstream)' : 'Audio') }}
           </span>
           <button
+            v-if="canReplace"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="uploading"
+            title="Replace audio"
+            @click.stop="triggerUpload"
+          >
+            <Loader2 v-if="uploading" class="size-3 animate-spin" />
+            <Upload v-else class="size-2.5" />
+          </button>
+          <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
             title="Download"
             @click.stop="downloadAudio"
@@ -230,19 +251,12 @@ async function downloadAudio() {
             @click.stop="runThisNode"
           >
             <Loader2 v-if="data.running" class="size-3 animate-spin" />
-            <Play v-else class="size-2.5" fill="currentColor" />
+            <RefreshCw v-else class="size-3" />
           </button>
         </div>
       </template>
 
       <template v-else-if="showUpload">
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept="audio/*"
-          class="hidden"
-          @change="onFileChange"
-        />
         <!-- Upload affordance — no nopan/nodrag so a click-and-drag moves
              the card, while a click-in-place opens the file picker. Vue
              Flow distinguishes drag from click by a small movement

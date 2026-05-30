@@ -9,6 +9,8 @@ import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/u
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
+import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
+import { useNodeSearch } from '~/composables/useNodeSearch'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -97,7 +99,7 @@ provide('vueFlowNodes', nodes)
 provide('vueFlowEdges', edges)
 const {
   onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut,
-  project, removeNodes, removeEdges, viewport: vfViewport,
+  project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
 } = useVueFlow()
 
 // Selection helpers — Vue Flow marks selected nodes with `selected: true`.
@@ -499,43 +501,23 @@ const selectionKeyCode = computed(() => isHandMode.value ? null : true) // selec
 const { isInsideSubgraph, breadcrumbs, enterSubgraph, exitToLevel, saveCurrentSubgraph, reset: resetNav } = useSubgraphNavigation()
 const rootWorkflow = ref<any>(null) // Full workflow with definitions
 
-// Handle node drop from sidebar
-async function handleDrop(event: DragEvent) {
-  event.preventDefault()
-  // Block library drops carry our custom MIME type; route them first since
-  // the text/plain payload is just a fallback prefixed with "block:".
-  if (event.dataTransfer?.types.includes('application/x-comfynext-block')) {
-    tryHandleBlockDrop(event)
-    return
-  }
-  const nodeType = event.dataTransfer?.getData('text/plain')
-  if (!nodeType) return
-  // Defensive: ignore the text/plain fallback that block drags also emit.
-  if (nodeType.startsWith('block:')) return
-
-  // Refresh schema if we don't know this node type — protects against the
-  // common case of "ComfyUI was restarted with new nodes but the cache is
-  // stale," which results in a node rendering without any ports.
-  if (!objectInfo.value[nodeType]) {
-    await fetchObjectInfo()
-  }
-
-  const canvasEl = (event.currentTarget as HTMLElement)
-  const rect = canvasEl.getBoundingClientRect()
-  const position = project({
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  })
-
-  const newId = String(Date.now())
+// ── Node factory ─────────────────────────────────────────────────────────────
+// Single source of truth for building a fresh node's data from object_info.
+// Used by drag-drop-from-sidebar, the node-search dialog, and wire splicing so
+// they never drift (the port/widget derivation used to be copy-pasted).
+function createNodeData(nodeType: string, position: { x: number, y: number }, widgetOverrides?: Record<string, unknown>) {
   const info = objectInfo.value[nodeType]
   const widgetDefs = getWidgetDefs(nodeType)
-
-  // Gate nodes use a dedicated component type
   const vueFlowType = getVueFlowType(nodeType)
-
-  nodes.value.push({
-    id: newId,
+  const widgetsValues = widgetDefs.map((w: any) => w.default ?? null)
+  if (widgetOverrides) {
+    for (const [name, value] of Object.entries(widgetOverrides)) {
+      const idx = widgetDefs.findIndex((w: any) => w.name === name)
+      if (idx >= 0) widgetsValues[idx] = value
+    }
+  }
+  return {
+    id: String(Date.now()),
     type: vueFlowType,
     position,
     data: {
@@ -546,8 +528,6 @@ async function handleDrop(event: DragEvent) {
         ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: true })),
       ]
         .filter(({ s }) => {
-          // Same rule as above: non-widget types become ports, and widget-typed
-          // inputs marked forceInput become ports too.
           const specArr = Array.isArray(s) ? s : [s]
           const type = specArr[0]
           const cfg = specArr[1] || {}
@@ -566,7 +546,7 @@ async function handleDrop(event: DragEvent) {
         type,
         links: null,
       })),
-      widgetsValues: widgetDefs.map((w: any) => w.default ?? null),
+      widgetsValues,
       widgetDefs,
       properties: {},
       mode: 0,
@@ -576,7 +556,216 @@ async function handleDrop(event: DragEvent) {
       priceBadge: info?.price_badge || null,
       ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
     },
-  } as any)
+  } as any
+}
+
+// ── Wire splicing ────────────────────────────────────────────────────────────
+// Insert a node between two already-connected nodes (drop-on-wire, edge "+"),
+// or after a node across all its matching output edges (artifact effect actions).
+function typesCompatible(a: string, b: string): boolean {
+  return a === b || a === '*' || b === '*'
+}
+function outputHandleFor(node: any, wantType?: string): string {
+  const outs = node?.data?.outputs ?? []
+  let idx = wantType ? outs.findIndex((o: any) => typesCompatible(o.type, wantType)) : -1
+  if (idx < 0) idx = 0
+  return `output-${idx}`
+}
+function inputHandleFor(node: any, wantType?: string): string {
+  const ins = node?.data?.inputs ?? []
+  let idx = wantType ? ins.findIndex((i: any) => typesCompatible(i.type, wantType)) : -1
+  if (idx < 0) idx = 0
+  return `input-${idx}`
+}
+function typeOfOutputHandle(node: any, handle?: string): string {
+  const i = parseInt(String(handle ?? '').replace('output-', '') || '0')
+  return node?.data?.outputs?.[i]?.type ?? '*'
+}
+function typeOfInputHandle(node: any, handle?: string): string {
+  const i = parseInt(String(handle ?? '').replace('input-', '') || '0')
+  return node?.data?.inputs?.[i]?.type ?? '*'
+}
+
+/** Splice a new node into an existing edge: A→B becomes A→New→B. */
+async function spliceIntoEdge(edgeId: string, nodeType: string, widgetOverrides?: Record<string, unknown>) {
+  const edge = (edges.value as any[]).find(e => e.id === edgeId)
+  if (!edge) return
+  if (!objectInfo.value[nodeType]) await fetchObjectInfo()
+  const src = (nodes.value as any[]).find(n => n.id === edge.source)
+  const tgt = (nodes.value as any[]).find(n => n.id === edge.target)
+  if (!src || !tgt) return
+  const srcOutType = typeOfOutputHandle(src, edge.sourceHandle)
+  const tgtInType = typeOfInputHandle(tgt, edge.targetHandle)
+  const pos = {
+    x: ((src.position?.x ?? 0) + (tgt.position?.x ?? 0)) / 2 - 110,
+    y: ((src.position?.y ?? 0) + (tgt.position?.y ?? 0)) / 2,
+  }
+  const node = createNodeData(nodeType, pos, widgetOverrides)
+  const inHandle = inputHandleFor(node, srcOutType)
+  const outHandle = outputHandleFor(node, tgtInType)
+  nodes.value.push(node)
+  // Wait for VueFlow to register the new node (and mount its handles) before
+  // wiring edges to it — otherwise edges referencing it are pruned as invalid.
+  await nextTick()
+  removeEdges([edgeId])
+  addEdges([
+    { source: edge.source, sourceHandle: edge.sourceHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: srcOutType } },
+    { source: node.id, sourceHandle: outHandle, target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
+  ])
+}
+
+/** Apply a transform after a node: feed it from the node and re-point every
+ *  existing matching-type output edge through it (used by artifact-card actions
+ *  like "Remove background"). If nothing was downstream, it's just appended. */
+async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAGE', widgetOverrides?: Record<string, unknown>) {
+  if (!objectInfo.value[nodeType]) await fetchObjectInfo()
+  const src = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!src) return
+  const srcOutHandle = outputHandleFor(src, outType)
+  const downstream = (edges.value as any[]).filter(e => e.source === nodeId && e.sourceHandle === srcOutHandle)
+  const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
+  const node = createNodeData(nodeType, pos, widgetOverrides)
+  const inHandle = inputHandleFor(node, outType)
+  const outHandle = outputHandleFor(node, outType)
+  nodes.value.push(node)
+  // Wait for VueFlow to register the new node before wiring edges to it.
+  await nextTick()
+  const newEdges: any[] = [
+    { source: nodeId, sourceHandle: srcOutHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: outType } },
+  ]
+  for (const e of downstream) {
+    newEdges.push({ source: node.id, sourceHandle: outHandle, target: e.target, targetHandle: e.targetHandle, type: 'comfy', data: { dataType: outType } })
+  }
+  if (downstream.length) removeEdges(downstream.map((e: any) => e.id))
+  addEdges(newEdges)
+}
+
+/** Can this node be spliced into this edge? (compatible in/out ports, and the
+ *  node isn't already an endpoint of the edge.) Shared by the splice action and
+ *  the drag-over highlight so the highlight always reflects a real drop target. */
+function canNodeSpliceEdge(node: any, edge: any): boolean {
+  if (!node || !edge || edge.source === node.id || edge.target === node.id) return false
+  const src = (nodes.value as any[]).find(n => n.id === edge.source)
+  const tgt = (nodes.value as any[]).find(n => n.id === edge.target)
+  if (!src || !tgt) return false
+  const srcOutType = typeOfOutputHandle(src, edge.sourceHandle)
+  const tgtInType = typeOfInputHandle(tgt, edge.targetHandle)
+  const hasIn = (node.data?.inputs ?? []).some((i: any) => typesCompatible(i.type, srcOutType))
+  const hasOut = (node.data?.outputs ?? []).some((o: any) => typesCompatible(o.type, tgtInType))
+  return hasIn && hasOut
+}
+
+/** Splice an EXISTING (already-placed) node into an edge it was dragged onto. */
+function spliceExistingNodeIntoEdge(nodeId: string, edgeId: string) {
+  const edge = (edges.value as any[]).find(e => e.id === edgeId)
+  const node = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!edge || !node || !canNodeSpliceEdge(node, edge)) return
+  const src = (nodes.value as any[]).find(n => n.id === edge.source)
+  const tgt = (nodes.value as any[]).find(n => n.id === edge.target)
+  const srcOutType = typeOfOutputHandle(src, edge.sourceHandle)
+  const tgtInType = typeOfInputHandle(tgt, edge.targetHandle)
+  removeEdges([edgeId])
+  addEdges([
+    { source: edge.source, sourceHandle: edge.sourceHandle, target: nodeId, targetHandle: inputHandleFor(node, srcOutType), type: 'comfy', data: { dataType: srcOutType } },
+    { source: nodeId, sourceHandle: outputHandleFor(node, tgtInType), target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
+  ])
+}
+
+// Find a spliceable wire under a dragged (fully-unconnected) node, or null.
+function spliceableEdgeUnderNode(node: any, event: any): string | null {
+  if (!node?.id) return null
+  const connected = (edges.value as any[]).some(e => e.source === node.id || e.target === node.id)
+  if (connected) return null
+  const x = (event as MouseEvent)?.clientX, y = (event as MouseEvent)?.clientY
+  if (x == null || y == null) return null
+  // elementsFromPoint sees through the dragged node to any wire beneath it.
+  for (const el of (document.elementsFromPoint(x, y) as HTMLElement[])) {
+    const id = el.closest?.('[data-edge-id]')?.getAttribute('data-edge-id')
+    if (!id) continue
+    const edge = (edges.value as any[]).find(e => e.id === id)
+    if (edge && canNodeSpliceEdge(node, edge)) return id
+  }
+  return null
+}
+
+// Live highlight while dragging an unconnected node over a compatible wire.
+onNodeDrag(({ event, node }) => {
+  dragOverEdgeId.value = spliceableEdgeUnderNode(node, event)
+})
+
+// Dropping a fully-unconnected node onto a compatible wire splices it in.
+onNodeDragStop(({ event, node }) => {
+  const id = spliceableEdgeUnderNode(node, event)
+  dragOverEdgeId.value = null
+  if (id) spliceExistingNodeIntoEdge(node.id, id)
+})
+
+// Edge currently under the cursor during a node drag → drop splices into it.
+const dragOverEdgeId = ref<string | null>(null)
+provide('spliceDragEdgeId', dragOverEdgeId)
+// Edge the "+" affordance targeted → the next node-search pick splices into it.
+let pendingSpliceEdgeId: string | null = null
+const { openNodeSearch } = useNodeSearch()
+
+function handleCanvasDragOver(event: DragEvent) {
+  event.preventDefault()
+  const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+  const edgeEl = el?.closest('[data-edge-id]') as HTMLElement | null
+  dragOverEdgeId.value = edgeEl?.getAttribute('data-edge-id') ?? null
+}
+
+function handleEdgeInsert(e: Event) {
+  const { edgeId } = (e as CustomEvent).detail || {}
+  if (!edgeId) return
+  pendingSpliceEdgeId = String(edgeId)
+  openNodeSearch()
+}
+
+function handleApplyEffect(e: Event) {
+  const { nodeId, nodeType, output, widgetOverrides } = (e as CustomEvent).detail || {}
+  if (!nodeId || !nodeType) return
+  spliceAfterNode(String(nodeId), String(nodeType), output || 'IMAGE', widgetOverrides)
+}
+
+// Handle node drop from sidebar
+async function handleDrop(event: DragEvent) {
+  event.preventDefault()
+  // Block library drops carry our custom MIME type; route them first since
+  // the text/plain payload is just a fallback prefixed with "block:".
+  if (event.dataTransfer?.types.includes('application/x-comfynext-block')) {
+    tryHandleBlockDrop(event)
+    return
+  }
+  const nodeType = event.dataTransfer?.getData('text/plain')
+  if (!nodeType) return
+  // Defensive: ignore the text/plain fallback that block drags also emit.
+  if (nodeType.startsWith('block:')) return
+
+  // Dropped onto a wire → splice the node into that connection (A→B ⇒ A→New→B).
+  // Detect the edge at drop time via elementFromPoint — the dragover-tracked id
+  // can be cleared by dragenter/leave bubbling races, so this is authoritative.
+  const dropEl = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+  const edgeId = dropEl?.closest('[data-edge-id]')?.getAttribute('data-edge-id') || dragOverEdgeId.value
+  dragOverEdgeId.value = null
+  if (edgeId) {
+    await spliceIntoEdge(edgeId, nodeType)
+    return
+  }
+
+  // Refresh schema if we don't know this node type — protects against the
+  // common case of "ComfyUI was restarted with new nodes but the cache is
+  // stale," which results in a node rendering without any ports.
+  if (!objectInfo.value[nodeType]) {
+    await fetchObjectInfo()
+  }
+
+  const canvasEl = (event.currentTarget as HTMLElement)
+  const rect = canvasEl.getBoundingClientRect()
+  const position = project({
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  })
+  nodes.value.push(createNodeData(nodeType, position))
 }
 
 // Load workflow when prop changes (ensure object_info is ready first)
@@ -657,68 +846,17 @@ async function handleAddNode(e: Event) {
     await fetchObjectInfo()
   }
 
-  // Get viewport center for placement
-  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  const newId = String(Date.now())
-  const info = objectInfo.value[nodeType]
-  const widgetDefs = getWidgetDefs(nodeType)
-  const vueFlowType = getVueFlowType(nodeType)
-
-  // Apply any name-based overrides supplied by the caller (used by the LoRA
-  // Library to pre-fill `lora_url`, etc.). Widget order is whatever
-  // getWidgetDefs returns — we look up positions by name.
-  const widgetsValues = widgetDefs.map((w: any) => w.default ?? null)
-  if (widgetOverrides) {
-    for (const [name, value] of Object.entries(widgetOverrides)) {
-      const idx = widgetDefs.findIndex((w: any) => w.name === name)
-      if (idx >= 0) widgetsValues[idx] = value
-    }
+  // If the search was opened from an edge "+", splice into that edge instead
+  // of dropping the node at viewport center.
+  if (pendingSpliceEdgeId) {
+    const edgeId = pendingSpliceEdgeId
+    pendingSpliceEdgeId = null
+    await spliceIntoEdge(edgeId, nodeType, widgetOverrides)
+    return
   }
 
-  nodes.value.push({
-    id: newId,
-    type: vueFlowType,
-    position: { x: center.x, y: center.y },
-    data: {
-      nodeType,
-      title: info?.display_name || nodeType,
-      inputs: [
-        ...Object.entries((info?.input?.required ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: false })),
-        ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: true })),
-      ]
-        .filter(({ s }) => {
-          // Non-widget input types (IMAGE, MODEL, AUDIO, …) always become ports.
-          // Widget-typed inputs marked `forceInput` become ports too — Comfy's
-          // opt-in for "render this connectable, not as a text field".
-          const specArr = Array.isArray(s) ? s : [s]
-          const type = specArr[0]
-          const cfg = specArr[1] || {}
-          if (Array.isArray(type)) return false
-          if (cfg.forceInput) return true
-          return !['INT', 'FLOAT', 'STRING', 'BOOLEAN', 'COMBO'].includes(String(type))
-        })
-        .map(({ n, s, optional }) => ({
-          name: n,
-          type: Array.isArray(s) ? String(s[0]) : String(s),
-          link: null,
-          optional,
-        })),
-      outputs: (info?.output || []).map((type: string, i: number) => ({
-        name: info?.output_name?.[i] || type,
-        type,
-        links: null,
-      })),
-      widgetsValues,
-      widgetDefs,
-      properties: {},
-      mode: 0,
-      size: [220, 120],
-      category: info?.category || '',
-      outputNode: !!info?.output_node,
-      priceBadge: info?.price_badge || null,
-      ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
-    },
-  } as any)
+  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides))
 }
 
 // Subgraph navigation: double-click to enter
@@ -1160,6 +1298,8 @@ onMounted(() => {
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
+  window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
+  window.addEventListener('comfynext:applyEffect', handleApplyEffect)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -1177,6 +1317,8 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
+  window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
+  window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -1562,6 +1704,46 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
   }
 }
 
+// Turnkey "protect in blend": when a Compositor has any layer flagged protect
+// AND feeds a Blend Scene whose keep_subject is unconnected, auto-wire the
+// Compositor's `protect_mask` output into that keep_subject. Runs on the
+// submitted workflow JSON, so the user never wires a mask by hand.
+function injectProtectMaskWiring(workflow: any): void {
+  if (!workflow?.nodes?.length) return
+  if (!Array.isArray(workflow.links)) workflow.links = []
+  const liveById = new Map((nodes.value as any[]).map(n => [String(n.id), n]))
+  const compositors = (workflow.nodes as any[]).filter(n => n.type === 'Compositor')
+  for (const comp of compositors) {
+    if ((comp.mode ?? 0) !== 0) continue
+    const live = liveById.get(String(comp.id))
+    const defs = live?.data?.widgetDefs as any[] | undefined
+    const wv = live?.data?.widgetsValues as any[] | undefined
+    if (!defs || !wv) continue
+    // Any layerN_protect widget truthy?
+    const anyProtect = defs.some((d: any, i: number) =>
+      /^layer\d+_protect$/.test(d?.name) && !!wv[i])
+    if (!anyProtect) continue
+    const outIdx = (comp.outputs as any[] | undefined)?.findIndex((o: any) => o?.name === 'protect_mask')
+    if (outIdx == null || outIdx < 0) continue
+    for (const node of workflow.nodes as any[]) {
+      if (node.type !== 'BlendSceneNode' || (node.mode ?? 0) !== 0) continue
+      // Only if this Blend Scene is actually fed by this Compositor.
+      const fedByComp = (workflow.links as any[]).some(
+        (l: any) => Array.isArray(l) && l[1] === comp.id && l[3] === node.id)
+      if (!fedByComp) continue
+      const ksIdx = (node.inputs as any[] | undefined)?.findIndex((inp: any) => inp?.name === 'keep_subject')
+      if (ksIdx == null || ksIdx < 0) continue
+      if (node.inputs[ksIdx].link != null) continue // user already wired one — respect it
+      const linkId = (workflow.last_link_id || 0) + 1
+      workflow.last_link_id = linkId
+      workflow.links.push([linkId, comp.id, outIdx, node.id, ksIdx, 'MASK'])
+      node.inputs[ksIdx].link = linkId
+      if (!Array.isArray(comp.outputs[outIdx].links)) comp.outputs[outIdx].links = []
+      comp.outputs[outIdx].links.push(linkId)
+    }
+  }
+}
+
 // Inject each Timeline node's editor state (tracks, clips, keyframes) into its
 // hidden `edit_state` widget so the backend render matches the editor preview
 // and FFmpeg export — keyframed transforms included. The editor already
@@ -1596,35 +1778,16 @@ let timelineRendering = false
 let timelineDirty = false
 let timelineRafHandle = 0
 
-/** Resolve a Timeline clip port (slot = port_index, 1-based) to a preview
- *  source. Handles video sources (LoadVideo) and image-sequence sources
- *  (KineticType — returns a mid-sequence frame, guaranteed visible). */
-function getTimelineClipSource(node: any, slot: number): { url: string; kind: 'video' | 'image' } | null {
+/** Resolve a Timeline clip port (slot = port_index, 1-based) to a still poster
+ *  source. Uses the shared resolver but collapses KineticType to a single
+ *  guaranteed-visible mid-sequence frame, and skips the generic images fallback
+ *  so the baked poster never tries to render arbitrary upstream nodes. */
+function getTimelineClipSource(node: any, slot: number): ClipSource | null {
   const edge = (edges.value as any[]).find((e: any) =>
     e.target === node.id && e.targetHandle === `input-${slot - 1}`)
   if (!edge) return null
   const src = (nodes.value as any[]).find((n: any) => n.id === edge.source)
-  if (!src) return null
-  const type = src.data?.nodeType
-  if (type === 'LoadVideoFrames' || type === 'LoadVideo') {
-    const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
-    const filename = src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0]
-    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'video' }
-  }
-  if (type === 'KineticType') {
-    const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
-    if (pIdx >= 0) {
-      try {
-        const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
-        if (Array.isArray(p.rendered) && p.rendered.length > 0) {
-          // Mid-sequence frame — visible for fade/slide presets where frame 0 is empty.
-          const mid = p.rendered[Math.floor(p.rendered.length / 2)]
-          return { url: `/view?${new URLSearchParams({ filename: String(mid), type: 'input' })}`, kind: 'image' }
-        }
-      } catch { /* ignore */ }
-    }
-  }
-  return null
+  return resolveClipSource(src, { kinetic: 'mid', imagesFallback: false })
 }
 
 function collectTimelineLayers(node: any): any[] {
@@ -1887,6 +2050,14 @@ function timelineSnapshot(node: any) {
           return `kt:${r.length}:${r[0] ?? ''}`
         } catch { /* ignore */ }
       }
+    }
+    // Universal artifact nodes: track the upload widget so picking a new file
+    // invalidates the baked poster (falls back to images[0] post-run).
+    if (src?.data?.nodeType === 'Video' || src?.data?.nodeType === 'Image') {
+      const widgetName = src.data.nodeType === 'Video' ? 'file' : 'image'
+      const wIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === widgetName) ?? -1
+      const fn = wIdx >= 0 ? src.data.widgetsValues?.[wIdx] : undefined
+      return fn ?? src?.data?.images?.[0] ?? null
     }
     return src?.data?.images?.[0] ?? null
   })
@@ -2916,6 +3087,7 @@ defineExpose({
   getFilteredWorkflow,
   refreshSchema,
   injectCompositorOverlays,
+  injectProtectMaskWiring,
   injectTimelineEditState,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
@@ -2963,7 +3135,8 @@ defineExpose({
       class="vue-node-canvas"
       fit-view-on-init
       @drop="handleDrop"
-      @dragover.prevent
+      @dragover="handleCanvasDragOver"
+      @dragleave="dragOverEdgeId = null"
       @node-double-click="handleNodeDoubleClick"
       @pane-context-menu="handlePaneContextMenu"
       @node-context-menu="handleNodeContextMenu"

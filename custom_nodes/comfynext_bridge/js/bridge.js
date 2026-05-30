@@ -493,6 +493,31 @@ app.registerExtension({
       }
     }
 
+    // Readiness gate: the parent waits for { status: "ready" } before sending
+    // workflows. If a loadWorkflow still arrives before ComfyUI's app is usable,
+    // queue it and flush once we're ready instead of silently dropping it.
+    let bridgeReady = false;
+    let pendingWorkflow = null;
+
+    function loadGraphIntoComfy(workflow) {
+      try {
+        window.app.loadGraphData(workflow);
+        console.log("[ComfyNext Bridge] Loaded workflow");
+        postToParent({ event: "workflow_loaded" });
+      } catch (e) {
+        console.error("[ComfyNext Bridge] Failed to load workflow:", e);
+        postToParent({ event: "workflow_loaded" }); // still signal so overlay clears
+      }
+    }
+
+    function flushPendingWorkflow() {
+      if (pendingWorkflow && window.app) {
+        const wf = pendingWorkflow;
+        pendingWorkflow = null;
+        loadGraphIntoComfy(wf);
+      }
+    }
+
     // Listen for postMessage commands from the parent ComfyNext wrapper
     window.addEventListener("message", async (event) => {
       if (!event.data || event.data.type !== "comfynext") return;
@@ -501,17 +526,21 @@ app.registerExtension({
       console.log("[ComfyNext Bridge] received action:", action, "payload:", JSON.stringify(event.data));
 
       if (action === "loadWorkflow") {
-        const { workflow, prompt } = event.data;
-        if (workflow && window.app) {
-          try {
-            window.app.loadGraphData(workflow);
-            console.log("[ComfyNext Bridge] Loaded workflow");
-            postToParent({ event: "workflow_loaded" });
-          } catch (e) {
-            console.error("[ComfyNext Bridge] Failed to load workflow:", e);
-            postToParent({ event: "workflow_loaded" }); // still signal so overlay clears
-          }
+        const { workflow } = event.data;
+        if (workflow && window.app && bridgeReady) {
+          loadGraphIntoComfy(workflow);
+        } else if (workflow) {
+          // Arrived before ComfyUI finished initializing — keep the latest and
+          // flush it the moment we're ready, rather than dropping it silently.
+          pendingWorkflow = workflow;
+          console.log("[ComfyNext Bridge] Queued workflow until ready");
         }
+      }
+
+      // Parent can ask whether we're ready (e.g. after a frontend-only reload that
+      // missed our initial broadcast); re-announce if so.
+      if (action === "requestStatus") {
+        if (bridgeReady) postToParent({ status: "ready" });
       }
 
       if (action === "getWorkflow") {
@@ -972,10 +1001,13 @@ app.registerExtension({
       }
 
       if (action === "queuePrompt") {
-        // Trigger ComfyUI's native queue prompt (same as clicking Run)
+        // Trigger ComfyUI's native queue prompt (same as clicking Run).
+        // queuePrompt is async — await it so validation/serialization failures
+        // (e.g. an unknown node type, or a node missing required inputs) are
+        // caught and surfaced to the parent instead of dying silently here.
         try {
           if (window.app?.queuePrompt) {
-            window.app.queuePrompt(0); // 0 = front of queue
+            await window.app.queuePrompt(0); // 0 = front of queue
             console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
           } else {
             // Fallback: try the command system
@@ -983,6 +1015,10 @@ app.registerExtension({
           }
         } catch (e) {
           console.error("[ComfyNext Bridge] queuePrompt error:", e);
+          postToParent({
+            event: "queue_error",
+            message: (e && (e.message || String(e))) || "Failed to queue the prompt.",
+          });
         }
       }
 
@@ -1213,6 +1249,8 @@ app.registerExtension({
     setTimeout(fetchUserProfile, 10000);
     setTimeout(fetchUserProfile, 20000);
 
+    bridgeReady = true;
+    flushPendingWorkflow();
     postToParent({ status: "ready" });
   },
 });

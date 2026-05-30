@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  X, Monitor, Paintbrush, MousePointer2, Zap, FolderOpen, ChevronDown, Sparkles,
+  X, Monitor, Paintbrush, MousePointer2, Zap, FolderOpen, ChevronDown, Sparkles, HardDriveDownload,
 } from 'lucide-vue-next'
 
 const { settingsOpen, closeSettings } = useSettingsModal()
@@ -22,6 +22,7 @@ const categories = [
   { id: 'execution', label: 'Execution', icon: Zap },
   { id: 'workflow', label: 'Workflow', icon: FolderOpen },
   { id: 'ai', label: 'AI', icon: Sparkles },
+  { id: 'models', label: 'Models', icon: HardDriveDownload },
 ]
 
 interface SettingDef {
@@ -261,6 +262,9 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
             <div v-if="loading" class="flex items-center justify-center py-12">
               <span class="text-sm text-white/40">Loading settings...</span>
             </div>
+
+            <!-- Models management gets a custom panel (dynamic status/progress). -->
+            <ModelBundlesPanel v-else-if="activeCategory === 'models'" />
 
             <div v-else class="flex flex-col gap-1">
               <div

@@ -96,41 +96,11 @@ const { addNode } = useNodeSearch()
 // -- Model pre-download orchestration ---------------------------------------
 // Some nodes (FaceSwap) need hundreds of MB of weights. We pre-fetch when the
 // card is first clicked so the first prompt isn't a "why is this hanging" moment.
+// State + the progress stream live in a module-level composable so an in-flight
+// download survives this panel being closed (v-if-unmounted).
+const { download, inflight, modelsReady, probeModelStatus, ensureModels, dismissDownload, ALL_MODEL_BUNDLES } = useModelDownloads()
 
-interface DownloadState {
-  active: boolean
-  label: string                      // "Face Swap" — what's installing
-  file: string                       // current file being fetched
-  downloaded: number                 // bytes
-  total: number                      // bytes
-  phase: 'checking' | 'downloading' | 'preparing' | 'error'
-  message?: string                   // populated on error
-}
-const download = reactive<DownloadState>({
-  active: false, label: '', file: '', downloaded: 0, total: 0, phase: 'checking',
-})
-
-// Per-key in-flight promise so repeated clicks dedupe to a single download.
-const inflight = new Map<string, Promise<boolean>>()
-
-// Which model bundles are already on disk — drives the cloud-icon badge on
-// cards. Probed on mount and after each successful download.
-const modelsReady = reactive<Set<string>>(new Set())
-
-async function probeModelStatus(key: ModelBundleKey) {
-  try {
-    const status = await (await fetch(`/comfynext/models/status?key=${key}`)).json()
-    if (status.ready) modelsReady.add(key)
-    else modelsReady.delete(key)
-  } catch { /* offline — leave as not-ready; click will surface the error */ }
-}
-const ALL_BUNDLES: ModelBundleKey[] = [
-  'faceswap', 'bgremove', 'upscale',
-  'frameinterp', 'subjecttrack',
-  'facerestore', 'lipsync', 'objectremove',
-  'whisper', 'demucs',
-]
-onMounted(() => { for (const k of ALL_BUNDLES) probeModelStatus(k) })
+onMounted(() => { for (const k of ALL_MODEL_BUNDLES) probeModelStatus(k) })
 
 // Card-level helpers used by the template.
 function isModelMissing(item: ToolboxItem): boolean {
@@ -146,80 +116,6 @@ function cardProgress(): number {
 
 function fmtMB(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(0)
-}
-
-async function ensureModels(key: ModelBundleKey): Promise<boolean> {
-  if (inflight.has(key)) return inflight.get(key)!
-  const p = (async (): Promise<boolean> => {
-    download.active = true
-    download.label = key  // overwritten by `start` event with the bundle's pretty label
-    download.phase = 'checking'
-    download.file = ''
-    download.downloaded = 0
-    download.total = 0
-    download.message = undefined
-
-    let status: any
-    try {
-      status = await (await fetch(`/comfynext/models/status?key=${key}`)).json()
-      if (status.label) download.label = status.label
-      if (status.ready) {
-        download.active = false
-        return true
-      }
-    } catch (err) {
-      download.phase = 'error'
-      download.message = 'Could not reach the model server. Is ComfyUI running?'
-      return false
-    }
-
-    // SSE stream of `data: {json}\n\n` lines from /comfynext/models/download.
-    return new Promise<boolean>((resolve) => {
-      const es = new EventSource(`/comfynext/models/download?key=${key}`)
-      es.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data)
-          if (msg.phase === 'start' && msg.label) {
-            download.label = msg.label
-          } else if (msg.phase === 'downloading') {
-            download.phase = 'downloading'
-            download.file = msg.file
-            download.downloaded = msg.downloaded
-            download.total = msg.total
-          } else if (msg.phase === 'preparing') {
-            download.phase = 'preparing'
-            download.file = msg.file
-          } else if (msg.phase === 'done') {
-            download.active = false
-            modelsReady.add(key)
-            es.close()
-            resolve(true)
-          } else if (msg.phase === 'error') {
-            download.phase = 'error'
-            download.message = msg.message || 'Download failed.'
-            es.close()
-            resolve(false)
-          }
-        } catch {}
-      }
-      es.onerror = () => {
-        // Browser closes EventSource on the stream's final byte — only flag a real
-        // error if we never reached `done`.
-        if (download.active && download.phase !== 'error') {
-          download.phase = 'error'
-          download.message = 'Lost connection to the model server.'
-        }
-        es.close()
-        resolve(download.phase !== 'error')
-      }
-    })
-  })().finally(() => inflight.delete(key))
-  inflight.set(key, p)
-  return p
-}
-
-function dismissDownload() {
-  download.active = false
 }
 
 async function handleAdd(item: ToolboxItem) {
@@ -245,16 +141,12 @@ function clearSearch() {
 // listens for `dragover`/`drop` and creates the node at the cursor position.
 function onCardDragStart(event: DragEvent, item: ToolboxItem) {
   if (!event.dataTransfer) return
-  // Nodes that need weights downloaded can't be dragged onto the canvas (the
-  // canvas drop handler would try to instantiate immediately). Cancel the drag
-  // and kick off the download instead — the user can drag once it's installed.
-  if (item.requiresModels) {
-    event.preventDefault()
-    handleAdd(item)
-    return
-  }
   event.dataTransfer.setData('text/plain', item.nodeType)
   event.dataTransfer.effectAllowed = 'copy'
+  // Model-backed nodes are still draggable — the node instantiates on drop and
+  // its weights download on first run. Kick the download off now (background) so
+  // it's likely ready by the time they run, without blocking the drag.
+  if (item.requiresModels) ensureModels(item.requiresModels)
   // Hide the hover-preview tooltip while a drag is in flight.
   if (enterTimer) clearTimeout(enterTimer)
   hoveredItem.value = null

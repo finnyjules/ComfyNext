@@ -21,6 +21,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._live_preview import save_live_preview
 
 from comfy_extras._model_downloads import (
     ModelBundle, ModelFile, loader_cache, register_bundle,
@@ -162,6 +163,10 @@ class FaceRestoreNode(IO.ComfyNode):
                 IO.Image.Output(display_name="frames"),
                 IO.Mask.Output(display_name="restored_mask"),
             ],
+            hidden=[IO.Hidden.unique_id],
+            # Emit the result so the frontend captures it (data.images) — lets the
+            # output preview on the node and composite anywhere it's wired (Frame).
+            is_output_node=True,
         )
 
     @classmethod
@@ -246,7 +251,11 @@ class FaceRestoreNode(IO.ComfyNode):
             out_frames.append(torch.from_numpy(out_rgb))
             out_masks.append(torch.from_numpy(mask_full))
 
-        return IO.NodeOutput(torch.stack(out_frames, dim=0), torch.stack(out_masks, dim=0))
+        frames_out = torch.stack(out_frames, dim=0)
+        return IO.NodeOutput(
+            frames_out, torch.stack(out_masks, dim=0),
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+        )
 
 
 class FaceRestoreExtension(ComfyExtension):

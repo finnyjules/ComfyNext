@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { X, Play, Pause, RotateCw } from 'lucide-vue-next'
+import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 
 const props = defineProps<{
   nodeId: string
@@ -58,27 +59,16 @@ const lenA = computed(() => effOutA.value - effInA.value)
 const lenB = computed(() => effOutB.value - effInB.value)
 const overlap = computed(() => Math.max(1, Math.min(duration.value, lenA.value, lenB.value)))
 
-// -- Source URL resolution (same pattern as TimelineModal) -------------------
+// -- Source URL resolution (shared with every other timeline surface) --------
 
-function resolveSource(clipPortIdx: number): { url: string; kind: 'video' | 'image' } | null {
+function resolveSource(clipPortIdx: number): ClipSource | null {
   const edge = props.edges.find((e: any) =>
     e.target === props.nodeId && e.targetHandle === `input-${clipPortIdx}`)
   if (!edge) return null
   const src = props.nodes.find((n: any) => n.id === edge.source)
-  if (!src) return null
-  const type = src.data?.nodeType
-  if (type === 'LoadVideoFrames' || type === 'LoadVideo') {
-    const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
-    const filename = src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0]
-    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'video' }
-  }
-  if (type === 'LoadImage') {
-    const idx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'image') ?? 0
-    const filename = src.data.widgetsValues?.[idx >= 0 ? idx : 0]
-    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'image' }
-  }
-  if (src?.data?.images?.length) return { url: String(src.data.images[0]), kind: 'image' }
-  return null
+  // Crossfade pairs two stills/clips — collapse a KineticType to a single
+  // mid-sequence frame rather than a playable sequence.
+  return resolveClipSource(src, { kinetic: 'mid' })
 }
 
 const clipA = computed(() => resolveSource(0))

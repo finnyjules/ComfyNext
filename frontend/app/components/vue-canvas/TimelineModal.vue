@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { X, Image as ImageIcon, Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight, RotateCw } from 'lucide-vue-next'
+import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 
 const props = defineProps<{
   nodeId: string
@@ -89,27 +90,14 @@ interface Layer {
 // resolve its file/preview. Supports video sources (LoadVideoFrames/LoadVideo),
 // image sources (LoadImage), and any node that has published an image preview
 // (e.g., TextClip → its rendered output).
-function resolveSource(clipSlot: number): { url: string; kind: 'video' | 'image' } | null {
+function resolveSource(clipSlot: number): ClipSource | null {
   const edge = props.edges.find((e: any) =>
     e.target === props.nodeId && e.targetHandle === `input-${clipSlot - 1}`)
   if (!edge) return null
   const src = props.nodes.find((n: any) => n.id === edge.source)
-  if (!src) return null
-  const type = src.data?.nodeType
-  if (type === 'LoadVideoFrames' || type === 'LoadVideo') {
-    const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
-    const filename = src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0]
-    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'video' }
-  }
-  if (type === 'LoadImage') {
-    const idx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'image') ?? 0
-    const filename = src.data.widgetsValues?.[idx >= 0 ? idx : 0]
-    if (filename) return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'image' }
-  }
-  if (src?.data?.images?.length) {
-    return { url: String(src.data.images[0]), kind: 'image' }
-  }
-  return null
+  // This preview pairs stills/clips — collapse a KineticType to a single
+  // mid-sequence frame rather than a playable sequence.
+  return resolveClipSource(src, { kinetic: 'mid' })
 }
 
 const layers = computed<Layer[]>(() => {
@@ -572,6 +560,14 @@ function resolveClipForRender(slot: number):
     const idx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'image') ?? 0
     const filename = src.data.widgetsValues?.[idx >= 0 ? idx : 0]
     if (filename) return { kind: 'image', filename: String(filename) }
+  }
+  // Universal artifact nodes (Video / Image): export the uploaded input file.
+  if (type === 'Video' || type === 'Image') {
+    const kind: 'video' | 'image' = type === 'Video' ? 'video' : 'image'
+    const widgetName = type === 'Video' ? 'file' : 'image'
+    const idx = src.data.widgetDefs?.findIndex((d: any) => d.name === widgetName) ?? -1
+    const filename = idx >= 0 ? src.data.widgetsValues?.[idx] : undefined
+    if (filename) return { kind, filename: String(filename) }
   }
   if (type === 'TextClip') {
     const defs = src.data.widgetDefs as any[] | undefined

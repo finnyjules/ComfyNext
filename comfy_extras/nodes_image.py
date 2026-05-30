@@ -25,6 +25,7 @@ import comfy.model_management
 import folder_paths
 import node_helpers
 from nodes import SaveImage
+from comfy_extras._live_preview import save_live_preview
 
 
 class Image(SaveImage):
@@ -82,6 +83,7 @@ class Image(SaveImage):
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
+                "unique_id": "UNIQUE_ID",
             },
         }
 
@@ -99,7 +101,9 @@ class Image(SaveImage):
 
     def process(self, image, export, filename_prefix, format, quality,
                 lossless_webp, png_compression, scale, max_dimension, embed_metadata,
-                batch_index=-1, images=None, prompt=None, extra_pnginfo=None):
+                batch_index=-1, images=None, prompt=None, extra_pnginfo=None,
+                unique_id=None):
+        loaded_file = None
         if images is not None:
             output_image = images
             # Variant fan-out: slice a single element from the batch when
@@ -117,6 +121,7 @@ class Image(SaveImage):
             )
         elif image:
             output_image, output_mask = _load_from_disk(image)
+            loaded_file = image
         else:
             # Nothing to do — return a 1×1 placeholder and let the UI render
             # the empty/upload state. No preview written.
@@ -124,7 +129,30 @@ class Image(SaveImage):
             placeholder_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
             return {"ui": {"images": []}, "result": (placeholder_img, placeholder_mask)}
 
-        preview_result = self._preview_to_temp(output_image, prompt, extra_pnginfo)
+        # A file loaded from disk carries its alpha in `output_mask` (= 1 - alpha).
+        # If it's actually transparent (e.g. a locked Background-Remove cutout),
+        # rebuild a 4-channel RGBA image so the alpha survives downstream instead
+        # of being dropped by convert("RGB") into the separate MASK output.
+        if (loaded_file
+                and output_mask.numel()
+                and tuple(output_mask.shape[-2:]) == tuple(output_image.shape[1:3])
+                and float(output_mask.max()) > 1e-3):
+            alpha = (1.0 - output_mask).clamp(0.0, 1.0)            # [B, H, W]
+            output_image = torch.cat([output_image[..., :3], alpha.unsqueeze(-1)], dim=-1)
+
+        # Any RGBA image — rebuilt above, or wired straight from an upstream that
+        # already emits 4ch (e.g. Background Remove "transparent") — previews as
+        # RGBA so the node body and Frame composite stay transparent (SaveImage
+        # only writes RGB). The Compositor folds the embedded 4th channel into its
+        # coverage, so a cut-out composites cleanly with or without locking.
+        if output_image.ndim == 4 and output_image.shape[-1] == 4:
+            # Keep the MASK output consistent with the embedded alpha.
+            output_mask = (1.0 - output_image[..., 3]).clamp(0.0, 1.0)
+            key = "".join(c if c.isalnum() else "_"
+                          for c in str(unique_id or loaded_file or "img"))
+            ui = save_live_preview(output_image.float().cpu(), f"img_{key}")
+        else:
+            ui = self._preview_to_temp(output_image, prompt, extra_pnginfo)["ui"]
 
         if export:
             self._export_to_output(
@@ -133,7 +161,7 @@ class Image(SaveImage):
                 prompt, extra_pnginfo,
             )
 
-        return {"ui": preview_result["ui"], "result": (output_image, output_mask)}
+        return {"ui": ui, "result": (output_image, output_mask)}
 
     def _preview_to_temp(self, images, prompt, extra_pnginfo):
         return SaveImage.save_images(

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw, Lock, LockOpen } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw, Lock, LockOpen, Eraser } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -148,21 +148,36 @@ async function onFileChange(event: Event) {
   target.value = ''
 }
 
+// A drop replaces the asset whenever it's local and unlocked (empty or already
+// loaded) — upstream-fed/locked nodes ignore a dropped file.
+const canReplace = computed(() => !hasUpstream.value && !isLocked.value)
 function onDrop(event: DragEvent) {
-  // Only act on drop when we're in the empty/upload state — otherwise the
-  // user might be doing something else (Vue Flow drag, etc.).
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
   const file = event.dataTransfer?.files?.[0]
   if (file) uploadFile(file)
 }
 function onDragOver(event: DragEvent) {
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
 }
 
 function triggerUpload() {
   fileInputRef.value?.click()
+}
+
+// Knock out the background: splice a local BackgroundRemove node after this image
+// (default 'transparent' RGBA output) and re-point whatever the image fed. The
+// canvas owns the graph mutation, so we just announce intent.
+function removeBackground() {
+  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+    detail: {
+      nodeId: props.id,
+      nodeType: 'BackgroundRemove',
+      output: 'IMAGE',
+      widgetOverrides: { output: 'transparent' },
+    },
+  }))
 }
 
 // OUTPUT_NODE nodes get a per-node Run affordance — the existing event the
@@ -284,6 +299,14 @@ function unlockArtifact() {
       class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10 backdrop-blur-sm"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
+      <!-- File picker — always mounted so Replace works in any state. -->
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="image/*"
+        class="hidden"
+        @change="onFileChange"
+      />
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
         <img
@@ -306,14 +329,21 @@ function unlockArtifact() {
             {{ filenameLabel || (hasUpstream ? 'Preview' : 'Image') }}
           </span>
           <button
-            v-if="!hasUpstream && !isLocked"
+            v-if="canReplace"
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
             :disabled="uploading"
             title="Replace image"
             @click.stop="triggerUpload"
           >
             <Loader2 v-if="uploading" class="size-3 animate-spin" />
-            <RefreshCw v-else class="size-2.5" />
+            <Upload v-else class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Remove background (transparent)"
+            @click.stop="removeBackground"
+          >
+            <Eraser class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
@@ -342,20 +372,13 @@ function unlockArtifact() {
             @click.stop="runThisNode"
           >
             <Loader2 v-if="data.running" class="size-3 animate-spin" />
-            <Play v-else class="size-2.5" fill="currentColor" />
+            <RefreshCw v-else class="size-3" />
           </button>
         </div>
       </template>
 
       <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
       <template v-else-if="showUpload">
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept="image/*"
-          class="hidden"
-          @change="onFileChange"
-        />
         <!-- Upload affordance — no nopan/nodrag so click-in-place opens
              the file picker but click-and-drag moves the card. -->
         <button

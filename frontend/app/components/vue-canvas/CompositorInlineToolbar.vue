@@ -2,7 +2,7 @@
 // Floating contextual toolbar for the Frame's inline editing — the common,
 // high-frequency controls for the selected local layer. The parent positions it
 // (screen-space, above the selection). Full/precise controls live in the modal.
-import { Bold, AlignLeft, AlignCenter, AlignRight, ArrowUp, ArrowDown, Trash2, Ban } from 'lucide-vue-next'
+import { Bold, AlignLeft, AlignCenter, AlignRight, ArrowUp, ArrowDown, Trash2, Ban, Shield } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 
 const props = defineProps<{
@@ -94,6 +94,9 @@ const hasFill = computed(() => props.layer.fill && props.layer.fill !== 'none')
         @change="emit('set', { blend: ($event.target as HTMLSelectElement).value })">
         <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
       </select>
+      <button class="ll-btn" :class="layer.protect ? 'is-on' : ''"
+        title="Protect in blend — keep this layer pixel-exact when a Blend Scene harmonizes the frame"
+        @click="emit('set', { protect: !layer.protect })"><Shield class="size-3.5" /></button>
     </template>
 
     <!-- z-order — every layer (wired or local) shares one depth stack -->

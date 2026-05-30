@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
 import {
-  Loader2, Download, Play, Pencil, Frame as FrameIcon, ImagePlus,
+  Loader2, Download, RefreshCw, Pencil, Frame as FrameIcon, ImagePlus,
   MousePointer2, Check, Type, Square, Circle, Minus, Trash2,
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
@@ -56,6 +56,7 @@ const imageOutIdx = computed(() => outputIdx('image'))
 // Per-layer transform widgets — slot s (0-based input) maps to layer{s+1}_*.
 function layerTf(slot: number, prop: string): number { const v = widgetVal(`layer${slot + 1}_${prop}`); return prop === 'scale' ? (v || 1) : v }
 function setLayerTf(slot: number, prop: string, v: number) { setWidget(`layer${slot + 1}_${prop}`, v) }
+function layerProtect(slot: number): boolean { return !!widgetVal(`layer${slot + 1}_protect`) }
 
 // ── Artboard dimensions ─────────────────────────────────────────────────────
 interface Preset { id: string; label: string; w: number; h: number }
@@ -546,7 +547,7 @@ const toolbarLayer = computed<any>(() => {
   if (editor.selected.value) return editor.selected.value
   if (selectedWiredSlot.value != null) {
     const wl = wiredLayers.value.find(x => x.slot === selectedWiredSlot.value)
-    if (wl) return { kind: 'wired', slot: wl.slot, opacity: layerTf(wl.slot, 'opacity'), blend: blendOf(wl.slot) }
+    if (wl) return { kind: 'wired', slot: wl.slot, opacity: layerTf(wl.slot, 'opacity'), blend: blendOf(wl.slot), protect: layerProtect(wl.slot) }
   }
   return null
 })
@@ -555,6 +556,7 @@ function onToolbarSet(patch: Record<string, any>) {
   if (slot != null && !editor.selectedId.value) {
     for (const k in patch) {
       if (k === 'blend') setWidget(`layer${slot + 1}_blend`, patch[k])
+      else if (k === 'protect') setWidget(`layer${slot + 1}_protect`, !!patch[k])
       else setLayerTf(slot, k, patch[k])
     }
   } else if (editor.selectedId.value) {
@@ -744,7 +746,7 @@ onUnmounted(() => {
         <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="!hasAnyLayer && !compositeUrl" title="Download" @click.stop="downloadImage"><Download class="size-2.5" /></button>
         <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="data.running || isMuted || isBypassed" :title="data.running ? 'Running…' : 'Render'" @click.stop="runThisNode">
           <Loader2 v-if="data.running" class="size-3 animate-spin" />
-          <Play v-else class="size-2.5" fill="currentColor" />
+          <RefreshCw v-else class="size-3" />
         </button>
       </div>
     </div>

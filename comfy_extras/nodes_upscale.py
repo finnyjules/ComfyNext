@@ -13,6 +13,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._live_preview import save_live_preview
 
 from comfy_extras._model_downloads import (
     ModelBundle, ModelFile, loader_cache, register_bundle,
@@ -102,6 +103,10 @@ class UpscaleNode(IO.ComfyNode):
                                      "0 disables tiling — only safe for small inputs."),
             ],
             outputs=[IO.Image.Output(display_name="frames")],
+            hidden=[IO.Hidden.unique_id],
+            # Emit the result so the frontend captures it (data.images) — lets the
+            # output preview on the node and composite anywhere it's wired (Frame).
+            is_output_node=True,
         )
 
     @classmethod
@@ -123,7 +128,11 @@ class UpscaleNode(IO.ComfyNode):
             up = _tiled_forward(model, img, tile=int(tile_size), overlap=32, scale=scale)
             out_frames.append(up.squeeze(0).permute(1, 2, 0).cpu())
 
-        return IO.NodeOutput(torch.stack(out_frames, dim=0))
+        frames_out = torch.stack(out_frames, dim=0)
+        return IO.NodeOutput(
+            frames_out,
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+        )
 
 
 class UpscaleExtension(ComfyExtension):

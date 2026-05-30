@@ -59,6 +59,7 @@ from comfy_api_nodes.util.download_helpers import (
     download_url_to_image_tensor,
     download_url_to_video_output,
 )
+from comfy_extras._live_preview import save_live_preview
 
 
 REPLICATE_API_BASE = "https://api.replicate.com/v1"
@@ -1625,6 +1626,119 @@ class EditImageNode(IO.ComfyNode):
         pred = await _run_prediction("black-forest-labs/flux-kontext-pro", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Blend Scene — harmonize a composite into one cohesive photo
+# =============================================================================
+
+_BLEND_SCENE_MODELS = ["Flux Kontext Pro", "Nano Banana"]
+
+_BLEND_SCENE_DEFAULT_PROMPT = (
+    "Blend all elements into a single cohesive, photorealistic image. "
+    "Unify the lighting direction, color temperature and ambient tone across the "
+    "whole scene. Add soft, realistic contact shadows where objects meet surfaces. "
+    "Match film grain and depth of field. Keep each element's shape, proportions "
+    "and identity unchanged."
+)
+
+
+class BlendSceneNode(IO.ComfyNode):
+    """Take a flat composite of separate elements (e.g. a generated background with
+    a transparent product + prop dropped onto a Frame) and re-render it as one
+    cohesive photo — matched lighting/color and real contact shadows.
+
+    Optional `keep_subject` mask preserves a region (e.g. the product) pixel-exact:
+    the harmonized scene is used everywhere except that region, where the original
+    pixels are composited back so a logo/label is never reinterpreted.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BlendSceneNode",
+            display_name="Blend Scene",
+            category="api node/image/Replicate",
+            description=(
+                "Harmonize a composite (background + cutout elements) into one "
+                "cohesive photo — unified lighting/color and realistic contact "
+                "shadows. Flux Kontext (faithful) or Nano Banana (more dramatic). "
+                "~$0.04 per blend."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_BLEND_SCENE_MODELS, default="Flux Kontext Pro"),
+                IO.Image.Input("image", tooltip="The flattened composite to blend (e.g. a Frame's output)."),
+                IO.String.Input("prompt", multiline=True, default=_BLEND_SCENE_DEFAULT_PROMPT,
+                                tooltip="How to blend. The default harmonizes lighting, color and shadows."),
+                IO.Mask.Input("keep_subject", optional=True,
+                              tooltip="Optional: a mask of a region to keep pixel-exact (e.g. the product). "
+                                      "The harmonized scene fills everywhere else."),
+                IO.Float.Input("keep_feather", default=2.0, min=0.0, max=30.0, step=0.5, advanced=True,
+                               tooltip="Soften the edge where the kept region meets the blended scene."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            hidden=[IO.Hidden.unique_id],
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt, keep_subject=None, keep_feather=2.0,
+                      seed=0, output_format="png"):
+        import torch.nn.functional as F
+
+        instruction = (prompt or "").strip() or _BLEND_SCENE_DEFAULT_PROMPT
+        data_url = _image_tensor_to_data_url(image)
+
+        # Each model takes a different input schema.
+        if model == "Nano Banana":
+            input_dict = {"prompt": instruction, "image_input": [data_url]}
+            slug = "google/nano-banana"
+        else:  # Flux Kontext Pro
+            input_dict = {
+                "prompt": instruction,
+                "input_image": data_url,
+                "aspect_ratio": "match_input_image",
+                "output_format": output_format,
+            }
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            slug = "black-forest-labs/flux-kontext-pro"
+
+        pred = await _run_prediction(slug, input_dict)
+        edited = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+
+        # Optional subject-preserve: composite the original masked region back over
+        # the harmonized result so e.g. a product label is never reinterpreted.
+        if keep_subject is not None:
+            base = image if image.dim() == 4 else image.unsqueeze(0)
+            ed = edited if edited.dim() == 4 else edited.unsqueeze(0)
+            _B, H, W, _C = base.shape
+            # Match the harmonized image back to the original size.
+            if ed.shape[1:3] != (H, W):
+                ed = F.interpolate(ed.permute(0, 3, 1, 2), size=(H, W), mode="bilinear",
+                                   align_corners=False).permute(0, 2, 3, 1)
+            m = keep_subject
+            if m.dim() == 2:
+                m = m.unsqueeze(0)
+            if m.dim() == 4 and m.shape[1] == 1:
+                m = m.squeeze(1)
+            if m.shape[1:3] != (H, W):
+                m = F.interpolate(m.unsqueeze(1), size=(H, W), mode="bilinear",
+                                  align_corners=False).squeeze(1)
+            if keep_feather > 0:
+                from torchvision.transforms.functional import gaussian_blur
+                ksize = 2 * int(round(3.0 * keep_feather)) + 1
+                m = gaussian_blur(m.unsqueeze(1), kernel_size=ksize, sigma=float(keep_feather)).squeeze(1)
+            m = m.clamp(0.0, 1.0).unsqueeze(-1)  # [B,H,W,1]
+            edited = (base[..., :3] * m + ed[..., :3] * (1.0 - m)).clamp(0.0, 1.0)
+
+        return IO.NodeOutput(
+            edited,
+            ui=save_live_preview(edited, str(cls.hidden.unique_id)),
+        )
 
 
 # =============================================================================
@@ -3443,6 +3557,7 @@ class ReplicateExtension(ComfyExtension):
             SketchToImageNode,          # Sketch to image · Nano Banana
             # Image — manipulation
             EditImageNode,              # Edit an image · Flux Kontext
+            BlendSceneNode,             # Blend Scene · Flux Kontext / Nano Banana
             RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
             TextEffectNode,             # Text effect · Ideogram v3
             UpscaleImageNode,           # Upscale an image · Clarity

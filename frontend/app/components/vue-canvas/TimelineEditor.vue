@@ -12,6 +12,7 @@ import { useClipPreview } from '~/composables/useClipPreview'
 import type { Clip, Track, BlendMode } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
+import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 
 const props = defineProps<{
   nodeId: string
@@ -160,45 +161,9 @@ function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' 
     const portIdx = (clip as any).port_index as number
     const binding = portBindings.value.find(b => b.port_index === portIdx)
     if (!binding) return null
-    // Look up the upstream node and read its file widget.
     const src = props.nodes.find((n: any) => n.id === binding.upstream_id)
     if (!src) return null
-    const type = binding.upstream_type
-    if (type === 'LoadVideo' || type === 'LoadVideoFrames') {
-      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'file') ?? 0
-      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
-      if (fname) return {
-        url: `/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`,
-        kind: 'video',
-      }
-    }
-    if (type === 'LoadImage') {
-      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'image') ?? 0
-      const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
-      if (fname) return {
-        url: `/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`,
-        kind: 'image',
-      }
-    }
-    // KineticType stores a full frame sequence in its params JSON. Return all
-    // frames as a 'sequence' so the playback engine animates through them
-    // (frame 0 of a fade-in is invisible, so a single static frame looks blank).
-    if (type === 'KineticType') {
-      const pIdx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'params') ?? -1
-      if (pIdx >= 0) {
-        try {
-          const p = JSON.parse(src.data?.widgetsValues?.[pIdx] || '{}')
-          if (Array.isArray(p.rendered) && p.rendered.length > 0) {
-            const urls = p.rendered.map((fn: string) =>
-              `/view?${new URLSearchParams({ filename: String(fn), type: 'input' })}`)
-            return { url: urls[0], kind: 'sequence', urls }
-          }
-        } catch { /* fall through */ }
-      }
-    }
-    // Fallback: any node that has published an image preview (e.g. processed output).
-    if (src.data?.images?.length) return { url: String(src.data.images[0]), kind: 'image' }
-    return null
+    return resolveClipSource(src)
   }
   return null
 }
@@ -1035,6 +1000,13 @@ const portBindings = computed<PortBinding[]>(() => {
       const fname = src.data?.widgetsValues?.[idx >= 0 ? idx : 0]
       if (fname) label = String(fname)
       duration = 1  // single image — let the user lengthen it manually
+    } else if (type === 'Video' || type === 'Image') {
+      // Universal artifact nodes: surface the uploaded filename if present.
+      const widgetName = type === 'Video' ? 'file' : 'image'
+      const idx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === widgetName) ?? -1
+      const fname = idx >= 0 ? src.data?.widgetsValues?.[idx] : undefined
+      if (fname) label = String(fname)
+      if (type === 'Image') duration = 1
     } else if (type === 'KineticType') {
       // Read frame count + text from the params JSON widget
       const pIdx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'params') ?? -1

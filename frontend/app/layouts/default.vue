@@ -311,6 +311,7 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 async function runVueWorkflow(targetIds?: string[]) {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
+    toast.error('Canvas not ready', { description: 'Give it a moment and try again.' })
     return
   }
 
@@ -342,6 +343,7 @@ async function runVueWorkflow(targetIds?: string[]) {
     : vueCanvasRef.value.getWorkflow()
   if (!workflow?.nodes?.length) {
     console.warn('[Run] workflow has no nodes')
+    toast.error('Nothing to run', { description: 'No runnable nodes were found for this action.' })
     return
   }
 
@@ -359,6 +361,14 @@ async function runVueWorkflow(targetIds?: string[]) {
     await vueCanvasRef.value.injectCompositorOverlays?.(plainWorkflow)
   } catch (err) {
     console.error('[Run] compositor overlay injection failed', err)
+    toast.error('Frame compositing failed', { description: String((err as any)?.message || err).slice(0, 120) })
+  }
+
+  // Auto-wire any "protect in blend" layers into a downstream Blend Scene.
+  try {
+    vueCanvasRef.value.injectProtectMaskWiring?.(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] protect-mask wiring failed', err)
   }
 
   // Push each Timeline node's editor state (keyframes, multi-track clips) into
@@ -367,18 +377,20 @@ async function runVueWorkflow(targetIds?: string[]) {
     vueCanvasRef.value.injectTimelineEditState?.(plainWorkflow)
   } catch (err) {
     console.error('[Run] timeline edit_state injection failed', err)
+    toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 120) })
   }
 
   // Load workflow into the bridge iframe's LiteGraph, then queue
   const iframe = getSharedIframe()
   if (!iframe?.contentWindow) {
     console.error('[Run] bridge iframe not found or not ready')
+    toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
     return
   }
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to bridge',
     targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
-  sendLoadWorkflow(plainWorkflow)
+  await sendLoadWorkflow(plainWorkflow)
   await new Promise(r => setTimeout(r, 800))
   console.log('[Run] sending queuePrompt')
   sendToActiveProjectIframe('queuePrompt')
@@ -706,18 +718,84 @@ onUnmounted(() => {
 })
 let sharedIframeReady = false
 const iframeReady = ref(false) // reactive for template
+// True while a workflow is being pushed into the canvas (incl. waiting for the
+// bridge to become ready on a cold start). Drives the loading overlay so the
+// wait reads as "initializing", not a dead/broken button.
+const workflowLoading = ref(false)
+let workflowLoadingTimer: ReturnType<typeof setTimeout> | null = null
 const vueCanvasRef = ref<any>(null)
 let currentProjectTabId: string | null = null // tracks which project tab's workflow is loaded
+
+// Bridge readiness handshake: the bridge posts { status: 'ready' } once ComfyUI's
+// app + node defs are fully initialized. We gate workflow loads on this instead of
+// a fixed delay, so "new workflow" works the instant the canvas is usable (cold
+// starts can take ~a minute) rather than silently dropping early messages.
+let bridgeIsReady = false
+let bridgeReadyResolve: (() => void) | null = null
+let bridgeReadyPromise: Promise<void> = new Promise((r) => { bridgeReadyResolve = r })
+
+function resetBridgeReady() {
+  bridgeIsReady = false
+  bridgeReadyPromise = new Promise((r) => { bridgeReadyResolve = r })
+}
+
+function markBridgeReady() {
+  if (bridgeIsReady) return
+  bridgeIsReady = true
+  bridgeReadyResolve?.()
+}
+
+// Resolve once the bridge signals ready. Nudges the bridge with requestStatus in
+// case our listener attached after it already broadcast (e.g. a frontend-only
+// reload while ComfyUI stays loaded). Falls back after timeoutMs so we never hang.
+function waitForBridgeReady(timeoutMs = 120000): Promise<void> {
+  if (bridgeIsReady) return Promise.resolve()
+  return new Promise((resolve) => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      clearInterval(poll)
+      clearTimeout(to)
+      resolve()
+    }
+    bridgeReadyPromise.then(finish)
+    const nudge = () => {
+      getSharedIframe()?.contentWindow?.postMessage({ type: 'comfynext', action: 'requestStatus' }, '*')
+    }
+    nudge()
+    const poll = setInterval(() => { if (bridgeIsReady) finish(); else nudge() }, 500)
+    const to = setTimeout(finish, timeoutMs)
+  })
+}
 
 function getSharedIframe(): HTMLIFrameElement | null {
   return document.querySelector('[data-tab-id="comfyui-shared"] iframe') as HTMLIFrameElement | null
 }
 
-function sendLoadWorkflow(workflow: any) {
+function beginWorkflowLoading() {
+  workflowLoading.value = true
+  if (workflowLoadingTimer) clearTimeout(workflowLoadingTimer)
+  // Safety net: never let the overlay get stuck if the bridge never confirms.
+  workflowLoadingTimer = setTimeout(() => { workflowLoading.value = false }, 125000)
+}
+
+function endWorkflowLoading() {
+  workflowLoading.value = false
+  if (workflowLoadingTimer) { clearTimeout(workflowLoadingTimer); workflowLoadingTimer = null }
+}
+
+async function sendLoadWorkflow(workflow: any) {
+  beginWorkflowLoading()
+  await waitForBridgeReady()
   const iframe = getSharedIframe()
   if (iframe?.contentWindow) {
     iframe.contentWindow.postMessage({ type: 'comfynext', action: 'loadWorkflow', workflow }, '*')
   }
+  else {
+    endWorkflowLoading()
+  }
+  // Otherwise cleared when the bridge confirms via the 'workflow_loaded' event.
 }
 
 function getWorkflowFromIframe(): Promise<any> {
@@ -786,14 +864,14 @@ async function loadWorkflowForTab(tab: any) {
   else {
     // LiteGraph mode: send to iframe
     if (saved) {
-      sendLoadWorkflow(saved)
+      await sendLoadWorkflow(saved)
     }
     else if (tab.promptId) {
       const workflow = await fetchWorkflowFromHistory(tab.promptId)
-      sendLoadWorkflow(workflow || BLANK_WORKFLOW)
+      await sendLoadWorkflow(workflow || BLANK_WORKFLOW)
     }
     else {
-      sendLoadWorkflow(BLANK_WORKFLOW)
+      await sendLoadWorkflow(BLANK_WORKFLOW)
     }
   }
   currentProjectTabId = tab.id
@@ -817,8 +895,14 @@ async function onSharedIframeLoad(event: Event) {
   const iframe = event.target as HTMLIFrameElement
   if (!iframe?.contentWindow) return
 
-  // Wait for ComfyUI JS to fully initialize
-  await new Promise((r) => setTimeout(r, 3000))
+  // A fresh iframe load means the bridge will (re)announce readiness.
+  resetBridgeReady()
+  // Wait for the bridge to signal ComfyUI is actually usable (window.app + node
+  // defs loaded) instead of guessing with a fixed delay. Vue mode doesn't drive
+  // workflows through the iframe, so it doesn't need to block on this.
+  if (!vueNodesEnabled.value) {
+    await waitForBridgeReady()
+  }
   sharedIframeReady = true
   iframeReady.value = true
 
@@ -1208,6 +1292,18 @@ function handleOpenBilling() {
 function handleBridgeMessage(event: MessageEvent) {
   if (!event.data || event.data.type !== 'comfynext-bridge') return
 
+  // Bridge signals ComfyUI is fully initialized and ready for workflow loads
+  if (event.data.status === 'ready') {
+    markBridgeReady()
+    return
+  }
+
+  // Bridge confirms a workflow finished loading into the canvas
+  if (event.data.event === 'workflow_loaded') {
+    endWorkflowLoading()
+    return
+  }
+
   // Handle credit updates (not tab-specific)
   if (event.data.event === 'credits_update') {
     credits.value = event.data.credits
@@ -1241,6 +1337,17 @@ function handleBridgeMessage(event: MessageEvent) {
   // Handle purchase error
   if (event.data.event === 'purchase_error') {
     creditsBuying.value = false
+    return
+  }
+
+  // Queue failed inside the canvas (validation / unknown node / serialization)
+  // before anything ran — surface it instead of failing silently.
+  if (event.data.event === 'queue_error') {
+    const msg = event.data.message || 'The canvas could not start this run.'
+    toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+    // Clear any pending run state so spinners don't hang.
+    if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
+    currentRunSilent.value = false
     return
   }
 
@@ -1408,6 +1515,7 @@ function handleBridgeMessage(event: MessageEvent) {
       const nodeName = event.data.node_type || event.data.node_id || 'Unknown node'
       const reason = event.data.exception_message || 'Unknown error'
       setRunResult({ kind: 'error', nodeName, message: reason, at: Date.now() })
+      toast.error(`${nodeName} failed`, { description: String(reason).slice(0, 200) })
     }
   }
 }
@@ -1879,11 +1987,13 @@ function dismissRunResult() {
             leave-to-class="opacity-0"
           >
             <div
-              v-if="!iframeReady"
+              v-if="!iframeReady || workflowLoading"
               class="absolute inset-0 z-30 bg-[#121212] flex flex-col items-center justify-center gap-3"
             >
               <div class="size-5 border-2 border-white/10 border-t-white/40 rounded-full animate-spin" />
-              <span class="text-xs text-white/30">Loading workspace...</span>
+              <span class="text-xs text-white/30">
+                {{ !iframeReady ? 'Starting ComfyUI…' : 'Loading workflow…' }}
+              </span>
             </div>
           </Transition>
         </div>

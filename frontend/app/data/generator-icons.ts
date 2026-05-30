@@ -18,6 +18,7 @@ import {
   UserCircle,
   PenTool,
   Pencil,
+  Blend,
   Maximize2,
   Scissors,
   Wand2,
@@ -45,6 +46,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
 
   // ----- Image · manipulation -----
   EditImageNode:        Pencil,
+  BlendSceneNode:       Blend,
   UpscaleImageNode:     Maximize2,
   RemoveBackgroundNode: Scissors,
   RestorePhotoNode:     Wand2,
@@ -103,6 +105,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
 
   // ----- Image · manipulation -----
   EditImageNode:        'BFL',                // Flux Kontext Pro
+  BlendSceneNode:       'BFL',                // Flux Kontext Pro (default; Nano Banana optional)
   UpscaleImageNode:     null,                 // Clarity — no brand
   RemoveBackgroundNode: null,                 // 851-labs/bg-remover
   RestorePhotoNode:     'BFL',                // Flux Kontext · Restore

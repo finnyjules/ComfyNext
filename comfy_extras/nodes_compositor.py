@@ -158,6 +158,23 @@ def _composite_layers(layers: list[dict], canvas_h: int, canvas_w: int) -> torch
     return result
 
 
+def _protect_coverage(layers: list[dict], canvas_h: int, canvas_w: int):
+    """Union the canvas-space coverage of every layer flagged `protect`.
+
+    Returns a [B, 1, H, W] alpha (1 where a protected layer covers) or None if
+    no layer is protected. Reuses _prep_layer so the coverage matches exactly
+    where each protected layer lands in the composite (transform + opacity +
+    embedded/mask alpha).
+    """
+    cov = None
+    for layer in layers:
+        if not layer.get("protect"):
+            continue
+        _rgb, a = _prep_layer(layer, canvas_h, canvas_w)
+        cov = a if cov is None else torch.maximum(cov, a)
+    return cov
+
+
 def _layer_inputs(idx: int, optional: bool):
     """Build the per-layer input declarations for layer N."""
     return [
@@ -216,6 +233,13 @@ class CompositorNode(IO.ComfyNode):
                                      tooltip="Text/shape overlay, composited on top with per-pixel alpha."))
         inputs.append(IO.Mask.Input("overlay_mask", optional=True,
                                     tooltip="Alpha for the overlay (LoadImage MASK = 1 - alpha)."))
+        # Per-layer "protect in blend": when on, the layer's coverage is unioned
+        # into the `protect_mask` output (canvas space, 1 = protected). Wired into
+        # Blend Scene's keep_subject so that region stays pixel-exact through the
+        # AI blend. Appended last so existing widget positions don't shift.
+        for i in range(1, _MAX_LAYERS + 1):
+            inputs.append(IO.Boolean.Input(f"layer{i}_protect", optional=True, default=False,
+                                           tooltip="Keep this layer pixel-exact when the scene is blended (Blend Scene)."))
         return IO.Schema(
             node_id="Compositor",
             display_name="Compositor",
@@ -223,7 +247,12 @@ class CompositorNode(IO.ComfyNode):
                         "Unused slots are inert — connect as many as your composition needs.",
             category="image/composite",
             inputs=inputs,
-            outputs=[IO.Image.Output(display_name="image")],
+            outputs=[
+                IO.Image.Output(display_name="image"),
+                # Union of layers flagged "protect" — 1 where a protected layer
+                # covers the canvas. Feeds Blend Scene's keep_subject.
+                IO.Mask.Output(display_name="protect_mask"),
+            ],
             hidden=[IO.Hidden.unique_id],
             is_output_node=True,
         )
@@ -247,6 +276,7 @@ class CompositorNode(IO.ComfyNode):
                 "blend": kwargs.get(f"layer{i}_blend", "normal"),
                 "z":   float(kwargs.get(f"layer{i}_z", float(i))),
                 "mask": kwargs.get(f"layer{i}_mask"),
+                "protect": bool(kwargs.get(f"layer{i}_protect", False)),
             })
 
         width = int(kwargs.get("width", 0) or 0)
@@ -256,7 +286,8 @@ class CompositorNode(IO.ComfyNode):
         if not layers and not explicit:
             # Nothing connected and no explicit size — return a tiny black image.
             blank = torch.zeros(1, 16, 16, 3)
-            return IO.NodeOutput(blank, ui=save_live_preview(blank, str(cls.hidden.unique_id)))
+            blank_mask = torch.zeros(1, 16, 16)
+            return IO.NodeOutput(blank, blank_mask, ui=save_live_preview(blank, str(cls.hidden.unique_id)))
 
         if explicit:
             canvas_h, canvas_w = height, width
@@ -296,7 +327,16 @@ class CompositorNode(IO.ComfyNode):
             result = result * (1.0 - a) + o.to(result.dtype) * a
 
         out = result.permute(0, 2, 3, 1).clamp(0.0, 1.0)
-        return IO.NodeOutput(out, ui=save_live_preview(out, str(cls.hidden.unique_id)))
+
+        # Build the protect mask (union of protected layers' coverage). 1 where a
+        # protected layer covers — fed straight into Blend Scene's keep_subject.
+        cov = _protect_coverage(layers, canvas_h, canvas_w)
+        if cov is None:
+            protect_mask = torch.zeros(out.shape[0], canvas_h, canvas_w, dtype=out.dtype)
+        else:
+            protect_mask = cov.squeeze(1).clamp(0.0, 1.0).to(out.dtype)
+
+        return IO.NodeOutput(out, protect_mask, ui=save_live_preview(out, str(cls.hidden.unique_id)))
 
 
 class CompositorExtension(ComfyExtension):

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Film, Save, Play, Download } from 'lucide-vue-next'
+import { Upload, Loader2, Film, Save, Play, RefreshCw, Download } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Visual half of the unified `Video` artifact node. Same state machine as
@@ -121,14 +121,17 @@ async function onFileChange(event: Event) {
   target.value = ''
 }
 
+// Drop accepts a file whenever the asset is local (empty or already loaded) —
+// upstream-fed nodes get their media from the wire, so a dropped file wouldn't show.
+const canReplace = computed(() => !hasUpstream.value)
 function onDrop(event: DragEvent) {
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
   const file = event.dataTransfer?.files?.[0]
   if (file) uploadFile(file)
 }
 function onDragOver(event: DragEvent) {
-  if (!showUpload.value) return
+  if (!canReplace.value) return
   event.preventDefault()
 }
 function triggerUpload() { fileInputRef.value?.click() }
@@ -194,6 +197,14 @@ async function downloadVideo() {
       class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10 backdrop-blur-sm"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
+      <!-- File picker — always mounted so Replace works in any state. -->
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="video/*"
+        class="hidden"
+        @change="onFileChange"
+      />
       <template v-if="videoUrl">
         <video
           :src="videoUrl"
@@ -214,6 +225,16 @@ async function downloadVideo() {
             {{ filenameLabel || (hasUpstream ? 'Video (upstream)' : 'Video') }}
           </span>
           <button
+            v-if="canReplace"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="uploading"
+            title="Replace video"
+            @click.stop="triggerUpload"
+          >
+            <Loader2 v-if="uploading" class="size-3 animate-spin" />
+            <Upload v-else class="size-2.5" />
+          </button>
+          <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
             title="Download"
             @click.stop="downloadVideo"
@@ -227,19 +248,12 @@ async function downloadVideo() {
             @click.stop="runThisNode"
           >
             <Loader2 v-if="data.running" class="size-3 animate-spin" />
-            <Play v-else class="size-2.5" fill="currentColor" />
+            <RefreshCw v-else class="size-3" />
           </button>
         </div>
       </template>
 
       <template v-else-if="showUpload">
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept="video/*"
-          class="hidden"
-          @change="onFileChange"
-        />
         <!-- Upload affordance — no nopan/nodrag so click-in-place opens
              the file picker but click-and-drag moves the card. -->
         <button

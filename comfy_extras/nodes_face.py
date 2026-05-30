@@ -15,6 +15,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._live_preview import save_live_preview
 
 from comfy_extras._model_downloads import (
     ModelBundle, ModelFile, loader_cache, register_bundle,
@@ -158,6 +159,10 @@ class FaceSwapNode(IO.ComfyNode):
                 IO.Image.Output(display_name="frames"),
                 IO.Mask.Output(display_name="swap_mask"),
             ],
+            hidden=[IO.Hidden.unique_id],
+            # Emit the result so the frontend captures it (data.images) — lets the
+            # output preview on the node and composite anywhere it's wired (Frame).
+            is_output_node=True,
         )
 
     @classmethod
@@ -229,7 +234,10 @@ class FaceSwapNode(IO.ComfyNode):
 
         frames_out = torch.stack(out_frames, dim=0)
         masks_out = torch.stack(out_masks, dim=0)
-        return IO.NodeOutput(frames_out, masks_out)
+        return IO.NodeOutput(
+            frames_out, masks_out,
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+        )
 
 
 # ---------------------------------------------------------------------------

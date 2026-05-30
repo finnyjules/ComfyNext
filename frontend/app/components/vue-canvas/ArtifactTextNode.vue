@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Loader2, Download, Play, Plus, X, Layers } from 'lucide-vue-next'
+import { Loader2, Download, RefreshCw, Plus, X, Layers } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Visual half of the unified `Text` artifact node. Holds one or more entries
@@ -312,7 +312,7 @@ onMounted(() => { syncWidgetToActive() })
           @click.stop="runThisNode"
         >
           <Loader2 v-if="data.running" class="size-3 animate-spin" />
-          <Play v-else class="size-2.5" fill="currentColor" />
+          <RefreshCw v-else class="size-3" />
         </button>
       </div>
     </div>

@@ -14,6 +14,7 @@ from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, IO
 
+from comfy_extras._live_preview import save_live_preview
 from comfy_extras._model_downloads import (
     ModelBundle, ModelFile, loader_cache, register_bundle,
 )
@@ -56,6 +57,10 @@ class BackgroundRemoveNode(IO.ComfyNode):
             display_name="Background Remove",
             description="Knock out the background. Works on single images and video frames.",
             category="image",
+            # Emit the result so the frontend captures it (data.images) — lets the
+            # output preview anywhere it's wired (e.g. composited in a Frame),
+            # matching every other image-producing node here.
+            is_output_node=True,
             inputs=[
                 IO.Image.Input("frames", tooltip="The image or video frames to remove the background from."),
                 IO.Combo.Input("output", options=["transparent", "premultiplied", "matte_only"],
@@ -72,6 +77,7 @@ class BackgroundRemoveNode(IO.ComfyNode):
                 IO.Image.Output(display_name="frames"),
                 IO.Mask.Output(display_name="mask"),
             ],
+            hidden=[IO.Hidden.unique_id],
         )
 
     @classmethod
@@ -89,6 +95,7 @@ class BackgroundRemoveNode(IO.ComfyNode):
 
         out_frames: list[torch.Tensor] = []
         out_masks: list[torch.Tensor] = []
+        preview_frames: list[torch.Tensor] = []
         for t in range(frames.shape[0]):
             arr = (frames[t].detach().cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
             pil = PILImage.fromarray(arr, mode="RGB")
@@ -112,14 +119,32 @@ class BackgroundRemoveNode(IO.ComfyNode):
                 m3 = np.stack([alpha_np] * 3, axis=-1)
                 out_frames.append(torch.from_numpy(m3).float())
             else:  # transparent
-                # ComfyUI's IMAGE type is 3-channel; we encode alpha as black pixels
-                # by multiplying RGB by alpha. Real RGBA flows through MASK.
-                rgb_with_alpha = rgb_np * alpha_np[..., None]
-                out_frames.append(torch.from_numpy(rgb_with_alpha).float())
+                # Emit straight RGBA (4-channel) so alpha flows through the IMAGE
+                # wire — the Compositor folds an embedded 4th channel into its
+                # coverage, so a cut-out composites cleanly live (no lock needed).
+                # premultiplied / matte_only stay 3-channel for tools that want them.
+                rgba_np = np.concatenate([rgb_np, alpha_np[..., None]], axis=-1)
+                out_frames.append(torch.from_numpy(rgba_np).float())
 
             out_masks.append(torch.from_numpy(alpha_np).float())
 
-        return IO.NodeOutput(torch.stack(out_frames, dim=0), torch.stack(out_masks, dim=0))
+            # RGBA preview so the result reads as truly transparent wherever it's
+            # wired (e.g. composited in a Frame). The IMAGE output stays 3-channel;
+            # this is purely the node-body / downstream preview.
+            if output == "matte_only":
+                prev = np.concatenate(
+                    [np.stack([alpha_np] * 3, axis=-1), np.ones_like(alpha_np)[..., None]],
+                    axis=-1,
+                )
+            else:
+                prev = np.concatenate([rgb_np, alpha_np[..., None]], axis=-1)
+            preview_frames.append(torch.from_numpy(prev).float())
+
+        return IO.NodeOutput(
+            torch.stack(out_frames, dim=0),
+            torch.stack(out_masks, dim=0),
+            ui=save_live_preview(torch.stack(preview_frames, dim=0), str(cls.hidden.unique_id)),
+        )
 
 
 class BGRemoveExtension(ComfyExtension):

@@ -15,6 +15,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._live_preview import save_live_preview
 
 from comfy_extras._model_downloads import (
     ModelBundle, ModelFile, loader_cache, register_bundle,
@@ -85,6 +86,10 @@ class ObjectRemoveNode(IO.ComfyNode):
                                      "especially if the mask was traced tightly."),
             ],
             outputs=[IO.Image.Output(display_name="frames")],
+            hidden=[IO.Hidden.unique_id],
+            # Emit the result so the frontend captures it (data.images) — lets the
+            # output preview on the node and composite anywhere it's wired (Frame).
+            is_output_node=True,
         )
 
     @classmethod
@@ -152,7 +157,11 @@ class ObjectRemoveNode(IO.ComfyNode):
             composed = arr * blend + (frames[t].detach().cpu().numpy()) * (1.0 - blend)
             out_frames.append(torch.from_numpy(composed.astype(np.float32)))
 
-        return IO.NodeOutput(torch.stack(out_frames, dim=0))
+        frames_out = torch.stack(out_frames, dim=0)
+        return IO.NodeOutput(
+            frames_out,
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+        )
 
 
 class ObjectRemoveExtension(ComfyExtension):

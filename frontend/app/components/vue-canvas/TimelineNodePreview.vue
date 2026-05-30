@@ -7,6 +7,7 @@
  * Independent of the modal — both can coexist; each maintains its own
  * <video> pool so neither steps on the other's currentTime/play state.
  */
+import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 
 const props = defineProps<{ nodeId: string }>()
 
@@ -47,42 +48,7 @@ function resolveSource(slot: number): { url: string; kind: 'video' | 'image' | '
     e.target === props.nodeId && e.targetHandle === `input-${slot - 1}`)
   if (!edge) return null
   const src = injectedNodes.value.find((n: any) => n.id === edge.source)
-  if (!src) return null
-  const type = src.data?.nodeType
-  if (type === 'LoadVideoFrames' || type === 'LoadVideo') {
-    const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
-    const filename = src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0]
-    if (filename) {
-      return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'video' }
-    }
-  }
-  if (type === 'LoadImage') {
-    const widgetIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'image') ?? 0
-    const filename = src.data.widgetsValues?.[widgetIdx >= 0 ? widgetIdx : 0]
-    if (filename) {
-      return { url: `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, kind: 'image' }
-    }
-  }
-  // KineticType: full rendered frame sequence stored in its params JSON.
-  if (type === 'KineticType') {
-    const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
-    if (pIdx >= 0) {
-      try {
-        const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
-        if (Array.isArray(p.rendered) && p.rendered.length > 0) {
-          const urls = p.rendered.map((fn: string) =>
-            `/view?${new URLSearchParams({ filename: String(fn), type: 'input' })}`)
-          return { url: urls[0], kind: 'sequence', urls }
-        }
-      } catch { /* ignore */ }
-    }
-  }
-  // TextClip / any upstream node already exposing its rendered output → use its
-  // first image (which the existing live preview pipeline already populates).
-  if (src?.data?.images?.length) {
-    return { url: String(src.data.images[0]), kind: 'image' }
-  }
-  return null
+  return resolveClipSource(src)
 }
 
 interface PreviewLayer {
