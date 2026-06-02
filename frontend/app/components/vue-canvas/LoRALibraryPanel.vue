@@ -186,6 +186,7 @@ interface LocalLora {
   trigger: string | null
   aesthetic: string | null
   url: string | null
+  coverUrl: string | null
   trainedOn: string | null
   sizeBytes: number | null
 }
@@ -226,10 +227,6 @@ function useLocalLora(l: LocalLora) {
   toast.success(`Added ${l.name}`, {
     description: l.trigger ? `Trigger: ${l.trigger}` : (l.baseModel ? `Base: ${l.baseModel}` : undefined),
   })
-}
-
-function fmtMB(bytes: number | null): string {
-  return bytes ? `${Math.round(bytes / 1024 / 1024)} MB` : ''
 }
 
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -301,28 +298,27 @@ function clearSearch() {
           <button
             v-for="l in visibleLocal"
             :key="l.filename"
-            class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/40 transition-colors cursor-pointer overflow-hidden h-[96px] text-left p-2.5 flex flex-col justify-between"
-            style="background: linear-gradient(135deg, hsl(265,42%,20%) 0%, hsl(292,46%,12%) 100%)"
+            class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/40 transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
             :title="l.aesthetic ? `Add ${l.name}\n\nStyle profile (added to prompt):\n${l.aesthetic}` : `Add ${l.name}`"
             @click="useLocalLora(l)"
           >
-            <div class="flex items-center justify-between">
-              <Sparkles class="size-3.5 text-violet-200/90" />
-              <div class="flex items-center gap-1">
-                <span
-                  v-if="l.aesthetic"
-                  class="text-[8.5px] uppercase tracking-wide text-violet-100/80 bg-violet-500/25 px-1 py-0.5 rounded"
-                  title="A aesthetic is bundled and added to the prompt"
-                >style</span>
-                <span v-if="l.baseModel" class="text-[8.5px] uppercase tracking-wide text-white/55 bg-black/30 px-1 py-0.5 rounded">{{ l.baseModel }}</span>
-              </div>
+            <!-- Cover image, or a violet gradient fallback when none exists yet -->
+            <img
+              v-if="l.coverUrl"
+              :src="l.coverUrl"
+              class="absolute inset-0 w-full h-full object-cover"
+              loading="lazy"
+            />
+            <div
+              v-else
+              class="absolute inset-0 flex items-center justify-center"
+              style="background: linear-gradient(135deg, hsl(265,42%,20%) 0%, hsl(292,46%,12%) 100%)"
+            >
+              <Sparkles class="size-6 text-violet-200/30" />
             </div>
-            <div class="min-w-0">
-              <div class="text-[12px] font-medium text-white truncate">{{ l.name }}</div>
-              <div v-if="l.trigger" class="text-[9.5px] font-mono text-violet-300/85 truncate" :title="`Trigger word: ${l.trigger}`">{{ l.trigger }}</div>
-              <div class="text-[10px] text-white/45 truncate">
-                {{ l.provider === 'replicate' ? 'Trained · Replicate' : 'Local' }}<span v-if="fmtMB(l.sizeBytes)"> · {{ fmtMB(l.sizeBytes) }}</span>
-              </div>
+            <!-- Name on a bottom scrim so it stays legible over any cover -->
+            <div class="absolute inset-x-0 bottom-0 px-2 pt-5 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent">
+              <div class="text-[11px] font-medium text-white truncate">{{ l.name }}</div>
             </div>
           </button>
       </div>
