@@ -9,6 +9,54 @@ app.registerExtension({
     console.log("[ComfyNext Bridge] setup() called, isEmbedded:", window.parent !== window);
     const isEmbedded = window.parent !== window;
 
+    // --- Protocol versioning -------------------------------------------------
+    // Bumped whenever the postMessage contract changes. Stamped onto every
+    // outbound message so the parent can detect a stale/mismatched bridge after
+    // an upstream ComfyUI update instead of silently misbehaving.
+    const COMFYNEXT_BRIDGE_PROTOCOL = 2;
+
+    // --- Diagnostics ---------------------------------------------------------
+    // The bridge patches ComfyUI's DOM and reaches into its Pinia stores *by
+    // name*. Those are upstream-owned and can move or vanish in any ComfyUI
+    // release. The old failure mode was silent: chrome would reappear, credits
+    // would stop updating, the canvas grid would revert — with nothing in the
+    // console to explain why. warnOnce() converts each such breakage into a
+    // single loud, deduplicated warning and a `bridge_degraded` signal to the
+    // parent, so a bad upstream bump is immediately diagnosable.
+    const _warnedKeys = new Set();
+    function warnOnce(key, ...args) {
+      if (_warnedKeys.has(key)) return;
+      _warnedKeys.add(key);
+      console.warn("[ComfyNext Bridge] ⚠️", ...args);
+      try {
+        if (window.parent !== window) {
+          window.parent.postMessage(
+            { type: "comfynext-bridge", v: COMFYNEXT_BRIDGE_PROTOCOL, event: "bridge_degraded", reason: key },
+            "*",
+          );
+        }
+      } catch (_) { /* parent gone — nothing we can do */ }
+    }
+
+    // Centralized, upstream-fragile selectors. When a ComfyUI release reshuffles
+    // its chrome, THIS is the one place to retune — every match documents the
+    // element it targets, instead of magic strings scattered through the file.
+    const BRIDGE_SELECTORS = {
+      workflowTabs: '[class*="workflow-tabs"]',      // top "Unsaved Workflow" tab bar
+      workflowTabsHeightClass: "workflow-tabs-height", // spacer that reserves tab-bar height
+      queueButtonText: /\d+\s*active/i,              // "N active" queue button label
+      jobQueuePanelClasses: ["w-[350px]", "pointer-events-auto"], // native job-queue overlay
+      sidebarToolbar: { minW: 20, maxW: 100, minH: 200 },  // narrow left icon strip
+      statusBarText: [/FPS/i, /N:\s*\d/i],           // bottom status bar (FPS / node count)
+      zoomBadgeText: /^\d+%$/,                        // zoom % label in bottom-right toolbar
+      canvasToolbar: { minW: 100, maxW: 500, maxH: 80 }, // its containing toolbar
+    };
+
+    // Set whenever hideComfyChrome successfully hides at least one element.
+    // verifyBridgeHealth() reads this to detect "ComfyUI loaded but we matched
+    // nothing" — the signature of an upstream markup change.
+    let _chromeHidEver = false;
+
     // When embedded in ComfyNext, hide ComfyUI's own chrome
     if (isEmbedded) {
       const style = document.createElement("style");
@@ -251,30 +299,33 @@ app.registerExtension({
         const vueApp = document.getElementById("vue-app");
         if (!vueApp) return;
 
+        const S = BRIDGE_SELECTORS;
+        let hid = 0;
+        const hide = (el) => { if (el) { el.style.display = "none"; hid++; } };
+
         // 1. Hide the workflow tabs bar (shows "Unsaved Workflow" etc)
-        const tabsEl = document.querySelector('[class*="workflow-tabs"]');
-        if (tabsEl) tabsEl.style.display = "none";
+        hide(document.querySelector(S.workflowTabs));
 
         document.querySelectorAll("[class]").forEach((el) => {
           const cls = typeof el.className === "string" ? el.className : "";
-          if (cls.includes("workflow-tabs-height") && !cls.includes("calc")) {
-            el.style.display = "none";
+          if (cls.includes(S.workflowTabsHeightClass) && !cls.includes("calc")) {
+            hide(el);
           }
         });
 
         // 2. Hide the "N active" queue button and the native queue panel
         document.querySelectorAll("button").forEach((btn) => {
           const text = btn.textContent?.trim();
-          if (text && /\d+\s*active/i.test(text)) {
-            btn.style.display = "none";
+          if (text && S.queueButtonText.test(text)) {
+            hide(btn);
           }
         });
 
         // 2b. Hide the native "Job Queue" panel overlay
         document.querySelectorAll("div").forEach((el) => {
           const cls = typeof el.className === "string" ? el.className : "";
-          if (cls.includes("w-[350px]") && cls.includes("pointer-events-auto")) {
-            el.style.display = "none";
+          if (S.jobQueuePanelClasses.every((c) => cls.includes(c))) {
+            hide(el);
           }
         });
 
@@ -284,8 +335,8 @@ app.registerExtension({
           for (const child of rootChild.children) {
             const rect = child.getBoundingClientRect();
             // Sidebar toolbar is narrow (40-80px) and full height
-            if (rect.width > 20 && rect.width < 100 && rect.height > 200) {
-              child.style.display = "none";
+            if (rect.width > S.sidebarToolbar.minW && rect.width < S.sidebarToolbar.maxW && rect.height > S.sidebarToolbar.minH) {
+              hide(child);
             }
           }
         }
@@ -293,8 +344,8 @@ app.registerExtension({
         // 4. Hide the bottom status bar (FPS, node counts etc.)
         document.querySelectorAll("footer, [class*='status']").forEach((el) => {
           const text = el.textContent || "";
-          if (/FPS/i.test(text) || /N:\s*\d/i.test(text)) {
-            el.style.display = "none";
+          if (S.statusBarText.some((re) => re.test(text))) {
+            hide(el);
           }
         });
 
@@ -302,15 +353,15 @@ app.registerExtension({
         // Find by zoom percentage text (e.g. "10%", "100%") and hide ancestor toolbar
         const allSpans = document.querySelectorAll("span, div, button");
         for (const el of allSpans) {
-          if (el.children.length === 0 && /^\d+%$/.test(el.textContent?.trim() || "")) {
+          if (el.children.length === 0 && S.zoomBadgeText.test(el.textContent?.trim() || "")) {
             // Walk up to find a toolbar-like container (positioned, small width)
             let parent = el.parentElement;
             for (let i = 0; i < 6 && parent; i++) {
               const rect = parent.getBoundingClientRect();
-              if (rect.width > 100 && rect.width < 500 && rect.height < 80) {
+              if (rect.width > S.canvasToolbar.minW && rect.width < S.canvasToolbar.maxW && rect.height < S.canvasToolbar.maxH) {
                 const cs = window.getComputedStyle(parent);
                 if (cs.position === "absolute" || cs.position === "fixed") {
-                  parent.style.display = "none";
+                  hide(parent);
                   break;
                 }
               }
@@ -318,6 +369,31 @@ app.registerExtension({
             }
             break;
           }
+        }
+
+        if (hid > 0) _chromeHidEver = true;
+        return hid;
+      }
+
+      // Health check: ComfyUI has clearly loaded (vue-app + a LiteGraph canvas
+      // are present) but we never managed to hide a single chrome element —
+      // that's the fingerprint of an upstream markup change. Warn loudly and
+      // point at the one place to fix (BRIDGE_SELECTORS) instead of leaving the
+      // user with a half-skinned UI and no explanation.
+      function verifyBridgeHealth() {
+        const vueApp = document.getElementById("vue-app");
+        if (!vueApp) {
+          warnOnce("no-vue-app", "ComfyUI #vue-app never appeared — the iframe may not be ComfyUI, or its mount point changed.");
+          return;
+        }
+        if (!_chromeHidEver) {
+          warnOnce(
+            "chrome-unmatched",
+            "ComfyUI loaded but the bridge hid 0 chrome elements — upstream markup likely changed. Retune BRIDGE_SELECTORS in custom_nodes/comfynext_bridge/js/bridge.js.",
+          );
+        }
+        if (!window.LGraphCanvas) {
+          warnOnce("no-litegraph", "window.LGraphCanvas missing after load — canvas patches (dot grid, context menu) won't apply; ComfyUI may have changed its global exports.");
         }
       }
 
@@ -342,6 +418,8 @@ app.registerExtension({
       setTimeout(hideComfyChrome, 3000);
       setTimeout(fixDashedBorders, 2000);
       setTimeout(fixDashedBorders, 4000);
+      // After the settle window, confirm the patches actually took.
+      setTimeout(verifyBridgeHealth, 7000);
 
       const observer = new MutationObserver(() => hideComfyChrome());
       observer.observe(document.body, { childList: true, subtree: true });
@@ -443,7 +521,12 @@ app.registerExtension({
         menuObserver.observe(document.body, { childList: true });
       }
 
-      // Retry patching until LGraphCanvas/LiteGraph is available
+      // Retry patching until LGraphCanvas/LiteGraph is available — but BOUNDED.
+      // The old loop retried every 500ms forever; if an upstream change ever
+      // stopped exposing these globals it would spin silently for the life of
+      // the tab. Cap at ~20s of attempts, then warn once and give up.
+      const _MAX_PATCH_ATTEMPTS = 40; // 40 × 500ms ≈ 20s
+      let _patchAttempts = 0;
       function tryPatchGrid() {
         if (window.LGraphCanvas) {
           patchGridToDots();
@@ -452,7 +535,14 @@ app.registerExtension({
           patchContextMenuPosition();
         }
         if (!window.LGraphCanvas || !window.LiteGraph?.ContextMenu) {
-          setTimeout(tryPatchGrid, 500);
+          if (++_patchAttempts < _MAX_PATCH_ATTEMPTS) {
+            setTimeout(tryPatchGrid, 500);
+          } else {
+            warnOnce(
+              "litegraph-patch-timeout",
+              "Gave up waiting for window.LGraphCanvas / LiteGraph.ContextMenu after ~20s — canvas dot-grid and context-menu patches did not apply. ComfyUI may have changed how it exposes LiteGraph globals.",
+            );
+          }
         }
       }
       setTimeout(tryPatchGrid, 1000);
@@ -560,11 +650,12 @@ app.registerExtension({
         const allButtons = document.querySelectorAll("button");
         for (const btn of allButtons) {
           const text = btn.textContent?.trim();
-          if (text && /\d+\s*active/i.test(text)) {
+          if (text && BRIDGE_SELECTORS.queueButtonText.test(text)) {
             btn.click();
             return;
           }
         }
+        warnOnce("queue-button-missing", "toggleQueue: no 'N active' queue button found — its label or markup may have changed upstream.");
       }
 
       // Force a credits refresh — used after a run finishes so the canvas
@@ -1088,7 +1179,8 @@ app.registerExtension({
     function postToParent(data) {
       console.log("[ComfyNext Bridge] postToParent:", data.event || data.status || "unknown");
       if (window.parent !== window) {
-        window.parent.postMessage({ type: "comfynext-bridge", ...data }, "*");
+        // `v` lets the parent detect a protocol mismatch after an upstream bump.
+        window.parent.postMessage({ type: "comfynext-bridge", v: COMFYNEXT_BRIDGE_PROTOCOL, ...data }, "*");
       }
     }
 
