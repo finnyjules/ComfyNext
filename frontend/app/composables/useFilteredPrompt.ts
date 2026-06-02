@@ -335,16 +335,13 @@ export function applyVariantFanOut(
  * objectInfo to find the index of the named widget in the node type's
  * declared input order. No-op if the node type doesn't have that widget.
  */
-export function setNamedWidget(
-  node: LiteGraphNode,
-  widgetName: string,
-  value: any,
-  objectInfo: Record<string, any>,
-): void {
-  const info = objectInfo[node.type]
-  if (!info) return
-  // Widget order: required first, then optional. Skip non-widget types
-  // (anything that becomes a port: IMAGE, MASK, LATENT, etc.).
+/**
+ * The ordered list of widget names for a node type, matching the positional
+ * layout of `widgets_values`. Required widgets first, then optional; ports
+ * (IMAGE/MASK/LATENT…) and forced-input widgets are skipped because they don't
+ * occupy a `widgets_values` slot.
+ */
+function orderedWidgetNames(info: any): string[] {
   const widgetNames: string[] = []
   const collect = (group: Record<string, any> | undefined) => {
     if (!group) return
@@ -367,12 +364,91 @@ export function setNamedWidget(
   }
   collect(info?.input?.required)
   collect(info?.input?.optional)
+  return widgetNames
+}
 
-  const idx = widgetNames.indexOf(widgetName)
+export function setNamedWidget(
+  node: LiteGraphNode,
+  widgetName: string,
+  value: any,
+  objectInfo: Record<string, any>,
+): void {
+  const info = objectInfo[node.type]
+  if (!info) return
+  const idx = orderedWidgetNames(info).indexOf(widgetName)
   if (idx < 0) return  // node type doesn't have this widget — silent no-op
 
   // Ensure widgets_values is an array of the right length.
   if (!Array.isArray(node.widgets_values)) node.widgets_values = []
   while (node.widgets_values.length <= idx) node.widgets_values.push(null)
   node.widgets_values[idx] = value
+}
+
+/** Read the current value of a named widget (null/undefined if unset). */
+export function getNamedWidget(
+  node: LiteGraphNode,
+  widgetName: string,
+  objectInfo: Record<string, any>,
+): any {
+  const info = objectInfo[node.type]
+  if (!info || !Array.isArray(node.widgets_values)) return undefined
+  const idx = orderedWidgetNames(info).indexOf(widgetName)
+  if (idx < 0) return undefined
+  return node.widgets_values[idx]
+}
+
+/**
+ * Make a *displayed* artifact-image result usable as a real input.
+ *
+ * An `Image` artifact card can show a generated result (its `data.images`
+ * preview) while having nothing wired into it and no file widget set — e.g.
+ * you generated something, then wired that card into a new op. At run time the
+ * backend node would see no source and emit a black 1×1 placeholder, silently
+ * feeding black downstream (you upscale/restyle and get black). Yet the card
+ * clearly shows an image, so this reads as a bug.
+ *
+ * This bridges the gap: for any `Image` node in the run that (a) has no
+ * incoming link, (b) has an empty file widget, and (c) is showing a result,
+ * we point its `image` widget at the shown file via ComfyUI's annotated-path
+ * syntax ("name [output]" / "name [temp]"). The backend then loads exactly
+ * what's on screen — what you see is what gets used. Results saved to the
+ * output dir (export-on cards) resolve durably; an ephemeral temp preview that
+ * was already wiped fails loudly via VALIDATE_INPUTS instead of going black.
+ */
+export function backfillStandaloneArtifactImages(
+  workflow: LiteGraphWorkflow,
+  liveNodes: any[],
+  objectInfo: Record<string, any>,
+): LiteGraphWorkflow {
+  const cloned: LiteGraphWorkflow = JSON.parse(JSON.stringify(workflow))
+  const hasIncoming = new Set<number>()
+  for (const link of cloned.links || []) {
+    if (Array.isArray(link) && link.length >= 4) hasIncoming.add(Number(link[3]))
+  }
+  const liveById = new Map<number, any>()
+  for (const n of liveNodes || []) liveById.set(Number(n.id), n)
+
+  const annotate = (url: string): string | null => {
+    const q = url.split('?')[1]
+    if (!q) return null
+    const p = new URLSearchParams(q)
+    const filename = p.get('filename')
+    if (!filename) return null
+    const type = p.get('type') || 'input'
+    const subfolder = p.get('subfolder') || ''
+    const name = subfolder ? `${subfolder}/${filename}` : filename
+    // A bare name resolves to the input dir; output/temp need the annotation.
+    return type && type !== 'input' ? `${name} [${type}]` : name
+  }
+
+  for (const node of (cloned.nodes as LiteGraphNode[]) || []) {
+    if ((node as any).type !== 'Image') continue
+    if (hasIncoming.has(Number(node.id))) continue        // upstream drives it
+    if (getNamedWidget(node, 'image', objectInfo)) continue // explicit pick/lock — leave it
+    const shown = liveById.get(Number(node.id))?.data?.images?.[0]
+    if (typeof shown !== 'string') continue
+    const annotated = annotate(shown)
+    if (annotated) setNamedWidget(node, 'image', annotated, objectInfo)
+  }
+  return cloned
 }
