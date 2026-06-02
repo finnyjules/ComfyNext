@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Save, Play, Download, RefreshCw, Lock, LockOpen, Eraser } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
+import { useTakesEnabled, projectTake, type Take } from '~/composables/useTakes'
 
 // The visual half of the unified `Image` artifact node. State is derived from
 // (upstream connection, file widget, execution output) rather than the node
@@ -21,6 +23,9 @@ const props = defineProps<{
     error?: boolean
     images?: string[]
     outputNode?: boolean
+    // Takes (non-destructive variation loop) — flag-gated, additive.
+    takes?: Take[]
+    activeTakeId?: string | null
   }
 }>()
 
@@ -50,16 +55,10 @@ const imageOutIdx = computed(() => outputIdx('image'))
 const maskOutIdx = computed(() => outputIdx('mask'))
 
 const imageWidgetIdx = computed(() => widgetIdx('image'))
-const exportWidgetIdx = computed(() => widgetIdx('export'))
 
 const widgetFilename = computed<string>(() => {
   const i = imageWidgetIdx.value
   return i >= 0 ? (props.data.widgetsValues?.[i] || '') : ''
-})
-
-const exportOn = computed<boolean>(() => {
-  const i = exportWidgetIdx.value
-  return i >= 0 ? !!props.data.widgetsValues?.[i] : false
 })
 
 // "Is something wired into my images input right now?"
@@ -85,12 +84,19 @@ const imageUrl = computed<string | null>(() => {
 // Lag the rendered <img> by one preload so cache-busting URLs don't flash
 // white between updates.
 const displayedUrl = ref<string | null>(null)
+// Natural pixel dimensions of the shown image (e.g. "1024 × 1024"), captured
+// during preload and displayed in the footer in place of the filename.
+const dims = ref<string | null>(null)
 let preloadGen = 0
 watch(imageUrl, (url) => {
-  if (!url) { displayedUrl.value = null; return }
+  if (!url) { displayedUrl.value = null; dims.value = null; return }
   const mine = ++preloadGen
   const img = new window.Image()
-  const commit = () => { if (mine === preloadGen) displayedUrl.value = url }
+  const commit = () => {
+    if (mine !== preloadGen) return
+    displayedUrl.value = url
+    dims.value = img.naturalWidth > 0 ? `${img.naturalWidth} × ${img.naturalHeight}` : null
+  }
   img.onload = commit
   img.onerror = commit
   img.src = url
@@ -260,6 +266,27 @@ function unlockArtifact() {
   if (!props.data.properties) return
   ;(props.data.properties as any).locked = false
 }
+
+// --- Takes (non-destructive variation loop) — flag-gated -------------------
+// Outputs materialize into this artifact node, so this is where takes land.
+// projectTake mirrors the chosen take onto data.images → imageUrl recomputes.
+const { takesEnabled } = useTakesEnabled()
+function selectTake(id: string) {
+  const t = (props.data.takes || []).find((x) => x.id === id)
+  if (t) Object.assign(props.data, projectTake(props.data, t))
+}
+function pinTake(id: string) {
+  const t = (props.data.takes || []).find((x) => x.id === id)
+  if (t) t.pinned = !t.pinned
+  // Phase 3: persist pinned takes to the asset library with provenance.
+}
+function discardTake(id: string) {
+  const takes = (props.data.takes || []).filter((x) => x.id !== id)
+  ;(props.data as any).takes = takes
+  if (props.data.activeTakeId === id) {
+    Object.assign(props.data, projectTake(props.data, takes[takes.length - 1] || null))
+  }
+}
 </script>
 
 <template>
@@ -314,19 +341,10 @@ function unlockArtifact() {
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
         />
-        <!-- Export badge sits over the image when the node will persist on run. -->
-        <div
-          v-if="exportOn"
-          class="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 h-5 rounded-md bg-black/55 backdrop-blur-sm text-white/85 text-[9px] font-medium uppercase tracking-[0.06em]"
-        >
-          <Save class="size-2.5" />
-          Export
-        </div>
-        <!-- Footer: filename + actions. Always shows download; swap only when
-             not driven by upstream (otherwise the file widget is irrelevant). -->
+        <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <span class="truncate flex-1 text-[10px] text-white/55">
-            {{ filenameLabel || (hasUpstream ? 'Preview' : 'Image') }}
+          <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
+            {{ dims || (hasUpstream ? 'Preview' : 'Image') }}
           </span>
           <button
             v-if="canReplace"
@@ -413,6 +431,17 @@ function unlockArtifact() {
         </div>
       </template>
     </div>
+
+    <!-- Takes strip (flag-gated): switch / pin / discard this node's results -->
+    <TakesStrip
+      v-if="takesEnabled && (data.takes?.length ?? 0) > 1"
+      :takes="data.takes!"
+      :active-take-id="data.activeTakeId"
+      class="mt-1 rounded-lg bg-black/40 border border-white/10"
+      @select="selectTake"
+      @pin="pinTake"
+      @discard="discardTake"
+    />
 
     <!-- Secondary MASK output — small port + label below the frame so the
          image stays the dominant visual but downstream MASK consumers stay
