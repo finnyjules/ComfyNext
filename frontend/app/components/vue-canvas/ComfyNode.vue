@@ -4,6 +4,8 @@ import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
+import { useTakesEnabled, projectTake, type Take } from '~/composables/useTakes'
 
 const props = defineProps<{
   id: string
@@ -29,6 +31,9 @@ const props = defineProps<{
     audios?: string[]
     animated?: boolean
     errorMessage?: string | null
+    // Takes (non-destructive variation loop) — flag-gated, additive.
+    takes?: Take[]
+    activeTakeId?: string | null
     // Subgraph metadata
     isSubgraph?: boolean
     subgraphName?: string | null
@@ -141,6 +146,29 @@ function rerollThisNode() {
   }))
 }
 
+// --- Takes (non-destructive variation loop) -------------------------------
+// Flag-gated; the strip only renders when enabled and there's >1 take. Actions
+// mutate props.data in place (same pattern as widget edits) — projectTake
+// mirrors the chosen take onto images/audios/text so the preview updates.
+const { takesEnabled } = useTakesEnabled()
+
+function selectTake(id: string) {
+  const t = (props.data.takes || []).find((x) => x.id === id)
+  if (t) Object.assign(props.data, projectTake(props.data, t))
+}
+function pinTake(id: string) {
+  const t = (props.data.takes || []).find((x) => x.id === id)
+  if (t) t.pinned = !t.pinned
+  // Phase 3: persist pinned takes to the asset library with provenance.
+}
+function discardTake(id: string) {
+  const takes = (props.data.takes || []).filter((x) => x.id !== id)
+  props.data.takes = takes
+  if (props.data.activeTakeId === id) {
+    Object.assign(props.data, projectTake(props.data, takes[takes.length - 1] || null))
+  }
+}
+
 // Live-preview node types: auto-run on widget change (debounced) so the
 // preview image refreshes without the user clicking Run.
 const LIVE_PREVIEW_NODES = new Set([
@@ -227,6 +255,11 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // moved into the ModelGalleryModal, so the node body only ever shows the
   // shared widgets (model picker, prompt, aspect_ratio, seed).
   GenerateVideoNode: (name, values, defs) => isVisibleForModel('GenerateVideoNode', name, values, defs),
+  // Upscalers expose very different controls per engine — Clarity has the full
+  // diffusion knob set, Real-ESRGAN/Topaz just face-enhance + scale, Recraft
+  // Crisp takes nothing but the image. Gate them so the node only shows what
+  // the selected model actually uses.
+  UpscaleImageNode: (name, values, defs) => isVisibleForModel('UpscaleImageNode', name, values, defs),
 }
 
 // For each use-case node, map model-gated widget names → the Model combo value
@@ -243,6 +276,18 @@ const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
     // Veo 3 + Kling 2.1 share negative_prompt; Kling adds cfg_scale
     negative_prompt:   ['Veo 3', 'Kling 2.1'],
     cfg_scale:         'Kling 2.1',
+  },
+  // Upscale engines. `model` is ungated (always shown). Recraft Crisp takes
+  // only the image, so none of these match it → it shows just the model picker.
+  UpscaleImageNode: {
+    prompt:              'Clarity',
+    scale_factor:        ['Clarity', 'Real-ESRGAN', 'Topaz'],   // not Recraft Crisp
+    creativity:          'Clarity',
+    resemblance:         'Clarity',
+    negative_prompt:     'Clarity',
+    num_inference_steps: 'Clarity',
+    seed:                'Clarity',
+    face_enhance:        ['Real-ESRGAN', 'Topaz'],
   },
 }
 
@@ -1180,6 +1225,16 @@ watch(previewImages, (urls) => {
         </div>
       </template>
     </div>
+
+    <!-- Takes strip (flag-gated): switch / pin / discard this node's results -->
+    <TakesStrip
+      v-if="takesEnabled && (data.takes?.length ?? 0) > 1"
+      :takes="data.takes!"
+      :active-take-id="data.activeTakeId"
+      @select="selectTake"
+      @pin="pinTake"
+      @discard="discardTake"
+    />
   </div>
 </template>
 

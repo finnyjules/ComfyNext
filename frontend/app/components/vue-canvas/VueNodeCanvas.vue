@@ -7,10 +7,11 @@ import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
-import { applyArtifactLocks, applyVariantFanOut, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
+import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import { useTakesEnabled, buildTake, appendTake } from '~/composables/useTakes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -40,6 +41,9 @@ const props = defineProps<{
   workflow: any
   activeTool?: string // 'select' | 'hand'
 }>()
+
+// Takes (non-destructive variation loop) — flag-gated; off by default.
+const { takesEnabled } = useTakesEnabled()
 
 // Groups round-trip through useVueNodes via a bridge object. Methods are
 // reassigned below once useCanvasGroups is instantiated; this dance avoids
@@ -995,21 +999,30 @@ function handleBridgeMessage(event: MessageEvent) {
           params.set('t', String(Date.now()))
           return `/view?${params}`
         }
-        const next: any = { ...target.data }
-        if (Array.isArray(output.images) && output.images.length) {
-          next.images = output.images.map(toUrl)
-          next.animated = output.animated?.[0] === true
+        if (takesEnabled.value) {
+          // Takes loop (flag-gated): append this run as a take instead of
+          // overwriting. appendTake mirrors the new (active) take onto
+          // images/audios/text/animated, so this stays behavior-identical for a
+          // single run while preserving prior results for compare/switch.
+          const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
+          target.data = appendTake({ ...target.data }, take)
+        } else {
+          const next: any = { ...target.data }
+          if (Array.isArray(output.images) && output.images.length) {
+            next.images = output.images.map(toUrl)
+            next.animated = output.animated?.[0] === true
+          }
+          if (Array.isArray(output.audio) && output.audio.length) {
+            next.audios = output.audio.map(toUrl)
+          }
+          // PreviewAny / "Preview as Text" nodes return { ui: { text: [string] } }
+          // which ComfyUI's execution events surface as `output.text`. Same goes
+          // for any node that exposes a debug-style text payload.
+          if (Array.isArray(output.text) && output.text.length) {
+            next.text = output.text.map((t: any) => String(t)).join('\n\n')
+          }
+          target.data = next
         }
-        if (Array.isArray(output.audio) && output.audio.length) {
-          next.audios = output.audio.map(toUrl)
-        }
-        // PreviewAny / "Preview as Text" nodes return { ui: { text: [string] } }
-        // which ComfyUI's execution events surface as `output.text`. Same goes
-        // for any node that exposes a debug-style text payload.
-        if (Array.isArray(output.text) && output.text.length) {
-          next.text = output.text.map((t: any) => String(t)).join('\n\n')
-        }
-        target.data = next
       }
     }
   }
@@ -2767,7 +2780,10 @@ function getFilteredWorkflow(targetIds: string[], opts: { rerollScope?: 'self' }
   // locked artifacts look like leaves.
   const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
   const filtered = targetIds.length ? buildFilteredWorkflow(unlocked, targetIds) : unlocked
-  const withFanOut = applyVariantFanOut(filtered, objectInfo.value)
+  // A standalone artifact card that's *showing* a result (but has nothing wired
+  // in) feeds the shown image instead of a black placeholder.
+  const backfilled = backfillStandaloneArtifactImages(filtered, nodes.value as any[], objectInfo.value)
+  const withFanOut = applyVariantFanOut(backfilled, objectInfo.value)
   forceExportOnCapturedArtifacts(withFanOut)
   return withFanOut
 }
@@ -3129,7 +3145,8 @@ defineExpose({
     if (!wf) return wf
     const aligned = realignWidgetValues(wf, objectInfo.value)
     const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
-    return applyVariantFanOut(unlocked, objectInfo.value)
+    const backfilled = backfillStandaloneArtifactImages(unlocked, nodes.value as any[], objectInfo.value)
+    return applyVariantFanOut(backfilled, objectInfo.value)
   },
   getFilteredWorkflow,
   refreshSchema,
@@ -3491,6 +3508,20 @@ defineExpose({
 .vue-node-canvas .vue-flow__node.selected .comfy-node {
   outline: 2px solid #818cf8;
   outline-offset: 1px;
+}
+
+/* Artifact cards use their own root classes (not .comfy-node), so the rule
+   above never reached them — they got selected on click but showed no ring,
+   which read as "can't select". Mirror the highlight on every artifact root. */
+.vue-node-canvas .vue-flow__node.selected .artifact-image,
+.vue-node-canvas .vue-flow__node.selected .artifact-video,
+.vue-node-canvas .vue-flow__node.selected .artifact-audio,
+.vue-node-canvas .vue-flow__node.selected .artifact-text,
+.vue-node-canvas .vue-flow__node.selected .artifact-frame-node,
+.vue-node-canvas .vue-flow__node.selected .artifact-timeline {
+  outline: 2px solid #818cf8;
+  outline-offset: 3px;
+  border-radius: 12px;
 }
 
 .vue-node-canvas .vue-flow__edge.selected path {
