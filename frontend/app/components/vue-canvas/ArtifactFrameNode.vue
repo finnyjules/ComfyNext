@@ -6,7 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, drawLocalLayer, ensureLayerFonts, ensureLayerImages } from '~/composables/useCompositorLayers'
+import { type LocalLayer, type TextLayer, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages } from '~/composables/useCompositorLayers'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -384,22 +384,11 @@ function moveSelectedZ(dir: number) {
 }
 
 // ── Unified stack render (one canvas, wired + local in z-order → WYSIWYG) ─────
-const _BLEND_OP: Record<string, GlobalCompositeOperation> = {
-  normal: 'source-over', multiply: 'multiply', screen: 'screen', overlay: 'overlay',
-  soft_light: 'soft-light', hard_light: 'hard-light', difference: 'difference',
-  lighten: 'lighten', darken: 'darken', add: 'lighter',
-}
+// Wired drawing uses the shared `drawWiredImageLayer` (computing fit from the
+// actual image) so the node and the Compositor modal render pixel-identically.
+// `wiredGeom` is kept only for hit-testing / handle placement.
 function drawWiredLayer(ctx: CanvasRenderingContext2D, l: WiredLayer, W: number, H: number) {
-  const img = wiredImages.value[l.url]
-  if (!img || !img.complete || !img.naturalWidth) return
-  const g = wiredGeom(l)
-  ctx.save()
-  ctx.globalAlpha = clamp(l.opacity, 0, 1)
-  ctx.globalCompositeOperation = _BLEND_OP[l.blend] ?? 'source-over'
-  ctx.translate(g.cx, g.cy)
-  if (g.rotation) ctx.rotate((g.rotation * Math.PI) / 180)
-  ctx.drawImage(img, -g.hw, -g.hh, g.hw * 2, g.hh * 2)
-  ctx.restore()
+  drawWiredImageLayer(ctx, wiredImages.value[l.url], l, W, H)
 }
 const stackCanvas = ref<HTMLCanvasElement | null>(null)
 function renderStack() {

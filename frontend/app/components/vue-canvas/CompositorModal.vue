@@ -2,12 +2,12 @@
 import {
   Image as ImageIcon, X, MousePointer2,
   Type, Square, Circle, Minus, Trash2,
-  AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown,
+  AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
 } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
   type TextLayer, type RectLayer, type EllipseLayer,
-  drawLocalLayer, ensureLayerFonts, ensureLayerImages,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages,
 } from '~/composables/useCompositorLayers'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 
@@ -283,10 +283,52 @@ function attachPointerListeners() {
 function detachPointerListeners() { window.removeEventListener('pointermove', onPointerMove) }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
-// ── Canvas pointer routing: local layers first, then image slots ────────────
+// ── Canvas pointer routing ──────────────────────────────────────────────────
+// Unified, z-aware hit test: walk the stack top→bottom and return the key of
+// the first layer (wired image OR local shape) whose rotated box contains the
+// point. Previously local shapes always won over wired images regardless of
+// depth, so clicking an image sitting *on top* would grab a shape beneath it.
+function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
+  const r = canvasRect(); if (!r) return null
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const px = ((clientX - r.left) / r.width) * W
+  const py = ((clientY - r.top) / r.height) * H
+  const inBox = (cx: number, cy: number, hw: number, hh: number, rotDeg: number) => {
+    const rad = (-rotDeg * Math.PI) / 180
+    const dx = px - cx, dy = py - cy
+    const lx = dx * Math.cos(rad) - dy * Math.sin(rad)
+    const ly = dx * Math.sin(rad) + dy * Math.cos(rad)
+    return Math.abs(lx) <= hw && Math.abs(ly) <= hh
+  }
+  const keys = stackKeys.value
+  for (let i = keys.length - 1; i >= 0; i--) {        // top → bottom
+    const res = resolveStackKey(keys[i]); if (!res) continue
+    if (res.type === 'wired') {
+      const { w: fw, h: fh } = fitSize(res.layer.slot)
+      const c = layerCenter(res.layer)
+      if (inBox(c.x, c.y, (fw / 2) * res.layer.scale + 4, (fh / 2) * res.layer.scale + 4, res.layer.rotation)) return keys[i]
+    } else {
+      const l = res.layer
+      const b = boxPx(l)
+      if (inBox(l.x * W, l.y * H, b.w / 2 + 8, b.h / 2 + 8, l.rotation)) return keys[i]
+    }
+  }
+  return null
+}
+
 function onCanvasPointerDownCapture(e: PointerEvent) {
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
-  onCanvasPointerDown(e) // hit → select local + start move (+ stops propagation); miss → deselect local, fall through to <img>
+  const key = hitTopStackKey(e.clientX, e.clientY)
+  const res = key ? resolveStackKey(key) : null
+  if (res?.type === 'wired') {
+    // Topmost layer here is a wired image → move it, not a shape beneath it.
+    selectLocal(null)
+    onLayerPointerDown(res.layer.slot, e) // selects slot + starts move (+ stops propagation)
+  } else if (res?.type === 'local') {
+    onCanvasPointerDown(e) // local editor selects + starts move (+ stops propagation)
+  } else {
+    selectLocal(null); selectedSlot.value = null // empty space → clear selection
+  }
 }
 function onCanvasDblClickCapture(e: MouseEvent) { onCanvasDblClick(e) }
 function onCanvasClick(e: MouseEvent) {
@@ -312,35 +354,15 @@ const editingStyle = computed(() => {
 })
 
 // ── Unified stack canvas (wired + local layers in z-order → WYSIWYG) ────────
-// Mirrors the Frame's `renderStack`: one canvas draws everything interleaved by
-// the unified stackKeys, so a local shape can sit below a wired image.
-const _BLEND_OP: Record<string, GlobalCompositeOperation> = {
-  normal: 'source-over', multiply: 'multiply', screen: 'screen', overlay: 'overlay',
-  soft_light: 'soft-light', hard_light: 'hard-light', difference: 'difference',
-  lighten: 'lighten', darken: 'darken', add: 'lighter',
-}
-// Cache loaded wired-image HTMLImageElements for canvas drawing.
+// One canvas draws everything interleaved by the unified stackKeys, so a local
+// shape can sit below a wired image. Wired drawing uses the shared
+// `drawWiredImageLayer` so the node and modal render pixel-identically.
 const wiredImageEls = ref<Record<number, HTMLImageElement>>({})
 function onWiredImageReady(slot: number, img: HTMLImageElement) {
   if (img.complete && img.naturalWidth) wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
 }
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
-  const img = wiredImageEls.value[layer.slot]
-  if (!img || !img.complete || !img.naturalWidth) return
-  // Fit the image into the canvas preserving aspect (same as fitSize), then
-  // apply the layer's CSS-space transform (translate %, rotate, scale).
-  const cAspect = W / H, iAspect = img.naturalWidth / img.naturalHeight
-  let fitW: number, fitH: number
-  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
-  const cx = W / 2 + layer.x * W, cy = H / 2 + layer.y * H
-  ctx.save()
-  ctx.globalAlpha = clamp(layer.opacity, 0, 1)
-  ctx.globalCompositeOperation = _BLEND_OP[layer.blend] ?? 'source-over'
-  ctx.translate(cx, cy)
-  if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
-  ctx.scale(layer.scale, layer.scale)
-  ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
-  ctx.restore()
+  drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H)
 }
 
 const overlayCanvas = ref<HTMLCanvasElement | null>(null)
@@ -392,6 +414,22 @@ const outWidth = computed(() => {
 })
 function pxW(norm: number) { return Math.round(norm * outWidth.value) }
 function setSizePx(id: string, key: string, px: number) { setLocal(id, { [key]: Math.max(0, px) / outWidth.value }) }
+
+// W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
+// normalized to the artboard width (the layer model's convention), so a single
+// outWidth conversion works for either axis. When locked, editing one axis
+// scales the other by the same factor.
+const lockRatio = ref(true)
+function setDimPx(l: any, key: 'w' | 'h', px: number) {
+  const next = Math.max(0, px) / outWidth.value
+  const other = key === 'w' ? 'h' : 'w'
+  if (lockRatio.value && l[key] > 0 && typeof l[other] === 'number') {
+    const ratio = next / l[key]
+    setLocal(l.id, { [key]: next, [other]: Math.max(0.002, l[other] * ratio) })
+  } else {
+    setLocal(l.id, { [key]: next })
+  }
+}
 function toggleFill(l: RectLayer | EllipseLayer) { setLocal(l.id, { fill: l.fill && l.fill !== 'none' ? 'none' : '#3b82f6' }) }
 function kindIcon(kind: string) {
   return kind === 'text' ? Type : kind === 'rect' ? Square
@@ -557,13 +595,13 @@ onUnmounted(() => {
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="corner"
             data-handle
-            class="absolute size-2.5 bg-white border border-yellow-400 cursor-nwse-resize"
+            class="absolute z-20 size-2.5 bg-white border border-yellow-400 cursor-nwse-resize"
             :style="{ left: handlePositions[corner].x + 'px', top: handlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onScalePointerDown($event)"
           />
           <div
             data-handle
-            class="absolute size-3 rounded-full bg-yellow-400 cursor-grab border-2 border-[#1a1a1a]"
+            class="absolute z-20 size-3 rounded-full bg-yellow-400 cursor-grab border-2 border-[#1a1a1a]"
             :style="{ left: handlePositions.rot.x + 'px', top: handlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onRotatePointerDown($event)"
           />
@@ -590,13 +628,13 @@ onUnmounted(() => {
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="'l-' + corner"
             data-handle
-            class="absolute size-2.5 bg-white border border-cyan-400 cursor-nwse-resize"
+            class="absolute z-20 size-2.5 bg-white border border-cyan-400 cursor-nwse-resize"
             :style="{ left: localHandlePositions[corner].x + 'px', top: localHandlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalScalePointerDown($event)"
           />
           <div
             data-handle
-            class="absolute size-3 rounded-full bg-cyan-400 cursor-grab border-2 border-[#1a1a1a]"
+            class="absolute z-20 size-3 rounded-full bg-cyan-400 cursor-grab border-2 border-[#1a1a1a]"
             :style="{ left: localHandlePositions.rot.x + 'px', top: localHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalRotatePointerDown($event)"
           />
@@ -754,6 +792,41 @@ onUnmounted(() => {
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
             </div>
           </template>
+
+          <!-- Size: W / H with aspect-ratio lock (shapes & images) -->
+          <div v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse' || selectedLocal.kind === 'image'">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Size</div>
+            <div class="flex items-center gap-2">
+              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+                <span class="text-xs text-white/40">W</span>
+                <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
+                  class="w-full bg-transparent text-xs text-white/90 outline-none"
+                  @input="setDimPx(selectedLocal!, 'w', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+              <button
+                class="shrink-0 size-7 rounded flex items-center justify-center border border-[#2a2a2a] cursor-pointer transition-colors"
+                :class="lockRatio ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/40' : 'text-white/40 hover:text-white/80'"
+                :title="lockRatio ? 'Aspect ratio locked — click to unlock' : 'Aspect ratio unlocked — click to lock'"
+                @click="lockRatio = !lockRatio"
+              >
+                <Lock v-if="lockRatio" class="size-3.5" />
+                <LockOpen v-else class="size-3.5" />
+              </button>
+              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+                <span class="text-xs text-white/40">H</span>
+                <input type="number" min="1" :value="pxW((selectedLocal as any).h)"
+                  class="w-full bg-transparent text-xs text-white/90 outline-none"
+                  @input="setDimPx(selectedLocal!, 'h', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+            </div>
+          </div>
+          <!-- Line: single length value -->
+          <div v-else-if="selectedLocal.kind === 'line'">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Length</div>
+            <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+              @input="setSizePx(selectedLocal!.id, 'w', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
+          </div>
 
           <!-- Common: rotation + opacity -->
           <div class="grid grid-cols-2 gap-3">

@@ -296,6 +296,47 @@ export function drawLocalLayers(
   for (const layer of layers) drawLocalLayer(ctx, layer, W, H)
 }
 
+/** Blend-mode name → canvas composite op (shared by node + modal wired draws). */
+export const WIRED_BLEND_OP: Record<string, GlobalCompositeOperation> = {
+  normal: 'source-over', multiply: 'multiply', screen: 'screen', overlay: 'overlay',
+  soft_light: 'soft-light', hard_light: 'hard-light', difference: 'difference',
+  lighten: 'lighten', darken: 'darken', add: 'lighter',
+}
+
+/** Transform of a wired image layer (normalized x/y, scale, rotation, blend). */
+export interface WiredTransform {
+  x: number; y: number; scale: number; rotation: number; opacity: number; blend: string
+}
+
+/**
+ * Draw one wired image layer — the SINGLE source of truth shared by the Frame
+ * node and the Compositor modal so their previews can't drift apart. The image
+ * is aspect-fit (contain) into the W×H artboard, then translated by the layer's
+ * normalized x/y, rotated, and scaled. Fit is computed from the *actual* image
+ * (not a separately-tracked dimension cache), so it never falls back to a
+ * stretch-fill when a cache entry is missing.
+ */
+export function drawWiredImageLayer(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement | undefined | null,
+  layer: WiredTransform,
+  W: number,
+  H: number,
+) {
+  if (!img || !img.complete || !img.naturalWidth) return
+  const cAspect = W / H, iAspect = img.naturalWidth / img.naturalHeight
+  let fitW: number, fitH: number
+  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
+  ctx.globalCompositeOperation = WIRED_BLEND_OP[layer.blend] ?? 'source-over'
+  ctx.translate(W / 2 + layer.x * W, H / 2 + layer.y * H)
+  if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
+  ctx.scale(layer.scale, layer.scale)
+  ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
+  ctx.restore()
+}
+
 /**
  * Bake local layers into a transparent RGBA PNG blob at W×H. Returns null if
  * there are no layers. Fonts must already be loaded (call `ensureLayerFonts`).
