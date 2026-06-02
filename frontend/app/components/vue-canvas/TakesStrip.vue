@@ -29,7 +29,9 @@ function thumb(t: Take): string | null {
       <span class="text-[10px] uppercase tracking-wide text-white/40">Takes</span>
       <span class="text-[10px] text-white/30 tabular-nums">{{ takes.length }}</span>
     </div>
-    <div class="flex items-center gap-1.5 overflow-x-auto pb-1">
+    <!-- nowheel/nopan/nodrag: let the strip scroll without the canvas hijacking
+         the wheel (zoom) or drag (pan). -->
+    <div class="nowheel nopan nodrag flex items-center gap-1.5 overflow-x-auto pb-1">
       <div
         v-for="t in takes"
         :key="t.id"
