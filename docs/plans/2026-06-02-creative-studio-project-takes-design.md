@@ -243,6 +243,29 @@ Effort: **S** ≈ days, **M** ≈ 1–2 wks, **L** ≈ 3+ wks. Impact is on the
 "build a graph and run it" to "work on a project and iterate toward a result" —
 that's the identity shift; 2–6 are high-value features on top of it.
 
+## Known limitations of the Phase 1 prototype (from stress-test)
+
+The flag-gated prototype stores takes on the deep-watched, serialized
+`node.data`. That keeps it tiny and additive, but two consequences surfaced in
+review and are accepted for the prototype:
+
+1. **Takes are session-only.** `convertToLiteGraph` stashes only the *active*
+   take's image into `comfynext_preview`, not the `takes` array — so a tab
+   switch or reload keeps the last image but drops the take history. The
+   settings copy says so. Real persistence arrives with Phase 0/2 (takes ride
+   inside a `ProjectVersion.activeTakes`).
+2. **Undo/redo is entangled with takes.** The canvas history deep-watches
+   `node.data`, so select/pin/discard can create undo steps and an undo can
+   resurrect a discarded take. Bounded (no crash/corruption; off by default),
+   but real.
+
+**The clean graduation fix for both:** move takes off `node.data` into a
+separate reactive store keyed by `nodeId` (in `useTakes`), projecting only the
+active take's `images/audios/text` back onto `node.data` for display. That takes
+the array out of both history snapshots and graph serialization in one move —
+then persistence is handled deliberately via project versions, not as a
+serialization side effect. Do this when takes graduate from the flag.
+
 ## Why this is the right direction (moat)
 
 Every step widens the gap only ComfyNext occupies. ComfyUI **won't** build a

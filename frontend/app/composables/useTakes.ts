@@ -115,18 +115,38 @@ export function projectTake<T extends TakeBearingData>(data: T, take: Take | nul
   }
 }
 
+/** Upper bound on retained takes per node (drops oldest UNPINNED past this). */
+export const MAX_TAKES = 30
+
+/** True if a take actually carries a result worth keeping. */
+export function takeHasContent(t: Take): boolean {
+  return !!(t.images?.length || t.audios?.length || (t.text && t.text.length))
+}
+
 /**
  * Append a take to node data and make it active, mirroring it onto the legacy
- * fields. If the most recent take shares this one's signature (a live-preview
- * node re-firing for the same file), REPLACE it instead of piling up dupes.
- * Pure: returns the next data object.
+ * fields. If ANY existing take shares this one's signature (a live-preview node
+ * re-firing for the same file — even one the user has scrolled back to),
+ * REPLACE that take in place instead of piling up dupes. Genuine re-rolls get a
+ * fresh filename → fresh signature → a new take. Caps growth at MAX_TAKES by
+ * dropping the oldest unpinned take. Pure: returns the next data object.
  */
 export function appendTake<T extends TakeBearingData>(data: T, take: Take): T {
   const prev = data.takes ?? []
-  const last = prev[prev.length - 1]
-  const takes = last && last.sig && last.sig === take.sig
-    ? [...prev.slice(0, -1), take]   // same output re-fired -> replace
-    : [...prev, take]                 // genuinely new result -> keep both
+  const dupeIdx = take.sig ? prev.findIndex((t) => t.sig && t.sig === take.sig) : -1
+  let takes: Take[]
+  if (dupeIdx >= 0) {
+    // Same output re-emitted — refresh it in place, preserving pin/label.
+    takes = prev.slice()
+    takes[dupeIdx] = { ...take, pinned: prev[dupeIdx]!.pinned, label: prev[dupeIdx]!.label }
+  } else {
+    takes = [...prev, take]
+    while (takes.length > MAX_TAKES) {
+      const oldestUnpinned = takes.findIndex((t) => !t.pinned)
+      if (oldestUnpinned < 0) break // everything is pinned — keep them all
+      takes.splice(oldestUnpinned, 1)
+    }
+  }
   return { ...projectTake(data, take), takes }
 }
 

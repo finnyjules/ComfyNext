@@ -284,7 +284,8 @@ function discardTake(id: string) {
   const takes = (props.data.takes || []).filter((x) => x.id !== id)
   ;(props.data as any).takes = takes
   if (props.data.activeTakeId === id) {
-    Object.assign(props.data, projectTake(props.data, takes[takes.length - 1] || null))
+    const fallback = takes.find((t) => t.pinned) || takes[takes.length - 1] || null
+    Object.assign(props.data, projectTake(props.data, fallback))
   }
 }
 </script>

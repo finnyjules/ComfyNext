@@ -11,7 +11,7 @@ import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImage
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { useNodeSearch } from '~/composables/useNodeSearch'
-import { useTakesEnabled, buildTake, appendTake } from '~/composables/useTakes'
+import { useTakesEnabled, buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -1005,7 +1005,9 @@ function handleBridgeMessage(event: MessageEvent) {
           // images/audios/text/animated, so this stays behavior-identical for a
           // single run while preserving prior results for compare/switch.
           const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
-          target.data = appendTake({ ...target.data }, take)
+          // Skip empties (a node that fires `executed` with a ui-only/empty
+          // payload shouldn't pile up blank takes).
+          if (takeHasContent(take)) target.data = appendTake({ ...target.data }, take)
         } else {
           const next: any = { ...target.data }
           if (Array.isArray(output.images) && output.images.length) {
