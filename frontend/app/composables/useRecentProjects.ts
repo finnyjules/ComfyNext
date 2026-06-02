@@ -137,6 +137,35 @@ export function useRecentProjects() {
       // Sort projects by most recent activity
       projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
       recentProjects.value = projects.slice(0, 10)
+
+      // Overlay durable projects (Phase 0). They key off the same projectUuid as
+      // workflowId. Durable name wins; a durable project not present in /history
+      // (e.g. saved but not yet run) is appended. History stays the backbone and
+      // thumbnail source until covers + version bodies fill in. Best-effort: if
+      // the endpoint is absent (older ComfyUI), the history list stands.
+      try {
+        const durable = await useProjects().listProjects()
+        if (durable.length) {
+          const byId = new Map(recentProjects.value.map((p) => [p.workflowId, p]))
+          for (const d of durable) {
+            const existing = byId.get(d.uuid)
+            if (existing) {
+              if (d.name) existing.name = d.name
+            } else {
+              recentProjects.value.push({
+                workflowId: d.uuid,
+                name: d.name || 'Untitled project',
+                promptIds: [],
+                images: [],
+                lastTimestamp: d.updatedAt || 0,
+                runCount: 0,
+              })
+            }
+          }
+          recentProjects.value.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+        }
+      } catch { /* durable projects optional — history list stands */ }
+
       fetchedOnce = true
     }
     catch (err) {
