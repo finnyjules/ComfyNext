@@ -708,6 +708,18 @@ function persistWorkflows() {
   catch {}
 }
 
+// Phase 0 (3a): mirror the session snapshot into a durable server-side Project
+// version, IN ADDITION to sessionStorage. Strictly additive and best-effort —
+// useProjects swallows all errors, and we never await it in a save path, so this
+// can't affect the existing (sync) sessionStorage persistence or block a tab
+// switch. Uses a single rolling "current" version id per project, so repeated
+// saves update in place instead of piling up versions. (load-on-open is 3b.)
+function saveDurableVersion(tab: any, workflow: any) {
+  if (!tab?.projectUuid || !workflow || !(workflow.nodes?.length > 0)) return
+  const name = tab.label || 'Untitled project'
+  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow }, name)
+}
+
 // Autosave: snapshot current canvas and persist to sessionStorage.
 // Only called on specific events (beforeunload, tab switch) — never on a timer.
 function autosaveCurrentWorkflow() {
@@ -720,6 +732,7 @@ function autosaveCurrentWorkflow() {
       raw[tab.id] = workflow
       try { sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(raw)) }
       catch {}
+      saveDurableVersion(tab, workflow)
     }
   }
 }
@@ -989,6 +1002,7 @@ watch(activeTabId, async (newId, oldId) => {
       if (workflow) savedWorkflows[oldTab.id] = workflow
     }
     persistWorkflows()
+    saveDurableVersion(oldTab, savedWorkflows[oldTab.id])
   }
 
   // Restore workflow when entering a project tab
