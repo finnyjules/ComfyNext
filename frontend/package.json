@@ -14,6 +14,11 @@
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
+    "@fontsource/anton": "^5.2.7",
+    "@fontsource/bebas-neue": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/playfair-display": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@nanostores/vue": "^1.1.0",
     "@phosphor-icons/vue": "^2.2.1",
     "@resvg/resvg-js": "^2.6.2",
@@ -47,6 +52,7 @@
     "@nuxtjs/color-mode": "^4.0.0",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.1",
+    "@types/node": "24.12.4",
     "tailwindcss": "^4.2.1"
   }
 }
