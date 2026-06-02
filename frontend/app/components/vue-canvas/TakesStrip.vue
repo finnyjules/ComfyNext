@@ -24,11 +24,7 @@ function thumb(t: Take): string | null {
 </script>
 
 <template>
-  <div class="border-t border-[#2a2a2a] px-2 py-2">
-    <div class="flex items-center gap-1.5 mb-1.5">
-      <span class="text-[10px] uppercase tracking-wide text-white/40">Takes</span>
-      <span class="text-[10px] text-white/30 tabular-nums">{{ takes.length }}</span>
-    </div>
+  <div class="border-t border-[#2a2a2a] px-2 py-1">
     <!-- nowheel/nopan/nodrag: let the strip scroll without the canvas hijacking
          the wheel (zoom) or drag (pan). px/py give the active take's outer ring
          room so overflow-x-auto's vertical clip doesn't shave the thumbnail tops. -->
