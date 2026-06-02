@@ -145,7 +145,8 @@ class Image(SaveImage):
         # RGBA so the node body and Frame composite stay transparent (SaveImage
         # only writes RGB). The Compositor folds the embedded 4th channel into its
         # coverage, so a cut-out composites cleanly with or without locking.
-        if output_image.ndim == 4 and output_image.shape[-1] == 4:
+        is_rgba = output_image.ndim == 4 and output_image.shape[-1] == 4
+        if is_rgba:
             # Keep the MASK output consistent with the embedded alpha.
             output_mask = (1.0 - output_image[..., 3]).clamp(0.0, 1.0)
             key = "".join(c if c.isalnum() else "_"
@@ -155,11 +156,20 @@ class Image(SaveImage):
             ui = self._preview_to_temp(output_image, prompt, extra_pnginfo)["ui"]
 
         if export:
-            self._export_to_output(
+            exported = self._export_to_output(
                 output_image, filename_prefix, format, quality, lossless_webp,
                 png_compression, scale, max_dimension, embed_metadata,
                 prompt, extra_pnginfo,
             )
+            # Point the node's preview at the persistent output file (type=
+            # "output") instead of the ephemeral temp preview. ComfyUI wipes
+            # temp/ on restart, so a temp-only preview leaves the canvas card
+            # showing a broken image even though the export survives in Assets.
+            # RGBA is the exception: SaveImage flattens alpha to RGB, so we keep
+            # the alpha-correct live preview for cut-outs (it's still temp, but
+            # transparency matters more there than restart-durability).
+            if not is_rgba and exported and exported.get("ui", {}).get("images"):
+                ui = exported["ui"]
 
         return {"ui": ui, "result": (output_image, output_mask)}
 
@@ -183,7 +193,9 @@ class Image(SaveImage):
             self.output_dir = self._export_dir
             self.type = "output"
             self.prefix_append = ""
-            SaveImage.save_images(
+            # Return the saved-file UI (filenames carry type="output") so the
+            # caller can point the node's preview at the *persistent* copy.
+            return SaveImage.save_images(
                 self, images, filename_prefix=filename_prefix,
                 format=format, quality=quality, lossless_webp=lossless_webp,
                 png_compression=png_compression, scale=scale, max_dimension=max_dimension,

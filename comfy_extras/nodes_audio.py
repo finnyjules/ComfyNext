@@ -335,7 +335,12 @@ class Audio(IO.ComfyNode):
         # frontend can fetch and play.
         ui = UI.PreviewAudio(value, cls=cls)
         if export:
-            UI.AudioSaveHelper.get_save_audio_ui(
+            # Point the card at the persistent output copy (type="output")
+            # instead of the ephemeral temp preview. ComfyUI wipes temp/ on
+            # restart, so a temp-only preview leaves the canvas card broken even
+            # though the export survives in Assets — same durability fix as the
+            # Image node.
+            ui = UI.AudioSaveHelper.get_save_audio_ui(
                 value,
                 filename_prefix=filename_prefix,
                 cls=cls,

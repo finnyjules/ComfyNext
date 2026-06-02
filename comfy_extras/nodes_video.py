@@ -366,7 +366,11 @@ class Video(io.ComfyNode):
         preview_ui = ui.PreviewVideo([ui.SavedResult(preview_file, subfolder, io.FolderType.temp)])
 
         if export:
-            # Save a permanent copy to the output dir alongside the preview.
+            # Save a permanent copy to the output dir and point the card's
+            # preview at *that* (FolderType.output) instead of the temp file.
+            # ComfyUI wipes temp/ on restart, so a temp-only preview leaves the
+            # canvas card broken even though the export survives in Assets —
+            # same durability fix as the Image node.
             out_folder, out_name, out_counter, out_sub, _ = folder_paths.get_save_image_path(
                 filename_prefix,
                 folder_paths.get_output_directory(),
@@ -375,6 +379,7 @@ class Video(io.ComfyNode):
             )
             out_file = f"{out_name}_{out_counter:05}_.mp4"
             video.save_to(os.path.join(out_folder, out_file))
+            preview_ui = ui.PreviewVideo([ui.SavedResult(out_file, out_sub, io.FolderType.output)])
 
         return io.NodeOutput(video, ui=preview_ui)
 
