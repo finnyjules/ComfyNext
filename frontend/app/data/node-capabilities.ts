@@ -38,6 +38,8 @@ export const CAPABILITIES: Capability[] = [
   // ---------- Image · from an image ----------
   { nodeType: 'EditImageNode',         useCase: 'Edit an image',           model: 'Flux Kontext Pro',             from: 'image', to: 'image' },
   { nodeType: 'BlendSceneNode',        useCase: 'Blend a composite scene',  model: 'Flux Kontext / Nano Banana',   from: 'image', to: 'image' },
+  { nodeType: 'RestyleFromImageNode',  useCase: 'Restyle from an image',    model: 'Nano Banana / IP-Adapter',     from: 'image', to: 'image' },
+  { nodeType: 'ProductShotNode',       useCase: 'Make a product shot',      model: 'SDXL Ad-Inpaint',              from: 'image', to: 'image' },
   { nodeType: 'UpscaleImageNode',      useCase: 'Upscale an image',        model: 'Clarity',                      from: 'image', to: 'image' },
   { nodeType: 'RemoveBackgroundNode',  useCase: 'Remove background',       model: '851-labs/bg-remover',          from: 'image', to: 'image' },
   { nodeType: 'RestorePhotoNode',      useCase: 'Restore an old photo',    model: 'Flux Kontext · Restore',       from: 'image', to: 'image' },

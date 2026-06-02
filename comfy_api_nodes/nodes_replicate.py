@@ -133,10 +133,9 @@ def _get_token() -> str:
 
 # ---------- LoRA sidecar lookup --------------------------------------------
 
-def _resolve_lora_url(lora_name: str) -> str | None:
-    """Map a local LoRA filename to the Replicate CDN URL recorded in its
-    sidecar JSON at training time (see frontend/server/api/cloud-train/status).
-    Returns None if no sidecar exists."""
+def _read_lora_sidecar(lora_name: str) -> dict | None:
+    """Load the sidecar JSON for a local LoRA filename (written at training time
+    by frontend/server/api/cloud-train/status). Returns None if absent/unreadable."""
     if not lora_name or lora_name == "[None]":
         return None
     for loras_dir in folder_paths.get_folder_paths("loras"):
@@ -147,10 +146,141 @@ def _resolve_lora_url(lora_name: str) -> str | None:
         if os.path.isfile(sidecar):
             try:
                 with open(sidecar, "r", encoding="utf-8") as f:
-                    return (json.load(f) or {}).get("replicate_url")
+                    return json.load(f) or {}
             except (OSError, json.JSONDecodeError):
                 return None
     return None
+
+
+def _resolve_trained_model(lora_name: str) -> str | None:
+    """Return the user's own trained Replicate model as `<owner>/<model>` (no
+    version) from the sidecar's `replicate_model`, if present.
+
+    These are full runnable Flux models with the LoRA *baked in* — we run them
+    DIRECTLY rather than feeding flux-dev-lora a `lora_weights` ref. That's the
+    only thing that works for them: the destination models are private, and
+    flux-dev-lora fetches `lora_weights` anonymously (can't reach private
+    weights). Running our own model uses the API token, so privacy is preserved.
+    """
+    meta = _read_lora_sidecar(lora_name)
+    ref = (meta or {}).get("replicate_model")
+    if not ref or not isinstance(ref, str):
+        return None
+    ref = ref.strip()
+    if "://" in ref:
+        return None
+    owner_model = ref.split(":", 1)[0].strip()  # drop ':<version>' → run latest
+    return owner_model or None
+
+
+def _is_replicate_model_ref(value: str) -> bool:
+    """True if `value` looks like a runnable Replicate model ref — `<owner>/<model>`
+    or `<owner>/<model>/<version>` (or `:<version>`) — rather than a URL / HF /
+    CivitAI / .safetensors weights reference. Used so the cloud trainer can hand
+    the inference node a trained model ref via `lora_url` and we run it directly
+    (the trained models are private; flux-dev-lora can't fetch their weights)."""
+    s = (value or "").strip()
+    if not s or "://" in s:
+        return False
+    low = s.lower()
+    if low.endswith(".safetensors"):
+        return False
+    if "huggingface.co" in low or "civitai.com" in low or low.startswith("hf.co/"):
+        return False
+    parts = [p for p in s.split("/") if p]
+    return len(parts) in (2, 3)
+
+
+def _bare_owner_model(value: str) -> str:
+    """`<owner>/<model>:<hash>` or `<owner>/<model>/<version>` → `<owner>/<model>`."""
+    s = (value or "").strip().split(":", 1)[0]
+    parts = [p for p in s.split("/") if p]
+    return "/".join(parts[:2])
+
+
+def _resolve_lora_url(lora_name: str) -> str | None:
+    """Map a local LoRA filename to a flux-dev-lora `lora_weights` reference.
+
+    Prefers `replicate_model` (slash form), falling back to the legacy
+    `replicate_url` (a *.tar*, which flux-dev-lora can't actually parse). This
+    is the EXTERNAL-weights path; for our own trained models prefer
+    `_resolve_trained_model` and run them directly. Returns None if no sidecar.
+    """
+    meta = _read_lora_sidecar(lora_name)
+    if meta is None:
+        return None
+    model_ref = meta.get("replicate_model")
+    if model_ref:
+        return _replicate_model_to_lora_ref(model_ref)
+    return meta.get("replicate_url")
+
+
+def _replicate_model_to_lora_ref(model_ref: str) -> str:
+    """Turn a Replicate model ref `<owner>/<model>:<hash>` into the slash form
+    `<owner>/<model>/<hash>` that flux-dev-lora's `lora_weights` accepts."""
+    model_ref = (model_ref or "").strip()
+    if "://" in model_ref:  # already a URL — not a model ref, leave alone
+        return model_ref
+    if ":" in model_ref and "/" in model_ref:
+        owner_model, _, version = model_ref.rpartition(":")
+        if version:
+            return f"{owner_model}/{version}"
+    return model_ref
+
+
+def _normalize_lora_ref(ref: str) -> str:
+    """Coerce a user-pasted LoRA reference into a form flux-dev-lora recognizes.
+
+    The model's source detection is picky: it wants 'huggingface.co/<owner>/<model>'
+    (NOT a scheme-prefixed URL), and it reads a bare '<owner>/<model>' as a
+    *Replicate* model. People most often paste the HuggingFace page URL, so we
+    strip the scheme for known hosts and normalize hf.co → huggingface.co. We do
+    NOT touch a bare 'owner/model' — that's genuinely ambiguous (could be a real
+    Replicate model), so the tooltip tells users to add the huggingface.co/ prefix.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return ref
+    low = ref.lower()
+    for scheme in ("https://", "http://"):
+        if low.startswith(scheme):
+            ref = ref[len(scheme):]
+            low = ref.lower()
+            break
+    if low.startswith("hf.co/"):
+        ref = "huggingface.co/" + ref[len("hf.co/"):]
+    return ref
+
+
+async def _autodetect_huggingface(ref: str) -> str:
+    """Resolve the bare-path ambiguity in favor of HuggingFace when it fits.
+
+    flux-dev-lora reads a bare '<owner>/<model>' as a *Replicate* model, but
+    community Flux LoRAs overwhelmingly live on HuggingFace (Replicate-hosted
+    ones arrive as full URLs via the sidecar). So for a bare ref we check the
+    HuggingFace API and, if the repo exists, prefix it with 'huggingface.co/'.
+    Full URLs and explicit hosts are left untouched — no false rerouting.
+    """
+    ref = (ref or "").strip()
+    if not ref or "/" not in ref:
+        return ref
+    low = ref.lower()
+    if low.startswith((
+        "http://", "https://", "huggingface.co/", "civitai.com/", "replicate.com/",
+    )):
+        return ref
+    repo = "/".join(ref.split("/")[:2])  # owner/model (drop any /file.safetensors)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://huggingface.co/api/models/{repo}",
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                if resp.status == 200:
+                    return "huggingface.co/" + ref
+    except Exception:
+        pass
+    return ref
 
 
 # ---------- Image tensor → data URL ----------------------------------------
@@ -416,20 +546,27 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                         "Pick a locally-trained LoRA. Only works if it has a sidecar "
                         ".json with replicate_url (created automatically by the cloud trainer)."
                     ),
+                    # Render a gallery launcher (WidgetLoraPicker) instead of a
+                    # plain dropdown; the combo still serializes a filename string.
+                    extra_dict={"comfynext_widget": "lora_picker"},
                 ),
                 IO.String.Input(
                     "lora_url",
                     default="",
                     multiline=False,
                     tooltip=(
-                        "Override: HuggingFace path (e.g. 'alvdansen/flux-koda') "
-                        "or direct URL to a .safetensors. Wins over lora_name when set. "
-                        "Leave empty to use lora_name instead."
+                        "Override LoRA source. Use a FULL form: "
+                        "HuggingFace → 'huggingface.co/owner/model' (optionally "
+                        "'/file.safetensors'); CivitAI → 'civitai.com/models/<id>'; "
+                        "Replicate → 'owner/model'; or a direct .safetensors URL. "
+                        "Note: a bare 'owner/model' is read as a Replicate model — "
+                        "for HuggingFace LoRAs keep the 'huggingface.co/' prefix. "
+                        "Wins over lora_name when set."
                     ),
                 ),
                 IO.Float.Input(
                     "lora_scale",
-                    default=1.0, min=0.0, max=3.0, step=0.05,
+                    default=1.0, min=0.0, max=1.5, step=0.05,
                     tooltip="LoRA strength. 1.0 is the trained level.",
                 ),
                 IO.Combo.Input(
@@ -458,6 +595,24 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                     default=0, min=0, max=0xFFFFFFFF,
                     tooltip="0 = random each run. Set a specific value for reproducible A/B tests.",
                 ),
+                IO.Image.Input(
+                    "image",
+                    optional=True,
+                    tooltip=(
+                        "Optional: apply the LoRA to THIS image (image-to-image) "
+                        "instead of generating from scratch. Wire an image here to "
+                        "restyle it with your LoRA. The input's aspect ratio is kept."
+                    ),
+                ),
+                IO.Float.Input(
+                    "prompt_strength",
+                    default=0.8, min=0.0, max=1.0, step=0.05,
+                    tooltip=(
+                        "Image-to-image only: how far to push the input image. "
+                        "0.2 = subtle restyle (keeps structure), 0.9 = strong "
+                        "reinterpretation. Ignored when no image is wired."
+                    ),
+                ),
             ],
             outputs=[
                 IO.Image.Output(),
@@ -475,38 +630,90 @@ class FluxLoRARemoteNode(IO.ComfyNode):
         aspect_ratio: str, megapixels: str,
         num_inference_steps: int, guidance: float,
         seed: int,
+        image=None, prompt_strength: float = 0.8,
     ):
-        # Resolution: explicit lora_url wins, then sidecar lookup by name.
-        resolved_lora = (lora_url or "").strip() or _resolve_lora_url(lora_name)
+        lora_url = (lora_url or "").strip()
+        # NOTE: the taste profile lives in the prompt itself (prepended by the
+        # frontend when a LoRA is added). We deliberately do NOT add it as a
+        # separate node input — that changes the ComfyUI schema, which the
+        # embedded canvas caches and gets out of sync with (scrambling widget
+        # positions). Keeping it in the prompt is schema-stable and robust.
+        full_prompt = prompt
+
+        # Two execution paths:
+        #  (A) Our own trained LoRA → run that model DIRECTLY. It's a Flux fork
+        #      with the LoRA baked in, runs private under our token, and needs no
+        #      `lora_weights`. Triggered when lora_url is a trained-model ref
+        #      (the cloud trainer fills it in this way), or — with no lora_url —
+        #      when the selected lora_name has a trained-model sidecar.
+        #  (B) External LoRA (a real URL / HF / CivitAI / .safetensors in
+        #      lora_url, or a legacy sidecar) → run flux-dev-lora with `lora_weights`.
+        if lora_url and _is_replicate_model_ref(lora_url):
+            trained_model = _bare_owner_model(lora_url)
+        elif not lora_url:
+            trained_model = _resolve_trained_model(lora_name)
+        else:
+            trained_model = None
 
         input_dict: dict = {
-            "prompt": prompt,
+            "prompt": full_prompt,
             "aspect_ratio": aspect_ratio,
             "megapixels": megapixels,
             "num_inference_steps": num_inference_steps,
-            "guidance": guidance,
             "num_outputs": 1,
             "output_format": "png",
             "disable_safety_checker": False,
         }
         if seed and seed > 0:
             input_dict["seed"] = seed
-        if resolved_lora:
-            input_dict["lora_weights"] = resolved_lora
-            input_dict["lora_scale"] = lora_scale
 
-        pred = await _run_prediction("black-forest-labs/flux-dev-lora", input_dict)
+        # img2img: when an image is wired, restyle it instead of generating from
+        # scratch. The model keeps the input's aspect ratio, so `aspect_ratio` is
+        # ignored in this mode.
+        img2img = image is not None
+        if img2img:
+            input_dict["image"] = _image_tensor_to_data_url(image)
+            input_dict["prompt_strength"] = prompt_strength
+
+        if trained_model:
+            # The baked-in trainer model (ostris flux fork) names it `guidance_scale`.
+            model = trained_model
+            resolved_lora = trained_model
+            input_dict["guidance_scale"] = guidance
+            input_dict["lora_scale"] = lora_scale
+        else:
+            # flux-dev-lora names it `guidance`.
+            input_dict["guidance"] = guidance
+            resolved_lora = _normalize_lora_ref(lora_url) or _resolve_lora_url(lora_name)
+            # A bare 'owner/model' is ambiguous — prefer HuggingFace if it exists.
+            if resolved_lora:
+                resolved_lora = await _autodetect_huggingface(resolved_lora)
+                input_dict["lora_weights"] = resolved_lora
+                input_dict["lora_scale"] = lora_scale
+            model = "black-forest-labs/flux-dev-lora"
+
+        pred = await _run_prediction(model, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+
+        # Drop any alpha channel — Replicate's img2img sometimes returns a
+        # 4-channel PNG, and a spurious alpha routes the downstream Image node to
+        # its transparent-preview path, which doesn't render in the canvas. A
+        # generation is never actually transparent, so force RGB. [B,H,W,C].
+        if tensor.dim() == 4 and tensor.shape[-1] == 4:
+            tensor = tensor[..., :3].contiguous()
 
         # Surface what was actually sent so the user can sanity-check via a
         # Preview as Text node. Confirms whether a LoRA was applied and which.
         actual_seed = pred.get("input", {}).get("seed", "random")
         logs_tail = (pred.get("logs") or "").strip().split("\n")[-3:]
         info_lines = [
-            f"lora: {resolved_lora or '(none — vanilla Flux Dev)'}",
+            f"mode: {'image-to-image' if img2img else 'text-to-image'}",
+            f"model: {model}",
+            f"lora: {resolved_lora or '(none — vanilla Flux Dev)'}"
+            + (" [baked-in]" if trained_model else ""),
             f"scale: {lora_scale if resolved_lora else 'n/a'}",
+            (f"prompt_strength: {prompt_strength}" if img2img else f"aspect: {aspect_ratio} @ {megapixels}MP"),
             f"seed: {actual_seed}",
-            f"aspect: {aspect_ratio} @ {megapixels}MP",
             "logs: " + " | ".join(logs_tail) if logs_tail else "",
         ]
         return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line))
@@ -1742,6 +1949,177 @@ class BlendSceneNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Restyle an image using the style of another image
+# =============================================================================
+
+_RESTYLE_MODELS = ["Nano Banana", "Style Transfer · IP-Adapter"]
+
+_RESTYLE_DEFAULT_PROMPT = (
+    "Redraw the first image in the visual art style of the second image. "
+    "Preserve the first image's composition, subject, pose and layout — "
+    "change only the rendering style, colors, texture, lighting and finish."
+)
+
+
+class RestyleFromImageNode(IO.ComfyNode):
+    """Apply the *style* of one image (the reference) onto another (the content).
+
+    Two engines, picked per-run:
+      • Nano Banana — multi-image edit. Most flexible / creative, but may
+        reinterpret the content while matching the reference's style.
+      • Style Transfer · IP-Adapter (fofr/style-transfer) — copies the
+        reference's style while keeping the content image's structure intact
+        (depth ControlNet + IP-Adapter). Best when composition must not change.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RestyleFromImageNode",
+            display_name="Restyle from Image",
+            category="api node/image/Replicate",
+            description=(
+                "Apply the style of one image onto another. Nano Banana "
+                "(creative, may reinterpret) or IP-Adapter Style Transfer "
+                "(keeps the content's structure). ~$0.04 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_RESTYLE_MODELS, default="Nano Banana"),
+                IO.Image.Input("content_image",
+                               tooltip="The image to restyle — its subject/composition is kept."),
+                IO.Image.Input("style_image",
+                               tooltip="The reference image whose look/style is copied onto the content."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Optional extra guidance (e.g. 'watercolor', 'cyberpunk neon'). "
+                                        "Leave blank to let the style image speak for itself."),
+                IO.Float.Input("structure_strength", default=0.65, min=0.0, max=1.0, step=0.05,
+                               tooltip="How much of the content's original structure/colors to preserve. "
+                                       "Higher = closer to the original (IP-Adapter only)."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            hidden=[IO.Hidden.unique_id],
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, content_image, style_image, prompt="",
+                      structure_strength=0.65, seed=0, output_format="png"):
+        content_url = _image_tensor_to_data_url(content_image)
+        style_url = _image_tensor_to_data_url(style_image)
+        guidance = (prompt or "").strip()
+
+        if model == "Nano Banana":
+            # First image = content, second = style reference. The baked
+            # instruction keeps the content's layout and only swaps the look.
+            instruction = _RESTYLE_DEFAULT_PROMPT
+            if guidance:
+                instruction += f" Additional style direction: {guidance}."
+            input_dict = {"prompt": instruction, "image_input": [content_url, style_url]}
+            slug = "google/nano-banana"
+        else:  # Style Transfer · IP-Adapter
+            input_dict = {
+                # fofr/style-transfer needs a non-empty prompt; fall back to a
+                # neutral one so the style image drives the result.
+                "prompt": guidance or "a high quality image",
+                "style_image": style_url,
+                "structure_image": content_url,
+                "structure_denoising_strength": float(structure_strength),
+                "output_format": output_format,
+                "number_of_images": 1,
+            }
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            slug = "fofr/style-transfer"
+
+        pred = await _run_prediction(slug, input_dict)
+        result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(
+            result,
+            ui=save_live_preview(result, str(cls.hidden.unique_id)),
+        )
+
+
+# =============================================================================
+# Use case: Product Shot — drop a product photo, get a studio-quality scene
+# =============================================================================
+
+# The ad-inpaint model takes a "W, H" string; expose a few friendly presets.
+_PRODUCT_SHOT_ASPECTS = {
+    "Square": "1024, 1024",
+    "Portrait": "832, 1216",
+    "Landscape": "1216, 832",
+}
+_PRODUCT_FILL = ["Original", "80", "70", "60", "50", "40", "30", "20"]
+
+_PRODUCT_SHOT_DEFAULT_PROMPT = (
+    "on a clean marble countertop, soft natural window light, minimal studio "
+    "setting, professional product photography, shallow depth of field"
+)
+
+
+class ProductShotNode(IO.ComfyNode):
+    """Turn a plain product photo into a studio-quality marketing shot.
+
+    Wraps catacolabs/sdxl-ad-inpaint: the product's background is removed and it
+    is placed into a generated scene described by `scene_prompt`. With
+    `keep_product_exact` on (default), the original product pixels are re-applied
+    over the result, so labels/logos are never reinterpreted.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="ProductShotNode",
+            display_name="Product Shot",
+            category="api node/image/Replicate",
+            description=(
+                "Drop a product photo and describe a scene — get a studio-quality "
+                "product shot. The background is removed and the product is placed "
+                "into a generated setting, kept pixel-exact. ~$0.04 per shot."
+            ),
+            inputs=[
+                IO.Image.Input("image", tooltip="The product photo. Its background is removed automatically."),
+                IO.String.Input("scene_prompt", multiline=True, default=_PRODUCT_SHOT_DEFAULT_PROMPT,
+                                tooltip="Describe the setting/background to place the product in."),
+                IO.Combo.Input("aspect", options=list(_PRODUCT_SHOT_ASPECTS.keys()), default="Square"),
+                IO.Combo.Input("product_size", options=_PRODUCT_FILL, default="Original",
+                               tooltip="How much of the frame the product fills. 'Original' keeps its natural "
+                                       "size; a number = percent of the image width."),
+                IO.Boolean.Input("keep_product_exact", default=True, advanced=True,
+                                 tooltip="Re-apply your original product pixels over the result so labels and "
+                                         "logos are never altered."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            hidden=[IO.Hidden.unique_id],
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image, scene_prompt, aspect="Square", product_size="Original",
+                      keep_product_exact=True, seed=0):
+        input_dict = {
+            "image": _image_tensor_to_data_url(image),
+            "prompt": (scene_prompt or "").strip() or _PRODUCT_SHOT_DEFAULT_PROMPT,
+            "img_size": _PRODUCT_SHOT_ASPECTS.get(aspect, "1024, 1024"),
+            "product_fill": product_size,
+            "apply_img": bool(keep_product_exact),
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+        pred = await _run_prediction("catacolabs/sdxl-ad-inpaint", input_dict)
+        result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(
+            result,
+            ui=save_live_preview(result, str(cls.hidden.unique_id)),
+        )
+
+
+# =============================================================================
 # Use case: Rotate the camera around an image's subject
 # =============================================================================
 #
@@ -1944,6 +2322,14 @@ class TextEffectNode(IO.ComfyNode):
                                        "'Match input' keeps the source crop in restyle mode."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
                              control_after_generate=True, tooltip="0 = random."),
+                IO.Float.Input(
+                    "freedom", default=0.0, min=0.0, max=1.0, step=0.05,
+                    tooltip="Restyle mode only. How far dispersion effects (Ink in "
+                            "Water, Smoke, Light Trails) may break the letters apart: "
+                            "0 = keep the exact letterforms, 1 = let them dissolve "
+                            "into the medium. The gallery sets a good default per "
+                            "effect; material effects ignore this.",
+                ),
                 IO.Image.Input(
                     "image", optional=True,
                     tooltip="Connect a Font Playground (or any image) to restyle "
@@ -1957,13 +2343,14 @@ class TextEffectNode(IO.ComfyNode):
         )
 
     @classmethod
-    async def execute(cls, text, effect, aspect_ratio, seed, image=None):
+    async def execute(cls, text, effect, aspect_ratio, seed, freedom=0.0, image=None):
         # Dispatch (which model + inputs) is pure logic in text_effects.py so it
         # unit-tests offline; the node just does the I/O around it.
         image_data_url = _image_tensor_to_data_url(image) if image is not None else None
         try:
             slug, input_dict = _build_text_effect_request(
                 effect, text, aspect_ratio, seed, image_data_url=image_data_url,
+                freedom=freedom,
             )
         except ValueError as e:
             # Surface the generate-mode "enter text" guard as a runtime error.
@@ -1971,7 +2358,7 @@ class TextEffectNode(IO.ComfyNode):
         mode = "restyle" if image_data_url is not None else "generate"
         print(
             f"[TextEffect] mode={mode} effect={effect!r} text={text!r} "
-            f"slug={slug!r} prompt={input_dict.get('prompt')!r}",
+            f"freedom={freedom!r} slug={slug!r} prompt={input_dict.get('prompt')!r}",
             flush=True,
         )
         pred = await _run_prediction(slug, input_dict)
@@ -3558,6 +3945,8 @@ class ReplicateExtension(ComfyExtension):
             # Image — manipulation
             EditImageNode,              # Edit an image · Flux Kontext
             BlendSceneNode,             # Blend Scene · Flux Kontext / Nano Banana
+            RestyleFromImageNode,       # Restyle from Image · Nano Banana / IP-Adapter
+            ProductShotNode,            # Product Shot · catacolabs/sdxl-ad-inpaint
             RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
             TextEffectNode,             # Text effect · Ideogram v3
             UpscaleImageNode,           # Upscale an image · Clarity

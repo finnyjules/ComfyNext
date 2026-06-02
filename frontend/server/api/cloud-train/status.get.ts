@@ -77,9 +77,14 @@ export default defineEventHandler(async (event) => {
   const id = String(query.id ?? '')
   const outputName = sanitize(String(query.outputName ?? 'my_lora'))
   const family = String(query.family ?? 'flux')
+  const triggerWord = String(query.triggerWord ?? '').trim()
+  // Aesthetic generated at train time (see /aesthetic). Stored
+  // in the sidecar and prepended to prompts so generations match the trained look.
+  const aesthetic = String(query.aesthetic ?? '').trim()
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
 
-  const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
+  // Cloud LoRA jobs are Replicate *trainings*, not predictions.
+  const res = await fetch(`https://api.replicate.com/v1/trainings/${id}`, {
     headers: { Authorization: `Token ${token}` },
   })
   if (!res.ok) {
@@ -88,7 +93,11 @@ export default defineEventHandler(async (event) => {
   const pred = await res.json() as {
     id: string
     status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled'
-    output?: string | string[] | null
+    // Trainings return the weights URL — a bare string, or an object like
+    // { weights: <tar url>, version: <owner>/<model>:<hash> }. `version` is the
+    // trained model pushed to our destination; it's the form flux-dev-lora's
+    // `lora_weights` accepts (the `weights` .tar is NOT — it can't parse it).
+    output?: string | string[] | { weights?: string, url?: string, version?: string } | null
     error?: string | null
     logs?: string
     metrics?: { predict_time?: number }
@@ -97,8 +106,21 @@ export default defineEventHandler(async (event) => {
   let localFilename: string | null = null
   let downloadError: string | null = null
 
-  if (pred.status === 'succeeded' && pred.output) {
-    const outputUrl = Array.isArray(pred.output) ? pred.output[0] : pred.output
+  const out: any = pred.output
+  const outputUrl: string | null = out == null ? null
+    : typeof out === 'string' ? out
+    : Array.isArray(out) ? out[0]
+    : (out.weights || out.url || null)
+
+  // The trained Replicate model reference (`<owner>/<model>:<hash>`). This is
+  // what inference (flux-dev-lora `lora_weights`) needs — the `.tar` weights URL
+  // above is download-only. Present only on object-shaped training output.
+  const modelRef: string | null =
+    out && typeof out === 'object' && !Array.isArray(out) && typeof out.version === 'string'
+      ? out.version
+      : null
+
+  if (pred.status === 'succeeded' && outputUrl) {
     const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
     await fs.mkdir(lorasDir, { recursive: true })
     const filename = `${outputName}.safetensors`
@@ -110,14 +132,19 @@ export default defineEventHandler(async (event) => {
       const dl = await downloadAndPlace(outputUrl, localPath)
       if (dl.ok) {
         localFilename = filename
-        // Sidecar JSON — referenced by the FluxLoRA inference node to map
-        // a local filename back to its public Replicate URL.
+        // Sidecar JSON — referenced by the FluxLoRA inference node to map a
+        // local filename back to its Replicate source. `replicate_model` is the
+        // trained model ref used for inference; `replicate_url` is the weights
+        // .tar kept for provenance/re-download only.
         const sidecar = {
           name: outputName,
           base_model: family === 'flux' ? 'flux-dev' : 'sdxl',
           provider: 'replicate',
+          trigger: triggerWord || null,
           replicate_prediction_id: pred.id,
+          replicate_model: modelRef,
           replicate_url: outputUrl,
+          aesthetic: aesthetic || null,
           trained_on: new Date().toISOString(),
         }
         await fs.writeFile(
@@ -136,7 +163,10 @@ export default defineEventHandler(async (event) => {
   return {
     id: pred.id,
     status: pred.status,
-    output: pred.output ?? null,
+    output: outputUrl,
+    // Bare `<owner>/<model>` (no version) — the inference node runs this DIRECTLY.
+    // Drive the node via this, NOT the `.tar` output URL (which can't be parsed).
+    replicateModel: modelRef ? modelRef.split(':')[0] : null,
     error: pred.error ?? downloadError ?? null,
     logs: logsTail,
     predictTime: pred.metrics?.predict_time ?? null,

@@ -34,6 +34,7 @@ interface CloudJob {
   error?: string | null
   localFilename?: string | null
   replicateUrl?: string | null
+  replicateModel?: string | null
 }
 const cloudJob = ref<CloudJob | null>(null)
 
@@ -188,6 +189,9 @@ const status = ref<'idle' | 'uploading' | 'captioning' | 'submitting' | 'trainin
 const errorMessage = ref<string | null>(null)
 const progressLabel = ref('')
 const progressPct = ref(0)
+// Aesthetic auto-generated from the dataset at train time, then
+// threaded into /status → sidecar → prepended to prompts when the LoRA is used.
+const cloudAesthetic = ref<string | null>(null)
 const outputFilename = ref<string | null>(null)
 const lossGraphUrl = ref<string | null>(null)
 
@@ -221,6 +225,59 @@ const form = reactive({
 })
 
 const advancedOpen = ref(false)
+
+// Open a fresh workflow with a Flux generator preloaded to use the trained LoRA.
+// FluxLoRARemoteNode resolves the local filename to its CDN url via the sidecar
+// JSON our cloud-train route wrote, so the LoRA "just works" in the new graph.
+const { openTab } = useTabs()
+function useTrainedLoraInWorkflow() {
+  const fname = cloudJob.value?.localFilename
+  if (!fname) return
+  const trigger = (form.triggerWord || '').trim()
+  // Style block (aesthetic + trigger) → the node's "Style" property (folded
+  // into the prompt at run time). Schema-stable; prompt left clean for the scene.
+  const profile = (cloudAesthetic.value || importedAesthetic.value || '').trim()
+  const style = [profile, trigger ? `${trigger},` : ''].filter(Boolean).join(' ')
+  const promptText = ''
+  // Drive the LoRA via `lora_url` set to the trained Replicate MODEL REF
+  // (<owner>/<model>) — the node runs that model directly. We can't use the
+  // `lora_name` combo (its options come from the canvas's cached object_info,
+  // which predates this fresh training, so the new file resets to empty), and we
+  // must NOT use the `.tar` CDN url (flux-dev-lora can't parse it). We still set
+  // lora_name too, so the dropdown shows it once object_info reloads.
+  const loraRef = cloudJob.value?.replicateModel || ''
+  const workflow = {
+    last_node_id: 1,
+    last_link_id: 0,
+    nodes: [{
+      id: 1,
+      type: 'FluxLoRARemoteNode',
+      pos: [360, 220],
+      size: [360, 460],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [],
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: null, slot_index: 0 }],
+      // aesthetic is a node property (folded into the prompt at run time).
+      properties: { 'Node name for S&R': 'FluxLoRARemoteNode', aesthetic: style },
+      // widget order (schema, 10 widgets): prompt, lora_name, lora_url,
+      // lora_scale, aspect_ratio, megapixels, num_inference_steps, guidance,
+      // seed, prompt_strength. seed has no control_after_generate, so no
+      // trailing control value.
+      widgets_values: [promptText, fname, loraRef, 1.0, '1:1', '1', 28, 3.5, 0, 0.8],
+    }],
+    links: [],
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  }
+  const tab = openTab({ type: 'project', label: `LoRA: ${(form.outputName || 'lora').trim()}` })
+  window.dispatchEvent(new CustomEvent('comfynext:loadTabWorkflow', {
+    detail: { tabId: tab.id, workflow },
+  }))
+}
 
 // Load checkpoint list from /object_info
 async function loadCheckpoints() {
@@ -347,7 +404,156 @@ function clearDataset() {
   outputFilename.value = null
   lossGraphUrl.value = null
   errorMessage.value = null
+  importedAesthetic.value = null
   status.value = 'idle'
+}
+
+// ----- Krea moodboard import ---------------------------------------------
+
+interface KreaBoardMeta {
+  id: string | null
+  name: string
+  imageCount: number
+  loadedImages?: number
+  aesthetic: string | null
+  positiveKeywords: string[]
+  previewImages: string[]
+  images: { url: string, width: number | null, height: number | null }[]
+}
+
+const kreaOpen = ref(false)
+const kreaBoardUrl = ref('')      // public board URL (browse/community) — fetched server-side
+const kreaFetching = ref(false)
+const kreaShowJson = ref(false)   // reveal the paste-JSON fallback (private/owned boards)
+const kreaJson = ref('')          // pasted moodboard JSON (DevTools → Copy Response)
+const kreaRework = ref(true)      // AI rename + reword on import (original derivative)
+const kreaImporting = ref(false)
+const kreaReworking = ref(false)
+const kreaError = ref<string | null>(null)
+const kreaBoards = ref<KreaBoardMeta[]>([])
+// When set (from a Krea import), used as the LoRA's aesthetic instead of
+// generating one with Qwen — Krea's is higher quality and free.
+const importedAesthetic = ref<string | null>(null)
+
+// Turn a board title into a trigger token, e.g. "Echo Flux Vortex" → "echo_flux_vortex".
+function slugifyTrigger(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip accents
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'style'
+}
+
+// Public (browse/community) boards: fetch + scrape server-side from the URL.
+async function fetchKreaBoard() {
+  kreaError.value = null
+  kreaBoards.value = []
+  const u = kreaBoardUrl.value.trim()
+  if (!u) { kreaError.value = 'Paste a Krea moodboard URL.'; return }
+  kreaFetching.value = true
+  try {
+    const res = await fetch(`/api/krea/board?url=${encodeURIComponent(u)}`)
+    const data = await res.json() as { moodboards?: KreaBoardMeta[], message?: string }
+    if (!res.ok) throw new Error(data?.message || `Failed (${res.status})`)
+    kreaBoards.value = (data.moodboards || []).filter((b) => b.images.length > 0)
+    if (!kreaBoards.value.length) kreaError.value = 'No images found on that board.'
+  } catch (e: any) {
+    kreaError.value = e?.message || String(e)
+  } finally {
+    kreaFetching.value = false
+  }
+}
+
+// Parse the moodboard JSON the user's authenticated browser produced (Krea's
+// API auth is cookie-based, so we can't fetch it server-side — but the response
+// the browser already received carries everything we need). Accepts the array
+// the gallery endpoint returns, or a single board object.
+function parseKreaJson() {
+  kreaError.value = null
+  kreaBoards.value = []
+  const raw = kreaJson.value.trim()
+  if (!raw) { kreaError.value = 'Paste the moodboard JSON first.'; return }
+  let data: any
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    kreaError.value = "That isn't valid JSON. In DevTools → Network, click the 'moodboards' request → right-click → Copy → Copy Response, then paste here."
+    return
+  }
+  const boards: any[] = Array.isArray(data) ? data : (Array.isArray(data?.moodboards) ? data.moodboards : [data])
+  kreaBoards.value = boards
+    .map((b: any): KreaBoardMeta => ({
+      id: b?.id ?? null,
+      name: b?.name || 'Untitled board',
+      imageCount: b?.imageCount ?? b?.totalImages ?? (b?.images?.length ?? 0),
+      aesthetic: b?.aesthetic ?? null,
+      positiveKeywords: Array.isArray(b?.positiveKeywords) ? b.positiveKeywords : [],
+      previewImages: Array.isArray(b?.previewImages) ? b.previewImages.slice(0, 4) : [],
+      images: (b?.images ?? [])
+        .map((im: any) => ({ url: im?.url, width: im?.width ?? null, height: im?.height ?? null }))
+        .filter((im: any) => typeof im.url === 'string' && im.url.length > 0),
+    }))
+    .filter((b) => b.images.length > 0)
+  if (!kreaBoards.value.length) {
+    kreaError.value = 'No boards with images found in that JSON. Make sure you copied the full response.'
+  }
+}
+
+async function importKreaBoard(board: KreaBoardMeta) {
+  kreaError.value = null
+  kreaImporting.value = true
+  try {
+    const files: File[] = []
+    for (let i = 0; i < board.images.length; i++) {
+      const im = board.images[i]!
+      try {
+        const res = await fetch(`/api/krea/image?url=${encodeURIComponent(im.url)}`)
+        if (!res.ok) continue
+        const blob = await res.blob()
+        const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+        files.push(new File([blob], `krea_${String(i + 1).padStart(4, '0')}.${ext}`, { type: blob.type || 'image/png' }))
+      } catch { /* skip this image */ }
+    }
+    if (!files.length) { kreaError.value = 'Could not download any images from that board.'; return }
+    await addFiles(files) // reuse: uploads to ComfyUI + builds previews/state
+
+    // Make it an ORIGINAL derivative: AI renames the board + rewords the
+    // aesthetic (similar direction, not a copy). Non-fatal — keeps originals on error.
+    let finalName = board.name
+    let finalProfile = board.aesthetic
+    if (kreaRework.value && (board.aesthetic || board.name)) {
+      kreaReworking.value = true
+      try {
+        const res = await fetch('/api/krea/rewrite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: board.name, aesthetic: board.aesthetic, keywords: board.positiveKeywords }),
+        })
+        if (res.ok) {
+          const r = await res.json() as { name?: string | null, aesthetic?: string | null }
+          if (r.name) finalName = r.name
+          if (r.aesthetic) finalProfile = r.aesthetic
+        }
+      } catch { /* keep originals */ } finally {
+        kreaReworking.value = false
+      }
+    }
+
+    if (finalProfile) importedAesthetic.value = finalProfile
+    // Prefill the LoRA name + trigger word from the (reworded) board name,
+    // unless the user already set their own.
+    const nameIsUntouched = !form.outputName.trim() || form.outputName.trim() === 'my_lora'
+    if (finalName && nameIsUntouched) form.outputName = finalName
+    if (finalName && !form.triggerWord.trim()) form.triggerWord = slugifyTrigger(finalName)
+
+    kreaBoards.value = []
+    kreaOpen.value = false
+    kreaBoardUrl.value = ''
+    kreaJson.value = ''
+  } finally {
+    kreaImporting.value = false
+  }
 }
 
 // ----- Drag-drop ---------------------------------------------------------
@@ -703,6 +909,66 @@ async function buildDatasetZip(): Promise<Blob> {
   return await zip.generateAsync({ type: 'blob', compression: 'STORE' })
 }
 
+/**
+ * Compose up to 4 representative dataset images into one small montage so the
+ * vision model reads the SET's shared aesthetic (not a single subject). Returns
+ * a JPEG data URI, or null if it can't be built (non-fatal).
+ */
+async function buildStyleMontageDataUrl(): Promise<string | null> {
+  try {
+    const picks = images.value.slice(0, 4)
+    if (picks.length === 0) return null
+    const cell = 320
+    const cols = picks.length <= 1 ? 1 : 2
+    const rows = Math.ceil(picks.length / cols)
+    const canvas = document.createElement('canvas')
+    canvas.width = cols * cell
+    canvas.height = rows * cell
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    for (let i = 0; i < picks.length; i++) {
+      const bmp = await createImageBitmap(picks[i]!.file)
+      const x = (i % cols) * cell
+      const y = Math.floor(i / cols) * cell
+      const scale = Math.max(cell / bmp.width, cell / bmp.height) // cover-fit
+      const w = bmp.width * scale
+      const h = bmp.height * scale
+      ctx.drawImage(bmp, x + (cell - w) / 2, y + (cell - h) / 2, w, h)
+      bmp.close?.()
+    }
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } catch {
+    return null
+  }
+}
+
+/** Ask the server to describe the dataset's aesthetic. Non-fatal: on any
+ *  failure we leave cloudAesthetic null and fall back to the trigger word. */
+async function generateAesthetic(): Promise<void> {
+  // A Krea-imported board already carries a high-quality aesthetic — use it
+  // directly and skip the (paid) Qwen vision call entirely.
+  if (importedAesthetic.value) {
+    cloudAesthetic.value = importedAesthetic.value
+    return
+  }
+  try {
+    const imageDataUrl = await buildStyleMontageDataUrl()
+    if (!imageDataUrl) return
+    const res = await fetch('/api/cloud-train/aesthetic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl }),
+    })
+    if (!res.ok) return
+    const { aesthetic } = await res.json() as { aesthetic?: string }
+    if (aesthetic) cloudAesthetic.value = aesthetic
+  } catch {
+    /* non-fatal */
+  }
+}
+
 async function startCloudTraining() {
   if (images.value.length < 2) return
   errorMessage.value = null
@@ -710,6 +976,7 @@ async function startCloudTraining() {
   lossGraphUrl.value = null
   progressPct.value = 0
   cloudJob.value = null
+  cloudAesthetic.value = null
 
   try {
     status.value = 'submitting'
@@ -750,6 +1017,11 @@ async function startCloudTraining() {
     const startJson = await startRes.json() as { id: string; status: any }
     cloudJob.value = { predictionId: startJson.id, status: startJson.status }
 
+    // Analyze the dataset's aesthetic once, while the GPU is still provisioning.
+    // Non-fatal and quick (~few s); result is threaded into /status → sidecar.
+    progressLabel.value = 'Analyzing dataset style…'
+    await generateAesthetic()
+
     status.value = 'training'
     progressLabel.value = 'Replicate is provisioning a GPU…'
     const final = await pollCloudJob(startJson.id, safeName, cloudFamily.value)
@@ -782,12 +1054,13 @@ async function pollCloudJob(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 3000))
     try {
-      const r = await fetch(`/api/cloud-train/status?id=${predictionId}&outputName=${encodeURIComponent(outputName)}&family=${family}`)
+      const r = await fetch(`/api/cloud-train/status?id=${predictionId}&outputName=${encodeURIComponent(outputName)}&family=${family}&triggerWord=${encodeURIComponent(form.triggerWord || '')}&aesthetic=${encodeURIComponent(cloudAesthetic.value || '')}`)
       if (!r.ok) continue
       const data = await r.json() as {
         id: string
         status: CloudJob['status']
         output: string | string[] | null
+        replicateModel?: string | null
         error: string | null
         logs?: string
         localFilename: string | null
@@ -801,6 +1074,7 @@ async function pollCloudJob(
         error: data.error,
         localFilename: data.localFilename,
         replicateUrl,
+        replicateModel: data.replicateModel ?? null,
       }
       cloudJob.value = job
 
@@ -1023,8 +1297,22 @@ onBeforeUnmount(() => {
           <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">
             Training images
             <span class="text-white/35 font-normal ml-2">{{ images.length }} {{ images.length === 1 ? 'image' : 'images' }}</span>
+            <span
+              v-if="importedAesthetic"
+              class="ml-2 text-[9.5px] uppercase tracking-wide text-violet-100/85 bg-violet-500/25 px-1.5 py-0.5 rounded align-middle"
+              :title="`Aesthetic from Krea (added to prompts):\n\n${importedAesthetic}`"
+            >aesthetic ✓</span>
           </label>
           <div class="flex items-center gap-2">
+            <button
+              v-if="images.length > 0"
+              class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
+              :class="kreaOpen ? '!bg-white/[0.08] !text-white' : ''"
+              @click="kreaOpen = !kreaOpen"
+            >
+              <Cloud class="size-3.5" />
+              Import from Krea
+            </button>
             <button
               v-if="images.length > 0"
               class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
@@ -1047,6 +1335,8 @@ onBeforeUnmount(() => {
           class="hidden"
           @change="(e) => addFiles((e.target as HTMLInputElement).files)"
         />
+
+        <!-- (Krea importer moved below, after the drop zone — see "Start from a Krea moodboard") -->
 
         <!-- What makes a good dataset (only when empty, before drop zone) -->
         <div v-if="images.length === 0" class="mb-3 rounded-lg bg-white/[0.02] border border-white/[0.05] px-4 py-3">
@@ -1077,6 +1367,130 @@ onBeforeUnmount(() => {
           <div class="text-center">
             <div class="text-[14px] text-white/75 mb-1">Drop your reference images</div>
             <div class="text-[11px] text-white/35">or click to browse · PNG, JPG, WebP</div>
+          </div>
+        </div>
+
+        <!-- Start from a Krea moodboard — first-class entry point (always shown when empty) -->
+        <div v-if="kreaOpen || images.length === 0">
+          <div v-if="images.length === 0" class="flex items-center gap-3 my-4">
+            <div class="h-px flex-1 bg-white/[0.08]" />
+            <span class="text-[10.5px] uppercase tracking-[0.14em] text-white/30">or start from a Krea moodboard</span>
+            <div class="h-px flex-1 bg-white/[0.08]" />
+          </div>
+
+          <div class="rounded-xl bg-violet-500/[0.04] border border-violet-400/15 p-4 space-y-3">
+            <div class="flex items-start gap-2.5">
+              <div class="size-8 rounded-lg bg-violet-500/15 flex items-center justify-center shrink-0">
+                <Cloud class="size-4 text-violet-300" />
+              </div>
+              <div class="min-w-0">
+                <div class="text-[12.5px] font-medium text-white">Import a Krea moodboard</div>
+                <p class="text-[11px] text-white/50 leading-relaxed mt-0.5">
+                  Paste a public moodboard URL (any board you can browse). Its images and aesthetic
+                  import automatically — no login, no DevTools.
+                </p>
+              </div>
+            </div>
+
+            <!-- Primary: paste a public board URL -->
+            <div class="flex items-center gap-2">
+              <input
+                v-model="kreaBoardUrl"
+                type="text"
+                placeholder="https://www.krea.ai/moodboard-feed/…"
+                class="flex-1 h-9 px-3 rounded-md bg-black/30 border border-white/10 text-[12px] text-white/85 placeholder:text-white/25 focus:outline-none focus:border-violet-400/40"
+                @keydown.enter="fetchKreaBoard"
+              />
+              <button
+                class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-violet-500/85 hover:bg-violet-500 text-[12px] font-medium text-white transition-colors cursor-pointer disabled:opacity-50"
+                :disabled="!kreaBoardUrl.trim() || kreaFetching"
+                @click="fetchKreaBoard"
+              >
+                <Loader2 v-if="kreaFetching" class="size-3.5 animate-spin" />
+                Fetch board
+              </button>
+            </div>
+
+            <!-- Make it original: AI rename + reword on import -->
+            <label class="flex items-start gap-2 cursor-pointer select-none">
+              <input v-model="kreaRework" type="checkbox" class="mt-0.5 accent-violet-500 cursor-pointer" />
+              <span class="text-[10.5px] text-white/55 leading-relaxed">
+                <span class="text-white/75">Make it original</span> — rename the board and reword the
+                aesthetic with AI so it's inspired by the reference, not a copy.
+              </span>
+            </label>
+
+            <!-- Fallback: paste JSON for a private board you own -->
+            <div>
+              <button
+                class="text-[10.5px] text-white/40 hover:text-white/70 inline-flex items-center gap-1 cursor-pointer transition-colors"
+                @click="kreaShowJson = !kreaShowJson"
+              >
+                <ChevronRight class="size-3 transition-transform" :class="kreaShowJson ? 'rotate-90' : ''" />
+                Importing a private board you own? Paste its JSON
+              </button>
+              <div v-if="kreaShowJson" class="mt-2 space-y-2 pl-1 border-l border-white/[0.06]">
+                <ol class="text-[10.5px] text-white/45 leading-relaxed list-decimal list-inside marker:text-white/25 space-y-0.5 pl-1">
+                  <li>Open the board on krea.ai → DevTools (<span class="text-white/65">⌥⌘I</span>) → <span class="text-white/65">Network</span>.</li>
+                  <li>Reload; click the <code class="text-white/70 bg-white/[0.05] px-1 rounded">moodboards</code> request → right-click → <span class="text-white/65">Copy → Copy Response</span>.</li>
+                </ol>
+                <textarea
+                  v-model="kreaJson"
+                  rows="3"
+                  placeholder='Paste the moodboard JSON here — e.g. [{"name":"…","images":[…],"tasteProfile":"…"}]'
+                  class="w-full px-2.5 py-2 rounded-md bg-black/30 border border-white/10 text-[11px] font-mono text-white/85 placeholder:text-white/25 focus:outline-none focus:border-violet-400/40 resize-y"
+                />
+                <div class="flex justify-end">
+                  <button
+                    class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/85 transition-colors cursor-pointer disabled:opacity-50"
+                    :disabled="!kreaJson.trim() || kreaImporting"
+                    @click="parseKreaJson"
+                  >
+                    Load from JSON
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p v-if="kreaError" class="text-[10.5px] text-red-300/90">{{ kreaError }}</p>
+
+            <!-- Board picker -->
+            <div v-if="kreaBoards.length" class="space-y-1.5 pt-0.5">
+              <div class="text-[10.5px] text-white/40">Pick a board to load its images:</div>
+              <div class="grid grid-cols-3 gap-2">
+                <button
+                  v-for="b in kreaBoards"
+                  :key="b.id || b.name"
+                  class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/50 overflow-hidden text-left transition-colors cursor-pointer disabled:opacity-50"
+                  :disabled="kreaImporting"
+                  :title="b.aesthetic || ''"
+                  @click="importKreaBoard(b)"
+                >
+                  <div class="flex gap-px h-16 bg-black/40">
+                    <img
+                      v-for="(p, i) in b.previewImages.slice(0, 3)"
+                      :key="i"
+                      :src="`/api/krea/image?url=${encodeURIComponent(p)}`"
+                      class="flex-1 min-w-0 object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                  <div class="p-2">
+                    <div class="text-[11px] font-medium text-white truncate">{{ b.name }}</div>
+                    <div class="text-[9.5px] text-white/45 truncate">
+                      <template v-if="b.loadedImages && b.loadedImages < b.imageCount">{{ b.loadedImages }} of {{ b.imageCount }} images</template>
+                      <template v-else>{{ b.imageCount }} {{ b.imageCount === 1 ? 'image' : 'images' }}</template>
+                      <span v-if="b.aesthetic" class="text-violet-300/80"> · aesthetic ✓</span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div v-if="kreaImporting" class="text-[10.5px] text-white/55 flex items-center gap-1.5">
+              <Loader2 class="size-3.5 animate-spin" />
+              {{ kreaReworking ? 'Reworking the style with AI…' : 'Downloading images…' }}
+            </div>
           </div>
         </div>
 
@@ -1197,6 +1611,25 @@ onBeforeUnmount(() => {
               placeholder="e.g. ohwx"
               class="w-full h-9 rounded-md bg-white/[0.04] border border-white/[0.08] hover:border-white/15 focus:border-white/25 focus:outline-none px-3 text-[13px] text-white/85 placeholder:text-white/25"
             />
+          </div>
+
+          <!-- Aesthetic (surfaced after a moodboard import) -->
+          <div v-if="importedAesthetic !== null">
+            <label class="block text-[12px] font-medium text-white/80 mb-1">
+              Aesthetic
+              <span class="text-violet-300/80 font-normal ml-1">added to your prompts</span>
+            </label>
+            <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
+              A short style description prepended to prompts when you use this LoRA, so generations match the look.
+              Imported from your Krea moodboard<span v-if="kreaRework"> and reworded to be original</span> — edit freely.
+            </p>
+            <textarea
+              v-model="importedAesthetic"
+              rows="4"
+              placeholder="Describe the aesthetic — color, texture, light, composition…"
+              class="w-full rounded-md bg-white/[0.04] border border-white/[0.08] hover:border-white/15 focus:border-white/25 focus:outline-none px-3 py-2 text-[12.5px] leading-relaxed text-white/85 placeholder:text-white/25 resize-y"
+            />
+            <p class="text-[10.5px] text-white/30 mt-1">{{ (importedAesthetic || '').trim().split(/\s+/).filter(Boolean).length }} words</p>
           </div>
 
           <!-- Steps, LR, Rank in a 3-column grid -->
@@ -1431,6 +1864,19 @@ onBeforeUnmount(() => {
             <Cloud class="size-3" />
             Also available on Replicate's CDN ↗
           </a>
+          <div v-if="cloudJob?.localFilename" class="mt-4 pt-4 border-t border-white/[0.06]">
+            <button
+              class="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-white text-black text-[13px] font-medium hover:bg-white/90 transition-colors cursor-pointer"
+              @click="useTrainedLoraInWorkflow"
+            >
+              <Sparkles class="size-4" />
+              Use in new workflow
+              <ArrowRight class="size-4" />
+            </button>
+            <p class="text-[11px] text-white/40 mt-2">
+              Opens a Flux generator with this LoRA<span v-if="form.triggerWord"> and your trigger word</span> ready to run.
+            </p>
+          </div>
         </div>
         <div v-if="lossGraphUrl" class="rounded-xl overflow-hidden bg-black border border-white/[0.06]">
           <img :src="lossGraphUrl" class="w-full max-h-[420px] object-contain" />

@@ -505,7 +505,7 @@ const rootWorkflow = ref<any>(null) // Full workflow with definitions
 // Single source of truth for building a fresh node's data from object_info.
 // Used by drag-drop-from-sidebar, the node-search dialog, and wire splicing so
 // they never drift (the port/widget derivation used to be copy-pasted).
-function createNodeData(nodeType: string, position: { x: number, y: number }, widgetOverrides?: Record<string, unknown>) {
+function createNodeData(nodeType: string, position: { x: number, y: number }, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>) {
   const info = objectInfo.value[nodeType]
   const widgetDefs = getWidgetDefs(nodeType)
   const vueFlowType = getVueFlowType(nodeType)
@@ -548,7 +548,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
       })),
       widgetsValues,
       widgetDefs,
-      properties: {},
+      properties: { ...(propertyOverrides || {}) },
       mode: 0,
       size: [220, 120],
       category: info?.category || '',
@@ -838,8 +838,8 @@ onConnect((params) => {
 
 // Listen for addNode events from NodeSearchDialog
 async function handleAddNode(e: Event) {
-  const detail = (e as CustomEvent<{ nodeType: string, widgetOverrides?: Record<string, unknown> }>).detail
-  const { nodeType, widgetOverrides } = detail
+  const detail = (e as CustomEvent<{ nodeType: string, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown> }>).detail
+  const { nodeType, widgetOverrides, propertyOverrides } = detail
 
   // Refresh schema if we don't know this node type.
   if (!objectInfo.value[nodeType]) {
@@ -856,7 +856,7 @@ async function handleAddNode(e: Event) {
   }
 
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides))
+  nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides))
 }
 
 // Subgraph navigation: double-click to enter
@@ -1167,6 +1167,7 @@ function handleOpenSmartLayout(e: Event) {
 const modelGalleryOpenForId = ref<string | null>(null)
 const videoModelGalleryOpenForId = ref<string | null>(null)
 const textEffectGalleryOpenForId = ref<string | null>(null)
+const loraGalleryOpenForId = ref<string | null>(null)
 function handleOpenModelGallery(e: Event) {
   const detail = (e as CustomEvent).detail
   const nodeId = detail?.nodeId ? String(detail.nodeId) : null
@@ -1174,6 +1175,10 @@ function handleOpenModelGallery(e: Event) {
   if (detail?.kind === 'video') videoModelGalleryOpenForId.value = nodeId
   else if (detail?.kind === 'text_effect') textEffectGalleryOpenForId.value = nodeId
   else modelGalleryOpenForId.value = nodeId
+}
+function handleOpenLoraGallery(e: Event) {
+  const nodeId = (e as CustomEvent).detail?.nodeId
+  if (nodeId) loraGalleryOpenForId.value = String(nodeId)
 }
 
 // Paste an image directly onto the canvas → uploads it to ComfyUI's input/
@@ -1297,6 +1302,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
+  window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
@@ -1316,6 +1322,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
+  window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
@@ -2713,8 +2720,12 @@ function captureActiveRunFromTargets(targetIds: string[]) {
   activeRunNodeIds.value = new Set([...keep].map(String))
 }
 
-function randomizeSeedsOnLiveState() {
+function randomizeSeedsOnLiveState(onlyNodeIds?: Set<string>) {
   for (const node of nodes.value as any[]) {
+    // Scoped re-roll: when a node-only run is requested, randomize seeds on the
+    // target node(s) alone so every other node's inputs stay identical → ComfyUI
+    // cache-hits all upstream (no regen, no re-billing) and only this node reruns.
+    if (onlyNodeIds && !onlyNodeIds.has(node.id)) continue
     const defs = node.data?.widgetDefs as any[] | undefined
     const values = node.data?.widgetsValues as any[] | undefined
     if (!defs || !values) continue
@@ -2740,8 +2751,10 @@ function randomizeSeedsOnLiveState() {
 
 // Build a filtered workflow snapshot from current canvas + target ids. Used
 // by the layout when it receives the runFiltered event.
-function getFilteredWorkflow(targetIds: string[]) {
-  randomizeSeedsOnLiveState()
+function getFilteredWorkflow(targetIds: string[], opts: { rerollScope?: 'self' } = {}) {
+  // 'self' = re-roll only the target node's seed (keep upstream cached); default
+  // = re-roll every seed in the graph (the classic full-run behavior).
+  randomizeSeedsOnLiveState(opts.rerollScope === 'self' ? new Set(targetIds) : undefined)
   captureActiveRunFromTargets(targetIds)
   const wf = getWorkflowWithSubgraphs()
   if (!wf) return wf
@@ -2754,7 +2767,33 @@ function getFilteredWorkflow(targetIds: string[]) {
   // locked artifacts look like leaves.
   const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
   const filtered = targetIds.length ? buildFilteredWorkflow(unlocked, targetIds) : unlocked
-  return applyVariantFanOut(filtered, objectInfo.value)
+  const withFanOut = applyVariantFanOut(filtered, objectInfo.value)
+  forceExportOnCapturedArtifacts(withFanOut)
+  return withFanOut
+}
+
+// An image/audio/video artifact that's capturing a wired upstream result is,
+// by definition, displaying a generation the user wants to keep — so force its
+// `export` on at submission. This writes a permanent file to output/ (which the
+// Assets page surfaces via its disk listing) instead of only an ephemeral temp
+// preview. Stale persisted sinks (saved with export=false) are corrected here
+// too. A bare artifact loading from disk (no upstream link) keeps the user's
+// own export choice untouched.
+const EXPORTABLE_ARTIFACT_TYPES = new Set(['Image', 'Audio', 'Video'])
+function forceExportOnCapturedArtifacts(wf: any) {
+  if (!wf?.nodes) return
+  for (const node of wf.nodes) {
+    if (!EXPORTABLE_ARTIFACT_TYPES.has(node.type)) continue
+    const hasUpstream = (node.inputs || []).some((i: any) => i?.link != null)
+    if (!hasUpstream) continue
+    const defs = getWidgetDefs(node.type)
+    const ei = defs.findIndex((w: any) => w.name === 'export')
+    if (ei < 0) continue
+    if (!Array.isArray(node.widgets_values)) {
+      node.widgets_values = defs.map((w: any) => w.default ?? null)
+    }
+    node.widgets_values[ei] = true
+  }
 }
 
 // One-time-per-session schema refresh, then heal any drifted Compositor nodes.
@@ -2889,7 +2928,15 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
           title: schema.info?.display_name || artifactNodeType,
           inputs: schema.inputs.map((p) => ({ ...p })),
           outputs: schema.outputs.map((p: any) => ({ ...p })),
-          widgetsValues: schema.widgetDefs.map((w: any) => w.default ?? null),
+          // Default widgets, but force `export` on: an auto-created sink should
+          // SAVE the generated result to output/ so it appears in Assets and
+          // survives as a real file (not just an ephemeral temp preview).
+          widgetsValues: (() => {
+            const wv = schema.widgetDefs.map((w: any) => w.default ?? null)
+            const ei = schema.widgetDefs.findIndex((w: any) => w.name === 'export')
+            if (ei >= 0) wv[ei] = true
+            return wv
+          })(),
           widgetDefs: schema.widgetDefs,
           properties: {},
           mode: 0,
@@ -3403,6 +3450,14 @@ defineExpose({
       :node-id="modelGalleryOpenForId"
       :nodes="nodes as any[]"
       @close="modelGalleryOpenForId = null"
+    />
+
+    <!-- LoRA gallery — opened from the FluxLoRARemoteNode lora_name launcher. -->
+    <VueCanvasLoraGalleryModal
+      v-if="loraGalleryOpenForId"
+      :node-id="loraGalleryOpenForId"
+      :nodes="nodes as any[]"
+      @close="loraGalleryOpenForId = null"
     />
 
     <!-- Video model gallery — opened from the GenerateVideoNode launcher. -->

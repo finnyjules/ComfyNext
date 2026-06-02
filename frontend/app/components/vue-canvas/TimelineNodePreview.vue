@@ -8,6 +8,8 @@
  * <video> pool so neither steps on the other's currentTime/play state.
  */
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
+import { interpolateClipAt } from '~~/shared/timeline/interpolate'
+import type { Keyframe } from '~~/shared/timeline/types'
 
 const props = defineProps<{ nodeId: string }>()
 
@@ -63,6 +65,7 @@ interface PreviewLayer {
   srcKind: 'video' | 'image' | 'sequence' | null
   srcUrls?: string[]    // for sequence sources (KineticType frames)
   inFrame: number
+  keyframes?: Keyframe[]   // present ⇒ transform animates over clip-local frames
 }
 
 const layers = computed<PreviewLayer[]>(() => {
@@ -91,6 +94,7 @@ const layers = computed<PreviewLayer[]>(() => {
               opacity: Number(clip.opacity ?? 1), blend: String(clip.blend ?? 'normal'),
               fadeIn: Number(clip.fade_in ?? 0), fadeOut: Number(clip.fade_out ?? 0),
               inFrame: Number(clip.in_frame ?? 0),
+              keyframes: Array.isArray(clip.keyframes) ? clip.keyframes : undefined,
               srcUrl: src?.url ?? null, srcKind: src?.kind ?? null, srcUrls: src?.urls,
             })
           }
@@ -324,8 +328,12 @@ function drawOnce() {
     }
     fade = Math.max(0, Math.min(1, fade))
 
+    // Per-frame transform: lerp between keyframes (or static scalars when none).
+    // Same shared helper as the editor preview, FFmpeg export, and node run.
+    const tf = interpolateClipAt(L, localFrame)
+
     ctx.save()
-    ctx.globalAlpha = Math.max(0, Math.min(1, L.opacity * fade))
+    ctx.globalAlpha = Math.max(0, Math.min(1, tf.opacity * fade))
     ctx.globalCompositeOperation = BLEND_MAP[L.blend] ?? 'source-over'
 
     const cAspect = canvas.width / canvas.height
@@ -334,11 +342,11 @@ function drawOnce() {
     if (sAspect > cAspect) { fitW = canvas.width; fitH = canvas.width / sAspect }
     else                   { fitH = canvas.height; fitW = canvas.height * sAspect }
 
-    const cx = canvas.width / 2 + L.x * canvas.width
-    const cy = canvas.height / 2 + L.y * canvas.height
+    const cx = canvas.width / 2 + tf.x * canvas.width
+    const cy = canvas.height / 2 + tf.y * canvas.height
     ctx.translate(cx, cy)
-    ctx.rotate((L.rotation * Math.PI) / 180)
-    ctx.scale(L.scale, L.scale)
+    ctx.rotate((tf.rotation * Math.PI) / 180)
+    ctx.scale(tf.scale, tf.scale)
     try { ctx.drawImage(media as CanvasImageSource, -fitW / 2, -fitH / 2, fitW, fitH) } catch {}
     ctx.restore()
   }

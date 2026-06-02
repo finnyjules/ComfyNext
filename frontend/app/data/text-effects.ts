@@ -31,6 +31,12 @@ export interface TextEffect {
   accent: string                 // hex accent used for the card swatch / styled fallback
   cssPreview: CssPreviewRecipe
   tags: string[]
+  // Dispersion effects want the letters to break apart. When `dispersion` is
+  // true, picking the effect seeds the node's "freedom" widget with
+  // `defaultFreedom` so the restyle disperses out of the box (material effects
+  // leave freedom at 0). Mirrors `medium`/`default_freedom` in text_effects.py.
+  dispersion?: boolean
+  defaultFreedom?: number
 }
 
 // The literal word is wrapped in quotes in every template so Ideogram treats
@@ -131,6 +137,8 @@ export const TEXT_EFFECTS: TextEffect[] = [
     accent: '#64748b',
     cssPreview: 'styled',
     tags: ['fluid', 'ink', 'elegant'],
+    dispersion: true,
+    defaultFreedom: 0.65,
   },
   {
     id: 'smoke-vapor',
@@ -141,6 +149,8 @@ export const TEXT_EFFECTS: TextEffect[] = [
     accent: '#94a3b8',
     cssPreview: 'styled',
     tags: ['smoke', 'volumetric', 'moody'],
+    dispersion: true,
+    defaultFreedom: 0.65,
   },
   {
     id: 'frosted-glass',
@@ -191,6 +201,8 @@ export const TEXT_EFFECTS: TextEffect[] = [
     accent: '#f59e0b',
     cssPreview: 'neon-trail',
     tags: ['light', 'long-exposure', 'neon'],
+    dispersion: true,
+    defaultFreedom: 0.6,
   },
   {
     id: 'molten-metal',

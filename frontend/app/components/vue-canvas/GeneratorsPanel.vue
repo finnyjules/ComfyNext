@@ -445,6 +445,8 @@ const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
   SketchToImageNode:       { useCase: 'Sketch to image',           model: 'Nano Banana' },
   // Image — manipulation
   EditImageNode:           { useCase: 'Edit an image',             model: 'Flux Kontext Pro' },
+  RestyleFromImageNode:    { useCase: 'Restyle from an image',     model: 'Nano Banana / IP-Adapter' },
+  ProductShotNode:         { useCase: 'Make a product shot',       model: 'SDXL Ad-Inpaint' },
   UpscaleImageNode:        { useCase: 'Upscale an image',          model: 'Clarity' },
   RemoveBackgroundNode:    { useCase: 'Remove background',         model: '851-labs/bg-remover' },
   RestorePhotoNode:        { useCase: 'Restore an old photo',      model: 'Flux Kontext · Restore' },

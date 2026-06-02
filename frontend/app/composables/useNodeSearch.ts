@@ -128,14 +128,14 @@ export function useNodeSearch() {
 
   function addNode(
     nodeType: string,
-    opts: { widgetOverrides?: Record<string, unknown> } = {},
+    opts: { widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown> } = {},
   ) {
     // Check if Vue nodes mode is active
     const { vueNodesEnabled } = useVueNodesEnabled()
     if (vueNodesEnabled.value) {
       // Dispatch custom event for Vue canvas to handle
       window.dispatchEvent(new CustomEvent('comfynext:addNode', {
-        detail: { nodeType, widgetOverrides: opts.widgetOverrides },
+        detail: { nodeType, widgetOverrides: opts.widgetOverrides, propertyOverrides: opts.propertyOverrides },
       }))
       closeNodeSearch()
       return

@@ -364,6 +364,24 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       // Enrich subgraph nodes with definition metadata
       const sgDef = isSubgraphType(lgNode.type) ? subgraphDefs.get(lgNode.type) : null
 
+      // Rehydrate any stashed runtime preview (see convertToLiteGraph) back onto
+      // node.data so the artifact shows its last generated image after a tab
+      // switch / reload, rather than an empty node.
+      const stashedPreview = (lgNode.properties as any)?.comfynext_preview
+      const previewData: any = {}
+      if (stashedPreview && typeof stashedPreview === 'object') {
+        if (Array.isArray(stashedPreview.images) && stashedPreview.images.length) {
+          previewData.images = stashedPreview.images
+          if (stashedPreview.animated !== undefined) previewData.animated = stashedPreview.animated
+        }
+        if (Array.isArray(stashedPreview.audios) && stashedPreview.audios.length) {
+          previewData.audios = stashedPreview.audios
+        }
+        if (typeof stashedPreview.text === 'string' && stashedPreview.text) {
+          previewData.text = stashedPreview.text
+        }
+      }
+
       return {
         id: String(lgNode.id),
         type: getVueFlowType(lgNode.type),
@@ -379,6 +397,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
           widgetsValues: lgNode.widgets_values || [],
           widgetDefs: getWidgetDefs(lgNode.type),
           properties: lgNode.properties || {},
+          ...previewData,
           mode: lgNode.mode ?? 0,
           color: lgNode.color,
           bgcolor: lgNode.bgcolor,
@@ -418,6 +437,21 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
     })
     const lgNodes: LiteGraphNode[] = rawNodes.map((n) => {
       const d = n.data || {}
+      // Stash runtime preview (generated images/audio/text) into `properties`
+      // so it survives serialization. The URLs point to ComfyUI output files
+      // that persist server-side, so restoring them rehydrates the artifact
+      // preview on tab switch / reload instead of showing an empty node.
+      let properties = d.properties
+      const preview: any = {}
+      if (Array.isArray(d.images) && d.images.length) {
+        preview.images = d.images
+        if (d.animated !== undefined) preview.animated = d.animated
+      }
+      if (Array.isArray(d.audios) && d.audios.length) preview.audios = d.audios
+      if (typeof d.text === 'string' && d.text) preview.text = d.text
+      if (Object.keys(preview).length) {
+        properties = { ...(d.properties || {}), comfynext_preview: preview }
+      }
       return {
         id: Number(n.id),
         type: d.nodeType,
@@ -427,7 +461,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
         inputs: d.inputs,
         outputs: d.outputs,
         widgets_values: (d.nodeType === 'Note' || d.nodeType === 'MarkdownNote') ? [d.text || ''] : d.widgetsValues,
-        properties: d.properties,
+        properties,
         mode: d.mode,
         color: d.color,
         bgcolor: d.bgcolor,

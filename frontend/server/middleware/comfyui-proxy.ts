@@ -23,8 +23,8 @@ const PROXY_PREFIXES = [
 ]
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
-const NITRO_API_PATHS = ['/api/explain', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts']
-const NITRO_API_PREFIXES = ['/api/templates', '/api/cloud-train']
+const NITRO_API_PATHS = ['/api/explain', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover']
+const NITRO_API_PREFIXES = ['/api/templates', '/api/cloud-train', '/api/krea']
 const NITRO_ROUTE_PREFIXES = ['/view', '/history']
 
 export default defineEventHandler(async (event) => {

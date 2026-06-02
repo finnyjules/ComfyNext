@@ -424,6 +424,15 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
+    <!-- LoRA gallery launcher: replaces the lora_name dropdown with a button
+         that opens the visual LoRA gallery modal. -->
+    <template v-else-if="widgetDef.comfynext_widget === 'lora_picker'">
+      <VueCanvasWidgetsWidgetLoraPicker
+        :model-value="modelValue"
+        :node-id="nodeId"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
     <!-- 3-axis camera gimbal: drives RotateCameraNode. The widget owns its
          own label and produces a JSON string {yaw,pitch,roll}. `nodeId` is
          forwarded so the widget can look up the connected image and render
@@ -505,9 +514,9 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
         @update:is-fixed="emit('update:isFixed', $event)"
       />
-      <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" @update:model-value="emit('update:modelValue', $event)" />
+      <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" :name="widgetDef.name" @update:model-value="emit('update:modelValue', $event)" />
       <VueCanvasWidgetsWidgetToggle v-else-if="isToggle" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="widgetDef.name.toLowerCase().includes('text') || widgetDef.name.toLowerCase().includes('prompt')" @update:model-value="emit('update:modelValue', $event)" />
+      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="widgetDef.multiline ?? (widgetDef.name.toLowerCase().includes('text') || widgetDef.name.toLowerCase().includes('prompt'))" @update:model-value="emit('update:modelValue', $event)" />
     </template>
   </div>
 </template>

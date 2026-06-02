@@ -17,6 +17,10 @@
  * kicks off a prediction. Returns the prediction id; the frontend polls
  * /status with that id.
  */
+function sanitize(name: string): string {
+  return (name || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-lora'
+}
+
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const token = (config as any).replicateToken
@@ -74,27 +78,69 @@ export default defineEventHandler(async (event) => {
   }
   if (body.triggerWord) input.trigger_word = body.triggerWord
 
-  const predRes = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ version, input }),
+  // These are TRAINING models — they must be started via the trainings API, not
+  // /v1/predictions (which would invoke the model's inference interface and
+  // reject with "prompt is required"). A training pushes the resulting weights
+  // to a `destination` model the token owner controls, so we resolve the
+  // account username and ensure that destination exists first.
+  const acctRes = await fetch('https://api.replicate.com/v1/account', {
+    headers: { Authorization: `Token ${token}` },
   })
-
-  if (!predRes.ok) {
-    const text = await predRes.text().catch(() => '')
-    throw createError({ statusCode: predRes.status, message: text || predRes.statusText })
+  if (!acctRes.ok) {
+    const text = await acctRes.text().catch(() => '')
+    throw createError({ statusCode: 502, message: `Could not resolve Replicate account: ${text || acctRes.statusText}` })
+  }
+  const account = await acctRes.json() as { username?: string }
+  const username = account.username
+  if (!username) {
+    throw createError({ statusCode: 502, message: 'Replicate account returned no username' })
   }
 
-  const pred = await predRes.json() as { id: string; status: string }
+  const destName = `jules-${sanitize(body.outputName)}`
+  const destination = `${username}/${destName}`
+
+  // Ensure the destination model exists (create on first use). A 409 / "already
+  // exists" just means we've trained to this name before — that's fine.
+  const createRes = await fetch('https://api.replicate.com/v1/models', {
+    method: 'POST',
+    headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      owner: username,
+      name: destName,
+      visibility: 'private',
+      hardware: 'gpu-t4',
+      description: 'LoRA trained from ComfyNext.',
+    }),
+  })
+  if (!createRes.ok && createRes.status !== 409) {
+    const text = await createRes.text().catch(() => '')
+    if (!/already exists/i.test(text)) {
+      throw createError({ statusCode: 502, message: `Could not create destination model ${destination}: ${text || createRes.statusText}` })
+    }
+  }
+
+  // Start the training.
+  const trainRes = await fetch(
+    `https://api.replicate.com/v1/models/${trainerModel}/versions/${version}/trainings`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination, input }),
+    },
+  )
+  if (!trainRes.ok) {
+    const text = await trainRes.text().catch(() => '')
+    throw createError({ statusCode: trainRes.status, message: text || trainRes.statusText })
+  }
+
+  const training = await trainRes.json() as { id: string; status: string }
   return {
-    id: pred.id,
-    status: pred.status,
+    id: training.id,
+    status: training.status,
     family: body.family ?? 'flux',
     outputName: body.outputName,
     trainerModel,
     versionId: version,
+    destination,
   }
 })

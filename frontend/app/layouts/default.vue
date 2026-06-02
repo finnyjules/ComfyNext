@@ -135,7 +135,13 @@ const seenStartModalTabIds = new Set<string>()
 watch(() => activeTabId.value, (id) => {
   if (!id) { startModalTabId.value = null; return }
   const tab = tabs.value.find((t) => t.id === id) as any
-  const isFreshBlankProject = tab?.type === 'project' && !tab?.workflowId && !seenStartModalTabIds.has(id)
+  // A tab that already has a workflow on the canvas (saved nodes) is NOT blank,
+  // even if it was opened without a workflowId (e.g. "Use in new workflow",
+  // a generation in progress). Tying the modal to real content — not just the
+  // volatile seen-Set — stops it re-appearing over an existing generation.
+  const hasSavedContent = (savedWorkflows[id]?.nodes?.length ?? 0) > 0
+  const isFreshBlankProject = tab?.type === 'project' && !tab?.workflowId
+    && !seenStartModalTabIds.has(id) && !hasSavedContent
   if (isFreshBlankProject) {
     seenStartModalTabIds.add(id)
     startModalTabId.value = id
@@ -308,7 +314,25 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 // When `targetIds` is provided, runs only that subset (plus upstream deps).
 // Forgiving filtering happens via buildFilteredWorkflow which mutes everything
 // outside the keep set; LiteGraph already honors mode=2 at queue time.
-async function runVueWorkflow(targetIds?: string[]) {
+// FluxLoRARemoteNode keeps its style/aesthetic in a node PROPERTY
+// (`properties.aesthetic`) rather than a ComfyUI input — that keeps the node
+// schema stable (a new input would de-sync the embedded canvas and scramble
+// widget positions). Here, at submit time, we fold it into the prompt widget
+// (index 0) on the outgoing workflow copy only.
+function injectLoraStyleIntoPrompt(workflow: any) {
+  for (const node of workflow?.nodes || []) {
+    if (node?.type !== 'FluxLoRARemoteNode') continue
+    // `tasteProfile` fallback keeps workflows saved before the rename working.
+    const style = String(node.properties?.aesthetic || node.properties?.tasteProfile || '').trim()
+    if (!style) continue
+    const wv = node.widgets_values
+    if (!Array.isArray(wv)) continue
+    const prompt = String(wv[0] ?? '')
+    wv[0] = prompt ? `${style} ${prompt}` : style
+  }
+}
+
+async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self' } = {}) {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
     toast.error('Canvas not ready', { description: 'Give it a moment and try again.' })
@@ -339,7 +363,7 @@ async function runVueWorkflow(targetIds?: string[]) {
   }
 
   const workflow = targetIds?.length && vueCanvasRef.value.getFilteredWorkflow
-    ? vueCanvasRef.value.getFilteredWorkflow(targetIds)
+    ? vueCanvasRef.value.getFilteredWorkflow(targetIds, opts)
     : vueCanvasRef.value.getWorkflow()
   if (!workflow?.nodes?.length) {
     console.warn('[Run] workflow has no nodes')
@@ -354,6 +378,11 @@ async function runVueWorkflow(targetIds?: string[]) {
   if (activeTab.value.projectUuid) {
     plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
   }
+
+  // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
+  // ComfyUI input — keeps the schema stable) into its prompt widget at submit
+  // time. The live node's prompt stays clean (we only mutate this copy).
+  injectLoraStyleIntoPrompt(plainWorkflow)
 
   // Bake any Compositor text/shape overlays into uploaded image layers and
   // wire them into the workflow (mutates plainWorkflow in place).
@@ -419,9 +448,10 @@ async function handleRunFiltered(e: Event) {
   const detail = (e as CustomEvent).detail
   const targetIds = detail?.targetIds as string[] | undefined
   if (!targetIds?.length) return
+  const rerollScope = detail?.rerollScope as 'self' | undefined
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
-  if (await maybeRunWithTextAutofill(expanded)) return
-  runVueWorkflow(expanded)
+  if (await maybeRunWithTextAutofill(expanded, { rerollScope })) return
+  runVueWorkflow(expanded, { rerollScope })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
@@ -456,7 +486,7 @@ function awaitExecutionComplete(timeoutMs = 120_000): Promise<void> {
 // value flows through, then we capture the executed text into entries[i].
 // Returns true if it handled the run (caller should skip its normal path).
 let textAutofillRunning = false
-async function maybeRunWithTextAutofill(targetIds?: string[]): Promise<boolean> {
+async function maybeRunWithTextAutofill(targetIds?: string[], opts: { rerollScope?: 'self' } = {}): Promise<boolean> {
   if (textAutofillRunning) return false
   const canvas = vueCanvasRef.value
   if (!canvas?.getNodes || !canvas?.getEdges) return false
@@ -524,7 +554,7 @@ async function maybeRunWithTextAutofill(targetIds?: string[]): Promise<boolean> 
       // a failed iteration would silently inherit the previous text.
       delete target.data.text
       const completed = awaitExecutionComplete()
-      await runVueWorkflow(targetIds)
+      await runVueWorkflow(targetIds, opts)
       try {
         await completed
       } catch (err) {
@@ -629,11 +659,16 @@ onMounted(() => {
   window.addEventListener('comfynext:runFiltered', handleRunFiltered)
   window.addEventListener('comfynext:runAll', handleRunAll)
   window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
+  window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
+  // Escape hatch: force-reload the embedded ComfyUI canvas from the console
+  // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
+  ;(window as any).__reloadCanvas = forceReloadCanvas
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
   window.removeEventListener('comfynext:runAll', handleRunAll)
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
+  window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
 })
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
@@ -738,6 +773,23 @@ function resetBridgeReady() {
   bridgeIsReady = false
   bridgeReadyPromise = new Promise((r) => { bridgeReadyResolve = r })
 }
+
+// The embedded ComfyUI canvas (iframe) fetches its node schema ONCE at load.
+// After a backend node-schema change it goes stale — it maps widget values to
+// the OLD widget order (e.g. a taste_profile value landing in the prompt_strength
+// slot → "could not convert string to float" → 400). A plain page refresh in dev
+// (HMR) often doesn't remount the iframe, so we force it: reset the bridge-ready
+// handshake AND reload the iframe with a cache-bust. Exposed on window so it can
+// be triggered from the console; also wired to the "Reload canvas" control.
+const comfyIframeSrc = ref('http://127.0.0.1:8188/')
+function forceReloadCanvas() {
+  resetBridgeReady()
+  endWorkflowLoading()
+  comfyIframeSrc.value = `http://127.0.0.1:8188/?_cb=${Date.now()}`
+}
+// Assign at setup time too (HMR re-runs setup but not always onMounted) so the
+// console escape hatch is always present.
+if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
 
 function markBridgeReady() {
   if (bridgeIsReady) return
@@ -883,6 +935,9 @@ function handleLoadTabWorkflow(e: Event) {
   const { tabId, workflow } = (e as CustomEvent).detail
   savedWorkflows[tabId] = workflow
   persistWorkflows()
+  // This tab now has real content — never treat it as a "fresh blank project"
+  // (would otherwise pop the Get Started modal over the loaded workflow).
+  seenStartModalTabIds.add(tabId)
   // If this tab is already active, load it now
   const tab = tabs.value.find((t: any) => t.id === tabId)
   if (tab && activeTabId.value === tabId) {
@@ -921,9 +976,12 @@ watch(activeTabId, async (newId, oldId) => {
   // Save current workflow when leaving a project tab
   if (oldTab?.type === 'project') {
     if (vueNodesEnabled.value) {
-      // Vue mode: serialize from Vue canvas
-      if (vueCanvasRef.value?.getWorkflow) {
-        savedWorkflows[oldTab.id] = vueCanvasRef.value.getWorkflow()
+      // Vue mode: serialize from Vue canvas. Guard against an empty/blank
+      // snapshot (canvas mid-unmount or not yet populated) clobbering a good
+      // saved workflow — losing the user's generation on tab switch-back.
+      const snapshot = vueCanvasRef.value?.getWorkflow?.()
+      if (snapshot && (snapshot.nodes?.length ?? 0) > 0) {
+        savedWorkflows[oldTab.id] = snapshot
       }
     }
     else if (sharedIframeReady) {
@@ -1647,7 +1705,7 @@ function dismissRunResult() {
       <!-- Tab bar -->
       <div class="flex items-center pt-[19px] bg-[#0a0a0a]">
         <!-- Tabs -->
-        <div class="flex items-end flex-1 min-w-0">
+        <div class="tab-strip flex items-end flex-1 min-w-0 overflow-x-auto">
           <template v-for="(tab, index) in tabs" :key="tab.id">
             <!-- Separator between inactive tabs -->
             <div
@@ -1816,6 +1874,7 @@ function dismissRunResult() {
           <AppsFaceSwapApp v-if="tab.appId === 'face-swap'" />
           <AppsAutoSubtitleApp v-else-if="tab.appId === 'auto-subtitle'" />
           <AppsKaraokeMakerApp v-else-if="tab.appId === 'karaoke-maker'" />
+          <AppsProductShotApp v-else-if="tab.appId === 'product-shot'" />
         </div>
         <!-- Train LoRA tab -->
         <div
@@ -1969,7 +2028,7 @@ function dismissRunResult() {
           :style="vueNodesEnabled && vueSidebarOpen ? { width: '320px', right: 'auto' } : {}"
         >
           <iframe
-            src="http://127.0.0.1:8188/"
+            :src="comfyIframeSrc"
             class="border-0 absolute"
             @load="onSharedIframeLoad"
             :style="{
@@ -2258,3 +2317,14 @@ function dismissRunResult() {
     />
   </div>
 </template>
+
+<style scoped>
+/* Tab strip scrolls horizontally when tabs overflow, instead of spilling over
+   the credits/run controls. Hide the scrollbar to keep the bar clean. */
+.tab-strip {
+  scrollbar-width: none;
+}
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+</style>

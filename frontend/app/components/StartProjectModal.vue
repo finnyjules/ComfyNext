@@ -1,27 +1,20 @@
 <script setup lang="ts">
 /**
- * "Get Started" modal — appears on a fresh blank project. Mad-libs picker:
+ * "Get Started" modal — appears on a fresh blank project.
  *
- *   I want to create [output]
- *                from [input]
- *               using [model]   →   [ Start ]   Skip
- *
- * The middle row only shows when the picked model actually consumes an
- * upstream asset; pure prompt-to-X paths collapse it ("Create X using Y").
- *
- * On Start, the parent layout drops a source artifact (when from ≠ prompt)
- * + the generator node, wired together — beginners get a runnable graph in
- * three clicks. Skip leaves a blank canvas for power users.
+ * A scannable grid of starting points grouped by what you want to make
+ * (Image · Video · Audio · Text · 3D). One click on a card emits the
+ * chosen capability; the parent layout drops the generator node — plus a
+ * pre-wired source artifact when the capability consumes an upstream asset
+ * (from ≠ 'prompt') — so beginners land on a runnable graph in a single
+ * click. Skip leaves a blank canvas for power users.
  */
-import { X, ChevronDown, Sparkles, Image as ImageIcon, Film, AudioWaveform, MessageSquareText, Box as BoxIcon } from 'lucide-vue-next'
+import { X, Search, Sparkles, Image as ImageIcon, Film, AudioWaveform, MessageSquareText, Box as BoxIcon } from 'lucide-vue-next'
 import {
   type IOType,
   type Capability,
   CAPABILITIES,
-  INPUT_TYPES,
   OUTPUT_TYPES,
-  inputsFor,
-  capabilitiesFor,
 } from '~/data/node-capabilities'
 import { getGeneratorIcon, getModelBrand } from '~/data/generator-icons'
 
@@ -44,199 +37,137 @@ const INPUT_ICONS: Record<string, any> = {
   audio:  AudioWaveform,
   text:   MessageSquareText,
 }
+// Short hint shown on cards that consume an upstream asset.
+const FROM_LABEL: Partial<Record<IOType, string>> = {
+  image: 'from an image',
+  video: 'from a video',
+  audio: 'from audio',
+  text:  'from text',
+}
 
-const output = ref<IOType | null>(null)
-const input = ref<IOType | null>(null)
-const selected = ref<Capability | null>(null)
+const query = ref('')
 
-const openSlot = ref<'output' | 'input' | 'model' | null>(null)
+interface Group {
+  id: string
+  label: string
+  icon: any
+  caps: Capability[]
+}
 
-// Available inputs for the chosen output, in a stable visual order.
-const availableInputs = computed(() => {
-  if (!output.value) return []
-  const reachable = new Set(inputsFor(output.value))
-  return INPUT_TYPES.filter((i) => reachable.has(i.id))
+// Capabilities grouped by output type, in OUTPUT_TYPES order, filtered live
+// by the search box. Empty groups are dropped.
+const groups = computed<Group[]>(() => {
+  const q = query.value.trim().toLowerCase()
+  const match = (c: Capability) =>
+    !q ||
+    c.useCase.toLowerCase().includes(q) ||
+    c.model.toLowerCase().includes(q)
+
+  return OUTPUT_TYPES.map((o) => ({
+    id: o.id,
+    label: o.label,
+    icon: OUTPUT_ICONS[o.id],
+    caps: CAPABILITIES.filter((c) => c.to === o.id && match(c)),
+  })).filter((g) => g.caps.length > 0)
 })
 
-const availableModels = computed<Capability[]>(() => {
-  if (!output.value || !input.value) return []
-  return capabilitiesFor(input.value, output.value)
-})
+const hasResults = computed(() => groups.value.length > 0)
 
-function pickOutput(o: IOType) {
-  output.value = o
-  // Reset downstream slots if the previous picks no longer make sense.
-  if (input.value && !inputsFor(o).includes(input.value)) input.value = null
-  if (selected.value && (selected.value.to !== o)) selected.value = null
-  openSlot.value = 'input'  // auto-advance
+function pick(cap: Capability) {
+  emit('start', { capability: cap })
 }
 
-function pickInput(i: IOType) {
-  input.value = i
-  if (selected.value && (selected.value.from !== i)) selected.value = null
-  openSlot.value = 'model'
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') emit('skip')
 }
-
-function pickModel(c: Capability) {
-  selected.value = c
-  openSlot.value = null
-}
-
-function start() {
-  if (!selected.value) return
-  emit('start', { capability: selected.value })
-}
-
-function outputLabel(id: IOType): string {
-  return OUTPUT_TYPES.find((o) => o.id === id)?.label || id
-}
-function inputLabel(id: IOType): string {
-  return INPUT_TYPES.find((i) => i.id === id)?.label || id
-}
+onMounted(() => window.addEventListener('keydown', onKey))
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
   <!-- Backdrop -->
   <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" @click.self="emit('skip')">
     <!-- Modal panel -->
-    <div class="relative w-[640px] max-w-full bg-[#161616] border border-white/10 rounded-2xl shadow-2xl">
-      <!-- Close -->
-      <button
-        class="absolute top-4 right-4 size-7 rounded-md flex items-center justify-center text-white/40 hover:text-white/85 hover:bg-white/[0.06] transition-colors cursor-pointer"
-        title="Skip — open a blank canvas"
-        @click="emit('skip')"
-      >
-        <X class="size-4" />
-      </button>
+    <div class="relative w-[760px] max-w-full max-h-[85vh] flex flex-col bg-[#161616] border border-white/10 rounded-2xl shadow-2xl">
+      <!-- Header -->
+      <div class="px-8 pt-8 pb-5 shrink-0">
+        <button
+          class="absolute top-4 right-4 size-7 rounded-md flex items-center justify-center text-white/40 hover:text-white/85 hover:bg-white/[0.06] transition-colors cursor-pointer"
+          title="Skip — open a blank canvas"
+          @click="emit('skip')"
+        >
+          <X class="size-4" />
+        </button>
 
-      <div class="px-8 pt-8 pb-6">
         <h2 class="text-[20px] font-medium text-white tracking-[0.1px] mb-1">
           What do you want to make?
         </h2>
-        <p class="text-[13px] text-white/45 mb-6">
-          Pick a path and we'll set up the canvas for you.
+        <p class="text-[13px] text-white/45">
+          Pick a starting point — we'll set up the canvas for you.
         </p>
 
-        <!-- Mad-libs row -->
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-3 text-[18px] text-white/85 leading-relaxed">
-          <span>I want to create</span>
+        <!-- Search -->
+        <div class="mt-5 relative">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-white/35" :stroke-width="1.75" />
+          <input
+            v-model="query"
+            type="text"
+            placeholder="Search starting points…"
+            autofocus
+            class="w-full h-10 pl-9 pr-3 rounded-lg bg-white/[0.03] border border-white/10 text-[14px] text-white placeholder:text-white/35 outline-none focus:border-white/25 focus:bg-white/[0.05] transition-colors"
+          />
+        </div>
+      </div>
 
-          <!-- Output slot -->
-          <div class="relative">
-            <button
-              class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors cursor-pointer"
-              :class="output ? 'bg-white/[0.06] border-white/15 text-white' : 'bg-white/[0.03] border-white/10 text-white/55 hover:text-white/85 hover:border-white/20'"
-              @click="openSlot = openSlot === 'output' ? null : 'output'"
-            >
-              <component :is="output ? OUTPUT_ICONS[output] : Sparkles" class="size-4 shrink-0" :stroke-width="1.75" />
-              <span>{{ output ? outputLabel(output) : '…' }}</span>
-              <ChevronDown class="size-3.5 text-white/40" />
-            </button>
-            <!-- Popup -->
-            <div
-              v-if="openSlot === 'output'"
-              class="absolute z-10 left-0 top-full mt-1.5 min-w-[200px] flex flex-col gap-0.5 bg-[#1a1a1a]/95 backdrop-blur-md border border-white/10 rounded-lg p-1.5 shadow-xl"
-            >
-              <button
-                v-for="opt in OUTPUT_TYPES"
-                :key="opt.id"
-                class="flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors cursor-pointer hover:bg-white/[0.08] text-[14px] text-white/85"
-                @click="pickOutput(opt.id)"
-              >
-                <component :is="OUTPUT_ICONS[opt.id]" class="size-4 text-white/70" :stroke-width="1.75" />
-                <span>{{ opt.label }}</span>
-              </button>
-            </div>
+      <!-- Card grid -->
+      <div class="px-8 pb-2 overflow-y-auto flex-1 min-h-0">
+        <div v-for="group in groups" :key="group.id" class="mb-6 last:mb-2">
+          <div class="flex items-center gap-2 mb-2.5 text-[11px] font-medium uppercase tracking-wider text-white/40">
+            <component :is="group.icon" class="size-3.5" :stroke-width="2" />
+            <span>{{ group.label }}</span>
           </div>
-
-          <!-- Input slot (always present so users see how the path expands) -->
-          <span class="text-white/45">from</span>
-          <div class="relative">
+          <div class="grid grid-cols-2 gap-2">
             <button
-              class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              :class="input ? 'bg-white/[0.06] border-white/15 text-white' : 'bg-white/[0.03] border-white/10 text-white/55 hover:text-white/85 hover:border-white/20'"
-              :disabled="!output"
-              @click="openSlot = openSlot === 'input' ? null : 'input'"
+              v-for="cap in group.caps"
+              :key="`${cap.nodeType}-${cap.from}`"
+              class="group/card flex items-start gap-2.5 p-3 min-h-[84px] rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/25 text-left transition-colors cursor-pointer"
+              @click="pick(cap)"
             >
-              <component :is="input ? INPUT_ICONS[input] : Sparkles" class="size-4 shrink-0" :stroke-width="1.75" />
-              <span>{{ input ? inputLabel(input) : '…' }}</span>
-              <ChevronDown class="size-3.5 text-white/40" />
-            </button>
-            <div
-              v-if="openSlot === 'input' && output"
-              class="absolute z-10 left-0 top-full mt-1.5 min-w-[200px] flex flex-col gap-0.5 bg-[#1a1a1a]/95 backdrop-blur-md border border-white/10 rounded-lg p-1.5 shadow-xl"
-            >
-              <button
-                v-for="opt in availableInputs"
-                :key="opt.id"
-                class="flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors cursor-pointer hover:bg-white/[0.08] text-[14px] text-white/85"
-                @click="pickInput(opt.id)"
-              >
-                <component :is="INPUT_ICONS[opt.id]" class="size-4 text-white/70" :stroke-width="1.75" />
-                <span>{{ opt.label }}</span>
-              </button>
-            </div>
-          </div>
-
-          <span class="text-white/45">using</span>
-          <div class="relative">
-            <button
-              class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              :class="selected ? 'bg-white/[0.06] border-white/15 text-white' : 'bg-white/[0.03] border-white/10 text-white/55 hover:text-white/85 hover:border-white/20'"
-              :disabled="!input"
-              @click="openSlot = openSlot === 'model' ? null : 'model'"
-            >
-              <component
-                :is="selected ? (getGeneratorIcon(selected.nodeType) || Sparkles) : Sparkles"
-                class="size-4 shrink-0"
-                :stroke-width="1.75"
-              />
-              <span>{{ selected ? selected.useCase : 'pick a model' }}</span>
-              <ChevronDown class="size-3.5 text-white/40" />
-            </button>
-            <div
-              v-if="openSlot === 'model' && input"
-              class="absolute z-10 left-0 top-full mt-1.5 w-[320px] max-h-[320px] overflow-y-auto flex flex-col gap-0.5 bg-[#1a1a1a]/95 backdrop-blur-md border border-white/10 rounded-lg p-1.5 shadow-xl"
-            >
-              <button
-                v-for="cap in availableModels"
-                :key="`${cap.nodeType}-${cap.from}`"
-                class="flex items-start gap-2.5 px-3 py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-white/[0.08]"
-                @click="pickModel(cap)"
-              >
-                <component :is="getGeneratorIcon(cap.nodeType) || Sparkles" class="size-4 text-white/85 shrink-0 mt-0.5" :stroke-width="1.75" />
-                <div class="flex flex-col min-w-0 flex-1">
-                  <span class="text-[13px] text-white/90 truncate">{{ cap.useCase }}</span>
-                  <span class="text-[11px] text-white/45 truncate">{{ cap.model }}</span>
-                </div>
-                <span v-if="getModelBrand(cap.nodeType)" class="text-[10px] uppercase tracking-wider text-white/40 mt-0.5">
-                  {{ getModelBrand(cap.nodeType) }}
+              <span class="shrink-0 size-8 rounded-lg bg-white/[0.05] group-hover/card:bg-white/[0.09] flex items-center justify-center transition-colors">
+                <component :is="getGeneratorIcon(cap.nodeType) || Sparkles" class="size-4 text-white/85" :stroke-width="1.75" />
+              </span>
+              <div class="flex flex-col min-w-0 flex-1">
+                <span class="text-[13px] text-white/90 truncate">{{ cap.useCase }}</span>
+                <span class="text-[11px] text-white/45 truncate">{{ cap.model }}</span>
+                <span
+                  v-if="cap.from !== 'prompt' && FROM_LABEL[cap.from]"
+                  class="mt-1 inline-flex items-center gap-1 text-[10px] text-white/35"
+                >
+                  <component :is="INPUT_ICONS[cap.from]" class="size-3" :stroke-width="1.75" />
+                  {{ FROM_LABEL[cap.from] }}
                 </span>
-              </button>
-              <div v-if="!availableModels.length" class="px-3 py-2 text-[12px] text-white/45">
-                No models for this combo yet.
               </div>
-            </div>
+              <span v-if="getModelBrand(cap.nodeType)" class="shrink-0 text-[10px] uppercase tracking-wider text-white/30 mt-0.5">
+                {{ getModelBrand(cap.nodeType) }}
+              </span>
+            </button>
           </div>
         </div>
 
-        <!-- Actions -->
-        <div class="mt-8 flex items-center justify-end gap-3">
-          <button
-            class="text-[12px] text-white/45 hover:text-white/85 transition-colors cursor-pointer"
-            @click="emit('skip')"
-          >
-            Skip — start with a blank canvas
-          </button>
-          <button
-            class="flex items-center gap-2 px-5 h-9 rounded-lg bg-comfy-blue/90 hover:bg-comfy-blue text-white text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            :disabled="!selected"
-            @click="start"
-          >
-            <Sparkles class="size-3.5" />
-            Start
-          </button>
+        <!-- Empty state -->
+        <div v-if="!hasResults" class="py-12 text-center text-[13px] text-white/40">
+          No starting points match “{{ query }}”.
         </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="px-8 py-4 shrink-0 border-t border-white/[0.06] flex items-center justify-end">
+        <button
+          class="text-[12px] text-white/45 hover:text-white/85 transition-colors cursor-pointer"
+          @click="emit('skip')"
+        >
+          Skip — start with a blank canvas
+        </button>
       </div>
     </div>
   </div>

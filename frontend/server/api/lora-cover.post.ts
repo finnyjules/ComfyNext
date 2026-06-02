@@ -1,0 +1,101 @@
+/**
+ * POST /api/lora-cover   Body: { name: <lora filename> }
+ *
+ * Generates a preview thumbnail for a trained LoRA by running it once on
+ * Replicate (the trained model, with its aesthetic + trigger as the prompt),
+ * and caches the result to models/loras/<base>.cover.webp. One-time per LoRA
+ * (subsequent calls overwrite). Returns { coverUrl }.
+ *
+ * This costs one generation (~$0.04) — it's only ever triggered by an explicit
+ * "Generate preview" click in the gallery, never automatically.
+ *
+ * Must be allowlisted in server/middleware/comfyui-proxy.ts (NITRO_API_PATHS).
+ */
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+
+function safeBase(name: string): string | null {
+  const base = (name || '').replace(/\.safetensors$/i, '')
+  return /^[a-zA-Z0-9_-]+$/.test(base) ? base : null
+}
+
+export default defineEventHandler(async (event) => {
+  const config = useRuntimeConfig()
+  const token = (config as any).replicateToken
+  if (!token) throw createError({ statusCode: 500, message: 'Replicate token not configured.' })
+
+  const body = await readBody(event) as { name?: string }
+  const name = String(body?.name ?? '')
+  const base = safeBase(name)
+  if (!base) throw createError({ statusCode: 400, message: 'Invalid LoRA name' })
+
+  const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
+
+  // Read the sidecar for the trained model ref + style.
+  let meta: any = {}
+  try {
+    meta = JSON.parse(await fs.readFile(path.join(lorasDir, `${base}.json`), 'utf8'))
+  } catch {
+    throw createError({ statusCode: 404, message: 'No sidecar for that LoRA.' })
+  }
+  const modelRef = String(meta.replicate_model ?? '').split(':')[0] // <owner>/<model>
+  if (!modelRef) {
+    throw createError({ statusCode: 400, message: 'This LoRA has no trained Replicate model to run.' })
+  }
+
+  const profile = String(meta.aesthetic ?? meta.taste_profile ?? '').trim()
+  const trigger = String(meta.trigger ?? '').trim()
+  const prompt = [profile, trigger ? `${trigger},` : '', 'a portrait'].filter(Boolean).join(' ')
+
+  const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
+
+  // Resolve the model's latest version, then run it (private models 404 on the
+  // model-aliased predictions endpoint, so go straight to versioned /predictions).
+  const mRes = await fetch(`https://api.replicate.com/v1/models/${modelRef}`, { headers })
+  if (!mRes.ok) throw createError({ statusCode: 502, message: `Could not look up ${modelRef}` })
+  const version = ((await mRes.json()) as any).latest_version?.id
+  if (!version) throw createError({ statusCode: 502, message: `${modelRef} has no version` })
+
+  const cRes = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      version,
+      input: {
+        prompt,
+        aspect_ratio: '1:1',
+        megapixels: '1',
+        num_inference_steps: 22,
+        guidance_scale: 3.5,
+        num_outputs: 1,
+        output_format: 'webp',
+        lora_scale: 1,
+      },
+    }),
+  })
+  if (!cRes.ok) {
+    throw createError({ statusCode: cRes.status, message: `Cover generation failed: ${await cRes.text().catch(() => cRes.statusText)}` })
+  }
+  let pred = await cRes.json() as { id: string, status: string, output?: unknown, error?: unknown }
+
+  const deadline = Date.now() + 120_000
+  while (!['succeeded', 'failed', 'canceled'].includes(pred.status)) {
+    if (Date.now() > deadline) throw createError({ statusCode: 504, message: 'Cover generation timed out' })
+    await new Promise((r) => setTimeout(r, 1500))
+    const pr = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers: { Authorization: `Token ${token}` } })
+    if (pr.ok) pred = await pr.json()
+  }
+  if (pred.status !== 'succeeded') {
+    throw createError({ statusCode: 502, message: `Cover generation ${pred.status}: ${String(pred.error ?? '')}` })
+  }
+
+  const out = pred.output
+  const imgUrl = Array.isArray(out) ? out[0] : (typeof out === 'string' ? out : null)
+  if (!imgUrl) throw createError({ statusCode: 502, message: 'Cover generation returned no image' })
+
+  const dl = await fetch(imgUrl)
+  if (!dl.ok) throw createError({ statusCode: 502, message: `Could not download cover (${dl.status})` })
+  await fs.writeFile(path.join(lorasDir, `${base}.cover.webp`), Buffer.from(await dl.arrayBuffer()))
+
+  return { ok: true, coverUrl: `/api/lora-cover?name=${encodeURIComponent(name)}&v=${Date.now()}` }
+})

@@ -83,7 +83,19 @@ watch(() => props.nodeId, () => { draftEffectId.value = currentEffectId.value })
 function onConfirm(item: TextEffect) {
   const idx = effectWidgetIdx.value
   if (idx < 0) { emit('close'); return }
+  const changed = node.value!.data.widgetsValues[idx] !== item.id
   node.value!.data.widgetsValues[idx] = item.id
+  // When the effect actually changes, seed the "freedom" dial with a sensible
+  // per-effect default: dispersion effects break apart out of the box, material
+  // effects reset to exact-preserve. Re-confirming the same effect leaves a
+  // manual freedom override untouched.
+  if (changed) {
+    const defs = (node.value?.data?.widgetDefs ?? []) as any[]
+    const fIdx = defs.findIndex(d => d.name === 'freedom')
+    if (fIdx >= 0) {
+      node.value!.data.widgetsValues[fIdx] = item.dispersion ? (item.defaultFreedom ?? 0.65) : 0
+    }
+  }
   emit('close')
 }
 

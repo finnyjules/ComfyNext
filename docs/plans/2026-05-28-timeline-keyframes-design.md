@@ -83,3 +83,23 @@ flat-widget→`edit_state` refactor — flagged, not bundled.
 
 **Render coverage:** editor preview + export (v1) — or also the node-body
 preview + `execute()` (bigger; entails the flat-widget→`edit_state` refactor).
+
+## Status update (2026-05-29) — loop closed
+
+All four render sites now agree. The feared "flat-widget→`edit_state` refactor"
+turned out not to be needed: both backend sites already read `edit_state`
+directly.
+
+| Path | Site | Keyframes |
+|---|---|---|
+| edit_state | editor playback — `usePlaybackEngine.ts` | ✅ |
+| edit_state | FFmpeg export — `nodes_timeline.py:746` | ✅ |
+| edit_state | backend node-run — `nodes_timeline.py:409` (`_execute_edit_state`) | ✅ |
+| edit_state | node-body preview — `TimelineNodePreview.vue` | ✅ now interpolates |
+
+The node-body preview already consumed `edit_state` (not flat widgets); it was
+only reading the *static* scalars. Fix was to thread `keyframes` into its
+`PreviewLayer` and call the shared `interpolateClipAt(L, localFrame)` per frame
+in `drawOnce()` — same helper as the other three sites. The legacy flat-widget
+path stays static (flat widgets can't express a keyframe list); it's back-compat
+only, reached just when wiring without the editor.

@@ -14,6 +14,7 @@ import {
   UserRoundCog,
   MessageSquareQuote,
   Music as MusicIcon,
+  Package,
 } from 'lucide-vue-next'
 import { getNewest } from '~/data/community/workflowService.js'
 import { formatNumber } from '~/lib/community/formatters.js'
@@ -76,6 +77,14 @@ const appCards = [
     icon: MusicIcon,
     accent: '#ff99f7',
     description: 'Split any song into instrumental and a-cappella stems.',
+  },
+  {
+    id: 'product-shot',
+    label: 'Product Shot',
+    domain: 'Image',
+    icon: Package,
+    accent: '#ffb55c',
+    description: 'Drop a product photo, describe a scene — get a studio-quality shot.',
   },
 ] as const
 

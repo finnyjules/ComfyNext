@@ -31,7 +31,7 @@ const { addNode } = useNodeSearch()
 
 // ── Category + search ─────────────────────────────────────────────────────
 
-type FilterCategory = LoRACategory | 'All'
+type FilterCategory = LoRACategory | 'All' | 'Your LoRAs'
 const activeCategory = ref<FilterCategory>('All')
 const searchQuery = ref('')
 
@@ -50,8 +50,16 @@ const visibleEntries = computed<LoRALibraryEntry[]>(() => {
 
 function categoryCount(cat: FilterCategory): number {
   if (cat === 'All') return LORA_LIBRARY.length
+  if (cat === 'Your LoRAs') return localLoras.value.length
   return LORA_LIBRARY.filter(e => e.category === cat).length
 }
+
+// Filter chips: "Your LoRAs" only appears once you've trained at least one.
+const filterTabs = computed<FilterCategory[]>(() => [
+  'All',
+  ...(localLoras.value.length ? (['Your LoRAs'] as FilterCategory[]) : []),
+  ...LORA_CATEGORIES,
+])
 
 // ── Adding to canvas ──────────────────────────────────────────────────────
 
@@ -169,6 +177,61 @@ onMounted(() => {
   for (const p of toFetch) fetchPreview(p)
 })
 
+// ── Your trained LoRAs (local models/loras + sidecars) ────────────────────
+interface LocalLora {
+  filename: string
+  name: string
+  baseModel: string | null
+  provider: string
+  trigger: string | null
+  aesthetic: string | null
+  url: string | null
+  trainedOn: string | null
+  sizeBytes: number | null
+}
+const localLoras = ref<LocalLora[]>([])
+async function fetchLocalLoras() {
+  try {
+    const res = await fetch('/api/loras-local')
+    if (!res.ok) return
+    const data = await res.json() as { loras: LocalLora[] }
+    localLoras.value = data.loras || []
+  } catch { /* offline — just show the curated library */ }
+}
+onMounted(fetchLocalLoras)
+
+const visibleLocal = computed<LocalLora[]>(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  // Own tab now — only shown when the "Your LoRAs" filter is active.
+  if (activeCategory.value !== 'Your LoRAs') return []
+  return localLoras.value.filter(l =>
+    !q || l.name.toLowerCase().includes(q) || l.filename.toLowerCase().includes(q))
+})
+
+function useLocalLora(l: LocalLora) {
+  // The style block (aesthetic + trigger) goes in the node's collapsed
+  // "Style" field — stored as a node PROPERTY, not a ComfyUI input, so the schema
+  // stays stable — and is folded into the prompt at run time. Keeps the prompt
+  // box clean for the user's scene.
+  const trig = l.trigger?.trim()
+  const style = [l.aesthetic?.trim(), trig ? `${trig},` : ''].filter(Boolean).join(' ')
+  addNode('FluxLoRARemoteNode', {
+    // Drive by filename — the node resolves it server-side via the sidecar and
+    // runs the user's own trained model directly (LoRA baked in, private). NEVER
+    // pass the .tar `url` into lora_url: flux-dev-lora can't parse it, and the
+    // trained model is private so its weights aren't anonymously fetchable.
+    widgetOverrides: { lora_name: l.filename },
+    ...(style ? { propertyOverrides: { aesthetic: style } } : {}),
+  })
+  toast.success(`Added ${l.name}`, {
+    description: l.trigger ? `Trigger: ${l.trigger}` : (l.baseModel ? `Base: ${l.baseModel}` : undefined),
+  })
+}
+
+function fmtMB(bytes: number | null): string {
+  return bytes ? `${Math.round(bytes / 1024 / 1024)} MB` : ''
+}
+
 const searchInputRef = ref<HTMLInputElement | null>(null)
 function clearSearch() {
   searchQuery.value = ''
@@ -218,7 +281,7 @@ function clearSearch() {
     <!-- Category tabs -->
     <div class="px-2 pb-2 flex flex-wrap gap-1">
       <button
-        v-for="cat in (['All', ...LORA_CATEGORIES] as FilterCategory[])"
+        v-for="cat in filterTabs"
         :key="cat"
         class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-[11px] transition-colors cursor-pointer"
         :class="activeCategory === cat
@@ -233,8 +296,39 @@ function clearSearch() {
 
     <!-- Body -->
     <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-2">
+      <!-- Your trained LoRAs (own filter tab) -->
+      <div v-if="visibleLocal.length" class="grid grid-cols-2 gap-2 pt-1">
+          <button
+            v-for="l in visibleLocal"
+            :key="l.filename"
+            class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/40 transition-colors cursor-pointer overflow-hidden h-[96px] text-left p-2.5 flex flex-col justify-between"
+            style="background: linear-gradient(135deg, hsl(265,42%,20%) 0%, hsl(292,46%,12%) 100%)"
+            :title="l.aesthetic ? `Add ${l.name}\n\nStyle profile (added to prompt):\n${l.aesthetic}` : `Add ${l.name}`"
+            @click="useLocalLora(l)"
+          >
+            <div class="flex items-center justify-between">
+              <Sparkles class="size-3.5 text-violet-200/90" />
+              <div class="flex items-center gap-1">
+                <span
+                  v-if="l.aesthetic"
+                  class="text-[8.5px] uppercase tracking-wide text-violet-100/80 bg-violet-500/25 px-1 py-0.5 rounded"
+                  title="A aesthetic is bundled and added to the prompt"
+                >style</span>
+                <span v-if="l.baseModel" class="text-[8.5px] uppercase tracking-wide text-white/55 bg-black/30 px-1 py-0.5 rounded">{{ l.baseModel }}</span>
+              </div>
+            </div>
+            <div class="min-w-0">
+              <div class="text-[12px] font-medium text-white truncate">{{ l.name }}</div>
+              <div v-if="l.trigger" class="text-[9.5px] font-mono text-violet-300/85 truncate" :title="`Trigger word: ${l.trigger}`">{{ l.trigger }}</div>
+              <div class="text-[10px] text-white/45 truncate">
+                {{ l.provider === 'replicate' ? 'Trained · Replicate' : 'Local' }}<span v-if="fmtMB(l.sizeBytes)"> · {{ fmtMB(l.sizeBytes) }}</span>
+              </div>
+            </div>
+          </button>
+      </div>
+
       <div
-        v-if="visibleEntries.length === 0"
+        v-if="visibleEntries.length === 0 && !visibleLocal.length"
         class="px-4 py-12 text-center text-xs text-white/40"
       >
         <template v-if="searchQuery.trim()">

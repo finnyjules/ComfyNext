@@ -100,6 +100,26 @@ export default defineNuxtConfig({
         },
       },
     },
+    // Pre-bundle the deps Vite would otherwise discover on first use. Without
+    // this, hitting an un-bundled dep mid-session makes Vite re-optimize and
+    // force a full page reload — the "click New workflow, nothing happens,
+    // then it randomly works a minute later" stall. This list is exactly what
+    // Vite's "discovered new dependencies at runtime" warning recommends.
+    optimizeDeps: {
+      include: [
+        '@vue-flow/core',
+        '@vue-flow/background',
+        '@vue-flow/minimap',
+        '@vueuse/core',
+        'gsap',
+        'jszip',
+        'lucide-vue-next',
+        'reka-ui',
+        '@faker-js/faker',
+        'clsx',
+        'tailwind-merge',
+      ],
+    },
     // Vite 7 defaults `allowedHosts` to localhost variants only — anything
     // else gets "Upgrade Required". Allow all hosts in dev so headless
     // preview tooling (which sends a non-localhost Host header) can drive

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Download, Loader2, Play, Upload } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Dices, Download, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
@@ -129,6 +129,18 @@ function runThisNode() {
   window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }))
 }
 
+// "Re-roll this node": run ONLY this node, leaving everything upstream exactly
+// as it was on the last run. We scope seed randomization to this node so all
+// upstream inputs stay identical → ComfyUI cache-hits them (no regen, no
+// re-billing) and recomputes just this node + its preview. Great for re-rolling
+// a generator or iterating on one node's settings without paying for the chain.
+function rerollThisNode() {
+  if (isMuted.value || isBypassed.value || props.data.running) return
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    detail: { targetIds: [props.id], rerollScope: 'self' },
+  }))
+}
+
 // Live-preview node types: auto-run on widget change (debounced) so the
 // preview image refreshes without the user clicking Run.
 const LIVE_PREVIEW_NODES = new Set([
@@ -255,6 +267,11 @@ function isWidgetVisible(widget: any): boolean {
 // Per-node widget groupings. Widgets in a group render together under a
 // collapsible header. Widgets not listed render flat above the groups.
 const WIDGET_GROUPS: Record<string, { title: string; widgets: string[] }[]> = {
+  // Keep the node tidy: only prompt / LoRA / scale / aspect ratio show by
+  // default; the rest live in a collapsed Advanced group.
+  FluxLoRARemoteNode: [
+    { title: 'Advanced', widgets: ['lora_url', 'megapixels', 'num_inference_steps', 'guidance', 'seed', 'prompt_strength'] },
+  ],
   AdjustColorBalance: [
     { title: 'Shadows',    widgets: ['shadows_cr',    'shadows_mg',    'shadows_yb'] },
     { title: 'Midtones',   widgets: ['midtones_cr',   'midtones_mg',   'midtones_yb'] },
@@ -280,6 +297,7 @@ const WIDGET_GROUPS: Record<string, { title: string; widgets: string[] }[]> = {
 // Initial collapsed state — keep every Compositor layer beyond #1 collapsed
 // so a fresh node isn't a wall of accordion groups.
 const collapsedGroups = ref(new Set<string>([
+  'Advanced',
   'Midtones', 'Highlights', 'Green output', 'Blue output',
   ...Array.from({ length: 15 }, (_, i) => `Layer ${i + 2}`),
 ]))
@@ -420,6 +438,19 @@ function widgetsInGroup(title: string): any[] {
   const byName = new Map((props.data.widgetDefs || []).map((d: any) => [d.name, d]))
   return g.widgets.map(n => byName.get(n)).filter(Boolean)
 }
+
+// FluxLoRARemoteNode "Style" field — the aesthetic, stored as a node
+// PROPERTY (not a ComfyUI input, so the schema stays stable) and folded into the
+// prompt at submit time. Collapsed by default to keep the prompt area clean.
+const styleOpen = ref(false)
+const loraStyleProp = computed<string>({
+  // `tasteProfile` fallback keeps workflows saved before the rename working.
+  get: () => String((props.data.properties as any)?.aesthetic ?? (props.data.properties as any)?.tasteProfile ?? ''),
+  set: (v: string) => {
+    if (!props.data.properties) (props.data as any).properties = {}
+    ;(props.data.properties as any).aesthetic = v
+  },
+})
 const isLivePreview = computed(() => LIVE_PREVIEW_NODES.has(props.data.nodeType))
 
 let liveRunTimer: ReturnType<typeof setTimeout> | null = null
@@ -782,6 +813,23 @@ watch(previewImages, (urls) => {
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || data.title }}</span>
+      <!-- Re-roll this node: runs ONLY this node, re-rolling its seed and reusing
+           cached upstream (no regen / re-billing of the chain). See rerollThisNode. -->
+      <button
+        v-if="showRunButton"
+        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
+        :class="(isMuted || isBypassed || data.running)
+          ? 'text-white/25 cursor-not-allowed'
+          : 'text-white/55 hover:text-violet-300 hover:bg-violet-400/15'"
+        :disabled="isMuted || isBypassed || data.running"
+        :title="isMuted ? 'Node is muted'
+          : isBypassed ? 'Node is bypassed'
+          : data.running ? 'Running…'
+          : 'Re-run only this node — new seed, everything upstream stays as-is'"
+        @click.stop="rerollThisNode"
+      >
+        <Dices class="size-3" />
+      </button>
       <!-- Per-node Run: runs this node + its upstream deps via filtered queue.
            Shows on generators, output sinks (OUTPUT_NODE=True), and heavy
            local compute — see showRunButton above. -->
@@ -797,7 +845,7 @@ watch(previewImages, (urls) => {
         :title="isMuted ? 'Node is muted'
           : isBypassed ? 'Node is bypassed'
           : data.running ? 'Running…'
-          : 'Run this node'"
+          : 'Run this node and everything before it'"
         @click.stop="runThisNode"
       >
         <Loader2 v-if="data.running" class="size-3 animate-spin" />
@@ -902,6 +950,30 @@ watch(previewImages, (urls) => {
             @update:is-fixed="setSeedFixed(widget, widgetIndex(widget.name), $event)"
           />
         </template>
+      </template>
+
+      <!-- FluxLoRARemoteNode: schema-free "Style" field. Stored as a node
+           property and prepended to the prompt at run time, so the prompt area
+           stays clean for the user's scene. -->
+      <template v-if="data.nodeType === 'FluxLoRARemoteNode'">
+        <div class="px-2 nopan nodrag">
+          <button
+            class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
+            @click="styleOpen = !styleOpen"
+          >
+            <ChevronRight class="size-3 transition-transform" :class="styleOpen ? 'rotate-90' : ''" />
+            <span>Style</span>
+            <span v-if="loraStyleProp.trim()" class="ml-1 normal-case text-[8.5px] text-white/60 bg-white/10 px-1 py-px rounded">added to prompt</span>
+          </button>
+          <div v-if="styleOpen" class="pb-1">
+            <textarea
+              v-model="loraStyleProp"
+              rows="4"
+              placeholder="Style / aesthetic — automatically added to the front of your prompt at run time. Keeps the prompt box clean for your scene."
+              class="nodrag nopan nowheel w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-[11px] leading-relaxed text-foreground placeholder:text-white/25 outline-none focus-visible:border-ring resize-y"
+            />
+          </div>
+        </div>
       </template>
     </div>
 

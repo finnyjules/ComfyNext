@@ -44,6 +44,16 @@ class TextEffect:
     prompt_template: str    # contains "{TEXT}" — generate (text-to-image) path
     edit_template: str = ""  # restyle (image-edit) instruction; material only
     model_slug: str = _TEXT_MODEL_SLUG
+    # Dispersion effects (ink, smoke, light-trails) want the letters to break
+    # apart — which the exact-preserve restyle fights. `medium` names the stuff
+    # the letters dissolve INTO; when set, the "freedom" dial grades the restyle
+    # from exact-preserve toward break-apart (see build_edit_prompt). Empty
+    # `medium` ⇒ a material effect that always preserves, ignoring freedom.
+    medium: str = ""
+    # Per-effect freedom (0..1) used when the caller passes freedom=None. Material
+    # effects stay at 0 (exact); dispersion effects default partway so they break
+    # up out of the box.
+    default_freedom: float = 0.0
 
 
 # Templates mirror the TS catalog verbatim so the gallery's description and the
@@ -77,10 +87,14 @@ EFFECTS: list[TextEffect] = [
         edit_template='Restyle the letters as raw cast brutalist concrete — rough aggregate texture, harsh directional shadows, monolithic surface.'),
     TextEffect("ink-in-water", "Ink in Water",
         'the word "{TEXT}" dissolving into billowing black ink dispersing through clear water, elegant fluid tendrils, high-speed photography, white background, fine art',
-        edit_template='Restyle the letters as billowing black ink dispersing through clear water — elegant fluid tendrils, high-speed fine-art look.'),
+        edit_template='Restyle the letters as billowing black ink dispersing through clear water — elegant fluid tendrils, high-speed fine-art look.',
+        medium="billowing black ink dispersing through clear water",
+        default_freedom=0.65),
     TextEffect("smoke-vapor", "Smoke / Vapor",
         'the word "{TEXT}" forming from drifting wisps of monochrome smoke and vapor, soft volumetric haze, dark background, moody fine-art photography',
-        edit_template='Restyle the letters as drifting monochrome smoke and vapor — soft volumetric haze, moody fine-art lighting.'),
+        edit_template='Restyle the letters as drifting monochrome smoke and vapor — soft volumetric haze, moody fine-art lighting.',
+        medium="drifting monochrome smoke and vapor",
+        default_freedom=0.65),
     TextEffect("frosted-glass", "Frosted Glass",
         'the word "{TEXT}" as translucent frosted glass letters, soft refraction and caustics, shallow depth of field, minimal pastel background, product render',
         edit_template='Restyle the letters as translucent frosted glass — soft refraction and caustics, shallow depth of field, pastel product finish.'),
@@ -95,7 +109,9 @@ EFFECTS: list[TextEffect] = [
         edit_template='Restyle the letters as cut crystal and gemstone facets — prismatic light refraction, sharp polished edges, luxury finish.'),
     TextEffect("light-trails", "Light Trails",
         'the word "{TEXT}" drawn in glowing long-exposure light trails, neon light-painting streaks against a dark night scene, motion blur, photographic',
-        edit_template='Restyle the letters as glowing long-exposure light trails — neon light-painting streaks, motion blur against darkness.'),
+        edit_template='Restyle the letters as glowing long-exposure light trails — neon light-painting streaks, motion blur against darkness.',
+        medium="glowing long-exposure neon light streaks",
+        default_freedom=0.6),
     TextEffect("molten-metal", "Molten Metal",
         'the word "{TEXT}" as glowing molten metal, poured liquid steel with incandescent orange heat, dramatic industrial lighting, dark background, cinematic render',
         edit_template='Restyle the letters as glowing molten metal — poured liquid steel with incandescent orange heat, dramatic industrial lighting.'),
@@ -114,20 +130,59 @@ def build_prompt(effect_id: str, text: str) -> str:
     return eff.prompt_template.replace("{TEXT}", safe)
 
 
-# Appended to every edit instruction so the image-edit model preserves the
-# user's exact typography and only changes the surface treatment.
+# Appended to a material edit instruction (or any effect at freedom≈0) so the
+# image-edit model preserves the user's exact typography and only changes the
+# surface treatment.
 _EDIT_PRESERVE_SUFFIX = (
     "Keep the exact letterforms, spacing, and composition unchanged; "
     "restyle only the surface material and lighting."
 )
 
 
-def build_edit_prompt(effect_id: str, text: str = "") -> str:
+def _clamp01(v: float) -> float:
+    return 0.0 if v < 0.0 else 1.0 if v > 1.0 else float(v)
+
+
+def _preserve_clause(freedom: float, medium: str) -> str:
+    """Grade the restyle from exact-preserve toward break-apart.
+
+    `medium` is what the letters dissolve into (only dispersion effects set it).
+    For material effects (`medium == ""`) — or any effect dialed near 0 — we
+    return the exact-preserve suffix unchanged, so material restyles and saved
+    workflows behave exactly as v1. As freedom climbs, the clause lets the
+    letterforms break up and disperse into `medium` while staying readable.
+    """
+    f = _clamp01(freedom)
+    if not medium or f < 0.12:
+        return _EDIT_PRESERVE_SUFFIX
+    if f < 0.45:
+        return (
+            "Keep the word clearly legible and the overall composition, but let "
+            f"the edges of the letterforms begin to break up and bleed into {medium}."
+        )
+    if f < 0.78:
+        return (
+            f"Let the letterforms dissolve and disperse into {medium} — the word "
+            "stays readable, but its edges clearly break apart and trail off."
+        )
+    return (
+        f"Let the letterforms largely come apart into {medium}, keeping just "
+        "enough structure that the word remains barely readable; favor the "
+        "dispersing medium over solid, intact letters."
+    )
+
+
+def build_edit_prompt(effect_id: str, text: str = "", freedom: float | None = None) -> str:
     """Instruction for the restyle (image-edit) path. The word already lives in
     the input image, so `text` is unused today — accepted for symmetry with
-    build_prompt. Falls back to the default effect on catalog drift."""
+    build_prompt. Falls back to the default effect on catalog drift.
+
+    `freedom` (0..1) controls how far the letters may break apart for dispersion
+    effects; None uses the effect's own `default_freedom`. Material effects
+    ignore it (they have no `medium`) and always preserve."""
     eff = EFFECTS_BY_ID.get(effect_id) or EFFECTS_BY_ID[DEFAULT_EFFECT_ID]
-    return f"{eff.edit_template} {_EDIT_PRESERVE_SUFFIX}"
+    f = eff.default_freedom if freedom is None else freedom
+    return f"{eff.edit_template} {_preserve_clause(f, eff.medium)}"
 
 
 def aspect_ok(ar: str) -> str:
@@ -148,6 +203,7 @@ def build_text_effect_request(
     aspect_ratio: str,
     seed: int = 0,
     image_data_url: str | None = None,
+    freedom: float | None = None,
 ) -> tuple[str, dict]:
     """Decide which Replicate model to call and with what inputs.
 
@@ -157,7 +213,9 @@ def build_text_effect_request(
     - `image_data_url` set → RESTYLE via Flux Kontext: repaint the exact
       letterforms already in the image. `text` is optional (the word lives in
       the pixels); `aspect_ratio` sets the output ratio, or keeps the source
-      crop when it's "Match input" (or a ratio Kontext can't take).
+      crop when it's "Match input" (or a ratio Kontext can't take). `freedom`
+      (0..1) lets dispersion effects break the letters apart; None uses the
+      effect's default. Material effects ignore it.
     - `image_data_url` None → GENERATE via Ideogram: render the word from a
       prompt. `text` is required — raises ValueError if blank.
 
@@ -166,7 +224,7 @@ def build_text_effect_request(
     eff = EFFECTS_BY_ID.get(effect_id) or EFFECTS_BY_ID[DEFAULT_EFFECT_ID]
     if image_data_url is not None:
         input_dict = {
-            "prompt": build_edit_prompt(effect_id, text),
+            "prompt": build_edit_prompt(effect_id, text, freedom),
             "input_image": image_data_url,
             "aspect_ratio": edit_aspect(aspect_ratio),
             "output_format": "png",

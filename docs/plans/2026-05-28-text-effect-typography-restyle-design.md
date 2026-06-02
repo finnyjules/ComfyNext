@@ -133,11 +133,38 @@ for this node's rendered component.
   without spending unless a paid round-trip is explicitly wanted.
 - **ComfyUI restart** required to pick up the Python changes (nodes are not hot-reloaded).
 
-## Out of scope / future
+## v2 update (2026-05-29) — dispersion freedom dial SHIPPED
 
-- **Option B "freedom" dial** — a single control sliding from exact-restyle toward
-  structure-guided regeneration, so dispersion effects (ink/smoke/light-trails)
-  can break the letters apart. Build only once A proves out.
+The **"freedom" dial** below is built — as a *prompt-level* grade on the existing
+Flux Kontext path (not a model swap), so dispersion ships at the same ~$0.04 with
+zero new integration. Kept as a clean 0→1 abstraction so the high band can later
+re-route to a structure-guided model (true Option B) without changing callers.
+
+- **Catalog** ([`text_effects.py`](../../comfy_api_nodes/text_effects.py)): `TextEffect`
+  gains `medium` (what the letters dissolve into) + `default_freedom`. The three
+  dispersion effects (ink-in-water, smoke-vapor, light-trails) set them; material
+  effects leave `medium=""` and are immune to freedom (always exact-preserve).
+- **Graded clause**: `_preserve_clause(freedom, medium)` replaces the single
+  preserve suffix with 4 bands — exact-preserve (`<0.12`/material) → edges bleed →
+  dissolve & trail off → largely come apart. `build_edit_prompt(id, text, freedom)`
+  and `build_text_effect_request(..., freedom)` thread it through; freedom only
+  affects restyle mode (generate already disperses via its prompt template).
+- **Node** ([`nodes_replicate.py`](../../comfy_api_nodes/nodes_replicate.py)):
+  `TextEffectNode` adds a `freedom` 0–1 slider. Old saved workflows default to 0 →
+  identical v1 behavior until re-picked.
+- **Gallery** ([`TextEffectGalleryModal.vue`](../../frontend/app/components/vue-canvas/TextEffectGalleryModal.vue)):
+  picking an effect *seeds* the freedom widget — dispersion effects → their default,
+  material → 0 — only when the effect actually changes (manual overrides survive
+  re-confirm). TS catalog mirrors `dispersion`/`defaultFreedom`.
+- **Tests**: `text_effects_test.py` extended — band grading, material immunity,
+  per-effect default, restyle-only threading. 19 pass.
+
+Remaining future work:
+
+- **Option B proper** — if the prompt-graded ceiling proves too tame, re-route the
+  high freedom band to a structure-guided regenerate (Flux ControlNet/Redux from
+  the Font Playground MASK). The `freedom` abstraction already supports this.
 - Per-effect model routing (some effects on a different edit/generate model).
 - Gallery preview reacting to a connected image (show the real type instead of the
   CSS approximation).
+- Gallery preview reflecting the freedom dial (currently a static CSS approximation).

@@ -79,7 +79,19 @@ function buildPrompt(srcFilename: string, tgtFilename: string) {
     },
     '4': {
       class_type: 'SaveImage',
-      inputs: { images: ['3', 0], filename_prefix: 'faceswap_template' },
+      // ComfyNext's SaveImage requires the full export-param set, not just
+      // images + filename_prefix like stock ComfyUI.
+      inputs: {
+        images: ['3', 0],
+        filename_prefix: 'faceswap_template',
+        format: 'png',
+        quality: 90,
+        lossless_webp: false,
+        png_compression: 4,
+        scale: 1.0,
+        max_dimension: 0,
+        embed_metadata: true,
+      },
     },
   }
 }
