@@ -1775,7 +1775,23 @@ class BlendSceneNode(IO.ComfyNode):
 # Use case: Restyle an image using the style of another image
 # =============================================================================
 
-_RESTYLE_MODELS = ["Nano Banana", "Style Transfer · IP-Adapter"]
+# Nano Banana family + the IP-Adapter engine. All three Nano Banana models
+# share the same `prompt` + `image_input` interface on Replicate (verified
+# against the live schema); the newer two additionally accept `resolution`.
+_RESTYLE_MODELS = [
+    "Nano Banana 2",            # google/nano-banana-2  (Gemini 3.1 Flash Image)
+    "Nano Banana Pro",          # google/nano-banana-pro (Gemini 3 Pro Image)
+    "Nano Banana",              # google/nano-banana    (Gemini 2.5 Flash Image, original)
+    "Style Transfer · IP-Adapter",
+]
+
+# Display name → Replicate slug. The "Nano Banana *" entries all speak the same
+# input dialect, so they fall through one shared request-builder below.
+_NANO_BANANA_SLUGS = {
+    "Nano Banana": "google/nano-banana",
+    "Nano Banana 2": "google/nano-banana-2",
+    "Nano Banana Pro": "google/nano-banana-pro",
+}
 
 _RESTYLE_DEFAULT_PROMPT = (
     "Redraw the first image in the visual art style of the second image. "
@@ -1802,12 +1818,13 @@ class RestyleFromImageNode(IO.ComfyNode):
             display_name="Restyle from Image",
             category="api node/image/Replicate",
             description=(
-                "Apply the style of one image onto another. Nano Banana "
-                "(creative, may reinterpret) or IP-Adapter Style Transfer "
-                "(keeps the content's structure). ~$0.04 per image."
+                "Apply the style of one image onto another. Nano Banana 2 / Pro "
+                "(creative, Gemini-powered) or IP-Adapter Style Transfer (keeps "
+                "the content's structure). Cost varies by model/resolution: "
+                "~$0.05 (NB2 @ 1K) up to ~$0.24 (Pro @ 4K)."
             ),
             inputs=[
-                IO.Combo.Input("model", options=_RESTYLE_MODELS, default="Nano Banana"),
+                IO.Combo.Input("model", options=_RESTYLE_MODELS, default="Nano Banana 2"),
                 IO.Image.Input("content_image",
                                tooltip="The image to restyle — its subject/composition is kept."),
                 IO.Image.Input("style_image",
@@ -1816,32 +1833,59 @@ class RestyleFromImageNode(IO.ComfyNode):
                                 tooltip="Optional extra guidance (e.g. 'watercolor', 'cyberpunk neon'). "
                                         "Leave blank to let the style image speak for itself."),
                 IO.Float.Input("structure_strength", default=0.65, min=0.0, max=1.0, step=0.05,
-                               tooltip="How much of the content's original structure/colors to preserve. "
-                                       "Higher = closer to the original (IP-Adapter only)."),
+                               tooltip="How much of the content's original structure to preserve. "
+                                       "Higher = closer to the original. IP-Adapter uses this directly; "
+                                       "Nano Banana folds it into the instruction (high = lock the subject, "
+                                       "low = free reinterpretation)."),
+                IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K",
+                               tooltip="Output resolution for Nano Banana 2 / Pro — higher costs more. "
+                                       "Ignored by the original Nano Banana and IP-Adapter."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
                 IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
             ],
             outputs=[IO.Image.Output()],
             hidden=[IO.Hidden.unique_id],
             is_output_node=True,
-            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true}}'),
         )
 
     @classmethod
     async def execute(cls, model, content_image, style_image, prompt="",
-                      structure_strength=0.65, seed=0, output_format="png"):
+                      structure_strength=0.65, resolution="1K", seed=0, output_format="png"):
         content_url = _image_tensor_to_data_url(content_image)
         style_url = _image_tensor_to_data_url(style_image)
         guidance = (prompt or "").strip()
 
-        if model == "Nano Banana":
+        if model in _NANO_BANANA_SLUGS:
             # First image = content, second = style reference. The baked
             # instruction keeps the content's layout and only swaps the look.
             instruction = _RESTYLE_DEFAULT_PROMPT
+            # Nano Banana has no numeric structure dial, so translate the
+            # slider into explicit guidance. Without this it tends to
+            # *reinterpret* the subject (swap clothing, drop the background)
+            # instead of only restyling it — which reads as "style transfer
+            # not working". High strength clamps the subject; low frees it.
+            if structure_strength >= 0.66:
+                instruction += (
+                    " Keep the subject's identity, clothing, pose, framing and"
+                    " background composition exactly as in the first image —"
+                    " restyle only colour, texture, lighting and finish; add"
+                    " nothing and remove nothing."
+                )
+            elif structure_strength <= 0.33:
+                instruction += " You may loosely reinterpret the content while matching the style."
             if guidance:
                 instruction += f" Additional style direction: {guidance}."
-            input_dict = {"prompt": instruction, "image_input": [content_url, style_url]}
-            slug = "google/nano-banana"
+            input_dict = {
+                "prompt": instruction,
+                "image_input": [content_url, style_url],
+                "output_format": output_format,
+            }
+            # Only the newer models accept a resolution dial; passing it to the
+            # original google/nano-banana would 422.
+            if model != "Nano Banana":
+                input_dict["resolution"] = resolution
+            slug = _NANO_BANANA_SLUGS[model]
         else:  # Style Transfer · IP-Adapter
             input_dict = {
                 # fofr/style-transfer needs a non-empty prompt; fall back to a
@@ -2336,6 +2380,18 @@ class GenerateVideoNode(IO.ComfyNode):
 # =============================================================================
 
 
+# Upscale engines, from creative→faithful. Each speaks a different input
+# dialect (verified against the live Replicate schemas), so execute() maps the
+# shared widgets per model. Slugs all route through _run_prediction.
+_UPSCALE_MODELS = ["Clarity", "Real-ESRGAN", "Recraft Crisp", "Topaz"]
+_UPSCALE_SLUGS = {
+    "Clarity": "philz1337x/clarity-upscaler",
+    "Real-ESRGAN": "nightmareai/real-esrgan",
+    "Recraft Crisp": "recraft-ai/recraft-crisp-upscale",
+    "Topaz": "topazlabs/image-upscale",
+}
+
+
 class UpscaleImageNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -2344,46 +2400,87 @@ class UpscaleImageNode(IO.ComfyNode):
             display_name="Upscale an image",
             category="api node/image/Replicate",
             description=(
-                "Detail-enhancing upscale via Clarity. Adds plausible detail; "
-                "not pixel-perfect. ~$0.05–0.20 per image depending on input."
+                "Upscale an image. Engines range from creative to faithful:\n"
+                "• Clarity — adds invented detail, prompt-guided (~$0.05–0.20)\n"
+                "• Real-ESRGAN — fast, faithful, no hallucination (~$0.002)\n"
+                "• Recraft Crisp — clean, crisp, cheapest, zero knobs (~$0.006)\n"
+                "• Topaz — premium pro-grade quality (~$0.05+)\n"
+                "Prompt / creativity / resemblance / steps apply to Clarity only."
             ),
             inputs=[
-                IO.Combo.Input("model", options=["Clarity"], default="Clarity"),
+                IO.Combo.Input("model", options=_UPSCALE_MODELS, default="Clarity",
+                               tooltip="Upscale engine. Clarity invents detail; Real-ESRGAN "
+                                       "and Recraft Crisp stay faithful; Topaz is premium."),
                 IO.Image.Input("image"),
                 IO.String.Input("prompt", multiline=True,
                                 default="masterpiece, best quality, highres",
-                                tooltip="(Clarity) Style prompt — guides invented detail."),
+                                tooltip="(Clarity only) Style prompt — guides invented detail."),
                 IO.Float.Input("scale_factor", default=2.0, min=1.0, max=10.0, step=0.5,
-                               tooltip="Output is scale_factor × input dimensions."),
+                               tooltip="Output is scale_factor × input dimensions. Topaz snaps "
+                                       "this to its nearest step (2x/4x/6x)."),
                 IO.Float.Input("creativity", default=0.35, min=0.0, max=1.0, step=0.05, advanced=True,
-                               tooltip="(Clarity) 0 = preserve, 1 = reinvent. 0.3–0.4 is the sweet spot."),
+                               tooltip="(Clarity only) 0 = preserve, 1 = reinvent. 0.3–0.4 is the sweet spot."),
                 IO.Float.Input("resemblance", default=0.6, min=0.0, max=3.0, step=0.05, advanced=True,
-                               tooltip="(Clarity) Higher = closer to input."),
+                               tooltip="(Clarity only) Higher = closer to input."),
                 IO.String.Input("negative_prompt", default="(worst quality, low quality, normal quality:2)",
-                                advanced=True),
-                IO.Int.Input("num_inference_steps", default=18, min=10, max=50, advanced=True),
-                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF),
+                                advanced=True, tooltip="(Clarity only) What to avoid."),
+                IO.Int.Input("num_inference_steps", default=18, min=10, max=50, advanced=True,
+                             tooltip="(Clarity only) More steps = more detail, slower."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             tooltip="0 = random. Used by Clarity."),
+                # NOTE: new inputs MUST be appended at the END. Widget values are
+                # positional, so inserting mid-list shifts every later widget on
+                # existing nodes (scrambles their saved values). face_enhance is
+                # last so the original first-8 slots stay put.
+                IO.Boolean.Input("face_enhance", default=False, advanced=True,
+                                 tooltip="Restore/enhance faces (Real-ESRGAN & Topaz). Ignored by others."),
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.10,"format":{"approximate":true}}'),
         )
 
     @classmethod
-    async def execute(cls, model, image, prompt, scale_factor, creativity,
-                      resemblance, negative_prompt, num_inference_steps, seed):
-        input_dict = {
-            "image": _image_tensor_to_data_url(image),
-            "prompt": prompt,
-            "scale_factor": scale_factor,
-            "creativity": creativity,
-            "resemblance": resemblance,
-            "negative_prompt": negative_prompt,
-            "num_inference_steps": num_inference_steps,
-            "output_format": "png",
-        }
-        if seed and seed > 0:
-            input_dict["seed"] = seed
-        pred = await _run_prediction("philz1337x/clarity-upscaler", input_dict)
+    async def execute(cls, model, image, prompt, scale_factor,
+                      creativity, resemblance, negative_prompt, num_inference_steps, seed,
+                      face_enhance=False):
+        img_url = _image_tensor_to_data_url(image)
+
+        if model == "Clarity":
+            input_dict = {
+                "image": img_url,
+                "prompt": prompt,
+                "scale_factor": scale_factor,
+                "creativity": creativity,
+                "resemblance": resemblance,
+                "negative_prompt": negative_prompt,
+                "num_inference_steps": num_inference_steps,
+                "output_format": "png",
+            }
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+        elif model == "Real-ESRGAN":
+            input_dict = {
+                "image": img_url,
+                "scale": float(scale_factor),
+                "face_enhance": bool(face_enhance),
+            }
+        elif model == "Recraft Crisp":
+            # Zero-knob crisp upscaler — takes only the image.
+            input_dict = {"image": img_url}
+        elif model == "Topaz":
+            # Topaz takes a fixed-step enum, not an arbitrary multiplier.
+            sf = float(scale_factor)
+            factor = "2x" if sf <= 2 else ("4x" if sf <= 4 else "6x")
+            input_dict = {
+                "image": img_url,
+                "upscale_factor": factor,
+                "face_enhancement": bool(face_enhance),
+                "output_format": "png",
+            }
+        else:
+            raise ValueError(f"Unknown upscale model: {model}")
+
+        pred = await _run_prediction(_UPSCALE_SLUGS[model], input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(tensor)
 
