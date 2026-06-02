@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Film, Save, Play, RefreshCw, Download } from 'lucide-vue-next'
+import { Upload, Loader2, Film, Play, RefreshCw, Download } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Visual half of the unified `Video` artifact node. Same state machine as
@@ -44,16 +44,10 @@ function widgetIdx(name: string): number {
 const sourceInputIdx = computed(() => inputIdx('source'))
 const videoOutputIdx = computed(() => outputIdx('video'))
 const fileWidgetIdx = computed(() => widgetIdx('file'))
-const exportWidgetIdx = computed(() => widgetIdx('export'))
 
 const widgetFilename = computed<string>(() => {
   const i = fileWidgetIdx.value
   return i >= 0 ? (props.data.widgetsValues?.[i] || '') : ''
-})
-
-const exportOn = computed<boolean>(() => {
-  const i = exportWidgetIdx.value
-  return i >= 0 ? !!props.data.widgetsValues?.[i] : false
 })
 
 const hasUpstream = computed(() => {
@@ -71,6 +65,26 @@ const videoUrl = computed<string | null>(() => {
   }
   return null
 })
+
+// Format seconds as M:SS (or H:MM:SS past an hour). Null for unknown/streamed
+// durations (some sources report Infinity until fully buffered).
+function fmtDuration(s: number): string | null {
+  if (!isFinite(s) || s <= 0) return null
+  const t = Math.round(s)
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
+  return (h > 0 ? `${h}:` : '') + `${mm}:${String(sec).padStart(2, '0')}`
+}
+
+// Footer label: dimensions · duration, read from the <video> metadata on load.
+// Reset when the source changes so stale values don't linger.
+const meta = ref<string | null>(null)
+watch(videoUrl, () => { meta.value = null })
+function onVideoMeta(e: Event) {
+  const v = e.target as HTMLVideoElement
+  const dims = v.videoWidth ? `${v.videoWidth} × ${v.videoHeight}` : null
+  meta.value = [dims, fmtDuration(v.duration)].filter(Boolean).join(' · ') || null
+}
 
 const filenameLabel = computed<string | null>(() => {
   if (widgetFilename.value) return widgetFilename.value
@@ -212,17 +226,11 @@ async function downloadVideo() {
           controls
           preload="metadata"
           playsinline
+          @loadedmetadata="onVideoMeta"
         />
-        <div
-          v-if="exportOn"
-          class="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 h-5 rounded-md bg-black/55 backdrop-blur-sm text-white/85 text-[9px] font-medium uppercase tracking-[0.06em]"
-        >
-          <Save class="size-2.5" />
-          Export
-        </div>
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <span class="truncate flex-1 text-[10px] text-white/55">
-            {{ filenameLabel || (hasUpstream ? 'Video (upstream)' : 'Video') }}
+          <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
+            {{ meta || (hasUpstream ? 'Video (upstream)' : 'Video') }}
           </span>
           <button
             v-if="canReplace"

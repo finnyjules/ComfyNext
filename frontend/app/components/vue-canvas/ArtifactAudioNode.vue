@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, AudioWaveform, Save, Play, RefreshCw, Download } from 'lucide-vue-next'
+import { Upload, Loader2, AudioWaveform, Play, RefreshCw, Download } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Visual half of the unified `Audio` artifact node. Same state machine as
@@ -42,16 +42,10 @@ function widgetIdx(name: string): number {
 const sourceInputIdx = computed(() => inputIdx('source'))
 const audioOutputIdx = computed(() => outputIdx('audio'))
 const audioWidgetIdx = computed(() => widgetIdx('audio'))
-const exportWidgetIdx = computed(() => widgetIdx('export'))
 
 const widgetFilename = computed<string>(() => {
   const i = audioWidgetIdx.value
   return i >= 0 ? (props.data.widgetsValues?.[i] || '') : ''
-})
-
-const exportOn = computed<boolean>(() => {
-  const i = exportWidgetIdx.value
-  return i >= 0 ? !!props.data.widgetsValues?.[i] : false
 })
 
 const hasUpstream = computed(() => {
@@ -70,6 +64,24 @@ const audioUrl = computed<string | null>(() => {
   }
   return null
 })
+
+// Format seconds as M:SS (or H:MM:SS past an hour). Null for unknown/streamed
+// durations (some sources report Infinity until fully buffered).
+function fmtDuration(s: number): string | null {
+  if (!isFinite(s) || s <= 0) return null
+  const t = Math.round(s)
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
+  return (h > 0 ? `${h}:` : '') + `${mm}:${String(sec).padStart(2, '0')}`
+}
+
+// Footer label: track duration, read from the <audio> metadata on load. Reset
+// when the source changes so stale values don't linger.
+const meta = ref<string | null>(null)
+watch(audioUrl, () => { meta.value = null })
+function onAudioMeta(e: Event) {
+  meta.value = fmtDuration((e.target as HTMLAudioElement).duration)
+}
 
 const filenameLabel = computed<string | null>(() => {
   if (widgetFilename.value) return widgetFilename.value
@@ -214,18 +226,12 @@ async function downloadAudio() {
             controls
             preload="metadata"
             style="min-width: 0;"
+            @loadedmetadata="onAudioMeta"
           />
         </div>
-        <div
-          v-if="exportOn"
-          class="absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 h-5 rounded-md bg-black/55 backdrop-blur-sm text-white/85 text-[9px] font-medium uppercase tracking-[0.06em]"
-        >
-          <Save class="size-2.5" />
-          Export
-        </div>
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <span class="truncate flex-1 text-[10px] text-white/55">
-            {{ filenameLabel || (hasUpstream ? 'Audio (upstream)' : 'Audio') }}
+          <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
+            {{ meta || (hasUpstream ? 'Audio (upstream)' : 'Audio') }}
           </span>
           <button
             v-if="canReplace"
