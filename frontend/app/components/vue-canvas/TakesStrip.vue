@@ -30,8 +30,9 @@ function thumb(t: Take): string | null {
       <span class="text-[10px] text-white/30 tabular-nums">{{ takes.length }}</span>
     </div>
     <!-- nowheel/nopan/nodrag: let the strip scroll without the canvas hijacking
-         the wheel (zoom) or drag (pan). -->
-    <div class="nowheel nopan nodrag flex items-center gap-1.5 overflow-x-auto pb-1">
+         the wheel (zoom) or drag (pan). px/py give the active take's outer ring
+         room so overflow-x-auto's vertical clip doesn't shave the thumbnail tops. -->
+    <div class="nowheel nopan nodrag flex items-center gap-1.5 overflow-x-auto px-0.5 py-1.5">
       <div
         v-for="t in takes"
         :key="t.id"
