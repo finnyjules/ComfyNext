@@ -3,7 +3,7 @@ export type TabStatus = 'idle' | 'running' | 'done'
 export interface Tab {
   id: string
   label: string
-  type: 'home' | 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor'
+  type: 'home' | 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects'
   closable: boolean
   status?: TabStatus
   progress?: number // 0-100, only used when status is 'running'
@@ -12,6 +12,7 @@ export interface Tab {
   projectUuid?: string // stable UUID for grouping all runs from this tab
   appId?: string // for 'app' tabs — which single-purpose surface is being run
   templateEditId?: string // for 'template-editor' tabs — which template is being edited
+  seedNodeType?: string // for fresh 'project' tabs — generator node to drop on open (skips the start-picker)
 }
 
 const homeTab: Tab = {
@@ -91,7 +92,7 @@ export function useTabs() {
     tabs.value.find((t) => t.id === activeTabId.value) ?? homeTab,
   )
 
-  function openTab(opts: { type: 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor'; label?: string; workflowId?: string; promptId?: string; projectUuid?: string; appId?: string; templateEditId?: string }) {
+  function openTab(opts: { type: 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects'; label?: string; workflowId?: string; promptId?: string; projectUuid?: string; appId?: string; templateEditId?: string; seedNodeType?: string }) {
     // Template editor: one tab per template id, switch to existing if open.
     if (opts.type === 'template-editor' && opts.templateEditId) {
       const existing = tabs.value.find((t) => t.type === 'template-editor' && t.templateEditId === opts.templateEditId)
@@ -165,6 +166,23 @@ export function useTabs() {
       return tab
     }
 
+    if (opts.type === 'all-projects') {
+      const existing = tabs.value.find((t) => t.type === 'all-projects')
+      if (existing) {
+        activeTabId.value = existing.id
+        return existing
+      }
+      const tab: Tab = {
+        id: 'all-projects',
+        label: opts.label ?? 'All projects',
+        type: 'all-projects',
+        closable: true,
+      }
+      tabs.value.push(tab)
+      activeTabId.value = tab.id
+      return tab
+    }
+
     if (opts.type === 'train') {
       const existing = tabs.value.find((t) => t.type === 'train')
       if (existing) {
@@ -194,6 +212,7 @@ export function useTabs() {
       workflowId: opts.workflowId,
       promptId: opts.promptId,
       projectUuid: opts.projectUuid || crypto.randomUUID(),
+      seedNodeType: opts.seedNodeType,
     }
     tabs.value.push(tab)
     activeTabId.value = tab.id

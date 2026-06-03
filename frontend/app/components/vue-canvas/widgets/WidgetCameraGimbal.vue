@@ -623,9 +623,25 @@ function hexPoints(r: number): string {
   return pts.join(' ')
 }
 
-// The subject image stays fixed in the gimbal — it represents the SUBJECT,
-// not the camera view. The camera orbits around it. No transform.
-const planeTransform = computed(() => ({ transform: 'none' }))
+// The subject image stays fixed (the camera orbits it), but we orient it to lie
+// in the world XY plane — i.e. facing +Z, the "front" the camera sits at —
+// using the SAME view transform as the gimbal rings. So at the default front
+// view the camera reads as floating in front of the image's face, not off to
+// the side. The plane doesn't rotate with the user's angles; only the camera moves.
+const FLIP_Y: Mat3 = [1, 0, 0, 0, -1, 0, 0, 0, 1]
+const planeTransform = computed(() => {
+  // CSS is Y-down / Z-toward-viewer while our math is Y-up; conjugating the view
+  // rotation by a Y-flip (M = F·V·F) lines the plane up exactly with the rings.
+  const M = mul(FLIP_Y, mul(viewMatrix, FLIP_Y))
+  // matrix3d is column-major — embed the row-major 3×3 rotation into the 4×4.
+  const m = [
+    M[0], M[3], M[6], 0,
+    M[1], M[4], M[7], 0,
+    M[2], M[5], M[8], 0,
+    0, 0, 0, 1,
+  ]
+  return { transform: `matrix3d(${m.join(',')})` }
+})
 </script>
 
 <template>

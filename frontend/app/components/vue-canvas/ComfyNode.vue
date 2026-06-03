@@ -5,7 +5,7 @@ import { getPartnerIcon } from '~/lib/partnerIcons'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
-import { useTakesEnabled, projectTake, type Take } from '~/composables/useTakes'
+import { projectTake, type Take } from '~/composables/useTakes'
 
 const props = defineProps<{
   id: string
@@ -147,11 +147,9 @@ function rerollThisNode() {
 }
 
 // --- Takes (non-destructive variation loop) -------------------------------
-// Flag-gated; the strip only renders when enabled and there's >1 take. Actions
-// mutate props.data in place (same pattern as widget edits) — projectTake
-// mirrors the chosen take onto images/audios/text so the preview updates.
-const { takesEnabled } = useTakesEnabled()
-
+// The strip renders once there's at least one take. Actions mutate props.data
+// in place (same pattern as widget edits) — projectTake mirrors the chosen take
+// onto images/audios/text so the preview updates.
 function selectTake(id: string) {
   const t = (props.data.takes || []).find((x) => x.id === id)
   if (t) Object.assign(props.data, projectTake(props.data, t))
@@ -1230,7 +1228,7 @@ watch(previewImages, (urls) => {
 
     <!-- Takes strip (flag-gated): switch / pin / discard this node's results -->
     <TakesStrip
-      v-if="takesEnabled && (data.takes?.length ?? 0) > 1"
+      v-if="(data.takes?.length ?? 0) >= 1"
       :takes="data.takes!"
       :active-take-id="data.activeTakeId"
       @select="selectTake"

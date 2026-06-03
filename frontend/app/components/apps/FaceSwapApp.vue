@@ -7,6 +7,7 @@
  * the prompt graph in code and submit it directly to /prompt.
  */
 import { ArrowRight, Download, Image as ImageIcon, Loader2, RefreshCcw, Upload, X } from 'lucide-vue-next'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 
 interface UploadedFile {
   file: File
@@ -18,7 +19,9 @@ const sourceFace = ref<UploadedFile | null>(null)
 const targetImage = ref<UploadedFile | null>(null)
 const status = ref<'idle' | 'uploading' | 'running' | 'done' | 'error'>('idle')
 const errorMessage = ref<string | null>(null)
-const outputUrl = ref<string | null>(null)
+// Each run stacks as a take; the displayed result is the active take.
+const { takes, activeTakeId, activeTake, addTake, selectTake, pinTake, discardTake, reset: resetTakes } = useAppTakes()
+const outputUrl = computed<string | null>(() => activeTake.value?.images?.[0] ?? null)
 const progressLabel = ref('')
 
 // ----- Upload helpers ----------------------------------------------------
@@ -56,7 +59,7 @@ function clearSlot(role: 'source' | 'target') {
   const ref = role === 'source' ? sourceFace : targetImage
   if (ref.value) URL.revokeObjectURL(ref.value.previewUrl)
   ref.value = null
-  outputUrl.value = null
+  resetTakes()
   status.value = 'idle'
 }
 
@@ -103,7 +106,6 @@ const canRun = computed(() =>
 async function run() {
   if (!canRun.value || !sourceFace.value || !targetImage.value) return
   errorMessage.value = null
-  outputUrl.value = null
   status.value = 'running'
   progressLabel.value = 'Submitting…'
 
@@ -124,12 +126,13 @@ async function run() {
     progressLabel.value = 'Running face swap…'
     const output = await pollForOutput(promptId)
     if (!output) throw new Error('Run finished but produced no output.')
-    outputUrl.value = `/view?${new URLSearchParams({
+    const url = `/view?${new URLSearchParams({
       filename: output.filename,
       type: output.type,
       ...(output.subfolder ? { subfolder: output.subfolder } : {}),
       t: String(Date.now()),
     })}`
+    addTake({ images: [url], promptId, sig: `${output.subfolder || ''}/${output.filename}` })
     status.value = 'done'
   } catch (e: any) {
     errorMessage.value = humanizeError(e?.message ?? String(e))
@@ -203,7 +206,7 @@ function reset() {
   if (targetImage.value) URL.revokeObjectURL(targetImage.value.previewUrl)
   sourceFace.value = null
   targetImage.value = null
-  outputUrl.value = null
+  resetTakes()
   errorMessage.value = null
   status.value = 'idle'
 }
@@ -384,6 +387,15 @@ function download() {
             <div class="text-[12px] text-white/40">{{ progressLabel || 'Working…' }}</div>
           </div>
         </div>
+        <TakesStrip
+          v-if="takes.length >= 1"
+          :takes="takes"
+          :active-take-id="activeTakeId"
+          class="mt-3 rounded-lg bg-black/40 border border-white/10"
+          @select="selectTake"
+          @pin="pinTake"
+          @discard="discardTake"
+        />
       </div>
     </div>
   </div>

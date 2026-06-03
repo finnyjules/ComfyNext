@@ -6,7 +6,6 @@ import {
 const { settingsOpen, closeSettings } = useSettingsModal()
 const { getLocalSetting, setLocalSetting } = useLocalSettings()
 const { reloadSetting: reloadVueNodesSetting } = useVueNodesEnabled()
-const { reloadSetting: reloadTakesSetting } = useTakesEnabled()
 
 // Settings data
 const settings = ref<Record<string, any>>({})
@@ -77,7 +76,6 @@ const settingsByCategory: Record<string, SettingDef[]> = {
   ],
   appearance: [
     { id: 'Comfy.VueNodes.Enabled', label: 'Modern node design', type: 'toggle', description: 'Use the new Vue-based node rendering', local: true },
-    { id: 'Comfy.Takes.Enabled', label: 'Takes (experimental)', type: 'toggle', description: 'Keep every generation as a switchable take instead of overwriting the previous result. Session-only for now — takes are not saved across reload.', local: true },
     { id: 'Comfy.Node.Opacity', label: 'Node opacity', type: 'slider', min: 0.1, max: 1, step: 0.05 },
     { id: 'Comfy.Graph.CanvasInfo', label: 'Show canvas info (FPS)', type: 'toggle' },
     { id: 'Comfy.Graph.LinkMarkers', label: 'Link midpoint markers', type: 'select', options: [
@@ -201,7 +199,6 @@ function handleToggle(setting: SettingDef) {
   }
   // Directly update the VueNodes composable ref (bypasses fragile event chain)
   if (setting.id === 'Comfy.VueNodes.Enabled') reloadVueNodesSetting()
-  if (setting.id === 'Comfy.Takes.Enabled') reloadTakesSetting()
 }
 
 function handleSelectChange(setting: SettingDef, rawValue: string) {

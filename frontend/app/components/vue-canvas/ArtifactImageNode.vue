@@ -3,7 +3,7 @@ import { Handle, Position } from '@vue-flow/core'
 import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
-import { useTakesEnabled, projectTake, type Take } from '~/composables/useTakes'
+import { projectTake, type Take } from '~/composables/useTakes'
 
 // The visual half of the unified `Image` artifact node. State is derived from
 // (upstream connection, file widget, execution output) rather than the node
@@ -267,10 +267,9 @@ function unlockArtifact() {
   ;(props.data.properties as any).locked = false
 }
 
-// --- Takes (non-destructive variation loop) — flag-gated -------------------
+// --- Takes (non-destructive variation loop) --------------------------------
 // Outputs materialize into this artifact node, so this is where takes land.
 // projectTake mirrors the chosen take onto data.images → imageUrl recomputes.
-const { takesEnabled } = useTakesEnabled()
 function selectTake(id: string) {
   const t = (props.data.takes || []).find((x) => x.id === id)
   if (t) Object.assign(props.data, projectTake(props.data, t))
@@ -435,7 +434,7 @@ function discardTake(id: string) {
 
     <!-- Takes strip (flag-gated): switch / pin / discard this node's results -->
     <TakesStrip
-      v-if="takesEnabled && (data.takes?.length ?? 0) > 1"
+      v-if="(data.takes?.length ?? 0) >= 1"
       :takes="data.takes!"
       :active-take-id="data.activeTakeId"
       class="mt-1 rounded-lg bg-black/40 border border-white/10"

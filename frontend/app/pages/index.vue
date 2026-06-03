@@ -11,6 +11,9 @@ import {
   ChevronDown,
   ExternalLink,
   Play,
+  Pin,
+  PinOff,
+  EyeOff,
   UserRoundCog,
   MessageSquareQuote,
   Music as MusicIcon,
@@ -23,8 +26,20 @@ import { useCommunityNav } from '~/composables/useCommunityNav'
 const { openTab } = useTabs()
 const { navigateTo: navCommunity } = useCommunityNav()
 const { recentProjects, loading: recentLoading, thumbnailUrl, timeAgo, fetchRecentProjects } = useRecentProjects()
+const { isPinned, isHidden, togglePin, hide } = useProjectPrefs()
 
 onMounted(() => fetchRecentProjects())
+
+// Home row sub-tabs: chronological "Recent" vs the user's "Pinned" shelf.
+const projectFilter = ref<'recent' | 'pinned'>('recent')
+
+// Hidden projects never show on the home row. Recent = everything else
+// (pinned items still appear here, flagged); Pinned = only pinned ones.
+const displayProjects = computed(() => {
+  const visible = recentProjects.value.filter((p) => !isHidden(p.workflowId))
+  if (projectFilter.value === 'pinned') return visible.filter((p) => isPinned(p.workflowId))
+  return visible
+})
 
 function openRecentProject(project: any) {
   const promptId = project.promptIds[0]
@@ -33,11 +48,11 @@ function openRecentProject(project: any) {
 }
 
 const projectTypes = [
-  { label: 'Create an image...', icon: ImageIcon, color: '#96b4ff' },
-  { label: 'Create a video...', icon: Video, color: '#54f4cf' },
-  { label: 'Create a 3D model...', icon: Box, color: '#ffb984' },
-  { label: 'Create a song...', icon: Music, color: '#ff99f7' },
-  { label: 'Create a voiceover...', icon: Mic, color: '#ff6259' },
+  { label: 'Create an image', tab: 'New image', icon: ImageIcon, color: '#96b4ff', nodeType: 'FluxLoRARemoteNode' },
+  { label: 'Create a video', tab: 'New video', icon: Video, color: '#54f4cf', nodeType: 'GenerateVideoNode' },
+  { label: 'Create a 3D model', tab: 'New 3D model', icon: Box, color: '#ffb984', nodeType: 'Generate3DNode' },
+  { label: 'Create a song', tab: 'New song', icon: Music, color: '#ff99f7', nodeType: 'GenerateMusicNode' },
+  { label: 'Create a voiceover', tab: 'New voiceover', icon: Mic, color: '#ff6259', nodeType: 'GenerateSpeechNode' },
 ]
 
 // Background SVGs for template cards (bg_1.svg to bg_18.svg)
@@ -48,6 +63,34 @@ const comfyTemplates = computed(() => {
   const newest = getNewest(30)
   return newest.filter((w: any) => w.creator?.id === 'cr_comfyui').slice(0, 12)
 })
+
+// v-scroll-fade: fades the edge of a horizontal scroller that has more content
+// off-screen, as a "you can scroll" affordance. Toggles .fade-left/.fade-right
+// based on scroll position so a row that already fits shows no fade.
+const vScrollFade = {
+  mounted(el: HTMLElement) {
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth
+      el.classList.toggle('fade-left', el.scrollLeft > 1)
+      el.classList.toggle('fade-right', el.scrollLeft < max - 1)
+    }
+    const handler = () => requestAnimationFrame(update)
+    el.addEventListener('scroll', handler, { passive: true })
+    const ro = new ResizeObserver(handler)
+    ro.observe(el)
+    const mo = new MutationObserver(handler)
+    mo.observe(el, { childList: true, subtree: true })
+    ;(el as any).__sf = { handler, ro, mo }
+    handler()
+  },
+  unmounted(el: HTMLElement) {
+    const sf = (el as any).__sf
+    if (!sf) return
+    el.removeEventListener('scroll', sf.handler)
+    sf.ro.disconnect()
+    sf.mo.disconnect()
+  },
+}
 
 
 // Catalog of apps surfaced on the home page. Order = display order.
@@ -87,6 +130,15 @@ const appCards = [
     description: 'Drop a product photo, describe a scene — get a studio-quality shot.',
   },
 ] as const
+
+// Custom cover art per app (in public/). Apps without an entry fall back to a
+// generated grid background.
+const APP_COVERS: Record<string, string> = {
+  'product-shot': '/app_covers/productshot.png',
+  'face-swap': '/app_covers/faceswap.png',
+  'karaoke-maker': '/app_covers/karaokemaker.png',
+  'auto-subtitle': '/app_covers/autosubtitle.png',
+}
 
 // Deterministic but varied background index for a given key (1..BG_COUNT).
 function bgIndexFor(key: string): number {
@@ -128,18 +180,15 @@ function isVideo(filename: string): boolean {
   <div class="overflow-y-auto px-12 py-8 space-y-16">
     <!-- Section 1: Hero Feature Banner -->
     <div
-      class="relative w-full h-[242px] rounded-[16px] bg-[#52367b] overflow-hidden"
+      class="relative w-full h-[242px] rounded-[16px] bg-[#FFFCD4] overflow-hidden"
     >
-      <!-- Decorative background shapes -->
-      <div
-        class="absolute inset-0 opacity-20"
-      >
-        <div class="absolute top-8 left-8 w-40 h-28 rounded-[12px] border border-white/30 rotate-[-8deg]" />
-        <div class="absolute top-16 left-32 w-48 h-32 rounded-[12px] border border-white/20 rotate-[4deg]" />
-        <div class="absolute bottom-4 left-16 w-36 h-24 rounded-[12px] border border-white/25 rotate-[-3deg]" />
-        <div class="absolute top-4 left-52 w-24 h-16 rounded-[8px] bg-white/10 rotate-[6deg]" />
-        <div class="absolute bottom-8 left-48 w-32 h-20 rounded-[8px] bg-white/10 rotate-[-5deg]" />
-      </div>
+      <!-- Hero artwork: anchored left; the banner bg (#FFFCD4) extends the
+           image's own pale background to the right so it blends seamlessly. -->
+      <img
+        src="/hero/hero_rotateimage.png"
+        alt=""
+        class="absolute inset-y-0 left-0 h-full w-[60%] xl:w-[64%] 2xl:w-[68%] object-cover object-left pointer-events-none select-none"
+      />
 
       <!-- Right side content -->
       <div class="absolute right-16 top-1/2 -translate-y-1/2 flex flex-col items-start gap-3 max-w-[45%]">
@@ -148,36 +197,37 @@ function isVideo(filename: string): boolean {
         >
           New feature
         </span>
-        <h1 class="text-[48px] font-extrabold tracking-tight text-white leading-none">
-          GATES
+        <h1 class="text-[48px] font-extrabold tracking-tight text-[#0a0a0a] leading-none">
+          Rotate Camera
         </h1>
         <div class="space-y-0.5">
-          <p class="text-xs font-medium text-white">
-            With Gates, you can now divide your workflow into steps.
+          <p class="text-xs font-medium text-[#0a0a0a]">
+            Re-render any image from a new viewpoint with a 3-axis camera gimbal.
           </p>
-          <p class="text-xs font-medium text-white">
-            Control generations every step of the way.
+          <p class="text-xs font-medium text-[#0a0a0a]">
+            Orbit, tilt and roll around your subject — powered by Qwen-Image-Edit.
           </p>
         </div>
         <button
-          class="flex items-center gap-2 rounded-[4px] bg-white text-[#18181b] h-[36px] px-4 text-sm font-medium hover:bg-white/90 transition-colors cursor-pointer"
+          class="flex items-center gap-2 rounded-[4px] bg-[#0a0a0a] text-white h-[36px] px-4 text-sm font-medium hover:bg-[#0a0a0a]/85 transition-colors cursor-pointer"
+          @click="openTab({ type: 'project', label: 'Rotate Camera', seedNodeType: 'RotateCameraNode' })"
         >
-          Open workflow example
+          Try Rotate Camera
           <ArrowRight class="size-4" />
         </button>
       </div>
 
       <!-- Carousel indicator -->
       <div class="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
-        <button class="text-white/60 hover:text-white transition-colors cursor-pointer">
+        <button class="text-[#0a0a0a]/50 hover:text-[#0a0a0a] transition-colors cursor-pointer">
           <ChevronUp class="size-4" />
         </button>
         <div class="flex flex-col gap-1.5">
-          <div class="w-1.5 h-1.5 rounded-full bg-white" />
-          <div class="w-1.5 h-1.5 rounded-full bg-white/40" />
-          <div class="w-1.5 h-1.5 rounded-full bg-white/40" />
+          <div class="w-1.5 h-1.5 rounded-full bg-[#0a0a0a]" />
+          <div class="w-1.5 h-1.5 rounded-full bg-[#0a0a0a]/30" />
+          <div class="w-1.5 h-1.5 rounded-full bg-[#0a0a0a]/30" />
         </div>
-        <button class="text-white/60 hover:text-white transition-colors cursor-pointer">
+        <button class="text-[#0a0a0a]/50 hover:text-[#0a0a0a] transition-colors cursor-pointer">
           <ChevronDown class="size-4" />
         </button>
       </div>
@@ -189,32 +239,34 @@ function isVideo(filename: string): boolean {
         Start a project
       </h2>
       <div class="flex gap-3 overflow-x-auto">
+        <!-- Medium cards: click drops a ready-to-run starter generator on a new
+             canvas. Dark theme to match the Apps cards below; colored icon chip
+             keeps the per-medium color language. -->
         <button
           v-for="pt in projectTypes"
           :key="pt.label"
-          class="flex items-center gap-3 h-[69px] flex-1 min-w-0 rounded-[4px] px-8 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.06)] cursor-pointer transition-opacity hover:opacity-90"
-          :style="{
-            background: `linear-gradient(90deg, ${pt.color}33, ${pt.color}33), linear-gradient(90deg, #fafafa, #fafafa)`,
-          }"
+          class="group flex items-center gap-3 h-[64px] flex-1 min-w-[168px] rounded-[12px] px-4 bg-white/[0.03] border border-white/[0.06] hover:border-white/15 hover:bg-white/[0.05] transition-colors cursor-pointer text-left"
+          @click="openTab({ type: 'project', label: pt.tab, seedNodeType: pt.nodeType })"
         >
           <div
-            class="flex items-center justify-center rounded-[8px] p-1 border-[0.5px] border-white"
+            class="flex items-center justify-center rounded-[8px] size-9 shrink-0"
             :style="{ backgroundColor: pt.color }"
           >
-            <component :is="pt.icon" class="size-6 text-white" />
+            <component :is="pt.icon" class="size-5 text-white" />
           </div>
-          <span class="text-sm font-medium text-[#18181b] whitespace-nowrap">
+          <span class="text-sm font-medium text-white/90 whitespace-nowrap">
             {{ pt.label }}
           </span>
         </button>
 
-        <!-- Blank project button -->
+        <!-- Blank project — a ghost/dashed card so it reads as the "from scratch"
+             option, distinct from the guided medium cards but still on the row. -->
         <button
-          class="flex items-center gap-2 h-[69px] flex-1 min-w-0 rounded-[4px] px-8 bg-[#fafafa] shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.06)] cursor-pointer transition-opacity hover:opacity-90"
+          class="group flex items-center justify-center gap-2 h-[64px] flex-1 min-w-[168px] rounded-[12px] px-4 bg-transparent border border-dashed border-white/15 hover:border-white/30 hover:bg-white/[0.03] transition-colors cursor-pointer"
           @click="openTab({ type: 'project' })"
         >
-          <Plus class="size-4 text-[#18181b]" />
-          <span class="text-sm font-medium text-[#18181b] whitespace-nowrap">
+          <Plus class="size-4 text-white/55 group-hover:text-white/80 transition-colors shrink-0" />
+          <span class="text-sm font-medium text-white/70 group-hover:text-white/90 whitespace-nowrap transition-colors">
             Start a blank project
           </span>
         </button>
@@ -232,33 +284,28 @@ function isVideo(filename: string): boolean {
       <p class="text-[13px] text-white/45 mb-4">
         One-click tools for specific jobs. No canvas, no nodes — drop inputs, hit run.
       </p>
-      <div class="grid grid-cols-3 gap-4">
+      <div v-scroll-fade class="scroll-fade flex gap-4 overflow-x-auto">
         <button
           v-for="app in appCards"
           :key="app.id"
-          class="group relative flex flex-col items-stretch h-[180px] rounded-[12px] overflow-hidden border border-white/[0.06] hover:border-white/15 transition-colors cursor-pointer text-left"
+          class="group relative flex flex-col items-stretch flex-1 min-w-[220px] h-[225px] rounded-[12px] overflow-hidden border border-white/[0.06] hover:border-white/15 transition-colors cursor-pointer text-left"
           @click="openTab({ type: 'app', label: app.label, appId: app.id })"
         >
           <img
-            :src="`/grid_bg/bg_${bgIndexFor(app.id)}.svg`"
+            :src="APP_COVERS[app.id] ?? `/grid_bg/bg_${bgIndexFor(app.id)}.svg`"
             alt=""
             class="absolute inset-0 w-full h-full object-cover"
           />
           <div class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/35 to-black/15 pointer-events-none" />
-          <div class="absolute top-0 left-0 right-0 h-[3px]" :style="{ backgroundColor: app.accent }" />
 
-          <div class="relative flex-1 flex items-center justify-center">
-            <div class="size-14 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center ring-1 ring-white/10">
-              <component :is="app.icon" class="size-7" :style="{ color: app.accent }" :stroke-width="1.5" />
-            </div>
-          </div>
+          <div class="flex-1" />
 
           <div class="relative p-4 pt-0">
             <div class="flex items-center justify-between mb-1">
-              <div class="text-[14px] font-medium text-white drop-shadow-sm">{{ app.label }}</div>
+              <div class="text-[17px] font-semibold text-white drop-shadow-sm">{{ app.label }}</div>
               <span class="text-[10px] uppercase tracking-[0.12em] text-white/55 font-medium">{{ app.domain }}</span>
             </div>
-            <p class="text-[12px] text-white/60 leading-snug line-clamp-2 drop-shadow-sm">
+            <p class="text-[12px] text-white/60 leading-snug line-clamp-2 min-h-[2.75em] drop-shadow-sm">
               {{ app.description }}
             </p>
           </div>
@@ -270,14 +317,25 @@ function isVideo(filename: string): boolean {
     <div>
       <div class="flex justify-between items-center mb-4">
         <div class="flex items-center gap-4">
-          <h2 class="text-[20px] font-medium text-white tracking-[0.2px]">
+          <button
+            class="text-[20px] font-medium tracking-[0.2px] transition-colors cursor-pointer"
+            :class="projectFilter === 'recent' ? 'text-white' : 'text-white/40 hover:text-white/60'"
+            @click="projectFilter = 'recent'"
+          >
             Recent projects
-          </h2>
-          <span class="text-[20px] font-medium text-white/40 tracking-[0.2px] cursor-pointer hover:text-white/60 transition-colors">
+          </button>
+          <button
+            class="text-[20px] font-medium tracking-[0.2px] transition-colors cursor-pointer"
+            :class="projectFilter === 'pinned' ? 'text-white' : 'text-white/40 hover:text-white/60'"
+            @click="projectFilter = 'pinned'"
+          >
             Pinned projects
-          </span>
+          </button>
         </div>
-        <button class="flex items-center gap-1 text-sm text-white hover:text-white/80 transition-colors cursor-pointer">
+        <button
+          class="flex items-center gap-1 text-sm text-white hover:text-white/80 transition-colors cursor-pointer"
+          @click="openTab({ type: 'all-projects', label: 'All projects' })"
+        >
           See all projects
           <ArrowRight class="size-3.5" />
         </button>
@@ -296,22 +354,52 @@ function isVideo(filename: string): boolean {
 
       <!-- Empty state -->
       <div
-        v-else-if="recentProjects.length === 0"
+        v-else-if="displayProjects.length === 0"
         class="flex items-center justify-center h-[180px] rounded-[16px] border border-[#2a2a2a] border-dashed"
       >
-        <p class="text-sm text-white/30">No recent generations yet. Run a workflow to see results here.</p>
+        <p class="text-sm text-white/30">
+          {{ projectFilter === 'pinned'
+            ? 'No pinned projects yet. Hover a project and hit the pin to keep it here.'
+            : 'No recent generations yet. Run a workflow to see results here.' }}
+        </p>
       </div>
 
       <!-- Real projects -->
-      <div v-else class="flex gap-[32px] overflow-x-auto pb-2">
+      <div v-else v-scroll-fade class="scroll-fade flex gap-[32px] overflow-x-auto pb-2">
         <div
-          v-for="project in recentProjects"
+          v-for="project in displayProjects"
           :key="project.workflowId"
           class="flex-shrink-0 w-[270px] cursor-pointer group"
           @click="openRecentProject(project)"
         >
           <!-- Thumbnail mosaic: 1 large left + 2 small right from last 3 images -->
-          <div class="h-[180px] rounded-[16px] bg-[#1e1e1e] overflow-hidden flex gap-px">
+          <div class="relative h-[180px] rounded-[16px] bg-[#1e1e1e] overflow-hidden flex gap-px">
+            <!-- Pin marker (persistent when pinned) -->
+            <div
+              v-if="isPinned(project.workflowId)"
+              class="absolute top-2 left-2 z-10 size-6 rounded-full bg-black/55 backdrop-blur-sm flex items-center justify-center"
+              title="Pinned"
+            >
+              <Pin class="size-3.5 text-[#ffb55c]" fill="currentColor" />
+            </div>
+            <!-- Hover actions: pin/unpin + hide -->
+            <div class="absolute top-2 right-2 z-10 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                class="size-7 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-sm flex items-center justify-center text-white/85 hover:text-white transition-colors"
+                :title="isPinned(project.workflowId) ? 'Unpin' : 'Pin'"
+                @click.stop="togglePin(project.workflowId)"
+              >
+                <PinOff v-if="isPinned(project.workflowId)" class="size-3.5" />
+                <Pin v-else class="size-3.5" />
+              </button>
+              <button
+                class="size-7 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-sm flex items-center justify-center text-white/85 hover:text-white transition-colors"
+                title="Hide from recent"
+                @click.stop="hide(project.workflowId)"
+              >
+                <EyeOff class="size-3.5" />
+              </button>
+            </div>
             <!-- Large asset (most recent) -->
             <template v-if="project.images[0]">
               <video
@@ -401,7 +489,7 @@ function isVideo(filename: string): boolean {
         Pre-built node graphs to open in the canvas and customize. Good if you want to peek under the hood.
       </p>
 
-      <div class="flex gap-6 overflow-x-auto pb-2">
+      <div v-scroll-fade class="scroll-fade flex gap-6 overflow-x-auto pb-2">
         <div
           v-for="(template, index) in comfyTemplates"
           :key="template.id"
@@ -434,14 +522,7 @@ function isVideo(filename: string): boolean {
               <h3 class="text-sm font-semibold text-white line-clamp-2 leading-tight drop-shadow-sm">
                 {{ template.title }}
               </h3>
-              <div class="flex items-center gap-1.5 mt-auto">
-                <UiAvatar class="size-5">
-                  <UiAvatarImage :src="template.creator.avatarUrl" :alt="template.creator.displayName" />
-                  <UiAvatarFallback class="text-[9px]">C</UiAvatarFallback>
-                </UiAvatar>
-                <span class="text-[11px] text-white/70">{{ template.creator.displayName }}</span>
-              </div>
-              <div class="flex items-center gap-3 text-[11px] text-white/50">
+              <div class="flex items-center gap-3 mt-auto text-[11px] text-white/50">
                 <span class="flex items-center gap-1">
                   <Play class="size-3" fill="currentColor" />
                   {{ formatNumber(template.stats.runs) }}
@@ -473,3 +554,31 @@ function isVideo(filename: string): boolean {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Edge fade for horizontal scrollers. --fl/--fr are widened by the
+   .fade-left/.fade-right classes (toggled by v-scroll-fade) only on the side
+   that has more content off-screen, so a row that fits shows no fade. */
+.scroll-fade {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fl, 0px),
+    #000 calc(100% - var(--fr, 0px)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fl, 0px),
+    #000 calc(100% - var(--fr, 0px)),
+    transparent 100%
+  );
+}
+.scroll-fade.fade-left {
+  --fl: 56px;
+}
+.scroll-fade.fade-right {
+  --fr: 56px;
+}
+</style>

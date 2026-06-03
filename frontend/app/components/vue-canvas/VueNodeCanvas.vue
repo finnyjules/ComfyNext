@@ -11,7 +11,7 @@ import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImage
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { useNodeSearch } from '~/composables/useNodeSearch'
-import { useTakesEnabled, buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
+import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -41,9 +41,6 @@ const props = defineProps<{
   workflow: any
   activeTool?: string // 'select' | 'hand'
 }>()
-
-// Takes (non-destructive variation loop) — flag-gated; off by default.
-const { takesEnabled } = useTakesEnabled()
 
 // Groups round-trip through useVueNodes via a bridge object. Methods are
 // reassigned below once useCanvasGroups is instantiated; this dance avoids
@@ -999,32 +996,14 @@ function handleBridgeMessage(event: MessageEvent) {
           params.set('t', String(Date.now()))
           return `/view?${params}`
         }
-        if (takesEnabled.value) {
-          // Takes loop (flag-gated): append this run as a take instead of
-          // overwriting. appendTake mirrors the new (active) take onto
-          // images/audios/text/animated, so this stays behavior-identical for a
-          // single run while preserving prior results for compare/switch.
-          const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
-          // Skip empties (a node that fires `executed` with a ui-only/empty
-          // payload shouldn't pile up blank takes).
-          if (takeHasContent(take)) target.data = appendTake({ ...target.data }, take)
-        } else {
-          const next: any = { ...target.data }
-          if (Array.isArray(output.images) && output.images.length) {
-            next.images = output.images.map(toUrl)
-            next.animated = output.animated?.[0] === true
-          }
-          if (Array.isArray(output.audio) && output.audio.length) {
-            next.audios = output.audio.map(toUrl)
-          }
-          // PreviewAny / "Preview as Text" nodes return { ui: { text: [string] } }
-          // which ComfyUI's execution events surface as `output.text`. Same goes
-          // for any node that exposes a debug-style text payload.
-          if (Array.isArray(output.text) && output.text.length) {
-            next.text = output.text.map((t: any) => String(t)).join('\n\n')
-          }
-          target.data = next
-        }
+        // Takes loop: append this run as a take instead of overwriting.
+        // appendTake mirrors the new (active) take onto images/audios/text/
+        // animated, so a single run stays behavior-identical while prior results
+        // are preserved for compare/switch.
+        const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
+        // Skip empties (a node that fires `executed` with a ui-only/empty
+        // payload shouldn't pile up blank takes).
+        if (takeHasContent(take)) target.data = appendTake({ ...target.data }, take)
       }
     }
   }

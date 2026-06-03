@@ -11,6 +11,7 @@ import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
 import LoraTrainerSurface from '~/components/LoraTrainerSurface.vue'
+import AllProjectsView from '~/components/AllProjectsView.vue'
 import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
@@ -144,12 +145,33 @@ watch(() => activeTabId.value, (id) => {
     && !seenStartModalTabIds.has(id) && !hasSavedContent
   if (isFreshBlankProject) {
     seenStartModalTabIds.add(id)
-    startModalTabId.value = id
+    if (tab.seedNodeType) {
+      // Opened from a homepage medium card — skip the picker and drop the
+      // chosen starter generator straight onto the new canvas.
+      startModalTabId.value = null
+      seedStarterGraph(tab.seedNodeType)
+    } else {
+      startModalTabId.value = id
+    }
   } else {
     // Tab switch → hide the modal (without re-triggering on switch-back).
     startModalTabId.value = null
   }
 })
+
+// Drop a starter generator onto a freshly-opened project. The canvas mounts a
+// tick or two after the tab activates, so retry until materializeStartGraph is
+// available, then ensure the schema is loaded (it reads object_info) before
+// seeding — mirrors the Run path's refreshSchema safety.
+async function seedStarterGraph(nodeType: string, tries = 0) {
+  const canvas = vueCanvasRef.value
+  if (canvas?.materializeStartGraph) {
+    await canvas.refreshSchema?.()
+    canvas.materializeStartGraph({ generatorNodeType: nodeType })
+  } else if (tries < 40) {
+    setTimeout(() => seedStarterGraph(nodeType, tries + 1), 50)
+  }
+}
 
 function onStartModalPick(payload: { capability: Capability }) {
   const cap = payload.capability
@@ -1746,6 +1768,7 @@ function dismissRunResult() {
               <Image v-else-if="tab.type === 'assets'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <AppWindow v-else-if="tab.type === 'app'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <Wand v-else-if="tab.type === 'train'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
+              <LayoutGrid v-else-if="tab.type === 'all-projects'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <!-- Project tab: status indicator -->
               <template v-else>
                 <!-- Idle: green dot -->
@@ -1898,6 +1921,15 @@ function dismissRunResult() {
           class="h-full"
         >
           <LoraTrainerSurface />
+        </div>
+        <!-- All projects tab (full grid of every project) -->
+        <div
+          v-for="tab in tabs.filter((t) => t.type === 'all-projects')"
+          :key="tab.id"
+          v-show="tab.id === activeTabId"
+          class="h-full overflow-auto"
+        >
+          <AllProjectsView />
         </div>
         <!-- Vue Node Canvas (when Modern node design enabled) -->
         <div

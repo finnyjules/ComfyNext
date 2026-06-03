@@ -45,6 +45,14 @@ function thumb(t: Take): string | null {
           class="size-full object-cover"
           loading="lazy"
         />
+        <video
+          v-else-if="t.videos?.length"
+          :src="t.videos[0]"
+          class="size-full object-cover"
+          muted
+          playsinline
+          preload="metadata"
+        />
         <div
           v-else
           class="size-full flex items-center justify-center bg-white/[0.04] text-[9px] text-white/40"

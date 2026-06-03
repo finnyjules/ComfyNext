@@ -14,6 +14,7 @@
  * Each step submits its own tiny prompt graph to /prompt and polls /history.
  */
 import { ArrowRight, Bookmark, Check, Copy, Download, Image as ImageIcon, Loader2, RefreshCcw, Sparkles, Upload, X } from 'lucide-vue-next'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 
 type Step = 1 | 2 | 3
 const step = ref<Step>(1)
@@ -326,7 +327,9 @@ function onPointerUp() { drag = null }
 
 const lighting = ref('')
 const blendModel = ref<'Flux Kontext Pro' | 'Nano Banana'>('Flux Kontext Pro')
-const finalUrl = ref<string | null>(null)
+// Each re-create stacks as a take; the displayed result is the active take.
+const { takes, activeTakeId, activeTake, addTake, selectTake, pinTake, discardTake, reset: resetTakes } = useAppTakes()
+const finalUrl = computed<string | null>(() => activeTake.value?.images?.[0] ?? null)
 // How strongly the original product is kept (1 = pixel-exact, 0 = fully relit).
 // Baked into the keep-mask's gray level so BlendScene cross-fades original↔relit.
 const preserve = ref(0.7)
@@ -380,10 +383,16 @@ async function runBlend() {
   // Keep the previous result on screen under the loading overlay (don't null it).
   error.value = null; busy.value = true; progress.value = 'Flattening composite…'
   try {
+    // The keep-mask cross-fades the *original* product pixels back over the result,
+    // which only lines up when the engine edits in place. Flux Kontext Pro does;
+    // Nano Banana regenerates the whole scene and relocates the product, so the
+    // preserved pixels land off-register and ghost. Only wire the mask for Kontext.
+    const usePreserve = blendModel.value === 'Flux Kontext Pro'
+
     const { composite, mask } = await buildComposite()
     progress.value = 'Uploading…'
     const compositeName = await uploadBlob(composite, 'product_composite.png')
-    const maskName = await uploadBlob(mask, 'product_mask.png')
+    const maskName = usePreserve ? await uploadBlob(mask, 'product_mask.png') : null
 
     const light = (lighting.value || '').trim() || LIGHT_PRESETS[0]!.prompt
     const blendPrompt =
@@ -393,27 +402,30 @@ async function runBlend() {
       'proportions and identity unchanged.'
 
     progress.value = 'Relighting & blending…'
-    const promptId = await submit({
+    const graph: Record<string, any> = {
       '1': { class_type: 'LoadImage', inputs: { image: compositeName } },
-      '2': { class_type: 'LoadImage', inputs: { image: maskName } },
-      '3': { class_type: 'ImageToMask', inputs: { image: ['2', 0], channel: 'red' } },
-      '4': {
-        class_type: 'BlendSceneNode',
-        inputs: {
-          model: blendModel.value,
-          image: ['1', 0],
-          prompt: blendPrompt,
-          keep_subject: ['3', 0],
-          keep_feather: edgeBlend.value,
-          seed: randomSeed(),
-          output_format: 'png',
-        },
-      },
-      '5': { class_type: 'SaveImage', inputs: saveImageInputs(['4', 0], 'product_shot') },
-    })
+    }
+    const blendInputs: Record<string, any> = {
+      model: blendModel.value,
+      image: ['1', 0],
+      prompt: blendPrompt,
+      // keep_feather isn't optional in the node schema, so always send it — the
+      // node only applies it when keep_subject is wired (Flux Kontext Pro).
+      keep_feather: edgeBlend.value,
+      seed: randomSeed(),
+      output_format: 'png',
+    }
+    if (usePreserve) {
+      graph['2'] = { class_type: 'LoadImage', inputs: { image: maskName } }
+      graph['3'] = { class_type: 'ImageToMask', inputs: { image: ['2', 0], channel: 'red' } }
+      blendInputs.keep_subject = ['3', 0]
+    }
+    graph['4'] = { class_type: 'BlendSceneNode', inputs: blendInputs }
+    graph['5'] = { class_type: 'SaveImage', inputs: saveImageInputs(['4', 0], 'product_shot') }
+    const promptId = await submit(graph)
     const out = pickImage(await pollHistory(promptId), { preferType: 'output' })
     if (!out) throw new Error('Blend finished but produced no output.')
-    finalUrl.value = viewUrl(out)
+    addTake({ images: [viewUrl(out)], promptId, sig: `${out.subfolder}/${out.filename}` })
   } catch (e: any) {
     error.value = humanizeError(e?.message ?? String(e))
   } finally {
@@ -442,7 +454,7 @@ function startOver() {
   step.value = 1
   bgUrl.value = null; bgDims.value = null; bgRef.value = null
   cutoutUrl.value = null; cutoutDims.value = null
-  finalUrl.value = null; error.value = null
+  resetTakes(); error.value = null
   pendingPlacement.value = null
 }
 
@@ -493,7 +505,7 @@ function persistLooks() {
 // clear only the product, and jump back to the Object step to add the next one.
 function shootAnother() {
   if (bgDims.value && placement.w > 0) pendingPlacement.value = currentRelPlacement()
-  cutoutUrl.value = null; cutoutDims.value = null; finalUrl.value = null; error.value = null
+  cutoutUrl.value = null; cutoutDims.value = null; resetTakes(); error.value = null
   step.value = 2
 }
 
@@ -516,7 +528,7 @@ async function applyLook(p: LookPreset) {
   bgMode.value = p.bgMode; bgPrompt.value = p.bgPrompt; bgAspect.value = p.bgAspect
   lighting.value = p.lighting; preserve.value = p.preserve; edgeBlend.value = p.edgeBlend; blendModel.value = p.blendModel
   pendingPlacement.value = p.placement
-  cutoutUrl.value = null; cutoutDims.value = null; finalUrl.value = null; error.value = null
+  cutoutUrl.value = null; cutoutDims.value = null; resetTakes(); error.value = null
   busy.value = true; progress.value = 'Loading look…'
   try {
     await setBackgroundFromRef(p.bgRef)
@@ -541,6 +553,15 @@ function deleteLook(id: string) {
       <!-- Final result -->
       <div v-if="step === 3 && finalUrl" class="w-full max-w-[720px] flex flex-col items-center">
         <img :src="finalUrl" class="w-full rounded-xl border border-white/[0.06] bg-black object-contain shadow-2xl" />
+        <TakesStrip
+          v-if="takes.length >= 1"
+          :takes="takes"
+          :active-take-id="activeTakeId"
+          class="mt-3 w-full rounded-lg bg-black/40 border border-white/10"
+          @select="selectTake"
+          @pin="pinTake"
+          @discard="discardTake"
+        />
       </div>
 
       <!-- Placement stage: background + draggable cutout -->
@@ -747,8 +768,23 @@ function deleteLook(id: string) {
             </div>
           </div>
 
-          <!-- Sliders -->
-          <div class="space-y-4">
+          <!-- Engine -->
+          <div class="flex items-center gap-2">
+            <span class="text-[12px] text-white/55">Engine</span>
+            <div class="inline-flex rounded-lg bg-white/[0.04] p-0.5 gap-0.5">
+              <button
+                v-for="m in (['Flux Kontext Pro','Nano Banana'] as const)" :key="m"
+                class="px-2.5 py-1.5 rounded-md text-[11.5px] font-medium transition-colors cursor-pointer"
+                :class="blendModel === m ? 'bg-white/[0.12] text-white' : 'text-white/50 hover:text-white/80'"
+                @click="blendModel = m"
+              >{{ m }}</button>
+            </div>
+          </div>
+
+          <!-- Preserve controls: only Flux Kontext Pro edits in place, so the
+               pixel-exact keep-mask only makes sense there. Nano Banana relights
+               by regenerating the whole scene, which moves the product. -->
+          <div v-if="blendModel === 'Flux Kontext Pro'" class="space-y-4">
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="text-[12px] text-white/70">Preserve product</label>
@@ -768,19 +804,9 @@ function deleteLook(id: string) {
               <p class="text-[10.5px] text-white/35 mt-1 leading-snug">How softly the product’s edges melt into the scene.</p>
             </div>
           </div>
-
-          <!-- Engine -->
-          <div class="flex items-center gap-2">
-            <span class="text-[12px] text-white/55">Engine</span>
-            <div class="inline-flex rounded-lg bg-white/[0.04] p-0.5 gap-0.5">
-              <button
-                v-for="m in (['Flux Kontext Pro','Nano Banana'] as const)" :key="m"
-                class="px-2.5 py-1.5 rounded-md text-[11.5px] font-medium transition-colors cursor-pointer"
-                :class="blendModel === m ? 'bg-white/[0.12] text-white' : 'text-white/50 hover:text-white/80'"
-                @click="blendModel = m"
-              >{{ m }}</button>
-            </div>
-          </div>
+          <p v-else class="text-[10.5px] text-white/35 leading-snug">
+            Nano Banana reimagines the whole scene for the most natural relight, so it can subtly restyle the product. For pixel-exact labels, switch to Flux Kontext Pro.
+          </p>
 
           <!-- Run -->
           <button

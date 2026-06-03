@@ -5,6 +5,7 @@
  *           → CreateVideo (audio re-attached) → SaveVideo.
  */
 import { ArrowRight, Download, Loader2, RefreshCcw } from 'lucide-vue-next'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 
 interface UploadedFile { file: File; filename: string; previewUrl: string }
 
@@ -12,7 +13,9 @@ const video = ref<UploadedFile | null>(null)
 const status = ref<'idle' | 'running' | 'done' | 'error'>('idle')
 const errorMessage = ref<string | null>(null)
 const progressLabel = ref('')
-const outputUrl = ref<string | null>(null)
+// Each run stacks as a take; the displayed result is the active take.
+const { takes, activeTakeId, activeTake, addTake, selectTake, pinTake, discardTake, reset: resetTakes } = useAppTakes()
+const outputUrl = computed<string | null>(() => activeTake.value?.videos?.[0] ?? null)
 
 // User-facing knobs
 const language = ref<'auto' | 'en' | 'fr' | 'es' | 'de' | 'ja' | 'zh' | 'pt' | 'it' | 'ko'>('auto')
@@ -75,7 +78,6 @@ function viewUrl(f: { filename: string; subfolder: string; type: string }): stri
 async function run() {
   if (!canRun.value || !video.value) return
   errorMessage.value = null
-  outputUrl.value = null
   status.value = 'running'
   progressLabel.value = 'Submitting…'
 
@@ -96,7 +98,7 @@ async function run() {
     progressLabel.value = 'Transcribing speech and burning captions (this can take a couple of minutes)…'
     const output = await pollForOutput(promptId)
     if (!output) throw new Error('Run finished but produced no output.')
-    outputUrl.value = viewUrl(output)
+    addTake({ videos: [viewUrl(output)], promptId, sig: `${output.subfolder || ''}/${output.filename}` })
     status.value = 'done'
   } catch (e: any) {
     errorMessage.value = humanizeError(e?.message ?? String(e))
@@ -153,7 +155,7 @@ function humanizeError(msg: string): string {
 
 function reset() {
   video.value = null
-  outputUrl.value = null
+  resetTakes()
   errorMessage.value = null
   status.value = 'idle'
 }
@@ -309,6 +311,15 @@ function download() {
             <div class="text-[12px] text-white/40 text-center px-6 max-w-md">{{ progressLabel || 'Working…' }}</div>
           </div>
         </div>
+        <TakesStrip
+          v-if="takes.length >= 1"
+          :takes="takes"
+          :active-take-id="activeTakeId"
+          class="mt-3 rounded-lg bg-black/40 border border-white/10"
+          @select="selectTake"
+          @pin="pinTake"
+          @discard="discardTake"
+        />
       </div>
     </div>
   </div>

@@ -1,4 +1,4 @@
-interface RecentProject {
+export interface RecentProject {
   workflowId: string
   name: string
   promptIds: string[] // all prompt IDs for this project (most recent first)
@@ -7,7 +7,10 @@ interface RecentProject {
   runCount: number
 }
 
+// `recentProjects` is the first 10 for the home row; `allProjects` is the full
+// list (same data, unsliced) for the "All projects" grid.
 const recentProjects = ref<RecentProject[]>([])
+const allProjects = ref<RecentProject[]>([])
 const loading = ref(false)
 let fetchedOnce = false
 
@@ -136,7 +139,6 @@ export function useRecentProjects() {
 
       // Sort projects by most recent activity
       projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
-      recentProjects.value = projects.slice(0, 10)
 
       // Overlay durable projects (Phase 0). They key off the same projectUuid as
       // workflowId. Durable name wins; a durable project not present in /history
@@ -146,13 +148,13 @@ export function useRecentProjects() {
       try {
         const durable = await useProjects().listProjects()
         if (durable.length) {
-          const byId = new Map(recentProjects.value.map((p) => [p.workflowId, p]))
+          const byId = new Map(projects.map((p) => [p.workflowId, p]))
           for (const d of durable) {
             const existing = byId.get(d.uuid)
             if (existing) {
               if (d.name) existing.name = d.name
             } else {
-              recentProjects.value.push({
+              projects.push({
                 workflowId: d.uuid,
                 name: d.name || 'Untitled project',
                 promptIds: [],
@@ -162,9 +164,12 @@ export function useRecentProjects() {
               })
             }
           }
-          recentProjects.value.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+          projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
         }
       } catch { /* durable projects optional — history list stands */ }
+
+      allProjects.value = projects
+      recentProjects.value = projects.slice(0, 10)
 
       fetchedOnce = true
     }
@@ -185,13 +190,16 @@ export function useRecentProjects() {
     const names = getSavedNames()
     names[workflowId] = name
     persistNames(names)
-    // Update in-memory
-    const project = recentProjects.value.find((p) => p.workflowId === workflowId)
-    if (project) project.name = name
+    // Update in-memory (both lists share the same objects, but guard anyway)
+    for (const list of [recentProjects.value, allProjects.value]) {
+      const project = list.find((p) => p.workflowId === workflowId)
+      if (project) project.name = name
+    }
   }
 
   return {
     recentProjects,
+    allProjects,
     loading,
     thumbnailUrl,
     timeAgo,

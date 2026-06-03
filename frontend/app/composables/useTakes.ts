@@ -15,8 +15,8 @@
  * a single `resolveActiveTake` read site; the prototype favors the projection
  * approach to keep the default path untouched and the blast radius tiny.
  *
- * Everything here is pure except the flag composable, so it's straightforward
- * to unit-test once the frontend gains a test runner.
+ * Everything here is pure, so it's straightforward to unit-test once the
+ * frontend gains a test runner.
  */
 
 export interface Take {
@@ -27,6 +27,7 @@ export interface Take {
   pinned?: boolean
   images?: string[]
   audios?: string[]
+  videos?: string[]
   text?: string
   animated?: boolean
   /** Stable identity of the underlying output (filenames, ignoring cache-buster). */
@@ -155,30 +156,4 @@ export function resolveActiveTake(data: TakeBearingData | undefined | null): Tak
   if (!data?.takes?.length) return null
   const id = data.activeTakeId
   return data.takes.find((t) => t.id === id) ?? data.takes[data.takes.length - 1] ?? null
-}
-
-// --- Feature flag (mirrors useVueNodesEnabled) -----------------------------
-
-const STORAGE_KEY = 'comfynext:Comfy.Takes.Enabled'
-const takesEnabled = ref(false)
-let listenerRegistered = false
-
-export function useTakesEnabled() {
-  function load() {
-    if (import.meta.server) return
-    takesEnabled.value = localStorage.getItem(STORAGE_KEY) === 'true'
-  }
-
-  if (import.meta.client && !listenerRegistered) {
-    listenerRegistered = true
-    window.addEventListener('storage', (e) => {
-      if (e.key === STORAGE_KEY) load()
-    })
-    window.addEventListener('comfynext:setting-changed', ((e: CustomEvent) => {
-      if (e.detail?.key === STORAGE_KEY) load()
-    }) as EventListener)
-    load()
-  }
-
-  return { takesEnabled, reloadSetting: load }
 }

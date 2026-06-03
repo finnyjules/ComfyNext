@@ -4,6 +4,7 @@
  * Pipeline: LoadAudio → VocalSeparator → 2× SaveAudioMP3.
  */
 import { ArrowRight, Download, Loader2, Music, RefreshCcw } from 'lucide-vue-next'
+import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 
 interface UploadedFile { file: File; filename: string; previewUrl: string }
 
@@ -11,8 +12,11 @@ const song = ref<UploadedFile | null>(null)
 const status = ref<'idle' | 'running' | 'done' | 'error'>('idle')
 const errorMessage = ref<string | null>(null)
 const progressLabel = ref('')
-const vocalsUrl = ref<string | null>(null)
-const instrumentalUrl = ref<string | null>(null)
+// Each separation stacks as a take holding both stems [vocals, instrumental];
+// the displayed pair is the active take.
+const { takes, activeTakeId, activeTake, addTake, selectTake, pinTake, discardTake, reset: resetTakes } = useAppTakes()
+const vocalsUrl = computed<string | null>(() => activeTake.value?.audios?.[0] ?? null)
+const instrumentalUrl = computed<string | null>(() => activeTake.value?.audios?.[1] ?? null)
 
 const canRun = computed(() => !!song.value && status.value !== 'running')
 
@@ -46,8 +50,6 @@ function viewUrl(f: { filename: string; subfolder: string; type: string }): stri
 async function run() {
   if (!canRun.value || !song.value) return
   errorMessage.value = null
-  vocalsUrl.value = null
-  instrumentalUrl.value = null
   status.value = 'running'
   progressLabel.value = 'Submitting…'
 
@@ -70,8 +72,11 @@ async function run() {
     if (!result.vocals || !result.instrumental) {
       throw new Error('Run finished but produced incomplete output.')
     }
-    vocalsUrl.value = viewUrl(result.vocals)
-    instrumentalUrl.value = viewUrl(result.instrumental)
+    addTake({
+      audios: [viewUrl(result.vocals), viewUrl(result.instrumental)],
+      promptId,
+      sig: `${result.vocals.subfolder || ''}/${result.vocals.filename}`,
+    })
     status.value = 'done'
   } catch (e: any) {
     errorMessage.value = humanizeError(e?.message ?? String(e))
@@ -130,8 +135,7 @@ function humanizeError(msg: string): string {
 
 function reset() {
   song.value = null
-  vocalsUrl.value = null
-  instrumentalUrl.value = null
+  resetTakes()
   errorMessage.value = null
   status.value = 'idle'
 }
@@ -258,6 +262,16 @@ function download(url: string, name: string) {
             <div class="text-[12px] text-white/40">{{ progressLabel || 'Working…' }}</div>
           </div>
         </div>
+
+        <TakesStrip
+          v-if="takes.length >= 1"
+          :takes="takes"
+          :active-take-id="activeTakeId"
+          class="mt-4 rounded-lg bg-black/40 border border-white/10"
+          @select="selectTake"
+          @pin="pinTake"
+          @discard="discardTake"
+        />
       </div>
     </div>
   </div>
