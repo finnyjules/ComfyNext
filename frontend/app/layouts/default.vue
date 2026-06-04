@@ -75,7 +75,7 @@ const sidebarItems = [
   { label: 'Assets', icon: LayoutGrid, tabId: 'assets' },
   // Make + edit
   { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
-  { label: 'LoRAs', icon: Library, panel: 'loras' },
+  { label: 'Styles', icon: Library, panel: 'loras' },
   { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
   { label: 'Annotate', icon: MessageSquareDashed, submenu: 'annotate' },
   // Power-user
@@ -930,7 +930,20 @@ async function loadWorkflowForTab(tab: any) {
   if (vueNodesEnabled.value) {
     // Vue mode: store workflow directly (no iframe needed)
     if (!saved) {
-      if (tab.promptId) {
+      // Phase 0 (3b): if this tab is tied to a durable Project, prefer its saved
+      // version — it's the freshest cross-session state (written by 3a on
+      // switch/unload), fresher than /history. Strictly a fallback: only runs
+      // when there's no in-session sessionStorage snapshot, and degrades to the
+      // existing history/blank path if the project or its version is absent.
+      let durableWf: any = null
+      if (tab.projectUuid) {
+        const loaded = await useProjects().loadProject(tab.projectUuid)
+        durableWf = loaded?.currentVersion?.workflow || null
+      }
+      if (durableWf && (durableWf.nodes?.length ?? 0) > 0) {
+        savedWorkflows[tab.id] = durableWf
+      }
+      else if (tab.promptId) {
         const workflow = await fetchWorkflowFromHistory(tab.promptId)
         savedWorkflows[tab.id] = workflow || BLANK_WORKFLOW
       }
