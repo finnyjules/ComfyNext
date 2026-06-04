@@ -729,8 +729,52 @@ function handleApplyEffect(e: Event) {
 }
 
 // Handle node drop from sidebar
+// ── Assets panel → canvas ──────────────────────────────────────────────────
+// Drop (or click) a generation/import from the Assets panel to add a loader
+// node for it. Images use LoadImageOutput (output folder) or LoadImage (input);
+// video/audio use their matching loaders (best-effort for output media).
+interface DroppedAsset { kind: 'image' | 'video' | 'audio'; filename: string; subfolder?: string; type?: string }
+
+function assetViewUrl(a: DroppedAsset): string {
+  const p = new URLSearchParams({ filename: a.filename, type: a.type || 'output' })
+  if (a.subfolder) p.set('subfolder', a.subfolder)
+  p.set('t', String(Date.now()))
+  return `/view?${p}`
+}
+
+async function addAssetNodeData(a: DroppedAsset, position: { x: number, y: number }) {
+  const nodeType = a.kind === 'video' ? 'LoadVideo'
+    : a.kind === 'audio' ? 'LoadAudio'
+      : a.type === 'input' ? 'LoadImage' : 'LoadImageOutput'
+  if (!objectInfo.value[nodeType]) await fetchObjectInfo()
+  const widgetName = a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : 'image'
+  // LoadImageOutput's combo value is "subfolder/filename" when nested.
+  const widgetVal = (nodeType === 'LoadImageOutput' && a.subfolder) ? `${a.subfolder}/${a.filename}` : a.filename
+  const node = createNodeData(nodeType, position, { [widgetName]: widgetVal }) as any
+  // Instant thumbnail for images (ArtifactImageNode renders data.images[0] first).
+  if (a.kind === 'image') node.data.images = [assetViewUrl(a)]
+  return node
+}
+
+async function handleAddAssetNode(e: Event) {
+  const a = (e as CustomEvent<DroppedAsset>).detail
+  if (!a?.filename) return
+  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  nodes.value.push(await addAssetNodeData(a, { x: center.x, y: center.y }))
+}
+
 async function handleDrop(event: DragEvent) {
   event.preventDefault()
+  // Assets panel drops carry our custom MIME type with a JSON payload.
+  if (event.dataTransfer?.types.includes('application/x-comfynext-asset')) {
+    try {
+      const a = JSON.parse(event.dataTransfer.getData('application/x-comfynext-asset')) as DroppedAsset
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const position = project({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+      nodes.value.push(await addAssetNodeData(a, position))
+    } catch { /* malformed payload — ignore */ }
+    return
+  }
   // Block library drops carry our custom MIME type; route them first since
   // the text/plain payload is just a fallback prefixed with "block:".
   if (event.dataTransfer?.types.includes('application/x-comfynext-block')) {
@@ -1287,6 +1331,7 @@ function handleAddAnnotationEvent(event: Event) {
 
 onMounted(() => {
   window.addEventListener('comfynext:addNode', handleAddNode)
+  window.addEventListener('comfynext:addAssetNode', handleAddAssetNode)
   window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
@@ -1307,6 +1352,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.removeEventListener('comfynext:addNode', handleAddNode)
+  window.removeEventListener('comfynext:addAssetNode', handleAddAssetNode)
   window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)

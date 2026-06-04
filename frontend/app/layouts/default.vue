@@ -72,7 +72,7 @@ const sidebarItems = [
   { label: 'Hand', icon: Hand, tool: 'hand' },
   // Sources
   { label: 'Add', icon: Plus, submenu: 'load', dividerBefore: true },
-  { label: 'Assets', icon: LayoutGrid, tabId: 'assets' },
+  { label: 'Assets', icon: LayoutGrid, panel: 'assets' },
   // Make + edit
   { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
   { label: 'Styles', icon: Library, panel: 'loras' },
@@ -202,6 +202,7 @@ const toolboxPanelOpen = ref(false) // tracks whether the Toolbox right panel is
 const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is visible
 const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
 const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
+const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
 
 // Whether a sidebar item is currently the "active" one (highlighted).
 // Single source of truth for the chevron/button highlight logic — used by
@@ -213,6 +214,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'generators') return generatorsPanelOpen.value
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
+  if (item?.panel === 'assets') return assetsPanelOpen.value
   if (item?.submenu === 'load') return loadMenuOpen.value
   if (item?.submenu === 'annotate') return annotateMenuOpen.value
   return activeSidebarItem.value === item?.label
@@ -260,31 +262,19 @@ function toggleSidebarItem(label: string) {
     }
     // In Vue mode, Select/Hand work natively via Vue Flow
   }
-  else if (item?.panel === 'toolbox') {
-    const wasOpen = toolboxPanelOpen.value
-    generatorsPanelOpen.value = false
-    loraLibraryPanelOpen.value = false
-    toolboxPanelOpen.value = !wasOpen
-  }
-  else if (item?.panel === 'generators') {
-    const wasOpen = generatorsPanelOpen.value
-    toolboxPanelOpen.value = false
-    loraLibraryPanelOpen.value = false
-    generatorsPanelOpen.value = !wasOpen
-  }
-  else if (item?.panel === 'loras') {
-    const wasOpen = loraLibraryPanelOpen.value
-    toolboxPanelOpen.value = false
-    generatorsPanelOpen.value = false
-    blockLibraryPanelOpen.value = false
-    loraLibraryPanelOpen.value = !wasOpen
-  }
-  else if (item?.panel === 'blocks') {
-    const wasOpen = blockLibraryPanelOpen.value
-    toolboxPanelOpen.value = false
-    generatorsPanelOpen.value = false
-    loraLibraryPanelOpen.value = false
-    blockLibraryPanelOpen.value = !wasOpen
+  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'blocks' || item?.panel === 'assets') {
+    // Left canvas panels are mutually exclusive — opening one closes the rest.
+    const refs = {
+      toolbox: toolboxPanelOpen,
+      generators: generatorsPanelOpen,
+      loras: loraLibraryPanelOpen,
+      blocks: blockLibraryPanelOpen,
+      assets: assetsPanelOpen,
+    }
+    const target = refs[item.panel as keyof typeof refs]
+    const wasOpen = target.value
+    for (const r of Object.values(refs)) r.value = false
+    target.value = !wasOpen
   }
   else if (item?.tabId) {
     const wasActive = activeSidebarItem.value === label
@@ -2042,6 +2032,20 @@ function dismissRunResult() {
         >
           <div v-if="blockLibraryPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasBlockLibraryPanel @close="blockLibraryPanelOpen = false" />
+          </div>
+        </Transition>
+
+        <!-- Assets left panel (mutually exclusive with the others) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="assetsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasAssetsPanel @close="assetsPanelOpen = false" />
           </div>
         </Transition>
 
