@@ -1123,6 +1123,13 @@ function handleOpenCompositor(e: Event) {
   if (detail?.nodeId) compositorOpenForId.value = String(detail.nodeId)
 }
 
+// Inpaint modal state (dedicated editor for an Image artifact).
+const inpaintOpenForId = ref<string | null>(null)
+function handleOpenInpaint(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) inpaintOpenForId.value = String(detail.nodeId)
+}
+
 // Kinetic Typography modal state.
 const kineticTypeOpenForId = ref<string | null>(null)
 function handleOpenKineticType(e: Event) {
@@ -1335,6 +1342,7 @@ onMounted(() => {
   window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.addEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
@@ -1356,6 +1364,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.removeEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
@@ -3432,6 +3441,17 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="compositorOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Inpaint editor modal -->
+    <Teleport to="body">
+      <VueCanvasInpaintModal
+        v-if="inpaintOpenForId"
+        :node-id="inpaintOpenForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="inpaintOpenForId = null"
       />
     </Teleport>
 

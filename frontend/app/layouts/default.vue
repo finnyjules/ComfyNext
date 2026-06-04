@@ -2063,7 +2063,7 @@ function dismissRunResult() {
           <div v-if="assetsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasAssetsPanel @close="assetsPanelOpen = false" />
           </div>
-          <div v-if="versionsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+          <div v-else-if="versionsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasVersionsPanel
               :project-id="activeTab.projectUuid || activeTab.workflowId || null"
               :project-name="activeTab.label || 'Untitled project'"

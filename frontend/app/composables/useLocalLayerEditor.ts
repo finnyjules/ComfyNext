@@ -9,10 +9,11 @@
  * (possibly zoomed) artboard element.
  */
 import {
-  type LocalLayer, type TextLayer, type RectLayer, type LineLayer,
+  type LocalLayer, type TextLayer, type RectLayer, type LineLayer, type PathLayer,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
-  localLayerBox,
+  localLayerBox, shapeToPathLayer,
 } from '~/composables/useCompositorLayers'
+import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables/useVectorSvg'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -39,11 +40,42 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!n.data.properties) n.data.properties = {}
     n.data.properties.comfynext_localLayers = next
   }
+
+  // ── Undo / redo (snapshot history over local layers) ────────────────────────
+  // The editor is the single mutation choke point, so one history stack here
+  // covers every vector edit. Discrete ops record before mutating; a drag
+  // records once at pointer-down (coalesced) so it's a single undo step.
+  const HISTORY_CAP = 120
+  const _past = ref<LocalLayer[][]>([])
+  const _future = ref<LocalLayer[][]>([])
+  function snapshot(): LocalLayer[] { return JSON.parse(JSON.stringify(localLayers.value)) }
+  function recordHistory() {
+    _past.value.push(snapshot())
+    if (_past.value.length > HISTORY_CAP) _past.value.shift()
+    _future.value = []
+  }
+  const canUndo = computed(() => _past.value.length > 0)
+  const canRedo = computed(() => _future.value.length > 0)
+  function undo() {
+    if (!_past.value.length) return
+    _future.value.push(snapshot())
+    commit(_past.value.pop()!)
+    if (selectedId.value && !localLayers.value.some(l => l.id === selectedId.value)) selectedId.value = null
+  }
+  function redo() {
+    if (!_future.value.length) return
+    _past.value.push(snapshot())
+    commit(_future.value.pop()!)
+    if (selectedId.value && !localLayers.value.some(l => l.id === selectedId.value)) selectedId.value = null
+  }
+
   function setLocal(id: string, patch: Record<string, any>) {
+    if (!drag.value) recordHistory() // drags record once at pointer-down
     commit(localLayers.value.map(l => (l.id === id ? { ...l, ...patch } as LocalLayer : l)))
   }
-  function addLocal(layer: LocalLayer) { commit([...localLayers.value, layer]); selectLocal(layer.id) }
+  function addLocal(layer: LocalLayer) { recordHistory(); commit([...localLayers.value, layer]); selectLocal(layer.id) }
   function deleteLocal(id: string) {
+    recordHistory()
     commit(localLayers.value.filter(l => l.id !== id))
     if (selectedId.value === id) selectedId.value = null
   }
@@ -51,13 +83,56 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const arr = [...localLayers.value]
     const i = arr.findIndex(l => l.id === id); const j = i + dir
     if (i < 0 || j < 0 || j >= arr.length) return
+    recordHistory()
     ;[arr[i], arr[j]] = [arr[j], arr[i]]; commit(arr)
   }
 
   // ── Selection / editing state ──────────────────────────────────────────────
   const selectedId = ref<string | null>(null)
   const selected = computed(() => localLayers.value.find(l => l.id === selectedId.value) ?? null)
-  function selectLocal(id: string | null) { selectedId.value = id }
+  // Multi-selection (superset of selectedId) for booleans / group / align.
+  const selectedIds = ref<Set<string>>(new Set())
+  /** All layer ids in the same group as `id` (just `id` if ungrouped). */
+  function groupSiblings(id: string): string[] {
+    const l = localLayers.value.find(x => x.id === id)
+    if (!l?.groupId) return [id]
+    return localLayers.value.filter(x => x.groupId === l.groupId).map(x => x.id)
+  }
+  function selectLocal(id: string | null) {
+    selectedId.value = id
+    selectedIds.value = id ? new Set(groupSiblings(id)) : new Set() // selecting a grouped layer selects the group
+  }
+  /** Shift-click: toggle `id` (and its group) in the multi-selection. */
+  function toggleSelect(id: string) {
+    const sibs = groupSiblings(id)
+    const s = new Set(selectedIds.value)
+    if (s.has(id)) { for (const x of sibs) s.delete(x); if (sibs.includes(selectedId.value!)) selectedId.value = [...s][s.size - 1] ?? null }
+    else { for (const x of sibs) s.add(x); selectedId.value = id }
+    selectedIds.value = s
+  }
+  let _groupSeq = 0
+  /** Group the current multi-selection (≥2 layers) under one groupId. */
+  function groupSelected() {
+    const ids = [...selectedIds.value]
+    if (ids.length < 2) return
+    const gid = `g-${Date.now().toString(36)}-${++_groupSeq}`
+    recordHistory()
+    commit(localLayers.value.map(l => (selectedIds.value.has(l.id) ? { ...l, groupId: gid } as LocalLayer : l)))
+  }
+  /** Ungroup: clear groupId on the selected layers. */
+  function ungroupSelected() {
+    if (!selectedIds.value.size) return
+    recordHistory()
+    commit(localLayers.value.map(l => {
+      if (!selectedIds.value.has(l.id) || !l.groupId) return l
+      const { groupId: _drop, ...rest } = l as any
+      return rest as LocalLayer
+    }))
+  }
+  const canGroup = computed(() => selectedIds.value.size >= 2)
+  const canUngroup = computed(() => selectedLayers.value.some(l => !!l.groupId))
+  const selectedLayers = computed(() =>
+    localLayers.value.filter(l => selectedIds.value.has(l.id))) // preserves z-order
   const editingId = ref<string | null>(null)
   const editingLayer = computed(() =>
     localLayers.value.find(l => l.id === editingId.value && l.kind === 'text') as TextLayer | undefined)
@@ -83,13 +158,47 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     return boxHandles(l.x * dims().w, l.y * dims().h, b.w / 2, b.h / 2, l.rotation)
   })
 
+  // ── Align / distribute (operates on the multi-selection) ────────────────────
+  type AlignMode = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom' | 'hdist' | 'vdist'
+  function alignSelected(mode: AlignMode) {
+    const sel = selectedLayers.value
+    if (sel.length < 2) return
+    const W = dims().w, H = dims().h
+    // Per-layer extents in normalized coords (x of width, y of height).
+    const ext = sel.map(l => {
+      const b = boxPx(l)
+      return { l, hx: b.w / 2 / W, hy: b.h / 2 / H }
+    })
+    recordHistory()
+    const patch = (id: string, p: Record<string, number>) =>
+      commit(localLayers.value.map(x => (x.id === id ? { ...x, ...p } as LocalLayer : x)))
+    if (mode === 'left') { const t = Math.min(...ext.map(e => e.l.x - e.hx)); for (const e of ext) patch(e.l.id, { x: t + e.hx }) }
+    else if (mode === 'right') { const t = Math.max(...ext.map(e => e.l.x + e.hx)); for (const e of ext) patch(e.l.id, { x: t - e.hx }) }
+    else if (mode === 'hcenter') { const lo = Math.min(...ext.map(e => e.l.x - e.hx)), hi = Math.max(...ext.map(e => e.l.x + e.hx)); const c = (lo + hi) / 2; for (const e of ext) patch(e.l.id, { x: c }) }
+    else if (mode === 'top') { const t = Math.min(...ext.map(e => e.l.y - e.hy)); for (const e of ext) patch(e.l.id, { y: t + e.hy }) }
+    else if (mode === 'bottom') { const t = Math.max(...ext.map(e => e.l.y + e.hy)); for (const e of ext) patch(e.l.id, { y: t - e.hy }) }
+    else if (mode === 'vcenter') { const lo = Math.min(...ext.map(e => e.l.y - e.hy)), hi = Math.max(...ext.map(e => e.l.y + e.hy)); const c = (lo + hi) / 2; for (const e of ext) patch(e.l.id, { y: c }) }
+    else if (mode === 'hdist' && sel.length >= 3) {
+      const s = [...ext].sort((a, b) => a.l.x - b.l.x)
+      const lo = s[0].l.x, hi = s[s.length - 1].l.x, step = (hi - lo) / (s.length - 1)
+      s.forEach((e, i) => patch(e.l.id, { x: lo + step * i }))
+    } else if (mode === 'vdist' && sel.length >= 3) {
+      const s = [...ext].sort((a, b) => a.l.y - b.l.y)
+      const lo = s[0].l.y, hi = s[s.length - 1].l.y, step = (hi - lo) / (s.length - 1)
+      s.forEach((e, i) => patch(e.l.id, { y: lo + step * i }))
+    }
+  }
+
   // ── Pointer interaction (zoom-agnostic via screen rect) ─────────────────────
   type Drag =
-    | { type: 'move'; id: string; sx: number; sy: number; ox: number; oy: number }
+    | { type: 'move'; id: string; sx: number; sy: number; origins: { id: string; ox: number; oy: number }[] }
     | { type: 'scale'; id: string; cx: number; cy: number; startDist: number; start: Record<string, number> }
     | { type: 'rotate'; id: string; cx: number; cy: number; startAngle: number; startRot: number }
     | null
   const drag = ref<Drag>(null)
+  // Active snap guide lines (normalized positions) shown while moving.
+  const snapGuides = ref<{ vx: number | null; hy: number | null }>({ vx: null, hy: null })
+  const SNAP_PX = 6 // snap distance threshold in screen pixels
 
   // screen px → normalized [0,1] within the artboard
   function toNorm(clientX: number, clientY: number, r: DOMRect) {
@@ -117,8 +226,43 @@ export function useLocalLayerEditor(opts: EditorOpts) {
 
   function startMove(id: string, e: PointerEvent) {
     const l = localLayers.value.find(x => x.id === id); if (!l) return
-    drag.value = { type: 'move', id, sx: e.clientX, sy: e.clientY, ox: l.x, oy: l.y }
+    recordHistory() // coalesce the whole drag into one undo step
+    // Move the whole selection (group) together when dragging within it.
+    const moveIds = selectedIds.value.has(id) ? [...selectedIds.value] : [id]
+    const origins = moveIds
+      .map(mid => { const m = localLayers.value.find(x => x.id === mid); return m ? { id: mid, ox: m.x, oy: m.y } : null })
+      .filter(Boolean) as { id: string; ox: number; oy: number }[]
+    drag.value = { type: 'move', id, sx: e.clientX, sy: e.clientY, origins }
     attach()
+  }
+
+  /** Snap the primary layer's edges/center to other layers + canvas center.
+   *  Returns adjusted (dx,dy) and sets the visible guide lines. */
+  function applySnap(primaryId: string, ox: number, oy: number, dx: number, dy: number) {
+    const W = dims().w, H = dims().h
+    const prim = localLayers.value.find(l => l.id === primaryId)
+    if (!prim) return { dx, dy }
+    const b = boxPx(prim); const hx = b.w / 2 / W, hy = b.h / 2 / H
+    const cx = ox + dx, cy = oy + dy
+    const movingIds = new Set((drag.value as any)?.origins?.map((o: any) => o.id) ?? [primaryId])
+    // Target lines from non-moving layers (left/center/right, top/middle/bottom) + canvas center.
+    const xt: number[] = [0.5], yt: number[] = [0.5]
+    for (const l of localLayers.value) {
+      if (movingIds.has(l.id)) continue
+      const lb = boxPx(l); const lhx = lb.w / 2 / W, lhy = lb.h / 2 / H
+      xt.push(l.x - lhx, l.x, l.x + lhx); yt.push(l.y - lhy, l.y, l.y + lhy)
+    }
+    const tx = SNAP_PX / W, ty = SNAP_PX / H
+    let bestX = { d: tx, adj: 0, guide: null as number | null }
+    for (const edge of [cx - hx, cx, cx + hx]) for (const t of xt) {
+      const dd = Math.abs(edge - t); if (dd < bestX.d) bestX = { d: dd, adj: t - edge, guide: t }
+    }
+    let bestY = { d: ty, adj: 0, guide: null as number | null }
+    for (const edge of [cy - hy, cy, cy + hy]) for (const t of yt) {
+      const dd = Math.abs(edge - t); if (dd < bestY.d) bestY = { d: dd, adj: t - edge, guide: t }
+    }
+    snapGuides.value = { vx: bestX.guide, hy: bestY.guide }
+    return { dx: dx + bestX.adj, dy: dy + bestY.adj }
   }
   function startScale(e: PointerEvent) {
     e.preventDefault(); e.stopPropagation()
@@ -127,7 +271,9 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const start: Record<string, number> = {}
     if (l.kind === 'text') start.fontSize = (l as TextLayer).fontSize
     else if (l.kind === 'line') start.w = (l as LineLayer).w
+    else if (l.kind === 'path') start.scale = (l as PathLayer).scale
     else { start.w = (l as RectLayer).w; start.h = (l as RectLayer).h }
+    recordHistory()
     drag.value = { type: 'scale', id: l.id, cx, cy, startDist: Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy)), start }
     attach()
   }
@@ -135,6 +281,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     e.preventDefault(); e.stopPropagation()
     const l = selected.value; const r = getRect(); if (!l || !r) return
     const cx = r.left + l.x * r.width, cy = r.top + l.y * r.height
+    recordHistory()
     drag.value = { type: 'rotate', id: l.id, cx, cy, startAngle: Math.atan2(e.clientY - cy, e.clientX - cx), startRot: l.rotation }
     attach()
   }
@@ -142,10 +289,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const d = drag.value; if (!d) return
     const r = getRect(); if (!r) return
     if (d.type === 'move') {
-      setLocal(d.id, {
-        x: clamp(d.ox + (e.clientX - d.sx) / r.width, -0.5, 1.5),
-        y: clamp(d.oy + (e.clientY - d.sy) / r.height, -0.5, 1.5),
-      })
+      const prim = d.origins.find(o => o.id === d.id) ?? d.origins[0]
+      let dx = (e.clientX - d.sx) / r.width, dy = (e.clientY - d.sy) / r.height
+      if (!e.altKey && prim) ({ dx, dy } = applySnap(prim.id, prim.ox, prim.oy, dx, dy)) // Alt disables snap
+      else snapGuides.value = { vx: null, hy: null }
+      const map = new Map(d.origins.map(o => [o.id, o]))
+      commit(localLayers.value.map(l => {
+        const o = map.get(l.id)
+        return o ? { ...l, x: clamp(o.ox + dx, -0.5, 1.5), y: clamp(o.oy + dy, -0.5, 1.5) } as LocalLayer : l
+      }))
     } else if (d.type === 'scale') {
       const ratio = Math.max(0.05, Math.hypot(e.clientX - d.cx, e.clientY - d.cy) / d.startDist)
       const patch: Record<string, number> = {}
@@ -158,7 +310,24 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       setLocal(d.id, { rotation: Math.round(rot) })
     }
   }
-  function onUp() { drag.value = null; window.removeEventListener('pointermove', onMove) }
+  function onUp() { drag.value = null; snapGuides.value = { vx: null, hy: null }; window.removeEventListener('pointermove', onMove) }
+
+  // ── Marquee (rubber-band) selection ─────────────────────────────────────────
+  const marquee = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  function startMarquee(nx: number, ny: number) { marquee.value = { x0: nx, y0: ny, x1: nx, y1: ny } }
+  function moveMarquee(nx: number, ny: number) { if (marquee.value) marquee.value = { ...marquee.value, x1: nx, y1: ny } }
+  function endMarquee(additive = false) {
+    const m = marquee.value; marquee.value = null
+    if (!m) return
+    const lo = { x: Math.min(m.x0, m.x1), y: Math.min(m.y0, m.y1) }
+    const hi = { x: Math.max(m.x0, m.x1), y: Math.max(m.y0, m.y1) }
+    if (hi.x - lo.x < 0.005 && hi.y - lo.y < 0.005) return // a click, not a drag
+    const hits = localLayers.value.filter(l => l.x >= lo.x && l.x <= hi.x && l.y >= lo.y && l.y <= hi.y)
+    const ids = new Set(additive ? selectedIds.value : [])
+    for (const l of hits) for (const sib of groupSiblings(l.id)) ids.add(sib)
+    selectedIds.value = ids
+    selectedId.value = hits.length ? hits[hits.length - 1].id : (additive ? selectedId.value : null)
+  }
   function attach() {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp, { once: true })
@@ -169,8 +338,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function onCanvasPointerDown(e: PointerEvent): boolean {
     if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return true
     const id = hitTest(e.clientX, e.clientY)
-    if (id) { e.preventDefault(); e.stopPropagation(); selectLocal(id); startMove(id, e); return true }
-    selectedId.value = null
+    if (id) {
+      e.preventDefault(); e.stopPropagation()
+      if (e.shiftKey) { toggleSelect(id); return true } // add/remove from multi-selection
+      if (!selectedIds.value.has(id)) selectLocal(id)    // keep group if clicking within it
+      else selectedId.value = id
+      startMove(id, e)
+      return true
+    }
+    selectedId.value = null; selectedIds.value = new Set()
     return false
   }
   function onCanvasDblClick(e: MouseEvent): boolean {
@@ -207,6 +383,46 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addLocal(createImageLayer(name, aspect))
   }
 
+  // Insert pre-built path layers (e.g. from SVG import / pen tool / AI vector).
+  // All layers from one import are added together; the topmost is selected.
+  function addPathLayers(layers: PathLayer[]) {
+    if (!layers.length) return
+    recordHistory()
+    commit([...localLayers.value, ...layers])
+    selectLocal(layers[layers.length - 1].id)
+  }
+  /** Parse an SVG string and add it as path layer(s), centered on the artboard. */
+  async function addPathFromSvg(svg: string, opts: { targetWidth?: number; cx?: number; cy?: number } = {}) {
+    const layers = await svgToPathLayers(svg, opts)
+    addPathLayers(layers)
+    return layers
+  }
+
+  /**
+   * Apply a boolean op to the selected path layers (≥2). Replaces the operands
+   * with a single result layer at the topmost operand's z-position.
+   */
+  async function applyBoolean(op: BooleanOp): Promise<boolean> {
+    // Operate on any closed-outline shapes; convert rect/ellipse/line → path so
+    // they can boolean with real paths. Keep the originals (with their ids) for
+    // removal, and z-order is preserved (selectedLayers is z-ordered).
+    const originals = selectedLayers.value.filter(l => l.kind === 'path' || l.kind === 'rect' || l.kind === 'ellipse' || l.kind === 'line')
+    if (originals.length < 2) return false
+    const operands = originals.map(l => shapeToPathLayer(l)).filter(Boolean) as PathLayer[]
+    if (operands.length < 2) return false
+    const result = await pathLayerBoolean(operands, op, dims())
+    if (!result) return false
+    const operandIds = new Set(originals.map(o => o.id))
+    const arr = localLayers.value
+    const topIdx = Math.max(...arr.map((l, i) => (operandIds.has(l.id) ? i : -1)))
+    const next = arr.filter(l => !operandIds.has(l.id))
+    next.splice(Math.min(topIdx - (operands.length - 1), next.length), 0, result)
+    recordHistory()
+    commit(next)
+    selectLocal(result.id)
+    return true
+  }
+
   return {
     localLayers, selectedId, selected, selectLocal,
     setLocal, addLocal, deleteLocal, moveLocalZ,
@@ -215,5 +431,10 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     hitTest, startScale, startRotate,
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile,
+    addPathLayers, addPathFromSvg, commit, recordHistory,
+    undo, redo, canUndo, canRedo,
+    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
+    groupSelected, ungroupSelected, canGroup, canUngroup,
+    snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   }
 }

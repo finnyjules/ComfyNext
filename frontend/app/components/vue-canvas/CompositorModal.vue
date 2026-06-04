@@ -10,6 +10,16 @@ import {
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages,
 } from '~/composables/useCompositorLayers'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
+import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
+import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
+import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
+import { imageLayerUrl } from '~/composables/useCompositorLayers'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2 } from 'lucide-vue-next'
+import {
+  AlignStartVertical, AlignCenterVertical, AlignEndVertical,
+  AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
+  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, Group, Ungroup,
+} from 'lucide-vue-next'
 
 const props = defineProps<{
   nodeId: string
@@ -143,7 +153,195 @@ const {
   startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
   addText, addRect, addEllipse, addLine, addImageFromFile,
+  addPathLayers, addPathFromSvg,
+  undo, redo, canUndo, canRedo,
+  selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
+  groupSelected, ungroupSelected, canGroup, canUngroup,
+  snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
 } = editor
+
+const selectedCount = computed(() => selectedLayers.value.length)
+const ALIGN_BTNS = [
+  { mode: 'left', icon: AlignStartVertical, title: 'Align left' },
+  { mode: 'hcenter', icon: AlignCenterVertical, title: 'Align horizontal centers' },
+  { mode: 'right', icon: AlignEndVertical, title: 'Align right' },
+  { mode: 'top', icon: AlignStartHorizontal, title: 'Align top' },
+  { mode: 'vcenter', icon: AlignCenterHorizontal, title: 'Align vertical centers' },
+  { mode: 'bottom', icon: AlignEndHorizontal, title: 'Align bottom' },
+  { mode: 'hdist', icon: AlignHorizontalSpaceAround, title: 'Distribute horizontally' },
+  { mode: 'vdist', icon: AlignVerticalSpaceAround, title: 'Distribute vertically' },
+] as const
+
+// ── Node edit (direct anchor/handle selection) ──────────────────────────────
+const nodeEdit = useVectorNodeEdit()
+const editDims = () => ({ w: canvasDisplay.w, h: canvasDisplay.h })
+
+async function enterNodeEdit(id: string) {
+  const l = localLayers.value.find(x => x.id === id)
+  if (!l || l.kind !== 'path') return false
+  selectLocal(id)
+  return await nodeEdit.enter(l as any, editDims())
+}
+function exitNodeEdit() { nodeEdit.reset() }
+
+// Outline box for a multi-selected layer (logical coords, rotated about center).
+function multiOutlineStyle(l: any) {
+  const b = boxPx(l)
+  return {
+    left: l.x * canvasDisplay.w + 'px', top: l.y * canvasDisplay.h + 'px',
+    width: b.w + 'px', height: b.h + 'px',
+    transform: `translate(-50%, -50%) rotate(${l.rotation || 0}deg)`,
+  }
+}
+
+// Boolean ops work on any closed-outline shapes (paths + rect/ellipse/line,
+// which get converted to paths). Available when ≥2 are selected.
+const BOOLEANABLE = new Set(['path', 'rect', 'ellipse', 'line'])
+const selectedPathCount = computed(() => selectedLayers.value.filter((l: any) => BOOLEANABLE.has(l.kind)).length)
+const BOOL_OPS = [
+  { op: 'unite', label: 'Unite' }, { op: 'subtract', label: 'Subtract' },
+  { op: 'intersect', label: 'Intersect' }, { op: 'exclude', label: 'Exclude' },
+] as const
+function onNodePointerDown(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return
+  if (nodeEdit.down(p.nx, p.ny)) { e.preventDefault(); e.stopPropagation() }
+}
+function onNodePointerMove(e: PointerEvent) {
+  if (!nodeEdit.hot.value) return
+  const p = clientToNorm(e); if (!p) return
+  nodeEdit.move(p.nx, p.ny)
+}
+async function onNodePointerUp() {
+  if (!nodeEdit.hot.value) return
+  nodeEdit.up()
+  await commitNodeEdit()
+}
+async function commitNodeEdit() {
+  const rebuilt = await nodeEdit.buildLayer(editDims())
+  if (!rebuilt || !nodeEdit.layerId.value) return
+  rebuilt.id = nodeEdit.layerId.value // keep identity → in-place edit + clean undo
+  recordHistory()
+  commit(localLayers.value.map(l => (l.id === rebuilt.id ? rebuilt : l)))
+}
+async function deleteNodeAnchor() {
+  nodeEdit.deleteSelected()
+  await commitNodeEdit()
+}
+
+// ── Pen tool + SVG import ────────────────────────────────────────────────────
+const pen = useVectorPen()
+const PEN_STYLE = { fill: '#3b82f6', stroke: '', strokeWidth: 0 }
+
+function clientToNorm(e: PointerEvent | MouseEvent) {
+  const r = canvasRect(); if (!r) return null
+  return { nx: (e.clientX - r.left) / r.width, ny: (e.clientY - r.top) / r.height }
+}
+function onPenPointerDown(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return
+  e.preventDefault(); e.stopPropagation()
+  if (pen.down(p.nx, p.ny) === 'closed') finishPen()
+}
+function onPenPointerMove(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return
+  pen.move(p.nx, p.ny)
+}
+function onPenPointerUp() { pen.up() }
+function finishPen() {
+  const layer = buildPathLayerFromAnchors(
+    pen.anchors.value, pen.draftClosed.value,
+    { w: canvasDisplay.w, h: canvasDisplay.h }, PEN_STYLE,
+  )
+  pen.setActive(false)
+  if (layer) addPathLayers([layer])
+}
+function togglePen() { pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit() } }
+// Return to the default Select tool: leave pen/node-edit modes.
+function selectTool() { if (pen.active.value) pen.setActive(false); if (nodeEdit.active.value) exitNodeEdit() }
+const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value)
+
+const svgInputRef = ref<HTMLInputElement | null>(null)
+function triggerImportSvg() { svgInputRef.value?.click() }
+async function onImportSvgFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]; input.value = ''
+  if (!file) return
+  try { await addPathFromSvg(await file.text(), { targetWidth: 0.5 }) }
+  catch (err) { console.error('[Compositor] SVG import failed:', err) }
+}
+
+// ── AI vector: text→SVG generate + raster→SVG vectorize ─────────────────────
+const aiOpen = ref(false)
+const aiPrompt = ref('')
+const aiStyle = ref<'any' | 'line_art' | 'engraving' | 'linocut'>('any')
+const aiBusy = ref(false)
+const aiError = ref('')
+
+// URL of the currently-selected image to vectorize (local image layer or wired).
+const vectorizableUrl = computed<string | null>(() => {
+  const l = selectedLocal.value
+  if (l && l.kind === 'image') return imageLayerUrl(l.filename)
+  if (selectedSlot.value != null) {
+    const w = layers.value.find((x: any) => x.slot === selectedSlot.value)
+    if (w?.url) return w.url as string
+  }
+  return null
+})
+
+async function runGenerate() {
+  const prompt = aiPrompt.value.trim()
+  if (!prompt || aiBusy.value) return
+  aiBusy.value = true; aiError.value = ''
+  try {
+    const svg = await generateVectorFromText(prompt, { style: aiStyle.value })
+    await addPathFromSvg(svg, { targetWidth: 0.7 })
+    aiPrompt.value = ''
+  } catch (err: any) {
+    aiError.value = err?.data?.message || err?.message || 'Generation failed'
+  } finally { aiBusy.value = false }
+}
+
+async function runVectorize(backend: 'local' | 'recraft') {
+  const url = vectorizableUrl.value
+  if (!url || aiBusy.value) return
+  aiBusy.value = true; aiError.value = ''
+  try {
+    // Recraft needs a data URL it can ingest; local can fetch the URL itself.
+    const image = backend === 'recraft' ? await urlToDataUrl(url) : url
+    const svg = await vectorizeImage(image, { backend })
+    await addPathFromSvg(svg, { targetWidth: 0.8 })
+  } catch (err: any) {
+    aiError.value = err?.data?.message || err?.message || 'Vectorize failed'
+  } finally { aiBusy.value = false }
+}
+
+// Esc cancels an in-progress pen draft (before it bubbles to modal-close).
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && pen.active.value) { e.stopPropagation(); pen.setActive(false); return }
+  if (e.key === 'Enter' && pen.active.value && pen.anchors.value.length >= 2) { e.preventDefault(); finishPen(); return }
+  // V → Select tool (when not typing in a field).
+  if ((e.key === 'v' || e.key === 'V') && !e.metaKey && !e.ctrlKey && !editingId.value) {
+    const tag = (e.target as HTMLElement)?.tagName
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') { selectTool(); return }
+  }
+  // Node edit: Esc/Enter exit, Delete removes the selected anchor.
+  if (nodeEdit.active.value) {
+    if (e.key === 'Escape' || e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); exitNodeEdit(); return }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && nodeEdit.selected.value != null && !editingId.value) {
+      e.preventDefault(); deleteNodeAnchor(); return
+    }
+  }
+  // Undo/redo — skip while editing text so the textarea handles it natively.
+  const meta = e.metaKey || e.ctrlKey
+  if (meta && (e.key === 'z' || e.key === 'Z') && !editingId.value) {
+    e.preventDefault(); e.stopPropagation()
+    if (e.shiftKey) redo(); else undo()
+  } else if (meta && (e.key === 'g' || e.key === 'G') && !editingId.value) {
+    e.preventDefault(); e.stopPropagation()
+    if (e.shiftKey) ungroupSelected(); else groupSelected()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown, true))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
 
 // ── Selection: image slot OR local layer, mutually exclusive ────────────────
 const selectedSlot = ref<number | null>(null)
@@ -317,21 +515,56 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
 }
 
 function onCanvasPointerDownCapture(e: PointerEvent) {
+  if (pen.active.value) { onPenPointerDown(e); return } // pen mode owns the canvas
+  if (nodeEdit.active.value) { onNodePointerDown(e); return } // node edit owns the canvas
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
   const key = hitTopStackKey(e.clientX, e.clientY)
   const res = key ? resolveStackKey(key) : null
   if (res?.type === 'wired') {
     // Topmost layer here is a wired image → move it, not a shape beneath it.
+    lastDownHitLayer = true
     selectLocal(null)
     onLayerPointerDown(res.layer.slot, e) // selects slot + starts move (+ stops propagation)
   } else if (res?.type === 'local') {
+    lastDownHitLayer = true
     onCanvasPointerDown(e) // local editor selects + starts move (+ stops propagation)
   } else {
-    selectLocal(null); selectedSlot.value = null // empty space → clear selection
+    // Empty space → begin a marquee (rubber-band) selection.
+    lastDownHitLayer = false
+    selectedSlot.value = null
+    if (!e.shiftKey) selectLocal(null)
+    const p = clientToNorm(e)
+    if (p) startMarquee(p.nx, p.ny)
   }
 }
-function onCanvasDblClickCapture(e: MouseEvent) { onCanvasDblClick(e) }
+function onCanvasPointerMoveCapture(e: PointerEvent) {
+  if (pen.active.value) onPenPointerMove(e)
+  else if (nodeEdit.active.value) onNodePointerMove(e)
+  else if (marquee.value) { const p = clientToNorm(e); if (p) moveMarquee(p.nx, p.ny) }
+}
+function onCanvasPointerUpCapture(e: PointerEvent) {
+  if (pen.active.value) onPenPointerUp()
+  else if (nodeEdit.active.value) onNodePointerUp()
+  else if (marquee.value) endMarquee(e.shiftKey)
+}
+function onCanvasDblClickCapture(e: MouseEvent) {
+  // Double-click a path → enter node edit; otherwise fall back to text edit.
+  if (!pen.active.value && !nodeEdit.active.value) {
+    const id = hitTopStackKey(e.clientX, e.clientY)
+    const res = id ? resolveStackKey(id) : null
+    if (res?.type === 'local' && res.layer.kind === 'path') {
+      e.preventDefault(); e.stopPropagation(); enterNodeEdit(res.layer.id); return
+    }
+  }
+  onCanvasDblClick(e)
+}
+// Set in onCanvasPointerDownCapture: was the just-completed press on a layer?
+// Local shapes are painted on a pointer-events-none canvas, so the trailing
+// `click` targets the artboard div — without this guard it would deselect the
+// shape we just selected on pointer-down.
+let lastDownHitLayer = false
 function onCanvasClick(e: MouseEvent) {
+  if (lastDownHitLayer) { lastDownHitLayer = false; return }
   if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
 }
 
@@ -381,6 +614,7 @@ function renderStack() {
     if (!r) continue
     if (r.type === 'wired') { drawWiredLayer(ctx, r.layer as Layer, W, H); continue }
     if (r.layer.id === editingId.value) continue
+    if (nodeEdit.active.value && r.layer.id === nodeEdit.layerId.value) continue // shown via overlay
     drawLocalLayer(ctx, r.layer, W, H)
   }
 }
@@ -390,6 +624,7 @@ watch(
     canvasDisplay.w, canvasDisplay.h,
     JSON.stringify(layers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImageEls.value).length,
+    nodeEdit.active.value, nodeEdit.layerId.value,
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -531,9 +766,12 @@ onUnmounted(() => {
       <div
         ref="canvasRef"
         class="relative bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5"
+        :class="(pen.active.value || nodeEdit.active.value) ? 'cursor-crosshair' : ''"
         :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         @click="onCanvasClick"
         @pointerdown.capture="onCanvasPointerDownCapture"
+        @pointermove="onCanvasPointerMoveCapture"
+        @pointerup="onCanvasPointerUpCapture"
         @dblclick.capture="onCanvasDblClickCapture"
       >
         <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
@@ -560,6 +798,65 @@ onUnmounted(() => {
           class="absolute inset-0 pointer-events-none"
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
+
+        <!-- Multi-select outlines (when 2+ layers selected) -->
+        <template v-if="selectedCount > 1 && !nodeEdit.active.value">
+          <div v-for="l in selectedLayers" :key="'ms-' + l.id"
+            class="absolute pointer-events-none border border-cyan-400/70 rounded-[1px]"
+            :style="multiOutlineStyle(l)" />
+        </template>
+
+        <!-- Snap guides (while dragging) -->
+        <div v-if="snapGuides.vx != null" class="absolute top-0 bottom-0 w-px bg-fuchsia-400/80 pointer-events-none"
+          :style="{ left: snapGuides.vx * canvasDisplay.w + 'px' }" />
+        <div v-if="snapGuides.hy != null" class="absolute left-0 right-0 h-px bg-fuchsia-400/80 pointer-events-none"
+          :style="{ top: snapGuides.hy * canvasDisplay.h + 'px' }" />
+
+        <!-- Marquee (rubber-band) selection rect -->
+        <div v-if="marquee" class="absolute border border-cyan-300/80 bg-cyan-300/10 pointer-events-none"
+          :style="{
+            left: Math.min(marquee.x0, marquee.x1) * canvasDisplay.w + 'px',
+            top: Math.min(marquee.y0, marquee.y1) * canvasDisplay.h + 'px',
+            width: Math.abs(marquee.x1 - marquee.x0) * canvasDisplay.w + 'px',
+            height: Math.abs(marquee.y1 - marquee.y0) * canvasDisplay.h + 'px',
+          }" />
+
+        <!-- Pen-tool draft overlay: live path preview + anchor dots (0..100 vb) -->
+        <svg
+          v-if="pen.active.value"
+          class="absolute inset-0 pointer-events-none"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
+          viewBox="0 0 100 100" preserveAspectRatio="none"
+        >
+          <path :d="pen.previewD.value" fill="none" stroke="#22d3ee" stroke-width="0.4"
+            vector-effect="non-scaling-stroke" />
+          <g v-for="(a, i) in pen.anchors.value" :key="i">
+            <circle :cx="a.x * 100" :cy="a.y * 100" r="0.8" :fill="i === 0 ? '#fde047' : '#22d3ee'"
+              vector-effect="non-scaling-stroke" stroke="#0a0a0a" stroke-width="0.3" />
+          </g>
+        </svg>
+
+        <!-- Node-edit overlay: live path + bezier handles + anchor points -->
+        <svg
+          v-if="nodeEdit.active.value"
+          class="absolute inset-0 pointer-events-none"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
+          viewBox="0 0 100 100" preserveAspectRatio="none"
+        >
+          <path :d="nodeEdit.previewD.value" fill="none" stroke="#22d3ee" stroke-width="0.4" vector-effect="non-scaling-stroke" />
+          <template v-for="(s, i) in nodeEdit.segments.value" :key="i">
+            <template v-if="i === nodeEdit.selected.value">
+              <line v-if="s.inH" :x1="s.point.x*100" :y1="s.point.y*100" :x2="s.inH.x*100" :y2="s.inH.y*100"
+                stroke="#22d3ee" stroke-width="0.25" vector-effect="non-scaling-stroke" />
+              <line v-if="s.outH" :x1="s.point.x*100" :y1="s.point.y*100" :x2="s.outH.x*100" :y2="s.outH.y*100"
+                stroke="#22d3ee" stroke-width="0.25" vector-effect="non-scaling-stroke" />
+              <circle v-if="s.inH" :cx="s.inH.x*100" :cy="s.inH.y*100" r="0.7" fill="#0a0a0a" stroke="#22d3ee" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+              <circle v-if="s.outH" :cx="s.outH.x*100" :cy="s.outH.y*100" r="0.7" fill="#0a0a0a" stroke="#22d3ee" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+            </template>
+            <rect :x="s.point.x*100 - 0.8" :y="s.point.y*100 - 0.8" width="1.6" height="1.6"
+              :fill="i === nodeEdit.selected.value ? '#fde047' : '#22d3ee'" stroke="#0a0a0a" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+          </template>
+        </svg>
 
         <!-- Inline text editor -->
         <textarea
@@ -641,10 +938,107 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <!-- Multi-select bar: align/distribute (any ≥2) + booleans (≥2 paths) -->
+      <div
+        v-if="selectedCount >= 2 && !nodeEdit.active.value"
+        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+        @pointerdown.stop
+      >
+        <button v-for="a in ALIGN_BTNS" :key="a.mode"
+          class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+          :disabled="(a.mode === 'hdist' || a.mode === 'vdist') && selectedCount < 3"
+          :title="a.title" @click="alignSelected(a.mode)">
+          <component :is="a.icon" class="size-4" />
+        </button>
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+          :disabled="!canGroup" title="Group (⌘G)" @click="groupSelected"><Group class="size-4" /></button>
+        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+          :disabled="!canUngroup" title="Ungroup (⌘⇧G)" @click="ungroupSelected"><Ungroup class="size-4" /></button>
+        <template v-if="selectedPathCount >= 2">
+          <div class="w-px h-5 bg-white/10 mx-0.5" />
+          <button v-for="b in BOOL_OPS" :key="b.op"
+            class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] text-white/85 cursor-pointer"
+            @click="applyBoolean(b.op)">{{ b.label }}</button>
+        </template>
+      </div>
+      <div
+        v-else-if="nodeEdit.active.value"
+        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-cyan-500/15 backdrop-blur-sm rounded-[10px] px-3 py-1.5 border border-cyan-400/30 shadow-lg text-[11px] text-cyan-200"
+        @pointerdown.stop
+      >
+        Editing path nodes — drag points & handles · Del removes a point ·
+        <button class="underline hover:text-white cursor-pointer" @click="exitNodeEdit">Done (Esc)</button>
+      </div>
+
+      <!-- AI vector panel (floats above the toolbar) -->
+      <div
+        v-if="aiOpen"
+        class="absolute bottom-[68px] w-[340px] bg-[#1a1a1a]/97 backdrop-blur-sm rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
+        @pointerdown.stop
+      >
+        <div class="flex items-center gap-1.5 mb-2 text-[11px] uppercase tracking-wide text-white/40">
+          <Sparkles class="size-3.5" /> Generate vector
+        </div>
+        <textarea
+          v-model="aiPrompt"
+          rows="2"
+          placeholder="a minimalist mountain logo, flat vector…"
+          class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+          @keydown.enter.exact.prevent="runGenerate"
+        />
+        <div class="flex items-center gap-1.5 mt-2">
+          <select v-model="aiStyle" class="h-7 bg-white/[0.06] rounded text-[11px] px-1 outline-none cursor-pointer">
+            <option value="any">Any</option>
+            <option value="line_art">Line art</option>
+            <option value="engraving">Engraving</option>
+            <option value="linocut">Linocut</option>
+          </select>
+          <button
+            class="flex-1 h-7 rounded-md bg-fuchsia-500/90 hover:bg-fuchsia-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            :disabled="aiBusy || !aiPrompt.trim()"
+            @click="runGenerate"
+          >{{ aiBusy ? 'Generating…' : 'Generate' }}</button>
+        </div>
+
+        <div class="mt-3 pt-2.5 border-t border-white/10">
+          <div class="flex items-center gap-1.5 mb-2 text-[11px] uppercase tracking-wide text-white/40">
+            <Wand2 class="size-3.5" /> Vectorize selected image
+          </div>
+          <div v-if="vectorizableUrl" class="flex items-center gap-1.5">
+            <button
+              class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
+              :disabled="aiBusy" title="Free local VTracer"
+              @click="runVectorize('local')"
+            >{{ aiBusy ? '…' : 'Trace (free)' }}</button>
+            <button
+              class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
+              :disabled="aiBusy" title="Recraft — higher fidelity, paid"
+              @click="runVectorize('recraft')"
+            >Recraft</button>
+          </div>
+          <div v-else class="text-[11px] text-white/30">Select an image layer to vectorize.</div>
+        </div>
+
+        <div v-if="aiError" class="mt-2 text-[11px] text-rose-400">{{ aiError }}</div>
+      </div>
+
       <!-- Bottom toolbar -->
       <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
-        <button class="flex items-center justify-center size-8 rounded-[8px] bg-yellow-400/90 text-black cursor-pointer" title="Select">
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="isSelectTool ? 'bg-yellow-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="Select (V)" @click="selectTool">
           <MousePointer2 class="size-4" />
+        </button>
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+        <button class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+          title="Undo (⌘Z)" :disabled="!canUndo" @click="undo">
+          <Undo2 class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+          title="Redo (⌘⇧Z)" :disabled="!canRedo" @click="redo">
+          <Redo2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
         <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
@@ -659,10 +1053,30 @@ onUnmounted(() => {
         <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
           <Minus class="size-4" />
         </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="pen.active.value ? 'bg-cyan-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="Pen — click to add points, drag for curves, click the first point or Enter to finish, Esc to cancel"
+          @click="togglePen"
+        >
+          <PenTool class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
+          <FileUp class="size-4" />
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="aiOpen ? 'bg-fuchsia-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="AI vector — generate from text or vectorize a selected image"
+          @click="aiOpen = !aiOpen"
+        >
+          <Sparkles class="size-4" />
+        </button>
         <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
         </button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
+        <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />
       </div>
     </div>
 

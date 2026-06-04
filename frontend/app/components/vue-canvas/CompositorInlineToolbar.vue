@@ -17,6 +17,10 @@ const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light', 'h
 function px(norm: number) { return Math.round((norm || 0) * props.pxBase) }
 function setPx(key: string, v: string) { emit('set', { [key]: Math.max(0, parseFloat(v) || 0) / props.pxBase }) }
 const hasFill = computed(() => props.layer.fill && props.layer.fill !== 'none')
+// A path's fill may be a gradient object; show a neutral swatch for the color
+// input (which, if used, replaces the gradient with a solid color).
+const pathFillColor = computed(() =>
+  typeof props.layer.fill === 'string' && props.layer.fill !== 'none' ? props.layer.fill : '#3b82f6')
 </script>
 
 <template>
@@ -63,6 +67,22 @@ const hasFill = computed(() => props.layer.fill && props.layer.fill !== 'none')
       <input v-if="layer.kind === 'rect'" type="number" min="0" :value="px(layer.radius)" title="Corner radius"
         class="w-11 h-6 bg-white/[0.06] rounded text-[11px] text-center text-white/85 outline-none"
         @input="setPx('radius', ($event.target as HTMLInputElement).value)" />
+    </template>
+
+    <!-- PATH (vector) -->
+    <template v-else-if="layer.kind === 'path'">
+      <input type="color" :value="pathFillColor" title="Fill"
+        class="size-6 shrink-0 rounded cursor-pointer bg-transparent border border-white/10 p-0"
+        @input="emit('set', { fill: ($event.target as HTMLInputElement).value })" />
+      <button class="ll-btn" :class="!hasFill ? 'is-on' : ''" title="No fill"
+        @click="emit('set', { fill: hasFill ? 'none' : '#3b82f6' })"><Ban class="size-3.5" /></button>
+      <span class="ll-sep" />
+      <input type="color" :value="layer.stroke || '#ffffff'" title="Stroke"
+        class="size-6 shrink-0 rounded cursor-pointer bg-transparent border border-white/10 p-0"
+        @input="emit('set', { stroke: ($event.target as HTMLInputElement).value })" />
+      <input type="number" min="0" :value="px(layer.strokeWidth)" title="Stroke width"
+        class="w-11 h-6 bg-white/[0.06] rounded text-[11px] text-center text-white/85 outline-none"
+        @input="setPx('strokeWidth', ($event.target as HTMLInputElement).value)" />
     </template>
 
     <!-- LINE -->

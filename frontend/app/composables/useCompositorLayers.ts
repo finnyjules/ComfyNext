@@ -13,7 +13,21 @@
  * One renderer (`drawLocalLayer`) draws to any 2D context at any resolution.
  */
 
-export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line'
+export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
+
+// ── Paint (solid color or gradient) ──────────────────────────────────────────
+// A fill/stroke can be a plain CSS color string, or a gradient. Gradient
+// geometry is resolution-independent: it's resolved against the layer's local
+// bounding box at draw time, so it scales with the shape.
+export interface GradientStop { offset: number; color: string } // offset 0..1
+export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
+export interface RadialGradient { type: 'radial'; stops: GradientStop[] }
+export type Gradient = LinearGradient | RadialGradient
+export type Paint = string | Gradient
+
+export function isGradient(p: Paint | undefined): p is Gradient {
+  return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
+}
 
 interface LayerCommon {
   id: string
@@ -22,6 +36,7 @@ interface LayerCommon {
   y: number          // normalized center Y (0..1 of height)
   rotation: number   // degrees
   opacity: number    // 0..1
+  groupId?: string   // layers sharing a groupId select/move/transform together
 }
 
 export interface TextLayer extends LayerCommon {
@@ -40,7 +55,7 @@ export interface TextLayer extends LayerCommon {
 export interface RectLayer extends LayerCommon {
   kind: 'rect'
   w: number; h: number    // normalized to canvas width
-  fill: string            // '' / 'none' = no fill
+  fill: Paint             // '' / 'none' = no fill; or a gradient
   stroke: string
   strokeWidth: number     // normalized to canvas width
   radius: number          // normalized to canvas width
@@ -49,9 +64,28 @@ export interface RectLayer extends LayerCommon {
 export interface EllipseLayer extends LayerCommon {
   kind: 'ellipse'
   w: number; h: number
-  fill: string
+  fill: Paint
   stroke: string
   strokeWidth: number
+}
+
+/**
+ * Bezier vector path — the core of the vector editor. Geometry is stored as an
+ * SVG path string `d` whose coordinates are in LOCAL units (1 unit = canvas
+ * width) and CENTERED on the path's bounding-box midpoint, so the layer's x/y +
+ * rotation transform behaves exactly like every other layer. `scale` is a
+ * uniform multiplier the resize handle drives; `bbox` is the un-scaled local
+ * extent (cached on import/edit) used for selection boxes and hit-testing.
+ */
+export interface PathLayer extends LayerCommon {
+  kind: 'path'
+  d: string               // SVG path data, local units, centered on (0,0)
+  bbox: { w: number; h: number } // un-scaled local extent (width-fraction units)
+  scale: number           // uniform size multiplier
+  fill: Paint             // '' / 'none' = no fill; or a gradient
+  fillRule: 'nonzero' | 'evenodd'
+  stroke: string
+  strokeWidth: number     // local units at scale=1 (scales with the shape)
 }
 
 export interface LineLayer extends LayerCommon {
@@ -67,7 +101,7 @@ export interface ImageLayer extends LayerCommon {
   w: number; h: number    // normalized to canvas width (aspect preserved on drop)
 }
 
-export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer
+export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer
 
 let _idSeq = 0
 function newId(): string {
@@ -116,6 +150,64 @@ export function createLineLayer(partial: Partial<LineLayer> = {}): LineLayer {
   }
 }
 
+export function createPathLayer(partial: Partial<PathLayer> = {}): PathLayer {
+  return {
+    id: newId(), kind: 'path',
+    x: 0.5, y: 0.5, rotation: 0, opacity: 1,
+    d: '', bbox: { w: 0.3, h: 0.3 }, scale: 1,
+    fill: '#3b82f6', fillRule: 'nonzero', stroke: '', strokeWidth: 0,
+    ...partial,
+  }
+}
+
+/**
+ * Convert a primitive shape (rect / ellipse / line) to an equivalent PathLayer
+ * so it can take part in boolean ops, node editing, etc. Geometry is expressed
+ * in the path local frame (centered on origin, units = canvas width), matching
+ * the shape's own x/y/rotation. Returns the layer unchanged if already a path,
+ * or null for kinds without a closed outline to convert (text / image).
+ */
+export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
+  if (layer.kind === 'path') return layer
+  const f = (v: number) => +v.toFixed(5)
+  if (layer.kind === 'rect') {
+    const { w, h } = layer
+    const r = Math.max(0, Math.min(layer.radius, Math.min(w, h) / 2))
+    const x0 = -w / 2, x1 = w / 2, y0 = -h / 2, y1 = h / 2
+    const d = r <= 0
+      ? `M ${f(x0)} ${f(y0)} L ${f(x1)} ${f(y0)} L ${f(x1)} ${f(y1)} L ${f(x0)} ${f(y1)} Z`
+      : `M ${f(x0 + r)} ${f(y0)} L ${f(x1 - r)} ${f(y0)} Q ${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + r)}` +
+        ` L ${f(x1)} ${f(y1 - r)} Q ${f(x1)} ${f(y1)} ${f(x1 - r)} ${f(y1)}` +
+        ` L ${f(x0 + r)} ${f(y1)} Q ${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - r)}` +
+        ` L ${f(x0)} ${f(y0 + r)} Q ${f(x0)} ${f(y0)} ${f(x0 + r)} ${f(y0)} Z`
+    return createPathLayer({
+      d, bbox: { w, h }, scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation,
+      opacity: layer.opacity, fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+    })
+  }
+  if (layer.kind === 'ellipse') {
+    const rx = layer.w / 2, ry = layer.h / 2, k = 0.5522847498 // cubic circle constant
+    const kx = rx * k, ky = ry * k
+    const d = `M 0 ${f(-ry)} C ${f(kx)} ${f(-ry)} ${f(rx)} ${f(-ky)} ${f(rx)} 0` +
+      ` C ${f(rx)} ${f(ky)} ${f(kx)} ${f(ry)} 0 ${f(ry)}` +
+      ` C ${f(-kx)} ${f(ry)} ${f(-rx)} ${f(ky)} ${f(-rx)} 0` +
+      ` C ${f(-rx)} ${f(-ky)} ${f(-kx)} ${f(-ry)} 0 ${f(-ry)} Z`
+    return createPathLayer({
+      d, bbox: { w: layer.w, h: layer.h }, scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation,
+      opacity: layer.opacity, fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+    })
+  }
+  if (layer.kind === 'line') {
+    const w = layer.w
+    return createPathLayer({
+      d: `M ${f(-w / 2)} 0 L ${f(w / 2)} 0`, bbox: { w, h: Math.max(layer.strokeWidth, 0.001) },
+      scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
+      fill: 'none', stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+    })
+  }
+  return null
+}
+
 /** Create an image layer. `aspect` (w/h) sizes the box so the image isn't
  *  distorted; defaults to a square. */
 export function createImageLayer(filename: string, aspect = 1, partial: Partial<ImageLayer> = {}): ImageLayer {
@@ -157,8 +249,36 @@ export async function ensureLayerImages(layers: LocalLayer[]): Promise<void> {
 
 // ── Rendering ─────────────────────────────────────────────────────────────--
 
-function hasPaint(color: string | undefined): boolean {
-  return !!color && color !== 'none' && color !== 'transparent'
+function hasPaint(paint: Paint | undefined): boolean {
+  if (isGradient(paint)) return paint.stops.length > 0
+  return !!paint && paint !== 'none' && paint !== 'transparent'
+}
+
+/**
+ * Resolve a Paint to a canvas fillStyle. Solid colors pass through; gradients
+ * are built against a local box `{ w, h }` (in the CURRENT drawing units, i.e.
+ * pixels for rect/ellipse, local width-fraction units for paths) centered on
+ * origin, so the gradient tracks the shape under any transform.
+ */
+function resolvePaint(
+  ctx: CanvasRenderingContext2D,
+  paint: Paint,
+  box: { w: number; h: number },
+): string | CanvasGradient {
+  if (!isGradient(paint)) return paint
+  const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+  let g: CanvasGradient
+  if (paint.type === 'radial') {
+    const r = Math.max(box.w, box.h) / 2
+    g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(r, 0.0001))
+  } else {
+    const rad = ((paint.angle ?? 0) * Math.PI) / 180
+    const hx = (Math.cos(rad) * box.w) / 2
+    const hy = (Math.sin(rad) * box.h) / 2
+    g = ctx.createLinearGradient(-hx, -hy, hx, hy)
+  }
+  for (const s of stops) g.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
+  return g
 }
 
 /** Split text into lines on explicit newlines (no auto-wrap in v1). */
@@ -203,6 +323,10 @@ export function localLayerBox(
   if (layer.kind === 'line') {
     return { w: layer.w * W, h: Math.max(layer.strokeWidth * W, 6) }
   }
+  if (layer.kind === 'path') {
+    const s = (layer.scale || 1) * W
+    return { w: Math.max(layer.bbox.w * s, 4), h: Math.max(layer.bbox.h * s, 4) }
+  }
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
 }
 
@@ -225,7 +349,7 @@ export function drawLocalLayer(
     const r = Math.max(0, Math.min(layer.radius * W, Math.min(w, h) / 2))
     ctx.beginPath()
     ctx.roundRect(-w / 2, -h / 2, w, h, r)
-    if (hasPaint(layer.fill)) { ctx.fillStyle = layer.fill; ctx.fill() }
+    if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
       ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = layer.stroke; ctx.stroke()
     }
@@ -233,10 +357,12 @@ export function drawLocalLayer(
     const w = layer.w * W, h = layer.h * W
     ctx.beginPath()
     ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
-    if (hasPaint(layer.fill)) { ctx.fillStyle = layer.fill; ctx.fill() }
+    if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
       ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = layer.stroke; ctx.stroke()
     }
+  } else if (layer.kind === 'path') {
+    drawPath(ctx, layer, W)
   } else if (layer.kind === 'line') {
     const w = layer.w * W
     ctx.beginPath()
@@ -284,6 +410,48 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
     if (stroke) ctx.strokeText(lines[i], anchorX, y)
     ctx.fillText(lines[i], anchorX, y)
   }
+}
+
+/**
+ * Module-cached Path2D per `d` string — building a Path2D parses the path data,
+ * which we'd otherwise repeat every animation frame.
+ */
+const _pathCache = new Map<string, Path2D>()
+function path2dFor(d: string): Path2D | null {
+  if (!d) return null
+  let p = _pathCache.get(d)
+  if (!p) {
+    try { p = new Path2D(d) } catch { return null }
+    if (_pathCache.size > 400) _pathCache.clear()
+    _pathCache.set(d, p)
+  }
+  return p
+}
+
+/**
+ * Draw a vector path layer. The context is already translated to the layer
+ * center and rotated; here we scale into the path's local units (1 unit =
+ * canvas width) times the layer's uniform `scale`, then fill/stroke the cached
+ * Path2D. Gradients resolve against the un-scaled local bbox.
+ */
+function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
+  const p = path2dFor(layer.d)
+  if (!p) return
+  const s = (layer.scale || 1) * W
+  ctx.save()
+  ctx.scale(s, s)
+  if (hasPaint(layer.fill)) {
+    ctx.fillStyle = resolvePaint(ctx, layer.fill, layer.bbox)
+    ctx.fill(p, layer.fillRule || 'nonzero')
+  }
+  if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
+    ctx.lineWidth = layer.strokeWidth
+    ctx.strokeStyle = layer.stroke
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.stroke(p)
+  }
+  ctx.restore()
 }
 
 /** Draw all local layers (bottom→top order = array order). */

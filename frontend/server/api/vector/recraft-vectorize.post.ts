@@ -1,0 +1,27 @@
+/**
+ * POST /api/vector/recraft-vectorize
+ *
+ * Raster→SVG via Recraft's vectorize model (Replicate) — higher-fidelity tracing
+ * than local VTracer, at a per-call cost. Body (JSON):
+ *   { image: string }   // data URL or public http(s) URL
+ * Returns: { svg: string }
+ *
+ * Use this when trace quality matters; default interactive vectorize should
+ * prefer the free local /api/vector/trace.
+ */
+const MODEL = 'recraft-ai/recraft-vectorize'
+
+export default defineEventHandler(async (event) => {
+  const token = requireReplicateToken()
+  const body = await readBody(event) as { image?: string }
+  if (!body.image) throw createError({ statusCode: 400, message: 'image is required (data URL or URL)' })
+
+  const output = await runReplicate(MODEL, { image: body.image }, token, { timeoutMs: 90_000 })
+  const url = firstOutputUrl(output)
+  if (!url) throw createError({ statusCode: 502, message: 'Recraft vectorize returned no output' })
+
+  const svgRes = await fetch(url)
+  if (!svgRes.ok) throw createError({ statusCode: 502, message: `Could not fetch vectorized SVG (${svgRes.status})` })
+  const svg = await svgRes.text()
+  return { svg, sourceUrl: url }
+})

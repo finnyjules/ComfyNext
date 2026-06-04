@@ -110,6 +110,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Source',
     items: [
       { nodeType: 'Image', label: 'Image', description: 'Universal image artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: Image },
+      { nodeType: 'Image', label: 'Inpaint', description: 'Paint a region of an image and describe the change — FLUX Fill replaces just that area. Adds an Image node; click its Inpaint button to open the editor.', icon: Brush },
     ],
   },
   {
@@ -459,7 +460,10 @@ export const TOOLBOX_NODE_ICONS: Record<string, Component> = (() => {
   const out: Record<string, Component> = {}
   for (const section of TOOLBOX_SECTIONS) {
     for (const item of section.items) {
-      out[item.nodeType] = item.icon
+      // First-wins: a node type can appear in multiple cards (e.g. an "Inpaint"
+      // shortcut that creates an Image node) without clobbering the canonical
+      // card's title-bar icon.
+      if (!(item.nodeType in out)) out[item.nodeType] = item.icon
     }
   }
   return out

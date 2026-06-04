@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
@@ -172,6 +172,11 @@ function triggerUpload() {
   fileInputRef.value?.click()
 }
 
+// Open the dedicated inpaint editor for this image (the canvas owns the modal).
+function openInpaint() {
+  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id } }))
+}
+
 // Knock out the background: splice a local BackgroundRemove node after this image
 // (default 'transparent' RGBA output) and re-point whatever the image fed. The
 // canvas owns the graph mutation, so we just announce intent.
@@ -334,6 +339,17 @@ function discardTake(id: string) {
         class="hidden"
         @change="onFileChange"
       />
+      <!-- Inpaint affordance for the empty / waiting states (corner button so it
+           doesn't fight the big upload/render targets). -->
+      <button
+        v-if="showUpload || showRender"
+        class="nopan nodrag absolute top-1 left-1 z-10 flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/50 hover:bg-black/70 text-white/55 hover:text-emerald-300 text-[10px] transition-colors cursor-pointer"
+        title="Inpaint — paint a region and describe the change"
+        @click.stop="openInpaint"
+      >
+        <Brush class="size-3" /> Inpaint
+      </button>
+
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
         <img
@@ -362,6 +378,13 @@ function discardTake(id: string) {
             @click.stop="removeBackground"
           >
             <Eraser class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-emerald-300 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Inpaint — paint a region and describe the change"
+            @click.stop="openInpaint"
+          >
+            <Brush class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
