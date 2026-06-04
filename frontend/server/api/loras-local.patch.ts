@@ -1,0 +1,78 @@
+/**
+ * PATCH /api/loras-local
+ *
+ * Edit a trained LoRA's metadata after training by updating its .json sidecar
+ * in ../models/loras (the same file GET /api/loras-local reads). Supports
+ * editing `name`, `trigger` and `aesthetic`. The weights file and its filename
+ * are never touched — only the provenance sidecar.
+ *
+ * Body: { filename: "<name>.safetensors", name?, trigger?, aesthetic? }
+ *
+ * Note: must be allowlisted in server/middleware/comfyui-proxy.ts
+ * (NITRO_API_PATHS) — '/api/loras-local' already is (path match is
+ * method-agnostic), so PATCH routes here rather than proxying to ComfyUI.
+ */
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+
+export default defineEventHandler(async (event) => {
+  const body = await readBody<{
+    filename?: string
+    name?: string
+    trigger?: string | null
+    aesthetic?: string | null
+  }>(event)
+
+  const filename = (body?.filename || '').trim()
+  // Bare .safetensors filename only — reject anything that could escape the dir.
+  if (
+    !filename.endsWith('.safetensors')
+    || filename.includes('/')
+    || filename.includes('\\')
+    || filename.includes('..')
+  ) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid filename' })
+  }
+
+  const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
+  const base = filename.slice(0, -'.safetensors'.length)
+  const sidecarPath = path.join(lorasDir, `${base}.json`)
+
+  // The weights must exist — don't write sidecars for phantom LoRAs.
+  try {
+    await fs.access(path.join(lorasDir, filename))
+  } catch {
+    throw createError({ statusCode: 404, statusMessage: 'LoRA not found' })
+  }
+
+  // Merge onto the existing sidecar (or start fresh if there isn't one).
+  let meta: Record<string, any> = {}
+  try {
+    meta = JSON.parse(await fs.readFile(sidecarPath, 'utf8'))
+  } catch { /* no/invalid sidecar — create one */ }
+
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k)
+  // name can't be blanked (it falls back to the filename in GET); trigger and
+  // aesthetic can be cleared to null.
+  if (has('name')) {
+    const n = String(body.name ?? '').trim()
+    if (n) meta.name = n
+  }
+  if (has('trigger')) {
+    const t = String(body.trigger ?? '').trim()
+    meta.trigger = t || null
+  }
+  if (has('aesthetic')) {
+    const a = String(body.aesthetic ?? '').trim()
+    meta.aesthetic = a || null
+  }
+
+  await fs.writeFile(sidecarPath, JSON.stringify(meta, null, 2), 'utf8')
+
+  return {
+    ok: true,
+    name: meta.name || base,
+    trigger: meta.trigger ?? null,
+    aesthetic: meta.aesthetic ?? null,
+  }
+})

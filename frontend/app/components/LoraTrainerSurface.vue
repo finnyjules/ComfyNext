@@ -54,7 +54,7 @@ const DOWNLOADABLE_CHECKPOINTS: DownloadableCheckpoint[] = [
     label: 'SDXL Base 1.0',
     family: 'SDXL',
     sizeBytes: 6_938_078_334,
-    blurb: 'Best default for character / style LoRAs. 1024×1024 native.',
+    blurb: 'Best default for characters and styles. 1024×1024 native.',
   },
   {
     key: 'lora-base-sd15',
@@ -203,7 +203,7 @@ const checkpointsError = ref<string | null>(null)
 
 const form = reactive({
   checkpoint: '',
-  outputName: 'my_lora',
+  outputName: 'my_style',
   triggerWord: '',
   steps: 1000,
   learningRate: 0.0004,
@@ -273,7 +273,7 @@ function useTrainedLoraInWorkflow() {
     extra: {},
     version: 0.4,
   }
-  const tab = openTab({ type: 'project', label: `LoRA: ${(form.outputName || 'lora').trim()}` })
+  const tab = openTab({ type: 'project', label: `Style: ${(form.outputName || 'style').trim()}` })
   window.dispatchEvent(new CustomEvent('comfynext:loadTabWorkflow', {
     detail: { tabId: tab.id, workflow },
   }))
@@ -500,6 +500,16 @@ function parseKreaJson() {
   }
 }
 
+// Fisher–Yates shuffle — returns a new array, leaves the original untouched.
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = arr.slice()
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j]!, a[i]!]
+  }
+  return a
+}
+
 async function importKreaBoard(board: KreaBoardMeta) {
   kreaError.value = null
   kreaImporting.value = true
@@ -540,10 +550,22 @@ async function importKreaBoard(board: KreaBoardMeta) {
       }
     }
 
-    if (finalProfile) importedAesthetic.value = finalProfile
+    // Append the board's keywords verbatim. They're precise terms, so we don't
+    // reword them (unlike the aesthetic prose above) — we only shuffle their
+    // order before tacking them on. board.positiveKeywords is the raw list,
+    // untouched by the optional rewrite.
+    const keywords = (board.positiveKeywords || [])
+      .map((k) => (typeof k === 'string' ? k.trim() : ''))
+      .filter(Boolean)
+    let aesthetic = (finalProfile || '').trim()
+    if (keywords.length) {
+      const tail = shuffleArray(keywords).join(', ')
+      aesthetic = aesthetic ? `${aesthetic}\n\n${tail}` : tail
+    }
+    if (aesthetic) importedAesthetic.value = aesthetic
     // Prefill the LoRA name + trigger word from the (reworded) board name,
     // unless the user already set their own.
-    const nameIsUntouched = !form.outputName.trim() || form.outputName.trim() === 'my_lora'
+    const nameIsUntouched = !form.outputName.trim() || form.outputName.trim() === 'my_style'
     if (finalName && nameIsUntouched) form.outputName = finalName
     if (finalName && !form.triggerWord.trim()) form.triggerWord = slugifyTrigger(finalName)
 
@@ -688,7 +710,7 @@ function onStartClicked() {
 }
 
 function buildTrainingPrompt() {
-  const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_lora'
+  const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
   const prefix = `loras/${safeName}`
 
   // Model loading branch: SDXL/SD1.5 use one all-in-one node; Flux uses three.
@@ -876,7 +898,7 @@ async function pollForTrainingResult(
       }
       // We can't read the SaveLoRA filename from /history (no output declared),
       // but we know the prefix → just report the safe name.
-      const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_lora'
+      const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
       return { loraFilename: safeName, lossGraphUrl }
     } catch (e) {
       if (e instanceof Error && (e.message.startsWith('Comfy:') || e.message.includes('LoRA'))) throw e
@@ -994,7 +1016,7 @@ async function startCloudTraining() {
     const upJson = await upRes.json() as { url: string }
 
     progressLabel.value = 'Starting Replicate training…'
-    const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_lora'
+    const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
     const startRes = await fetch('/api/cloud-train/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1081,7 +1103,7 @@ async function pollCloudJob(
       if (data.status !== lastStatus) {
         if (data.status === 'starting') progressLabel.value = 'Replicate is provisioning a GPU…'
         else if (data.status === 'processing') progressLabel.value = 'Training in progress on Replicate…'
-        else if (data.status === 'succeeded') progressLabel.value = 'Downloading LoRA…'
+        else if (data.status === 'succeeded') progressLabel.value = 'Downloading Style…'
         else if (data.status === 'failed') progressLabel.value = 'Training failed.'
         else if (data.status === 'canceled') progressLabel.value = 'Training canceled.'
         lastStatus = data.status
@@ -1130,10 +1152,10 @@ onBeforeUnmount(() => {
       <!-- Header -->
       <div class="mb-12">
         <div class="text-[11px] uppercase tracking-[0.16em] text-white/35 font-medium mb-3">
-          Training · LoRA
+          Create · Style
         </div>
         <h1 class="text-[44px] font-medium text-white tracking-tight leading-[1.05] mb-4">
-          Train a LoRA
+          Create a Style
         </h1>
         <p class="text-[15px] text-white/60 max-w-[640px] leading-relaxed">
           Teach a Stable Diffusion or Flux model what a person, character, or style looks like.
@@ -1173,7 +1195,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="text-[11px] text-white/40 mt-2 leading-relaxed">
           <span v-if="computeMode === 'local'">Runs on this machine. Free, but slow on Apple Silicon (Flux ~8–16 hours).</span>
-          <span v-else>Runs on a Replicate GPU. ~$3–5 per Flux LoRA, ~20–40 min wall time. Requires <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">NUXT_REPLICATE_TOKEN</code>.</span>
+          <span v-else>Runs on a Replicate GPU. ~$3–5 per Flux style, ~20–40 min wall time. Requires <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">NUXT_REPLICATE_TOKEN</code>.</span>
         </p>
       </section>
 
@@ -1195,7 +1217,7 @@ onBeforeUnmount(() => {
               <span class="text-[13px] text-white font-medium">Flux Dev</span>
               <span class="text-[10px] uppercase tracking-wider text-white/40 px-1.5 py-0.5 rounded bg-white/[0.04]">FLUX</span>
             </div>
-            <p class="text-[11px] text-white/45 leading-snug">Highest quality. ~$3–5 per LoRA, ~25–40 min.</p>
+            <p class="text-[11px] text-white/45 leading-snug">Highest quality. ~$3–5 per style, ~25–40 min.</p>
           </button>
           <button
             class="text-left rounded-lg border p-4 transition-colors cursor-pointer"
@@ -1208,7 +1230,7 @@ onBeforeUnmount(() => {
               <span class="text-[13px] text-white font-medium">SDXL</span>
               <span class="text-[10px] uppercase tracking-wider text-white/40 px-1.5 py-0.5 rounded bg-white/[0.04]">SDXL</span>
             </div>
-            <p class="text-[11px] text-white/45 leading-snug">Faster + cheaper. ~$0.50–1 per LoRA, ~10–15 min.</p>
+            <p class="text-[11px] text-white/45 leading-snug">Faster + cheaper. ~$0.50–1 per style, ~10–15 min.</p>
           </button>
         </div>
       </section>
@@ -1581,7 +1603,7 @@ onBeforeUnmount(() => {
         <div class="space-y-5">
           <!-- LoRA name -->
           <div>
-            <label class="block text-[12px] font-medium text-white/80 mb-1">LoRA name</label>
+            <label class="block text-[12px] font-medium text-white/80 mb-1">Style name</label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
               What to call the trained file. Saved as <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">models/loras/&lt;name&gt;.safetensors</code>.
             </p>
@@ -1600,7 +1622,7 @@ onBeforeUnmount(() => {
               <span class="text-white/35 font-normal ml-1">optional</span>
             </label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
-              A rare word that "activates" this LoRA when used in a prompt. Pick something that wouldn't normally show up in captions —
+              A rare word that "activates" this style when used in a prompt. Pick something that wouldn't normally show up in captions —
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">ohwx</code>,
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">sks</code>, or a made-up token like
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">jln_2026</code> work well.
@@ -1620,7 +1642,7 @@ onBeforeUnmount(() => {
               <span class="text-violet-300/80 font-normal ml-1">added to your prompts</span>
             </label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
-              A short style description prepended to prompts when you use this LoRA, so generations match the look.
+              A short style description prepended to prompts when you use this style, so generations match the look.
               Imported from your Krea moodboard<span v-if="kreaRework"> and reworded to be original</span> — edit freely.
             </p>
             <textarea
@@ -1666,7 +1688,7 @@ onBeforeUnmount(() => {
             </div>
             <div>
               <label class="block text-[12px] font-medium text-white/80 mb-1">
-                LoRA size
+                Style size
                 <span class="text-white/35 font-normal ml-1">rank</span>
               </label>
               <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
@@ -1750,7 +1772,7 @@ onBeforeUnmount(() => {
             </select>
           </div>
           <div>
-            <label class="block text-[11px] text-white/50 mb-1.5">LoRA dtype</label>
+            <label class="block text-[11px] text-white/50 mb-1.5">Weights dtype</label>
             <select v-model="form.loraDtype" class="w-full h-9 rounded-md bg-white/[0.04] border border-white/[0.08] hover:border-white/15 focus:border-white/25 focus:outline-none px-2 text-[12px] text-white/85">
               <option>bf16</option><option>fp32</option>
             </select>
@@ -1791,7 +1813,7 @@ onBeforeUnmount(() => {
           </p>
           <p v-else-if="errorMessage" class="text-rose-400 max-w-md">{{ errorMessage }}</p>
           <p v-else-if="status === 'done'" class="text-emerald-400 flex items-center gap-2">
-            <span>Done — your LoRA was saved.</span>
+            <span>Done — your Style was saved.</span>
           </p>
           <span v-else class="text-white/35">
             {{
@@ -1833,7 +1855,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="text-[11px] text-white/35 mt-2">
           <span v-if="computeMode === 'local'">Training runs in-process and can take many minutes. Leave this tab open.</span>
-          <span v-else>Training is running on Replicate's GPUs (~20–40 min for Flux, ~10–15 min for SDXL). Keep this tab open so we can auto-download the LoRA when it's done.</span>
+          <span v-else>Training is running on Replicate's GPUs (~20–40 min for Flux, ~10–15 min for SDXL). Keep this tab open so we can auto-download the Style when it's done.</span>
         </p>
       </div>
 
@@ -1843,7 +1865,7 @@ onBeforeUnmount(() => {
           <h2 class="text-[20px] font-medium text-white tracking-tight">Result</h2>
         </div>
         <div v-if="outputFilename" class="rounded-xl bg-white/[0.02] border border-white/[0.06] p-5 mb-4">
-          <div class="text-[11px] text-white/40 uppercase tracking-wider mb-2">LoRA saved</div>
+          <div class="text-[11px] text-white/40 uppercase tracking-wider mb-2">Style saved</div>
           <div class="text-[15px] text-white font-mono mb-1">
             <span v-if="cloudJob?.localFilename">{{ cloudJob.localFilename }}</span>
             <span v-else>{{ outputFilename }}_*.safetensors</span>
@@ -1874,7 +1896,7 @@ onBeforeUnmount(() => {
               <ArrowRight class="size-4" />
             </button>
             <p class="text-[11px] text-white/40 mt-2">
-              Opens a Flux generator with this LoRA<span v-if="form.triggerWord"> and your trigger word</span> ready to run.
+              Opens a Flux generator with this Style<span v-if="form.triggerWord"> and your trigger word</span> ready to run.
             </p>
           </div>
         </div>

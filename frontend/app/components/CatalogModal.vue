@@ -141,7 +141,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           class="relative z-10 w-full max-w-[1280px] h-[85vh] max-h-[860px] flex flex-col bg-[#161616] rounded-xl border border-white/10 shadow-[0_24px_64px_rgba(0,0,0,0.55)] overflow-hidden"
         >
           <!-- Header -->
-          <div class="flex items-start gap-4 px-5 pt-4 pb-3 border-b border-white/[0.06]">
+          <div class="flex items-start gap-4 px-5 pt-4 pb-3">
             <div class="flex-1 min-w-0">
               <h2 class="text-sm font-semibold text-white/95 truncate">{{ title }}</h2>
               <p v-if="subtitle" class="text-[11px] text-white/45 mt-0.5 truncate">{{ subtitle }}</p>
@@ -157,7 +157,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
           <!-- Search row — sits on its own line so the filter row below has
                the whole width to lay chips out without orphans. -->
-          <div class="px-5 pt-3 pb-2.5 border-b border-white/[0.06]">
+          <div class="px-5 pt-3 pb-2.5">
             <div class="relative max-w-md">
               <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-white/35 pointer-events-none" />
               <input
@@ -172,7 +172,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <!-- Filter chip strip — horizontally scrollable so a long tag list
                never wraps into orphan rows. The track has no visible
                scrollbar; we scroll it with the wheel/trackpad. -->
-          <div v-if="filters?.length" class="px-5 py-2 border-b border-white/[0.06] overflow-x-auto scrollbar-thin">
+          <div v-if="filters?.length" class="px-5 py-2 overflow-x-auto scrollbar-thin">
             <div class="flex items-center gap-1 w-max">
               <button
                 v-for="f in filters"
@@ -229,7 +229,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <!-- Detail pane -->
             <aside
               v-if="$slots.detail && focusedItem"
-              class="w-[360px] shrink-0 border-l border-white/[0.06] bg-[#1b1b1b]/70 overflow-y-auto"
+              class="w-[360px] shrink-0 bg-[#1b1b1b]/70 overflow-y-auto"
             >
               <slot name="detail" :item="focusedItem" />
             </aside>

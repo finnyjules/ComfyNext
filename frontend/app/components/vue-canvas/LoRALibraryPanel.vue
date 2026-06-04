@@ -31,7 +31,7 @@ const { addNode } = useNodeSearch()
 
 // ── Category + search ─────────────────────────────────────────────────────
 
-type FilterCategory = LoRACategory | 'All' | 'Your LoRAs'
+type FilterCategory = LoRACategory | 'All' | 'Your Styles'
 const activeCategory = ref<FilterCategory>('All')
 const searchQuery = ref('')
 
@@ -50,14 +50,14 @@ const visibleEntries = computed<LoRALibraryEntry[]>(() => {
 
 function categoryCount(cat: FilterCategory): number {
   if (cat === 'All') return LORA_LIBRARY.length
-  if (cat === 'Your LoRAs') return localLoras.value.length
+  if (cat === 'Your Styles') return localLoras.value.length
   return LORA_LIBRARY.filter(e => e.category === cat).length
 }
 
-// Filter chips: "Your LoRAs" only appears once you've trained at least one.
+// Filter chips: "Your Styles" only appears once you've trained at least one.
 const filterTabs = computed<FilterCategory[]>(() => [
   'All',
-  ...(localLoras.value.length ? (['Your LoRAs'] as FilterCategory[]) : []),
+  ...(localLoras.value.length ? (['Your Styles'] as FilterCategory[]) : []),
   ...LORA_CATEGORIES,
 ])
 
@@ -203,8 +203,8 @@ onMounted(fetchLocalLoras)
 
 const visibleLocal = computed<LocalLora[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  // Own tab now — only shown when the "Your LoRAs" filter is active.
-  if (activeCategory.value !== 'Your LoRAs') return []
+  // Own tab now — only shown when the "Your Styles" filter is active.
+  if (activeCategory.value !== 'Your Styles') return []
   return localLoras.value.filter(l =>
     !q || l.name.toLowerCase().includes(q) || l.filename.toLowerCase().includes(q))
 })
@@ -242,7 +242,7 @@ function clearSearch() {
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="flex items-center gap-2">
         <Library class="size-4 text-white/70" />
-        <span class="text-sm font-semibold text-white/90">LoRA Library</span>
+        <span class="text-sm font-semibold text-white/90">Styles</span>
       </div>
       <button
         class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors cursor-pointer"
@@ -260,7 +260,7 @@ function clearSearch() {
           ref="searchInputRef"
           v-model="searchQuery"
           type="text"
-          placeholder="Search LoRAs…"
+          placeholder="Search styles…"
           class="w-full bg-white/[0.04] border border-white/10 rounded pl-7 pr-7 py-1.5 text-xs text-white/85 placeholder-white/30 outline-none focus:bg-white/[0.06] focus:border-white/20 transition-colors"
           @keydown.esc="clearSearch"
         />
@@ -328,7 +328,7 @@ function clearSearch() {
         class="px-4 py-12 text-center text-xs text-white/40"
       >
         <template v-if="searchQuery.trim()">
-          No LoRAs match <span class="text-white/70">"{{ searchQuery }}"</span>.
+          No styles match <span class="text-white/70">"{{ searchQuery }}"</span>.
           <button class="block mx-auto mt-2 text-white/70 hover:text-white underline underline-offset-2 cursor-pointer" @click="clearSearch">
             Clear search
           </button>
@@ -428,9 +428,9 @@ function clearSearch() {
 
     <!-- Footer hint -->
     <div class="px-3 py-2 border-t border-white/[0.06] text-[10px] text-white/35 leading-snug">
-      Click a LoRA to add a Flux Dev + LoRA node with its URL pre-filled.
+      Click a Style to add a node with its URL pre-filled.
       Need something not here? Paste any HuggingFace path or .safetensors URL
-      into the node's <span class="text-white/55 font-mono">Lora url</span> field.
+      into the node's <span class="text-white/55 font-mono">Style URL</span> field.
     </div>
   </div>
 </template>

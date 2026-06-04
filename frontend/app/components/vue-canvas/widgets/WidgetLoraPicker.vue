@@ -41,7 +41,7 @@ function openGallery() {
 <template>
   <button
     class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-colors cursor-pointer text-left group"
-    :title="selected ? `${selected} — click to change LoRA` : 'Browse your LoRAs'"
+    :title="selected ? `${selected} — click to change Style` : 'Browse your Styles'"
     @click="openGallery"
   >
     <span class="size-7 rounded-md shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden">
@@ -56,10 +56,10 @@ function openGallery() {
     </span>
     <span class="flex flex-col min-w-0 flex-1">
       <span class="text-[11px] font-medium truncate leading-tight" :class="selected ? 'text-white/90' : 'text-white/55'">
-        {{ selected ?? 'Choose a LoRA' }}
+        {{ selected ?? 'Choose a Style' }}
       </span>
       <span class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
-        {{ selected ? 'LoRA' : 'open gallery' }}
+        {{ selected ? 'Style' : 'open gallery' }}
       </span>
     </span>
     <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />

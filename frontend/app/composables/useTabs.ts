@@ -191,7 +191,7 @@ export function useTabs() {
       }
       const tab: Tab = {
         id: 'train',
-        label: opts.label ?? 'Train LoRA',
+        label: opts.label ?? 'Create a Style',
         type: 'train',
         closable: true,
       }

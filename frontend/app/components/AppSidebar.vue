@@ -2,7 +2,7 @@
 import {
   House,
   Globe,
-  Bell,
+  LayoutGrid,
   Image,
   CircleHelp,
   Settings,
@@ -13,10 +13,10 @@ const route = useRoute()
 
 const navItems = [
   { icon: House, label: 'Home', to: '/' },
-  { icon: Globe, label: 'Community', action: 'openCommunity' },
-  { icon: Bell, label: 'Notifications', to: '/notifications' },
+  { icon: LayoutGrid, label: 'Projects', action: 'openAllProjects' },
   { icon: Image, label: 'Assets', action: 'openAssets' },
-  { icon: Wand, label: 'Train LoRA', action: 'openTrain' },
+  { icon: Wand, label: 'Create a Style', action: 'openTrain' },
+  { icon: Globe, label: 'Community', action: 'openCommunity' },
 ]
 
 const bottomItems = [
@@ -37,12 +37,14 @@ function handleAction(action: string) {
   if (action === 'openAssets') openTab({ type: 'assets' })
   else if (action === 'openCommunity') openTab({ type: 'community' })
   else if (action === 'openTrain') openTab({ type: 'train' })
+  else if (action === 'openAllProjects') openTab({ type: 'all-projects', label: 'All projects' })
 }
 
 function getActionActive(action: string): boolean {
   if (action === 'openAssets') return activeTab.value.type === 'assets'
   if (action === 'openCommunity') return activeTab.value.type === 'community'
   if (action === 'openTrain') return activeTab.value.type === 'train'
+  if (action === 'openAllProjects') return activeTab.value.type === 'all-projects'
   return false
 }
 

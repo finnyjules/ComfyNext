@@ -44,7 +44,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     hfPath: 'XLabs-AI/flux-RealismLora',
     label: 'Flux Realism',
     trigger: 'photo',
-    blurb: 'Boosts realism, skin detail and lighting. The OG Flux realism LoRA.',
+    blurb: 'Boosts realism, skin detail and lighting. The OG Flux realism style.',
     category: 'Realism',
     author: 'XLabs-AI',
     examplePrompt: 'photo of a woman walking through tokyo at night, neon reflections on wet pavement',
