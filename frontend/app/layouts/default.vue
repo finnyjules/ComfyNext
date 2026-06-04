@@ -4,7 +4,7 @@ import {
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
-  StickyNote, ListChecks, ArrowRight, MessageSquareDashed,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, History,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Sonner } from '~/components/ui/sonner'
@@ -81,6 +81,7 @@ const sidebarItems = [
   // Power-user
   { label: 'Nodes', icon: GitFork, tabId: 'node-library', dividerBefore: true },
   { label: 'Blocks', icon: Boxes, panel: 'blocks' },
+  { label: 'Versions', icon: History, panel: 'versions' },
   // Hidden for now. Re-add to restore.
   // { label: 'Apps', icon: AppWindow, tabId: 'apps' },
   // { label: 'Templates', icon: LayoutTemplate },
@@ -203,6 +204,7 @@ const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is
 const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
 const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
 const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
+const versionsPanelOpen = ref(false) // tracks whether the Versions panel is visible
 
 // Whether a sidebar item is currently the "active" one (highlighted).
 // Single source of truth for the chevron/button highlight logic — used by
@@ -215,6 +217,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.panel === 'assets') return assetsPanelOpen.value
+  if (item?.panel === 'versions') return versionsPanelOpen.value
   if (item?.submenu === 'load') return loadMenuOpen.value
   if (item?.submenu === 'annotate') return annotateMenuOpen.value
   return activeSidebarItem.value === item?.label
@@ -262,7 +265,7 @@ function toggleSidebarItem(label: string) {
     }
     // In Vue mode, Select/Hand work natively via Vue Flow
   }
-  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'blocks' || item?.panel === 'assets') {
+  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'blocks' || item?.panel === 'assets' || item?.panel === 'versions') {
     // Left canvas panels are mutually exclusive — opening one closes the rest.
     const refs = {
       toolbox: toolboxPanelOpen,
@@ -270,6 +273,7 @@ function toggleSidebarItem(label: string) {
       loras: loraLibraryPanelOpen,
       blocks: blockLibraryPanelOpen,
       assets: assetsPanelOpen,
+      versions: versionsPanelOpen,
     }
     const target = refs[item.panel as keyof typeof refs]
     const wasOpen = target.value
@@ -730,6 +734,18 @@ function saveDurableVersion(tab: any, workflow: any) {
   if (!tab?.projectUuid || !workflow || !(workflow.nodes?.length > 0)) return
   const name = tab.label || 'Untitled project'
   useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow }, name)
+}
+
+// Restore a saved version (from VersionsPanel) onto the canvas. Assigning the
+// reactive savedWorkflows entry — the canvas's :workflow prop, and a fresh
+// object from the server — triggers VueNodeCanvas's prop watch, which rebuilds
+// the graph. The restored state becomes the working state and autosaves to the
+// rolling 'current' on the next switch/unload.
+function onRestoreVersion(workflow: any) {
+  const tab = activeTab.value
+  if (!tab || !workflow || !(workflow.nodes?.length > 0)) return
+  savedWorkflows[tab.id] = workflow
+  persistWorkflows()
 }
 
 // Autosave: snapshot current canvas and persist to sessionStorage.
@@ -2046,6 +2062,15 @@ function dismissRunResult() {
         >
           <div v-if="assetsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasAssetsPanel @close="assetsPanelOpen = false" />
+          </div>
+          <div v-if="versionsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasVersionsPanel
+              :project-id="activeTab.projectUuid || activeTab.workflowId || null"
+              :project-name="activeTab.label || 'Untitled project'"
+              :get-workflow="() => vueCanvasRef?.getWorkflow?.()"
+              @close="versionsPanelOpen = false"
+              @restore="onRestoreVersion"
+            />
           </div>
         </Transition>
 
