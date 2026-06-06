@@ -1,0 +1,69 @@
+# Fly.io config for ComfyNext — Nuxt frontend + CPU-only ComfyUI in one machine.
+# Generation runs on Replicate, so no GPU is required.
+#
+# IMPORTANT: the app name below must match NUXT_PUBLIC_COMFY_ORIGIN's hostname.
+# If you change the app name, update that env var too (and the secret/volume).
+
+app = "vessell"
+primary_region = "cdg"   # Paris. Change to your nearest region if you like.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "3000"
+  # The ComfyUI canvas iframe loads from this origin (the :8188 service below).
+  NUXT_PUBLIC_COMFY_ORIGIN = "https://vessell.fly.dev:8188"
+
+# Persistent storage for outputs, uploads, and user settings/workflows.
+[[mounts]]
+  source = "vessell_data"
+  destination = "/data"
+
+###############################################################################
+# Service A — Nuxt frontend (the main https hostname)
+###############################################################################
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "30s"
+
+###############################################################################
+# Service B — ComfyUI canvas, exposed as a second origin on :8188
+###############################################################################
+[[services]]
+  internal_port = 8188
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 8188
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "4gb"

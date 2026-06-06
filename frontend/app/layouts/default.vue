@@ -348,7 +348,7 @@ function injectLoraStyleIntoPrompt(workflow: any) {
   }
 }
 
-async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self' } = {}) {
+async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self', live?: boolean } = {}) {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
     toast.error('Canvas not ready', { description: 'Give it a moment and try again.' })
@@ -380,7 +380,7 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
 
   const workflow = targetIds?.length && vueCanvasRef.value.getFilteredWorkflow
     ? vueCanvasRef.value.getFilteredWorkflow(targetIds, opts)
-    : vueCanvasRef.value.getWorkflow()
+    : vueCanvasRef.value.getWorkflow(opts.live ? { reroll: false } : undefined)
   if (!workflow?.nodes?.length) {
     console.warn('[Run] workflow has no nodes')
     toast.error('Nothing to run', { description: 'No runnable nodes were found for this action.' })
@@ -780,7 +780,7 @@ function handleLiveRun() {
   // Safety: drop the counter if no execution_start arrives (e.g. queue rejected the prompt).
   if (pendingLiveRunsResetTimer) clearTimeout(pendingLiveRunsResetTimer)
   pendingLiveRunsResetTimer = setTimeout(() => { pendingLiveRuns.value = 0 }, 10000)
-  runVueWorkflow()
+  runVueWorkflow(undefined, { live: true })
 }
 
 onMounted(() => {
@@ -822,11 +822,15 @@ function resetBridgeReady() {
 // (HMR) often doesn't remount the iframe, so we force it: reset the bridge-ready
 // handshake AND reload the iframe with a cache-bust. Exposed on window so it can
 // be triggered from the console; also wired to the "Reload canvas" control.
-const comfyIframeSrc = ref('http://127.0.0.1:8188/')
+// Public origin the ComfyUI canvas iframe loads from. In production this is set
+// to the app's ComfyUI origin via NUXT_PUBLIC_COMFY_ORIGIN; in dev it falls back
+// to the local ComfyUI server on :8188.
+const comfyOrigin = useRuntimeConfig().public.comfyOrigin || 'http://127.0.0.1:8188'
+const comfyIframeSrc = ref(`${comfyOrigin}/`)
 function forceReloadCanvas() {
   resetBridgeReady()
   endWorkflowLoading()
-  comfyIframeSrc.value = `http://127.0.0.1:8188/?_cb=${Date.now()}`
+  comfyIframeSrc.value = `${comfyOrigin}/?_cb=${Date.now()}`
 }
 // Assign at setup time too (HMR re-runs setup but not always onMounted) so the
 // console escape hatch is always present.
@@ -1646,7 +1650,7 @@ function dismissRunResult() {
     <!-- Hidden bridge iframe: always mounted so credits/auth work on all pages -->
     <iframe
       id="comfynext-bridge-iframe"
-      src="http://127.0.0.1:8188/"
+      :src="`${comfyOrigin}/`"
       class="fixed w-[10px] h-[10px] -left-[100px] -top-[100px] opacity-0 pointer-events-none"
       aria-hidden="true"
       tabindex="-1"

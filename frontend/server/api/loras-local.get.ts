@@ -36,9 +36,18 @@ export default defineEventHandler(async () => {
     sizeBytes: number | null
   }> = []
 
+  // Derive one entry per LoRA from either the weights (.safetensors) or the
+  // provenance sidecar (.json). On the deployed server the heavy .safetensors
+  // are intentionally absent (inference runs on Replicate via meta.replicate_model),
+  // so the sidecar alone is enough to populate the "Your LoRAs" library.
+  const bases = new Set<string>()
   for (const f of files) {
-    if (!f.endsWith('.safetensors')) continue
-    const base = f.slice(0, -'.safetensors'.length)
+    if (f.endsWith('.safetensors')) bases.add(f.slice(0, -'.safetensors'.length))
+    else if (f.endsWith('.json')) bases.add(f.slice(0, -'.json'.length))
+  }
+
+  for (const base of bases) {
+    const f = `${base}.safetensors`
 
     let meta: any = {}
     try {
@@ -51,7 +60,7 @@ export default defineEventHandler(async () => {
       const st = await fs.stat(path.join(lorasDir, f))
       sizeBytes = st.size
       if (!trainedOn) trainedOn = st.mtime.toISOString()
-    } catch { /* ignore */ }
+    } catch { /* weights absent (e.g. on the deployed server) — sidecar only */ }
 
     // Cover thumbnail, if one's been generated (POST /api/lora-cover). Cache-bust
     // by mtime so a regenerated cover refreshes in the gallery.

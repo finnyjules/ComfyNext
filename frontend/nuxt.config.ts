@@ -9,6 +9,12 @@ export default defineNuxtConfig({
     // Server-only. Set via NUXT_REPLICATE_TOKEN env var.
     // Used by /api/cloud-train/* routes; never exposed to the browser.
     replicateToken: '',
+    public: {
+      // Public origin the ComfyUI canvas iframe loads from. Empty in dev →
+      // falls back to http://127.0.0.1:8188. In production set via
+      // NUXT_PUBLIC_COMFY_ORIGIN (e.g. https://comfynext.fly.dev:8188).
+      comfyOrigin: '',
+    },
   },
 
   modules: [

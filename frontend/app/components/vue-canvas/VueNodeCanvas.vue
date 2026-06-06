@@ -2,6 +2,7 @@
 // force HMR reload
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
+import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
@@ -742,17 +743,45 @@ function assetViewUrl(a: DroppedAsset): string {
   return `/view?${p}`
 }
 
+// Copy an output/temp asset into the input folder so a unified artifact node
+// (which loads via /upload/image → input — the endpoint is generic for image,
+// video and audio) can run it natively. Input assets already live there, so just
+// return their filename. This is "Option A": the artifact carries a real,
+// loadable file instead of a fragile output reference.
+async function ensureInputFilename(a: DroppedAsset): Promise<string> {
+  if (a.type === 'input') return a.filename
+  try {
+    const blob = await (await fetch(assetViewUrl(a))).blob()
+    const fd = new FormData()
+    fd.append('image', new File([blob], a.filename, { type: blob.type || 'application/octet-stream' }))
+    fd.append('overwrite', 'true')
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error(`copy-to-input returned ${res.status}`)
+    const json = await res.json()
+    return (json?.name as string) ?? a.filename
+  } catch (err) {
+    console.error('[asset→artifact] copy to input failed:', err)
+    return a.filename // fall back; node still shows, user can re-pick
+  }
+}
+
+// Each medium maps to a unified artifact node + its file-bearing widget.
+const ASSET_ARTIFACT_SPEC = {
+  image: { nodeType: 'Image', widget: 'image' },
+  video: { nodeType: 'Video', widget: 'file' },
+  audio: { nodeType: 'Audio', widget: 'audio' },
+} as const
+
 async function addAssetNodeData(a: DroppedAsset, position: { x: number, y: number }) {
-  const nodeType = a.kind === 'video' ? 'LoadVideo'
-    : a.kind === 'audio' ? 'LoadAudio'
-      : a.type === 'input' ? 'LoadImage' : 'LoadImageOutput'
+  // Every medium becomes a unified artifact node that *carries* the file, rather
+  // than a brittle Load* node referencing an output-folder name (the source of
+  // the "shows a thumbnail but won't run" bug). Output/temp assets are copied
+  // into the input folder first so the artifact loads them natively.
+  const { nodeType, widget } = ASSET_ARTIFACT_SPEC[a.kind]
   if (!objectInfo.value[nodeType]) await fetchObjectInfo()
-  const widgetName = a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : 'image'
-  // LoadImageOutput's combo value is "subfolder/filename" when nested.
-  const widgetVal = (nodeType === 'LoadImageOutput' && a.subfolder) ? `${a.subfolder}/${a.filename}` : a.filename
-  const node = createNodeData(nodeType, position, { [widgetName]: widgetVal }) as any
-  // Instant thumbnail for images (ArtifactImageNode renders data.images[0] first).
-  if (a.kind === 'image') node.data.images = [assetViewUrl(a)]
+  const inputName = await ensureInputFilename(a)
+  const node = createNodeData(nodeType, position, { [widget]: inputName }) as any
+  if (a.kind === 'image') node.data.images = [assetViewUrl(a)] // instant thumbnail
   return node
 }
 
@@ -1293,14 +1322,15 @@ async function handlePaste(e: ClipboardEvent) {
     return
   }
 
-  // Refresh object_info so the LoadImage combo includes the just-uploaded
+  // Refresh object_info so the Image artifact's combo includes the just-uploaded
   // file. Cached by default; force a re-fetch.
   await fetchObjectInfo(true)
 
-  // Spawn a LoadImage node centered in the viewport with the new filename.
+  // Spawn a unified `Image` artifact node (not a brittle LoadImage) with the
+  // uploaded file — it's already in the input folder, so it runs natively.
   window.dispatchEvent(new CustomEvent('comfynext:addNode', {
     detail: {
-      nodeType: 'LoadImage',
+      nodeType: 'Image',
       widgetOverrides: { image: uploadedName },
     },
   }))
@@ -2155,10 +2185,42 @@ function openMenu(x: number, y: number, items: MenuItem[]) { menu.value = { x, y
 
 // Pending target ids for filtered run — emitted to the parent layout via a
 // custom event so the existing runVueWorkflow plumbing can stay one path.
+// Pre-flight: a Load* node with no file selected is rejected by ComfyUI's
+// validation, but the run path swallows that — so the workflow just "doesn't
+// run" with no feedback. Catch it here and name the offending node. (Unified
+// artifact nodes are exempt: they can legitimately be empty while capturing an
+// upstream result.)
+const MEDIA_LOADERS: Record<string, { widget: string, label: string }> = {
+  LoadImage: { widget: 'image', label: 'image' },
+  LoadImageOutput: { widget: 'image', label: 'image' },
+  LoadVideo: { widget: 'video', label: 'video' },
+  LoadAudio: { widget: 'audio', label: 'audio' },
+}
+function preflightMediaInputs(targetIds?: Set<string>): boolean {
+  for (const n of nodes.value as any[]) {
+    if (targetIds && !targetIds.has(n.id)) continue
+    const spec = MEDIA_LOADERS[n.data?.nodeType]
+    if (!spec) continue
+    if (n.data?.mode === 2 || n.data?.mode === 4) continue // muted / bypassed
+    const idx = (n.data?.widgetDefs as any[])?.findIndex((d: any) => d.name === spec.widget) ?? -1
+    const val = idx >= 0 ? n.data?.widgetsValues?.[idx] : undefined
+    if (!val || (typeof val === 'string' && !val.trim())) {
+      const article = /^[aeiou]/.test(spec.label) ? 'an' : 'a'
+      toast.error(`Pick ${article} ${spec.label} before running`, {
+        description: `"${n.data?.title || n.data?.nodeType}" has no ${spec.label} selected.`,
+      })
+      return false
+    }
+  }
+  return true
+}
+
 function emitRunFiltered(targetIds: string[]) {
+  if (!preflightMediaInputs(new Set(targetIds))) return
   window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds } }))
 }
 function emitRunAll() {
+  if (!preflightMediaInputs()) return
   window.dispatchEvent(new CustomEvent('comfynext:runAll'))
 }
 
@@ -3174,8 +3236,11 @@ defineExpose({
   // Global Run path. Match the per-node Run pre-processing: realign widget
   // values, randomize seeds on the live canvas state, capture the active run
   // set, apply locks, then variant fan-out on the JSON snapshot.
-  getWorkflow: () => {
-    randomizeSeedsOnLiveState()
+  getWorkflow: (opts?: { reroll?: boolean }) => {
+    // Live-preview runs pass reroll:false — re-rolling a seed mutates the live
+    // widget state, which re-trips the live-run watch and loops forever (any
+    // live-preview node with a seed, e.g. Caustics). A normal Run re-rolls.
+    if (opts?.reroll !== false) randomizeSeedsOnLiveState()
     captureActiveRunFromTargets([])
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf

@@ -85,6 +85,16 @@ const toolboxIcon = computed(() => TOOLBOX_NODE_ICONS[props.data.nodeType as str
 // what the node does, not just who runs it.
 const generatorIcon = computed(() => getGeneratorIcon(props.data.nodeType as string))
 
+// Frontend overrides for node title-bar names. The backend display_name (e.g.
+// "Flux Dev + LoRA (Replicate)") describes the model; here we relabel a node in
+// terms of what the user is doing with it. Per CLAUDE.md, UI naming lives in Vue.
+const NODE_TITLE_OVERRIDES: Record<string, string> = {
+  FluxLoRARemoteNode: 'Generate with a style',
+}
+const displayTitle = computed(
+  () => NODE_TITLE_OVERRIDES[props.data.nodeType as string] || props.data.title,
+)
+
 // Extract the minimum USD price from the price badge expression
 const priceLabel = computed(() => {
   const badge = props.data.priceBadge
@@ -857,7 +867,7 @@ watch(previewImages, (urls) => {
       <component v-else-if="generatorIcon" :is="generatorIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
-      <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || data.title }}</span>
+      <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || displayTitle }}</span>
       <!-- Re-roll this node: runs ONLY this node, re-rolling its seed and reusing
            cached upstream (no regen / re-billing of the chain). See rerollThisNode. -->
       <button

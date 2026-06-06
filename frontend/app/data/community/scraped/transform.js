@@ -171,6 +171,9 @@ function transformTemplates() {
 
     // Thumbnails
     const thumbnailUrl = t.thumbnails?.[0] || `https://picsum.photos/seed/${id}/400/300`
+    // Optional looping video preview (e.g. API video workflows). Still image above
+    // serves as the poster / fallback for img-only surfaces (search, collections).
+    const previewVideoUrl = t.videoThumbnail || ''
     const realImages = t.thumbnails?.length > 0
       ? t.thumbnails.map((url, idx) => ({
         url,
@@ -258,13 +261,24 @@ function transformTemplates() {
     // Description (markdown)
     const description = generateDescription(t, categoryLabel, baseModel, techniqueList, nodes.length)
 
-    // Creator — all scraped workflows come from the ComfyUI official account
-    const creator = {
+    // Creator — defaults to the official ComfyUI account, but honors an explicit
+    // `createdBy` from the source so community-authored workflows credit their author.
+    const comfyCreator = {
       id: 'cr_comfyui',
       handle: '@comfyui',
       displayName: 'ComfyUI',
       avatarUrl: 'https://preview.redd.it/new-comfyui-logo-icon-v0-c05cowjywfze1.png?width=640&crop=smart&auto=webp&s=d381ee8ada0a2b993684c9ef26daf744c43350e2',
     }
+    const authoredBy = (t.createdBy || '').trim()
+    const isOfficial = !authoredBy || /^comfy\s*ui$/i.test(authoredBy)
+    const creator = isOfficial
+      ? comfyCreator
+      : {
+        id: `cr_${authoredBy.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`,
+        handle: `@${authoredBy.toLowerCase().replace(/[^a-z0-9]+/g, '')}`,
+        displayName: authoredBy,
+        avatarUrl: `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(authoredBy)}`,
+      }
 
     workflows.push({
       id,
@@ -284,6 +298,7 @@ function transformTemplates() {
       outputType,
       estimatedTime,
       thumbnailUrl,
+      previewVideoUrl,
       outputImages,
       hasBeforeAfter: realImages.length === 2, // real scraped images form a before/after pair
       stats: {

@@ -1,0 +1,35 @@
+# VCS / tooling
+.git
+.github
+.ci
+.claude
+*.log
+**/.DS_Store
+
+# Python
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+
+# Node / Nuxt (frontend is rebuilt inside the image)
+**/node_modules
+frontend/.nuxt
+frontend/.output
+frontend/dist
+**/test-results
+
+# Runtime data (recreated on the Fly volume at /data)
+/output
+/input
+/temp
+/user
+
+# Model weights — keep only the LoRA sidecars + cover thumbnails,
+# drop the multi-GB .safetensors and insightface bundles.
+models/**
+!models/loras/**
+models/loras/**/*.safetensors
+
+# Misc large/unneeded at runtime
+Assets

@@ -624,12 +624,12 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
             :class="isCollapsed(section) ? '-rotate-90' : ''"
           />
         </button>
-        <div v-if="!isCollapsed(section)" class="grid grid-cols-3 gap-1">
+        <div v-if="!isCollapsed(section)" class="grid grid-cols-2 gap-2">
           <button
             v-for="item in section.items"
             :key="item.nodeType"
             draggable="true"
-            class="relative group flex flex-col items-center justify-center gap-2 aspect-square rounded-md bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing p-1.5"
+            class="relative group flex flex-col items-center justify-start gap-2 min-h-[128px] rounded-lg bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing p-3 pt-4"
             :title="`${item.label} (${item.nodeType}) — click to add, or drag onto canvas`"
             @click="addNode(item.nodeType)"
             @dragstart="(e) => onCardDragStart(e, item)"
@@ -648,7 +648,7 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
                  per-node icon takes the main slot, the provider drops into
                  a small badge in the bottom-right corner. -->
             <div
-              class="relative size-7 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
+              class="relative size-9 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
               :class="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider) ? 'bg-white/[0.04]' : ''"
               :style="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider)
                 ? {}
@@ -658,56 +658,47 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
               <component
                 v-if="getGeneratorIcon(item.nodeType)"
                 :is="getGeneratorIcon(item.nodeType)"
-                class="size-4 text-white/85"
+                class="size-5 text-white/85"
                 :stroke-width="1.75"
               />
               <span
                 v-else-if="hasComfyBrandIcon(item.provider)"
                 :class="[comfyBrandIconClass(item.provider), isComfyMonoIcon(item.provider) ? 'bg-white' : '']"
-                class="size-4"
+                class="size-5"
               />
               <component
                 v-else
                 :is="providerIcon(item.provider, section.domain)"
-                class="size-3.5"
+                class="size-4"
                 :stroke-width="1.75"
               />
-
-              <!-- Provider mini-chip — only shown when the main slot is the
-                   per-node icon (otherwise the provider is already the main
-                   visual). Reflects the actual MODEL brand (BFL / Ideogram /
-                   …), not the API transport (Replicate falls back here).
-                   Same dark chip background regardless of provider so the
-                   visual weight is consistent across cards. Pulled mostly
-                   outside the main icon so it reads as a badge, not a
-                   sticker covering the glyph. -->
-              <template v-if="getGeneratorIcon(item.nodeType)">
-                <span
-                  v-if="hasComfyBrandIcon(chipProvider(item))"
-                  :class="[comfyBrandIconClass(chipProvider(item)), isComfyMonoIcon(chipProvider(item)) ? 'bg-white/85' : '']"
-                  class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1a1a1a] bg-[#1a1a1a]"
-                  :title="chipProvider(item)"
-                />
-                <span
-                  v-else
-                  class="absolute -bottom-1.5 -right-1.5 size-2.5 rounded-[3px] ring-1 ring-[#1a1a1a] bg-[#1a1a1a] flex items-center justify-center text-white/70"
-                  :title="chipProvider(item)"
-                >
-                  <component :is="providerIcon(chipProvider(item), section.domain)" class="size-1.5" :stroke-width="2.75" />
-                </span>
-              </template>
             </div>
             <!-- Use-case-first label when the node is in the map; falls back
                  to the cleaned model name for partner nodes we haven't mapped. -->
             <template v-if="useCaseFor(item)">
-              <span class="text-[11px] text-white/85 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5">
+              <span class="text-[13px] text-white/85 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5 min-h-[2.4em] flex items-center justify-center">
                 {{ useCaseFor(item)!.useCase }}
               </span>
-              <span class="text-[9px] text-white/40 group-hover:text-white/55 text-center leading-tight transition-colors line-clamp-1 px-0.5 -mt-1">
-                {{ useCaseFor(item)!.model }}
+              <span class="flex items-center justify-center gap-1 px-0.5 -mt-1 max-w-full">
+                <!-- Model/provider brand icon, inline next to the model name. -->
+                <span
+                  v-if="hasComfyBrandIcon(chipProvider(item))"
+                  :class="[comfyBrandIconClass(chipProvider(item)), isComfyMonoIcon(chipProvider(item)) ? 'bg-white/45 group-hover:bg-white/60' : '']"
+                  class="text-[8px] leading-none shrink-0"
+                  :title="chipProvider(item)"
+                />
+                <component
+                  v-else
+                  :is="providerIcon(chipProvider(item), section.domain)"
+                  class="size-2 shrink-0 text-white/45 group-hover:text-white/60"
+                  :stroke-width="2"
+                />
+                <span class="text-[11px] text-white/40 group-hover:text-white/55 leading-tight transition-colors line-clamp-1">
+                  {{ useCaseFor(item)!.model }}
+                </span>
               </span>
             </template>
-            <span v-else class="text-[11px] text-white/70 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5">
+            <span v-else class="text-[13px] text-white/70 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5 min-h-[2.4em] flex items-center justify-center">
               {{ item.label.replace(item.provider, '').replace(/^[ :·-]+/, '') || item.label }}
             </span>
           </button>

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { toast } from 'vue-sonner'
 import { useStore } from '@nanostores/vue'
 import { $favoriteIds, toggleFavorite } from '~/composables/community/auth.js'
 import { formatNumber } from '~/lib/community/formatters.js'
@@ -7,7 +8,6 @@ import { getWorkflowBySlug } from '~/data/community/workflowService.js'
 import WorkflowBadges from '~/components/community/workflow/WorkflowBadges.vue'
 import WorkflowDescription from '~/components/community/workflow/WorkflowDescription.vue'
 import WorkflowModels from '~/components/community/workflow/WorkflowModels.vue'
-import WorkflowOutputGallery from '~/components/community/workflow/WorkflowOutputGallery.vue'
 import BeforeAfterSlider from '~/components/community/ui/BeforeAfterSlider.vue'
 import RelatedWorkflows from '~/components/community/RelatedWorkflows.vue'
 import { useCommunityNav } from '~/composables/useCommunityNav'
@@ -24,6 +24,8 @@ const workflow = computed(() => getWorkflowBySlug(props.slug))
 const bannerImage = computed(() =>
   workflow.value?.outputImages?.[0]?.url || workflow.value?.thumbnailUrl
 )
+
+const previewVideoUrl = computed(() => workflow.value?.previewVideoUrl || '')
 
 const hasBeforeAfter = computed(() => workflow.value?.hasBeforeAfter === true)
 
@@ -48,6 +50,7 @@ function goBack() {
 }
 
 const isLoadingWorkflow = ref(false)
+const isDownloading = ref(false)
 
 async function openWorkflow() {
   if (!workflow.value) return
@@ -56,9 +59,14 @@ async function openWorkflow() {
   isLoadingWorkflow.value = true
 
   try {
-    // Fetch the real workflow JSON from comfy.org
-    const res = await fetch(`https://comfy.org/workflows/${wf.slug}.json`)
-    if (!res.ok) throw new Error(`Failed to fetch workflow: ${res.status}`)
+    // Fetch the workflow JSON via our server proxy. It resolves both official
+    // comfy.org templates and community workflows, and bypasses the missing
+    // CORS headers on comfy.org's community download endpoint.
+    const res = await fetch(`/api/community-workflow?slug=${encodeURIComponent(wf.slug)}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.message || `Failed to load workflow (${res.status})`)
+    }
     const workflowJson = await res.json()
 
     // Open a new project tab with the workflow title
@@ -70,8 +78,46 @@ async function openWorkflow() {
     }))
   } catch (err) {
     console.error('Failed to load workflow:', err)
+    toast.error("Couldn't open this template", {
+      description: err?.message || "The workflow graph isn't available.",
+    })
   } finally {
     isLoadingWorkflow.value = false
+  }
+}
+
+async function downloadWorkflow() {
+  if (!workflow.value || isDownloading.value) return
+  const wf = workflow.value
+
+  isDownloading.value = true
+
+  try {
+    // Same server proxy as openWorkflow — resolves official + community graphs.
+    const res = await fetch(`/api/community-workflow?slug=${encodeURIComponent(wf.slug)}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.message || `Failed to download workflow (${res.status})`)
+    }
+    const workflowJson = await res.json()
+
+    const filename = `${(wf.title || wf.slug || 'workflow').replace(/[^\w.-]+/g, '_')}.json`
+    const blob = new Blob([JSON.stringify(workflowJson, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    console.error('Failed to download workflow:', err)
+    toast.error("Couldn't download this template", {
+      description: err?.message || "The workflow graph isn't available.",
+    })
+  } finally {
+    isDownloading.value = false
   }
 }
 
@@ -111,7 +157,7 @@ function handleFavorite() {
       <!-- Main two-column layout -->
       <section class="relative z-[1] pb-10 md:pb-6">
         <div class="mx-auto max-w-7xl px-6">
-          <div class="grid grid-cols-[2fr_1fr] gap-10 items-start">
+          <div class="grid grid-cols-[2fr_1fr] gap-10 items-center">
             <!-- Left column: hero image + output gallery -->
             <div class="flex flex-col gap-4">
               <BeforeAfterSlider
@@ -119,16 +165,22 @@ function handleFavorite() {
                 :beforeImage="workflow.outputImages[1].url"
                 :afterImage="workflow.outputImages[0].url"
               />
+              <video
+                v-else-if="previewVideoUrl"
+                :src="previewVideoUrl"
+                :poster="bannerImage"
+                autoplay
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                class="w-full object-cover rounded-xl"
+              />
               <img
                 v-else
                 :src="bannerImage"
                 :alt="workflow.title"
                 class="w-full object-cover rounded-xl"
-              />
-
-              <WorkflowOutputGallery
-                v-if="!hasBeforeAfter && workflow.outputImages?.length > 1"
-                :images="workflow.outputImages.slice(1)"
               />
             </div>
 
@@ -180,14 +232,16 @@ function handleFavorite() {
 
                 <UiButton
                   variant="secondary"
+                  :disabled="isDownloading"
                   class="bg-[#262729] text-white hover:bg-[#333537] gap-2"
+                  @click="downloadWorkflow"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polyline points="16 18 22 12 16 6" />
                     <polyline points="8 6 2 12 8 18" />
                     <line x1="14.5" y1="4" x2="9.5" y2="20" />
                   </svg>
-                  Download .json
+                  {{ isDownloading ? 'Downloading…' : 'Download .json' }}
                 </UiButton>
 
                 <UiButton

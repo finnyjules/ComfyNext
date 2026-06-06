@@ -68,6 +68,20 @@ function handleCardClick(e) {
             variant === 'gallery' ? 'group-hover:scale-[1.03]' : 'group-hover:scale-105',
           ]"
         />
+        <video
+          v-else-if="workflow.previewVideoUrl"
+          :src="workflow.previewVideoUrl"
+          :poster="workflow.thumbnailUrl"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          class="w-full h-full object-cover transition-transform duration-[400ms] ease-in-out"
+          :class="[
+            variant === 'gallery' ? 'group-hover:scale-[1.03]' : 'group-hover:scale-105',
+          ]"
+        />
         <img
           v-else
           :src="workflow.thumbnailUrl"

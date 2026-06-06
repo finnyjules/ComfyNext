@@ -133,8 +133,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               class="group/card flex items-start gap-2.5 p-3 min-h-[84px] rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/25 text-left transition-colors cursor-pointer"
               @click="pick(cap)"
             >
-              <span class="shrink-0 size-8 rounded-lg bg-white/[0.05] group-hover/card:bg-white/[0.09] flex items-center justify-center transition-colors">
-                <component :is="getGeneratorIcon(cap.nodeType) || Sparkles" class="size-4 text-white/85" :stroke-width="1.75" />
+              <span class="shrink-0 size-11 rounded-lg bg-white/[0.05] group-hover/card:bg-white/[0.09] flex items-center justify-center transition-colors">
+                <component :is="getGeneratorIcon(cap.nodeType) || Sparkles" class="size-6 text-white/85" :stroke-width="1.75" />
               </span>
               <div class="flex flex-col min-w-0 flex-1">
                 <span class="text-[13px] text-white/90 truncate">{{ cap.useCase }}</span>

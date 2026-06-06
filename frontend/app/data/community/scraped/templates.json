@@ -1,8 +1,35 @@
 {
   "scrapedAt": "2026-02-16T03:16:49.829Z",
   "source": "https://www.comfy.org/workflows/",
-  "count": 318,
+  "count": 319,
   "templates": [
+    {
+      "slug": "064da31db8f3-064da31db8f3",
+      "title": "Seedance 2.0 - Viral Videos Character Swap",
+      "description": "A one click workflow to recreate an input video with your character. Upload the video and your character, and Google Gemini analyzes the input video to reverse-engineer a prompt. The workflow extracts the first frame, swaps your character into it, and feeds it through Seedance 2.0 Reference-to-Video to generate the final clip.",
+      "category": "Video",
+      "type": "Video to Video",
+      "thumbnails": [
+        "https://www.comfy.org/workflows/og.png?type=workflow&title=Seedance+2.0+-+Viral+Videos+Character+Swap&thumbnail=https%3A%2F%2Fcomfy-hub-assets.comfy.org%2Fuploads%2F61c7358d-96f5-49e2-81f5-4991d461ed1c.mp4&creator=hellorob"
+      ],
+      "videoThumbnail": "https://comfy-hub-assets.comfy.org/uploads/61c7358d-96f5-49e2-81f5-4991d461ed1c.mp4",
+      "isPopular": true,
+      "createdBy": "hellorob",
+      "lastUpdate": "",
+      "categories": [
+        "Video",
+        "Video to Video",
+        "Character",
+        "Face Swap",
+        "API"
+      ],
+      "models": [
+        "Seedance 2.0",
+        "Gemini"
+      ],
+      "downloadSize": "",
+      "estTime": ""
+    },
     {
       "slug": "image_qwen_image_edit_2509",
       "title": "Qwen Image Edit 2509",
