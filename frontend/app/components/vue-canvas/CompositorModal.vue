@@ -705,6 +705,19 @@ function toggleLayerMask(l: any) {
   else setLayerMask(l, {})
 }
 
+// ── Layer blur effect ───────────────────────────────────────────────────────
+function layerBlur(l: any): any | undefined { return l?.effects?.find((e: any) => e.type === 'layer_blur') }
+function setLayerBlur(l: any, radius: number) {
+  if (!l) return
+  const others = (l.effects || []).filter((e: any) => e.type !== 'layer_blur')
+  setLocal(l.id, { effects: radius > 0 ? [...others, { type: 'layer_blur', radius, visible: true }] : others })
+}
+function toggleLayerBlur(l: any) {
+  if (!l) return
+  if (layerBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'layer_blur') })
+  else setLayerBlur(l, 0.02)
+}
+
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
 // outWidth conversion works for either axis. When locked, editing one axis
@@ -1355,6 +1368,21 @@ onUnmounted(() => {
                     @input="setLocalShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- Layer blur -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Layer blur</div>
+              <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+                @click="toggleLayerBlur(selectedLocal!)">{{ layerBlur(selectedLocal) ? 'Remove' : 'Add' }}</button>
+            </div>
+            <div v-if="layerBlur(selectedLocal)" class="flex items-center gap-2">
+              <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Radius</div>
+              <input type="number" min="0" step="0.5" :value="Math.round((layerBlur(selectedLocal)?.radius || 0) * 1000) / 10"
+                class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setLayerBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
           </div>
 

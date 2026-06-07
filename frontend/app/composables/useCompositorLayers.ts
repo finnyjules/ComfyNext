@@ -40,7 +40,12 @@ export interface DropShadowEffect {
   blur: number    // blur radius, normalized to canvas width
   visible: boolean
 }
-export type LayerEffect = DropShadowEffect
+export interface LayerBlurEffect {
+  type: 'layer_blur'
+  radius: number  // blur radius, normalized to canvas width
+  visible: boolean
+}
+export type LayerEffect = DropShadowEffect | LayerBlurEffect
 
 // Clip mask: the layer is clipped to a rect/ellipse region in CANVAS space
 // (axis-aligned, normalized like everything else). For local layers this is
@@ -396,13 +401,15 @@ function paintLayer(
   const shadow = layer.effects?.find(
     (e): e is DropShadowEffect => e.type === 'drop_shadow' && e.visible,
   )
+  const blur = layer.effects?.find(
+    (e): e is LayerBlurEffect => e.type === 'layer_blur' && e.visible,
+  )
 
-  // Drop-shadow path: render the layer to an offscreen at canvas size, then
-  // composite it with a canvas shadow — the shadow is cast from the layer's
-  // alpha silhouette, so it works identically for text, shapes, vectors and
-  // images. Because bakeOverlay() also renders through here, the shadow is
-  // baked into generation exactly as previewed (preview == output).
-  if (shadow) {
+  // Effected path: render the layer to an offscreen at canvas size, then
+  // composite it with a drop shadow and/or blur. Works identically for text,
+  // shapes, vectors and images, and because bakeOverlay() renders through here
+  // the effects are baked into generation exactly as previewed.
+  if (shadow || blur) {
     const off = document.createElement('canvas')
     off.width = Math.max(1, Math.round(W))
     off.height = Math.max(1, Math.round(H))
@@ -413,10 +420,13 @@ function paintLayer(
       drawLayerContent(octx, layer, W)
       ctx.save()
       ctx.globalAlpha = opacity
-      ctx.shadowColor = shadow.color
-      ctx.shadowBlur = Math.max(0, shadow.blur * W)
-      ctx.shadowOffsetX = shadow.x * W
-      ctx.shadowOffsetY = shadow.y * W
+      if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W)}px)`
+      if (shadow) {
+        ctx.shadowColor = shadow.color
+        ctx.shadowBlur = Math.max(0, shadow.blur * W)
+        ctx.shadowOffsetX = shadow.x * W
+        ctx.shadowOffsetY = shadow.y * W
+      }
       ctx.drawImage(off, 0, 0)
       ctx.restore()
       return
