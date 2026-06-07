@@ -122,6 +122,24 @@ export function useInpaint() {
     }
   }
 
+  /** Cloud background removal (851-labs/background-remover) — returns a
+   *  transparent-PNG data URL cutout of the subject. */
+  async function removeBackground(image: string): Promise<string> {
+    busy.value = true; error.value = ''
+    try {
+      const res = await $fetch<{ image: string }>('/api/inpaint/remove-bg', {
+        method: 'POST',
+        body: { image },
+      })
+      return res.image
+    } catch (err: any) {
+      error.value = err?.data?.message || err?.message || 'Background removal failed'
+      throw err
+    } finally {
+      busy.value = false
+    }
+  }
+
   /** Click-to-select a region: SAM returns a mask data URL (white = selected).
    *  `pointPx` is in the source image's pixel space (same space as `image`).
    *  (v3 click-to-select.) */
@@ -145,5 +163,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, text2img, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, text2img, removeBackground, uploadDataUrl }
 }
