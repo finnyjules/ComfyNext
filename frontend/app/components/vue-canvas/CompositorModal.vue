@@ -6,8 +6,8 @@ import {
 } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
-  type TextLayer, type RectLayer, type EllipseLayer,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages,
+  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack,
 } from '~/composables/useCompositorLayers'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
@@ -609,21 +609,15 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  // Layers used as a mask (referenced by another's maskedById) only clip; they
-  // don't paint standalone.
-  const locals = localLayers.value as any[]
-  const maskIds = new Set<string>()
-  for (const l of locals) if (l.maskedById) maskIds.add(l.maskedById)
-  for (const key of stackKeys.value) {
+  const items = stackKeys.value.map((key): StackItem | null => {
     const r = resolveStackKey(key)
-    if (!r) continue
-    if (r.type === 'wired') { drawWiredLayer(ctx, r.layer as Layer, W, H); continue }
-    if (r.layer.id === editingId.value) continue
-    if (nodeEdit.active.value && r.layer.id === nodeEdit.layerId.value) continue // shown via overlay
-    if (maskIds.has(r.layer.id)) continue
-    const maskLayer = (r.layer as any).maskedById ? locals.find((l: any) => l.id === (r.layer as any).maskedById) : null
-    drawLocalLayer(ctx, r.layer, W, H, maskLayer)
-  }
+    if (!r) return null
+    return r.type === 'wired'
+      ? { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+      : { type: 'local', layer: r.layer as LocalLayer }
+  }).filter((x): x is StackItem => x != null)
+  paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
+    l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value))
 }
 watch(
   () => [

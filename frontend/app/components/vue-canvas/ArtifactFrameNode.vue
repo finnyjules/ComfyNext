@@ -6,7 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages } from '~/composables/useCompositorLayers'
+import { type LocalLayer, type TextLayer, type StackItem, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -401,20 +401,14 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  // Layers used as a mask (referenced by another's maskedById) don't paint on
-  // their own — they only clip the layer that references them.
-  const locals = editor.localLayers.value
-  const maskIds = new Set<string>()
-  for (const l of locals) if (l.maskedById) maskIds.add(l.maskedById)
-  for (const key of stackKeys.value) {
+  const items = stackKeys.value.map((key): StackItem | null => {
     const r = resolveKey(key)
-    if (!r) continue
-    if (r.type === 'wired') { drawWiredLayer(ctx, r.layer, W, H); continue }
-    if (r.layer.id === editor.editingId.value) continue
-    if (maskIds.has(r.layer.id)) continue
-    const maskLayer = r.layer.maskedById ? locals.find(l => l.id === r.layer.maskedById) : null
-    drawLocalLayer(ctx, r.layer, W, H, maskLayer)
-  }
+    if (!r) return null
+    return r.type === 'wired'
+      ? { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
+      : { type: 'local', layer: r.layer }
+  }).filter((x): x is StackItem => x != null)
+  paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value)
 }
 watch(
   () => [

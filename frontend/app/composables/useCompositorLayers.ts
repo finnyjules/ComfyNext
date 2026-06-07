@@ -580,21 +580,43 @@ function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
 }
 
 /** Draw all local layers (bottom→top order = array order). */
+// One ordered stack item: a wired image layer (drawn via its own closure) or a
+// local layer. The single source of truth for stack rendering — both canvases
+// (Frame node, Compositor modal) and the bake go through paintLayerStack, so
+// masking/effects can't drift between them (the bug-class this prevents).
+export type StackItem =
+  | { type: 'wired'; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
+  | { type: 'local'; layer: LocalLayer }
+
+export function paintLayerStack(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  items: StackItem[],
+  localLayers: LocalLayer[],
+  skip?: (layer: LocalLayer) => boolean,
+) {
+  // Layers used as a mask (referenced by another's maskedById) only clip — they
+  // don't paint on their own.
+  const maskIds = new Set<string>()
+  for (const l of localLayers) if (l.maskedById) maskIds.add(l.maskedById)
+  for (const item of items) {
+    if (item.type === 'wired') { item.draw(ctx, W, H); continue }
+    const layer = item.layer
+    if (skip?.(layer)) continue
+    if (maskIds.has(layer.id)) continue
+    const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+    drawLocalLayer(ctx, layer, W, H, maskLayer)
+  }
+}
+
 export function drawLocalLayers(
   ctx: CanvasRenderingContext2D,
   layers: LocalLayer[],
   W: number,
   H: number,
 ) {
-  // Layers used as a mask (referenced by another's maskedById) don't paint on
-  // their own — they only clip the layer that references them.
-  const maskIds = new Set<string>()
-  for (const l of layers) if (l.maskedById) maskIds.add(l.maskedById)
-  for (const layer of layers) {
-    if (maskIds.has(layer.id)) continue
-    const maskLayer = layer.maskedById ? layers.find(l => l.id === layer.maskedById) : null
-    drawLocalLayer(ctx, layer, W, H, maskLayer)
-  }
+  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local', layer: l })), layers)
 }
 
 /** Blend-mode name → canvas composite op (shared by node + modal wired draws). */
