@@ -108,7 +108,7 @@ export function useInpaint() {
   async function text2img(prompt: string, aspectRatio = '1:1', opts: { count?: number; seed?: number } = {}): Promise<string[]> {
     busy.value = true; error.value = ''
     try {
-      const res = await $fetch<{ images: string[] }>('/api/generate/flux', {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
         method: 'POST',
         body: { prompt, aspect_ratio: aspectRatio, count: opts.count ?? 1, seed: opts.seed },
       })

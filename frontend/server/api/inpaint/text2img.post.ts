@@ -1,10 +1,12 @@
 /**
- * POST /api/generate/flux
+ * POST /api/inpaint/text2img
  *
  * Text-to-image via Black Forest Labs FLUX.1 [dev] on Replicate. Used by the
  * Compositor's Generative Fill when the painted region has little/no underlying
  * image to inpaint — flux-fill is an inpainter and produces poor results on a
  * blank region, so we conjure a fresh subject here instead and drop it in.
+ *
+ * (Lives under inpaint/ alongside flux-fill so it shares that route group.)
  *
  * Body:
  *   prompt        string  what to generate (required)
