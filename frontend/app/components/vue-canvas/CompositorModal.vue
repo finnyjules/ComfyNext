@@ -609,13 +609,20 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
+  // Layers used as a mask (referenced by another's maskedById) only clip; they
+  // don't paint standalone.
+  const locals = localLayers.value as any[]
+  const maskIds = new Set<string>()
+  for (const l of locals) if (l.maskedById) maskIds.add(l.maskedById)
   for (const key of stackKeys.value) {
     const r = resolveStackKey(key)
     if (!r) continue
     if (r.type === 'wired') { drawWiredLayer(ctx, r.layer as Layer, W, H); continue }
     if (r.layer.id === editingId.value) continue
     if (nodeEdit.active.value && r.layer.id === nodeEdit.layerId.value) continue // shown via overlay
-    drawLocalLayer(ctx, r.layer, W, H)
+    if (maskIds.has(r.layer.id)) continue
+    const maskLayer = (r.layer as any).maskedById ? locals.find((l: any) => l.id === (r.layer as any).maskedById) : null
+    drawLocalLayer(ctx, r.layer, W, H, maskLayer)
   }
 }
 watch(
