@@ -23,7 +23,12 @@ def _blend(base: torch.Tensor, top: torch.Tensor, mode: str) -> torch.Tensor:
     if mode == "screen":     return 1.0 - (1.0 - a) * (1.0 - b)
     if mode == "overlay":
         return torch.where(a < 0.5, 2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b))
-    if mode == "soft_light": return (1.0 - 2.0 * b) * a * a + 2.0 * b * a
+    if mode == "soft_light":
+        # W3C/CSS soft-light, matching the browser <canvas> the preview renders
+        # with. (Was the Pegtop approximation, which drifted up to ~28/255 vs the
+        # editor — see tests-unit/comfy_extras_test/test_compositor_blend_conformance.py)
+        d = torch.where(a <= 0.25, ((16.0 * a - 12.0) * a + 4.0) * a, torch.sqrt(a))
+        return torch.where(b < 0.5, a - (1.0 - 2.0 * b) * a * (1.0 - a), a + (2.0 * b - 1.0) * (d - a))
     if mode == "hard_light":
         return torch.where(b < 0.5, 2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b))
     if mode == "difference": return (a - b).abs()

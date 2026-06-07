@@ -29,6 +29,19 @@ export function isGradient(p: Paint | undefined): p is Gradient {
   return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
 }
 
+// Layer effects (Figma-style). Drop shadow first; inner shadow / blur extend
+// this union later. All distances normalized to canvas width, like every other
+// dimension here, so they survive resize/export unchanged.
+export interface DropShadowEffect {
+  type: 'drop_shadow'
+  color: string   // rgba/hex (alpha allowed)
+  x: number       // offset X, normalized to canvas width
+  y: number       // offset Y, normalized to canvas width
+  blur: number    // blur radius, normalized to canvas width
+  visible: boolean
+}
+export type LayerEffect = DropShadowEffect
+
 interface LayerCommon {
   id: string
   kind: LocalLayerKind
@@ -37,6 +50,7 @@ interface LayerCommon {
   rotation: number   // degrees
   opacity: number    // 0..1
   groupId?: string   // layers sharing a groupId select/move/transform together
+  effects?: LayerEffect[] // drop shadow etc. — applied at render time
 }
 
 export interface TextLayer extends LayerCommon {
@@ -337,11 +351,49 @@ export function drawLocalLayer(
   W: number,
   H: number,
 ) {
+  const opacity = Math.max(0, Math.min(1, layer.opacity))
+  const shadow = layer.effects?.find(
+    (e): e is DropShadowEffect => e.type === 'drop_shadow' && e.visible,
+  )
+
+  // Drop-shadow path: render the layer to an offscreen at canvas size, then
+  // composite it with a canvas shadow — the shadow is cast from the layer's
+  // alpha silhouette, so it works identically for text, shapes, vectors and
+  // images. Because bakeOverlay() also renders through here, the shadow is
+  // baked into generation exactly as previewed (preview == output).
+  if (shadow) {
+    const off = document.createElement('canvas')
+    off.width = Math.max(1, Math.round(W))
+    off.height = Math.max(1, Math.round(H))
+    const octx = off.getContext('2d')
+    if (octx) {
+      octx.translate(layer.x * W, layer.y * H)
+      if (layer.rotation) octx.rotate((layer.rotation * Math.PI) / 180)
+      drawLayerContent(octx, layer, W)
+      ctx.save()
+      ctx.globalAlpha = opacity
+      ctx.shadowColor = shadow.color
+      ctx.shadowBlur = Math.max(0, shadow.blur * W)
+      ctx.shadowOffsetX = shadow.x * W
+      ctx.shadowOffsetY = shadow.y * W
+      ctx.drawImage(off, 0, 0)
+      ctx.restore()
+      return
+    }
+  }
+
+  // Fast path (no effects): draw inline, identical to before.
   ctx.save()
-  ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
+  ctx.globalAlpha = opacity
   ctx.translate(layer.x * W, layer.y * H)
   if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
+  drawLayerContent(ctx, layer, W)
+  ctx.restore()
+}
 
+// Per-kind shape rendering. Caller has already applied opacity + the layer's
+// translate/rotate to `ctx`; here we just paint the geometry at the origin.
+function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number) {
   if (layer.kind === 'text') {
     drawText(ctx, layer, W)
   } else if (layer.kind === 'rect') {
@@ -383,7 +435,6 @@ export function drawLocalLayer(
       ctx.fillRect(-w / 2, -h / 2, w, h)
     }
   }
-  ctx.restore()
 }
 
 function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
