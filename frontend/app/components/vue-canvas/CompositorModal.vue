@@ -416,7 +416,7 @@ function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg:
 }
 const handlePositions = computed(() => {
   const layer = selected.value
-  if (!layer) return null
+  if (!layer || genActive.value) return null
   const { w: fitW, h: fitH } = fitSize(layer.slot)
   const c = layerCenter(layer)
   return boxHandles(c.x, c.y, (fitW / 2) * layer.scale, (fitH / 2) * layer.scale, layer.rotation, layer.scale)
@@ -516,6 +516,9 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
 }
 
 function onCanvasPointerDownCapture(e: PointerEvent) {
+  // Generate mode: brush/box paint the region; shape mode falls through so a
+  // shape can still be selected (then promoted via "Use shape").
+  if (genActive.value && (genTool.value === 'brush' || genTool.value === 'box')) { onGenPointerDown(e); return }
   if (pen.active.value) { onPenPointerDown(e); return } // pen mode owns the canvas
   if (nodeEdit.active.value) { onNodePointerDown(e); return } // node edit owns the canvas
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
@@ -539,11 +542,17 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   }
 }
 function onCanvasPointerMoveCapture(e: PointerEvent) {
+  if (genActive.value) {
+    if (genTool.value === 'brush') { const p = genPointFromEvent(e); if (p) { genCursor.x = p.x; genCursor.y = p.y; genCursor.on = true } }
+    if (genDraw.value) { onGenPointerMove(e); return }
+    if (genTool.value === 'brush' || genTool.value === 'box') return
+  }
   if (pen.active.value) onPenPointerMove(e)
   else if (nodeEdit.active.value) onNodePointerMove(e)
   else if (marquee.value) { const p = clientToNorm(e); if (p) moveMarquee(p.nx, p.ny) }
 }
 function onCanvasPointerUpCapture(e: PointerEvent) {
+  if (genActive.value && genDraw.value) { onGenPointerUp(e); return }
   if (pen.active.value) onPenPointerUp()
   else if (nodeEdit.active.value) onNodePointerUp()
   else if (marquee.value) endMarquee(e.shiftKey)
@@ -565,6 +574,7 @@ function onCanvasDblClickCapture(e: MouseEvent) {
 // shape we just selected on pointer-down.
 let lastDownHitLayer = false
 function onCanvasClick(e: MouseEvent) {
+  if (genActive.value && genTool.value !== 'shape') return // region-paint owns the canvas
   if (lastDownHitLayer) { lastDownHitLayer = false; return }
   if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
 }
@@ -725,43 +735,195 @@ function maskCandidates(l: any): any[] { return (localLayers.value as any[]).fil
 function layerLabel(l: any): string { return `${l.kind} ${String(l.id).slice(-4)}` }
 function setLayerMaskedBy(l: any, id: string) { if (l) setLocal(l.id, { maskedById: id || undefined }) }
 
-// ── Generate in region (the moat: a vector mask drives inpaint) ──────────────
-// An image layer's Crop region becomes the inpaint mask: regenerate ONLY inside
-// that exact vector region, replacing the layer's image. Compose → mask →
-// generate-into-mask → compose, with no hand-painting.
+// ── Generative Fill: regenerate a region of an image in place ────────────────
+// A "Generate" mode where you mark a region directly on the canvas — drag a Box,
+// paint with a Brush, or promote a selected Shape — and inpaint ONLY that region
+// of the target image (surrounding pixels are kept). The region is painted in
+// artboard pixels and projected onto the target image's own pixels through the
+// inverse of its draw transform, so it's correct under scale and rotation.
 const inpaint = useInpaint()
 const genPrompt = ref('')
-async function generateRegion(layer: any) {
-  if (!layer || layer.kind !== 'image' || !layer.mask) return
+
+type GenTool = 'box' | 'brush' | 'shape'
+const GEN_TOOLS: GenTool[] = ['box', 'brush', 'shape']
+const genActive = ref(false)
+const genTool = ref<GenTool>('brush')
+const genBrush = ref(56)                  // brush diameter, artboard px
+const genTargetId = ref<string | null>(null)
+const genVersion = ref(0)                 // bump → repaint the tinted overlay
+const genHasMask = ref(false)
+const genCursor = reactive({ x: -999, y: -999, on: false })
+
+// Source-of-truth region mask: opaque white on transparent, in artboard px.
+let genMaskCanvas: HTMLCanvasElement | null = null
+function genMaskCtx(): CanvasRenderingContext2D | null {
+  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
+  if (!genMaskCanvas) genMaskCanvas = document.createElement('canvas')
+  if (genMaskCanvas.width !== W || genMaskCanvas.height !== H) { genMaskCanvas.width = W; genMaskCanvas.height = H }
+  return genMaskCanvas.getContext('2d')
+}
+function clearGenMask() {
+  const ctx = genMaskCtx()
+  if (ctx && genMaskCanvas) ctx.clearRect(0, 0, genMaskCanvas.width, genMaskCanvas.height)
+  genHasMask.value = false; genVersion.value++
+}
+
+// Target image layer: explicit pick → currently-selected image → topmost image.
+const genTarget = computed<any | null>(() => {
+  const pick = genTargetId.value && localLayers.value.find((l: any) => l.id === genTargetId.value && l.kind === 'image')
+  if (pick) return pick
+  if (selectedLocal.value?.kind === 'image') return selectedLocal.value
+  return [...localLayers.value].reverse().find((l: any) => l.kind === 'image') || null
+})
+const genTargetLabel = computed(() => {
+  const t = genTarget.value; if (!t) return null
+  return `Image ${localLayers.value.filter((l: any) => l.kind === 'image').indexOf(t) + 1}`
+})
+const genShapeCandidate = computed(() => {
+  const l = selectedLocal.value
+  return l && (l.kind === 'rect' || l.kind === 'ellipse' || l.kind === 'path' || l.kind === 'line') ? l : null
+})
+
+function enterGenMode() {
+  selectTool(); exitNodeEdit()
+  if (pen.active.value) pen.setActive(false)
+  aiOpen.value = false
+  genActive.value = true
+  genTargetId.value = genTarget.value?.id ?? null
+  clearGenMask()
+}
+function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask() }
+function toggleGenMode() { genActive.value ? exitGenMode() : enterGenMode() }
+
+// ── Region painting (all tools write into the one artboard-space mask) ───────
+const genDraw = ref<{ tool: GenTool; x0: number; y0: number; lx: number; ly: number } | null>(null)
+function genPointFromEvent(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return null
+  return { x: p.nx * canvasDisplay.w, y: p.ny * canvasDisplay.h }
+}
+function genStrokeTo(x: number, y: number) {
+  const ctx = genMaskCtx(); if (!ctx) return
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = genBrush.value
+  if (genDraw.value) { ctx.beginPath(); ctx.moveTo(genDraw.value.lx, genDraw.value.ly); ctx.lineTo(x, y); ctx.stroke() }
+  ctx.beginPath(); ctx.arc(x, y, genBrush.value / 2, 0, Math.PI * 2); ctx.fill()
+}
+function genBoxTo(x0: number, y0: number, x1: number, y1: number) {
+  const ctx = genMaskCtx(); if (!ctx || !genMaskCanvas) return
+  ctx.clearRect(0, 0, genMaskCanvas.width, genMaskCanvas.height)
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0))
+}
+function onGenPointerDown(e: PointerEvent) {
+  const p = genPointFromEvent(e); if (!p) return
+  e.preventDefault(); e.stopPropagation()
+  canvasRef.value?.setPointerCapture?.(e.pointerId)
+  genDraw.value = { tool: genTool.value, x0: p.x, y0: p.y, lx: p.x, ly: p.y }
+  if (genTool.value === 'brush') genStrokeTo(p.x, p.y)
+  else genBoxTo(p.x, p.y, p.x, p.y)
+  genHasMask.value = true; genVersion.value++
+}
+function onGenPointerMove(e: PointerEvent) {
+  if (!genDraw.value) return
+  const p = genPointFromEvent(e); if (!p) return
+  e.preventDefault(); e.stopPropagation()
+  if (genDraw.value.tool === 'brush') { genStrokeTo(p.x, p.y); genDraw.value.lx = p.x; genDraw.value.ly = p.y }
+  else genBoxTo(genDraw.value.x0, genDraw.value.y0, p.x, p.y)
+  genHasMask.value = true; genVersion.value++
+}
+function onGenPointerUp(e: PointerEvent) {
+  if (!genDraw.value) return
+  e.preventDefault(); e.stopPropagation()
+  genDraw.value = null
+}
+
+// Fill a shape/path silhouette (the current fillStyle) — mirrors the renderer's
+// per-kind geometry (1 unit = artboard width), so "Use shape" matches the canvas.
+function drawMaskShape(ctx: CanvasRenderingContext2D, l: any, W: number) {
+  if (l.kind === 'rect') {
+    const w = l.w * W, h = l.h * W, r = Math.max(0, Math.min((l.radius || 0) * W, Math.min(w, h) / 2))
+    ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r); ctx.fill()
+  } else if (l.kind === 'ellipse') {
+    const w = l.w * W, h = l.h * W
+    ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill()
+  } else if (l.kind === 'path') {
+    try {
+      const p = new Path2D(l.d), s = (l.scale || 1) * W
+      ctx.save(); ctx.scale(s, s); ctx.fill(p, l.fillRule || 'nonzero'); ctx.restore()
+    } catch { /* bad path data */ }
+  } else if (l.kind === 'line') {
+    const w = l.w * W
+    ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(w / 2, 0)
+    ctx.lineCap = 'round'; ctx.lineWidth = Math.max(10, (l.strokeWidth || 0.01) * W); ctx.stroke()
+  }
+}
+function genUseShape() {
+  const l = genShapeCandidate.value; const ctx = genMaskCtx()
+  if (!l || !ctx) return
+  ctx.save()
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'
+  ctx.translate(l.x * canvasDisplay.w, l.y * canvasDisplay.h)
+  if (l.rotation) ctx.rotate((l.rotation * Math.PI) / 180)
+  drawMaskShape(ctx, l, canvasDisplay.w)
+  ctx.restore()
+  genHasMask.value = true; genVersion.value++
+}
+
+// Tinted preview of the region mask (a separate visible canvas above the stack).
+const genOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+function renderGenOverlay() {
+  const cv = genOverlayCanvas.value; if (!cv) return
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+  cv.width = Math.max(1, Math.round(W * dpr)); cv.height = Math.max(1, Math.round(H * dpr))
+  const ctx = cv.getContext('2d'); if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, W, H)
+  if (genMaskCanvas && genHasMask.value) {
+    ctx.drawImage(genMaskCanvas, 0, 0, W, H)
+    ctx.globalCompositeOperation = 'source-in'
+    ctx.fillStyle = '#10b981'                 // emerald region tint
+    ctx.fillRect(0, 0, W, H)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+}
+watch([genVersion, genActive, () => canvasDisplay.w, () => canvasDisplay.h],
+  () => nextTick(renderGenOverlay))
+
+// Project the artboard-space region onto the target image's pixels and inpaint.
+async function runRegionFill() {
+  const layer = genTarget.value
+  if (!layer || !genHasMask.value || inpaint.busy.value || !genMaskCanvas) return
   try {
     const img = await loadImage(imageLayerUrl(layer.filename))
     const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
     const imageData = imageToDataUrl(img, capW, capH)
-    // Map the Crop region (canvas-normalized) into the image's space. The image
-    // fills the layer box (stretched), so it's a linear map; only the vertical
-    // CENTER needs the artboard aspect (x→W, y→H, but sizes→W in the model).
-    const aspect = canvasDisplay.h / canvasDisplay.w
-    const c = layer.mask
-    const relX = (c.x - layer.x) / layer.w + 0.5
-    const relY = (c.y - layer.y) * aspect / layer.h + 0.5
-    const relW = c.w / layer.w
-    const relH = c.h / layer.h
+    // Affine (artboard px → image px): inverse of the image's draw transform.
+    // A local image fills box w=layer.w*W, h=layer.h*W centered at (x*W, y*H),
+    // rotated by `rotation`, so the map is a pure affine.
+    const W = canvasDisplay.w, H = canvasDisplay.h
+    const cx = layer.x * W, cy = layer.y * H
+    const bw = (layer.w || 0.0001) * W, bh = (layer.h || 0.0001) * W
+    const th = ((layer.rotation || 0) * Math.PI) / 180
+    const cos = Math.cos(th), sin = Math.sin(th)
+    const a = (capW * cos) / bw, c = (capW * sin) / bw
+    const b = (-capH * sin) / bh, d = (capH * cos) / bh
+    const e = capW / 2 - a * cx - c * cy
+    const f = capH / 2 - b * cx - d * cy
     const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
     const mctx = mc.getContext('2d')!
-    mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)           // BLACK = keep
-    mctx.fillStyle = '#fff'                                            // WHITE = inpaint
-    const mcx = relX * capW, mcy = relY * capH, mw = relW * capW, mh = relH * capH
-    mctx.beginPath()
-    if (c.kind === 'ellipse') mctx.ellipse(mcx, mcy, mw / 2, mh / 2, 0, 0, Math.PI * 2)
-    else mctx.rect(mcx - mw / 2, mcy - mh / 2, mw, mh)
-    mctx.fill()
+    mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)   // BLACK = keep
+    mctx.setTransform(a, b, c, d, e, f)
+    mctx.drawImage(genMaskCanvas, 0, 0)                        // WHITE region = inpaint
+    mctx.setTransform(1, 0, 0, 1, 0, 0)
     const maskData = mc.toDataURL('image/png')
     const results = await inpaint.fluxFill(imageData, maskData, genPrompt.value.trim())
     if (!results.length) return
     const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
-    setLocal(layer.id, { filename: newName }) // replace the layer's image with the result
-  } catch (e) {
-    console.error('[compositor inpaint]', e)
+    setLocal(layer.id, { filename: newName })
+    clearGenMask()
+  } catch (err) {
+    console.error('[compositor inpaint]', err)
   }
 }
 
@@ -802,10 +964,12 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (editingId.value) { endEdit(); return }
     if (typing) return
+    if (genActive.value) { exitGenMode(); return }
     emit('close')
     return
   }
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing) {
+  // Don't delete the target layer while painting a generative-fill region.
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing && !genActive.value) {
     e.preventDefault()
     deleteLocal(selectedLocalId.value)
   }
@@ -881,12 +1045,13 @@ onUnmounted(() => {
       <div
         ref="canvasRef"
         class="relative bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5"
-        :class="(pen.active.value || nodeEdit.active.value) ? 'cursor-crosshair' : ''"
+        :class="(pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : (genActive && genTool === 'brush') ? 'cursor-none' : ''"
         :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         @click="onCanvasClick"
         @pointerdown.capture="onCanvasPointerDownCapture"
         @pointermove="onCanvasPointerMoveCapture"
         @pointerup="onCanvasPointerUpCapture"
+        @pointerleave="genCursor.on = false"
         @dblclick.capture="onCanvasDblClickCapture"
       >
         <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
@@ -914,8 +1079,22 @@ onUnmounted(() => {
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
 
+        <!-- Generative-fill region overlay (tinted mask preview) -->
+        <canvas
+          v-show="genActive"
+          ref="genOverlayCanvas"
+          class="absolute inset-0 pointer-events-none"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px', opacity: 0.55 }"
+        />
+        <!-- Brush cursor ring -->
+        <div
+          v-if="genActive && genTool === 'brush' && genCursor.on"
+          class="absolute pointer-events-none rounded-full border border-emerald-300/90 bg-emerald-300/10"
+          :style="{ left: (genCursor.x - genBrush / 2) + 'px', top: (genCursor.y - genBrush / 2) + 'px', width: genBrush + 'px', height: genBrush + 'px', zIndex: 30 }"
+        />
+
         <!-- Multi-select outlines (when 2+ layers selected) -->
-        <template v-if="selectedCount > 1 && !nodeEdit.active.value">
+        <template v-if="selectedCount > 1 && !nodeEdit.active.value && !genActive">
           <div v-for="l in selectedLayers" :key="'ms-' + l.id"
             class="absolute pointer-events-none border border-cyan-400/70 rounded-[1px]"
             :style="multiOutlineStyle(l)" />
@@ -1021,7 +1200,7 @@ onUnmounted(() => {
 
         <!-- Local-layer selection / handles -->
         <svg
-          v-if="localHandlePositions && !editingId"
+          v-if="localHandlePositions && !editingId && !genActive"
           class="absolute inset-0 w-full h-full pointer-events-none"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
@@ -1035,7 +1214,7 @@ onUnmounted(() => {
             stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
-        <template v-if="localHandlePositions && !editingId">
+        <template v-if="localHandlePositions && !editingId && !genActive">
           <div
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="'l-' + corner"
@@ -1138,6 +1317,64 @@ onUnmounted(() => {
         <div v-if="aiError" class="mt-2 text-[11px] text-rose-400">{{ aiError }}</div>
       </div>
 
+      <!-- Generative-fill panel (floats above the toolbar) -->
+      <div
+        v-if="genActive"
+        class="absolute bottom-[68px] w-[360px] bg-[#1a1a1a]/97 backdrop-blur-sm rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
+        @pointerdown.stop
+      >
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-white/40">
+            <Wand2 class="size-3.5" /> Generate in region
+          </div>
+          <span v-if="genTargetLabel" class="text-[10px] text-emerald-300/90">→ {{ genTargetLabel }}</span>
+          <span v-else class="text-[10px] text-amber-400">Select an image layer</span>
+        </div>
+
+        <!-- Region tool -->
+        <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05] mb-2">
+          <button v-for="t in GEN_TOOLS" :key="t"
+            class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer transition-colors"
+            :class="genTool === t ? 'bg-emerald-500/90 text-black font-medium' : 'text-white/70 hover:bg-white/10'"
+            @click="genTool = t">{{ t }}</button>
+        </div>
+
+        <!-- Tool helpers -->
+        <div v-if="genTool === 'brush'" class="flex items-center gap-2 mb-2">
+          <span class="text-[10px] text-white/40 w-9 shrink-0">Brush</span>
+          <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-emerald-400 cursor-pointer" />
+          <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
+        </div>
+        <div v-else-if="genTool === 'shape'" class="flex items-center gap-1.5 mb-2">
+          <button
+            class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            :disabled="!genShapeCandidate" @click="genUseShape"
+          >{{ genShapeCandidate ? 'Use selected shape →' : 'Select a shape/path first' }}</button>
+        </div>
+        <p v-else class="text-[10px] text-white/35 mb-2">Drag a box over the image.</p>
+
+        <textarea
+          v-model="genPrompt"
+          rows="2"
+          placeholder="what to generate in the region…"
+          class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+          @keydown.enter.exact.prevent="runRegionFill"
+        />
+        <div class="flex items-center gap-1.5 mt-2">
+          <button
+            class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default"
+            :disabled="!genHasMask" title="Clear region" @click="clearGenMask"
+          >Clear</button>
+          <button
+            class="flex-1 h-7 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            :disabled="inpaint.busy.value || !genTarget || !genHasMask"
+            @click="runRegionFill"
+          >{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
+          <button class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer" @click="exitGenMode">Done</button>
+        </div>
+        <div v-if="inpaint.error.value" class="mt-2 text-[11px] text-rose-400">{{ inpaint.error.value }}</div>
+      </div>
+
       <!-- Bottom toolbar -->
       <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
@@ -1186,6 +1423,14 @@ onUnmounted(() => {
           @click="aiOpen = !aiOpen"
         >
           <Sparkles class="size-4" />
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="genActive ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="Generate in region — mark an area (box, brush, or shape) and regenerate just that part of an image"
+          @click="toggleGenMode"
+        >
+          <Wand2 class="size-4" />
         </button>
         <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
@@ -1471,15 +1716,13 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Generate in region: the crop region drives an inpaint (the moat) -->
-          <div v-if="selectedLocal.kind === 'image' && layerMask(selectedLocal)" class="mt-3">
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Generate in region</div>
-            <input v-model="genPrompt" type="text" placeholder="what to generate in the masked area…"
-              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none mb-1.5" />
-            <button class="w-full py-1.5 rounded text-[11px] font-medium bg-yellow-500/90 hover:bg-yellow-400 text-black disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="inpaint.busy.value"
-              @click="generateRegion(selectedLocal)">{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
-            <div v-if="inpaint.error.value" class="text-[10px] text-amber-400 mt-1">{{ inpaint.error.value }}</div>
+          <!-- Generate in region now lives in the ✨ toolbar mode (canvas-native). -->
+          <div v-if="selectedLocal.kind === 'image'" class="mt-3">
+            <button
+              class="w-full py-1.5 rounded text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer"
+              :class="genActive ? 'bg-emerald-500/90 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+              @click="enterGenMode"
+            ><Wand2 class="size-3" /> Generate in region…</button>
           </div>
         </div>
       </template>
