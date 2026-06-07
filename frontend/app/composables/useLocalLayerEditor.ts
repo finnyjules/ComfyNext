@@ -40,15 +40,25 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!n.data.properties) n.data.properties = {}
     n.data.properties.comfynext_localLayers = next
   }
+  // The unified z-order (wired + local StackKeys) lives alongside the layers;
+  // history captures it too so reorders/grouping undo cleanly.
+  function readOrder(): string[] { return ((node()?.data?.properties as any)?.comfynext_stackOrder as string[]) ?? [] }
+  function writeOrder(order: string[]) {
+    const n = node(); if (!n) return
+    if (!n.data.properties) n.data.properties = {}
+    ;(n.data.properties as any).comfynext_stackOrder = order
+  }
 
-  // ── Undo / redo (snapshot history over local layers) ────────────────────────
+  // ── Undo / redo (snapshot history over local layers + z-order) ──────────────
   // The editor is the single mutation choke point, so one history stack here
   // covers every vector edit. Discrete ops record before mutating; a drag
   // records once at pointer-down (coalesced) so it's a single undo step.
+  type Snapshot = { layers: LocalLayer[]; order: string[] }
   const HISTORY_CAP = 120
-  const _past = ref<LocalLayer[][]>([])
-  const _future = ref<LocalLayer[][]>([])
-  function snapshot(): LocalLayer[] { return JSON.parse(JSON.stringify(localLayers.value)) }
+  const _past = ref<Snapshot[]>([])
+  const _future = ref<Snapshot[]>([])
+  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()] } }
+  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]) }
   function recordHistory() {
     _past.value.push(snapshot())
     if (_past.value.length > HISTORY_CAP) _past.value.shift()
@@ -59,13 +69,13 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function undo() {
     if (!_past.value.length) return
     _future.value.push(snapshot())
-    commit(_past.value.pop()!)
+    restore(_past.value.pop()!)
     if (selectedId.value && !localLayers.value.some(l => l.id === selectedId.value)) selectedId.value = null
   }
   function redo() {
     if (!_future.value.length) return
     _past.value.push(snapshot())
-    commit(_future.value.pop()!)
+    restore(_future.value.pop()!)
     if (selectedId.value && !localLayers.value.some(l => l.id === selectedId.value)) selectedId.value = null
   }
 
