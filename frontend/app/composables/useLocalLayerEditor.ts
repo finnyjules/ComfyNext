@@ -383,6 +383,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addLocal(createImageLayer(name, aspect))
   }
 
+  // Add an image layer from an already-uploaded input name (e.g. a generative-
+  // fill result), with optional transform overrides (x/y/w/h).
+  function addImageFromName(name: string, aspect = 1, partial: Partial<LocalLayer> = {}) {
+    addLocal(createImageLayer(name, aspect, partial as any))
+  }
+
   // Insert pre-built path layers (e.g. from SVG import / pen tool / AI vector).
   // All layers from one import are added together; the topmost is selected.
   function addPathLayers(layers: PathLayer[]) {
@@ -430,7 +436,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     boxPx, handlePositions,
     hitTest, startScale, startRotate,
     onCanvasPointerDown, onCanvasDblClick,
-    addText, addRect, addEllipse, addLine, addImageFromFile,
+    addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
     addPathLayers, addPathFromSvg, commit, recordHistory,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,

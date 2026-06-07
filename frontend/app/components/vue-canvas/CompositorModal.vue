@@ -153,7 +153,7 @@ const {
   boxPx, handlePositions: localHandlePositions,
   startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
-  addText, addRect, addEllipse, addLine, addImageFromFile,
+  addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
   addPathLayers, addPathFromSvg,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
@@ -776,7 +776,8 @@ const genTarget = computed<any | null>(() => {
   return [...localLayers.value].reverse().find((l: any) => l.kind === 'image') || null
 })
 const genTargetLabel = computed(() => {
-  const t = genTarget.value; if (!t) return null
+  const t = genTarget.value
+  if (!t) return 'New layer'   // no image target → generate against the composite
   return `Image ${localLayers.value.filter((l: any) => l.kind === 'image').indexOf(t) + 1}`
 })
 const genShapeCandidate = computed(() => {
@@ -890,37 +891,85 @@ function renderGenOverlay() {
 watch([genVersion, genActive, () => canvasDisplay.w, () => canvasDisplay.h],
   () => nextTick(renderGenOverlay))
 
-// Project the artboard-space region onto the target image's pixels and inpaint.
+// Render the whole stack (wired + local, in z-order) to an offscreen canvas —
+// the composited artboard, used as the inpaint base when no single image layer
+// is the target (so generative fill works over wired images too).
+function bakeStack(W: number, H: number): HTMLCanvasElement {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+  const ctx = cv.getContext('2d')!
+  const items = stackKeys.value.map((key): StackItem | null => {
+    const r = resolveStackKey(key)
+    if (!r) return null
+    return r.type === 'wired'
+      ? { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+      : { type: 'local', layer: r.layer as LocalLayer }
+  }).filter((x): x is StackItem => x != null)
+  paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[])
+  return cv
+}
+
+// Generate inside the painted region. Two paths:
+//  • a local image is the target → inpaint within its own pixels (project the
+//    artboard region through the inverse of its draw transform) and replace it.
+//  • otherwise → inpaint the composited artboard (context-aware, includes wired
+//    images), keep ONLY the region, and drop it in as a new top layer so the
+//    layers underneath stay intact.
 async function runRegionFill() {
+  if (!genHasMask.value || inpaint.busy.value || !genMaskCanvas) return
   const layer = genTarget.value
-  if (!layer || !genHasMask.value || inpaint.busy.value || !genMaskCanvas) return
   try {
-    const img = await loadImage(imageLayerUrl(layer.filename))
-    const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
-    const imageData = imageToDataUrl(img, capW, capH)
-    // Affine (artboard px → image px): inverse of the image's draw transform.
-    // A local image fills box w=layer.w*W, h=layer.h*W centered at (x*W, y*H),
-    // rotated by `rotation`, so the map is a pure affine.
-    const W = canvasDisplay.w, H = canvasDisplay.h
-    const cx = layer.x * W, cy = layer.y * H
-    const bw = (layer.w || 0.0001) * W, bh = (layer.h || 0.0001) * W
-    const th = ((layer.rotation || 0) * Math.PI) / 180
-    const cos = Math.cos(th), sin = Math.sin(th)
-    const a = (capW * cos) / bw, c = (capW * sin) / bw
-    const b = (-capH * sin) / bh, d = (capH * cos) / bh
-    const e = capW / 2 - a * cx - c * cy
-    const f = capH / 2 - b * cx - d * cy
-    const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
-    const mctx = mc.getContext('2d')!
-    mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)   // BLACK = keep
-    mctx.setTransform(a, b, c, d, e, f)
-    mctx.drawImage(genMaskCanvas, 0, 0)                        // WHITE region = inpaint
-    mctx.setTransform(1, 0, 0, 1, 0, 0)
-    const maskData = mc.toDataURL('image/png')
-    const results = await inpaint.fluxFill(imageData, maskData, genPrompt.value.trim())
-    if (!results.length) return
-    const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
-    setLocal(layer.id, { filename: newName })
+    if (layer) {
+      const img = await loadImage(imageLayerUrl(layer.filename))
+      const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
+      const imageData = imageToDataUrl(img, capW, capH)
+      // Affine (artboard px → image px): inverse of the image's draw transform.
+      const W = canvasDisplay.w, H = canvasDisplay.h
+      const cx = layer.x * W, cy = layer.y * H
+      const bw = (layer.w || 0.0001) * W, bh = (layer.h || 0.0001) * W
+      const th = ((layer.rotation || 0) * Math.PI) / 180
+      const cos = Math.cos(th), sin = Math.sin(th)
+      const a = (capW * cos) / bw, c = (capW * sin) / bw
+      const b = (-capH * sin) / bh, d = (capH * cos) / bh
+      const e = capW / 2 - a * cx - c * cy
+      const f = capH / 2 - b * cx - d * cy
+      const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
+      const mctx = mc.getContext('2d')!
+      mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)   // BLACK = keep
+      mctx.setTransform(a, b, c, d, e, f)
+      mctx.drawImage(genMaskCanvas, 0, 0)                        // WHITE region = inpaint
+      mctx.setTransform(1, 0, 0, 1, 0, 0)
+      const results = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), genPrompt.value.trim())
+      if (!results.length) return
+      const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
+      setLocal(layer.id, { filename: newName })
+    } else {
+      // Composite path. Bake at artboard aspect (long side 1024).
+      const W = canvasDisplay.w, H = canvasDisplay.h
+      const long = 1024
+      const bw = Math.max(1, Math.round(W >= H ? long : long * (W / H)))
+      const bh = Math.max(1, Math.round(W >= H ? long * (H / W) : long))
+      const baked = bakeStack(bw, bh)
+      const baseC = document.createElement('canvas'); baseC.width = bw; baseC.height = bh
+      const bctx = baseC.getContext('2d')!
+      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, bw, bh)    // neutral base where empty
+      bctx.drawImage(baked, 0, 0)
+      const maskC = document.createElement('canvas'); maskC.width = bw; maskC.height = bh
+      const xctx = maskC.getContext('2d')!
+      xctx.fillStyle = '#000'; xctx.fillRect(0, 0, bw, bh)
+      xctx.drawImage(genMaskCanvas, 0, 0, bw, bh)                // WHITE region = inpaint
+      const results = await inpaint.fluxFill(baseC.toDataURL('image/png'), maskC.toDataURL('image/png'), genPrompt.value.trim())
+      if (!results.length) return
+      // Keep ONLY the region (transparent elsewhere) so it overlays as a patch.
+      const full = await loadImage(results[0])
+      const patch = document.createElement('canvas'); patch.width = bw; patch.height = bh
+      const pctx = patch.getContext('2d')!
+      pctx.drawImage(full, 0, 0, bw, bh)
+      pctx.globalCompositeOperation = 'destination-in'
+      pctx.drawImage(genMaskCanvas, 0, 0, bw, bh)
+      pctx.globalCompositeOperation = 'source-over'
+      const newName = await inpaint.uploadDataUrl(patch.toDataURL('image/png'), 'compinpaint')
+      addImageFromName(newName, bw / bh, { x: 0.5, y: 0.5, w: 1, h: H / W })
+    }
     clearGenMask()
   } catch (err) {
     console.error('[compositor inpaint]', err)
@@ -1317,64 +1366,6 @@ onUnmounted(() => {
         <div v-if="aiError" class="mt-2 text-[11px] text-rose-400">{{ aiError }}</div>
       </div>
 
-      <!-- Generative-fill panel (floats above the toolbar) -->
-      <div
-        v-if="genActive"
-        class="absolute bottom-[68px] w-[360px] bg-[#1a1a1a]/97 backdrop-blur-sm rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
-        @pointerdown.stop
-      >
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-white/40">
-            <Wand2 class="size-3.5" /> Generate in region
-          </div>
-          <span v-if="genTargetLabel" class="text-[10px] text-emerald-300/90">→ {{ genTargetLabel }}</span>
-          <span v-else class="text-[10px] text-amber-400">Select an image layer</span>
-        </div>
-
-        <!-- Region tool -->
-        <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05] mb-2">
-          <button v-for="t in GEN_TOOLS" :key="t"
-            class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer transition-colors"
-            :class="genTool === t ? 'bg-emerald-500/90 text-black font-medium' : 'text-white/70 hover:bg-white/10'"
-            @click="genTool = t">{{ t }}</button>
-        </div>
-
-        <!-- Tool helpers -->
-        <div v-if="genTool === 'brush'" class="flex items-center gap-2 mb-2">
-          <span class="text-[10px] text-white/40 w-9 shrink-0">Brush</span>
-          <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-emerald-400 cursor-pointer" />
-          <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
-        </div>
-        <div v-else-if="genTool === 'shape'" class="flex items-center gap-1.5 mb-2">
-          <button
-            class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default"
-            :disabled="!genShapeCandidate" @click="genUseShape"
-          >{{ genShapeCandidate ? 'Use selected shape →' : 'Select a shape/path first' }}</button>
-        </div>
-        <p v-else class="text-[10px] text-white/35 mb-2">Drag a box over the image.</p>
-
-        <textarea
-          v-model="genPrompt"
-          rows="2"
-          placeholder="what to generate in the region…"
-          class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
-          @keydown.enter.exact.prevent="runRegionFill"
-        />
-        <div class="flex items-center gap-1.5 mt-2">
-          <button
-            class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default"
-            :disabled="!genHasMask" title="Clear region" @click="clearGenMask"
-          >Clear</button>
-          <button
-            class="flex-1 h-7 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
-            :disabled="inpaint.busy.value || !genTarget || !genHasMask"
-            @click="runRegionFill"
-          >{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
-          <button class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer" @click="exitGenMode">Done</button>
-        </div>
-        <div v-if="inpaint.error.value" class="mt-2 text-[11px] text-rose-400">{{ inpaint.error.value }}</div>
-      </div>
-
       <!-- Bottom toolbar -->
       <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
@@ -1442,8 +1433,71 @@ onUnmounted(() => {
 
     <!-- Right sidebar: properties -->
     <div class="w-72 border-l border-white/10 shrink-0 flex flex-col">
+      <!-- Generate-in-region controls (mode owns the inspector) -->
+      <template v-if="genActive">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Wand2 class="size-3.5 text-emerald-400" />
+          <span class="text-sm font-medium">Generate in region</span>
+          <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitGenMode"><X class="size-3.5" /></button>
+        </div>
+        <div class="p-4 flex flex-col gap-3 overflow-y-auto">
+          <!-- Target -->
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-white/40">Target</span>
+            <span class="text-emerald-300/90">{{ genTargetLabel }}</span>
+          </div>
+
+          <!-- Region tool -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Region</div>
+            <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
+              <button v-for="t in GEN_TOOLS" :key="t"
+                class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer transition-colors"
+                :class="genTool === t ? 'bg-emerald-500/90 text-black font-medium' : 'text-white/70 hover:bg-white/10'"
+                @click="genTool = t">{{ t }}</button>
+            </div>
+            <div v-if="genTool === 'brush'" class="flex items-center gap-2 mt-2">
+              <span class="text-[10px] text-white/40 w-9 shrink-0">Brush</span>
+              <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-emerald-400 cursor-pointer" />
+              <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
+            </div>
+            <button v-else-if="genTool === 'shape'"
+              class="w-full h-7 mt-2 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              :disabled="!genShapeCandidate" @click="genUseShape"
+            >{{ genShapeCandidate ? 'Use selected shape →' : 'Select a shape/path first' }}</button>
+            <p v-else class="text-[10px] text-white/35 mt-2">Drag a box over the canvas.</p>
+          </div>
+
+          <!-- Prompt -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Prompt</div>
+            <textarea
+              v-model="genPrompt"
+              rows="3"
+              placeholder="what to generate in the region…"
+              class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+              @keydown.enter.exact.prevent="runRegionFill"
+            />
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <button
+              class="h-8 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              :disabled="!genHasMask" title="Clear region" @click="clearGenMask"
+            >Clear</button>
+            <button
+              class="flex-1 h-8 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              :disabled="inpaint.busy.value || !genHasMask"
+              @click="runRegionFill"
+            >{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
+          </div>
+          <p v-if="!genHasMask" class="text-[10px] text-white/30 -mt-1">Mark a region on the canvas to enable Generate.</p>
+          <div v-if="inpaint.error.value" class="text-[11px] text-rose-400">{{ inpaint.error.value }}</div>
+        </div>
+      </template>
+
       <!-- Local-layer properties -->
-      <template v-if="selectedLocal">
+      <template v-else-if="selectedLocal">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <component :is="kindIcon(selectedLocal.kind)" class="size-3.5 text-white/60" />
           <span class="text-sm font-medium capitalize">{{ selectedLocal.kind }}</span>
