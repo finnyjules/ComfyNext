@@ -650,6 +650,37 @@ const outWidth = computed(() => {
 function pxW(norm: number) { return Math.round(norm * outWidth.value) }
 function setSizePx(id: string, key: string, px: number) { setLocal(id, { [key]: Math.max(0, px) / outWidth.value }) }
 
+// ── Drop-shadow layer effect ────────────────────────────────────────────────
+// Stored on layer.effects as a single drop_shadow; rendered by drawLocalLayer
+// (and baked identically). color is an rgba string (hex picker + opacity).
+function parseRgba(s: string): { hex: string, a: number } {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(s || '')
+  if (m) {
+    const hex = '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('')
+    return { hex, a: m[4] != null ? parseFloat(m[4]) : 1 }
+  }
+  return { hex: (s && s.startsWith('#')) ? s.slice(0, 7) : '#000000', a: 1 }
+}
+function composeRgba(hex: string, a: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16) || 0, g = parseInt(h.slice(2, 4), 16) || 0, b = parseInt(h.slice(4, 6), 16) || 0
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, a))})`
+}
+function localShadow(l: any): any | undefined { return l?.effects?.find((e: any) => e.type === 'drop_shadow') }
+function shadowHex(l: any): string { return parseRgba(localShadow(l)?.color || '').hex }
+function shadowAlpha(l: any): number { return parseRgba(localShadow(l)?.color || '').a }
+function setLocalShadow(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = localShadow(l) || { type: 'drop_shadow', color: 'rgba(0, 0, 0, 0.35)', x: 0, y: 0.012, blur: 0.03, visible: true }
+  const next = { ...cur, ...patch }
+  setLocal(l.id, { effects: [...((l.effects || []).filter((e: any) => e.type !== 'drop_shadow')), next] })
+}
+function toggleLocalShadow(l: any) {
+  if (!l) return
+  if (localShadow(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'drop_shadow') })
+  else setLocalShadow(l, {})
+}
+
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
 // outWidth conversion works for either axis. When locked, editing one axis
@@ -1255,6 +1286,45 @@ onUnmounted(() => {
               <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
                 class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { opacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) })" />
+            </div>
+          </div>
+
+          <!-- Drop shadow effect -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Drop shadow</div>
+              <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+                @click="toggleLocalShadow(selectedLocal!)">{{ localShadow(selectedLocal) ? 'Remove' : 'Add' }}</button>
+            </div>
+            <div v-if="localShadow(selectedLocal)" class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <input type="color" :value="shadowHex(selectedLocal)"
+                  class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
+                  @input="setLocalShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, shadowAlpha(selectedLocal)) })" />
+                <input type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)" title="Shadow opacity %"
+                  class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setLocalShadow(selectedLocal!, { color: composeRgba(shadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+              </div>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">X</div>
+                  <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.x || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setLocalShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
+                </div>
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Y</div>
+                  <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.y || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setLocalShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
+                </div>
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Blur</div>
+                  <input type="number" min="0" step="0.5" :value="Math.round((localShadow(selectedLocal)?.blur || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setLocalShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
