@@ -964,7 +964,10 @@ async function runRegionFill() {
       const gi = await loadImage(results[0])
       const genAspect = (gi.naturalWidth || 1) / (gi.naturalHeight || 1)
       const name = await inpaint.uploadDataUrl(results[0], 'compgen')
-      addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w: boxW / W })
+      // Set BOTH w and h so the box matches the generated image's real aspect
+      // (createImageLayer derives h from its default width, not our override).
+      const lw = boxW / W
+      addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w: lw, h: lw / genAspect })
     }
     clearGenMask()
   } catch (err) {

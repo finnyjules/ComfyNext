@@ -244,7 +244,9 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
 /** Create an image layer. `aspect` (w/h) sizes the box so the image isn't
  *  distorted; defaults to a square. */
 export function createImageLayer(filename: string, aspect = 1, partial: Partial<ImageLayer> = {}): ImageLayer {
-  const w = 0.6
+  // Derive h from the *effective* width (a partial.w override included) so the
+  // box keeps the image's aspect; partial can still override h explicitly.
+  const w = partial.w ?? 0.6
   return {
     id: newId(), kind: 'image',
     x: 0.5, y: 0.5, rotation: 0, opacity: 1,
