@@ -79,6 +79,14 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     commit(localLayers.value.filter(l => l.id !== id))
     if (selectedId.value === id) selectedId.value = null
   }
+  /** Delete many layers in one history step (e.g. a whole group). */
+  function deleteLayers(ids: string[]) {
+    if (!ids.length) return
+    recordHistory()
+    const set = new Set(ids)
+    commit(localLayers.value.filter(l => !set.has(l.id)))
+    if (selectedId.value && set.has(selectedId.value)) selectLocal(null)
+  }
   function moveLocalZ(id: string, dir: -1 | 1) {
     const arr = [...localLayers.value]
     const i = arr.findIndex(l => l.id === id); const j = i + dir
@@ -394,6 +402,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function addPathLayers(layers: PathLayer[]) {
     if (!layers.length) return
     recordHistory()
+    // Auto-group a multi-path import (e.g. an SVG) so it lists and moves as one
+    // unit instead of flooding the layer panel with dozens of loose paths.
+    if (layers.length > 1) {
+      const gid = `g-${Date.now().toString(36)}-${++_groupSeq}`
+      for (const l of layers) (l as any).groupId = gid
+    }
     commit([...localLayers.value, ...layers])
     selectLocal(layers[layers.length - 1].id)
   }
@@ -437,7 +451,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     hitTest, startScale, startRotate,
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
-    addPathLayers, addPathFromSvg, commit, recordHistory,
+    addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
     groupSelected, ungroupSelected, canGroup, canUngroup,

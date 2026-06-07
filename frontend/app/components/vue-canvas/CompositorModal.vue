@@ -15,7 +15,7 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2 } from 'lucide-vue-next'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown } from 'lucide-vue-next'
 import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -155,7 +155,7 @@ const {
   startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
   addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
-  addPathLayers, addPathFromSvg,
+  addPathLayers, addPathFromSvg, deleteLayers,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
   groupSelected, ungroupSelected, canGroup, canUngroup,
@@ -404,6 +404,35 @@ const resolvedStack = computed(() =>
     return r ? { key, ...r } : null
   }).filter(Boolean) as { key: StackKey; type: 'wired' | 'local'; layer: any }[],
 )
+
+// Sidebar list with grouped local layers collapsed into a single 'group' row
+// (one row per groupId, positioned at its topmost member). Wired + ungrouped
+// locals stay as individual rows.
+type PanelGroup = { type: 'group'; key: string; groupId: string; layers: any[] }
+const panelItems = computed(() => {
+  const out: any[] = []
+  const byGroup = new Map<string, PanelGroup>()
+  for (const item of resolvedStack.value) {
+    const gid = item.type === 'local' ? item.layer.groupId : null
+    if (gid) {
+      let g = byGroup.get(gid)
+      if (!g) { g = { type: 'group', key: 'grp-' + gid, groupId: gid, layers: [] }; byGroup.set(gid, g); out.push(g) }
+      g.layers.push(item)
+    } else {
+      out.push(item)
+    }
+  }
+  return out
+})
+const expandedGroups = ref<Set<string>>(new Set())
+function toggleGroup(gid: string) {
+  const s = new Set(expandedGroups.value)
+  s.has(gid) ? s.delete(gid) : s.add(gid)
+  expandedGroups.value = s
+}
+function selectGroup(g: PanelGroup) { if (g.layers[0]) selectLocal(g.layers[0].layer.id) }
+function deleteGroup(g: PanelGroup) { deleteLayers(g.layers.map(it => it.layer.id)) }
+function isGroupSelected(g: PanelGroup) { return g.layers.some(it => selectedIds.value.has(it.layer.id)) }
 
 // Shared corner/rotation-handle geometry for a rotated box centered at (cx, cy).
 function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number, scale = 1) {
@@ -1058,10 +1087,41 @@ onUnmounted(() => {
       <div class="p-3 flex-1 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
 
-        <!-- Unified z-order stack (top-first, same model as the Frame) -->
-        <template v-for="item in resolvedStack" :key="item.key">
+        <!-- Unified z-order stack (top-first). Grouped local layers collapse into one row. -->
+        <template v-for="item in panelItems" :key="item.key">
+          <!-- Group row -->
+          <div v-if="item.type === 'group'">
+            <div
+              class="group flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors"
+              :class="isGroupSelected(item) ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+              @click="selectGroup(item)"
+            >
+              <button class="text-white/40 hover:text-white/80 -ml-1 p-0.5 cursor-pointer" title="Expand/collapse"
+                @click.stop="toggleGroup(item.groupId)">
+                <component :is="expandedGroups.has(item.groupId) ? ChevronDown : ChevronRight" class="size-3.5" />
+              </button>
+              <Group class="size-3.5 text-white/60 shrink-0" />
+              <span class="text-sm truncate flex-1">Group <span class="text-white/40">· {{ item.layers.length }}</span></span>
+              <button class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
+                title="Delete group" @click.stop="deleteGroup(item)">
+                <Trash2 class="size-3.5" />
+              </button>
+            </div>
+            <div v-if="expandedGroups.has(item.groupId)" class="ml-3.5 border-l border-white/10 pl-1">
+              <div
+                v-for="child in item.layers" :key="child.key"
+                class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors"
+                :class="selectedLocalId === child.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+                @click="selectLocal(child.layer.id)"
+              >
+                <component :is="kindIcon(child.layer.kind)" class="size-3 text-white/45 shrink-0" />
+                <span class="text-[13px] truncate flex-1 text-white/65 capitalize">{{ child.layer.kind }}</span>
+              </div>
+            </div>
+          </div>
+          <!-- Local row -->
           <div
-            v-if="item.type === 'local'"
+            v-else-if="item.type === 'local'"
             class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
             :class="selectedLocalId === item.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
             @click="selectLocal(item.layer.id)"
@@ -1079,6 +1139,7 @@ onUnmounted(() => {
               <Trash2 class="size-3.5" />
             </button>
           </div>
+          <!-- Wired image row -->
           <div
             v-else
             class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
