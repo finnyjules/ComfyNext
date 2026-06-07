@@ -769,13 +769,13 @@ function clearGenMask() {
   genHasMask.value = false; genVersion.value++
 }
 
-// Target image layer: explicit pick → currently-selected image → topmost image.
-const genTarget = computed<any | null>(() => {
-  const pick = genTargetId.value && localLayers.value.find((l: any) => l.id === genTargetId.value && l.kind === 'image')
-  if (pick) return pick
-  if (selectedLocal.value?.kind === 'image') return selectedLocal.value
-  return [...localLayers.value].reverse().find((l: any) => l.kind === 'image') || null
-})
+// Target image layer: locked at enter to the SELECTED image, if any. No
+// selection → null → generate a brand-new image (never grab an existing one).
+const genTarget = computed<any | null>(() =>
+  genTargetId.value
+    ? localLayers.value.find((l: any) => l.id === genTargetId.value && l.kind === 'image') ?? null
+    : null,
+)
 const genTargetLabel = computed(() => {
   const t = genTarget.value
   if (!t) return 'New layer'   // no image target → generate against the composite
@@ -787,11 +787,14 @@ const genShapeCandidate = computed(() => {
 })
 
 function enterGenMode() {
+  // Lock the target to the selected image (if any) at the moment we enter;
+  // nothing selected → new image.
+  const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
   selectTool(); exitNodeEdit()
   if (pen.active.value) pen.setActive(false)
   aiOpen.value = false
   genActive.value = true
-  genTargetId.value = genTarget.value?.id ?? null
+  genTargetId.value = sel
   clearGenMask()
 }
 function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask() }
