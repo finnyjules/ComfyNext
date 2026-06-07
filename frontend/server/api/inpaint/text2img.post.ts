@@ -1,10 +1,9 @@
 /**
  * POST /api/inpaint/text2img
  *
- * Text-to-image via Black Forest Labs FLUX.1 [dev] on Replicate. Used by the
- * Compositor's Generative Fill when the painted region has little/no underlying
- * image to inpaint — flux-fill is an inpainter and produces poor results on a
- * blank region, so we conjure a fresh subject here instead and drop it in.
+ * Text-to-image via Black Forest Labs FLUX.1 [schnell] on Replicate — the cheap,
+ * fast (4-step) FLUX tier. Used by the Compositor's Generative Fill when nothing
+ * is selected, to conjure a brand-new subject and drop it in as a layer.
  *
  * (Lives under inpaint/ alongside flux-fill so it shares that route group.)
  *
@@ -20,7 +19,7 @@
  * Helpers (runReplicate/firstOutputUrl/fetchAsDataUrl/requireReplicateToken)
  * are auto-imported from server/utils/replicate.ts.
  */
-const MODEL = 'black-forest-labs/flux-dev'
+const MODEL = 'black-forest-labs/flux-schnell'
 
 interface Body {
   prompt?: string
@@ -47,10 +46,10 @@ export default defineEventHandler(async (event) => {
         prompt,
         aspect_ratio,
         num_outputs: 1,
-        num_inference_steps: 28,
-        guidance: 3,
+        num_inference_steps: 4,   // schnell: 1–4 (guidance-distilled, no guidance param)
         output_format: 'png',
         megapixels: '1',
+        go_fast: true,
         seed,
       }, token, { timeoutMs: 120_000 })
       const url = firstOutputUrl(out)

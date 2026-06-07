@@ -103,8 +103,8 @@ export function useInpaint() {
     }
   }
 
-  /** Text-to-image via FLUX.1 [dev] — used when a region has no underlying
-   *  image to inpaint, so we conjure a fresh subject instead. */
+  /** Text-to-image via FLUX.1 [schnell] (cheap/fast tier) — used when nothing
+   *  is selected, to conjure a fresh subject and drop it in as a layer. */
   async function text2img(prompt: string, aspectRatio = '1:1', opts: { count?: number; seed?: number } = {}): Promise<string[]> {
     busy.value = true; error.value = ''
     try {
