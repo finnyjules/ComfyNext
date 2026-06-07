@@ -425,20 +425,26 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
     toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 120) })
   }
 
-  // Load workflow into the bridge iframe's LiteGraph, then queue
-  const iframe = getSharedIframe()
+  // Pick the worker for the tab being run (always 0 when the pool is off), so
+  // separate canvases queue to separate ComfyUI servers and run concurrently.
+  const runTabId = activeTab.value?.id || ''
+  const workerIdx = workerForTab(runTabId)
+  if (poolEnabled.value && runTabId) workerRunningTab[workerIdx] = runTabId
+
+  // Load workflow into that worker's LiteGraph, then queue
+  const iframe = getWorkerIframe(workerIdx)
   if (!iframe?.contentWindow) {
     console.error('[Run] bridge iframe not found or not ready')
     toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
     return
   }
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
-  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to bridge',
+  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
     targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
-  await sendLoadWorkflow(plainWorkflow)
+  await sendLoadWorkflow(plainWorkflow, workerIdx)
   await new Promise(r => setTimeout(r, 800))
-  console.log('[Run] sending queuePrompt')
-  sendToActiveProjectIframe('queuePrompt')
+  console.log('[Run] sending queuePrompt to worker', workerIdx)
+  iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
   // iframe sometimes retains focus after the postMessage handshake, and on
@@ -836,6 +842,82 @@ function forceReloadCanvas() {
 // console escape hatch is always present.
 if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
 
+// ───────────────────────────────────────────────────────────────────────────
+// Parallel-run worker pool (prototype). OFF by default → a single worker,
+// identical to today's behavior. Enable in the browser console with:
+//   localStorage['comfynext:pool'] = 'on'   // uses :8188 + :8189
+//   localStorage['comfynext:pool'] = 'http://127.0.0.1:8188,http://127.0.0.1:8189'
+// then reload. Each project tab is round-robin assigned to a worker; runs on
+// different tabs hit different ComfyUI servers and execute concurrently.
+// ───────────────────────────────────────────────────────────────────────────
+const comfyWorkers = ref<string[]>([comfyOrigin])
+if (import.meta.client) {
+  try {
+    const raw = localStorage.getItem('comfynext:pool')
+    if (raw === 'on') comfyWorkers.value = [comfyOrigin, comfyOrigin.replace(/:\d+/, ':8189')]
+    else if (raw) {
+      const list = raw.split(',').map(s => s.trim()).filter(Boolean)
+      if (list.length) comfyWorkers.value = list
+    }
+  } catch { /* ignore */ }
+}
+const poolEnabled = computed(() => comfyWorkers.value.length > 1)
+
+// tabId → worker index (round-robin in assignment order). Worker 0 always = the
+// existing shared iframe, so single-worker callers get index 0 unchanged.
+const tabWorker = reactive<Record<string, number>>({})
+function workerForTab(tabId?: string | null): number {
+  if (!poolEnabled.value || !tabId) return 0
+  if (tabWorker[tabId] == null) {
+    tabWorker[tabId] = Object.keys(tabWorker).length % comfyWorkers.value.length
+  }
+  return tabWorker[tabId]
+}
+// worker index → the tab currently running on it (set at submit; a worker runs
+// one prompt at a time, so this is enough to route that worker's events back).
+const workerRunningTab = reactive<Record<number, string>>({})
+// The worker the *currently viewed* canvas runs on — lets the canvas ignore
+// other workers' run events (so a background tab's run doesn't clear the active
+// tab's animation) and re-apply the right running node when you switch tabs.
+const activeWorker = computed(() => workerForTab(activeTab.value?.id))
+
+function getWorkerIframe(idx: number): HTMLIFrameElement | null {
+  if (idx === 0) return getSharedIframe()
+  return document.querySelector(`iframe[data-worker="${idx}"]`) as HTMLIFrameElement | null
+}
+function workerIndexOfFrame(win: Window | null): number | null {
+  if (!win) return null
+  if (getSharedIframe()?.contentWindow === win) return 0
+  for (const f of document.querySelectorAll('iframe[data-worker]')) {
+    if ((f as HTMLIFrameElement).contentWindow === win) return Number((f as HTMLIFrameElement).dataset.worker)
+  }
+  return null
+}
+
+// Per-worker bridge-ready (the global bridgeIsReady stays for the worker-0 /
+// single-worker path; this tracks the extra pool workers).
+const workerReady = reactive<Record<number, boolean>>({})
+const workerReadyResolvers: Record<number, Array<() => void>> = {}
+function markWorkerReady(idx: number) {
+  if (workerReady[idx]) return
+  workerReady[idx] = true
+  ;(workerReadyResolvers[idx] || []).forEach(r => r())
+  workerReadyResolvers[idx] = []
+}
+function waitForWorkerReady(idx: number, timeoutMs = 120000): Promise<void> {
+  if (idx === 0) return waitForBridgeReady(timeoutMs) // reuse existing global handshake
+  if (workerReady[idx]) return Promise.resolve()
+  return new Promise((resolve) => {
+    let done = false
+    const finish = () => { if (done) return; done = true; clearInterval(poll); clearTimeout(to); resolve() }
+    ;(workerReadyResolvers[idx] ||= []).push(finish)
+    const nudge = () => getWorkerIframe(idx)?.contentWindow?.postMessage({ type: 'comfynext', action: 'requestStatus' }, '*')
+    nudge()
+    const poll = setInterval(() => { if (workerReady[idx]) finish(); else nudge() }, 500)
+    const to = setTimeout(finish, timeoutMs)
+  })
+}
+
 function markBridgeReady() {
   if (bridgeIsReady) return
   bridgeIsReady = true
@@ -882,10 +964,10 @@ function endWorkflowLoading() {
   if (workflowLoadingTimer) { clearTimeout(workflowLoadingTimer); workflowLoadingTimer = null }
 }
 
-async function sendLoadWorkflow(workflow: any) {
+async function sendLoadWorkflow(workflow: any, workerIdx = 0) {
   beginWorkflowLoading()
-  await waitForBridgeReady()
-  const iframe = getSharedIframe()
+  await waitForWorkerReady(workerIdx)
+  const iframe = getWorkerIframe(workerIdx)
   if (iframe?.contentWindow) {
     iframe.contentWindow.postMessage({ type: 'comfynext', action: 'loadWorkflow', workflow }, '*')
   }
@@ -1411,7 +1493,11 @@ function handleBridgeMessage(event: MessageEvent) {
 
   // Bridge signals ComfyUI is fully initialized and ready for workflow loads
   if (event.data.status === 'ready') {
-    markBridgeReady()
+    markBridgeReady() // global (worker-0 / single-worker path)
+    if (poolEnabled.value) {
+      const w = workerIndexOfFrame(event.source as Window)
+      if (w != null) markWorkerReady(w)
+    }
     return
   }
 
@@ -1486,13 +1572,24 @@ function handleBridgeMessage(event: MessageEvent) {
   const sourceFrame = event.source as Window
   const projectTabs = tabs.value.filter((t) => t.type === 'project')
 
-  // Find matching tab by checking iframes
   let tabId: string | null = null
-  for (const tab of projectTabs) {
-    const iframe = document.querySelector(`[data-tab-id="${tab.id}"] iframe`) as HTMLIFrameElement
-    if (iframe?.contentWindow === sourceFrame) {
-      tabId = tab.id
-      break
+
+  // Pool: route by the worker that sent the event → the tab running on it. This
+  // lets a background canvas (not the active one) keep updating while another
+  // runs. Only when the pool is enabled — single-worker keeps the logic below.
+  if (poolEnabled.value) {
+    const w = workerIndexOfFrame(sourceFrame)
+    if (w != null && workerRunningTab[w]) tabId = workerRunningTab[w]
+  }
+
+  // Find matching tab by checking iframes
+  if (!tabId) {
+    for (const tab of projectTabs) {
+      const iframe = document.querySelector(`[data-tab-id="${tab.id}"] iframe`) as HTMLIFrameElement
+      if (iframe?.contentWindow === sourceFrame) {
+        tabId = tab.id
+        break
+      }
     }
   }
 
@@ -1652,6 +1749,19 @@ function dismissRunResult() {
       id="comfynext-bridge-iframe"
       :src="`${comfyOrigin}/`"
       class="fixed w-[10px] h-[10px] -left-[100px] -top-[100px] opacity-0 pointer-events-none"
+      aria-hidden="true"
+      tabindex="-1"
+    />
+
+    <!-- Parallel-run prototype: one hidden execution iframe per extra worker
+         (index >= 1). Worker 0 is the main comfyui-shared canvas iframe below.
+         Rendered only when the pool is enabled, so single-worker is untouched. -->
+    <iframe
+      v-for="i in (comfyWorkers.length - 1)"
+      :key="`worker-${i}`"
+      :data-worker="i"
+      :src="`${comfyWorkers[i]}/`"
+      class="fixed w-[10px] h-[10px] -left-[300px] -top-[300px] opacity-0 pointer-events-none"
       aria-hidden="true"
       tabindex="-1"
     />
@@ -1966,6 +2076,7 @@ function dismissRunResult() {
               ref="vueCanvasRef"
               :workflow="savedWorkflows[activeTab.id] || undefined"
               :active-tool="activeTool"
+              :active-worker="activeWorker"
             />
             <ExplainOverlay :vue-canvas="vueCanvasRef" />
           </div>

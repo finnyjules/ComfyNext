@@ -41,7 +41,35 @@ import '@vue-flow/minimap/dist/style.css'
 const props = defineProps<{
   workflow: any
   activeTool?: string // 'select' | 'hand'
+  activeWorker?: number // parallel-run pool: the worker this canvas's tab runs on (0 = default)
 }>()
+
+// Parallel-run pool: which node is currently executing on each worker, so a
+// background tab's run events don't touch the active canvas, and the right
+// running node is re-lit when you switch to a still-running tab.
+const runningNodeByWorker: Record<number, string | null> = {}
+function eventWorker(src: Window | null): number {
+  if (!src) return 0
+  for (const f of document.querySelectorAll('iframe[data-worker]')) {
+    const frame = f as HTMLIFrameElement
+    if (frame.contentWindow === src) return Number(frame.dataset.worker)
+  }
+  return 0 // shared iframe / single-worker
+}
+// Re-light the node currently running on the now-active worker, so switching to
+// a still-running canvas shows its animation instead of going blank.
+function applyRunningForActiveWorker() {
+  const target = runningNodeByWorker[props.activeWorker ?? 0] || null
+  for (const n of nodes.value as any[]) {
+    const should = !!target && n.id === target
+    if (!!n.data?.running !== should) n.data = { ...n.data, running: should }
+  }
+  for (const e of edges.value as any[]) {
+    const should = !!target && e.source === target
+    if (!!e.data?.running !== should) e.data = { ...e.data, running: should }
+  }
+}
+watch(() => props.activeWorker, () => nextTick(applyRunningForActiveWorker))
 
 // Groups round-trip through useVueNodes via a bridge object. Methods are
 // reassigned below once useCanvasGroups is instantiated; this dance avoids
@@ -1012,6 +1040,17 @@ function handleBridgeMessage(event: MessageEvent) {
 
   const { event: evt, node_id, node, percent, progress: prog } = event.data
   const nodeId = node_id || node // bridge sends node_id, normalize
+
+  // Parallel-run pool: track every worker's currently-running node, but only let
+  // the worker behind the *active* tab drive this canvas's animation — otherwise
+  // a background tab's run would clear the visible tab's glow. Single-worker:
+  // eventWorker and activeWorker are both 0, so nothing changes.
+  const evWorker = eventWorker(event.source as Window | null)
+  const isActiveWorker = evWorker === (props.activeWorker ?? 0)
+  if (evt === 'executing') runningNodeByWorker[evWorker] = nodeId ? String(nodeId) : null
+  if (evt === 'execution_complete') runningNodeByWorker[evWorker] = null
+  if (!isActiveWorker && evt !== 'executed' && evt !== 'execution_error') return
+
   if (evt === 'executing') {
     // Clear all running states on nodes and edges
     for (const n of nodes.value) {
@@ -1061,13 +1100,26 @@ function handleBridgeMessage(event: MessageEvent) {
     if (nodeId && output) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
+        // Parallel-run pool: a result produced by an extra worker (its iframe is
+        // tagged data-worker) lives on THAT worker's origin. The default :8188
+        // /view proxy can't see other workers' files and filenames collide, so
+        // make those URLs absolute to the producing worker. Worker 0 / single
+        // worker → relative (served via the proxy, unchanged).
+        let originPrefix = ''
+        const src = event.source as Window | null
+        if (src) {
+          for (const f of document.querySelectorAll('iframe[data-worker]')) {
+            const frame = f as HTMLIFrameElement
+            if (frame.contentWindow === src) { originPrefix = new URL(frame.src).origin; break }
+          }
+        }
         const toUrl = (f: any) => {
           const params = new URLSearchParams({ filename: f.filename, type: f.type })
           if (f.subfolder) params.set('subfolder', f.subfolder)
           // Cache-buster: live-preview nodes reuse a fixed filename, so without
           // a unique query the browser would serve the stale cached file.
           params.set('t', String(Date.now()))
-          return `/view?${params}`
+          return `${originPrefix}/view?${params}`
         }
         // Takes loop: append this run as a take instead of overwriting.
         // appendTake mirrors the new (active) take onto images/audios/text/
