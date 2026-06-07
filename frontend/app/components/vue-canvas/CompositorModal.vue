@@ -680,6 +680,13 @@ function toggleLocalShadow(l: any) {
   if (localShadow(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'drop_shadow') })
   else setLocalShadow(l, {})
 }
+function setShadowHex(l: any, raw: string) {
+  let h = '#' + (raw || '').trim().replace(/^#/, '')
+  const m3 = /^#([0-9a-fA-F]{3})$/.exec(h)
+  if (m3) h = '#' + m3[1].split('').map(c => c + c).join('')
+  if (!/^#[0-9a-fA-F]{6}$/.test(h)) return // ignore partial/invalid input
+  setLocalShadow(l, { color: composeRgba(h, shadowAlpha(l)) })
+}
 
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
@@ -1298,12 +1305,18 @@ onUnmounted(() => {
             </div>
             <div v-if="localShadow(selectedLocal)" class="space-y-1.5">
               <div class="flex items-center gap-1.5">
-                <input type="color" :value="shadowHex(selectedLocal)"
+                <input type="color" :value="shadowHex(selectedLocal)" title="Shadow color"
                   class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
                   @input="setLocalShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, shadowAlpha(selectedLocal)) })" />
-                <input type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)" title="Shadow opacity %"
-                  class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-                  @input="setLocalShadow(selectedLocal!, { color: composeRgba(shadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                <input type="text" spellcheck="false" maxlength="7" :value="shadowHex(selectedLocal)" title="Hex color"
+                  class="flex-1 min-w-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs font-mono uppercase text-white/90 outline-none"
+                  @change="setShadowHex(selectedLocal!, ($event.target as HTMLInputElement).value)" />
+                <div class="flex items-center gap-0.5 shrink-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
+                  <input type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)"
+                    class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
+                    @input="setLocalShadow(selectedLocal!, { color: composeRgba(shadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                  <span class="text-[10px] text-white/35 select-none">%</span>
+                </div>
               </div>
               <div class="grid grid-cols-3 gap-1.5">
                 <div>
@@ -1401,3 +1414,16 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Strip the native number-input spinner arrows in the inspector. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+</style>
