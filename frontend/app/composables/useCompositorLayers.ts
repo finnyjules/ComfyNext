@@ -68,7 +68,8 @@ interface LayerCommon {
   opacity: number    // 0..1
   groupId?: string   // layers sharing a groupId select/move/transform together
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
-  mask?: LayerMask        // clip region — applied at render time
+  mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
+  maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
 }
 
 export interface TextLayer extends LayerCommon {
@@ -378,9 +379,31 @@ export function drawLocalLayer(
   layer: LocalLayer,
   W: number,
   H: number,
+  maskLayer?: LocalLayer | null,
 ) {
-  // Clip mask wraps the whole layer paint (incl. its drop shadow). Applied in
-  // canvas space, so it's a fixed region on the artboard.
+  // Layer mask: clip this layer to another layer's alpha silhouette (Figma
+  // "use as mask"). Render the content, then keep only where the mask layer's
+  // alpha is, via destination-in on an offscreen.
+  if (maskLayer) {
+    const off = document.createElement('canvas')
+    off.width = Math.max(1, Math.round(W))
+    off.height = Math.max(1, Math.round(H))
+    const octx = off.getContext('2d')
+    if (octx) {
+      drawLocalLayerSelf(octx, layer, W, H)
+      octx.globalCompositeOperation = 'destination-in'
+      drawLocalLayerSelf(octx, maskLayer, W, H)
+      octx.globalCompositeOperation = 'source-over'
+      ctx.drawImage(off, 0, 0)
+      return
+    }
+  }
+  drawLocalLayerSelf(ctx, layer, W, H)
+}
+
+// A layer's own paint, including its crop (rect/ellipse) region — but NOT any
+// layer-mask, which drawLocalLayer applies around this.
+function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
   if (layer.mask) {
     ctx.save()
     applyMaskClip(ctx, layer.mask, W, H)
@@ -563,7 +586,15 @@ export function drawLocalLayers(
   W: number,
   H: number,
 ) {
-  for (const layer of layers) drawLocalLayer(ctx, layer, W, H)
+  // Layers used as a mask (referenced by another's maskedById) don't paint on
+  // their own — they only clip the layer that references them.
+  const maskIds = new Set<string>()
+  for (const l of layers) if (l.maskedById) maskIds.add(l.maskedById)
+  for (const layer of layers) {
+    if (maskIds.has(layer.id)) continue
+    const maskLayer = layer.maskedById ? layers.find(l => l.id === layer.maskedById) : null
+    drawLocalLayer(ctx, layer, W, H, maskLayer)
+  }
 }
 
 /** Blend-mode name → canvas composite op (shared by node + modal wired draws). */

@@ -718,6 +718,11 @@ function toggleLayerBlur(l: any) {
   else setLayerBlur(l, 0.02)
 }
 
+// ── Layer mask (this layer is clipped by another layer's silhouette) ─────────
+function maskCandidates(l: any): any[] { return (localLayers.value as any[]).filter((o: any) => o.id !== l?.id) }
+function layerLabel(l: any): string { return `${l.kind} ${String(l.id).slice(-4)}` }
+function setLayerMaskedBy(l: any, id: string) { if (l) setLocal(l.id, { maskedById: id || undefined }) }
+
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
 // outWidth conversion works for either axis. When locked, editing one axis
@@ -1386,10 +1391,21 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Clip mask -->
+          <!-- Layer mask: clip this layer to another layer's silhouette -->
+          <div class="mt-3">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
+            <select :value="(selectedLocal as any).maskedById || ''"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+              @change="setLayerMaskedBy(selectedLocal!, ($event.target as HTMLSelectElement).value)">
+              <option value="">No mask</option>
+              <option v-for="o in maskCandidates(selectedLocal)" :key="o.id" :value="o.id">Mask with {{ layerLabel(o) }}</option>
+            </select>
+          </div>
+
+          <!-- Crop to a rect/ellipse region -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Mask</div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Crop</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleLayerMask(selectedLocal!)">{{ layerMask(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>

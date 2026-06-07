@@ -401,12 +401,19 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
+  // Layers used as a mask (referenced by another's maskedById) don't paint on
+  // their own — they only clip the layer that references them.
+  const locals = editor.localLayers.value
+  const maskIds = new Set<string>()
+  for (const l of locals) if (l.maskedById) maskIds.add(l.maskedById)
   for (const key of stackKeys.value) {
     const r = resolveKey(key)
     if (!r) continue
     if (r.type === 'wired') { drawWiredLayer(ctx, r.layer, W, H); continue }
     if (r.layer.id === editor.editingId.value) continue
-    drawLocalLayer(ctx, r.layer, W, H)
+    if (maskIds.has(r.layer.id)) continue
+    const maskLayer = r.layer.maskedById ? locals.find(l => l.id === r.layer.maskedById) : null
+    drawLocalLayer(ctx, r.layer, W, H, maskLayer)
   }
 }
 watch(
