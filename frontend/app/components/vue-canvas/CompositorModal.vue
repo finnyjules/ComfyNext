@@ -14,6 +14,7 @@ import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVector
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
+import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2 } from 'lucide-vue-next'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -724,6 +725,46 @@ function maskCandidates(l: any): any[] { return (localLayers.value as any[]).fil
 function layerLabel(l: any): string { return `${l.kind} ${String(l.id).slice(-4)}` }
 function setLayerMaskedBy(l: any, id: string) { if (l) setLocal(l.id, { maskedById: id || undefined }) }
 
+// ── Generate in region (the moat: a vector mask drives inpaint) ──────────────
+// An image layer's Crop region becomes the inpaint mask: regenerate ONLY inside
+// that exact vector region, replacing the layer's image. Compose → mask →
+// generate-into-mask → compose, with no hand-painting.
+const inpaint = useInpaint()
+const genPrompt = ref('')
+async function generateRegion(layer: any) {
+  if (!layer || layer.kind !== 'image' || !layer.mask) return
+  try {
+    const img = await loadImage(imageLayerUrl(layer.filename))
+    const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
+    const imageData = imageToDataUrl(img, capW, capH)
+    // Map the Crop region (canvas-normalized) into the image's space. The image
+    // fills the layer box (stretched), so it's a linear map; only the vertical
+    // CENTER needs the artboard aspect (x→W, y→H, but sizes→W in the model).
+    const aspect = canvasDisplay.h / canvasDisplay.w
+    const c = layer.mask
+    const relX = (c.x - layer.x) / layer.w + 0.5
+    const relY = (c.y - layer.y) * aspect / layer.h + 0.5
+    const relW = c.w / layer.w
+    const relH = c.h / layer.h
+    const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
+    const mctx = mc.getContext('2d')!
+    mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)           // BLACK = keep
+    mctx.fillStyle = '#fff'                                            // WHITE = inpaint
+    const mcx = relX * capW, mcy = relY * capH, mw = relW * capW, mh = relH * capH
+    mctx.beginPath()
+    if (c.kind === 'ellipse') mctx.ellipse(mcx, mcy, mw / 2, mh / 2, 0, 0, Math.PI * 2)
+    else mctx.rect(mcx - mw / 2, mcy - mh / 2, mw, mh)
+    mctx.fill()
+    const maskData = mc.toDataURL('image/png')
+    const results = await inpaint.fluxFill(imageData, maskData, genPrompt.value.trim())
+    if (!results.length) return
+    const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
+    setLocal(layer.id, { filename: newName }) // replace the layer's image with the result
+  } catch (e) {
+    console.error('[compositor inpaint]', e)
+  }
+}
+
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
 // outWidth conversion works for either axis. When locked, editing one axis
@@ -1428,6 +1469,17 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+          </div>
+
+          <!-- Generate in region: the crop region drives an inpaint (the moat) -->
+          <div v-if="selectedLocal.kind === 'image' && layerMask(selectedLocal)" class="mt-3">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Generate in region</div>
+            <input v-model="genPrompt" type="text" placeholder="what to generate in the masked area…"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none mb-1.5" />
+            <button class="w-full py-1.5 rounded text-[11px] font-medium bg-yellow-500/90 hover:bg-yellow-400 text-black disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="inpaint.busy.value"
+              @click="generateRegion(selectedLocal)">{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
+            <div v-if="inpaint.error.value" class="text-[10px] text-amber-400 mt-1">{{ inpaint.error.value }}</div>
           </div>
         </div>
       </template>
