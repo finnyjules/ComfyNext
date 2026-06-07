@@ -103,6 +103,25 @@ export function useInpaint() {
     }
   }
 
+  /** Text-to-image via FLUX.1 [dev] — used when a region has no underlying
+   *  image to inpaint, so we conjure a fresh subject instead. */
+  async function text2img(prompt: string, aspectRatio = '1:1', opts: { count?: number; seed?: number } = {}): Promise<string[]> {
+    busy.value = true; error.value = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/generate/flux', {
+        method: 'POST',
+        body: { prompt, aspect_ratio: aspectRatio, count: opts.count ?? 1, seed: opts.seed },
+      })
+      results.value = res.images
+      return res.images
+    } catch (err: any) {
+      error.value = err?.data?.message || err?.message || 'Generation failed'
+      throw err
+    } finally {
+      busy.value = false
+    }
+  }
+
   /** Click-to-select a region: SAM returns a mask data URL (white = selected).
    *  `pointPx` is in the source image's pixel space (same space as `image`).
    *  (v3 click-to-select.) */
@@ -126,5 +145,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, text2img, uploadDataUrl }
 }

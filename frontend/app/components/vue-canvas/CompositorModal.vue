@@ -908,6 +908,43 @@ function bakeStack(W: number, H: number): HTMLCanvasElement {
   return cv
 }
 
+// flux-dev's supported aspect ratios → nearest match for a region's bbox.
+const FLUX_ASPECTS: [string, number][] = [
+  ['1:1', 1], ['16:9', 16 / 9], ['9:16', 9 / 16], ['3:2', 3 / 2], ['2:3', 2 / 3],
+  ['4:5', 4 / 5], ['5:4', 5 / 4], ['4:3', 4 / 3], ['3:4', 3 / 4], ['21:9', 21 / 9], ['9:21', 9 / 21],
+]
+function pickAspectRatio(r: number): string {
+  let best = '1:1', bd = Infinity
+  for (const [s, v] of FLUX_ASPECTS) { const d = Math.abs(Math.log(r / v)); if (d < bd) { bd = d; best = s } }
+  return best
+}
+// Bounding box of the painted region (artboard px), or null if empty.
+function genMaskBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (!genMaskCanvas) return null
+  const W = genMaskCanvas.width, H = genMaskCanvas.height
+  const d = genMaskCanvas.getContext('2d')!.getImageData(0, 0, W, H).data
+  let minX = W, minY = H, maxX = 0, maxY = 0, found = false
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (d[(y * W + x) * 4 + 3] > 20) { found = true; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y }
+  }
+  return found ? { minX, minY, maxX, maxY } : null
+}
+// Fraction of the painted region that overlaps real baked content (0..1) — the
+// signal for smart routing: low → conjure a subject (text→image), high → inpaint.
+function regionCoverage(baked: HTMLCanvasElement): number {
+  if (!genMaskCanvas) return 0
+  const S = 96
+  const mc = document.createElement('canvas'); mc.width = S; mc.height = S
+  const mctx = mc.getContext('2d')!; mctx.drawImage(genMaskCanvas, 0, 0, S, S)
+  const md = mctx.getImageData(0, 0, S, S).data
+  const bc = document.createElement('canvas'); bc.width = S; bc.height = S
+  const bctx = bc.getContext('2d')!; bctx.drawImage(baked, 0, 0, S, S)
+  const bd = bctx.getImageData(0, 0, S, S).data
+  let region = 0, content = 0
+  for (let i = 3; i < md.length; i += 4) { if (md[i] > 20) { region++; if (bd[i] > 20) content++ } }
+  return region ? content / region : 0
+}
+
 // Generate inside the painted region. Two paths:
 //  • a local image is the target → inpaint within its own pixels (project the
 //    artboard region through the inverse of its draw transform) and replace it.
@@ -949,26 +986,44 @@ async function runRegionFill() {
       const bw = Math.max(1, Math.round(W >= H ? long : long * (W / H)))
       const bh = Math.max(1, Math.round(W >= H ? long * (H / W) : long))
       const baked = bakeStack(bw, bh)
-      const baseC = document.createElement('canvas'); baseC.width = bw; baseC.height = bh
-      const bctx = baseC.getContext('2d')!
-      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, bw, bh)    // neutral base where empty
-      bctx.drawImage(baked, 0, 0)
-      const maskC = document.createElement('canvas'); maskC.width = bw; maskC.height = bh
-      const xctx = maskC.getContext('2d')!
-      xctx.fillStyle = '#000'; xctx.fillRect(0, 0, bw, bh)
-      xctx.drawImage(genMaskCanvas, 0, 0, bw, bh)                // WHITE region = inpaint
-      const results = await inpaint.fluxFill(baseC.toDataURL('image/png'), maskC.toDataURL('image/png'), genPrompt.value.trim())
-      if (!results.length) return
-      // Keep ONLY the region (transparent elsewhere) so it overlays as a patch.
-      const full = await loadImage(results[0])
-      const patch = document.createElement('canvas'); patch.width = bw; patch.height = bh
-      const pctx = patch.getContext('2d')!
-      pctx.drawImage(full, 0, 0, bw, bh)
-      pctx.globalCompositeOperation = 'destination-in'
-      pctx.drawImage(genMaskCanvas, 0, 0, bw, bh)
-      pctx.globalCompositeOperation = 'source-over'
-      const newName = await inpaint.uploadDataUrl(patch.toDataURL('image/png'), 'compinpaint')
-      addImageFromName(newName, bw / bh, { x: 0.5, y: 0.5, w: 1, h: H / W })
+      const prompt = genPrompt.value.trim()
+
+      if (regionCoverage(baked) < 0.12) {
+        // Little/no real content under the region → flux-fill would just sketch
+        // on a blank base. Conjure a fresh subject (text→image) sized to the
+        // region's bbox and drop it in there instead.
+        const bnd = genMaskBounds(); if (!bnd) return
+        const cx = (bnd.minX + bnd.maxX) / 2, cy = (bnd.minY + bnd.maxY) / 2
+        const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
+        const results = await inpaint.text2img(prompt || 'subject, isolated on plain background', pickAspectRatio(boxW / boxH))
+        if (!results.length) return
+        const gi = await loadImage(results[0])
+        const genAspect = (gi.naturalWidth || 1) / (gi.naturalHeight || 1)
+        const name = await inpaint.uploadDataUrl(results[0], 'compgen')
+        addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w: boxW / W })
+      } else {
+        // Real content under the region → context-aware inpaint, keep only the
+        // region as a patch so the layers underneath stay intact.
+        const baseC = document.createElement('canvas'); baseC.width = bw; baseC.height = bh
+        const bctx = baseC.getContext('2d')!
+        bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, bw, bh)  // fill any transparent gaps
+        bctx.drawImage(baked, 0, 0)
+        const maskC = document.createElement('canvas'); maskC.width = bw; maskC.height = bh
+        const xctx = maskC.getContext('2d')!
+        xctx.fillStyle = '#000'; xctx.fillRect(0, 0, bw, bh)
+        xctx.drawImage(genMaskCanvas, 0, 0, bw, bh)              // WHITE region = inpaint
+        const results = await inpaint.fluxFill(baseC.toDataURL('image/png'), maskC.toDataURL('image/png'), prompt)
+        if (!results.length) return
+        const full = await loadImage(results[0])
+        const patch = document.createElement('canvas'); patch.width = bw; patch.height = bh
+        const pctx = patch.getContext('2d')!
+        pctx.drawImage(full, 0, 0, bw, bh)
+        pctx.globalCompositeOperation = 'destination-in'
+        pctx.drawImage(genMaskCanvas, 0, 0, bw, bh)
+        pctx.globalCompositeOperation = 'source-over'
+        const newName = await inpaint.uploadDataUrl(patch.toDataURL('image/png'), 'compinpaint')
+        addImageFromName(newName, bw / bh, { x: 0.5, y: 0.5, w: 1, h: H / W })
+      }
     }
     clearGenMask()
   } catch (err) {
