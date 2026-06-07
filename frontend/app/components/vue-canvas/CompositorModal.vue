@@ -15,7 +15,8 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, Blend } from 'lucide-vue-next'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2 } from 'lucide-vue-next'
+import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
@@ -1852,7 +1853,7 @@ onUnmounted(() => {
               :disabled="inpaint.busy.value"
               title="Cloud background removal — replaces the image with a transparent cutout"
               @click="removeImageBg(selectedLocal)"
-            ><Blend class="size-3" /> {{ inpaint.busy.value ? 'Removing…' : 'Remove background' }}</button>
+            ><PhCheckerboard class="size-3" /> {{ inpaint.busy.value ? 'Removing…' : 'Remove background' }}</button>
             <div v-if="inpaint.error.value" class="text-[10px] text-rose-400">{{ inpaint.error.value }}</div>
           </div>
         </div>
