@@ -1294,6 +1294,22 @@ const modelGalleryOpenForId = ref<string | null>(null)
 const videoModelGalleryOpenForId = ref<string | null>(null)
 const textEffectGalleryOpenForId = ref<string | null>(null)
 const loraGalleryOpenForId = ref<string | null>(null)
+
+// Any full-screen editor/gallery modal that overlays the canvas and owns the
+// keyboard while open.
+const anyEditorModalOpen = computed(() => !!(
+  compositorOpenForId.value || inpaintOpenForId.value || kineticTypeOpenForId.value ||
+  asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
+  smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
+  textEffectGalleryOpenForId.value || loraGalleryOpenForId.value
+))
+// Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
+// modal is open (e.g. the Compositor), the node behind it is still selected, so a
+// Delete/Backspace meant for a local layer would wipe the whole Frame node. Disable
+// Vue Flow's delete-key whenever a modal owns the keyboard.
+const vfDeleteKeyCode = computed<string[] | null>(() =>
+  anyEditorModalOpen.value ? null : ['Backspace', 'Delete'])
+
 function handleOpenModelGallery(e: Event) {
   const detail = (e as CustomEvent).detail
   const nodeId = detail?.nodeId ? String(detail.nodeId) : null
@@ -3348,7 +3364,7 @@ defineExpose({
       :min-zoom="0.1"
       :max-zoom="4"
       :connection-line-style="{ stroke: '#818cf8', strokeWidth: 2 }"
-      :delete-key-code="['Backspace', 'Delete']"
+      :delete-key-code="vfDeleteKeyCode"
       class="vue-node-canvas"
       fit-view-on-init
       @drop="handleDrop"
