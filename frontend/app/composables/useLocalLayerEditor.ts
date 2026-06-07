@@ -127,6 +127,13 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     recordHistory()
     commit(localLayers.value.map(l => (selectedIds.value.has(l.id) ? { ...l, groupId: gid } as LocalLayer : l)))
   }
+  /** Rename a group: mirror the name onto every member layer. */
+  function renameGroup(groupId: string, name: string) {
+    recordHistory()
+    const nm = name.trim()
+    commit(localLayers.value.map(l => (l.groupId === groupId
+      ? { ...l, groupName: nm || undefined } as LocalLayer : l)))
+  }
   /** Ungroup: clear groupId on the selected layers. */
   function ungroupSelected() {
     if (!selectedIds.value.size) return
@@ -454,7 +461,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
-    groupSelected, ungroupSelected, canGroup, canUngroup,
+    groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   }
 }

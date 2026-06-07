@@ -158,7 +158,7 @@ const {
   addPathLayers, addPathFromSvg, deleteLayers,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
-  groupSelected, ungroupSelected, canGroup, canUngroup,
+  groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
 } = editor
 
@@ -433,6 +433,48 @@ function toggleGroup(gid: string) {
 function selectGroup(g: PanelGroup) { if (g.layers[0]) selectLocal(g.layers[0].layer.id) }
 function deleteGroup(g: PanelGroup) { deleteLayers(g.layers.map(it => it.layer.id)) }
 function isGroupSelected(g: PanelGroup) { return g.layers.some(it => selectedIds.value.has(it.layer.id)) }
+function groupLabel(g: PanelGroup) { return g.layers[0]?.layer.groupName || 'Group' }
+
+// Group rename (double-click the group label).
+const editingGroupId = ref<string | null>(null)
+const groupNameDraft = ref('')
+function startGroupRename(g: PanelGroup) { editingGroupId.value = g.groupId; groupNameDraft.value = groupLabel(g) === 'Group' ? '' : groupLabel(g) }
+function commitGroupRename() {
+  if (editingGroupId.value) renameGroup(editingGroupId.value, groupNameDraft.value)
+  editingGroupId.value = null
+}
+
+// ── Layer panel drag-and-drop reorder (unified z-order) ──────────────────────
+function setStackOrder(topFirstKeys: StackKey[]) {
+  const node = compositor.value; if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  ;(node.data.properties as any).comfynext_stackOrder = [...topFirstKeys].reverse() // stored bottom→top
+}
+const dragRow = ref<number | null>(null)
+const dropRow = ref<number | null>(null)   // insertion index (0..panelItems.length)
+function rowKeys(it: any): StackKey[] { return it.type === 'group' ? it.layers.map((c: any) => c.key) : [it.key] }
+function onRowDragStart(idx: number, e: DragEvent) {
+  dragRow.value = idx
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }
+}
+function onRowDragOver(idx: number, e: DragEvent) {
+  e.preventDefault()
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  dropRow.value = idx + (e.clientY > r.top + r.height / 2 ? 1 : 0)
+}
+function onRowDrop() {
+  if (dragRow.value != null && dropRow.value != null) {
+    const items = [...panelItems.value]
+    const from = dragRow.value
+    const [moved] = items.splice(from, 1)
+    let insert = dropRow.value > from ? dropRow.value - 1 : dropRow.value
+    insert = Math.max(0, Math.min(items.length, insert))
+    items.splice(insert, 0, moved)
+    setStackOrder(items.flatMap(rowKeys))
+  }
+  dragRow.value = null; dropRow.value = null
+}
+function onRowDragEnd() { dragRow.value = null; dropRow.value = null }
 
 // Shared corner/rotation-handle geometry for a rotated box centered at (cx, cy).
 function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number, scale = 1) {
@@ -1087,69 +1129,92 @@ onUnmounted(() => {
       <div class="p-3 flex-1 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
 
-        <!-- Unified z-order stack (top-first). Grouped local layers collapse into one row. -->
-        <template v-for="item in panelItems" :key="item.key">
-          <!-- Group row -->
-          <div v-if="item.type === 'group'">
+        <!-- Unified z-order stack (top-first). Grouped local layers collapse; drag to reorder. -->
+        <template v-for="(item, idx) in panelItems" :key="item.key">
+          <div v-if="dropRow === idx" class="h-0.5 bg-emerald-400 rounded mx-1.5 my-0.5" />
+          <div
+            :draggable="!editingGroupId"
+            :class="dragRow === idx ? 'opacity-40' : ''"
+            @dragstart="onRowDragStart(idx, $event)"
+            @dragover="onRowDragOver(idx, $event)"
+            @drop="onRowDrop"
+            @dragend="onRowDragEnd"
+          >
+            <!-- Group row -->
+            <template v-if="item.type === 'group'">
+              <div
+                class="group flex items-center gap-1.5 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing transition-colors"
+                :class="isGroupSelected(item) ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+                @click="selectGroup(item)"
+              >
+                <button class="text-white/40 hover:text-white/80 -ml-1 p-0.5 cursor-pointer" title="Expand/collapse"
+                  @click.stop="toggleGroup(item.groupId)">
+                  <component :is="expandedGroups.has(item.groupId) ? ChevronDown : ChevronRight" class="size-3.5" />
+                </button>
+                <Group class="size-3.5 text-white/60 shrink-0" />
+                <input
+                  v-if="editingGroupId === item.groupId"
+                  v-model="groupNameDraft"
+                  :ref="(el: any) => el?.focus?.()"
+                  class="flex-1 min-w-0 bg-white/[0.06] rounded px-1 text-sm outline-none"
+                  draggable="false"
+                  @click.stop @mousedown.stop
+                  @keydown.enter.prevent="commitGroupRename"
+                  @keydown.esc.prevent="editingGroupId = null"
+                  @blur="commitGroupRename"
+                />
+                <span v-else class="text-sm truncate flex-1" title="Double-click to rename"
+                  @dblclick.stop="startGroupRename(item)">{{ groupLabel(item) }} <span class="text-white/40">· {{ item.layers.length }}</span></span>
+                <button class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
+                  title="Delete group" @click.stop="deleteGroup(item)">
+                  <Trash2 class="size-3.5" />
+                </button>
+              </div>
+              <div v-if="expandedGroups.has(item.groupId)" class="ml-3.5 border-l border-white/10 pl-1">
+                <div
+                  v-for="child in item.layers" :key="child.key"
+                  class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors"
+                  :class="selectedLocalId === child.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+                  @click="selectLocal(child.layer.id)"
+                >
+                  <component :is="kindIcon(child.layer.kind)" class="size-3 text-white/45 shrink-0" />
+                  <span class="text-[13px] truncate flex-1 text-white/65 capitalize">{{ child.layer.kind }}</span>
+                </div>
+              </div>
+            </template>
+            <!-- Local row -->
             <div
-              class="group flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors"
-              :class="isGroupSelected(item) ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
-              @click="selectGroup(item)"
+              v-else-if="item.type === 'local'"
+              class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing transition-colors"
+              :class="selectedLocalId === item.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+              @click="selectLocal(item.layer.id)"
+              @dblclick="item.layer.kind === 'text' && beginEdit(item.layer.id)"
             >
-              <button class="text-white/40 hover:text-white/80 -ml-1 p-0.5 cursor-pointer" title="Expand/collapse"
-                @click.stop="toggleGroup(item.groupId)">
-                <component :is="expandedGroups.has(item.groupId) ? ChevronDown : ChevronRight" class="size-3.5" />
-              </button>
-              <Group class="size-3.5 text-white/60 shrink-0" />
-              <span class="text-sm truncate flex-1">Group <span class="text-white/40">· {{ item.layers.length }}</span></span>
-              <button class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
-                title="Delete group" @click.stop="deleteGroup(item)">
+              <component :is="kindIcon(item.layer.kind)" class="size-3.5 text-white/60 shrink-0" />
+              <span class="text-sm truncate flex-1">
+                {{ item.layer.kind === 'text' ? (item.layer.text?.split('\n')[0] || 'Text') : item.layer.kind }}
+              </span>
+              <button
+                class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition"
+                title="Delete"
+                @click.stop="deleteLocal(item.layer.id)"
+              >
                 <Trash2 class="size-3.5" />
               </button>
             </div>
-            <div v-if="expandedGroups.has(item.groupId)" class="ml-3.5 border-l border-white/10 pl-1">
-              <div
-                v-for="child in item.layers" :key="child.key"
-                class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors"
-                :class="selectedLocalId === child.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
-                @click="selectLocal(child.layer.id)"
-              >
-                <component :is="kindIcon(child.layer.kind)" class="size-3 text-white/45 shrink-0" />
-                <span class="text-[13px] truncate flex-1 text-white/65 capitalize">{{ child.layer.kind }}</span>
-              </div>
+            <!-- Wired image row -->
+            <div
+              v-else
+              class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-grab active:cursor-grabbing transition-colors"
+              :class="selectedSlot === item.layer.slot ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
+              @click="selectImage(item.layer.slot)"
+            >
+              <ImageIcon class="size-3.5 text-white/60 shrink-0" />
+              <span class="text-sm">Layer {{ item.layer.slot }}</span>
             </div>
           </div>
-          <!-- Local row -->
-          <div
-            v-else-if="item.type === 'local'"
-            class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
-            :class="selectedLocalId === item.layer.id ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
-            @click="selectLocal(item.layer.id)"
-            @dblclick="item.layer.kind === 'text' && beginEdit(item.layer.id)"
-          >
-            <component :is="kindIcon(item.layer.kind)" class="size-3.5 text-white/60 shrink-0" />
-            <span class="text-sm truncate flex-1">
-              {{ item.layer.kind === 'text' ? (item.layer.text?.split('\n')[0] || 'Text') : item.layer.kind }}
-            </span>
-            <button
-              class="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 transition"
-              title="Delete"
-              @click.stop="deleteLocal(item.layer.id)"
-            >
-              <Trash2 class="size-3.5" />
-            </button>
-          </div>
-          <!-- Wired image row -->
-          <div
-            v-else
-            class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
-            :class="selectedSlot === item.layer.slot ? 'bg-white/10' : 'hover:bg-white/[0.04]'"
-            @click="selectImage(item.layer.slot)"
-          >
-            <ImageIcon class="size-3.5 text-white/60 shrink-0" />
-            <span class="text-sm">Layer {{ item.layer.slot }}</span>
-          </div>
         </template>
+        <div v-if="dropRow === panelItems.length" class="h-0.5 bg-emerald-400 rounded mx-1.5 my-0.5" />
         <div v-if="!layers.length && !localLayers.length" class="text-xs text-white/30 px-1 py-2 italic">
           Connect images to the Compositor's layer ports, or add text/shapes below.
         </div>

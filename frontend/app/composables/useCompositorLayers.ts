@@ -67,6 +67,7 @@ interface LayerCommon {
   rotation: number   // degrees
   opacity: number    // 0..1
   groupId?: string   // layers sharing a groupId select/move/transform together
+  groupName?: string // display name for the group (mirrored on every member)
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
   maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
