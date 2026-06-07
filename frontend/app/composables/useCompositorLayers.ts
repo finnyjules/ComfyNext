@@ -42,6 +42,18 @@ export interface DropShadowEffect {
 }
 export type LayerEffect = DropShadowEffect
 
+// Clip mask: the layer is clipped to a rect/ellipse region in CANVAS space
+// (axis-aligned, normalized like everything else). For local layers this is
+// applied in the canvas and carried into the bake, so the clipped alpha is also
+// the generation coverage — the seam for "mask region == inpaint region".
+export interface LayerMask {
+  kind: 'rect' | 'ellipse'
+  x: number          // normalized center X (of width)
+  y: number          // normalized center Y (of height)
+  w: number          // normalized to canvas width
+  h: number          // normalized to canvas width
+}
+
 interface LayerCommon {
   id: string
   kind: LocalLayerKind
@@ -51,6 +63,7 @@ interface LayerCommon {
   opacity: number    // 0..1
   groupId?: string   // layers sharing a groupId select/move/transform together
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
+  mask?: LayerMask        // clip region — applied at render time
 }
 
 export interface TextLayer extends LayerCommon {
@@ -345,7 +358,35 @@ export function localLayerBox(
 }
 
 /** Draw a single local layer onto a 2D context sized W×H. */
+// Clip the context to a layer's mask region (canvas space). Caller wraps this in
+// save()/restore(). No-op shape support beyond rect/ellipse for now.
+function applyMaskClip(ctx: CanvasRenderingContext2D, mask: LayerMask, W: number, H: number) {
+  const cx = mask.x * W, cy = mask.y * H, w = Math.max(0, mask.w * W), h = Math.max(0, mask.h * W)
+  ctx.beginPath()
+  if (mask.kind === 'ellipse') ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2)
+  else ctx.rect(cx - w / 2, cy - h / 2, w, h)
+  ctx.clip()
+}
+
 export function drawLocalLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: LocalLayer,
+  W: number,
+  H: number,
+) {
+  // Clip mask wraps the whole layer paint (incl. its drop shadow). Applied in
+  // canvas space, so it's a fixed region on the artboard.
+  if (layer.mask) {
+    ctx.save()
+    applyMaskClip(ctx, layer.mask, W, H)
+    paintLayer(ctx, layer, W, H)
+    ctx.restore()
+  } else {
+    paintLayer(ctx, layer, W, H)
+  }
+}
+
+function paintLayer(
   ctx: CanvasRenderingContext2D,
   layer: LocalLayer,
   W: number,

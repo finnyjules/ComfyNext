@@ -688,6 +688,23 @@ function setShadowHex(l: any, raw: string) {
   setLocalShadow(l, { color: composeRgba(h, shadowAlpha(l)) })
 }
 
+// ── Clip mask ───────────────────────────────────────────────────────────────
+function layerMask(l: any): any | undefined { return l?.mask }
+function setLayerMask(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = l.mask || {
+    kind: 'ellipse',
+    x: l.x ?? 0.5, y: l.y ?? 0.5,
+    w: (l.w ?? 0.4), h: (l.h ?? l.w ?? 0.4),
+  }
+  setLocal(l.id, { mask: { ...cur, ...patch } })
+}
+function toggleLayerMask(l: any) {
+  if (!l) return
+  if (l.mask) setLocal(l.id, { mask: undefined })
+  else setLayerMask(l, {})
+}
+
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
 // normalized to the artboard width (the layer model's convention), so a single
 // outWidth conversion works for either axis. When locked, editing one axis
@@ -1336,6 +1353,33 @@ onUnmounted(() => {
                   <input type="number" min="0" step="0.5" :value="Math.round((localShadow(selectedLocal)?.blur || 0) * 1000) / 10"
                     class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Clip mask -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Mask</div>
+              <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+                @click="toggleLayerMask(selectedLocal!)">{{ layerMask(selectedLocal) ? 'Remove' : 'Add' }}</button>
+            </div>
+            <div v-if="layerMask(selectedLocal)" class="space-y-1.5">
+              <div class="flex gap-1">
+                <button class="flex-1 py-1 rounded text-[11px] border"
+                  :class="layerMask(selectedLocal)?.kind === 'rect' ? 'bg-white/10 border-white/20 text-white/90' : 'border-[#2a2a2a] text-white/50 hover:text-white/80'"
+                  @click="setLayerMask(selectedLocal!, { kind: 'rect' })">Rect</button>
+                <button class="flex-1 py-1 rounded text-[11px] border"
+                  :class="layerMask(selectedLocal)?.kind === 'ellipse' ? 'bg-white/10 border-white/20 text-white/90' : 'border-[#2a2a2a] text-white/50 hover:text-white/80'"
+                  @click="setLayerMask(selectedLocal!, { kind: 'ellipse' })">Ellipse</button>
+              </div>
+              <div class="grid grid-cols-4 gap-1.5">
+                <div v-for="k in (['x','y','w','h'] as const)" :key="k">
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">{{ k }}</div>
+                  <input type="number" step="0.5" :value="Math.round((layerMask(selectedLocal)?.[k] || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setLayerMask(selectedLocal!, { [k]: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
               </div>
             </div>
