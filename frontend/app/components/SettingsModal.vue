@@ -111,6 +111,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.Queue.MaxHistoryItems', label: 'Queue history size', type: 'number', min: 10, max: 10000 },
     { id: 'Comfy.NodeReplacement.Enabled', label: 'Automatic node replacement', type: 'toggle' },
     { id: 'Comfy.Validation.Workflows', label: 'Validate workflows', type: 'toggle' },
+    { id: 'ComfyNext.Cost.ConfirmThresholdUsd', label: 'Confirm runs above (USD)', type: 'text', local: true, description: 'Ask before queueing runs whose estimated cost meets this amount. Default 1. Set 0 to ask for every paid run.' },
   ],
   workflow: [
     { id: 'Comfy.Workflow.AutoSave', label: 'Auto save', type: 'select', options: [

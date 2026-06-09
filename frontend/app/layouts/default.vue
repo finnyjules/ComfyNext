@@ -358,11 +358,14 @@ function injectLoraStyleIntoPrompt(workflow: any) {
   }
 }
 
-async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self', live?: boolean } = {}) {
+async function runVueWorkflow(
+  targetIds?: string[],
+  opts: { rerollScope?: 'self', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
+): Promise<boolean> {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
     toast.error('Canvas not ready', { description: 'Give it a moment and try again.' })
-    return
+    return false
   }
 
   // Ensure the cached /object_info schema is current (the mount-time fetch can
@@ -394,7 +397,7 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
   if (!workflow?.nodes?.length) {
     console.warn('[Run] workflow has no nodes')
     toast.error('Nothing to run', { description: 'No runnable nodes were found for this action.' })
-    return
+    return false
   }
 
   // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
@@ -403,6 +406,32 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
   // Stamp the tab's stable project UUID so history entries can be grouped
   if (activeTab.value.projectUuid) {
     plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
+  }
+
+  // Cost guard: estimate the exact set of nodes about to run and confirm
+  // expensive runs before any side-effecting prep (compositor uploads) or
+  // queueing. Live-preview runs never prompt.
+  if (!opts.skipCostConfirm && !opts.live) {
+    const vnodes = vueCanvasRef.value.getNodes?.() || []
+    const estInput = (plainWorkflow.nodes as any[])
+      .filter((n: any) => (n.mode ?? 0) !== 2)
+      .map((wn: any) => {
+        const vn = vnodes.find((v: any) => String(v.id) === String(wn.id))
+        return {
+          id: String(wn.id),
+          type: String(wn.type || ''),
+          title: vn?.data?.title,
+          badgeExpr: vn?.data?.priceBadge?.expr ?? null,
+        }
+      })
+    const single = estimateUsdForNodes(estInput)
+    if (single) {
+      const iterations = Math.max(1, opts.costConfirmIterations || 1)
+      const est: CostEstimate = { ...single, usd: single.usd * iterations }
+      if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
+        return false
+      }
+    }
   }
 
   // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
@@ -449,7 +478,7 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
   if (!iframe?.contentWindow) {
     console.error('[Run] bridge iframe not found or not ready')
     toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
-    return
+    return false
   }
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
@@ -472,6 +501,7 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
     const root = document.querySelector('.vue-node-canvas-root') as HTMLElement | null
     root?.focus({ preventScroll: true })
   })
+  return true
 }
 
 // Filtered-run events from the canvas context menu (Run Group, Run Selection).
@@ -589,7 +619,16 @@ async function maybeRunWithTextAutofill(targetIds?: string[], opts: { rerollScop
       // a failed iteration would silently inherit the previous text.
       delete target.data.text
       const completed = awaitExecutionComplete()
-      await runVueWorkflow(targetIds, opts)
+      const queued = await runVueWorkflow(targetIds, {
+        ...opts,
+        ...(iter === 0
+          ? { costConfirmIterations: emptySlots.length }
+          : { skipCostConfirm: true }),
+      })
+      if (queued === false) {
+        completed.catch(() => {}) // listener self-cleans on its own timeout
+        break
+      }
       try {
         await completed
       } catch (err) {
@@ -680,7 +719,10 @@ async function handleRunTextIterator(e: Event) {
       // Materialize downstream sinks before queuing — same dance as
       // handleRunFiltered. Iterator only ever runs from this one node.
       const expanded = canvas.materializeAutoImageSinks?.([nodeId]) ?? [nodeId]
-      await runVueWorkflow(expanded)
+      const queued = await runVueWorkflow(expanded, i === 0
+        ? { costConfirmIterations: entries.length }
+        : { skipCostConfirm: true })
+      if (queued === false) break // user declined the cost confirm
       // Small breather so the bridge / queue settles before the next.
       await new Promise(r => setTimeout(r, 250))
     }
@@ -695,6 +737,7 @@ onMounted(() => {
   window.addEventListener('comfynext:runAll', handleRunAll)
   window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
+  runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
   ;(window as any).__reloadCanvas = forceReloadCanvas
@@ -704,6 +747,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runAll', handleRunAll)
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
+  if (runEstimateTimer) clearInterval(runEstimateTimer)
 })
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
@@ -1470,6 +1514,34 @@ watch(credits, (newVal) => {
 const userProfile = ref<{ email?: string | null, displayName?: string | null, photoURL?: string | null, uid?: string | null, providerId?: string | null } | null>(null)
 const userPopupOpen = ref(false)
 
+// Pre-run cost guard — promise-based confirm so runVueWorkflow can await it.
+const costConfirm = ref<{ estimate: CostEstimate; iterations: number; resolve: (ok: boolean) => void } | null>(null)
+function confirmRunCost(estimate: CostEstimate, iterations = 1): Promise<boolean> {
+  return new Promise((resolve) => { costConfirm.value = { estimate, iterations, resolve } })
+}
+function resolveCostConfirm(ok: boolean) {
+  costConfirm.value?.resolve(ok)
+  costConfirm.value = null
+}
+function costConfirmThresholdUsd(): number {
+  const raw = useLocalSettings().getLocalSetting('ComfyNext.Cost.ConfirmThresholdUsd')
+  const n = parseFloat(raw ?? '')
+  return Number.isFinite(n) && n >= 0 ? n : 1
+}
+
+// Rolling estimate for the Run button. Polled (not computed) because the
+// canvas nodes live behind a component ref, outside our reactivity graph.
+const runEstimate = ref<CostEstimate | null>(null)
+let runEstimateTimer: ReturnType<typeof setInterval> | null = null
+function updateRunEstimate() {
+  if (!vueNodesEnabled.value || activeTab.value?.type !== 'project') {
+    runEstimate.value = null
+    return
+  }
+  const nodes = vueCanvasRef.value?.getNodes?.() || []
+  runEstimate.value = estimateUsdForNodes(vueNodesToEstimateInput(nodes))
+}
+
 // Credits modal (native Vue — no iframe needed)
 const creditsModalOpen = ref(false)
 const creditsAmount = ref(50)
@@ -1990,6 +2062,42 @@ function dismissRunResult() {
       tabindex="-1"
     />
 
+    <!-- Pre-run cost confirm -->
+    <div
+      v-if="costConfirm"
+      class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60"
+      @click.self="resolveCostConfirm(false)"
+    >
+      <div class="w-[360px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl p-4">
+        <div class="text-sm font-semibold text-white mb-1">
+          This run costs ~${{ costConfirm.estimate.usd.toFixed(2) }}
+        </div>
+        <div v-if="costConfirm.iterations > 1" class="text-[11px] text-white/50 mb-2">
+          {{ costConfirm.iterations }} runs × ~${{ (costConfirm.estimate.usd / costConfirm.iterations).toFixed(2) }} each
+        </div>
+        <div class="max-h-[160px] overflow-y-auto mb-3 space-y-1">
+          <div
+            v-for="item in costConfirm.estimate.breakdown"
+            :key="item.id"
+            class="flex items-center justify-between gap-3 text-[11px] text-white/60"
+          >
+            <span class="truncate">{{ item.label }}</span>
+            <span class="tabular-nums shrink-0">${{ item.usd.toFixed(2) }}</span>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs text-white/70 hover:bg-white/10 transition-colors cursor-pointer"
+            @click="resolveCostConfirm(false)"
+          >Cancel</button>
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-action hover:bg-comfy-blue/80 transition-colors cursor-pointer"
+            @click="resolveCostConfirm(true)"
+          >Run anyway</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Credits modal -->
     <Transition
       enter-active-class="transition-all duration-200 ease-out"
@@ -2444,10 +2552,13 @@ function dismissRunResult() {
         >
           <button
             class="flex items-center gap-1.5 bg-action hover:bg-comfy-blue/80 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
-            @click="runVueWorkflow"
+            @click="() => runVueWorkflow()"
           >
             <Play class="size-3.5 text-white fill-white" />
             <span class="text-sm font-semibold text-white">Run</span>
+            <span v-if="runEstimate" class="text-[11px] font-medium text-white/75 tabular-nums">
+              ~${{ runEstimate.usd.toFixed(2) }}
+            </span>
           </button>
           <button
             class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
