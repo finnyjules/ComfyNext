@@ -9,7 +9,7 @@ import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
-import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer } from '~/composables/useCompositorLayers'
+import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
@@ -44,6 +44,8 @@ const props = defineProps<{
   workflow: any
   activeTool?: string // 'select' | 'hand'
   activeWorker?: number // parallel-run pool: the worker this canvas's tab runs on (0 = default)
+  displayedCanvasId?: string | null // multi-canvas: which doc canvas is on screen
+  runningCanvasId?: string | null // multi-canvas: which doc canvas the in-flight run was queued from
 }>()
 
 // Parallel-run pool: which node is currently executing on each worker, so a
@@ -58,10 +60,23 @@ function eventWorker(src: Window | null): number {
   }
   return 0 // shared iframe / single-worker
 }
+// Multi-canvas: does the in-flight run belong to the canvas on screen? Node
+// ids are small sequential ints that collide across a project's canvases, so
+// "find node by id" is only safe when the displayed canvas IS the run's
+// canvas. Null on either side (legacy paths, single-canvas docs not yet
+// loaded) means no scoping info — behave as before.
+const runScopeMatches = computed(() =>
+  props.runningCanvasId == null
+  || props.displayedCanvasId == null
+  || props.runningCanvasId === props.displayedCanvasId,
+)
+
 // Re-light the node currently running on the now-active worker, so switching to
 // a still-running canvas shows its animation instead of going blank.
 function applyRunningForActiveWorker() {
-  const target = runningNodeByWorker[props.activeWorker ?? 0] || null
+  const target = runScopeMatches.value
+    ? (runningNodeByWorker[props.activeWorker ?? 0] || null)
+    : null
   for (const n of nodes.value as any[]) {
     const should = !!target && n.id === target
     if (!!n.data?.running !== should) n.data = { ...n.data, running: should }
@@ -72,6 +87,24 @@ function applyRunningForActiveWorker() {
   }
 }
 watch(() => props.activeWorker, () => nextTick(applyRunningForActiveWorker))
+
+// 'executed' results that arrived while their canvas wasn't on screen, keyed
+// by the run's canvas id. Applied (and cleared) when that canvas is shown
+// again — see the workflow prop watch. Without this, a run finishing on a
+// background canvas would either lose its result or, worse, deliver it to a
+// same-id node on the displayed canvas.
+const pendingTakesByCanvas: Record<string, Array<{ nodeId: string, take: any }>> = {}
+
+function applyPendingTakesForDisplayedCanvas() {
+  const canvasId = props.displayedCanvasId
+  if (!canvasId || !pendingTakesByCanvas[canvasId]?.length) return
+  const pending = pendingTakesByCanvas[canvasId]
+  delete pendingTakesByCanvas[canvasId]
+  for (const { nodeId, take } of pending) {
+    const target = (nodes.value as any[]).find((n: any) => n.id === nodeId)
+    if (target) target.data = appendTake({ ...target.data }, take)
+  }
+}
 
 // Groups round-trip through useVueNodes via a bridge object. Methods are
 // reassigned below once useCanvasGroups is instantiated; this dance avoids
@@ -875,6 +908,11 @@ async function handleDrop(event: DragEvent) {
 // Load workflow when prop changes (ensure object_info is ready first)
 // Track the workflow identity to avoid re-processing the same object
 let lastWorkflowRef: any = null
+// True from "new workflow prop accepted" until the graph rebuild lands. While
+// set, getWorkflow() still serializes the PREVIOUS graph — callers that
+// snapshot-then-save (tab switch, canvas switch) must check isApplyingWorkflow
+// first or they'd write stale content into the wrong slot.
+const applyingWorkflow = ref(false)
 watch(
   () => props.workflow,
   async (wf) => {
@@ -885,9 +923,20 @@ watch(
     lastWorkflowRef = wf
     rootWorkflow.value = wf
     resetNav()
-    await fetchObjectInfo()
-    convertFromLiteGraph(wf, wf.definitions)
-    nextTick(() => fitView({ padding: 0.2 }))
+    applyingWorkflow.value = true
+    try {
+      await fetchObjectInfo()
+      convertFromLiteGraph(wf, wf.definitions)
+    } finally {
+      applyingWorkflow.value = false
+    }
+    // Multi-canvas: results that landed while this canvas was off-screen, and
+    // the running glow if its run is still in flight (the rebuild wiped both).
+    applyPendingTakesForDisplayedCanvas()
+    nextTick(() => {
+      applyRunningForActiveWorker()
+      fitView({ padding: 0.2 })
+    })
   },
   { immediate: true },
 )
@@ -963,6 +1012,61 @@ async function handleAddNode(e: Event) {
   nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides))
 }
 
+// Edit as Frame: convert a layer-splitting node's results into a Frame
+// artifact wired next to it. Layerize → background as wired layer1 + the
+// Ideogram text containers as editable local text layers; Split-photo →
+// clean background (layer1) + subject cutout (layer2) as wired layers. The
+// Frame's unified stack then lets any layer reorder above/below any other.
+async function handleEditAsFrame(e: Event) {
+  const nodeId = String((e as CustomEvent).detail?.nodeId ?? '')
+  const src = (nodes.value as any[]).find((n: any) => n.id === nodeId)
+  if (!src) return
+  if (!objectInfo.value['Compositor']) await fetchObjectInfo()
+  if (!objectInfo.value['Compositor']) return
+
+  const isLayerize = src.data?.nodeType === 'LayerizeGraphicNode'
+  const parsed = isLayerize ? parseIdeogramLayers(String(src.data?.text || '')) : null
+  if (isLayerize && (!parsed || !parsed.textLayers.length)) {
+    console.warn('[EditAsFrame] no usable text layers in layers_json')
+    if (!parsed) return
+  }
+
+  const pos = { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 120, y: src.position?.y ?? 0 }
+  // Artboard size = the resolution Ideogram re-rendered at (its text coords
+  // are in that space, NOT the input image's) — or layer-1-driven for splits.
+  const frame = createNodeData('Compositor', pos, parsed ? { width: parsed.width, height: parsed.height } : undefined)
+  const frameProps = (frame.data.properties ||= {}) as Record<string, any>
+
+  const wire = (outputIdx: number, inputName: string) => {
+    const idx = (frame.data.inputs as any[]).findIndex((i: any) => i.name === inputName)
+    if (idx < 0) return
+    edges.value.push({
+      id: `e-frame-${frame.id}-${inputName}`,
+      source: src.id,
+      sourceHandle: `output-${outputIdx}`,
+      target: frame.id,
+      targetHandle: `input-${idx}`,
+      type: 'comfy',
+      data: { dataType: 'IMAGE' },
+    } as any)
+  }
+
+  if (parsed) {
+    frameProps.comfynext_frame = { ...(frameProps.comfynext_frame || {}), preset: 'custom' }
+    frameProps.comfynext_localLayers = parsed.textLayers
+    // Background at the bottom of the unified stack, every text layer above.
+    frameProps.comfynext_stackOrder = ['w:1', ...parsed.textLayers.map((l) => `l:${l.id}`)]
+    ensureLayerFonts(parsed.textLayers as any, parsed.width).catch(() => {})
+    nodes.value.push(frame as any)
+    wire(0, 'layer1') // text-free background
+  } else {
+    frameProps.comfynext_stackOrder = ['w:1', 'w:2']
+    nodes.value.push(frame as any)
+    wire(1, 'layer1') // clean background plate → bottom
+    wire(0, 'layer2') // subject cutout → top
+  }
+}
+
 // Subgraph navigation: double-click to enter
 function handleNodeDoubleClick({ node }: { node: any }) {
   if (!node.data?.isSubgraph || !node.data?.subgraphId) return
@@ -1036,6 +1140,36 @@ function getWorkflowWithSubgraphs() {
   return convertToLiteGraph()
 }
 
+// Build a Take from a bridge 'executed' event, or null if the payload is
+// empty (a ui-only `executed` shouldn't pile up blank takes).
+function takeFromExecutedEvent(event: MessageEvent): any | null {
+  const output = event.data.output
+  if (!output) return null
+  // Parallel-run pool: a result produced by an extra worker (its iframe is
+  // tagged data-worker) lives on THAT worker's origin. The default :8188
+  // /view proxy can't see other workers' files and filenames collide, so
+  // make those URLs absolute to the producing worker. Worker 0 / single
+  // worker → relative (served via the proxy, unchanged).
+  let originPrefix = ''
+  const src = event.source as Window | null
+  if (src) {
+    for (const f of document.querySelectorAll('iframe[data-worker]')) {
+      const frame = f as HTMLIFrameElement
+      if (frame.contentWindow === src) { originPrefix = new URL(frame.src).origin; break }
+    }
+  }
+  const toUrl = (f: any) => {
+    const params = new URLSearchParams({ filename: f.filename, type: f.type })
+    if (f.subfolder) params.set('subfolder', f.subfolder)
+    // Cache-buster: live-preview nodes reuse a fixed filename, so without
+    // a unique query the browser would serve the stale cached file.
+    params.set('t', String(Date.now()))
+    return `${originPrefix}/view?${params}`
+  }
+  const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
+  return takeHasContent(take) ? take : null
+}
+
 // Listen for execution progress from bridge (via postMessage)
 function handleBridgeMessage(event: MessageEvent) {
   if (event.data?.type !== 'comfynext-bridge') return
@@ -1052,6 +1186,20 @@ function handleBridgeMessage(event: MessageEvent) {
   if (evt === 'executing') runningNodeByWorker[evWorker] = nodeId ? String(nodeId) : null
   if (evt === 'execution_complete') runningNodeByWorker[evWorker] = null
   if (!isActiveWorker && evt !== 'executed' && evt !== 'execution_error') return
+
+  // Multi-canvas: the run belongs to another canvas of this tab — don't let
+  // its events touch the displayed graph (node ids collide across canvases,
+  // so they'd falsely light up or receive the run's results). 'executed'
+  // payloads are buffered and land when the run's canvas is shown again.
+  if (isActiveWorker && !runScopeMatches.value) {
+    if (evt === 'executed' && nodeId && event.data.output && props.runningCanvasId) {
+      const take = takeFromExecutedEvent(event)
+      if (take) {
+        ;(pendingTakesByCanvas[props.runningCanvasId] ||= []).push({ nodeId: String(nodeId), take })
+      }
+    }
+    return
+  }
 
   if (evt === 'executing') {
     // Clear all running states on nodes and edges
@@ -1098,39 +1246,15 @@ function handleBridgeMessage(event: MessageEvent) {
 
   if (evt === 'executed') {
     // Store output images/videos/audio on the node (for PreviewImage, PreviewVideo, PreviewAudio, SaveImage etc.)
-    const output = event.data.output
-    if (nodeId && output) {
+    if (nodeId && event.data.output) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
-        // Parallel-run pool: a result produced by an extra worker (its iframe is
-        // tagged data-worker) lives on THAT worker's origin. The default :8188
-        // /view proxy can't see other workers' files and filenames collide, so
-        // make those URLs absolute to the producing worker. Worker 0 / single
-        // worker → relative (served via the proxy, unchanged).
-        let originPrefix = ''
-        const src = event.source as Window | null
-        if (src) {
-          for (const f of document.querySelectorAll('iframe[data-worker]')) {
-            const frame = f as HTMLIFrameElement
-            if (frame.contentWindow === src) { originPrefix = new URL(frame.src).origin; break }
-          }
-        }
-        const toUrl = (f: any) => {
-          const params = new URLSearchParams({ filename: f.filename, type: f.type })
-          if (f.subfolder) params.set('subfolder', f.subfolder)
-          // Cache-buster: live-preview nodes reuse a fixed filename, so without
-          // a unique query the browser would serve the stale cached file.
-          params.set('t', String(Date.now()))
-          return `${originPrefix}/view?${params}`
-        }
         // Takes loop: append this run as a take instead of overwriting.
         // appendTake mirrors the new (active) take onto images/audios/text/
         // animated, so a single run stays behavior-identical while prior results
         // are preserved for compare/switch.
-        const take = buildTake((event.data as any).prompt_id ?? null, output, toUrl)
-        // Skip empties (a node that fires `executed` with a ui-only/empty
-        // payload shouldn't pile up blank takes).
-        if (takeHasContent(take)) target.data = appendTake({ ...target.data }, take)
+        const take = takeFromExecutedEvent(event)
+        if (take) target.data = appendTake({ ...target.data }, take)
       }
     }
   }
@@ -1580,6 +1704,7 @@ onMounted(() => {
   window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.addEventListener('comfynext:openAsciiOptions', handleOpenAscii)
@@ -1605,6 +1730,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
   window.removeEventListener('comfynext:openAsciiOptions', handleOpenAscii)
@@ -1876,7 +2002,10 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       if (port?.link != null) connectedSlots.push(s)
     }
     const presentKeys = [
-      ...connectedSlots.map(s => `w:${s}`),
+      // Wired keys are 1-based (`w:1` = layer1), matching ArtifactFrameNode
+      // and CompositorModal — all three surfaces must agree or saved orders
+      // get dropped as "not present".
+      ...connectedSlots.map(s => `w:${s + 1}`),
       ...locals.map(l => `l:${l.id}`),
     ]
     if (!presentKeys.length) continue
@@ -1993,8 +2122,8 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       const key = order[zi]
       if (key.startsWith('w:')) {
         await flush()
-        const slot = Number(key.slice(2))
-        setNamedWidget(comp, `layer${slot + 1}_z`, zi, objectInfo.value)
+        const layerN = Number(key.slice(2)) // 1-based: `w:1` = layer1
+        setNamedWidget(comp, `layer${layerN}_z`, zi, objectInfo.value)
       } else {
         const layer = localById.get(key.slice(2))
         if (layer) { if (!run.length) runZ = zi; run.push(layer) }
@@ -3235,6 +3364,10 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
       const outType = String(outputs[i].type).toUpperCase()
       const artifactNodeType = ARTIFACT_NODE_FOR_OUTPUT[outType]
       if (!artifactNodeType) continue
+      // Layerize's layers_json is machine data for "Edit as Frame" (the node
+      // carries it in its own result payload) — don't materialize a Text sink
+      // that would dump raw JSON on the canvas.
+      if (src.data?.nodeType === 'LayerizeGraphicNode' && outputs[i].name === 'layers_json') continue
       const schema = getSchema(artifactNodeType)
       if (!schema) continue
       // Skip if anything is already wired from this exact output handle.
@@ -3472,6 +3605,7 @@ defineExpose({
   getNodes: () => nodes.value,
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
+  isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
   fitView: () => fitView({ padding: 0.2 }),

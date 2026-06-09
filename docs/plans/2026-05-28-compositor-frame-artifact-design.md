@@ -120,6 +120,34 @@ for focused/precise work (blend, exact numbers).
 - `frontend/app/components/vue-canvas/CompositorModal.vue` — dimensions awareness;
   positioned as the focused/precise editor
 
+## Layer ingestion — flat image → editable layers (2026-06-09)
+
+The Figma-parity payoff for imports: deconstruct a flat image into Frame layers.
+Three generator nodes (`comfy_api_nodes/nodes_replicate.py`) + an **"Edit as
+Frame"** button on each that builds a wired Frame:
+
+- **`LayerizeGraphicNode`** (Ideogram Layerize, ~$0.08) — text-free background
+  + structured text JSON. The node is an output node carrying its own result
+  (`ui.text` → `data.text`), so no downstream wiring is needed.
+  `parseIdeogramLayers` (useCompositorLayers) converts Ideogram's px-space
+  containers (in its *re-rendered* `resolution`, not the input size) into
+  normalized `TextLayer`s; Edit-as-Frame wires background → layer1, sets the
+  artboard to that resolution, and stacks the text layers on top. Container
+  extraction varies by seed — zero-container results still produce a valid
+  background-only frame. Its `layers_json` STRING output is excluded from
+  auto-sink materialization (machine data, not user content).
+- **`SplitPhotoLayersNode`** (bg-remover + LaMa/Bria eraser) — RGBA subject +
+  clean background plate → wired as layer2-over-layer1.
+- **`OutpaintImageNode`** (Flux Fill / Bria Expand) — with a live zone-preview
+  on the node. Not frame-specific. *Not yet run live.*
+
+**Stack-key alignment (latent bug fixed):** persisted `comfynext_stackOrder`
+wired keys are **1-based** (`w:1` = the backend's layer1) everywhere. Before,
+ArtifactFrameNode and the submit/bake interleaver used 0-based keys while
+CompositorModal used 1-based — so wired-layer z-orders saved in one surface
+were silently dropped by the others (filtered as "not present"). All three now
+agree; pre-fix frame-saved orders fall back to the default stacking.
+
 ## Implementation notes
 
 - No `@vue-flow/node-resizer` dependency — resize manually, zoom-aware, mirroring

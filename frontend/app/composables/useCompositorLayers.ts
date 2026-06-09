@@ -143,6 +143,51 @@ function newId(): string {
   return `ll-${Date.now().toString(36)}-${_idSeq}`
 }
 
+// ── Ideogram Layerize import ─────────────────────────────────────────────────
+// Convert the layers_json emitted by LayerizeGraphicNode (Ideogram Layerize)
+// into Frame text layers. Ideogram reports a `resolution` (often different
+// from the input size — it re-renders) and text containers whose item boxes
+// are top-left px rects in that resolution space; our layers are normalized
+// center coords, so the math here is the whole conversion. Schema sample:
+//   { data: [{ resolution: "1152x864", text_containers: [{ items: [{
+//       x, y, width, height, angle, alignment, font_file, font_size,
+//       line_height, spans: [{ color, text }] }] }] }] }
+export interface IdeogramImport { width: number; height: number; textLayers: TextLayer[] }
+
+export function parseIdeogramLayers(json: string): IdeogramImport | null {
+  let root: any
+  try { root = JSON.parse(json) } catch { return null }
+  const d = root?.data?.[0]
+  if (!d) return null
+  const [W, H] = String(d.resolution || '').split('x').map(Number)
+  if (!W || !H) return null
+  const textLayers: TextLayer[] = []
+  for (const container of d.text_containers ?? []) {
+    for (const item of container.items ?? []) {
+      const spans: any[] = item.spans ?? []
+      const text = spans.map((s) => s?.text ?? '').join('')
+      if (!text.trim()) continue
+      // 'Montserrat-Medium.ttf' → 'Montserrat'; camel-case splits get spaces.
+      const file = String(item.font_file || '')
+      const family = file.replace(/\.(ttf|otf)$/i, '').split('-')[0]
+        .replace(/([a-z])([A-Z])/g, '$1 $2').trim()
+      textLayers.push(createTextLayer({
+        x: ((item.x ?? 0) + (item.width ?? 0) / 2) / W,
+        y: ((item.y ?? 0) + (item.height ?? 0) / 2) / H,
+        rotation: Number(item.angle) || 0,
+        text,
+        fontFamily: family || 'Inter',
+        fontWeight: /bold|black|heavy|700|800|900/i.test(file) ? 700 : 400,
+        fontSize: (Number(item.font_size) || 32) / W,
+        color: spans[0]?.color || '#ffffff',
+        align: (['left', 'center', 'right'] as const).includes(item.alignment) ? item.alignment : 'center',
+        lineHeight: typeof item.line_height === 'number' && item.line_height > 0 ? item.line_height : 1.2,
+      }))
+    }
+  }
+  return { width: W, height: H, textLayers }
+}
+
 // ── Factories ───────────────────────────────────────────────────────────────
 
 export function createTextLayer(partial: Partial<TextLayer> = {}): TextLayer {

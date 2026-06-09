@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Dices, Download, Loader2, Play, Upload } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
@@ -270,6 +270,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Crisp takes nothing but the image. Gate them so the node only shows what
   // the selected model actually uses.
   UpscaleImageNode: (name, values, defs) => isVisibleForModel('UpscaleImageNode', name, values, defs),
+  // Outpaint: Flux Fill uses a direction picker; Bria Expand uses an aspect
+  // ratio. Show only the control the selected engine actually consumes.
+  OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
 }
 
 // For each use-case node, map model-gated widget names → the Model combo value
@@ -290,14 +293,28 @@ const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
   // Upscale engines. `model` is ungated (always shown). Recraft Crisp takes
   // only the image, so none of these match it → it shows just the model picker.
   UpscaleImageNode: {
-    prompt:              'Clarity',
-    scale_factor:        ['Clarity', 'Real-ESRGAN', 'Topaz'],   // not Recraft Crisp
-    creativity:          'Clarity',
-    resemblance:         'Clarity',
-    negative_prompt:     'Clarity',
-    num_inference_steps: 'Clarity',
-    seed:                'Clarity',
-    face_enhance:        ['Real-ESRGAN', 'Topaz'],
+    prompt:                 'Clarity',
+    scale_factor:           ['Clarity', 'Crystal', 'Real-ESRGAN'],   // Topaz uses topaz_upscale_factor; Recraft takes none
+    creativity:             'Clarity',
+    resemblance:            'Clarity',
+    negative_prompt:        'Clarity',
+    num_inference_steps:    'Clarity',
+    seed:                   'Clarity',
+    face_enhance:           ['Real-ESRGAN', 'Topaz'],
+    // Topaz-only controls (topazlabs/image-upscale)
+    topaz_enhance_model:    'Topaz',
+    topaz_upscale_factor:   'Topaz',
+    topaz_subject_detection:'Topaz',
+    topaz_output_format:    'Topaz',
+    topaz_face_creativity:  'Topaz',
+    topaz_face_strength:    'Topaz',
+    // Crystal-only controls (philz1337x/crystal-upscaler)
+    crystal_creativity:     'Crystal',
+    crystal_output_format:  'Crystal',
+  },
+  OutpaintImageNode: {
+    direction:    'Flux Fill',     // directional / zoom-out picker
+    aspect_ratio: 'Bria Expand',   // target canvas ratio
   },
 }
 
@@ -716,6 +733,79 @@ function getUpstreamImage(portName: string): string | null {
   return null
 }
 
+// --- Outpaint zone visualization (OutpaintImageNode only) -------------------
+// A schematic on the node showing the original image inside the expanded
+// canvas, with the new (to-be-generated) area hatched. Updates live as the
+// model / direction / aspect-ratio widgets change. Geometry is exact for
+// Zoom-out / Make-square / Bria aspect ratios; directional outpaints use a
+// representative extent (the API doesn't expose the exact amount).
+const outpaintSrcAR = ref(1)
+function onOutpaintImgLoad(e: Event) {
+  const img = e.target as HTMLImageElement
+  if (img.naturalWidth && img.naturalHeight) {
+    outpaintSrcAR.value = img.naturalWidth / img.naturalHeight
+  }
+}
+const outpaintSrc = computed(() =>
+  props.data.nodeType === 'OutpaintImageNode' ? getUpstreamImage('image') : null)
+
+const outpaintGeom = computed(() => {
+  if (props.data.nodeType !== 'OutpaintImageNode') return null
+  const wv = props.data.widgetsValues || []
+  const model = wv[widgetIndex('model')] ?? 'Flux Fill'
+  const ar = outpaintSrcAR.value || 1
+  // Original rect, normalized so its longer side = 1.
+  const ow = ar >= 1 ? 1 : ar
+  const oh = ar >= 1 ? 1 / ar : 1
+  let cw = ow, ch = oh, ox = 0, oy = 0
+  let approx = false
+
+  if (model === 'Bria Expand') {
+    const [rw, rh] = String(wv[widgetIndex('aspect_ratio')] ?? '16:9').split(':').map(Number)
+    const targetAR = (rw || 16) / (rh || 9)
+    if (targetAR >= ow / oh) { ch = oh; cw = oh * targetAR } else { cw = ow; ch = ow / targetAR }
+    ox = (cw - ow) / 2; oy = (ch - oh) / 2
+  } else {
+    const dir = wv[widgetIndex('direction')] ?? 'Zoom out 1.5x'
+    const ext = 0.5  // representative directional extent
+    if (dir === 'Zoom out 1.5x') { cw = ow * 1.5; ch = oh * 1.5; ox = (cw - ow) / 2; oy = (ch - oh) / 2 }
+    else if (dir === 'Zoom out 2x') { cw = ow * 2; ch = oh * 2; ox = (cw - ow) / 2; oy = (ch - oh) / 2 }
+    else if (dir === 'Make square') { const s = Math.max(ow, oh); cw = s; ch = s; ox = (s - ow) / 2; oy = (s - oh) / 2 }
+    else if (dir === 'Left outpaint') { cw = ow * (1 + ext); ch = oh; ox = ow * ext; oy = 0; approx = true }
+    else if (dir === 'Right outpaint') { cw = ow * (1 + ext); ch = oh; ox = 0; oy = 0; approx = true }
+    else if (dir === 'Top outpaint') { cw = ow; ch = oh * (1 + ext); ox = 0; oy = oh * ext; approx = true }
+    else if (dir === 'Bottom outpaint') { cw = ow; ch = oh * (1 + ext); ox = 0; oy = 0; approx = true }
+  }
+  // Fit the whole canvas into a display box, preserving aspect.
+  const MAXW = 232, MAXH = 150
+  const s = Math.min(MAXW / cw, MAXH / ch)
+  const pct = Math.round((ow * oh) / (cw * ch) * 100)
+  // Display-space (px) rects for the HTML/CSS render.
+  return {
+    dispW: Math.round(cw * s), dispH: Math.round(ch * s),
+    thumbLeft: ox * s, thumbTop: oy * s, thumbW: ow * s, thumbH: oh * s,
+    pct, approx,
+  }
+})
+
+// --- Edit as Frame (layer-splitting nodes) -----------------------------------
+// Layerize / Split-photo deconstruct a flat image into layers; this hands the
+// result to a Frame artifact (wired image layers + — for Layerize — the text
+// containers converted into editable local text layers). The canvas owns the
+// node/edge creation; we just announce the intent.
+const showEditAsFrame = computed(() =>
+  props.data.nodeType === 'LayerizeGraphicNode' || props.data.nodeType === 'SplitPhotoLayersNode')
+const editAsFrameReady = computed(() => {
+  // Layerize needs its run result — the text layers live in the layers_json
+  // payload (mirrored to data.text). Split-photo only wires outputs, so the
+  // Frame can be created before the first run.
+  if (props.data.nodeType === 'LayerizeGraphicNode') return !!(props.data as any).text
+  return true
+})
+function editAsFrame() {
+  window.dispatchEvent(new CustomEvent('comfynext:editAsFrame', { detail: { nodeId: props.id } }))
+}
+
 // Compute preview images: from execution output or LoadImage widget value
 const previewImages = computed(() => {
   // Execution output images (PreviewImage, SaveImage, etc.)
@@ -967,6 +1057,47 @@ watch(previewImages, (urls) => {
         />
         <span v-else class="flex-1" />
       </div>
+    </div>
+
+    <!-- Outpaint zone preview: original image inside the expanded canvas,
+         new area hatched. OutpaintImageNode only. Pure HTML/CSS so it never
+         re-decodes the source image during canvas pan/zoom (SVG <image> did). -->
+    <div v-if="data.nodeType === 'OutpaintImageNode' && outpaintGeom"
+         class="border-t border-[#2a2a2a] pt-2 pb-1 flex flex-col items-center gap-1">
+      <div class="op-canvas relative overflow-hidden rounded-[3px]"
+           :style="{ width: outpaintGeom.dispW + 'px', height: outpaintGeom.dispH + 'px' }">
+        <!-- Original image (thumbnail if wired, else solid block) -->
+        <img v-if="outpaintSrc" :src="outpaintSrc" alt="" draggable="false"
+             class="absolute object-fill select-none pointer-events-none"
+             :style="{ left: outpaintGeom.thumbLeft + 'px', top: outpaintGeom.thumbTop + 'px',
+                       width: outpaintGeom.thumbW + 'px', height: outpaintGeom.thumbH + 'px',
+                       outline: '1px solid #e8e8e8', outlineOffset: '-1px' }"
+             @load="onOutpaintImgLoad">
+        <div v-else class="absolute bg-[#3a3a3a]"
+             :style="{ left: outpaintGeom.thumbLeft + 'px', top: outpaintGeom.thumbTop + 'px',
+                       width: outpaintGeom.thumbW + 'px', height: outpaintGeom.thumbH + 'px' }" />
+      </div>
+      <span class="text-[9px] text-[#6f6f6f] leading-none">
+        new area · original {{ outpaintGeom.pct }}% of canvas{{ outpaintGeom.approx ? ' (approx)' : '' }}
+      </span>
+    </div>
+
+    <!-- Edit as Frame: hand the split layers to a Frame artifact -->
+    <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-1.5">
+      <button
+        class="w-full flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] font-medium transition-colors"
+        :class="editAsFrameReady
+          ? 'bg-white/[0.07] hover:bg-white/[0.14] text-white/85 cursor-pointer'
+          : 'bg-white/[0.03] text-white/30 cursor-not-allowed'"
+        :disabled="!editAsFrameReady"
+        :title="editAsFrameReady
+          ? 'Create a Frame with these results as editable layers'
+          : 'Run the node first — the editable text layers come from the result'"
+        @click.stop="editAsFrame"
+      >
+        <Frame class="size-3.5" />
+        Edit as Frame
+      </button>
     </div>
 
     <!-- Widgets (Compositor edits via its dedicated modal, so we hide its inline controls) -->
@@ -1288,6 +1419,16 @@ watch(previewImages, (urls) => {
 <style scoped>
 .comfy-node {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Outpaint zone preview: dark base + blue diagonal hatch marks the new area,
+   dashed edge marks the expanded canvas. The original thumbnail sits on top. */
+.op-canvas {
+  box-sizing: border-box;
+  background-color: #161d33;
+  background-image: repeating-linear-gradient(
+    45deg, transparent 0 5px, rgba(91, 123, 214, 0.55) 5px 6px);
+  border: 1px dashed rgba(91, 123, 214, 0.8);
 }
 
 /* Sweeping glow border when running */

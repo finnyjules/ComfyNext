@@ -330,7 +330,11 @@ const editingStyle = computed(() => {
 // This is the single source of truth for depth, so any layer — a dropped shape
 // or a wired image — can sit above or below any other, like Figma/Photoshop.
 type StackKey = string
-function wiredKey(slot: number): StackKey { return `w:${slot}` }
+// Wired keys are 1-BASED (`w:1` = the backend's layer1) so the persisted
+// order round-trips with CompositorModal, which numbers slots the same way.
+// The frame's internal WiredLayer.slot stays 0-based (input-port index), so
+// the +1/-1 happens only at the persistence boundary here.
+function wiredKey(slot: number): StackKey { return `w:${slot + 1}` }
 function localKey(id: string): StackKey { return `l:${id}` }
 
 // Present layers in the legacy default order: wired at the bottom, locals on top
@@ -354,7 +358,7 @@ function resolveKey(key: StackKey):
   | { type: 'local'; layer: LocalLayer }
   | null {
   if (key.startsWith('w:')) {
-    const slot = Number(key.slice(2))
+    const slot = Number(key.slice(2)) - 1 // persisted keys are 1-based (layerN)
     const layer = wiredLayers.value.find(l => l.slot === slot)
     return layer ? { type: 'wired', layer } : null
   }
