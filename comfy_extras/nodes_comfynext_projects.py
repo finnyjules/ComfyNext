@@ -18,10 +18,12 @@ On-disk layout (under the ComfyUI user dir):
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import shutil
 import tempfile
+import uuid as uuidlib
 
 
 # ---------- pure storage layer (dependency-light, unit-tested) --------------
@@ -173,6 +175,52 @@ def read_version(root: str, uuid: str, vid: str) -> dict | None:
     if not (_is_safe_id(uuid) and _is_safe_id(vid)):
         return None
     return _read_json(_version_file(root, uuid, vid))
+
+
+def _generations_file(root: str, uuid: str) -> str:
+    return os.path.join(_project_dir(root, uuid), "generations.jsonl")
+
+
+def list_generations(root: str, uuid: str) -> list[dict]:
+    """All recorded runs for a project, newest first. Corrupt or truncated
+    lines (e.g. a crash mid-append) are skipped, never fatal."""
+    if not _is_safe_id(uuid):
+        return []
+    out: list[dict] = []
+    try:
+        with open(_generations_file(root, uuid), "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+    except OSError:
+        return []
+    out.sort(key=lambda g: g.get("ts") or 0, reverse=True)
+    return out
+
+
+def append_generation(root: str, uuid: str, record: dict, *, now: int = 0) -> dict | None:
+    """Append one run record (JSONL). Dedup by promptId so history backfill is
+    idempotent — returns None when that promptId is already recorded."""
+    if not _is_safe_id(uuid):
+        raise ValueError("invalid project uuid")
+    pid = record.get("promptId")
+    if pid and any(g.get("promptId") == pid for g in list_generations(root, uuid)):
+        return None
+    rec = dict(record)
+    rec.setdefault("id", f"g_{uuidlib.uuid4().hex[:12]}")
+    rec.setdefault("ts", now)
+    path = _generations_file(root, uuid)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+    return rec
 
 
 # ---------- aiohttp routes (thin shell over the storage layer) --------------

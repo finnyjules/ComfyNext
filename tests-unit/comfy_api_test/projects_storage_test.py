@@ -155,3 +155,52 @@ def test_written_files_are_valid_json_on_disk(root):
     P.ensure_project(root, "p", name="Disk", now=1)
     with open(P._project_file(root, "p"), "r", encoding="utf-8") as f:
         assert json.load(f)["name"] == "Disk"
+
+
+# --------------------------------------------------------------------------- #
+# Generation records (durable per-run history)
+# --------------------------------------------------------------------------- #
+
+def test_append_and_list_generations_newest_first(root):
+    P.ensure_project(root, "p", now=1)
+    P.append_generation(root, "p", {"id": "g_1", "promptId": "pr1", "ts": 100, "outputs": []})
+    P.append_generation(root, "p", {"id": "g_2", "promptId": "pr2", "ts": 300, "outputs": []})
+    P.append_generation(root, "p", {"id": "g_3", "promptId": "pr3", "ts": 200, "outputs": []})
+    gens = P.list_generations(root, "p")
+    assert [g["id"] for g in gens] == ["g_2", "g_3", "g_1"]
+
+
+def test_append_generation_dedups_by_prompt_id(root):
+    P.ensure_project(root, "p", now=1)
+    first = P.append_generation(root, "p", {"id": "g_1", "promptId": "pr1", "ts": 100})
+    assert first is not None
+    dup = P.append_generation(root, "p", {"id": "g_2", "promptId": "pr1", "ts": 200})
+    assert dup is None
+    assert len(P.list_generations(root, "p")) == 1
+
+
+def test_append_generation_fills_id_and_ts(root):
+    P.ensure_project(root, "p", now=1)
+    stored = P.append_generation(root, "p", {"promptId": "pr1"}, now=555)
+    assert stored["id"].startswith("g_")
+    assert stored["ts"] == 555
+
+
+def test_list_generations_missing_file_or_project(root):
+    assert P.list_generations(root, "nope") == []
+    P.ensure_project(root, "p", now=1)
+    assert P.list_generations(root, "p") == []
+
+
+def test_list_generations_skips_corrupt_lines(root):
+    P.ensure_project(root, "p", now=1)
+    P.append_generation(root, "p", {"id": "g_1", "promptId": "pr1", "ts": 100})
+    with open(P._generations_file(root, "p"), "a", encoding="utf-8") as f:
+        f.write("{ not valid json\n")
+    P.append_generation(root, "p", {"id": "g_2", "promptId": "pr2", "ts": 200})
+    assert [g["id"] for g in P.list_generations(root, "p")] == ["g_2", "g_1"]
+
+
+def test_append_generation_bad_uuid_raises(root):
+    with pytest.raises(ValueError):
+        P.append_generation(root, "../evil", {"promptId": "x"})
