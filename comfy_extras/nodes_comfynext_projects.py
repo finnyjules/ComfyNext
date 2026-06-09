@@ -361,6 +361,46 @@ try:
             return web.json_response({"error": "not found"}, status=404)
         return web.json_response({"version": version})
 
+    @PromptServer.instance.routes.post("/comfynext/projects/{uuid}/generations")
+    async def _generations_post_route(request):
+        uid = request.match_info["uuid"]
+        try:
+            body = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+        now = _now_ms()
+        record = dict(body.get("generation") or {})
+        record.setdefault("id", f"g_{_uuidlib.uuid4().hex[:12]}")
+        record.setdefault("ts", now)
+        try:
+            ensure_project(_root(), uid, name=body.get("projectName") or "Untitled project", now=now)
+            stored = append_generation(_root(), uid, record, now=now)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        if stored is None:  # promptId already recorded (backfill re-post)
+            return web.json_response({"id": record["id"], "deduped": True})
+        append_spend(spend_file(folder_paths.get_user_directory()), {
+            "ts": stored.get("ts"),
+            "projectUuid": uid,
+            "promptId": stored.get("promptId"),
+            "usd": stored.get("usd"),
+            "credits": stored.get("credits"),
+        })
+        project = read_project(_root(), uid)
+        if project:
+            project["updatedAt"] = now
+            write_project(_root(), project)
+        return web.json_response({"id": stored["id"]})
+
+    @PromptServer.instance.routes.get("/comfynext/projects/{uuid}/generations")
+    async def _generations_list_route(request):
+        return web.json_response({"generations": list_generations(_root(), request.match_info["uuid"])})
+
+    @PromptServer.instance.routes.get("/comfynext/spend/summary")
+    async def _spend_summary_route(_request):
+        path = spend_file(folder_paths.get_user_directory())
+        return web.json_response(spend_summary(path, now_ms=_now_ms()))
+
 except Exception as e:  # pragma: no cover - exercised only at server boot
     # No PromptServer (e.g. imported in a test / headless context) — the pure
     # storage layer above is still usable and tested directly.
