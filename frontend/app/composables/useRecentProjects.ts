@@ -1,3 +1,5 @@
+import { historyEntryToRecord } from '~/lib/generations'
+
 export interface RecentProject {
   workflowId: string
   name: string
@@ -62,112 +64,79 @@ export function useRecentProjects() {
     if (fetchedOnce && recentProjects.value.length > 0) return
     loading.value = true
     try {
-      const res = await fetch('/history')
-      const data = (await res.json()) as Record<string, any>
-
-      // Parse all executions
-      interface Execution {
-        promptId: string
-        workflowId: string
-        name: string
-        images: { filename: string; subfolder: string; type: string }[]
-        timestamp: number
-      }
-      const executions: Execution[] = []
-
-      for (const [promptId, entry] of Object.entries(data)) {
-        const e = entry as any
-        if (!e.status?.completed) continue
-
-        const images: { filename: string; subfolder: string; type: string }[] = []
-        if (e.outputs) {
-          for (const nodeOutput of Object.values(e.outputs) as any[]) {
-            if ((nodeOutput as any).images) images.push(...(nodeOutput as any).images)
-          }
-        }
-        if (images.length === 0) continue
-
-        const messages = e.status?.messages ?? []
-        const startMsg = messages.find((m: any) => m[0] === 'execution_start')
-        const timestamp = startMsg?.[1]?.timestamp ?? 0
-
-        // Get workflow ID or create fingerprint
-        const prompt = e.prompt ?? []
-        const nodes = prompt[2] ?? {}
-        const workflow = prompt[3]?.extra_pnginfo?.workflow ?? {}
-        const workflowId = workflow.extra?.projectUuid
-          || [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))].sort().join(',')
-
-        const classTypes = [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))]
-        const name = deriveProjectName(classTypes)
-
-        executions.push({ promptId, workflowId, name, images, timestamp })
-      }
-
-      // Sort by timestamp (most recent first)
-      executions.sort((a, b) => b.timestamp - a.timestamp)
-
-      // Group by workflowId
-      const groups = new Map<string, Execution[]>()
-      for (const exec of executions) {
-        const group = groups.get(exec.workflowId) || []
-        group.push(exec)
-        groups.set(exec.workflowId, group)
-      }
-
-      // Build project cards — collect last 3 images across all runs
+      const savedNames = getSavedNames()
+      const { listProjects, listGenerations, saveGeneration } = useProjects()
       const projects: RecentProject[] = []
-      for (const [workflowId, execs] of groups) {
-        const allImages: { filename: string; subfolder: string; type: string }[] = []
-        for (const exec of execs) {
-          for (const img of exec.images) {
-            allImages.push(img)
-            if (allImages.length >= 3) break
+      const durableIds = new Set<string>()
+      const recordedPromptIds = new Set<string>()
+
+      // 1) Durable projects are the primary list — names + thumbnails from
+      // their generation records, which survive ComfyUI restarts.
+      const durable = await listProjects()
+      await Promise.all(durable.map(async (d) => {
+        durableIds.add(d.uuid)
+        const gens = await listGenerations(d.uuid)
+        const images: { filename: string; subfolder: string; type: string }[] = []
+        for (const g of gens) {
+          if (g.promptId) recordedPromptIds.add(g.promptId)
+          for (const o of g.outputs || []) {
+            if (o.kind === 'image' && o.type === 'output' && images.length < 3) images.push(o)
           }
-          if (allImages.length >= 3) break
         }
-        const savedNames = getSavedNames()
         projects.push({
-          workflowId,
-          name: savedNames[workflowId] || execs[0].name,
-          promptIds: execs.map((e) => e.promptId),
-          images: allImages,
-          lastTimestamp: execs[0].timestamp,
-          runCount: execs.length,
+          workflowId: d.uuid,
+          name: d.name || savedNames[d.uuid] || 'Untitled project',
+          promptIds: gens.map((g) => g.promptId).filter(Boolean),
+          images,
+          lastTimestamp: Math.max(d.updatedAt || 0, gens[0]?.ts || 0),
+          runCount: gens.length,
         })
-      }
+      }))
 
-      // Sort projects by most recent activity
-      projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
-
-      // Overlay durable projects (Phase 0). They key off the same projectUuid as
-      // workflowId. Durable name wins; a durable project not present in /history
-      // (e.g. saved but not yet run) is appended. History stays the backbone and
-      // thumbnail source until covers + version bodies fill in. Best-effort: if
-      // the endpoint is absent (older ComfyUI), the history list stands.
+      // 2) /history fallback for pre-durable work + backfill of unrecorded
+      // runs into their durable project (idempotent — server dedups by
+      // promptId, so re-posting on every Home load is harmless).
       try {
-        const durable = await useProjects().listProjects()
-        if (durable.length) {
-          const byId = new Map(projects.map((p) => [p.workflowId, p]))
-          for (const d of durable) {
-            const existing = byId.get(d.uuid)
-            if (existing) {
-              if (d.name) existing.name = d.name
-            } else {
-              projects.push({
-                workflowId: d.uuid,
-                name: d.name || 'Untitled project',
-                promptIds: [],
-                images: [],
-                lastTimestamp: d.updatedAt || 0,
-                runCount: 0,
-              })
+        const res = await fetch('/history')
+        const data = (await res.json()) as Record<string, any>
+        const byFingerprint = new Map<string, RecentProject>()
+        for (const [promptId, entry] of Object.entries(data)) {
+          const parsed = historyEntryToRecord(promptId, entry)
+          if (!parsed) continue
+          if (parsed.projectUuid && durableIds.has(parsed.projectUuid)) {
+            if (!recordedPromptIds.has(promptId)) {
+              // Lazy migration: persist this run before history forgets it.
+              saveGeneration(parsed.projectUuid, parsed.record)
             }
+            continue // already represented by its durable project card
           }
-          projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+          const e = entry as any
+          const nodes = (e.prompt ?? [])[2] ?? {}
+          const classTypes = [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))] as string[]
+          const workflowId = parsed.projectUuid || classTypes.filter(Boolean).sort().join(',')
+          let p = byFingerprint.get(workflowId)
+          if (!p) {
+            p = {
+              workflowId,
+              name: savedNames[workflowId] || deriveProjectName(classTypes),
+              promptIds: [],
+              images: [],
+              lastTimestamp: parsed.record.ts,
+              runCount: 0,
+            }
+            byFingerprint.set(workflowId, p)
+          }
+          p.promptIds.push(promptId)
+          p.runCount++
+          p.lastTimestamp = Math.max(p.lastTimestamp, parsed.record.ts)
+          for (const o of parsed.record.outputs) {
+            if (o.kind === 'image' && p.images.length < 3) p.images.push(o)
+          }
         }
-      } catch { /* durable projects optional — history list stands */ }
+        projects.push(...byFingerprint.values())
+      } catch { /* history unreachable — durable list stands */ }
 
+      projects.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
       allProjects.value = projects
       recentProjects.value = projects.slice(0, 10)
 

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { extractOutputFiles } from '~/lib/generations'
+import { historyEntryToRecord } from '~/lib/generations'
 
 // Every saved generation in a project, grouped by project. Unlike
 // useRecentProjects (which caps at 3 images for the home cards), this keeps the
@@ -55,49 +55,67 @@ export function useProjectGenerations() {
     if (!force && fetchedOnce && generationsByProject.value.length) return
     loading.value = true
     try {
-      const res = await fetch('/history')
-      const data = (await res.json()) as Record<string, any>
       const savedNames = getSavedNames()
+      const groups = new Map<string, ProjectGenerations>()
+      const recordedPromptIds = new Set<string>()
 
-      interface Exec { promptId: string; workflowId: string; name: string; timestamp: number; assets: GenAsset[] }
-      const execs: Exec[] = []
-
-      for (const [promptId, entry] of Object.entries(data)) {
-        const e = entry as any
-        if (!e.status?.completed) continue
-
-        const startMsg = (e.status?.messages ?? []).find((m: any) => m[0] === 'execution_start')
-        const timestamp = startMsg?.[1]?.timestamp ?? 0
-
-        const prompt = e.prompt ?? []
-        const nodes = prompt[2] ?? {}
-        const workflow = prompt[3]?.extra_pnginfo?.workflow ?? {}
-        const workflowId = workflow.extra?.projectUuid
-          || [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))].sort().join(',')
-        const classTypes = [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))] as string[]
-
+      // 1) Durable records — survive ComfyUI restarts; carry per-run cost.
+      const { listProjects, listGenerations } = useProjects()
+      const durable = await listProjects()
+      await Promise.all(durable.map(async (p) => {
+        const gens = await listGenerations(p.uuid)
         const assets: GenAsset[] = []
-        for (const nodeOut of Object.values(e.outputs ?? {})) {
-          for (const o of extractOutputFiles(nodeOut)) {
-            assets.push({ ...o, promptId, timestamp })
+        for (const g of gens) {
+          if (g.promptId) recordedPromptIds.add(g.promptId)
+          for (const o of g.outputs || []) {
+            if (o.type !== 'output') continue
+            assets.push({ ...o, promptId: g.promptId, timestamp: g.ts, usd: g.usd ?? null })
           }
         }
-        if (!assets.length) continue
-        execs.push({ promptId, workflowId, name: savedNames[workflowId] || deriveProjectName(classTypes), timestamp, assets })
-      }
+        if (!assets.length) return
+        groups.set(p.uuid, {
+          workflowId: p.uuid,
+          name: p.name || savedNames[p.uuid] || 'Untitled project',
+          generations: assets,
+          lastTimestamp: assets[0]?.timestamp || p.updatedAt || 0,
+        })
+      }))
 
-      execs.sort((a, b) => b.timestamp - a.timestamp)
-
-      const groups = new Map<string, ProjectGenerations>()
-      for (const ex of execs) {
-        let g = groups.get(ex.workflowId)
-        if (!g) {
-          g = { workflowId: ex.workflowId, name: ex.name, generations: [], lastTimestamp: ex.timestamp }
-          groups.set(ex.workflowId, g)
+      // 2) Merge runs only the live /history knows about (not yet recorded,
+      // or pre-durable projects). History dies on server restart — that's
+      // exactly the gap the durable pass above closes.
+      try {
+        const res = await fetch('/history')
+        const data = (await res.json()) as Record<string, any>
+        for (const [promptId, entry] of Object.entries(data)) {
+          if (recordedPromptIds.has(promptId)) continue
+          const parsed = historyEntryToRecord(promptId, entry)
+          if (!parsed) continue
+          const e = entry as any
+          const nodes = (e.prompt ?? [])[2] ?? {}
+          const classTypes = [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))] as string[]
+          const workflowId = parsed.projectUuid
+            || classTypes.filter(Boolean).sort().join(',')
+          let g = groups.get(workflowId)
+          if (!g) {
+            g = {
+              workflowId,
+              name: savedNames[workflowId] || deriveProjectName(classTypes),
+              generations: [],
+              lastTimestamp: parsed.record.ts,
+            }
+            groups.set(workflowId, g)
+          }
+          for (const o of parsed.record.outputs) {
+            g.generations.push({ ...o, promptId, timestamp: parsed.record.ts, usd: null })
+          }
         }
-        g.generations.push(...ex.assets)
-      }
+      } catch { /* history unreachable — durable list stands alone */ }
 
+      for (const g of groups.values()) {
+        g.generations.sort((a, b) => b.timestamp - a.timestamp)
+        g.lastTimestamp = g.generations[0]?.timestamp ?? g.lastTimestamp
+      }
       generationsByProject.value = [...groups.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp)
       fetchedOnce = true
     }
