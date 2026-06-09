@@ -4,7 +4,7 @@ import {
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
-  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, History, Drama,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Sonner } from '~/components/ui/sonner'
@@ -15,6 +15,12 @@ import AllProjectsView from '~/components/AllProjectsView.vue'
 import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
+import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import {
+  BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
+  makeBlankWorkflow, makeCanvasId, nextCanvasName, toProjectDoc,
+  type ProjectCanvas, type ProjectDoc,
+} from '~/lib/projectDoc'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
@@ -82,7 +88,6 @@ const sidebarItems = [
   // Power-user
   { label: 'Nodes', icon: GitFork, tabId: 'node-library', dividerBefore: true },
   { label: 'Blocks', icon: Boxes, panel: 'blocks' },
-  { label: 'Versions', icon: History, panel: 'versions' },
   // Hidden for now. Re-add to restore.
   // { label: 'Apps', icon: AppWindow, tabId: 'apps' },
   // { label: 'Templates', icon: LayoutTemplate },
@@ -142,7 +147,7 @@ watch(() => activeTabId.value, (id) => {
   // even if it was opened without a workflowId (e.g. "Use in new workflow",
   // a generation in progress). Tying the modal to real content — not just the
   // volatile seen-Set — stops it re-appearing over an existing generation.
-  const hasSavedContent = (savedWorkflows[id]?.nodes?.length ?? 0) > 0
+  const hasSavedContent = docHasContent(savedWorkflows[id])
   const isFreshBlankProject = tab?.type === 'project' && !tab?.workflowId
     && !seenStartModalTabIds.has(id) && !hasSavedContent
   if (isFreshBlankProject) {
@@ -206,7 +211,6 @@ const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel
 const charactersPanelOpen = ref(false) // tracks whether the Character Library panel is visible
 const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
 const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
-const versionsPanelOpen = ref(false) // tracks whether the Versions panel is visible
 
 // Whether a sidebar item is currently the "active" one (highlighted).
 // Single source of truth for the chevron/button highlight logic — used by
@@ -220,7 +224,6 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'characters') return charactersPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.panel === 'assets') return assetsPanelOpen.value
-  if (item?.panel === 'versions') return versionsPanelOpen.value
   if (item?.submenu === 'load') return loadMenuOpen.value
   if (item?.submenu === 'annotate') return annotateMenuOpen.value
   return activeSidebarItem.value === item?.label
@@ -270,7 +273,7 @@ function toggleSidebarItem(label: string) {
     }
     // In Vue mode, Select/Hand work natively via Vue Flow
   }
-  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'characters' || item?.panel === 'blocks' || item?.panel === 'assets' || item?.panel === 'versions') {
+  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'characters' || item?.panel === 'blocks' || item?.panel === 'assets') {
     // Left canvas panels are mutually exclusive — opening one closes the rest.
     const refs = {
       toolbox: toolboxPanelOpen,
@@ -279,7 +282,6 @@ function toggleSidebarItem(label: string) {
       characters: charactersPanelOpen,
       blocks: blockLibraryPanelOpen,
       assets: assetsPanelOpen,
-      versions: versionsPanelOpen,
     }
     const target = refs[item.panel as keyof typeof refs]
     const wasOpen = target.value
@@ -437,6 +439,9 @@ async function runVueWorkflow(targetIds?: string[], opts: { rerollScope?: 'self'
   const runTabId = activeTab.value?.id || ''
   const workerIdx = workerForTab(runTabId)
   if (poolEnabled.value && runTabId) workerRunningTab[workerIdx] = runTabId
+  // Runs are always queued from the displayed canvas of the run tab.
+  const runDoc = savedWorkflows[runTabId]
+  runningCanvasByWorker[workerIdx] = isProjectDoc(runDoc) ? runDoc.activeCanvasId : null
 
   // Load workflow into that worker's LiteGraph, then queue
   const iframe = getWorkerIframe(workerIdx)
@@ -714,20 +719,31 @@ async function stopVueWorkflow() {
 }
 
 // Single shared ComfyUI iframe — all project tabs share one iframe
-const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
 const WORKFLOWS_STORAGE_KEY = 'comfynext:workflows'
 
-// Restore persisted workflows from sessionStorage
+// Restore persisted workflows from sessionStorage. Older sessions stored a
+// bare workflow per tab — wrap those into one-canvas docs on the way in.
 function loadPersistedWorkflows(): Record<string, any> {
   if (import.meta.server) return {}
   try {
     const saved = sessionStorage.getItem(WORKFLOWS_STORAGE_KEY)
-    return saved ? JSON.parse(saved) : {}
+    const parsed = saved ? JSON.parse(saved) : {}
+    for (const key of Object.keys(parsed)) parsed[key] = toProjectDoc(parsed[key])
+    return parsed
   }
   catch { return {} }
 }
 
-const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → workflow JSON
+const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → ProjectDoc
+
+// The workflow the Vue canvas should display: the active canvas of the active
+// tab's doc. Switching canvases (or restoring a version) swaps this to a new
+// object reference, which is what VueNodeCanvas's prop watch keys on.
+const activeTabWorkflow = computed(() => {
+  const doc = savedWorkflows[activeTab.value.id]
+  if (!doc) return undefined
+  return isProjectDoc(doc) ? activeCanvasOf(doc).workflow : doc
+})
 
 function persistWorkflows() {
   if (import.meta.server) return
@@ -742,23 +758,164 @@ function persistWorkflows() {
 // useProjects swallows all errors, and we never await it in a save path, so this
 // can't affect the existing (sync) sessionStorage persistence or block a tab
 // switch. Uses a single rolling "current" version id per project, so repeated
-// saves update in place instead of piling up versions. (load-on-open is 3b.)
-function saveDurableVersion(tab: any, workflow: any) {
-  if (!tab?.projectUuid || !workflow || !(workflow.nodes?.length > 0)) return
+// saves update in place instead of piling up versions. The body is the whole
+// ProjectDoc (every canvas) — the backend treats it as opaque JSON.
+function saveDurableVersion(tab: any, doc: any) {
+  if (!tab?.projectUuid || !docHasContent(doc)) return
   const name = tab.label || 'Untitled project'
-  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow }, name)
+  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name)
 }
 
-// Restore a saved version (from VersionsPanel) onto the canvas. Assigning the
-// reactive savedWorkflows entry — the canvas's :workflow prop, and a fresh
-// object from the server — triggers VueNodeCanvas's prop watch, which rebuilds
-// the graph. The restored state becomes the working state and autosaves to the
-// rolling 'current' on the next switch/unload.
-function onRestoreVersion(workflow: any) {
+// Snapshot the live canvas into its slot in the tab's doc. The single choke
+// point for "what's on screen → what's saved":
+//   - reroll:false so serializing never mutates live seed widgets (a re-roll
+//     would re-trip live-run watchers);
+//   - refuses to write while the canvas is still applying a workflow prop —
+//     getWorkflow() would return the PREVIOUS canvas and clobber this slot;
+//   - refuses empty snapshots (canvas mid-unmount), matching the old guard.
+// The workflow write goes through toRaw so saving the ACTIVE canvas doesn't
+// swap the :workflow prop reference and trigger a pointless graph rebuild.
+// Returns the (normalized) doc, or null if the tab has no doc and nothing to
+// save (so a not-yet-loaded tab keeps its durable-load path on revisit).
+function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
+  const canvas = vueCanvasRef.value
+  const settled = canvas?.getWorkflow && !canvas.isApplyingWorkflow?.()
+  const snapshot = settled ? canvas.getWorkflow({ reroll: false }) : null
+  const hasSnapshot = !!snapshot && (snapshot.nodes?.length ?? 0) > 0
+  if (!savedWorkflows[tabId] && !hasSnapshot) return null
+  const doc = toProjectDoc(savedWorkflows[tabId])
+  savedWorkflows[tabId] = doc
+  if (hasSnapshot) activeCanvasOf(toRaw(doc)).workflow = snapshot
+  return doc
+}
+
+// Restore a saved version (from the project menu) onto the canvas. The body
+// may be a whole ProjectDoc (new versions) or a bare workflow (old ones) —
+// either way it replaces the tab's entire doc. Assigning a fresh object into
+// reactive savedWorkflows swaps the canvas's :workflow prop reference, which
+// triggers VueNodeCanvas's prop watch to rebuild the graph. The restored state
+// becomes the working state and autosaves to the rolling 'current' on the
+// next switch/unload.
+function onRestoreVersion(body: any) {
   const tab = activeTab.value
-  if (!tab || !workflow || !(workflow.nodes?.length > 0)) return
-  savedWorkflows[tab.id] = workflow
+  if (!tab || !docHasContent(body)) return
+  savedWorkflows[tab.id] = toProjectDoc(body)
   persistWorkflows()
+  if (!vueNodesEnabled.value) {
+    sendLoadWorkflow(JSON.parse(JSON.stringify(activeCanvasOf(savedWorkflows[tab.id]).workflow)))
+  }
+}
+
+// ── Multi-canvas operations (project menu) ──────────────────────────────────
+// The active tab's doc, for the project menu's canvas list. Normalized lazily:
+// a tab that hasn't loaded yet has no doc and the menu shows nothing to switch.
+const activeProjectDoc = computed<ProjectDoc | null>(() => {
+  if (activeTab.value.type !== 'project') return null
+  const doc = savedWorkflows[activeTab.value.id]
+  return isProjectDoc(doc) ? doc : null
+})
+
+// Re-entrancy guard: a switch serializes the outgoing canvas, swaps the doc's
+// active id, and (in LiteGraph mode) pushes the target into the iframe. Block
+// further switches until that completes so two rapid clicks can't interleave.
+const canvasSwitching = ref(false)
+
+async function switchProjectCanvas(canvasId: string) {
+  const tab = activeTab.value
+  if (tab.type !== 'project' || canvasSwitching.value) return
+  const doc = toProjectDoc(savedWorkflows[tab.id])
+  savedWorkflows[tab.id] = doc
+  if (doc.activeCanvasId === canvasId) return
+  const target = doc.canvases.find((c) => c.id === canvasId)
+  if (!target) return
+  canvasSwitching.value = true
+  try {
+    if (vueNodesEnabled.value) {
+      // Serialize the outgoing canvas first (guarded against mid-load/empty
+      // snapshots), then swap the active id — the activeTabWorkflow computed
+      // changes reference and the canvas prop watch rebuilds the graph.
+      snapshotActiveCanvasIntoDoc(tab.id)
+      doc.activeCanvasId = canvasId
+    }
+    else {
+      const workflow = await getWorkflowFromIframe()
+      if (workflow && (workflow.nodes?.length ?? 0) > 0) {
+        activeCanvasOf(doc).workflow = workflow
+      }
+      doc.activeCanvasId = canvasId
+      await sendLoadWorkflow(JSON.parse(JSON.stringify(target.workflow || BLANK_WORKFLOW)))
+    }
+    persistWorkflows()
+    saveDurableVersion(tab, doc)
+  } finally {
+    canvasSwitching.value = false
+  }
+}
+
+async function addProjectCanvas() {
+  const tab = activeTab.value
+  if (tab.type !== 'project' || canvasSwitching.value) return
+  const doc = toProjectDoc(savedWorkflows[tab.id])
+  savedWorkflows[tab.id] = doc
+  const canvas: ProjectCanvas = { id: makeCanvasId(), name: nextCanvasName(doc), workflow: makeBlankWorkflow() }
+  doc.canvases.push(canvas)
+  await switchProjectCanvas(canvas.id)
+}
+
+function renameProjectCanvas(canvasId: string, name: string) {
+  const doc = activeProjectDoc.value
+  const canvas = doc?.canvases.find((c) => c.id === canvasId)
+  if (!canvas || !name.trim()) return
+  canvas.name = name.trim()
+  persistWorkflows()
+}
+
+async function deleteProjectCanvas(canvasId: string) {
+  const tab = activeTab.value
+  const doc = activeProjectDoc.value
+  if (!doc || doc.canvases.length <= 1 || canvasSwitching.value) return
+  const idx = doc.canvases.findIndex((c) => c.id === canvasId)
+  if (idx === -1) return
+  // Deleting the canvas on screen: move to a neighbor first so the doc never
+  // points at a canvas that no longer exists.
+  if (doc.activeCanvasId === canvasId) {
+    const neighbor = doc.canvases[idx + 1] ?? doc.canvases[idx - 1]
+    if (!neighbor) return
+    await switchProjectCanvas(neighbor.id)
+  }
+  const at = doc.canvases.findIndex((c) => c.id === canvasId)
+  if (at !== -1) doc.canvases.splice(at, 1)
+  persistWorkflows()
+  saveDurableVersion(tab, doc)
+}
+
+// Rename the project from the menu: tab label + recent-projects name +
+// durable project record, mirroring what the tab double-click rename does.
+function renameActiveProject(name: string) {
+  const tab = activeTab.value
+  if (tab.type !== 'project' || !name.trim()) return
+  renameTab(tab.id, name)
+  if (tab.workflowId) useRecentProjects().setProjectName(tab.workflowId, name.trim())
+  if (tab.projectUuid) useProjects().renameProject(tab.projectUuid, name.trim())
+}
+
+// The full doc with the live canvas serialized in, deep-copied — what a named
+// version snapshot should contain. Async because the LiteGraph path has to
+// round-trip through the iframe.
+async function getProjectDocForVersionSave(): Promise<any | null> {
+  const tab = activeTab.value
+  if (tab.type !== 'project') return null
+  if (vueNodesEnabled.value) {
+    const doc = snapshotActiveCanvasIntoDoc(tab.id)
+    return doc ? JSON.parse(JSON.stringify(toRaw(doc))) : null
+  }
+  const doc = toProjectDoc(savedWorkflows[tab.id])
+  savedWorkflows[tab.id] = doc
+  const workflow = await getWorkflowFromIframe()
+  if (workflow && (workflow.nodes?.length ?? 0) > 0) {
+    activeCanvasOf(doc).workflow = workflow
+  }
+  return JSON.parse(JSON.stringify(toRaw(doc)))
 }
 
 // Autosave: snapshot current canvas and persist to sessionStorage.
@@ -767,13 +924,11 @@ function autosaveCurrentWorkflow() {
   const tab = activeTab.value
   if (tab?.type !== 'project') return
   if (vueNodesEnabled.value && vueCanvasRef.value?.getWorkflow) {
-    const workflow = vueCanvasRef.value.getWorkflow()
-    if (workflow && workflow.nodes?.length > 0) {
-      const raw = toRaw(savedWorkflows)
-      raw[tab.id] = workflow
-      try { sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(raw)) }
+    const doc = snapshotActiveCanvasIntoDoc(tab.id)
+    if (doc && docHasContent(doc)) {
+      try { sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(toRaw(savedWorkflows))) }
       catch {}
-      saveDurableVersion(tab, workflow)
+      saveDurableVersion(tab, doc)
     }
   }
 }
@@ -861,10 +1016,33 @@ const comfyWorkers = ref<string[]>([comfyOrigin])
 if (import.meta.client) {
   try {
     const raw = localStorage.getItem('comfynext:pool')
-    if (raw === 'on') comfyWorkers.value = [comfyOrigin, comfyOrigin.replace(/:\d+/, ':8189')]
+    let desired: string[] | null = null
+    if (raw === 'on') desired = [comfyOrigin, comfyOrigin.replace(/:\d+/, ':8189')]
     else if (raw) {
       const list = raw.split(',').map(s => s.trim()).filter(Boolean)
-      if (list.length) comfyWorkers.value = list
+      if (list.length > 1) desired = list
+    }
+    // The pool flag can outlive the extra servers it points at (it lives in
+    // localStorage; the :8189 worker is something you start by hand). A dead
+    // worker is worse than no worker — every run round-robined onto it waits
+    // ~2 minutes for a bridge that never loads, then silently does nothing.
+    // So probe each extra worker first and only enable the ones that answer.
+    // no-cors because the extra workers are cross-origin without CORS headers:
+    // a resolved fetch (even opaque) means a server is listening; a network
+    // error means it isn't. Until the probe lands we stay single-worker, which
+    // is always safe (worker 0 = the shared iframe).
+    if (desired && desired.length > 1) {
+      Promise.all(desired.slice(1).map(async (origin) => {
+        try {
+          await fetch(`${origin}/`, { mode: 'no-cors', signal: AbortSignal.timeout(3000) })
+          return origin
+        } catch { return null }
+      })).then((probed) => {
+        const alive = probed.filter((o): o is string => !!o)
+        const dead = desired!.slice(1).filter((o) => !alive.includes(o))
+        if (dead.length) console.warn('[pool] ignoring unreachable worker(s):', dead.join(', '), '— runs stay on the primary server')
+        if (alive.length) comfyWorkers.value = [desired![0], ...alive]
+      })
     }
   } catch { /* ignore */ }
 }
@@ -883,6 +1061,10 @@ function workerForTab(tabId?: string | null): number {
 // worker index → the tab currently running on it (set at submit; a worker runs
 // one prompt at a time, so this is enough to route that worker's events back).
 const workerRunningTab = reactive<Record<number, string>>({})
+// worker index → which doc canvas the in-flight run was queued from. Lets the
+// canvas component scope run events/animations to the right canvas — node ids
+// collide across a project's canvases, so worker alone isn't enough.
+const runningCanvasByWorker = reactive<Record<number, string | null>>({})
 // The worker the *currently viewed* canvas runs on — lets the canvas ignore
 // other workers' run events (so a background tab's run doesn't clear the active
 // tab's animation) and re-apply the right running node when you switch tabs.
@@ -1027,43 +1209,46 @@ async function loadWorkflowForTab(tab: any) {
   const saved = savedWorkflows[tab.id]
 
   if (vueNodesEnabled.value) {
-    // Vue mode: store workflow directly (no iframe needed)
+    // Vue mode: store the doc directly (no iframe needed) — the canvas reads
+    // its active canvas via the activeTabWorkflow computed.
     if (!saved) {
       // Phase 0 (3b): if this tab is tied to a durable Project, prefer its saved
       // version — it's the freshest cross-session state (written by 3a on
       // switch/unload), fresher than /history. Strictly a fallback: only runs
       // when there's no in-session sessionStorage snapshot, and degrades to the
       // existing history/blank path if the project or its version is absent.
-      let durableWf: any = null
+      // The durable body may be a whole ProjectDoc (new saves) or a bare
+      // workflow (old ones) — toProjectDoc normalizes either.
+      let durableBody: any = null
       if (tab.projectUuid) {
         const loaded = await useProjects().loadProject(tab.projectUuid)
-        durableWf = loaded?.currentVersion?.workflow || null
+        durableBody = loaded?.currentVersion?.workflow || null
       }
-      if (durableWf && (durableWf.nodes?.length ?? 0) > 0) {
-        savedWorkflows[tab.id] = durableWf
+      if (docHasContent(durableBody)) {
+        savedWorkflows[tab.id] = toProjectDoc(durableBody)
       }
       else if (tab.promptId) {
         const workflow = await fetchWorkflowFromHistory(tab.promptId)
-        savedWorkflows[tab.id] = workflow || BLANK_WORKFLOW
+        savedWorkflows[tab.id] = toProjectDoc(workflow || makeBlankWorkflow())
       }
       else if (tab.workflowId) {
         // Try to load from recent workflows API
         try {
           const res = await fetch(`/api/workflows/${tab.workflowId}`)
           const data = await res.json()
-          savedWorkflows[tab.id] = data?.workflow || BLANK_WORKFLOW
+          savedWorkflows[tab.id] = toProjectDoc(data?.workflow || makeBlankWorkflow())
         }
-        catch { savedWorkflows[tab.id] = BLANK_WORKFLOW }
+        catch { savedWorkflows[tab.id] = toProjectDoc(makeBlankWorkflow()) }
       }
       else {
-        savedWorkflows[tab.id] = BLANK_WORKFLOW
+        savedWorkflows[tab.id] = toProjectDoc(makeBlankWorkflow())
       }
     }
   }
   else {
-    // LiteGraph mode: send to iframe
+    // LiteGraph mode: send the doc's active canvas to the iframe
     if (saved) {
-      await sendLoadWorkflow(saved)
+      await sendLoadWorkflow(JSON.parse(JSON.stringify(activeCanvasOf(toProjectDoc(saved)).workflow)))
     }
     else if (tab.promptId) {
       const workflow = await fetchWorkflowFromHistory(tab.promptId)
@@ -1080,7 +1265,7 @@ async function loadWorkflowForTab(tab: any) {
 // Handle workflow loaded from community template
 function handleLoadTabWorkflow(e: Event) {
   const { tabId, workflow } = (e as CustomEvent).detail
-  savedWorkflows[tabId] = workflow
+  savedWorkflows[tabId] = toProjectDoc(workflow)
   persistWorkflows()
   // This tab now has real content — never treat it as a "fresh blank project"
   // (would otherwise pop the Get Started modal over the loaded workflow).
@@ -1120,20 +1305,20 @@ watch(activeTabId, async (newId, oldId) => {
   const oldTab = tabs.value.find((t) => t.id === oldId)
   const newTab = tabs.value.find((t) => t.id === newId)
 
-  // Save current workflow when leaving a project tab
+  // Save current workflow when leaving a project tab — into the active
+  // canvas's slot of the tab's doc. snapshotActiveCanvasIntoDoc guards
+  // against empty/mid-load snapshots clobbering a good saved canvas.
   if (oldTab?.type === 'project') {
     if (vueNodesEnabled.value) {
-      // Vue mode: serialize from Vue canvas. Guard against an empty/blank
-      // snapshot (canvas mid-unmount or not yet populated) clobbering a good
-      // saved workflow — losing the user's generation on tab switch-back.
-      const snapshot = vueCanvasRef.value?.getWorkflow?.()
-      if (snapshot && (snapshot.nodes?.length ?? 0) > 0) {
-        savedWorkflows[oldTab.id] = snapshot
-      }
+      snapshotActiveCanvasIntoDoc(oldTab.id)
     }
     else if (sharedIframeReady) {
       const workflow = await getWorkflowFromIframe()
-      if (workflow) savedWorkflows[oldTab.id] = workflow
+      if (workflow && (workflow.nodes?.length ?? 0) > 0) {
+        const doc = toProjectDoc(savedWorkflows[oldTab.id])
+        savedWorkflows[oldTab.id] = doc
+        activeCanvasOf(doc).workflow = workflow
+      }
     }
     persistWorkflows()
     saveDurableVersion(oldTab, savedWorkflows[oldTab.id])
@@ -1154,10 +1339,10 @@ watch(vueNodesEnabled, async (enabled) => {
     // ALWAYS fetch fresh — don't trust cache (may be BLANK_WORKFLOW from earlier failure)
     if (tab.promptId) {
       const wf = await fetchWorkflowFromHistory(tab.promptId)
-      if (wf) savedWorkflows[tab.id] = wf
+      if (wf) savedWorkflows[tab.id] = toProjectDoc(wf)
     }
     if (!savedWorkflows[tab.id]) {
-      savedWorkflows[tab.id] = BLANK_WORKFLOW
+      savedWorkflows[tab.id] = toProjectDoc(makeBlankWorkflow())
     }
     currentProjectTabId = null
     await loadWorkflowForTab(tab)
@@ -1228,44 +1413,14 @@ const runCostDeadline = ref(0)
 const executedNodeIds = new Set<string>()
 
 // Tally USD cost from the price_badge of every Replicate node that ran.
-// Mirrors GeneratorsPanel.parsePrice but inlined to keep one source of nodes.
-// Returns null when no priced Replicate node ran (so the credit-delta path
-// can win for Comfy-native workflows).
+// The badge parsing/summing lives in lib/costEstimate.ts (shared with the
+// pre-run estimate). Returns null when no priced Replicate node ran (so the
+// credit-delta path can win for Comfy-native workflows).
 function estimateReplicateUsd(): { usd: number; approximate: boolean } | null {
   const nodes = vueCanvasRef.value?.getNodes?.() || []
-  let usd = 0
-  let approximate = false
-  let anyPriced = false
-  for (const id of executedNodeIds) {
-    const node = nodes.find((n: any) => n.id === id)
-    const badge = node?.data?.priceBadge
-    const nodeType: string = node?.data?.type || ''
-    // Only count nodes that bill the user's Replicate account. Naming
-    // convention from comfy_api_nodes/nodes_replicate.py: classes end in
-    // "RemoteNode". This skips Comfy-native nodes that also have badges.
-    const isReplicate = nodeType.endsWith('RemoteNode')
-    if (!isReplicate || !badge?.expr) continue
-    const expr = String(badge.expr).trim()
-    // Static literal: `{"type":"usd","usd":0.04,...}`
-    try {
-      const parsed = JSON.parse(expr)
-      if (typeof parsed?.usd === 'number') {
-        usd += parsed.usd
-        anyPriced = true
-        if (parsed?.format?.approximate) approximate = true
-        continue
-      }
-    } catch { /* not JSON — try JSONata */ }
-    // Dynamic JSONata: pull the first numeric "usd": value as a floor estimate.
-    // Anything dynamic is implicitly approximate.
-    const match = expr.match(/"usd"\s*:\s*([0-9]+\.?[0-9]*)/)
-    if (match) {
-      usd += parseFloat(match[1]!)
-      anyPriced = true
-      approximate = true
-    }
-  }
-  return anyPriced ? { usd, approximate } : null
+  const ran = nodes.filter((n: any) => executedNodeIds.has(String(n.id)))
+  const est = estimateUsdForNodes(vueNodesToEstimateInput(ran))
+  return est ? { usd: est.usd, approximate: est.approximate } : null
 }
 
 const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>({})
@@ -2081,9 +2236,11 @@ function dismissRunResult() {
           <div class="absolute inset-0">
             <VueCanvasVueNodeCanvas
               ref="vueCanvasRef"
-              :workflow="savedWorkflows[activeTab.id] || undefined"
+              :workflow="activeTabWorkflow"
               :active-tool="activeTool"
               :active-worker="activeWorker"
+              :displayed-canvas-id="activeProjectDoc?.activeCanvasId ?? null"
+              :running-canvas-id="runningCanvasByWorker[activeWorker] ?? null"
             />
             <ExplainOverlay :vue-canvas="vueCanvasRef" />
           </div>
@@ -2199,16 +2356,24 @@ function dismissRunResult() {
           <div v-if="assetsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasAssetsPanel @close="assetsPanelOpen = false" />
           </div>
-          <div v-else-if="versionsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
-            <VueCanvasVersionsPanel
-              :project-id="activeTab.projectUuid || activeTab.workflowId || null"
-              :project-name="activeTab.label || 'Untitled project'"
-              :get-workflow="() => vueCanvasRef?.getWorkflow?.()"
-              @close="versionsPanelOpen = false"
-              @restore="onRestoreVersion"
-            />
-          </div>
         </Transition>
+
+        <!-- Project menu: floating chip at top-left — project name, canvas
+             switcher, and version snapshots (replaces the Versions panel). -->
+        <VueCanvasProjectMenu
+          v-if="activeTab.type === 'project'"
+          :project-id="activeTab.projectUuid || activeTab.workflowId || null"
+          :project-name="activeTab.label || 'Untitled project'"
+          :doc="activeProjectDoc"
+          :switching="canvasSwitching"
+          :get-project-doc="getProjectDocForVersionSave"
+          @rename-project="renameActiveProject"
+          @switch-canvas="switchProjectCanvas"
+          @add-canvas="addProjectCanvas"
+          @rename-canvas="renameProjectCanvas"
+          @delete-canvas="deleteProjectCanvas"
+          @restore="onRestoreVersion"
+        />
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
         <div
