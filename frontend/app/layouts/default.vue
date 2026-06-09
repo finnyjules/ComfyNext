@@ -16,6 +16,7 @@ import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
   makeBlankWorkflow, makeCanvasId, nextCanvasName, toProjectDoc,
@@ -1412,6 +1413,30 @@ let runStartCredits: number | null = null
 const runCostDeadline = ref(0)
 const executedNodeIds = new Set<string>()
 
+// Output files collected from `executed` events during the current run — the
+// durable generation record is assembled from these at execution_complete.
+const runOutputs: GenOutput[] = []
+
+// A record waiting for its cost. Replicate-billed runs flush immediately
+// (Comfy's balance won't move); credit-billed runs wait for the balance
+// watcher's delta (or the deadline timer) so the record carries real credits.
+let pendingGen: {
+  projectUuid: string
+  projectName?: string
+  record: GenerationRecord
+  flushed: boolean
+  timer: ReturnType<typeof setTimeout> | null
+} | null = null
+
+function flushPendingGen(creditsDelta?: number | null) {
+  if (!pendingGen || pendingGen.flushed) return
+  pendingGen.flushed = true
+  if (pendingGen.timer) clearTimeout(pendingGen.timer)
+  if (typeof creditsDelta === 'number' && creditsDelta > 0) pendingGen.record.credits = creditsDelta
+  useProjects().saveGeneration(pendingGen.projectUuid, pendingGen.record, pendingGen.projectName)
+  pendingGen = null
+}
+
 // Tally USD cost from the price_badge of every Replicate node that ran.
 // The badge parsing/summing lives in lib/costEstimate.ts (shared with the
 // pre-run estimate). Returns null when no priced Replicate node ran (so the
@@ -1439,6 +1464,7 @@ watch(credits, (newVal) => {
   const delta = runStartCredits - newVal
   if (delta > 0) {
     lastRunResult.value = { ...result, cost: delta }
+    flushPendingGen(delta)
   }
 })
 const userProfile = ref<{ email?: string | null, displayName?: string | null, photoURL?: string | null, uid?: string | null, providerId?: string | null } | null>(null)
@@ -1796,6 +1822,8 @@ function handleBridgeMessage(event: MessageEvent) {
     // first live-run is followed by a real Run.
     runStartCredits = credits.value
     executedNodeIds.clear()
+    runOutputs.length = 0
+    flushPendingGen() // a previous run still waiting on credits records as-is
     // New run wipes any prior result from the status bar — the user wants
     // to know about THIS run, not the last one.
     if (!currentRunSilent.value) {
@@ -1821,6 +1849,7 @@ function handleBridgeMessage(event: MessageEvent) {
     }
     currentRunningNode.value = displayName
   } else if (evt === 'executed') {
+    if (event.data.output) runOutputs.push(...extractOutputFiles(event.data.output))
     // Track node completion for coarse progress
     tabNodeProgress.value.completed++
     const np = tabNodeProgress.value
@@ -1846,13 +1875,46 @@ function handleBridgeMessage(event: MessageEvent) {
     }
     const wasSilent = currentRunSilent.value
     currentRunSilent.value = false
+    // Durable generation record — silent/live runs count too (they spend real
+    // money). Fire-and-forget; never blocks the UI path.
+    const runProjectUuid = projectTabs.find((t) => t.id === tabId)?.projectUuid || null
+    const replicateEstimate = validatedRun ? estimateReplicateUsd() : null
+    if (runProjectUuid && validatedRun && (runOutputs.length || replicateEstimate)) {
+      const runDoc = savedWorkflows[tabId]
+      const vueNodes = vueCanvasRef.value?.getNodes?.() || []
+      const ranTypes = [...executedNodeIds]
+        .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.type)
+        .filter(Boolean) as string[]
+      pendingGen = {
+        projectUuid: runProjectUuid,
+        projectName: projectTabs.find((t) => t.id === tabId)?.label,
+        record: {
+          promptId: prompt_id || `local_${Date.now().toString(36)}`,
+          ts: Date.now(),
+          canvasId: isProjectDoc(runDoc) ? runDoc.activeCanvasId : null,
+          outputs: [...runOutputs],
+          usd: replicateEstimate?.usd ?? null,
+          usdApproximate: replicateEstimate?.approximate ?? false,
+          credits: null,
+          nodes: [...new Set(ranTypes)],
+        },
+        flushed: false,
+        timer: null,
+      }
+      if (replicateEstimate) {
+        flushPendingGen()
+      } else {
+        pendingGen.timer = setTimeout(() => flushPendingGen(), 9000)
+      }
+    }
+    runOutputs.length = 0
     if (!wasSilent) {
       updateTabStatus(tabId, 'done')
       if (validatedRun && lastRunResult.value?.kind !== 'error') {
         // Did any Replicate (BYOK, dollar-billed) node run? If yes, that's
         // the user's true cost surface — Comfy's credit balance won't change.
         // Otherwise, lean on the credit-delta watcher below for the number.
-        const replicate = estimateReplicateUsd()
+        const replicate = replicateEstimate
         setRunResult({
           kind: 'success',
           durationMs,
