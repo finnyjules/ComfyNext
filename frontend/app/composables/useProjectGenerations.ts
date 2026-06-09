@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { extractOutputFiles } from '~/lib/generations'
 
 // Every saved generation in a project, grouped by project. Unlike
 // useRecentProjects (which caps at 3 images for the home cards), this keeps the
@@ -13,6 +14,7 @@ export interface GenAsset {
   type: string // 'output' | 'temp' | 'input'
   promptId: string
   timestamp: number
+  usd?: number | null
 }
 
 export interface ProjectGenerations {
@@ -25,13 +27,6 @@ export interface ProjectGenerations {
 const generationsByProject = ref<ProjectGenerations[]>([])
 const loading = ref(false)
 let fetchedOnce = false
-
-function classify(filename: string): 'image' | 'video' | 'audio' {
-  const f = filename.toLowerCase()
-  if (/\.(mp4|webm|mov|avi|mkv|m4v)$/.test(f)) return 'video'
-  if (/\.(mp3|wav|flac|ogg|m4a|aac)$/.test(f)) return 'audio'
-  return 'image'
-}
 
 // Mirror of useRecentProjects' name derivation so projects read the same way.
 function deriveProjectName(classTypes: string[]): string {
@@ -82,24 +77,9 @@ export function useProjectGenerations() {
         const classTypes = [...new Set(Object.values(nodes).map((n: any) => n.class_type || ''))] as string[]
 
         const assets: GenAsset[] = []
-        if (e.outputs) {
-          for (const nodeOut of Object.values(e.outputs) as any[]) {
-            for (const key of ['images', 'gifs', 'audio', 'video']) {
-              const arr = (nodeOut as any)[key]
-              if (!Array.isArray(arr)) continue
-              for (const f of arr) {
-                // Final saves only — skip live-preview temp frames.
-                if (!f?.filename || f.type !== 'output') continue
-                assets.push({
-                  kind: classify(f.filename),
-                  filename: f.filename,
-                  subfolder: f.subfolder || '',
-                  type: f.type,
-                  promptId,
-                  timestamp,
-                })
-              }
-            }
+        for (const nodeOut of Object.values(e.outputs ?? {})) {
+          for (const o of extractOutputFiles(nodeOut)) {
+            assets.push({ ...o, promptId, timestamp })
           }
         }
         if (!assets.length) continue
