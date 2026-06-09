@@ -27,6 +27,9 @@ const loadingHistory = ref(true)
 // Image natural dimensions
 const imageDimensions = ref<{ width: number; height: number } | null>(null)
 
+// Estimated run cost from the durable generation record (history doesn't carry it)
+const runUsd = ref<number | null>(null)
+
 // Comments
 const commentsKey = computed(() => `comfynext-comments-${props.promptId}`)
 const comments = ref<string[]>([])
@@ -52,6 +55,13 @@ onMounted(async () => {
     const res = await fetch(`/history/${props.promptId}`)
     const data = await res.json()
     historyData.value = data[props.promptId] ?? null
+    // Durable record carries the run's estimated cost (history doesn't).
+    const projectUuid = historyData.value?.prompt?.[3]?.extra_pnginfo?.workflow?.extra?.projectUuid
+    if (projectUuid) {
+      const gens = await useProjects().listGenerations(projectUuid)
+      const rec = gens.find((g) => g.promptId === props.promptId)
+      if (typeof rec?.usd === 'number' && rec.usd > 0) runUsd.value = rec.usd
+    }
   } catch (e) {
     console.error('Failed to fetch history:', e)
   } finally {
@@ -326,6 +336,9 @@ function removeComment(index: number) {
             </div>
             <div v-if="executionTime" class="text-xs text-white/40">
               Execution time: {{ executionTime }}s
+            </div>
+            <div v-if="runUsd" class="text-xs text-white/40 tabular-nums">
+              Cost ~${{ runUsd.toFixed(runUsd >= 1 ? 2 : 3) }}
             </div>
           </div>
 
