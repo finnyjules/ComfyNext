@@ -223,6 +223,64 @@ def append_generation(root: str, uuid: str, record: dict, *, now: int = 0) -> di
     return rec
 
 
+def spend_file(user_dir: str) -> str:
+    """Global spend ledger — NOT under projects/, so deleting a project keeps
+    its historical spend (the ledger stays accurate)."""
+    return os.path.join(user_dir, "comfynext", "spend.jsonl")
+
+
+def append_spend(path: str, entry: dict) -> None:
+    """Append one ledger line. Free runs (no usd, no credits) are not logged."""
+    usd = entry.get("usd") or 0
+    credits = entry.get("credits") or 0
+    if usd <= 0 and credits <= 0:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def _month_key(ts_ms: int) -> str:
+    dt = datetime.datetime.fromtimestamp((ts_ms or 0) / 1000, datetime.timezone.utc)
+    return dt.strftime("%Y-%m")
+
+
+def spend_summary(path: str, *, now_ms: int) -> dict:
+    """Totals for the current UTC calendar month, all time, and per project."""
+    month = {"usd": 0, "credits": 0}
+    total = {"usd": 0, "credits": 0}
+    by_project: dict[str, dict] = {}
+    cur = _month_key(now_ms)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        usd = float(e.get("usd") or 0)
+        credits = e.get("credits") or 0
+        total["usd"] += usd
+        total["credits"] += credits
+        if _month_key(e.get("ts") or 0) == cur:
+            month["usd"] += usd
+            month["credits"] += credits
+        pu = e.get("projectUuid") or "unknown"
+        bp = by_project.setdefault(pu, {"uuid": pu, "usd": 0, "credits": 0})
+        bp["usd"] += usd
+        bp["credits"] += credits
+    ranked = sorted(by_project.values(), key=lambda d: -d["usd"])
+    return {"month": month, "total": total, "byProject": ranked}
+
+
 # ---------- aiohttp routes (thin shell over the storage layer) --------------
 
 try:

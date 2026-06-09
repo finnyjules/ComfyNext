@@ -204,3 +204,52 @@ def test_list_generations_skips_corrupt_lines(root):
 def test_append_generation_bad_uuid_raises(root):
     with pytest.raises(ValueError):
         P.append_generation(root, "../evil", {"promptId": "x"})
+
+
+# --------------------------------------------------------------------------- #
+# Spend ledger
+# --------------------------------------------------------------------------- #
+
+# 2026-06-15T00:00:00Z and 2026-05-15T00:00:00Z in ms — fixed so the month
+# bucketing test is deterministic.
+JUNE_TS = 1781481600000
+MAY_TS = 1778803200000
+
+
+@pytest.fixture
+def ledger(tmp_path):
+    return P.spend_file(str(tmp_path))
+
+
+def test_spend_file_layout(tmp_path):
+    assert P.spend_file(str(tmp_path)).endswith(os.path.join("comfynext", "spend.jsonl"))
+
+
+def test_append_spend_skips_free_runs(ledger):
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "p", "usd": 0, "credits": None})
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "p", "usd": None, "credits": 0})
+    assert not os.path.exists(ledger)
+
+
+def test_spend_summary_months_and_projects(ledger):
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "a", "promptId": "1", "usd": 0.04, "credits": None})
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "a", "promptId": "2", "usd": 6.0, "credits": None})
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "b", "promptId": "3", "usd": None, "credits": 120})
+    P.append_spend(ledger, {"ts": MAY_TS, "projectUuid": "a", "promptId": "4", "usd": 1.0, "credits": None})
+    s = P.spend_summary(ledger, now_ms=JUNE_TS)
+    assert s["month"]["usd"] == pytest.approx(6.04)
+    assert s["month"]["credits"] == 120
+    assert s["total"]["usd"] == pytest.approx(7.04)
+    by = {p["uuid"]: p for p in s["byProject"]}
+    assert by["a"]["usd"] == pytest.approx(7.04)
+    assert by["b"]["credits"] == 120
+
+
+def test_spend_summary_empty_and_corrupt(ledger):
+    s = P.spend_summary(ledger, now_ms=JUNE_TS)
+    assert s == {"month": {"usd": 0, "credits": 0}, "total": {"usd": 0, "credits": 0}, "byProject": []}
+    os.makedirs(os.path.dirname(ledger), exist_ok=True)
+    with open(ledger, "w", encoding="utf-8") as f:
+        f.write("garbage\n")
+    P.append_spend(ledger, {"ts": JUNE_TS, "projectUuid": "a", "usd": 1.0})
+    assert P.spend_summary(ledger, now_ms=JUNE_TS)["total"]["usd"] == pytest.approx(1.0)
