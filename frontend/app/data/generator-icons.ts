@@ -19,6 +19,9 @@ import {
   PenTool,
   Pencil,
   Blend,
+  Layers,
+  SquareStack,
+  Expand,
   Maximize2,
   Scissors,
   Wand2,
@@ -51,6 +54,9 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   RemoveBackgroundNode: Scissors,
   RestorePhotoNode:     Wand2,
   FixFacesNode:         Smile,
+  LayerizeGraphicNode:  Layers,
+  SplitPhotoLayersNode: SquareStack,
+  OutpaintImageNode:    Expand,
 
   // ----- Image · analysis -----
   DescribeImageNode:    MessageSquareText,
@@ -110,6 +116,9 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
   RemoveBackgroundNode: null,                 // 851-labs/bg-remover
   RestorePhotoNode:     'BFL',                // Flux Kontext · Restore
   FixFacesNode:         null,                 // CodeFormer
+  LayerizeGraphicNode:  'Ideogram',           // Ideogram Layerize
+  SplitPhotoLayersNode: null,                 // pipeline: bg-remover + LaMa/Bria Eraser
+  OutpaintImageNode:    'BFL',                // default engine is Flux Fill (Bria Expand optional)
 
   // ----- Image · analysis -----
   DescribeImageNode:    null,                 // Moondream 2

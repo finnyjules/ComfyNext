@@ -451,6 +451,9 @@ const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
   RemoveBackgroundNode:    { useCase: 'Remove background',         model: '851-labs/bg-remover' },
   RestorePhotoNode:        { useCase: 'Restore an old photo',      model: 'Flux Kontext · Restore' },
   FixFacesNode:            { useCase: 'Fix faces in a photo',      model: 'CodeFormer' },
+  LayerizeGraphicNode:     { useCase: 'Layerize a graphic',        model: 'Ideogram Layerize' },
+  SplitPhotoLayersNode:    { useCase: 'Split photo into layers',   model: 'BG Remover + LaMa / Bria Eraser' },
+  OutpaintImageNode:       { useCase: 'Expand / outpaint an image', model: 'Flux Fill / Bria Expand' },
   // Replicate FaceSwap removed — the local FaceSwap node (InsightFace, in
   // comfy_extras/nodes_face.py) is faster, supports video, and is free.
   // Image — analysis
@@ -624,29 +627,22 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
             :class="isCollapsed(section) ? '-rotate-90' : ''"
           />
         </button>
-        <div v-if="!isCollapsed(section)" class="grid grid-cols-2 gap-2">
+        <div v-if="!isCollapsed(section)" class="flex flex-col gap-1">
           <button
             v-for="item in section.items"
             :key="item.nodeType"
             draggable="true"
-            class="relative group flex flex-col items-center justify-start gap-2 min-h-[128px] rounded-lg bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing p-3 pt-4"
+            class="relative group flex items-center gap-3 rounded-lg bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing px-2.5 py-2 text-left"
             :title="`${item.label} (${item.nodeType}) — click to add, or drag onto canvas`"
             @click="addNode(item.nodeType)"
             @dragstart="(e) => onCardDragStart(e, item)"
             @mouseenter="(e) => onCardEnter(e, item)"
             @mouseleave="onCardLeave"
           >
-            <span
-              v-if="item.price"
-              class="absolute top-1 right-1 text-[9px] tabular-nums leading-none px-1 py-0.5 rounded bg-amber-500/15 text-amber-200/90 border border-amber-500/15 group-hover:bg-amber-500/25 transition-colors"
-              :title="`${item.priceApprox ? '~' : ''}${item.price}${item.priceSuffix ? ' ' + item.priceSuffix : ''}${item.priceVaries ? ' (varies by settings)' : ''}`"
-            >{{ item.priceApprox ? '~' : '' }}{{ item.price }}</span>
             <!-- Main icon = per-node use-case glyph when we have one
                  (Generate → Sparkles, Upscale → Maximize, etc.). Falls back
                  to the provider's own icon when there's no mapping yet —
-                 so a freshly-added partner still looks reasonable. When the
-                 per-node icon takes the main slot, the provider drops into
-                 a small badge in the bottom-right corner. -->
+                 so a freshly-added partner still looks reasonable. -->
             <div
               class="relative size-9 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
               :class="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider) ? 'bg-white/[0.04]' : ''"
@@ -673,34 +669,41 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
                 :stroke-width="1.75"
               />
             </div>
-            <!-- Use-case-first label when the node is in the map; falls back
+            <!-- Use-case-first title + model subline when mapped; falls back
                  to the cleaned model name for partner nodes we haven't mapped. -->
-            <template v-if="useCaseFor(item)">
-              <span class="text-[13px] text-white/85 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5 min-h-[2.4em] flex items-center justify-center">
-                {{ useCaseFor(item)!.useCase }}
-              </span>
-              <span class="flex items-center justify-center gap-1 px-0.5 -mt-1 max-w-full">
-                <!-- Model/provider brand icon, inline next to the model name. -->
-                <span
-                  v-if="hasComfyBrandIcon(chipProvider(item))"
-                  :class="[comfyBrandIconClass(chipProvider(item)), isComfyMonoIcon(chipProvider(item)) ? 'bg-white/45 group-hover:bg-white/60' : '']"
-                  class="text-[8px] leading-none shrink-0"
-                  :title="chipProvider(item)"
-                />
-                <component
-                  v-else
-                  :is="providerIcon(chipProvider(item), section.domain)"
-                  class="size-2 shrink-0 text-white/45 group-hover:text-white/60"
-                  :stroke-width="2"
-                />
-                <span class="text-[11px] text-white/40 group-hover:text-white/55 leading-tight transition-colors line-clamp-1">
-                  {{ useCaseFor(item)!.model }}
+            <div class="flex flex-col min-w-0 flex-1">
+              <template v-if="useCaseFor(item)">
+                <span class="text-[13px] text-white/85 group-hover:text-white/95 leading-tight transition-colors truncate">
+                  {{ useCaseFor(item)!.useCase }}
                 </span>
+                <span class="flex items-center gap-1 max-w-full mt-0.5">
+                  <!-- Model/provider brand icon, inline next to the model name. -->
+                  <span
+                    v-if="hasComfyBrandIcon(chipProvider(item))"
+                    :class="[comfyBrandIconClass(chipProvider(item)), isComfyMonoIcon(chipProvider(item)) ? 'bg-white/45 group-hover:bg-white/60' : '']"
+                    class="text-[8px] leading-none shrink-0"
+                    :title="chipProvider(item)"
+                  />
+                  <component
+                    v-else
+                    :is="providerIcon(chipProvider(item), section.domain)"
+                    class="size-2 shrink-0 text-white/45 group-hover:text-white/60"
+                    :stroke-width="2"
+                  />
+                  <span class="text-[11px] text-white/40 group-hover:text-white/55 leading-tight transition-colors truncate">
+                    {{ useCaseFor(item)!.model }}
+                  </span>
+                </span>
+              </template>
+              <span v-else class="text-[13px] text-white/70 group-hover:text-white/95 leading-tight transition-colors truncate">
+                {{ item.label.replace(item.provider, '').replace(/^[ :·-]+/, '') || item.label }}
               </span>
-            </template>
-            <span v-else class="text-[13px] text-white/70 group-hover:text-white/95 text-center leading-tight transition-colors line-clamp-2 px-0.5 min-h-[2.4em] flex items-center justify-center">
-              {{ item.label.replace(item.provider, '').replace(/^[ :·-]+/, '') || item.label }}
-            </span>
+            </div>
+            <span
+              v-if="item.price"
+              class="shrink-0 text-[10px] tabular-nums leading-none px-1.5 py-1 rounded bg-amber-500/15 text-amber-200/90 border border-amber-500/15 group-hover:bg-amber-500/25 transition-colors"
+              :title="`${item.priceApprox ? '~' : ''}${item.price}${item.priceSuffix ? ' ' + item.priceSuffix : ''}${item.priceVaries ? ' (varies by settings)' : ''}`"
+            >{{ item.priceApprox ? '~' : '' }}{{ item.price }}</span>
           </button>
         </div>
       </div>

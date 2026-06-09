@@ -44,6 +44,9 @@ export const CAPABILITIES: Capability[] = [
   { nodeType: 'RemoveBackgroundNode',  useCase: 'Remove background',       model: '851-labs/bg-remover',          from: 'image', to: 'image' },
   { nodeType: 'RestorePhotoNode',      useCase: 'Restore an old photo',    model: 'Flux Kontext · Restore',       from: 'image', to: 'image' },
   { nodeType: 'FixFacesNode',          useCase: 'Fix faces in a photo',    model: 'CodeFormer',                   from: 'image', to: 'image' },
+  { nodeType: 'LayerizeGraphicNode',   useCase: 'Layerize a graphic',      model: 'Ideogram Layerize',            from: 'image', to: 'image' },
+  { nodeType: 'SplitPhotoLayersNode',  useCase: 'Split photo into layers', model: 'BG Remover + LaMa / Bria Eraser', from: 'image', to: 'image' },
+  { nodeType: 'OutpaintImageNode',     useCase: 'Expand / outpaint an image', model: 'Flux Fill / Bria Expand',     from: 'image', to: 'image' },
   { nodeType: 'ConsistentFaceNode',    useCase: 'Generate a consistent face', model: 'Ideogram Character',        from: 'image', to: 'image' },
   { nodeType: 'SketchToImageNode',     useCase: 'Sketch to image',         model: 'Nano Banana',                  from: 'image', to: 'image' },
 

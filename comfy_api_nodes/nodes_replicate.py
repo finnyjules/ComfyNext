@@ -2761,9 +2761,10 @@ class GenerateVideoNode(IO.ComfyNode):
 # Upscale engines, from creative→faithful. Each speaks a different input
 # dialect (verified against the live Replicate schemas), so execute() maps the
 # shared widgets per model. Slugs all route through _run_prediction.
-_UPSCALE_MODELS = ["Clarity", "Real-ESRGAN", "Recraft Crisp", "Topaz"]
+_UPSCALE_MODELS = ["Clarity", "Crystal", "Real-ESRGAN", "Recraft Crisp", "Topaz"]
 _UPSCALE_SLUGS = {
     "Clarity": "philz1337x/clarity-upscaler",
+    "Crystal": "philz1337x/crystal-upscaler",
     "Real-ESRGAN": "nightmareai/real-esrgan",
     "Recraft Crisp": "recraft-ai/recraft-crisp-upscale",
     "Topaz": "topazlabs/image-upscale",
@@ -2780,6 +2781,7 @@ class UpscaleImageNode(IO.ComfyNode):
             description=(
                 "Upscale an image. Engines range from creative to faithful:\n"
                 "• Clarity — adds invented detail, prompt-guided (~$0.05–0.20)\n"
+                "• Crystal — creative detail, simple creativity knob (~$0.01–0.04)\n"
                 "• Real-ESRGAN — fast, faithful, no hallucination (~$0.002)\n"
                 "• Recraft Crisp — clean, crisp, cheapest, zero knobs (~$0.006)\n"
                 "• Topaz — premium pro-grade quality (~$0.05+)\n"
@@ -2787,15 +2789,15 @@ class UpscaleImageNode(IO.ComfyNode):
             ),
             inputs=[
                 IO.Combo.Input("model", options=_UPSCALE_MODELS, default="Clarity",
-                               tooltip="Upscale engine. Clarity invents detail; Real-ESRGAN "
-                                       "and Recraft Crisp stay faithful; Topaz is premium."),
+                               tooltip="Upscale engine. Clarity & Crystal invent detail; "
+                                       "Real-ESRGAN and Recraft Crisp stay faithful; Topaz is premium."),
                 IO.Image.Input("image"),
                 IO.String.Input("prompt", multiline=True,
                                 default="masterpiece, best quality, highres",
                                 tooltip="(Clarity only) Style prompt — guides invented detail."),
                 IO.Float.Input("scale_factor", default=2.0, min=1.0, max=10.0, step=0.5,
-                               tooltip="Output is scale_factor × input dimensions. Topaz snaps "
-                                       "this to its nearest step (2x/4x/6x)."),
+                               tooltip="Output is scale_factor × input dimensions. "
+                                       "(Clarity / Real-ESRGAN — Topaz uses its own upscale factor.)"),
                 IO.Float.Input("creativity", default=0.35, min=0.0, max=1.0, step=0.05, advanced=True,
                                tooltip="(Clarity only) 0 = preserve, 1 = reinvent. 0.3–0.4 is the sweet spot."),
                 IO.Float.Input("resemblance", default=0.6, min=0.0, max=3.0, step=0.05, advanced=True,
@@ -2804,14 +2806,48 @@ class UpscaleImageNode(IO.ComfyNode):
                                 advanced=True, tooltip="(Clarity only) What to avoid."),
                 IO.Int.Input("num_inference_steps", default=18, min=10, max=50, advanced=True,
                              tooltip="(Clarity only) More steps = more detail, slower."),
+                # control_after_generate=True is REQUIRED: without it every input
+                # declared AFTER `seed` (face_enhance + all topaz_* widgets) is
+                # off-by-one at queue time, because the Vue bridge only reserves
+                # the seed-control slot in widgets_values when this flag is set.
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
-                             tooltip="0 = random. Used by Clarity."),
+                             control_after_generate=True, tooltip="0 = random. Used by Clarity."),
                 # NOTE: new inputs MUST be appended at the END. Widget values are
                 # positional, so inserting mid-list shifts every later widget on
                 # existing nodes (scrambles their saved values). face_enhance is
                 # last so the original first-8 slots stay put.
                 IO.Boolean.Input("face_enhance", default=False, advanced=True,
                                  tooltip="Restore/enhance faces (Real-ESRGAN & Topaz). Ignored by others."),
+                # --- Topaz-only controls (mirror topazlabs/image-upscale). Gated
+                # to the Topaz model in the frontend; appended here per the
+                # positional-widget rule above so existing nodes keep their values.
+                IO.Combo.Input("topaz_enhance_model",
+                               options=["Standard V2", "Low Resolution V2", "CGI",
+                                        "High Fidelity V2", "Text Refine"],
+                               default="Standard V2", advanced=True,
+                               tooltip="(Topaz) Enhancement model: Standard V2 (general), "
+                                       "Low Resolution V2 (low-res input), CGI (digital art), "
+                                       "High Fidelity V2 (preserves detail), Text Refine (text)."),
+                IO.Combo.Input("topaz_upscale_factor", options=["None", "2x", "4x", "6x"],
+                               default="2x", advanced=True,
+                               tooltip="(Topaz) How much to upscale. None = enhance only, no resize."),
+                IO.Combo.Input("topaz_subject_detection", options=["None", "All", "Foreground", "Background"],
+                               default="None", advanced=True,
+                               tooltip="(Topaz) Detect and prioritize subjects when enhancing."),
+                IO.Combo.Input("topaz_output_format", options=["png", "jpg"], default="png", advanced=True,
+                               tooltip="(Topaz) Output image format."),
+                IO.Float.Input("topaz_face_creativity", default=0.0, min=0.0, max=1.0, step=0.05, advanced=True,
+                               tooltip="(Topaz) Face-enhancement creativity 0–1. Ignored unless Face enhance is on."),
+                IO.Float.Input("topaz_face_strength", default=0.8, min=0.0, max=1.0, step=0.05, advanced=True,
+                               tooltip="(Topaz) How sharp enhanced faces are vs. background, 0–1. "
+                                       "Ignored unless Face enhance is on."),
+                # --- Crystal-only controls (mirror philz1337x/crystal-upscaler).
+                # Crystal's creativity is 0–10 (not Clarity's 0–1), so it gets its
+                # own widget. Appended at the END per the positional-widget rule.
+                IO.Float.Input("crystal_creativity", default=0.0, min=0.0, max=10.0, step=0.5, advanced=True,
+                               tooltip="(Crystal) Creativity 0–10. 0 = faithful, higher = more invented detail."),
+                IO.Combo.Input("crystal_output_format", options=["png", "jpg"], default="png", advanced=True,
+                               tooltip="(Crystal) Output image format."),
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.10,"format":{"approximate":true}}'),
@@ -2820,7 +2856,11 @@ class UpscaleImageNode(IO.ComfyNode):
     @classmethod
     async def execute(cls, model, image, prompt, scale_factor,
                       creativity, resemblance, negative_prompt, num_inference_steps, seed,
-                      face_enhance=False):
+                      face_enhance=False,
+                      topaz_enhance_model="Standard V2", topaz_upscale_factor="2x",
+                      topaz_subject_detection="None", topaz_output_format="png",
+                      topaz_face_creativity=0.0, topaz_face_strength=0.8,
+                      crystal_creativity=0.0, crystal_output_format="png"):
         img_url = _image_tensor_to_data_url(image)
 
         if model == "Clarity":
@@ -2836,6 +2876,13 @@ class UpscaleImageNode(IO.ComfyNode):
             }
             if seed and seed > 0:
                 input_dict["seed"] = seed
+        elif model == "Crystal":
+            input_dict = {
+                "image": img_url,
+                "scale_factor": float(scale_factor),
+                "creativity": float(crystal_creativity),
+                "output_format": crystal_output_format,
+            }
         elif model == "Real-ESRGAN":
             input_dict = {
                 "image": img_url,
@@ -2846,15 +2893,17 @@ class UpscaleImageNode(IO.ComfyNode):
             # Zero-knob crisp upscaler — takes only the image.
             input_dict = {"image": img_url}
         elif model == "Topaz":
-            # Topaz takes a fixed-step enum, not an arbitrary multiplier.
-            sf = float(scale_factor)
-            factor = "2x" if sf <= 2 else ("4x" if sf <= 4 else "6x")
             input_dict = {
                 "image": img_url,
-                "upscale_factor": factor,
+                "enhance_model": topaz_enhance_model,
+                "upscale_factor": topaz_upscale_factor,
+                "subject_detection": topaz_subject_detection,
+                "output_format": topaz_output_format,
                 "face_enhancement": bool(face_enhance),
-                "output_format": "png",
             }
+            if face_enhance:
+                input_dict["face_enhancement_creativity"] = float(topaz_face_creativity)
+                input_dict["face_enhancement_strength"] = float(topaz_face_strength)
         else:
             raise ValueError(f"Unknown upscale model: {model}")
 
@@ -2965,6 +3014,276 @@ class FixFacesNode(IO.ComfyNode):
         }
         pred = await _run_prediction("sczhou/codeformer", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
+# =============================================================================
+# Use case: Layerize a graphic (split a flat design into layers)
+# =============================================================================
+
+
+class LayerizeGraphicNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="LayerizeGraphicNode",
+            display_name="Layerize a graphic",
+            category="api node/image/Replicate",
+            description=(
+                "Split a flat graphic (poster, ad, thumbnail, UI mockup) into a "
+                "clean, text-free background plus structured text-layer data — "
+                "positions, fonts, colors, and ready-to-use HTML overlay code. "
+                "Best for design graphics, not photographs. Ideogram Layerize. "
+                "~$0.08 per image.\n"
+                "Outputs: the background image (text removed) and the layer JSON."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Ideogram Layerize"], default="Ideogram Layerize"),
+                IO.Image.Input("image", tooltip="The flat graphic to layerize (JPEG/PNG/WebP, max 10MB)."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Optional — describe the graphic to guide layerization."),
+                IO.Int.Input("seed", default=0, min=0, max=0x7FFFFFFF, advanced=True,
+                             control_after_generate=True,
+                             tooltip="0 = random. Set for reproducible results."),
+            ],
+            outputs=[
+                IO.Image.Output(display_name="background"),
+                IO.String.Output(display_name="layers_json"),
+            ],
+            hidden=[IO.Hidden.unique_id],
+            # Output node so the run's `executed` event reaches the frontend
+            # even with nothing wired downstream: the node carries its own
+            # background preview + the layer JSON (data.text), which is what
+            # the "Edit as Frame" conversion reads.
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.08,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt, seed):
+        import json as _json
+        input_dict = {"flat_graphic_image": _image_tensor_to_data_url(image)}
+        if (prompt or "").strip():
+            input_dict["prompt"] = prompt.strip()
+        if seed and seed > 0:
+            input_dict["seed"] = int(seed)
+
+        pred = await _run_prediction("ideogram-ai/layerize", input_dict)
+        urls = _all_output_urls(pred)
+        if not urls:
+            raise ValueError("Layerize returned no output.")
+
+        # Output is an unordered pair: a background image and a text-layer JSON.
+        # Pick by file extension so we're robust to ordering changes.
+        def _ext(u: str) -> str:
+            return u.lower().split("?")[0].rsplit(".", 1)[-1]
+        img_url = next((u for u in urls if _ext(u) in ("png", "jpg", "jpeg", "webp")), None)
+        json_url = next((u for u in urls if _ext(u) == "json"), None)
+        if img_url is None:
+            img_url = next((u for u in urls if u != json_url), None)
+        if img_url is None:
+            raise ValueError("Layerize returned no background image.")
+
+        tensor = await download_url_to_image_tensor(img_url, cls=cls)
+
+        layers_json = ""
+        if json_url:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        json_url, timeout=aiohttp.ClientTimeout(total=30)
+                    ) as r:
+                        layers_json = await r.text()
+            except Exception as e:
+                layers_json = _json.dumps({"error": f"failed to fetch layer data: {e}"})
+
+        # Surface both results on the node itself (background preview image +
+        # the layer JSON as a text payload) so "Edit as Frame" can convert the
+        # structured text layers without any downstream wiring.
+        ui = save_live_preview(tensor, str(cls.hidden.unique_id))
+        if layers_json:
+            ui = {**ui, "text": [layers_json]}
+        return IO.NodeOutput(tensor, layers_json, ui=ui)
+
+
+# =============================================================================
+# Use case: Split a photo into layers (subject cutout + clean background plate)
+# =============================================================================
+
+
+# Background-fill engines for the hole left behind once the subject is removed.
+# Both are dedicated object *removers* — they reconstruct the hole from
+# surrounding context and do NOT regenerate a new subject (unlike a generative
+# inpainter such as Flux Fill, which happily paints a fresh person into a
+# person-shaped hole). Both take image + mask with white = remove.
+_PHOTO_FILL_SLUGS = {
+    "LaMa (fast)": "zylim0702/remove-object",
+    "Bria Eraser (quality)": "bria/eraser",
+}
+
+
+class SplitPhotoLayersNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="SplitPhotoLayersNode",
+            display_name="Split photo into layers",
+            category="api node/image/Replicate",
+            description=(
+                "Decompose a photo into two editable layers, ready for the "
+                "Compositor:\n"
+                "• subject — a transparent RGBA cutout (851-labs background remover)\n"
+                "• background — a clean plate with the subject removed and the "
+                "hole reconstructed (LaMa, ~$0.003 total; or Bria Eraser, ~$0.04)\n"
+                "Both engines ERASE (reconstruct from surroundings) — they will "
+                "not paint a new subject into the hole. The revealed area is "
+                "AI-reconstructed, not recovered."
+            ),
+            inputs=[
+                IO.Combo.Input("background_fill", options=list(_PHOTO_FILL_SLUGS),
+                               default="LaMa (fast)",
+                               tooltip="How to reconstruct the hole left by the removed subject. "
+                                       "LaMa is fast/cheap; Bria Eraser is SOTA quality. Both are "
+                                       "true erasers — neither regenerates a new subject."),
+                IO.Image.Input("image", tooltip="The photo to split into subject + background."),
+                IO.Int.Input("mask_grow", default=12, min=0, max=50, step=1, advanced=True,
+                             tooltip="Grow the subject mask by N px before filling, so no thin "
+                                     "halo of the subject is left behind in the background plate."),
+            ],
+            outputs=[
+                IO.Image.Output(display_name="subject"),     # RGBA cutout (alpha preserved)
+                IO.Image.Output(display_name="background"),  # opaque clean plate
+            ],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.01,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, background_fill, image, mask_grow=12):
+        from PIL import ImageFilter
+        img_url = _image_tensor_to_data_url(image)
+
+        # 1) Subject cutout (RGBA) from the background remover.
+        sub_pred = await _run_prediction(
+            "851-labs/background-remover",
+            {"image": img_url, "background_type": "rgba", "format": "png"},
+        )
+        subject = await download_url_to_image_tensor(_first_output_url(sub_pred), cls=cls)
+
+        # 2) Inpaint mask (white = subject region to fill). Derive it from the
+        #    cutout's alpha — free, no extra call. Fall back to the remover's
+        #    dedicated matte ('map') if no alpha came back for some reason.
+        if subject.dim() == 4 and subject.shape[-1] >= 4:
+            alpha = (subject[0, :, :, 3].clamp(0, 1) * 255).round().to(torch.uint8).cpu().numpy()
+            mask_img = Image.fromarray(alpha, mode="L")
+        else:
+            map_pred = await _run_prediction(
+                "851-labs/background-remover",
+                {"image": img_url, "background_type": "map", "format": "png"},
+            )
+            mt = await download_url_to_image_tensor(_first_output_url(map_pred), cls=cls)
+            arr = (mt[0, :, :, 0].clamp(0, 1) * 255).round().to(torch.uint8).cpu().numpy()
+            mask_img = Image.fromarray(arr, mode="L")
+
+        if mask_grow > 0:
+            mask_img = mask_img.filter(ImageFilter.MaxFilter(mask_grow * 2 + 1))
+        mbuf = io.BytesIO()
+        mask_img.save(mbuf, format="PNG")
+        mask_url = "data:image/png;base64," + base64.b64encode(mbuf.getvalue()).decode("ascii")
+
+        # 3) Erase the subject region → clean background plate. Both engines
+        #    take image + mask (white = remove) and reconstruct, not regenerate.
+        slug = _PHOTO_FILL_SLUGS[background_fill]
+        bg_pred = await _run_prediction(slug, {"image": img_url, "mask": mask_url})
+        background = await download_url_to_image_tensor(_first_output_url(bg_pred), cls=cls)
+        # Background is an opaque plate — drop any alpha so the downstream Image
+        # artifact renders normally (a spurious alpha routes it to the
+        # transparent-preview path).
+        if background.dim() == 4 and background.shape[-1] == 4:
+            background = background[..., :3].contiguous()
+
+        return IO.NodeOutput(subject, background)
+
+
+# =============================================================================
+# Use case: Expand / outpaint an image
+# =============================================================================
+
+
+_OUTPAINT_DIRECTIONS = [
+    "Zoom out 1.5x", "Zoom out 2x", "Make square",
+    "Left outpaint", "Right outpaint", "Top outpaint", "Bottom outpaint",
+]
+_OUTPAINT_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"]
+
+
+class OutpaintImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="OutpaintImageNode",
+            display_name="Expand / outpaint an image",
+            category="api node/image/Replicate",
+            description=(
+                "Extend an image beyond its borders — the model invents plausible "
+                "new surroundings. Two engines:\n"
+                "• Flux Fill — directional outpaint or zoom-out via a single picker "
+                "(Left/Right/Top/Bottom, Zoom out, Make square), prompt-steerable (~$0.05)\n"
+                "• Bria Expand — expand to an exact target aspect ratio, clean and "
+                "commercial-grade (~$0.04)\n"
+                "Use the prompt to guide what fills the new space (optional)."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=["Flux Fill", "Bria Expand"], default="Flux Fill",
+                               tooltip="Flux Fill = directional/zoom outpaint; "
+                                       "Bria Expand = expand to a target aspect ratio."),
+                IO.Image.Input("image"),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Optional — describe what should fill the new area "
+                                        "(e.g. 'forest clearing, soft daylight'). Both engines use it."),
+                IO.Combo.Input("direction", options=_OUTPAINT_DIRECTIONS, default="Zoom out 1.5x",
+                               tooltip="(Flux Fill) Which way to extend, or zoom out / make square. "
+                                       "The mask is generated automatically."),
+                IO.Combo.Input("aspect_ratio", options=_OUTPAINT_ASPECT_RATIOS, default="16:9",
+                               tooltip="(Bria Expand) Target aspect ratio to expand the canvas to."),
+                # seed last + control_after_generate=True (positional-widget rule).
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True,
+                             control_after_generate=True, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt, direction, aspect_ratio, seed=0):
+        img_url = _image_tensor_to_data_url(image)
+        prompt = (prompt or "").strip()
+
+        if model == "Flux Fill":
+            input_dict = {
+                "image": img_url,
+                "outpaint": direction,
+                "prompt": prompt,
+                "output_format": "png",
+                "safety_tolerance": 6,
+            }
+            if seed and seed > 0:
+                input_dict["seed"] = int(seed)
+            slug = "black-forest-labs/flux-fill-pro"
+        elif model == "Bria Expand":
+            input_dict = {"image": img_url, "aspect_ratio": aspect_ratio}
+            if prompt:
+                input_dict["prompt"] = prompt
+            if seed and seed > 0:
+                input_dict["seed"] = int(seed)
+            slug = "bria/expand-image"
+        else:
+            raise ValueError(f"Unknown outpaint model: {model}")
+
+        pred = await _run_prediction(slug, input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        # Opaque result — drop any alpha so the downstream Image artifact renders.
+        if tensor.dim() == 4 and tensor.shape[-1] == 4:
+            tensor = tensor[..., :3].contiguous()
         return IO.NodeOutput(tensor)
 
 
@@ -4252,6 +4571,9 @@ class ReplicateExtension(ComfyExtension):
             RemoveBackgroundNode,       # Remove background · 851-labs/bg-remover
             RestorePhotoNode,           # Restore an old photo · Flux Kontext Restore
             FixFacesNode,               # Fix faces in a photo · CodeFormer
+            LayerizeGraphicNode,        # Layerize a graphic · Ideogram Layerize
+            SplitPhotoLayersNode,       # Split photo into layers · bg-remover + LaMa/Bria Eraser
+            OutpaintImageNode,          # Expand / outpaint an image · Flux Fill / Bria Expand
             # Image — analysis
             DescribeImageNode,          # Describe an image · Moondream 2
             ExtractTextNode,            # Extract text from image (OCR) · Dolphin
