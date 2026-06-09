@@ -3,8 +3,63 @@ export type BlendMode =
   | 'soft_light' | 'hard_light' | 'difference'
   | 'lighten' | 'darken' | 'add'
 
+// ── v2 additions: transitions, filters, captions, mattes, bakes ─────────────
+
+/** Built-in junction transitions. Phase-5 generative kinds extend this union. */
+export type TransitionKind = 'crossfade' | 'wipe_left' | 'wipe_right' | 'slide_up' | 'slide_down'
+
+/** A transition lives on the junction between two adjacent clips on one track,
+ *  overlapping `duration` frames centered on the cut. */
+export interface Transition {
+  id: string
+  track_id: string
+  from_clip_id: string
+  to_clip_id: string
+  kind: TransitionKind
+  duration: number
+  params?: Record<string, number | string>
+}
+
+/** Per-clip color adjustments. Identity when a field is absent:
+ *  brightness 0 (additive −1..1), contrast 1 (×, pivot 0.5), saturation 1 (×),
+ *  hue 0 (degrees −180..180), temperature 0 (warm/cool −1..1). */
+export interface ClipFilters {
+  brightness?: number
+  contrast?: number
+  saturation?: number
+  hue?: number
+  temperature?: number
+}
+
+/** Link to an AI-generated derivative asset (matte, interpolated transition,
+ *  reframe). `source_key` hashes the inputs that produced it — mismatch ⇒
+ *  stale, re-bake. */
+export interface BakeRef {
+  asset_id: string
+  source_key: string
+}
+
+/** Word timing is clip-local frames, like Keyframe.frame. */
+export interface CaptionWord {
+  text: string
+  start_frame: number
+  end_frame: number
+}
+
+export interface CaptionSpec {
+  words: CaptionWord[]
+  preset: string
+  font_family: string
+  font_size: number        // normalized to canvas height (0..1)
+  color: string
+  highlight_color: string
+  y: number                // vertical anchor 0..1 from top (default 0.85)
+}
+
+export const EDIT_STATE_VERSION = 2
+
 export interface EditState {
-  version: 1
+  version: typeof EDIT_STATE_VERSION
   canvas: {
     width: number
     height: number
@@ -12,12 +67,14 @@ export interface EditState {
     bg_color: string
   }
   tracks: Track[]
+  /** Transitions attached to clip junctions (v2+). Always present after migration. */
+  transitions: Transition[]
   total_frames: number
 }
 
 export interface Track {
   id: string
-  kind: 'video' | 'audio'
+  kind: 'video' | 'audio' | 'captions'
   name: string
   muted: boolean
   locked: boolean
@@ -54,21 +111,35 @@ export interface BaseClip {
   audio_fade_out?: number
   /** Animation keyframes (clip-local frames). Present ⇒ transform animates. */
   keyframes?: Keyframe[]
+  /** Playback rate (v2). 1 = normal; source advances local_frame × speed. */
+  speed?: number
+  /** Play the source backwards (v2). */
+  reverse?: boolean
+  /** Per-clip color adjustments (v2). Absent ⇒ identity. */
+  filters?: ClipFilters
+  /** AI matte asset composited as this clip's alpha (v2). */
+  matte_asset_id?: string
+  /** Cached AI-generated derivative backing this clip (v2). */
+  bake?: BakeRef
 }
 
 export interface VideoClip extends BaseClip {
   kind: 'video'
   asset_id: string
+  /** Absolute or input-relative file path, inlined for the export/render path. */
+  path?: string
 }
 
 export interface ImageClip extends BaseClip {
   kind: 'image'
   asset_id: string
+  path?: string
 }
 
 export interface AudioClip extends BaseClip {
   kind: 'audio'
   asset_id: string
+  path?: string
 }
 
 export interface TextSpec {
@@ -129,7 +200,12 @@ export interface LowerThirdClip extends BaseClip {
   lower_third: LowerThirdSpec
 }
 
-export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip
+export interface CaptionClip extends BaseClip {
+  kind: 'caption'
+  caption: CaptionSpec
+}
+
+export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip
 
 export interface Asset {
   id: string
@@ -145,14 +221,28 @@ export interface Asset {
 
 export function createDefaultEditState(): EditState {
   return {
-    version: 1,
+    version: EDIT_STATE_VERSION,
     canvas: { width: 1280, height: 720, fps: 30, bg_color: '#000000' },
     tracks: [
       { id: crypto.randomUUID(), kind: 'video', name: 'Video 1', muted: false, locked: false, clips: [] },
       { id: crypto.randomUUID(), kind: 'audio', name: 'Audio 1', muted: false, locked: false, clips: [] },
     ],
+    transitions: [],
     total_frames: 0,
   }
+}
+
+/** Accept any supported stored EditState (v1 widgets/autosaves included) and
+ *  normalize it to the current version in place. Returns null when `raw` is
+ *  not an edit state — callers fall back to createDefaultEditState(). */
+export function migrateEditState(raw: unknown): EditState | null {
+  if (!raw || typeof raw !== 'object') return null
+  const s = raw as Record<string, any>
+  if (s.version !== 1 && s.version !== EDIT_STATE_VERSION) return null
+  if (!Array.isArray(s.tracks)) return null
+  s.version = EDIT_STATE_VERSION
+  if (!Array.isArray(s.transitions)) s.transitions = []
+  return s as EditState
 }
 
 export function computeTotalFrames(state: EditState): number {
