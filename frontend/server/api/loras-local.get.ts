@@ -29,6 +29,7 @@ export default defineEventHandler(async () => {
     provider: string
     trigger: string | null
     aesthetic: string | null
+    kind: 'character' | 'style' | null
     url: string | null
     coverUrl: string | null
     canGenerateCover: boolean
@@ -80,6 +81,9 @@ export default defineEventHandler(async () => {
       provider: meta.provider || (meta.replicate_url ? 'replicate' : 'local'),
       trigger: meta.trigger ?? null,
       aesthetic: meta.aesthetic ?? meta.taste_profile ?? null,
+      // 'character' = usable as an identity LoRA in the Characters panel;
+      // anything else (incl. legacy untagged) is treated as a style.
+      kind: meta.kind === 'character' ? 'character' : (meta.kind === 'style' ? 'style' : null),
       url: meta.replicate_url ?? null,
       coverUrl,
       canGenerateCover: !!meta.replicate_model,

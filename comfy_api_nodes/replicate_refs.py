@@ -174,6 +174,25 @@ def _resolve_lora_url(lora_name: str) -> str | None:
     return meta.get("replicate_url")
 
 
+def _resolve_lora_weights_url(lora_name: str) -> str | None:
+    """Map a local trained-LoRA filename to its raw WEIGHTS artifact URL — the
+    `replicate_url` (a *.tar* / *.safetensors* the cloud trainer stores) — NOT
+    the private model ref.
+
+    This is the form `lucataco/flux-dev-multi-lora` needs: it loads and stacks
+    LoRA *weights*, and cannot run our private trained *models* (it would misread
+    a bare `<owner>/<model>` as a HuggingFace slug). The single-LoRA path prefers
+    `replicate_model` and runs it directly; multi-LoRA stacking can't, so it uses
+    the weights tar the trainer already keeps for exactly this purpose. Returns
+    None if there's no sidecar or no weights URL in it.
+    """
+    meta = _read_lora_sidecar(lora_name)
+    if meta is None:
+        return None
+    url = meta.get("replicate_url")
+    return url.strip() if isinstance(url, str) and url.strip() else None
+
+
 def _replicate_model_to_lora_ref(model_ref: str) -> str:
     """Turn a Replicate model ref `<owner>/<model>:<hash>` into the slash form
     `<owner>/<model>/<hash>` that flux-dev-lora's `lora_weights` accepts."""

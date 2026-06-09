@@ -13,8 +13,14 @@ import { Sparkles, ChevronRight } from 'lucide-vue-next'
 const props = defineProps<{
   modelValue: string   // selected LoRA filename, or "[None]"/empty
   nodeId?: string
+  widgetName?: string  // which input this picker edits (default lora_name)
+  kind?: 'character' | 'style'  // 'character' → Characters gallery + label
 }>()
 defineEmits<{ 'update:modelValue': [value: string] }>()
+
+// Noun shown on the button + used to title the gallery. A 'character' picker
+// (e.g. the multi-LoRA node's slot A) browses your characters, not your styles.
+const noun = computed(() => (props.kind === 'character' ? 'Character' : 'Style'))
 
 const selected = computed(() => {
   const v = (props.modelValue || '').trim()
@@ -33,7 +39,7 @@ watch(() => props.modelValue, () => { coverError.value = false })
 
 function openGallery() {
   window.dispatchEvent(new CustomEvent('comfynext:openLoraGallery', {
-    detail: { nodeId: props.nodeId },
+    detail: { nodeId: props.nodeId, widgetName: props.widgetName, kind: props.kind },
   }))
 }
 </script>
@@ -41,7 +47,7 @@ function openGallery() {
 <template>
   <button
     class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-colors cursor-pointer text-left group"
-    :title="selected ? `${selected} — click to change Style` : 'Browse your Styles'"
+    :title="selected ? `${selected} — click to change ${noun}` : `Browse your ${noun === 'Character' ? 'Characters' : 'Styles'}`"
     @click="openGallery"
   >
     <span class="size-7 rounded-md shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden">
@@ -56,10 +62,10 @@ function openGallery() {
     </span>
     <span class="flex flex-col min-w-0 flex-1">
       <span class="text-[11px] font-medium truncate leading-tight" :class="selected ? 'text-white/90' : 'text-white/55'">
-        {{ selected ?? 'Choose a Style' }}
+        {{ selected ?? `Choose a ${noun}` }}
       </span>
       <span class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
-        {{ selected ? 'Style' : 'open gallery' }}
+        {{ selected ? noun : 'open gallery' }}
       </span>
     </span>
     <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />

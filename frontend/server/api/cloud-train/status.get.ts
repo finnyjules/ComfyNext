@@ -81,6 +81,9 @@ export default defineEventHandler(async (event) => {
   // Aesthetic generated at train time (see /aesthetic). Stored
   // in the sidecar and prepended to prompts so generations match the trained look.
   const aesthetic = String(query.aesthetic ?? '').trim()
+  // 'character' tags the LoRA as an identity so it lands in the Characters
+  // panel; anything else is a style. Written into the sidecar at train time.
+  const kind = String(query.kind ?? '').trim() === 'character' ? 'character' : 'style'
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
 
   // Cloud LoRA jobs are Replicate *trainings*, not predictions.
@@ -145,6 +148,7 @@ export default defineEventHandler(async (event) => {
           replicate_model: modelRef,
           replicate_url: outputUrl,
           aesthetic: aesthetic || null,
+          kind,
           trained_on: new Date().toISOString(),
         }
         await fs.writeFile(

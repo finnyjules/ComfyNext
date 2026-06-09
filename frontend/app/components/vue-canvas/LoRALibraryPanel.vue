@@ -14,13 +14,12 @@ import {
   Sparkles,
   Copy,
   ArrowUpRight,
+  Drama,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
 import {
   LORA_LIBRARY,
-  LORA_CATEGORIES,
-  type LoRACategory,
   type LoRALibraryEntry,
 } from '~/data/lora-library'
 import { useNodeSearch } from '~/composables/useNodeSearch'
@@ -29,37 +28,37 @@ defineEmits<{ close: [] }>()
 
 const { addNode } = useNodeSearch()
 
-// ── Category + search ─────────────────────────────────────────────────────
+// ── Tabs + search ─────────────────────────────────────────────────────────
+// Two tabs only: "Your Styles" (your trained, non-character LoRAs) and
+// "Legacy" (the curated public LoRA library). Characters live in their own
+// panel, so they never appear here.
 
-type FilterCategory = LoRACategory | 'All' | 'Your Styles'
-const activeCategory = ref<FilterCategory>('All')
+type FilterTab = 'Your Styles' | 'Legacy'
+const FILTER_TABS: FilterTab[] = ['Your Styles', 'Legacy']
+const activeTab = ref<FilterTab>('Your Styles')
 const searchQuery = ref('')
 
 const visibleEntries = computed<LoRALibraryEntry[]>(() => {
+  if (activeTab.value !== 'Legacy') return []
   const q = searchQuery.value.trim().toLowerCase()
   return LORA_LIBRARY.filter(e =>
-    (activeCategory.value === 'All' || e.category === activeCategory.value)
-    && (!q
-      || e.label.toLowerCase().includes(q)
-      || e.blurb.toLowerCase().includes(q)
-      || e.trigger.toLowerCase().includes(q)
-      || e.author.toLowerCase().includes(q)
-      || e.hfPath.toLowerCase().includes(q)),
+    !q
+    || e.label.toLowerCase().includes(q)
+    || e.blurb.toLowerCase().includes(q)
+    || e.trigger.toLowerCase().includes(q)
+    || e.author.toLowerCase().includes(q)
+    || e.hfPath.toLowerCase().includes(q)
+    || e.category.toLowerCase().includes(q),
   )
 })
 
-function categoryCount(cat: FilterCategory): number {
-  if (cat === 'All') return LORA_LIBRARY.length
-  if (cat === 'Your Styles') return localLoras.value.length
-  return LORA_LIBRARY.filter(e => e.category === cat).length
-}
+// A trained LoRA lives in exactly one place: characters go to the Characters
+// panel, everything else is a style here.
+const localStyleLoras = computed(() => localLoras.value.filter(l => l.kind !== 'character'))
 
-// Filter chips: "Your Styles" only appears once you've trained at least one.
-const filterTabs = computed<FilterCategory[]>(() => [
-  'All',
-  ...(localLoras.value.length ? (['Your Styles'] as FilterCategory[]) : []),
-  ...LORA_CATEGORIES,
-])
+function tabCount(tab: FilterTab): number {
+  return tab === 'Your Styles' ? localStyleLoras.value.length : LORA_LIBRARY.length
+}
 
 // ── Adding to canvas ──────────────────────────────────────────────────────
 
@@ -185,6 +184,7 @@ interface LocalLora {
   provider: string
   trigger: string | null
   aesthetic: string | null
+  kind: 'character' | 'style' | null
   url: string | null
   coverUrl: string | null
   trainedOn: string | null
@@ -203,9 +203,9 @@ onMounted(fetchLocalLoras)
 
 const visibleLocal = computed<LocalLora[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  // Own tab now — only shown when the "Your Styles" filter is active.
-  if (activeCategory.value !== 'Your Styles') return []
-  return localLoras.value.filter(l =>
+  // Shown only on the "Your Styles" tab.
+  if (activeTab.value !== 'Your Styles') return []
+  return localStyleLoras.value.filter(l =>
     !q || l.name.toLowerCase().includes(q) || l.filename.toLowerCase().includes(q))
 })
 
@@ -227,6 +227,31 @@ function useLocalLora(l: LocalLora) {
   toast.success(`Added ${l.name}`, {
     description: l.trigger ? `Trigger: ${l.trigger}` : (l.baseModel ? `Base: ${l.baseModel}` : undefined),
   })
+}
+
+// Promote a trained LoRA to a character — it moves to the Characters panel,
+// where it can be stacked with a style. Tag lives in the sidecar (PATCH kind).
+const promoting = ref<Set<string>>(new Set())
+async function markAsCharacter(l: LocalLora, e: Event) {
+  e.stopPropagation()
+  promoting.value.add(l.filename)
+  try {
+    const res = await fetch('/api/loras-local', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: l.filename, kind: 'character' }),
+    })
+    if (!res.ok) throw new Error()
+    const target = localLoras.value.find(x => x.filename === l.filename)
+    if (target) target.kind = 'character'  // drops it from this list, into Characters
+    toast.success(`${l.name} is now a character`, {
+      description: 'Find it in the Characters panel.',
+    })
+  } catch {
+    toast.error('Couldn\'t update — try again')
+  } finally {
+    promoting.value.delete(l.filename)
+  }
 }
 
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -275,19 +300,19 @@ function clearSearch() {
       </div>
     </div>
 
-    <!-- Category tabs -->
-    <div class="px-2 pb-2 flex flex-wrap gap-1">
+    <!-- Tabs: Your Styles · Legacy -->
+    <div class="px-2 pb-2 flex gap-1">
       <button
-        v-for="cat in filterTabs"
-        :key="cat"
+        v-for="tab in FILTER_TABS"
+        :key="tab"
         class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-[11px] transition-colors cursor-pointer"
-        :class="activeCategory === cat
+        :class="activeTab === tab
           ? 'bg-white/[0.12] text-white font-medium'
           : 'text-white/50 hover:text-white/80 hover:bg-white/[0.05]'"
-        @click="activeCategory = cat"
+        @click="activeTab = tab"
       >
-        <span>{{ cat }}</span>
-        <span class="text-white/35 tabular-nums">{{ categoryCount(cat) }}</span>
+        <span>{{ tab }}</span>
+        <span class="text-white/35 tabular-nums">{{ tabCount(tab) }}</span>
       </button>
     </div>
 
@@ -316,6 +341,15 @@ function clearSearch() {
             >
               <Sparkles class="size-6 text-violet-200/30" />
             </div>
+            <!-- Hover action: promote to a character -->
+            <button
+              class="absolute top-1.5 right-1.5 size-6 rounded-md bg-black/55 hover:bg-violet-500/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
+              :title="`Make &quot;${l.name}&quot; a character`"
+              :disabled="promoting.has(l.filename)"
+              @click="markAsCharacter(l, $event)"
+            >
+              <Drama class="size-3 text-white/90" />
+            </button>
             <!-- Name on a bottom scrim so it stays legible over any cover -->
             <div class="absolute inset-x-0 bottom-0 px-2 pt-5 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent">
               <div class="text-[11px] font-medium text-white truncate">{{ l.name }}</div>
@@ -333,8 +367,14 @@ function clearSearch() {
             Clear search
           </button>
         </template>
+        <template v-else-if="activeTab === 'Your Styles'">
+          No trained styles yet.
+          <button class="block mx-auto mt-2 text-white/70 hover:text-white underline underline-offset-2 cursor-pointer" @click="activeTab = 'Legacy'">
+            Browse the Legacy library
+          </button>
+        </template>
         <template v-else>
-          Nothing in this category yet.
+          Nothing here yet.
         </template>
       </div>
 

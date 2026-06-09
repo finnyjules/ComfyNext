@@ -257,6 +257,42 @@ def test_resolve_lora_url_none_without_sidecar(loras_dir):
     assert rr._resolve_lora_url("nope.safetensors") is None
 
 
+# ---------- _resolve_lora_weights_url (multi-LoRA stacking) ------------------
+#
+# flux-dev-multi-lora loads WEIGHTS, not private models, so this resolver must
+# return the `replicate_url` .tar — the opposite preference of _resolve_lora_url.
+
+def test_resolve_lora_weights_url_returns_tar_not_model_ref(loras_dir):
+    _write_sidecar(loras_dir, "mine.safetensors", {
+        "replicate_model": "julien/jules-portrait:abc123",
+        "replicate_url": "https://replicate.delivery/xezq/abc/trained_model.tar",
+    })
+    # Even with a model ref present, weights-first returns the .tar.
+    assert (rr._resolve_lora_weights_url("mine.safetensors")
+            == "https://replicate.delivery/xezq/abc/trained_model.tar")
+
+
+def test_resolve_lora_weights_url_none_when_only_model_ref(loras_dir):
+    # Newer private-model-only trainings have no weights URL → can't be stacked.
+    _write_sidecar(loras_dir, "mine.safetensors",
+                   {"replicate_model": "julien/jules-x:def456"})
+    assert rr._resolve_lora_weights_url("mine.safetensors") is None
+
+
+def test_resolve_lora_weights_url_strips_whitespace(loras_dir):
+    _write_sidecar(loras_dir, "mine.safetensors",
+                   {"replicate_url": "  https://x/trained_model.tar  "})
+    assert rr._resolve_lora_weights_url("mine.safetensors") == "https://x/trained_model.tar"
+
+
+def test_resolve_lora_weights_url_none_without_sidecar(loras_dir):
+    assert rr._resolve_lora_weights_url("nope.safetensors") is None
+
+
+def test_resolve_lora_weights_url_none_for_sentinel(loras_dir):
+    assert rr._resolve_lora_weights_url("[None]") is None
+
+
 def test_replicate_model_to_lora_ref_colon_to_slash():
     assert rr._replicate_model_to_lora_ref("owner/model:hash") == "owner/model/hash"
 

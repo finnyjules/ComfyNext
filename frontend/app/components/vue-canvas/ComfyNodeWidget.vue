@@ -430,6 +430,8 @@ function formatLabel(name: string): string {
       <VueCanvasWidgetsWidgetLoraPicker
         :model-value="modelValue"
         :node-id="nodeId"
+        :widget-name="widgetDef.name"
+        :kind="(widgetDef as any).lora_kind === 'character' ? 'character' : 'style'"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>

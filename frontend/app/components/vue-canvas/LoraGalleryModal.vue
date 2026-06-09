@@ -13,8 +13,16 @@ import { Sparkles, Loader2, Pencil, Check, X, RefreshCcw } from 'lucide-vue-next
 const props = defineProps<{
   nodeId: string
   nodes: any[]
+  widgetName?: string          // which combo to write (default 'lora_name')
+  kind?: 'character' | 'style'  // 'character' → browse characters, not styles
 }>()
 const emit = defineEmits<{ close: [] }>()
+
+// The combo this gallery edits, and whether it browses characters or styles.
+const targetWidget = computed(() => props.widgetName || 'lora_name')
+const isCharacter = computed(() => props.kind === 'character')
+const noun = computed(() => (isCharacter.value ? 'Character' : 'Style'))
+const nounPlural = computed(() => (isCharacter.value ? 'Characters' : 'Styles'))
 
 interface LoraItem {
   id: string                 // filename (the value lora_name stores)
@@ -40,7 +48,7 @@ function widgetIndex(name: string): number {
 }
 
 const currentId = computed<string | null>(() => {
-  const idx = widgetIndex('lora_name')
+  const idx = widgetIndex(targetWidget.value)
   const v = idx >= 0 ? node.value?.data?.widgetsValues?.[idx] : null
   return v && v !== '[None]' ? String(v) : null
 })
@@ -64,7 +72,10 @@ onMounted(async () => {
     const res = await fetch('/api/loras-local')
     if (res.ok) {
       const data = await res.json() as { loras?: any[] }
-      items.value = (data.loras || []).map((l) => ({
+      items.value = (data.loras || [])
+        // Show characters in a character picker, styles everywhere else.
+        .filter((l) => (isCharacter.value ? l.kind === 'character' : l.kind !== 'character'))
+        .map((l) => ({
         id: l.filename,
         name: l.name,
         trigger: l.trigger ?? null,
@@ -112,19 +123,37 @@ async function generateCover(item: LoraItem, e?: Event) {
 
 function onConfirm(item: LoraItem) {
   const data = node.value?.data
-  if (!data) { emit('close'); return }
+  if (!data || !Array.isArray(data.widgetsValues)) { emit('close'); return }
   const set = (name: string, value: any) => {
     const idx = widgetIndex(name)
     if (idx >= 0) data.widgetsValues[idx] = value
   }
-  // Style block (aesthetic + trigger) → the node's "Style" PROPERTY (folded
-  // into the prompt at run time). Schema stays stable; prompt box stays clean.
   const trig = item.trigger?.trim()
-  const style = [item.aesthetic?.trim(), trig ? `${trig},` : ''].filter(Boolean).join(' ')
-  set('lora_name', item.id)
-  set('lora_url', '')                            // clear override so the name drives
-  if (!data.properties) data.properties = {}
-  data.properties.aesthetic = style
+  // The URL-override sibling for this slot, cleared so the picked name drives.
+  const urlOverride = targetWidget.value === 'lora_a' ? 'lora_a_url'
+    : targetWidget.value === 'lora_b' ? 'lora_b_url'
+    : 'lora_url'
+  set(targetWidget.value, item.id)
+  set(urlOverride, '')
+
+  if (isCharacter.value) {
+    // Character: put its trigger in the prompt (activates the LoRA). Leave the
+    // "Style" aesthetic property alone — the character's own look would fight
+    // the style (and the multi-LoRA node's single Style slot holds the style's).
+    if (trig) {
+      const pIdx = widgetIndex('prompt')
+      if (pIdx >= 0) {
+        const cur = String(data.widgetsValues[pIdx] ?? '')
+        if (!cur.includes(trig)) data.widgetsValues[pIdx] = cur ? `${trig}, ${cur}` : `${trig}, `
+      }
+    }
+  } else {
+    // Style: fold aesthetic + trigger into the node's "Style" PROPERTY (prepended
+    // to the prompt at run time). Schema stays stable; prompt box stays clean.
+    const style = [item.aesthetic?.trim(), trig ? `${trig},` : ''].filter(Boolean).join(' ')
+    if (!data.properties) data.properties = {}
+    data.properties.aesthetic = style
+  }
   emit('close')
 }
 
@@ -190,14 +219,14 @@ async function saveEdit(item: LoraItem) {
 <template>
   <CatalogModal
     :open="true"
-    title="Your Styles"
+    :title="`Your ${nounPlural}`"
     :subtitle="loading ? 'Loading…' : `${items.length} trained`"
     :items="visibleItems"
     :selected-id="currentId"
     :search-query="searchQuery"
-    search-placeholder="Search by name, trigger, style…"
+    :search-placeholder="`Search by name, trigger, ${noun.toLowerCase()}…`"
     :confirm-label="focusedItem ? `Use ${focusedItem.name}` : 'Use this'"
-    empty-message="No styles yet — create one in the Create a Style tab."
+    :empty-message="isCharacter ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.'"
     @close="emit('close')"
     @confirm="(item: any) => onConfirm(item as LoraItem)"
     @update:selected-id="(id: string) => focusedId = id"

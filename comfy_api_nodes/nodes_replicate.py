@@ -76,6 +76,7 @@ from comfy_api_nodes.replicate_refs import (
     _read_token_from_dotenv,
     _replicate_model_to_lora_ref,
     _resolve_lora_url,
+    _resolve_lora_weights_url,
     _resolve_trained_model,
 )
 
@@ -386,6 +387,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                         "for HuggingFace LoRAs keep the 'huggingface.co/' prefix. "
                         "Wins over lora_name when set."
                     ),
+                    advanced=True,
                 ),
                 IO.Float.Input(
                     "lora_scale",
@@ -402,16 +404,19 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                     options=["1", "0.25"],
                     default="1",
                     tooltip="Output size. 1 ≈ 1024px on the long edge; 0.25 ≈ 512px.",
+                    advanced=True,
                 ),
                 IO.Int.Input(
                     "num_inference_steps",
                     default=28, min=4, max=50,
                     tooltip="More steps = better detail, slower. 28 is the Flux Dev sweet spot.",
+                    advanced=True,
                 ),
                 IO.Float.Input(
                     "guidance",
                     default=3.5, min=0.0, max=20.0, step=0.1,
                     tooltip="Flux Dev's prompt adherence. 3.5 is the canonical default.",
+                    advanced=True,
                 ),
                 IO.Int.Input(
                     "seed",
@@ -435,6 +440,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                         "0.2 = subtle restyle (keeps structure), 0.9 = strong "
                         "reinterpretation. Ignored when no image is wired."
                     ),
+                    advanced=True,
                 ),
             ],
             outputs=[
@@ -536,6 +542,251 @@ class FluxLoRARemoteNode(IO.ComfyNode):
             + (" [baked-in]" if trained_model else ""),
             f"scale: {lora_scale if resolved_lora else 'n/a'}",
             (f"prompt_strength: {prompt_strength}" if img2img else f"aspect: {aspect_ratio} @ {megapixels}MP"),
+            f"seed: {actual_seed}",
+            "logs: " + " | ".join(logs_tail) if logs_tail else "",
+        ]
+        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line))
+
+
+# =============================================================================
+# Node: Flux Dev + 2 LoRAs (stack a character LoRA + a style LoRA)
+# =============================================================================
+
+# Module-level rotation counter for the multi-LoRA cache-bug workaround. Lives
+# here (not as a class attribute) because ComfyUI locks the node class against
+# attribute mutation at runtime. A mutable dict so we never rebind the global.
+_MULTILORA_ROTATE = {"n": 0}
+
+
+class FluxMultiLoRARemoteNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        lora_options = folder_paths.get_filename_list("loras") + ["[None]"]
+        return IO.Schema(
+            node_id="FluxMultiLoRARemoteNode",
+            display_name="Flux Dev + 2 LoRAs (Replicate)",
+            category="api node/image/Replicate",
+            description=(
+                "Stack TWO LoRAs on Flux Dev in a single generation via "
+                "Replicate's lucataco/flux-dev-multi-lora — e.g. a character "
+                "LoRA + a style LoRA, each with its own scale. Pick "
+                "locally-trained LoRAs (uses the weights artifact from their "
+                "sidecar) or override a slot with a HuggingFace / CivitAI / "
+                ".safetensors reference. Requires REPLICATE_API_TOKEN."
+            ),
+            inputs=[
+                IO.String.Input(
+                    "prompt",
+                    multiline=True,
+                    default="",
+                    tooltip="Text prompt. Include BOTH LoRAs' trigger words.",
+                ),
+                # ── Slot A (e.g. the character) ──
+                IO.Combo.Input(
+                    "lora_a",
+                    options=lora_options,
+                    default="[None]",
+                    tooltip="First LoRA — the character. Opens your Characters gallery.",
+                    extra_dict={"comfynext_widget": "lora_picker", "lora_kind": "character"},
+                ),
+                IO.String.Input(
+                    "lora_a_url",
+                    default="",
+                    multiline=False,
+                    tooltip=(
+                        "Override for slot A: HuggingFace 'huggingface.co/owner/model', "
+                        "a CivitAI download URL, or a direct .safetensors URL. Wins over "
+                        "lora_a. Note: a private Replicate model ref won't load here — "
+                        "this model stacks weights, not models."
+                    ),
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "scale_a",
+                    default=0.9, min=0.0, max=1.5, step=0.05,
+                    tooltip="Strength of LoRA A. ~0.9 keeps a character identity strong.",
+                ),
+                # ── Slot B (e.g. the style) ──
+                IO.Combo.Input(
+                    "lora_b",
+                    options=lora_options,
+                    default="[None]",
+                    tooltip="Second LoRA — e.g. the style.",
+                    extra_dict={"comfynext_widget": "lora_picker"},
+                ),
+                IO.String.Input(
+                    "lora_b_url",
+                    default="",
+                    multiline=False,
+                    tooltip="Override for slot B (same forms as slot A). Wins over lora_b.",
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "scale_b",
+                    default=0.8, min=0.0, max=1.5, step=0.05,
+                    tooltip="Strength of LoRA B. ~0.8 applies a style without overpowering the character.",
+                ),
+                IO.Combo.Input(
+                    "aspect_ratio",
+                    options=_FLUX_LORA_ASPECT_RATIOS,
+                    default="1:1",
+                ),
+                IO.Int.Input(
+                    "num_inference_steps",
+                    default=28, min=4, max=50,
+                    tooltip="More steps = better detail, slower. 28 is the Flux Dev sweet spot.",
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "guidance",
+                    default=3.5, min=0.0, max=10.0, step=0.1,
+                    tooltip="Prompt adherence. 3.5 is the canonical default; 2–5 brings out style.",
+                    advanced=True,
+                ),
+                IO.Int.Input(
+                    "seed",
+                    default=0, min=0, max=0xFFFFFFFF,
+                    tooltip="0 = random each run. Set a value for reproducible A/B tests.",
+                ),
+                IO.Image.Input(
+                    "image",
+                    optional=True,
+                    tooltip=(
+                        "Optional: apply BOTH LoRAs to THIS image (image-to-image) "
+                        "instead of generating from scratch. The input's aspect ratio is kept."
+                    ),
+                ),
+                IO.Float.Input(
+                    "prompt_strength",
+                    default=0.8, min=0.0, max=1.0, step=0.05,
+                    tooltip=(
+                        "Image-to-image only: 0.2 = subtle restyle (keeps structure), "
+                        "0.9 = strong reinterpretation. Ignored when no image is wired."
+                    ),
+                    advanced=True,
+                ),
+            ],
+            outputs=[
+                IO.Image.Output(),
+                IO.String.Output(display_name="info"),
+            ],
+            price_badge=IO.PriceBadge(
+                expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}',
+            ),
+        )
+
+    @classmethod
+    async def execute(
+        cls,
+        prompt: str,
+        lora_a: str, lora_a_url: str, scale_a: float,
+        lora_b: str, lora_b_url: str, scale_b: float,
+        aspect_ratio: str, num_inference_steps: int, guidance: float,
+        seed: int,
+        image=None, prompt_strength: float = 0.8,
+    ):
+        # Resolve each slot to a WEIGHTS reference flux-dev-multi-lora can load.
+        # A picker selection → the trained LoRA's weights artifact (.tar) from its
+        # sidecar (NOT the private model ref — this model stacks weights, not
+        # models). A URL override → HF / CivitAI / .safetensors passed through
+        # (bare owner/model is HF-autodetected, matching the single-LoRA node).
+        async def _resolve_slot(lora_name: str, lora_url: str) -> str | None:
+            lora_url = (lora_url or "").strip()
+            if lora_url:
+                return await _autodetect_huggingface(_normalize_lora_ref(lora_url))
+            return _resolve_lora_weights_url(lora_name)
+
+        loras: list[str] = []
+        scales: list[float] = []
+        for name, url, scale in (
+            (lora_a, lora_a_url, scale_a),
+            (lora_b, lora_b_url, scale_b),
+        ):
+            resolved = await _resolve_slot(name, url)
+            if resolved:
+                loras.append(resolved)
+                scales.append(scale)
+
+        if not loras:
+            raise RuntimeError(
+                "No LoRAs resolved. Pick a locally-trained LoRA (needs a sidecar "
+                ".json with replicate_url), or set a HuggingFace / CivitAI / "
+                ".safetensors URL in at least one slot."
+            )
+
+        # ── Work around flux-dev-multi-lora's warm-container cache bug ──────
+        # The model only (re)loads LoRAs when the request differs from the last
+        # one a given container saw; its no-LoRA branch unloads adapters WITHOUT
+        # resetting that memory. So on the shared public model, a stranger's
+        # no-LoRA request can leave OUR next identical request running with no
+        # LoRAs at all (vanilla Flux). We defend two ways:
+        #  (1) alternate LoRA order every call (order doesn't change the result),
+        #      so consecutive calls never look "the same" → forces a reload;
+        #  (2) verify from the logs that a load actually happened and, if not,
+        #      retry once with the order flipped (guaranteed to differ → reload).
+        if len(loras) >= 2:
+            _MULTILORA_ROTATE["n"] ^= 1
+            if _MULTILORA_ROTATE["n"]:
+                loras = list(reversed(loras))
+                scales = list(reversed(scales))
+
+        input_dict: dict = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance,   # multi-lora names it `guidance_scale`
+            "hf_loras": loras,
+            "lora_scales": scales,
+            "num_outputs": 1,
+            "output_format": "png",
+            "disable_safety_checker": False,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+
+        # img2img: when an image is wired, restyle it instead of generating from
+        # scratch. The model keeps the input's aspect ratio, so `aspect_ratio`
+        # is ignored in this mode.
+        img2img = image is not None
+        if img2img:
+            input_dict["image"] = _image_tensor_to_data_url(image)
+            input_dict["prompt_strength"] = prompt_strength
+
+        # The model prints "Downloading LoRA weights" once per LoRA it loads;
+        # its absence (with LoRAs requested) means the container skipped loading.
+        def _loaded(p: dict) -> bool:
+            return "Downloading LoRA weights" in (p.get("logs") or "")
+
+        pred = await _run_prediction("lucataco/flux-dev-multi-lora", input_dict)
+        retried = False
+        if loras and len(loras) >= 2 and not _loaded(pred):
+            # Skipped on a warm container. Flip the order — now guaranteed to
+            # differ from whatever it cached — and retry once to force a reload.
+            retried = True
+            loras = list(reversed(loras))
+            scales = list(reversed(scales))
+            input_dict["hf_loras"] = loras
+            input_dict["lora_scales"] = scales
+            pred = await _run_prediction("lucataco/flux-dev-multi-lora", input_dict)
+
+        loras_loaded = _loaded(pred)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+
+        # Drop any alpha channel — a spurious alpha routes the downstream Image
+        # node to its transparent-preview path, which doesn't render. [B,H,W,C].
+        if tensor.dim() == 4 and tensor.shape[-1] == 4:
+            tensor = tensor[..., :3].contiguous()
+
+        actual_seed = pred.get("input", {}).get("seed", "random")
+        logs_tail = (pred.get("logs") or "").strip().split("\n")[-3:]
+        info_lines = [
+            f"mode: {'image-to-image' if img2img else 'text-to-image'}",
+            "model: lucataco/flux-dev-multi-lora",
+            "loras: " + ", ".join(f"{lref} @ {s}" for lref, s in zip(loras, scales)),
+            f"loras_loaded: {'yes' if loras_loaded else 'NO — stacking may not have applied'}"
+            + (" (after retry)" if retried else ""),
+            (f"prompt_strength: {prompt_strength}" if img2img else f"aspect: {aspect_ratio}"),
+            f"steps: {num_inference_steps}, guidance: {guidance}",
             f"seed: {actual_seed}",
             "logs: " + " | ".join(logs_tail) if logs_tail else "",
         ]
@@ -1239,6 +1490,133 @@ class Hunyuan3DRemoteNode(IO.ComfyNode):
         )
         url = _first_output_url(pred)
         return IO.NodeOutput(url)
+
+
+# =============================================================================
+# Node: Hunyuan3D 2 Multi-View (front/back/left/right → textured GLB)
+# =============================================================================
+
+
+class Hunyuan3DMultiViewNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="Hunyuan3DMultiViewNode",
+            display_name="Multi-View → 3D (Replicate)",
+            category="api node/3d/Replicate",
+            description=(
+                "Reconstruct a 3D model from a front/back/left/right character sheet "
+                "(e.g. the Pose Mannequin 'Generate 3D views' output). Front is "
+                "required; the other three are optional but strongly recommended.\n"
+                "• TRELLIS — textured GLB (good, cheaper).\n"
+                "• Rodin — textured PBR + QUAD topology (premium, best for rigging).\n"
+                "• Hunyuan3D-2mv — geometry only (finer mesh, no texture).\n"
+                "~$0.30–0.60, ~30–120s. Output is a STRING URL to the GLB mesh."
+            ),
+            inputs=[
+                IO.Image.Input("front_image", tooltip="Front view (required)."),
+                IO.Image.Input("back_image", optional=True, tooltip="Back view."),
+                IO.Image.Input("left_image", optional=True, tooltip="Left-side view."),
+                IO.Image.Input("right_image", optional=True, tooltip="Right-side view."),
+                IO.Combo.Input("engine",
+                               options=["TRELLIS (textured)", "Rodin (textured · quad mesh)", "Hunyuan3D-2mv (geometry only)"],
+                               default="TRELLIS (textured)",
+                               tooltip="TRELLIS/Rodin bake textures (Rodin = quad topology, premium); Hunyuan3D-2mv is shape-only."),
+                IO.Int.Input("steps", default=50, min=20, max=100, step=5,
+                             tooltip="Inference steps (Hunyuan only)."),
+                IO.Float.Input("guidance_scale", default=5.5, min=1.0, max=20.0, step=0.5, advanced=True),
+                IO.Int.Input("octree_resolution", default=256, min=128, max=512, step=64, advanced=True,
+                             tooltip="Mesh resolution, Hunyuan only. Higher = denser."),
+                IO.Boolean.Input("remove_background", default=True,
+                                 tooltip="Strip each view's background before reconstruction."),
+                # control_after_generate=True is REQUIRED: it auto-randomizes the
+                # seed each run (so ComfyUI doesn't serve a cached result forever —
+                # "Done in 0.3s"), and keeps the widgets declared AFTER it aligned.
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+                # New inputs appended LAST + optional so existing node instances keep
+                # their widget positions and fall back to the execute() defaults.
+                IO.String.Input("prompt", multiline=True, default="a full-body character", optional=True,
+                                tooltip="Text description of the subject. REQUIRED by Rodin; ignored by TRELLIS/Hunyuan."),
+                IO.Combo.Input("rodin_quality", options=["medium", "high", "low", "extra-low"], default="medium",
+                               optional=True, advanced=True, tooltip="Rodin mesh detail tier."),
+                IO.Boolean.Input("rodin_tapose", default=False, optional=True, advanced=True,
+                                 tooltip="Rodin: normalize a human model to a clean A/T-pose base (good for rigging)."),
+                IO.Int.Input("rodin_poly_count", default=0, min=0, max=300000, step=1000, optional=True, advanced=True,
+                             tooltip="Rodin: custom polygon count (0 = automatic)."),
+            ],
+            outputs=[IO.String.Output(display_name="glb_url")],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.30,"format":{"approximate":true}}'),
+            is_output_node=True,
+        )
+
+    @classmethod
+    async def execute(cls, front_image, back_image=None, left_image=None, right_image=None,
+                      engine="TRELLIS (textured)", prompt="a full-body character",
+                      rodin_quality="medium", rodin_tapose=False, rodin_poly_count=0,
+                      steps=50, guidance_scale=5.5,
+                      octree_resolution=256, remove_background=True, seed=0):
+        front = _image_tensor_to_data_url(front_image)
+        back = _image_tensor_to_data_url(back_image) if back_image is not None else None
+        left = _image_tensor_to_data_url(left_image) if left_image is not None else None
+        right = _image_tensor_to_data_url(right_image) if right_image is not None else None
+
+        if engine.startswith("Hunyuan"):
+            # Geometry-only: tencent/hunyuan3d-2mv (no texture stage).
+            input_dict: dict = {
+                "front_image": front, "steps": steps, "guidance_scale": guidance_scale,
+                "octree_resolution": octree_resolution, "remove_background": remove_background,
+                "file_type": "glb",
+            }
+            if back: input_dict["back_image"] = back
+            if left: input_dict["left_image"] = left
+            if right: input_dict["right_image"] = right
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("tencent/hunyuan3d-2mv", input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+            return IO.NodeOutput(_first_output_url(pred))
+
+        if engine.startswith("Rodin"):
+            # Hyper3D Rodin — multi-image (up to 5) → textured PBR GLB with quad
+            # topology. Premium quality; output is a plain GLB URL. Rodin REQUIRES
+            # a non-empty prompt even with images.
+            images = [img for img in (front, back, left, right) if img]
+            input_dict = {
+                "images": images,
+                "prompt": (prompt or "").strip() or "a full-body character",
+                "material": "PBR",
+                "mesh_mode": "Quad",
+                "quality": rodin_quality,
+                "geometry_file_format": "glb",
+                "tapose": bool(rodin_tapose),
+            }
+            if rodin_poly_count and rodin_poly_count > 0:
+                input_dict["quality_override"] = int(rodin_poly_count)
+            if seed and seed > 0:
+                # Rodin caps the seed at 65535; our randomizer goes to ~4.3B, so map in.
+                input_dict["seed"] = int(seed) % 65536
+            pred = await _run_prediction("hyper3d/rodin", input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+            return IO.NodeOutput(_first_output_url(pred))
+
+        # Default: TRELLIS — multi-image → TEXTURED GLB. Order front-first.
+        images = [img for img in (front, back, left, right) if img]
+        input_dict = {
+            "images": images,
+            "generate_model": True,   # off by default on Replicate → must enable for a GLB
+            "generate_color": False,
+            "texture_size": 1024,
+            "mesh_simplify": 0.95,
+        }
+        if seed and seed > 0:
+            input_dict["seed"] = seed
+            input_dict["randomize_seed"] = False
+        pred = await _run_prediction("firtoz/trellis", input_dict,
+                                     poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+        output = pred.get("output")
+        url = output.get("model_file") if isinstance(output, dict) else None
+        return IO.NodeOutput(url or _first_output_url(pred))
 
 
 # =============================================================================
@@ -3857,6 +4235,7 @@ class ReplicateExtension(ComfyExtension):
             # ─── Use-case nodes (the user-facing surface) ───
             # Image — generation
             FluxLoRARemoteNode,         # Generate an image with your LoRA — kept separate
+            FluxMultiLoRARemoteNode,    # Stack 2 LoRAs (character + style) · flux-dev-multi-lora
             GenerateImageNode,          # Generate an image · Flux Pro / Ideogram
             GenerateAnimeNode,          # Generate an anime image · Animagine XL
             GenerateEmojiNode,          # Generate an emoji · Flux Kontext Emoji
@@ -3917,6 +4296,7 @@ class ReplicateExtension(ComfyExtension):
             MusicGenRemoteNode,
             MiniMaxSpeechRemoteNode,
             Hunyuan3DRemoteNode,
+            Hunyuan3DMultiViewNode,
         ]
 
 

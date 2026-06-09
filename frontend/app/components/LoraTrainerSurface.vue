@@ -13,8 +13,10 @@
  *      → MakeTrainingDataset → TrainLoraNode → SaveLoRA
  *   4. POST /prompt, poll /history/<id>
  */
-import { ArrowRight, ChevronDown, ChevronRight, Cloud, Cpu, Download, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
+import { ArrowRight, ChevronDown, ChevronRight, Cloud, Cpu, Download, Drama, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import JSZip from 'jszip'
+import { CHARACTER_SHOT_SCENES, CHARACTER_SHOT_ASPECTS } from '~/data/character-shot-scenes'
 
 // ----- Compute mode (Local vs Cloud) ------------------------------------
 
@@ -181,6 +183,8 @@ interface DatasetImage {
   previewUrl: string     // local blob: URL for preview
   caption: string
   captionState: 'idle' | 'captioning' | 'done' | 'error'
+  generated?: boolean    // came from "Build character dataset" (re-rollable)
+  scene?: string         // the scene prompt used, so regenerate re-rolls the same shot type
 }
 
 const sessionFolder = `lora_dataset_${Date.now()}`
@@ -194,6 +198,28 @@ const progressPct = ref(0)
 const cloudAesthetic = ref<string | null>(null)
 const outputFilename = ref<string | null>(null)
 const lossGraphUrl = ref<string | null>(null)
+
+// What you're training. Drives the caption strategy: a character's captions
+// must NOT describe the identity (it has to live in the trigger word), whereas
+// a style's captions describe the content normally. Also tags the LoRA's
+// `kind` on success so a character lands in the Characters panel.
+const trainingKind = ref<'style' | 'character'>('style')
+// Kind-aware labels so the page reads correctly for both styles and characters.
+const kindLabel = computed(() => (trainingKind.value === 'character' ? 'Character' : 'Style'))
+const kindNoun = computed(() => (trainingKind.value === 'character' ? 'character' : 'style'))
+// Training knobs (steps/LR/rank) collapse under an Advanced disclosure.
+const advancedSettingsOpen = ref(false)
+
+// "Build character dataset" — bootstrap a varied, consistent training set from
+// ONE reference photo via ideogram-character (see buildCharacterDataset).
+const refInputRef = ref<HTMLInputElement | null>(null)
+const referenceFile = ref<File | null>(null)
+const referencePreview = ref<string | null>(null)
+const subjectHint = ref('')
+const datasetCount = ref(16)
+const buildingDataset = ref(false)
+const buildProgress = reactive({ done: 0, total: 0 })
+const buildError = ref<string | null>(null)
 
 // ----- Hyperparameters ---------------------------------------------------
 
@@ -314,25 +340,49 @@ const selectedFamily = computed<'sdxl_sd15' | 'flux'>(() => {
 // averages — rough but in the right ballpark.
 const REPLICATE_H100_PER_SEC = 0.001525
 
+const IDEOGRAM_PER_IMAGE = 0.08 // ideogram-character, per generated shot
+
 const costEstimate = computed(() => {
   const steps = Math.max(1, form.steps || 1000)
-  if (cloudFamily.value === 'flux') {
-    // ostris/flux-dev-lora-trainer: ~60s setup + 1.5–2.5s/step on H100.
-    const lowSec = 60 + steps * 1.5
-    const highSec = 90 + steps * 2.5
-    return {
-      cost: `~$${(lowSec * REPLICATE_H100_PER_SEC).toFixed(2)}–${(highSec * REPLICATE_H100_PER_SEC).toFixed(2)}`,
-      time: `~${Math.round(lowSec / 60)}–${Math.round(highSec / 60)} min`,
-      note: 'Cold starts add a minute or two. Long jobs can hit the upper bound.',
-    }
-  }
-  // ostris/sdxl-lora-trainer: ~30s setup + 0.5–0.9s/step on H100.
-  const lowSec = 30 + steps * 0.5
-  const highSec = 45 + steps * 0.9
+  const flux = cloudFamily.value === 'flux'
+  // ostris flux trainer: ~60s setup + 1.5–2.5s/step; sdxl: ~30s + 0.5–0.9s/step.
+  const lowSec = flux ? 60 + steps * 1.5 : 30 + steps * 0.5
+  const highSec = flux ? 90 + steps * 2.5 : 45 + steps * 0.9
+  const lowUsd = lowSec * REPLICATE_H100_PER_SEC
+  const highUsd = highSec * REPLICATE_H100_PER_SEC
   return {
-    cost: `~$${(lowSec * REPLICATE_H100_PER_SEC).toFixed(2)}–${(highSec * REPLICATE_H100_PER_SEC).toFixed(2)}`,
+    lowUsd,
+    highUsd,
+    cost: `~$${lowUsd.toFixed(2)}–${highUsd.toFixed(2)}`,
     time: `~${Math.max(1, Math.round(lowSec / 60))}–${Math.round(highSec / 60)} min`,
-    note: 'SDXL is the cheaper, faster choice when you don\'t need Flux quality.',
+    note: flux
+      ? 'Cold starts add a minute or two. Long jobs can hit the upper bound.'
+      : 'SDXL is the cheaper, faster choice when you don\'t need Flux quality.',
+  }
+})
+
+// Cost of the images you still plan to GENERATE (the ones already on disk are
+// sunk). In character mode with a reference set but no shots yet, that's the
+// planned dataset; otherwise nothing left to generate.
+const plannedDatasetCount = computed(() => {
+  if (trainingKind.value !== 'character' || !referenceFile.value) return 0
+  const generated = images.value.filter(i => i.generated).length
+  if (generated > 0) return 0 // already built — cost is sunk
+  return Math.min(datasetCount.value, CHARACTER_SHOT_SCENES.length)
+})
+
+const datasetCostUsd = computed(() => plannedDatasetCount.value * IDEOGRAM_PER_IMAGE)
+
+// Combined "what this character costs from here" — dataset shots still to make
+// + the training run. Shown so you can see the whole bill before committing.
+const totalEstimate = computed(() => {
+  const ds = datasetCostUsd.value
+  const low = ds + costEstimate.value.lowUsd
+  const high = ds + costEstimate.value.highUsd
+  return {
+    hasDataset: ds > 0,
+    datasetCost: `~$${ds.toFixed(2)}`,
+    total: `~$${low.toFixed(2)}–${high.toFixed(2)}`,
   }
 })
 
@@ -596,55 +646,56 @@ function onDragLeave() {
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-// ----- Auto-caption via Claude vision -----------------------------------
+// ----- Auto-caption via server-side vision (Qwen2-VL on Replicate) --------
+// Replaces the old client-built ComfyUI graph (ShowText|pysssss + a stale
+// ClaudeNode schema) which /prompt rejected at validation, so it never worked.
+// We downscale the image in the browser and ask /api/cloud-train/caption for a
+// caption; `mode` swaps the instruction so a character's captions never
+// describe the identity (that must live in the trigger word).
 
-const CAPTION_SYSTEM = 'You write concise, training-friendly image captions for LoRA training. '
-  + 'Describe the subject, key visual attributes, style, and composition in one or two short sentences. '
-  + 'Do not start with "an image of" or "a photo of". No quotes, no markdown. Just the caption text.'
+/** Downscale a File to a JPEG data URL (long edge ~768px) for the vision call. */
+async function imageToDataUrl(file: File, maxEdge = 768): Promise<string | null> {
+  try {
+    const bmp = await createImageBitmap(file)
+    const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height))
+    const w = Math.max(1, Math.round(bmp.width * scale))
+    const h = Math.max(1, Math.round(bmp.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(bmp, 0, 0, w, h)
+    bmp.close?.()
+    return canvas.toDataURL('image/jpeg', 0.85)
+  } catch {
+    return null
+  }
+}
 
 async function captionOne(idx: number) {
   const img = images.value[idx]
   if (!img) return
   img.captionState = 'captioning'
   try {
-    // Single-node Claude workflow. The Anthropic node uploads to ComfyAPI then
-    // calls Claude. We point its "image_1" input at the already-uploaded file.
-    const prompt = {
-      '1': {
-        class_type: 'LoadImage',
-        inputs: { image: img.filename ? `${sessionFolder}/${img.filename}` : img.filename },
-      },
-      '2': {
-        class_type: 'ClaudeNode',
-        inputs: {
-          prompt: 'Caption this image for LoRA training.',
-          system_prompt: CAPTION_SYSTEM,
-          model: 'claude-sonnet-4-5',
-          max_tokens: 256,
-          temperature: 0.3,
-          image_1: ['1', 0],
-        },
-      },
-      '3': {
-        class_type: 'ShowText|pysssss',
-        inputs: { text: ['2', 0] },
-      },
-    }
-    const res = await fetch('/prompt', {
+    const imageDataUrl = await imageToDataUrl(img.file)
+    if (!imageDataUrl) throw new Error('Could not read image')
+    const res = await fetch('/api/cloud-train/caption', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({
+        imageDataUrl,
+        mode: trainingKind.value,
+        trigger: form.triggerWord,
+      }),
     })
-    if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`)
-    const data = await res.json()
-    const promptId = data?.prompt_id
-    if (!promptId) throw new Error('No prompt_id from /prompt')
-    const text = await pollForText(promptId)
-    if (text) {
-      img.caption = text.trim()
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`)
+    const { caption } = await res.json() as { caption?: string }
+    if (caption && caption.trim()) {
+      img.caption = caption.trim()
       img.captionState = 'done'
     } else {
-      throw new Error('Claude returned no text.')
+      throw new Error('Empty caption returned')
     }
   } catch (e: any) {
     img.captionState = 'error'
@@ -664,32 +715,141 @@ async function captionAll() {
   status.value = 'idle'
 }
 
-async function pollForText(promptId: string): Promise<string | null> {
-  const deadline = Date.now() + 2 * 60 * 1000
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 600))
-    try {
-      const r = await fetch(`/history/${promptId}`)
-      if (!r.ok) continue
-      const data = await r.json()
-      const entry = data?.[promptId]
-      if (!entry) continue
-      if (entry?.status?.status_str === 'error') {
-        throw new Error(extractComfyError(entry))
-      }
-      const outputs = entry?.outputs
-      if (!outputs) continue
-      for (const node of Object.values(outputs) as any[]) {
-        // Claude node returns its text in the first string output
-        if (typeof node?.text === 'string') return node.text
-        if (Array.isArray(node?.text) && node.text.length > 0) return String(node.text[0])
-        if (Array.isArray(node?.string) && node.string.length > 0) return String(node.string[0])
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith('Comfy:')) throw e
+// ----- Build a character dataset from one reference -----------------------
+// Generates a varied, consistent set via ideogram-character, then drops the
+// results into the training set so the user just curates → captions → trains.
+
+function onReferencePicked(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file || !file.type.startsWith('image/')) return
+  referenceFile.value = file
+  if (referencePreview.value) URL.revokeObjectURL(referencePreview.value)
+  referencePreview.value = URL.createObjectURL(file)
+  buildError.value = null
+}
+
+/** Decode a base64 data URL into a File (to feed the same addFiles() path). */
+function dataUrlToFile(dataUrl: string, name: string): File {
+  const comma = dataUrl.indexOf(',')
+  const head = dataUrl.slice(0, comma)
+  const b64 = dataUrl.slice(comma + 1)
+  const mime = head.match(/data:(.*?);base64/)?.[1] || 'image/png'
+  const bin = atob(b64)
+  const arr = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+  return new File([arr], name, { type: mime })
+}
+
+// Per-shot re-roll state, keyed by the image's server filename.
+const regenerating = ref<Set<string>>(new Set())
+
+/** Generate one shot from the reference for a given scene. Returns a File or null. */
+async function generateCharacterShot(refDataUrl: string, scene: string, aspectIdx: number): Promise<File | null> {
+  const subject = subjectHint.value.trim()
+  const prompt = subject ? `${subject}, ${scene}` : scene
+  try {
+    const res = await fetch('/api/cloud-train/character-shot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        referenceImageDataUrl: refDataUrl,
+        prompt,
+        aspectRatio: CHARACTER_SHOT_ASPECTS[aspectIdx % CHARACTER_SHOT_ASPECTS.length],
+      }),
+    })
+    if (!res.ok) return null
+    const { imageDataUrl } = await res.json() as { imageDataUrl?: string }
+    return imageDataUrl ? dataUrlToFile(imageDataUrl, `char_${aspectIdx}_${images.value.length}.png`) : null
+  } catch {
+    return null
+  }
+}
+
+/** Upload a generated File and append it to the dataset, tagged for re-rolling. */
+async function addGeneratedImage(file: File, scene: string) {
+  try {
+    const filename = await uploadImage(file)
+    images.value.push({
+      file, filename,
+      previewUrl: URL.createObjectURL(file),
+      caption: '', captionState: 'idle',
+      generated: true, scene,
+    })
+  } catch { /* skip */ }
+}
+
+async function buildCharacterDataset() {
+  if (!referenceFile.value || buildingDataset.value) return
+  buildError.value = null
+  const refDataUrl = await imageToDataUrl(referenceFile.value, 1024)
+  if (!refDataUrl) {
+    buildError.value = 'Could not read the reference image.'
+    return
+  }
+  const refUrl: string = refDataUrl // narrowed const — survives into the worker closure
+
+  const n = Math.max(4, Math.min(CHARACTER_SHOT_SCENES.length, datasetCount.value || 16))
+  const scenes = CHARACTER_SHOT_SCENES.slice(0, n)
+
+  buildingDataset.value = true
+  buildProgress.total = scenes.length
+  buildProgress.done = 0
+  let made = 0
+
+  // Small concurrency pool — each shot is an independent ideogram-character
+  // call. Images appear live as they land; a failed shot is skipped (the set
+  // just comes back a bit smaller), so one bad shot never kills the run.
+  const CONCURRENCY = 3
+  let next = 0
+  async function worker() {
+    while (next < scenes.length) {
+      const i = next++
+      const scene = scenes[i]!
+      const file = await generateCharacterShot(refUrl, scene, i)
+      if (file) { await addGeneratedImage(file, scene); made++ }
+      buildProgress.done++
     }
   }
-  return null
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, scenes.length) }, worker))
+
+  buildingDataset.value = false
+  if (made) {
+    toast.success(`Generated ${made} image${made === 1 ? '' : 's'}`, {
+      description: 'Curate (remove any that drifted), then caption & train.',
+    })
+  } else {
+    buildError.value = 'No images were generated — check your Replicate token and try again.'
+  }
+}
+
+/** Re-roll a single generated shot in place — same scene, fresh result. */
+async function regenerateShot(idx: number) {
+  const img = images.value[idx]
+  if (!img || !img.generated || !referenceFile.value) return
+  const key = img.filename
+  if (regenerating.value.has(key)) return
+  const refDataUrl = await imageToDataUrl(referenceFile.value, 1024)
+  if (!refDataUrl) return
+
+  regenerating.value.add(key)
+  try {
+    const file = await generateCharacterShot(refDataUrl, img.scene || CHARACTER_SHOT_SCENES[0]!, idx)
+    if (!file) throw new Error('no image')
+    const filename = await uploadImage(file)
+    const target = images.value[idx]
+    if (target) {
+      URL.revokeObjectURL(target.previewUrl)
+      target.file = file
+      target.filename = filename
+      target.previewUrl = URL.createObjectURL(file)
+      target.caption = ''
+      target.captionState = 'idle'
+    }
+  } catch {
+    toast.error('Regenerate failed — try again')
+  } finally {
+    regenerating.value.delete(key)
+  }
 }
 
 // ----- Training ----------------------------------------------------------
@@ -1076,7 +1236,7 @@ async function pollCloudJob(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 3000))
     try {
-      const r = await fetch(`/api/cloud-train/status?id=${predictionId}&outputName=${encodeURIComponent(outputName)}&family=${family}&triggerWord=${encodeURIComponent(form.triggerWord || '')}&aesthetic=${encodeURIComponent(cloudAesthetic.value || '')}`)
+      const r = await fetch(`/api/cloud-train/status?id=${predictionId}&outputName=${encodeURIComponent(outputName)}&family=${family}&triggerWord=${encodeURIComponent(form.triggerWord || '')}&aesthetic=${encodeURIComponent(cloudAesthetic.value || '')}&kind=${trainingKind.value}`)
       if (!r.ok) continue
       const data = await r.json() as {
         id: string
@@ -1150,27 +1310,54 @@ onBeforeUnmount(() => {
   <div class="h-full overflow-y-auto bg-[#0a0a0a]">
     <div class="max-w-[1080px] mx-auto px-10 py-12">
       <!-- Header -->
-      <div class="mb-12">
+      <div class="mb-10">
         <div class="text-[11px] uppercase tracking-[0.16em] text-white/35 font-medium mb-3">
-          Create · Style
+          Create · {{ kindLabel }}
         </div>
         <h1 class="text-[44px] font-medium text-white tracking-tight leading-[1.05] mb-4">
-          Create a Style
+          Train a {{ kindLabel }}
         </h1>
         <p class="text-[15px] text-white/60 max-w-[640px] leading-relaxed">
-          Teach a Stable Diffusion or Flux model what a person, character, or style looks like.
+          Teach a Stable Diffusion or Flux model a look or a person.
           Drop in <span class="text-white/85">10–30 reference images</span>, give it a name, and
           the trainer produces a small <code class="text-[13px] text-white/75 bg-white/[0.04] px-1 py-0.5 rounded">.safetensors</code>
           file you can load into any workflow.
         </p>
       </div>
 
+      <!-- 1 · What are you training? — the choice that shapes everything below -->
+      <section class="mb-8">
+        <label class="block text-[12px] font-medium text-white/85 tracking-[0.01em] mb-2">What are you training?</label>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
+            :class="trainingKind === 'style'
+              ? 'border-violet-400 bg-violet-500/15'
+              : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
+            @click="trainingKind = 'style'"
+          >
+            <span class="text-[13px] font-medium text-white">Style</span>
+            <span class="text-[11px] text-white/50 leading-snug">A look across many subjects — palette, lighting, texture.</span>
+          </button>
+          <button
+            type="button"
+            class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
+            :class="trainingKind === 'character'
+              ? 'border-violet-400 bg-violet-500/15'
+              : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
+            @click="trainingKind = 'character'"
+          >
+            <span class="text-[13px] font-medium text-white">Character</span>
+            <span class="text-[11px] text-white/50 leading-snug">One person's identity — captions skip the face so the trigger owns it.</span>
+          </button>
+        </div>
+      </section>
+
       <!-- Compute mode -->
       <section class="mb-8">
         <div class="flex items-center justify-between mb-2">
-          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Compute</label>
-          <span class="text-[11px] text-white/35">Step 1</span>
-        </div>
+          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Compute</label>        </div>
         <div class="inline-flex rounded-lg bg-white/[0.03] border border-white/[0.06] p-0.5">
           <button
             class="inline-flex items-center gap-2 h-9 px-4 rounded-md text-[12.5px] font-medium transition-colors cursor-pointer"
@@ -1202,9 +1389,7 @@ onBeforeUnmount(() => {
       <!-- Cloud family picker (cloud mode only) -->
       <section v-if="computeMode === 'cloud'" class="mb-10">
         <div class="flex items-center justify-between mb-2">
-          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Base model</label>
-          <span class="text-[11px] text-white/35">Step 2</span>
-        </div>
+          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Base model</label>        </div>
         <div class="grid grid-cols-2 gap-3">
           <button
             class="text-left rounded-lg border p-4 transition-colors cursor-pointer"
@@ -1238,9 +1423,7 @@ onBeforeUnmount(() => {
       <!-- Local base-model picker (local mode only) -->
       <section v-if="computeMode === 'local'" class="mb-10">
         <div class="flex items-center justify-between mb-2">
-          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Base model</label>
-          <span class="text-[11px] text-white/35">Step 2</span>
-        </div>
+          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Base model</label>        </div>
         <div v-if="checkpointsLoading" class="h-10 rounded-md bg-white/[0.04] border border-white/[0.06] flex items-center px-3 text-[12px] text-white/40">
           <Loader2 class="size-3.5 animate-spin mr-2" />
           Loading checkpoints…
@@ -1344,9 +1527,7 @@ onBeforeUnmount(() => {
               <Sparkles v-if="status !== 'captioning'" class="size-3.5" />
               <Loader2 v-else class="size-3.5 animate-spin" />
               Auto-caption all
-            </button>
-            <span class="text-[11px] text-white/35">Step 3</span>
-          </div>
+            </button>          </div>
         </div>
 
         <input
@@ -1357,6 +1538,75 @@ onBeforeUnmount(() => {
           class="hidden"
           @change="(e) => addFiles((e.target as HTMLInputElement).files)"
         />
+
+        <!-- Build a character dataset from one reference (character mode only) -->
+        <div
+          v-if="trainingKind === 'character'"
+          class="mb-4 rounded-xl border border-violet-400/20 bg-violet-500/[0.04] p-3"
+        >
+          <div class="flex items-center gap-2 mb-1">
+            <Drama class="size-4 text-violet-300" />
+            <span class="text-[12.5px] font-medium text-white/85">Build a dataset from one photo</span>
+          </div>
+          <p class="text-[11px] text-white/55 leading-relaxed mb-3">
+            Drop one clear, front-on photo. We generate <span class="text-white/75">{{ Math.min(datasetCount, CHARACTER_SHOT_SCENES.length) }}</span>
+            consistent shots of the same person across angles, lighting and settings (Ideogram Character),
+            then add them below to curate &amp; train. ~${{ (Math.min(datasetCount, CHARACTER_SHOT_SCENES.length) * 0.08).toFixed(2) }}.
+          </p>
+
+          <div class="flex gap-3">
+            <button
+              type="button"
+              class="relative size-20 shrink-0 rounded-lg border border-white/12 hover:border-violet-400/40 bg-white/[0.03] overflow-hidden flex items-center justify-center cursor-pointer"
+              :title="referenceFile ? 'Change reference photo' : 'Choose a reference photo'"
+              @click="refInputRef?.click()"
+            >
+              <img v-if="referencePreview" :src="referencePreview" class="absolute inset-0 w-full h-full object-cover" />
+              <div v-else class="flex flex-col items-center gap-1 text-white/40">
+                <Upload class="size-4" />
+                <span class="text-[9px]">Reference</span>
+              </div>
+            </button>
+            <input ref="refInputRef" type="file" accept="image/*" class="hidden" @change="onReferencePicked" />
+
+            <div class="flex-1 min-w-0 space-y-2">
+              <input
+                v-model="subjectHint"
+                type="text"
+                placeholder="Optional: who is it? e.g. a young woman with red hair"
+                class="w-full h-8 rounded-md bg-white/[0.04] border border-white/[0.08] focus:border-white/25 focus:outline-none px-2.5 text-[12px] text-white/85 placeholder:text-white/25"
+              />
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/50">Shots</label>
+                <input
+                  v-model.number="datasetCount"
+                  type="number" min="8" max="24"
+                  class="w-16 h-8 rounded-md bg-white/[0.04] border border-white/[0.08] focus:border-white/25 focus:outline-none px-2 text-[12px] text-white/85"
+                />
+                <button
+                  type="button"
+                  class="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-medium transition-colors"
+                  :class="referenceFile && !buildingDataset
+                    ? 'bg-violet-500 hover:bg-violet-400 text-white cursor-pointer'
+                    : 'bg-white/[0.06] text-white/35 cursor-not-allowed'"
+                  :disabled="!referenceFile || buildingDataset"
+                  @click="buildCharacterDataset"
+                >
+                  <Loader2 v-if="buildingDataset" class="size-3.5 animate-spin" />
+                  <Sparkles v-else class="size-3.5" />
+                  {{ buildingDataset ? `Generating ${buildProgress.done}/${buildProgress.total}…` : 'Generate dataset' }}
+                </button>
+              </div>
+              <div v-if="buildingDataset" class="h-1 rounded-full bg-white/[0.08] overflow-hidden">
+                <div
+                  class="h-full bg-violet-400 transition-all duration-300"
+                  :style="{ width: `${buildProgress.total ? (buildProgress.done / buildProgress.total * 100) : 0}%` }"
+                />
+              </div>
+              <p v-if="buildError" class="text-[10.5px] text-rose-300">{{ buildError }}</p>
+            </div>
+          </div>
+        </div>
 
         <!-- (Krea importer moved below, after the drop zone — see "Start from a Krea moodboard") -->
 
@@ -1542,6 +1792,18 @@ onBeforeUnmount(() => {
               >
                 <X class="size-3" />
               </button>
+              <!-- Re-roll a generated shot (character dataset only) -->
+              <button
+                v-if="img.generated && referenceFile"
+                class="absolute top-1.5 right-9 size-6 rounded-full bg-black/70 hover:bg-violet-500/90 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white transition-opacity cursor-pointer disabled:cursor-wait"
+                :class="regenerating.has(img.filename) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                title="Regenerate this shot"
+                :disabled="regenerating.has(img.filename)"
+                @click="regenerateShot(idx)"
+              >
+                <Loader2 v-if="regenerating.has(img.filename)" class="size-3 animate-spin" />
+                <RefreshCcw v-else class="size-3" />
+              </button>
               <!-- Caption state pill -->
               <div
                 v-if="img.captionState === 'captioning'"
@@ -1593,17 +1855,16 @@ onBeforeUnmount(() => {
         </template>
       </section>
 
-      <!-- Simple form -->
+      <!-- Details -->
       <section class="mb-6">
         <div class="flex items-center justify-between mb-3">
-          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Training settings</label>
-          <span class="text-[11px] text-white/35">Step 4</span>
+          <label class="text-[12px] font-medium text-white/85 tracking-[0.01em]">Details</label>
         </div>
 
         <div class="space-y-5">
           <!-- LoRA name -->
           <div>
-            <label class="block text-[12px] font-medium text-white/80 mb-1">Style name</label>
+            <label class="block text-[12px] font-medium text-white/80 mb-1">{{ kindLabel }} name</label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
               What to call the trained file. Saved as <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">models/loras/&lt;name&gt;.safetensors</code>.
             </p>
@@ -1622,7 +1883,7 @@ onBeforeUnmount(() => {
               <span class="text-white/35 font-normal ml-1">optional</span>
             </label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
-              A rare word that "activates" this style when used in a prompt. Pick something that wouldn't normally show up in captions —
+              A rare word that "activates" this {{ kindNoun }} when used in a prompt. Pick something that wouldn't normally show up in captions —
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">ohwx</code>,
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">sks</code>, or a made-up token like
               <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">jln_2026</code> work well.
@@ -1654,8 +1915,18 @@ onBeforeUnmount(() => {
             <p class="text-[10.5px] text-white/30 mt-1">{{ (importedAesthetic || '').trim().split(/\s+/).filter(Boolean).length }} words</p>
           </div>
 
-          <!-- Steps, LR, Rank in a 3-column grid -->
-          <div class="grid grid-cols-3 gap-4">
+          <!-- Training knobs — collapsed; the defaults work for most runs -->
+          <div>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] text-white/45 hover:text-white/75 cursor-pointer transition-colors"
+              @click="advancedSettingsOpen = !advancedSettingsOpen"
+            >
+              <ChevronRight class="size-3 transition-transform" :class="advancedSettingsOpen ? 'rotate-90' : ''" />
+              Advanced settings
+              <span class="normal-case tracking-normal text-white/30 ml-1">steps · learning rate · rank</span>
+            </button>
+            <div v-if="advancedSettingsOpen" class="grid grid-cols-3 gap-4 mt-3">
             <div>
               <label class="block text-[12px] font-medium text-white/80 mb-1">Training steps</label>
               <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
@@ -1688,13 +1959,13 @@ onBeforeUnmount(() => {
             </div>
             <div>
               <label class="block text-[12px] font-medium text-white/80 mb-1">
-                Style size
+                LoRA size
                 <span class="text-white/35 font-normal ml-1">rank</span>
               </label>
               <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
                 Higher = more capacity + bigger file.
                 <span class="text-white/65">16</span> is the sweet spot;
-                <span class="text-white/65">32–64</span> for complex styles.
+                <span class="text-white/65">32–64</span> for complex subjects.
               </p>
               <input
                 v-model.number="form.rank"
@@ -1703,6 +1974,7 @@ onBeforeUnmount(() => {
                 max="128"
                 class="w-full h-9 rounded-md bg-white/[0.04] border border-white/[0.08] hover:border-white/15 focus:border-white/25 focus:outline-none px-3 text-[13px] text-white/85"
               />
+            </div>
             </div>
           </div>
         </div>
@@ -1716,8 +1988,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="flex-1">
             <div class="text-[12.5px] text-white/85 mb-0.5">
-              <span class="font-medium">Estimated cost: {{ costEstimate.cost }}</span>
+              <span class="font-medium">Estimated {{ totalEstimate.hasDataset ? 'training cost' : 'cost' }}: {{ costEstimate.cost }}</span>
               <span class="text-white/45"> · {{ costEstimate.time }}</span>
+            </div>
+            <div v-if="totalEstimate.hasDataset" class="text-[12px] text-emerald-200/90 mb-0.5">
+              + dataset {{ totalEstimate.datasetCost }} ({{ plannedDatasetCount }} shots) ·
+              <span class="font-medium text-emerald-100">total {{ totalEstimate.total }}</span>
             </div>
             <p class="text-[11px] text-white/50 leading-relaxed">
               Billed to your Replicate account. {{ costEstimate.note }}
@@ -1734,7 +2010,8 @@ onBeforeUnmount(() => {
         >
           <ChevronDown v-if="advancedOpen" class="size-3.5" />
           <ChevronRight v-else class="size-3.5" />
-          Advanced settings
+          Local engine settings
+          <span class="text-white/30 ml-1">optimizer · loss · dtype</span>
         </button>
         <div v-if="advancedOpen" class="grid grid-cols-3 gap-3 p-4 rounded-lg bg-white/[0.02] border border-white/[0.05]">
           <div>

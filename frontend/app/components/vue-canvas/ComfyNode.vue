@@ -506,6 +506,15 @@ const loraStyleProp = computed<string>({
     ;(props.data.properties as any).aesthetic = v
   },
 })
+// Inputs flagged `advanced` in the node schema collapse into an "Advanced"
+// section (closed by default) so a node shows only its core controls. Honors
+// the same hidden/internal/grouped exclusions as the main widget loop.
+const advancedOpen = ref(false)
+const advancedWidgets = computed(() =>
+  (props.data.widgetDefs || []).filter((w: any) =>
+    w.advanced && !w.hidden && w.comfynext_widget !== 'internal'
+    && isWidgetVisible(w) && !groupedWidgetNames.value.has(w.name)))
+
 const isLivePreview = computed(() => LIVE_PREVIEW_NODES.has(props.data.nodeType))
 
 let liveRunTimer: ReturnType<typeof setTimeout> | null = null
@@ -970,7 +979,7 @@ watch(previewImages, (urls) => {
            custom nodes) get the same toggle. -->
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
-          v-if="!widget.hidden && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
+          v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
           :widget-def="widget"
           :node-type="data.nodeType"
           :node-id="id"
@@ -1007,10 +1016,38 @@ watch(previewImages, (urls) => {
         </template>
       </template>
 
-      <!-- FluxLoRARemoteNode: schema-free "Style" field. Stored as a node
-           property and prepended to the prompt at run time, so the prompt area
-           stays clean for the user's scene. -->
-      <template v-if="data.nodeType === 'FluxLoRARemoteNode'">
+      <!-- Advanced inputs (collapsed by default) — any input flagged
+           `advanced` in the schema, e.g. the multi-LoRA node's URL overrides
+           and sampler knobs, so the node shows only its core controls. -->
+      <template v-if="advancedWidgets.length">
+        <div class="px-2 nopan nodrag">
+          <button
+            class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
+            @click="advancedOpen = !advancedOpen"
+          >
+            <ChevronRight class="size-3 transition-transform" :class="advancedOpen ? 'rotate-90' : ''" />
+            <span>Advanced</span>
+          </button>
+        </div>
+        <template v-if="advancedOpen">
+          <VueCanvasComfyNodeWidget
+            v-for="widget in advancedWidgets"
+            :key="widget.name"
+            :widget-def="widget"
+            :node-type="data.nodeType"
+            :node-id="id"
+            :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
+            :is-fixed="isSeedFixed(widget, widgetIndex(widget.name))"
+            @update:model-value="data.widgetsValues[widgetIndex(widget.name)] = $event"
+            @update:is-fixed="setSeedFixed(widget, widgetIndex(widget.name), $event)"
+          />
+        </template>
+      </template>
+
+      <!-- FluxLoRARemoteNode / FluxMultiLoRARemoteNode: schema-free "Style"
+           field. Stored as a node property and prepended to the prompt at run
+           time, so the prompt area stays clean for the user's scene. -->
+      <template v-if="data.nodeType === 'FluxLoRARemoteNode' || data.nodeType === 'FluxMultiLoRARemoteNode'">
         <div class="px-2 nopan nodrag">
           <button
             class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"

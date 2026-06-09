@@ -122,6 +122,26 @@ export function useInpaint() {
     }
   }
 
+  /** Put a character into a mannequin's pose via Nano Banana 2. `character` and
+   *  `pose` are data URLs (the character image and the gray mannequin render).
+   *  Returns the posed character(s) as data URLs. */
+  async function pose(character: string, poseImg: string, prompt = '', opts: { count?: number } = {}): Promise<string[]> {
+    busy.value = true; error.value = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/pose', {
+        method: 'POST',
+        body: { character, pose: poseImg, prompt, count: opts.count ?? 1 },
+      })
+      results.value = res.images
+      return res.images
+    } catch (err: any) {
+      error.value = err?.data?.message || err?.message || 'Pose generation failed'
+      throw err
+    } finally {
+      busy.value = false
+    }
+  }
+
   /** Cloud background removal (851-labs/background-remover) — returns a
    *  transparent-PNG data URL cutout of the subject. */
   async function removeBackground(image: string): Promise<string> {
@@ -163,5 +183,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, text2img, removeBackground, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, text2img, pose, removeBackground, uploadDataUrl }
 }

@@ -2584,6 +2584,8 @@ async def init_builtin_extra_nodes():
         "nodes_lip_sync.py",
         "nodes_smart_layout.py",
         "nodes_compositor.py",
+        "nodes_pose_mannequin.py",
+        "nodes_model3d.py",
         "nodes_comfynext_projects.py",
         "nodes_timeline.py",
         "nodes_type.py",

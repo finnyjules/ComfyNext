@@ -4,7 +4,7 @@ import {
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
-  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, History,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, History, Drama,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Sonner } from '~/components/ui/sonner'
@@ -76,6 +76,7 @@ const sidebarItems = [
   // Make + edit
   { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
   { label: 'Styles', icon: Library, panel: 'loras' },
+  { label: 'Characters', icon: Drama, panel: 'characters' },
   { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
   { label: 'Annotate', icon: MessageSquareDashed, submenu: 'annotate' },
   // Power-user
@@ -202,6 +203,7 @@ const vueRightPanelOpen = ref(false) // tracks whether Vue right panel (Workflow
 const toolboxPanelOpen = ref(false) // tracks whether the Toolbox right panel is visible
 const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is visible
 const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
+const charactersPanelOpen = ref(false) // tracks whether the Character Library panel is visible
 const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
 const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
 const versionsPanelOpen = ref(false) // tracks whether the Versions panel is visible
@@ -215,6 +217,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'toolbox') return toolboxPanelOpen.value
   if (item?.panel === 'generators') return generatorsPanelOpen.value
   if (item?.panel === 'loras') return loraLibraryPanelOpen.value
+  if (item?.panel === 'characters') return charactersPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.panel === 'assets') return assetsPanelOpen.value
   if (item?.panel === 'versions') return versionsPanelOpen.value
@@ -234,6 +237,7 @@ function toggleSidebarItem(label: string) {
     toolboxPanelOpen.value = false
     generatorsPanelOpen.value = false
     loraLibraryPanelOpen.value = false
+    charactersPanelOpen.value = false
     blockLibraryPanelOpen.value = false
     annotateMenuOpen.value = false
     loadMenuOpen.value = !loadMenuOpen.value
@@ -243,6 +247,7 @@ function toggleSidebarItem(label: string) {
     toolboxPanelOpen.value = false
     generatorsPanelOpen.value = false
     loraLibraryPanelOpen.value = false
+    charactersPanelOpen.value = false
     blockLibraryPanelOpen.value = false
     loadMenuOpen.value = false
     annotateMenuOpen.value = !annotateMenuOpen.value
@@ -265,12 +270,13 @@ function toggleSidebarItem(label: string) {
     }
     // In Vue mode, Select/Hand work natively via Vue Flow
   }
-  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'blocks' || item?.panel === 'assets' || item?.panel === 'versions') {
+  else if (item?.panel === 'toolbox' || item?.panel === 'generators' || item?.panel === 'loras' || item?.panel === 'characters' || item?.panel === 'blocks' || item?.panel === 'assets' || item?.panel === 'versions') {
     // Left canvas panels are mutually exclusive — opening one closes the rest.
     const refs = {
       toolbox: toolboxPanelOpen,
       generators: generatorsPanelOpen,
       loras: loraLibraryPanelOpen,
+      characters: charactersPanelOpen,
       blocks: blockLibraryPanelOpen,
       assets: assetsPanelOpen,
       versions: versionsPanelOpen,
@@ -337,7 +343,8 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 // (index 0) on the outgoing workflow copy only.
 function injectLoraStyleIntoPrompt(workflow: any) {
   for (const node of workflow?.nodes || []) {
-    if (node?.type !== 'FluxLoRARemoteNode') continue
+    if (node?.type !== 'FluxLoRARemoteNode' && node?.type !== 'FluxMultiLoRARemoteNode') continue
+    // Both keep `prompt` at widget index 0, so the same fold applies.
     // `tasteProfile` fallback keeps workflows saved before the rename working.
     const style = String(node.properties?.aesthetic || node.properties?.tasteProfile || '').trim()
     if (!style) continue
@@ -2149,6 +2156,20 @@ function dismissRunResult() {
         >
           <div v-if="loraLibraryPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
             <VueCanvasLoRALibraryPanel @close="loraLibraryPanelOpen = false" />
+          </div>
+        </Transition>
+
+        <!-- Character Library left panel (mutually exclusive with the others) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="-translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="-translate-x-full"
+        >
+          <div v-if="charactersPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
+            <VueCanvasCharacterLibraryPanel @close="charactersPanelOpen = false" />
           </div>
         </Transition>
 

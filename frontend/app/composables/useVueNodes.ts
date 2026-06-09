@@ -153,6 +153,10 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   Compositor: 'artifact-frame',
   // The Timeline is a first-class artifact card too (live preview + editor modal).
   Timeline: 'artifact-timeline',
+  // The Pose Mannequin node: character thumb + posed-mannequin editor modal.
+  PoseMannequin: 'pose-mannequin',
+  // The 3D Model viewer: loads a GLB URL into an interactive Three.js viewer.
+  Model3D: 'artifact-3d',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

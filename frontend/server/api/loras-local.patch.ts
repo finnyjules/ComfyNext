@@ -3,10 +3,12 @@
  *
  * Edit a trained LoRA's metadata after training by updating its .json sidecar
  * in ../models/loras (the same file GET /api/loras-local reads). Supports
- * editing `name`, `trigger` and `aesthetic`. The weights file and its filename
- * are never touched — only the provenance sidecar.
+ * editing `name`, `trigger`, `aesthetic` and `kind`. The weights file and its
+ * filename are never touched — only the provenance sidecar.
  *
- * Body: { filename: "<name>.safetensors", name?, trigger?, aesthetic? }
+ * Body: { filename: "<name>.safetensors", name?, trigger?, aesthetic?, kind? }
+ *   kind: 'character' | 'style' | null — tags the LoRA so the Characters panel
+ *   can surface identity LoRAs separately from style LoRAs.
  *
  * Note: must be allowlisted in server/middleware/comfyui-proxy.ts
  * (NITRO_API_PATHS) — '/api/loras-local' already is (path match is
@@ -21,6 +23,7 @@ export default defineEventHandler(async (event) => {
     name?: string
     trigger?: string | null
     aesthetic?: string | null
+    kind?: 'character' | 'style' | null
   }>(event)
 
   const filename = (body?.filename || '').trim()
@@ -66,6 +69,10 @@ export default defineEventHandler(async (event) => {
     const a = String(body.aesthetic ?? '').trim()
     meta.aesthetic = a || null
   }
+  if (has('kind')) {
+    // Only 'character' or 'style' are meaningful; anything else clears the tag.
+    meta.kind = body.kind === 'character' || body.kind === 'style' ? body.kind : null
+  }
 
   await fs.writeFile(sidecarPath, JSON.stringify(meta, null, 2), 'utf8')
 
@@ -74,5 +81,6 @@ export default defineEventHandler(async (event) => {
     name: meta.name || base,
     trigger: meta.trigger ?? null,
     aesthetic: meta.aesthetic ?? null,
+    kind: meta.kind ?? null,
   }
 })

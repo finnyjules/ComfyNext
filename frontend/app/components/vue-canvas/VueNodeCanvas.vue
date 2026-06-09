@@ -23,6 +23,8 @@ import ArtifactAudioNode from '~/components/vue-canvas/ArtifactAudioNode.vue'
 import ArtifactVideoNode from '~/components/vue-canvas/ArtifactVideoNode.vue'
 import ArtifactFrameNode from '~/components/vue-canvas/ArtifactFrameNode.vue'
 import ArtifactTimelineNode from '~/components/vue-canvas/ArtifactTimelineNode.vue'
+import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
+import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
@@ -1211,6 +1213,138 @@ function handleOpenInpaint(e: Event) {
   if (detail?.nodeId) inpaintOpenForId.value = String(detail.nodeId)
 }
 
+// Pose Mannequin 3D editor modal state.
+const poseOpenForId = ref<string | null>(null)
+function handleOpenPose(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) poseOpenForId.value = String(detail.nodeId)
+}
+
+// A Pose Mannequin generation finished in the editor: route the result image to
+// a downstream artifact-image node (the pose node itself only shows the pose).
+// We can't reuse materializeAutoImageSinks here — PoseMannequin is in
+// ARTIFACT_NODE_COMPONENTS (for its custom renderer), so that helper skips it.
+function handlePoseResult(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const nodeId = detail?.nodeId ? String(detail.nodeId) : null
+  const filename = detail?.filename ? String(detail.filename) : null
+  if (!nodeId || !filename) return
+  const poseNode = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!poseNode) return
+
+  let outIdx = (poseNode.data?.outputs ?? []).findIndex((o: any) => String(o.type).toUpperCase() === 'IMAGE')
+  if (outIdx < 0) outIdx = 0
+  const handle = `output-${outIdx}`
+
+  // Reuse an existing artifact-image sink on this output; else create one.
+  let sink: any = null
+  for (const ed of edges.value as any[]) {
+    if (ed.source !== nodeId || ed.sourceHandle !== handle) continue
+    const t = (nodes.value as any[]).find(n => n.id === ed.target)
+    if (t && t.data?.nodeType === 'Image') { sink = t; break }
+  }
+  if (!sink) {
+    const srcPos = poseNode.position || { x: 0, y: 0 }
+    const srcW = (poseNode.data?.size?.[0] ?? 200) as number
+    sink = createNodeData('Image', { x: srcPos.x + srcW + 80, y: srcPos.y })
+    // Save the result to output/ (appears in Assets), matching auto-sinks.
+    const ei = sink.data.widgetDefs?.findIndex((w: any) => w.name === 'export') ?? -1
+    if (ei >= 0) sink.data.widgetsValues[ei] = true
+    sink.data.size = [240, 280]
+    nodes.value.push(sink)
+    edges.value.push({
+      id: `e-pose-${sink.id}`,
+      source: nodeId, sourceHandle: handle,
+      target: sink.id, targetHandle: 'input-0',
+      type: 'comfy', data: { dataType: 'IMAGE' },
+    } as any)
+  }
+
+  // Display the result + persist it as the sink's own image.
+  sink.data.images = [`/view?${new URLSearchParams({ filename, type: 'input' })}`]
+  const wi = sink.data.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
+  if (wi >= 0) {
+    if (!Array.isArray(sink.data.widgetsValues)) sink.data.widgetsValues = []
+    sink.data.widgetsValues[wi] = filename
+    const def = sink.data.widgetDefs[wi]
+    if (def && Array.isArray(def.options) && !def.options.includes(filename)) def.options.push(filename)
+  }
+  if (!sink.data.properties) sink.data.properties = {}
+  sink.data.properties.locked = true
+}
+
+// Multi-view "3D views" finished: drop each generated angle as a standalone
+// locked artifact-image node in a grid beside the pose node (a character sheet
+// to feed image-to-3D). Not wired — the pose node has one output; these are an
+// independent set of result images.
+function handlePoseMultiResult(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const nodeId = detail?.nodeId ? String(detail.nodeId) : null
+  const views: Array<{ label: string; filename: string }> = Array.isArray(detail?.views) ? detail.views : []
+  if (!nodeId || !views.length) return
+  const poseNode = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!poseNode) return
+  const srcPos = poseNode.position || { x: 0, y: 0 }
+  const srcW = (poseNode.data?.size?.[0] ?? 200) as number
+  const baseTs = Date.now()
+  let i = 0
+  const byLabel: Record<string, string> = {} // view label → created node id
+  for (const v of views) {
+    if (!v?.filename) continue
+    const sink = createNodeData('Image', { x: srcPos.x + srcW + 80 + (i % 2) * 270, y: srcPos.y + Math.floor(i / 2) * 300 })
+    sink.id = String(baseTs + i) // unique numeric ids (Date.now() collides in a tight loop)
+    sink.data.size = [240, 280]
+    sink.data.title = `3D · ${v.label}`
+    const wi = sink.data.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
+    if (wi >= 0) {
+      sink.data.widgetsValues[wi] = v.filename
+      const def = sink.data.widgetDefs[wi]
+      if (def && Array.isArray(def.options) && !def.options.includes(v.filename)) def.options.push(v.filename)
+    }
+    sink.data.images = [`/view?${new URLSearchParams({ filename: v.filename, type: 'input' })}`]
+    sink.data.properties = { locked: true }
+    nodes.value.push(sink)
+    byLabel[v.label] = sink.id
+    i++
+  }
+
+  // Auto-wire a Hunyuan3D Multi-View node to the four views → hit Run for a GLB.
+  // Best-effort: only if the node type is loaded (needs the Comfy backend to have
+  // it). Maps each view to the matching input port (front/back/left/right).
+  if (objectInfo.value?.['Hunyuan3DMultiViewNode']) {
+    const mv = createNodeData('Hunyuan3DMultiViewNode', { x: srcPos.x + srcW + 80 + 2 * 270 + 60, y: srcPos.y + 140 })
+    mv.id = String(baseTs + 100)
+    nodes.value.push(mv)
+    const inputIdxByLabel: Record<string, string> = { front: 'front_image', back: 'back_image', left: 'left_image', right: 'right_image' }
+    for (const label in byLabel) {
+      const inName = inputIdxByLabel[label]
+      const idx = mv.data.inputs?.findIndex((p: any) => p.name === inName) ?? -1
+      if (idx < 0) continue
+      edges.value.push({
+        id: `e-mv-${mv.id}-${label}`,
+        source: byLabel[label], sourceHandle: 'output-0',
+        target: mv.id, targetHandle: `input-${idx}`,
+        type: 'comfy', data: { dataType: 'IMAGE' },
+      } as any)
+    }
+
+    // And a 3D viewer on the mesh output, so Run → see the model on canvas.
+    if (objectInfo.value?.['Model3D']) {
+      const viewer = createNodeData('Model3D', { x: mv.position.x + (mv.data?.size?.[0] ?? 220) + 80, y: mv.position.y })
+      viewer.id = String(baseTs + 101)
+      nodes.value.push(viewer)
+      const outIdx = mv.data.outputs?.findIndex((o: any) => o.name === 'glb_url') ?? 0
+      const inIdx = viewer.data.inputs?.findIndex((p: any) => p.name === 'glb_url') ?? 0
+      edges.value.push({
+        id: `e-mv3d-${viewer.id}`,
+        source: mv.id, sourceHandle: `output-${outIdx < 0 ? 0 : outIdx}`,
+        target: viewer.id, targetHandle: `input-${inIdx < 0 ? 0 : inIdx}`,
+        type: 'comfy', data: { dataType: 'STRING' },
+      } as any)
+    }
+  }
+}
+
 // Kinetic Typography modal state.
 const kineticTypeOpenForId = ref<string | null>(null)
 function handleOpenKineticType(e: Event) {
@@ -1294,11 +1428,14 @@ const modelGalleryOpenForId = ref<string | null>(null)
 const videoModelGalleryOpenForId = ref<string | null>(null)
 const textEffectGalleryOpenForId = ref<string | null>(null)
 const loraGalleryOpenForId = ref<string | null>(null)
+const loraGalleryWidgetName = ref<string>('lora_name')
+const loraGalleryKind = ref<'character' | 'style'>('style')
 
 // Any full-screen editor/gallery modal that overlays the canvas and owns the
 // keyboard while open.
 const anyEditorModalOpen = computed(() => !!(
   compositorOpenForId.value || inpaintOpenForId.value || kineticTypeOpenForId.value ||
+  poseOpenForId.value ||
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || loraGalleryOpenForId.value
@@ -1319,8 +1456,11 @@ function handleOpenModelGallery(e: Event) {
   else modelGalleryOpenForId.value = nodeId
 }
 function handleOpenLoraGallery(e: Event) {
-  const nodeId = (e as CustomEvent).detail?.nodeId
-  if (nodeId) loraGalleryOpenForId.value = String(nodeId)
+  const detail = (e as CustomEvent).detail || {}
+  if (!detail.nodeId) return
+  loraGalleryWidgetName.value = detail.widgetName || 'lora_name'
+  loraGalleryKind.value = detail.kind === 'character' ? 'character' : 'style'
+  loraGalleryOpenForId.value = String(detail.nodeId)
 }
 
 // Paste an image directly onto the canvas → uploads it to ComfyUI's input/
@@ -1449,6 +1589,9 @@ onMounted(() => {
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
+  window.addEventListener('comfynext:openPose', handleOpenPose)
+  window.addEventListener('comfynext:poseResult', handlePoseResult)
+  window.addEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
   window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
   window.addEventListener('paste', handlePaste)
@@ -1471,6 +1614,9 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
+  window.removeEventListener('comfynext:openPose', handleOpenPose)
+  window.removeEventListener('comfynext:poseResult', handlePoseResult)
+  window.removeEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
   window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
   window.removeEventListener('paste', handlePaste)
@@ -3350,7 +3496,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'artifact-3d': markRaw(Artifact3DNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
@@ -3588,6 +3734,17 @@ defineExpose({
       />
     </Teleport>
 
+    <!-- Pose Mannequin 3D editor modal -->
+    <Teleport to="body">
+      <VueCanvasPoseEditorModal
+        v-if="poseOpenForId"
+        :node-id="poseOpenForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="poseOpenForId = null"
+      />
+    </Teleport>
+
     <!-- Kinetic Typography editor modal -->
     <Teleport to="body">
       <VueCanvasKineticTypeModal
@@ -3654,6 +3811,8 @@ defineExpose({
       v-if="loraGalleryOpenForId"
       :node-id="loraGalleryOpenForId"
       :nodes="nodes as any[]"
+      :widget-name="loraGalleryWidgetName"
+      :kind="loraGalleryKind"
       @close="loraGalleryOpenForId = null"
     />
 
