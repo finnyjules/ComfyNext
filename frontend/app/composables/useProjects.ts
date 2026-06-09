@@ -10,6 +10,7 @@
  *
  * See docs/plans/2026-06-02-phase0-project-persistence-spec.md.
  */
+import type { GenerationRecord } from '~/lib/generations'
 
 export interface ProjectMeta {
   uuid: string
@@ -43,6 +44,12 @@ export interface Project {
   updatedAt: number
   currentVersionId: string | null
   versionIndex: VersionMeta[]
+}
+
+export interface SpendSummary {
+  month: { usd: number; credits: number }
+  total: { usd: number; credits: number }
+  byProject: { uuid: string; usd: number; credits: number }[]
 }
 
 export function useProjects() {
@@ -113,5 +120,45 @@ export function useProjects() {
     }
   }
 
-  return { listProjects, loadProject, saveVersion, loadVersion, renameProject, deleteProject }
+  /** Record one completed run (also feeds the global spend ledger server-side).
+   *  Fire-and-forget safe: failures only warn. */
+  async function saveGeneration(
+    uuid: string,
+    generation: GenerationRecord,
+    projectName?: string,
+  ): Promise<string | null> {
+    try {
+      const res = await $fetch<{ id: string }>(
+        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+        { method: 'POST', body: { projectName, generation } },
+      )
+      return res.id ?? null
+    } catch (e) {
+      console.warn('[useProjects] saveGeneration failed:', e)
+      return null
+    }
+  }
+
+  async function listGenerations(uuid: string): Promise<GenerationRecord[]> {
+    try {
+      const res = await $fetch<{ generations: GenerationRecord[] }>(
+        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+      )
+      return res.generations ?? []
+    } catch (e) {
+      console.warn('[useProjects] listGenerations failed:', e)
+      return []
+    }
+  }
+
+  async function fetchSpendSummary(): Promise<SpendSummary | null> {
+    try {
+      return await $fetch<SpendSummary>('/comfynext/spend/summary')
+    } catch (e) {
+      console.warn('[useProjects] spend summary failed:', e)
+      return null
+    }
+  }
+
+  return { listProjects, loadProject, saveVersion, loadVersion, renameProject, deleteProject, saveGeneration, listGenerations, fetchSpendSummary }
 }
