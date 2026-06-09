@@ -51,13 +51,14 @@ export function estimateUsdForNodes(nodes: EstimateInputNode[]): CostEstimate | 
 }
 
 /** Adapt Vue Flow canvas nodes (ComfyNode data shape) to estimate input.
- *  Disabled nodes (mode 2) are excluded — they don't run. */
+ *  The LiteGraph class name lives in data.nodeType (data.type is the Vue Flow
+ *  renderer type). Disabled nodes (mode 2) are excluded — they don't run. */
 export function vueNodesToEstimateInput(nodes: any[]): EstimateInputNode[] {
   return (nodes || [])
     .filter((n: any) => ((n?.data?.mode ?? 0) !== 2))
     .map((n: any) => ({
       id: String(n.id),
-      type: String(n?.data?.type || ''),
+      type: String(n?.data?.nodeType || ''),
       title: n?.data?.title,
       badgeExpr: n?.data?.priceBadge?.expr ?? null,
     }))

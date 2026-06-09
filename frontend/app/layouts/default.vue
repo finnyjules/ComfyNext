@@ -419,7 +419,7 @@ async function runVueWorkflow(
         const vn = vnodes.find((v: any) => String(v.id) === String(wn.id))
         return {
           id: String(wn.id),
-          type: String(wn.type || ''),
+          type: String(wn.type || vn?.data?.nodeType || ''),
           title: vn?.data?.title,
           badgeExpr: vn?.data?.priceBadge?.expr ?? null,
         }
@@ -1955,7 +1955,7 @@ function handleBridgeMessage(event: MessageEvent) {
       const runDoc = savedWorkflows[tabId]
       const vueNodes = vueCanvasRef.value?.getNodes?.() || []
       const ranTypes = [...executedNodeIds]
-        .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.type)
+        .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.nodeType)
         .filter(Boolean) as string[]
       pendingGen = {
         projectUuid: runProjectUuid,
