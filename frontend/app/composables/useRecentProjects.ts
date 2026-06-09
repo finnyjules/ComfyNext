@@ -189,7 +189,12 @@ export function useRecentProjects() {
   function setProjectName(workflowId: string, name: string) {
     const names = getSavedNames()
     names[workflowId] = name
-    persistNames(names)
+    persistNames(names) // offline fallback — server below is the source of truth
+    // History-fingerprint ids (comma-joined class types, pre-uuid projects)
+    // must not become junk server projects.
+    if (workflowId && !workflowId.includes(',')) {
+      useProjects().renameProject(workflowId, name)
+    }
     // Update in-memory (both lists share the same objects, but guard anyway)
     for (const list of [recentProjects.value, allProjects.value]) {
       const project = list.find((p) => p.workflowId === workflowId)
