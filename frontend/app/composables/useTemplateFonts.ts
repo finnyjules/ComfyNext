@@ -23,6 +23,16 @@ export function useGoogleFontPreview() {
     link.href = googleFontCssUrl(trimmed)
     link.dataset.googleFont = trimmed
     document.head.appendChild(link)
+    // Optimistic second request for the full variable-weight range, so weight
+    // controls beyond 400/700 render real faces. Variable families resolve it;
+    // static families 400 the stylesheet, which fails silently — the 400/700
+    // link above still applies and the browser snaps to the nearest weight.
+    const range = document.createElement('link')
+    range.rel = 'stylesheet'
+    const f = encodeURIComponent(trimmed).replace(/%20/g, '+')
+    range.href = `https://fonts.googleapis.com/css2?family=${f}:wght@100..900&display=swap`
+    range.dataset.googleFont = `${trimmed}:range`
+    document.head.appendChild(range)
     ensured.add(trimmed)
   }
   return { ensure }

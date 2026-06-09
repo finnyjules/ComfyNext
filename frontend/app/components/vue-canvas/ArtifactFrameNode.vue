@@ -203,12 +203,22 @@ function wiredGeom(l: WiredLayer) {
   if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
   return { cx: W / 2 + l.x * W, cy: H / 2 + l.y * H, hw: (fitW * l.scale) / 2, hh: (fitH * l.scale) / 2, rotation: l.rotation }
 }
+// Per-wired-layer visibility/lock, persisted on node properties as 1-BASED
+// slot arrays (layerN numbering, same as the w:N stack keys and the modal).
+// Internal WiredLayer.slot stays 0-based — hence the +1 at every lookup.
+const hiddenWiredSet = computed(() =>
+  new Set((((props.data.properties as any)?.comfynext_hiddenWired as number[]) ?? []).map(Number)))
+const lockedWiredSet = computed(() =>
+  new Set((((props.data.properties as any)?.comfynext_lockedWired as number[]) ?? []).map(Number)))
+
 function wiredHitTest(clientX: number, clientY: number): number | null {
   const r = artboardRef.value?.getBoundingClientRect()
   if (!r) return null
   const W = box.value.w, H = box.value.h
   const px = ((clientX - r.left) / r.width) * W, py = ((clientY - r.top) / r.height) * H
   for (let i = wiredLayers.value.length - 1; i >= 0; i--) {
+    const slotN = wiredLayers.value[i].slot + 1
+    if (hiddenWiredSet.value.has(slotN) || lockedWiredSet.value.has(slotN)) continue
     const g = wiredGeom(wiredLayers.value[i])
     const rad = (-g.rotation * Math.PI) / 180
     const dx = px - g.cx, dy = py - g.cy
@@ -408,9 +418,11 @@ function renderStack() {
   const items = stackKeys.value.map((key): StackItem | null => {
     const r = resolveKey(key)
     if (!r) return null
-    return r.type === 'wired'
-      ? { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
-      : { type: 'local', layer: r.layer }
+    if (r.type === 'wired') {
+      if (hiddenWiredSet.value.has(r.layer.slot + 1)) return null
+      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
+    }
+    return { type: 'local', layer: r.layer }
   }).filter((x): x is StackItem => x != null)
   paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value)
 }
@@ -420,6 +432,7 @@ watch(
     box.value.w, box.value.h,
     JSON.stringify(wiredLayers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImages.value).length,
+    JSON.stringify([...hiddenWiredSet.value]),
   ] as const,
   async () => {
     for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -475,8 +488,13 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   for (const key of keys) {
     const r = resolveKey(key)
     if (!r) continue
-    if (r.type === 'wired') drawWiredLayer(ctx, r.layer, W, H)
-    else drawLocalLayer(ctx, r.layer, W, H)
+    if (r.type === 'wired') {
+      if (hiddenWiredSet.value.has(r.layer.slot + 1)) continue
+      drawWiredLayer(ctx, r.layer, W, H)
+    } else {
+      if (r.layer.visible === false) continue
+      drawLocalLayer(ctx, r.layer, W, H)
+    }
   }
   return cv
 }

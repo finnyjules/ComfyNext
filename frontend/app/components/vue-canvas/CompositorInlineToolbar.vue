@@ -2,7 +2,7 @@
 // Floating contextual toolbar for the Frame's inline editing — the common,
 // high-frequency controls for the selected local layer. The parent positions it
 // (screen-space, above the selection). Full/precise controls live in the modal.
-import { Bold, AlignLeft, AlignCenter, AlignRight, ArrowUp, ArrowDown, Trash2, Ban, Shield } from 'lucide-vue-next'
+import { AlignLeft, AlignCenter, AlignRight, ArrowUp, ArrowDown, Trash2, Ban, Shield } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 
 const props = defineProps<{
@@ -42,8 +42,11 @@ const pathFillColor = computed(() =>
       <input type="number" min="1" :value="px(layer.fontSize)" title="Size"
         class="w-11 h-6 bg-white/[0.06] rounded text-[11px] text-center text-white/85 outline-none"
         @input="setPx('fontSize', ($event.target as HTMLInputElement).value)" />
-      <button class="ll-btn" :class="layer.fontWeight === 700 ? 'is-on' : ''" title="Bold"
-        @click="emit('set', { fontWeight: layer.fontWeight === 700 ? 400 : 700 })"><Bold class="size-3.5" /></button>
+      <select :value="layer.fontWeight || 400" title="Weight"
+        class="h-6 w-12 bg-white/[0.06] rounded text-[11px] text-white/85 px-0.5 outline-none cursor-pointer"
+        @change="emit('set', { fontWeight: parseInt(($event.target as HTMLSelectElement).value) || 400 })">
+        <option v-for="w in [100, 200, 300, 400, 500, 600, 700, 800, 900]" :key="w" :value="w">{{ w }}</option>
+      </select>
       <button v-for="a in (['left','center','right'] as const)" :key="a" class="ll-btn" :class="layer.align === a ? 'is-on' : ''" :title="`Align ${a}`"
         @click="emit('set', { align: a })">
         <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : AlignRight" class="size-3.5" />
@@ -117,6 +120,16 @@ const pathFillColor = computed(() =>
       <button class="ll-btn" :class="layer.protect ? 'is-on' : ''"
         title="Protect in blend — keep this layer pixel-exact when a Blend Scene harmonizes the frame"
         @click="emit('set', { protect: !layer.protect })"><Shield class="size-3.5" /></button>
+    </template>
+
+    <!-- blend — local layers blend against whatever is below in the stack -->
+    <template v-if="layer.kind !== 'wired'">
+      <span class="ll-sep" />
+      <select :value="layer.blend || 'normal'" title="Blend mode"
+        class="h-6 max-w-[72px] bg-white/[0.06] rounded text-[11px] text-white/85 px-1 outline-none cursor-pointer"
+        @change="emit('set', { blend: ($event.target as HTMLSelectElement).value })">
+        <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
+      </select>
     </template>
 
     <!-- z-order — every layer (wired or local) shares one depth stack -->

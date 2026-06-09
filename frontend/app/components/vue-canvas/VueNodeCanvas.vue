@@ -2047,7 +2047,9 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     const usedSlots = new Set<number>(connectedSlots) // wired slots are taken
 
     // Bake one contiguous run of local layers into a spare slot at depth `z`.
-    const injectRun = async (run: LocalLayer[], z: number) => {
+    // `blend` is the run's blend mode — non-normal blends bake as single-layer
+    // runs so the backend can apply the mode per layer.
+    const injectRun = async (run: LocalLayer[], z: number, blend = 'normal') => {
       if (!run.length || !(W > 0 && H > 0)) return
       const blob = await bakeOverlay(run, W, H)
       if (!blob) return
@@ -2108,13 +2110,18 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       setNamedWidget(comp, `layer${slot + 1}_rotation`, 0, objectInfo.value)
       setNamedWidget(comp, `layer${slot + 1}_scale`, 1, objectInfo.value)
       setNamedWidget(comp, `layer${slot + 1}_opacity`, 1, objectInfo.value)
-      setNamedWidget(comp, `layer${slot + 1}_blend`, 'normal', objectInfo.value)
+      setNamedWidget(comp, `layer${slot + 1}_blend`, blend, objectInfo.value)
       setNamedWidget(comp, `layer${slot + 1}_z`, z, objectInfo.value)
     }
 
     // Walk bottom→top: stamp each wired layer's z, accumulating contiguous local
     // runs and flushing them (at the run's bottom depth) when a wired layer or
     // the end interrupts the run. Stack index = z, so all depths are distinct.
+    // Hidden layers are skipped entirely; a local layer with a non-normal blend
+    // mode bakes as its own single-layer run so the backend applies the mode.
+    const hiddenWired = new Set<number>(
+      ((comp.properties?.comfynext_hiddenWired as number[] | undefined) ?? []).map(Number),
+    )
     let run: LocalLayer[] = []
     let runZ = 0
     const flush = async () => { if (run.length) { await injectRun(run, runZ); run = [] } }
@@ -2124,9 +2131,22 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         await flush()
         const layerN = Number(key.slice(2)) // 1-based: `w:1` = layer1
         setNamedWidget(comp, `layer${layerN}_z`, zi, objectInfo.value)
+        // Hidden wired layer: zero its opacity on the OUTGOING copy only (the
+        // live node keeps its real opacity for when the eye toggles back on).
+        if (hiddenWired.has(layerN)) setNamedWidget(comp, `layer${layerN}_opacity`, 0, objectInfo.value)
       } else {
         const layer = localById.get(key.slice(2))
-        if (layer) { if (!run.length) runZ = zi; run.push(layer) }
+        if (!layer || layer.visible === false) continue
+        const blend = layer.blend && layer.blend !== 'normal' ? layer.blend : null
+        if (blend) {
+          await flush()
+          // Bake with blend stripped — the offscreen blends against nothing;
+          // the backend applies the mode against the real backdrop.
+          await injectRun([{ ...layer, blend: 'normal' } as LocalLayer], zi, blend)
+        } else {
+          if (!run.length) runZ = zi
+          run.push(layer)
+        }
       }
     }
     await flush()

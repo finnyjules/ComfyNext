@@ -3,6 +3,7 @@ import {
   Image as ImageIcon, X, MousePointer2,
   Type, Square, Circle, Minus, Trash2,
   AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
+  Eye, EyeOff,
 } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
@@ -581,6 +582,9 @@ type Drag = DragMove | DragScale | DragRotate | null
 const drag = ref<Drag>(null)
 
 function onLayerPointerDown(slot: number, e: PointerEvent) {
+  // Hidden/locked wired layers don't respond to direct canvas presses (the
+  // invisible <img> hit targets stay mounted regardless).
+  if (hiddenWired.value.has(slot) || lockedWired.value.has(slot)) return
   e.preventDefault(); e.stopPropagation()
   selectImage(slot)
   const layer = layers.value.find(l => l.slot === slot)
@@ -653,12 +657,16 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
   const keys = stackKeys.value
   for (let i = keys.length - 1; i >= 0; i--) {        // top → bottom
     const res = resolveStackKey(keys[i]); if (!res) continue
+    // Hidden or locked layers are transparent to canvas hits (Figma behavior:
+    // the layers panel can still select a locked layer, the canvas can't).
     if (res.type === 'wired') {
+      if (hiddenWired.value.has(res.layer.slot) || lockedWired.value.has(res.layer.slot)) continue
       const { w: fw, h: fh } = fitSize(res.layer.slot)
       const c = layerCenter(res.layer)
       if (inBox(c.x, c.y, (fw / 2) * res.layer.scale + 4, (fh / 2) * res.layer.scale + 4, res.layer.rotation)) return keys[i]
     } else {
       const l = res.layer
+      if (l.visible === false || l.locked) continue
       const b = boxPx(l)
       if (inBox(l.x * W, l.y * H, b.w / 2 + 8, b.h / 2 + 8, l.rotation)) return keys[i]
     }
@@ -760,6 +768,43 @@ function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, 
   drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H)
 }
 
+// ── Per-layer visibility & lock ──────────────────────────────────────────────
+// Local layers carry visible/locked on the layer itself; wired layers persist
+// them on node properties as 1-based slot arrays (same numbering as the w:N
+// stack keys). Hidden wired layers get opacity 0 stamped on the outgoing copy
+// at submit; hidden locals are skipped from bakes entirely.
+function readSlotArr(propKey: string): number[] {
+  return (((compositor.value?.data?.properties as any)?.[propKey] as number[] | undefined) ?? []).map(Number)
+}
+function writeSlotArr(propKey: string, arr: number[]) {
+  const node = compositor.value
+  if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  ;(node.data.properties as any)[propKey] = arr
+}
+const hiddenWired = computed(() => new Set(readSlotArr('comfynext_hiddenWired')))
+const lockedWired = computed(() => new Set(readSlotArr('comfynext_lockedWired')))
+function toggleWiredFlag(propKey: 'comfynext_hiddenWired' | 'comfynext_lockedWired', slot: number) {
+  const cur = readSlotArr(propKey)
+  writeSlotArr(propKey, cur.includes(slot) ? cur.filter(s => s !== slot) : [...cur, slot])
+}
+function rowHidden(row: any): boolean {
+  if (row.kind === 'wired') return hiddenWired.value.has(row.slot)
+  return row.layer ? row.layer.visible === false : false
+}
+function rowLocked(row: any): boolean {
+  if (row.kind === 'wired') return lockedWired.value.has(row.slot)
+  return row.layer ? !!row.layer.locked : false
+}
+function toggleRowHidden(row: any) {
+  if (row.kind === 'wired') toggleWiredFlag('comfynext_hiddenWired', row.slot)
+  else if (row.layer) setLocal(row.layer.id, { visible: row.layer.visible === false ? undefined : false } as any)
+}
+function toggleRowLocked(row: any) {
+  if (row.kind === 'wired') toggleWiredFlag('comfynext_lockedWired', row.slot)
+  else if (row.layer) setLocal(row.layer.id, { locked: !row.layer.locked } as any)
+}
+
 const overlayCanvas = ref<HTMLCanvasElement | null>(null)
 function renderStack() {
   const cv = overlayCanvas.value
@@ -774,9 +819,11 @@ function renderStack() {
   const items = stackKeys.value.map((key): StackItem | null => {
     const r = resolveStackKey(key)
     if (!r) return null
-    return r.type === 'wired'
-      ? { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
-      : { type: 'local', layer: r.layer as LocalLayer }
+    if (r.type === 'wired') {
+      if (hiddenWired.value.has((r.layer as Layer).slot)) return null
+      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+    }
+    return { type: 'local', layer: r.layer as LocalLayer }
   }).filter((x): x is StackItem => x != null)
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value))
@@ -788,6 +835,7 @@ watch(
     JSON.stringify(layers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImageEls.value).length,
     nodeEdit.active.value, nodeEdit.layerId.value,
+    JSON.stringify(readSlotArr('comfynext_hiddenWired')),
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -880,6 +928,50 @@ function toggleLayerBlur(l: any) {
   if (layerBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'layer_blur') })
   else setLayerBlur(l, 0.02)
 }
+
+// ── Inner shadow (cast inward from the silhouette edge) ──────────────────────
+function innerShadow(l: any): any | undefined { return l?.effects?.find((e: any) => e.type === 'inner_shadow') }
+function innerShadowHex(l: any): string { return parseRgba(innerShadow(l)?.color || '').hex }
+function innerShadowAlpha(l: any): number { return parseRgba(innerShadow(l)?.color || '').a }
+function setInnerShadow(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = innerShadow(l) || { type: 'inner_shadow', color: 'rgba(0, 0, 0, 0.45)', x: 0, y: 0.008, blur: 0.02, visible: true }
+  const next = { ...cur, ...patch }
+  setLocal(l.id, { effects: [...((l.effects || []).filter((e: any) => e.type !== 'inner_shadow')), next] })
+}
+function toggleInnerShadow(l: any) {
+  if (!l) return
+  if (innerShadow(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'inner_shadow') })
+  else setInnerShadow(l, {})
+}
+
+// ── Background blur (blur what's behind the layer, within its silhouette) ───
+function bgBlur(l: any): any | undefined { return l?.effects?.find((e: any) => e.type === 'background_blur') }
+function setBgBlur(l: any, radius: number) {
+  if (!l) return
+  const others = (l.effects || []).filter((e: any) => e.type !== 'background_blur')
+  setLocal(l.id, { effects: radius > 0 ? [...others, { type: 'background_blur', radius, visible: true }] : others })
+}
+function toggleBgBlur(l: any) {
+  if (!l) return
+  if (bgBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'background_blur') })
+  else setBgBlur(l, 0.02)
+}
+
+// Blend modes shared with the backend Compositor's layer{N}_blend combo (and
+// WIRED_BLEND_OP in the draw engine) — keep all three lists in sync.
+const LOCAL_BLEND_MODES = [
+  'normal', 'multiply', 'screen', 'overlay', 'soft_light', 'hard_light',
+  'difference', 'lighten', 'darken', 'add',
+]
+
+// Full Google-Fonts weight range; the loader requests 100..900 optimistically
+// and the browser snaps to the nearest weight the family actually has.
+const FONT_WEIGHTS = [
+  { v: 100, label: 'Thin' }, { v: 200, label: 'Extra Light' }, { v: 300, label: 'Light' },
+  { v: 400, label: 'Regular' }, { v: 500, label: 'Medium' }, { v: 600, label: 'Semi Bold' },
+  { v: 700, label: 'Bold' }, { v: 800, label: 'Extra Bold' }, { v: 900, label: 'Black' },
+]
 
 // ── Layer mask (this layer is clipped by another layer's silhouette) ─────────
 function maskCandidates(l: any): any[] { return (localLayers.value as any[]).filter((o: any) => o.id !== l?.id) }
@@ -1256,8 +1348,24 @@ onUnmounted(() => {
               />
               <span v-else-if="row.kind === 'group'" class="text-sm truncate flex-1" title="Double-click to rename"
                 @dblclick.stop="startGroupRename(row.item)">{{ groupLabel(row.item) }} <span class="text-white/40">· {{ row.item.layers.length }}</span></span>
-              <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1">Layer {{ row.slot }}</span>
-              <span v-else class="truncate flex-1 capitalize" :class="row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm'">{{ rowLabel(row) }}</span>
+              <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1" :class="rowHidden(row) ? 'text-white/35' : ''">Layer {{ row.slot }}</span>
+              <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']">{{ rowLabel(row) }}</span>
+              <!-- Lock (locked layers render but ignore canvas clicks/drags) -->
+              <button v-if="row.kind !== 'group'"
+                class="transition cursor-pointer"
+                :class="rowLocked(row) ? 'text-amber-300/90' : 'opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80'"
+                :title="rowLocked(row) ? 'Unlock' : 'Lock (not selectable on canvas)'"
+                @click.stop="toggleRowLocked(row)">
+                <component :is="rowLocked(row) ? Lock : LockOpen" class="size-3.5" />
+              </button>
+              <!-- Visibility (hidden layers drop out of render, bake and export) -->
+              <button v-if="row.kind !== 'group'"
+                class="transition cursor-pointer"
+                :class="rowHidden(row) ? 'text-white/70' : 'opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80'"
+                :title="rowHidden(row) ? 'Show' : 'Hide'"
+                @click.stop="toggleRowHidden(row)">
+                <component :is="rowHidden(row) ? EyeOff : Eye" class="size-3.5" />
+              </button>
               <!-- Delete -->
               <button v-if="row.kind === 'group'" class="opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
                 title="Delete group" @click.stop="deleteGroup(row.item)">
@@ -1730,13 +1838,18 @@ onUnmounted(() => {
                   @input="setSizePx(selectedLocal!.id, 'fontSize', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
               </div>
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Style</div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Weight</div>
+                <select :value="(selectedLocal as any).fontWeight || 400"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                  @change="setLocal(selectedLocal!.id, { fontWeight: parseInt(($event.target as HTMLSelectElement).value) || 400 })">
+                  <option v-for="w in FONT_WEIGHTS" :key="w.v" :value="w.v">{{ w.label }} · {{ w.v }}</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Align</div>
                 <div class="flex gap-1">
-                  <button class="flex-1 flex items-center justify-center bg-[#1a1a1a] border border-[#2a2a2a] rounded py-1.5"
-                    :class="(selectedLocal as any).fontWeight === 700 ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
-                    @click="setLocal(selectedLocal!.id, { fontWeight: (selectedLocal as any).fontWeight === 700 ? 400 : 700 })">
-                    <Bold class="size-3.5" />
-                  </button>
                   <button v-for="a in (['left','center','right'] as const)" :key="a"
                     class="flex-1 flex items-center justify-center bg-[#1a1a1a] border border-[#2a2a2a] rounded py-1.5"
                     :class="(selectedLocal as any).align === a ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
@@ -1744,6 +1857,13 @@ onUnmounted(() => {
                     <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : AlignRight" class="size-3.5" />
                   </button>
                 </div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5" title="Set a width to auto-wrap words; clear for free-flowing text">Text box W</div>
+                <input type="number" min="0" placeholder="auto"
+                  :value="(selectedLocal as any).boxW ? pxW((selectedLocal as any).boxW) : ''"
+                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
+                  @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
               </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
@@ -1868,6 +1988,16 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Blend mode (vs layers below; same modes as wired layers) -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Blend</div>
+            <select :value="(selectedLocal as any).blend || 'normal'"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              @change="setLocal(selectedLocal!.id, { blend: ($event.target as HTMLSelectElement).value } as any)">
+              <option v-for="m in LOCAL_BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
+            </select>
+          </div>
+
           <!-- Drop shadow effect -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
@@ -1913,6 +2043,48 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Inner shadow -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Inner shadow</div>
+              <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+                @click="toggleInnerShadow(selectedLocal!)">{{ innerShadow(selectedLocal) ? 'Remove' : 'Add' }}</button>
+            </div>
+            <div v-if="innerShadow(selectedLocal)" class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <input type="color" :value="innerShadowHex(selectedLocal)" title="Shadow color"
+                  class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
+                  @input="setInnerShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, innerShadowAlpha(selectedLocal)) })" />
+                <div class="flex items-center gap-0.5 shrink-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
+                  <input type="number" min="0" max="100" step="1" :value="Math.round(innerShadowAlpha(selectedLocal) * 100)"
+                    class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
+                    @input="setInnerShadow(selectedLocal!, { color: composeRgba(innerShadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                  <span class="text-[10px] text-white/35 select-none">%</span>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">X</div>
+                  <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.x || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setInnerShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
+                </div>
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Y</div>
+                  <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.y || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setInnerShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
+                </div>
+                <div>
+                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Blur</div>
+                  <input type="number" min="0" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.blur || 0) * 1000) / 10"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setInnerShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Layer blur -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
@@ -1925,6 +2097,21 @@ onUnmounted(() => {
               <input type="number" min="0" step="0.5" :value="Math.round((layerBlur(selectedLocal)?.radius || 0) * 1000) / 10"
                 class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLayerBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
+            </div>
+          </div>
+
+          <!-- Background blur (blurs what's behind the layer, inside its shape) -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Background blur</div>
+              <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+                @click="toggleBgBlur(selectedLocal!)">{{ bgBlur(selectedLocal) ? 'Remove' : 'Add' }}</button>
+            </div>
+            <div v-if="bgBlur(selectedLocal)" class="flex items-center gap-2">
+              <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Radius</div>
+              <input type="number" min="0" step="0.5" :value="Math.round((bgBlur(selectedLocal)?.radius || 0) * 1000) / 10"
+                class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setBgBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
           </div>
 

@@ -237,6 +237,9 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const px = nx * W, py = ny * H
     for (let i = localLayers.value.length - 1; i >= 0; i--) {
       const l = localLayers.value[i]
+      // Hidden/locked layers are transparent to canvas hits (the layers panel
+      // can still select a locked layer; the canvas can't).
+      if (l.visible === false || l.locked) continue
       const b = boxPx(l)
       const cx = l.x * W, cy = l.y * H
       const rad = (-l.rotation * Math.PI) / 180

@@ -29,9 +29,8 @@ export function isGradient(p: Paint | undefined): p is Gradient {
   return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
 }
 
-// Layer effects (Figma-style). Drop shadow first; inner shadow / blur extend
-// this union later. All distances normalized to canvas width, like every other
-// dimension here, so they survive resize/export unchanged.
+// Layer effects (Figma-style). All distances normalized to canvas width, like
+// every other dimension here, so they survive resize/export unchanged.
 export interface DropShadowEffect {
   type: 'drop_shadow'
   color: string   // rgba/hex (alpha allowed)
@@ -45,7 +44,25 @@ export interface LayerBlurEffect {
   radius: number  // blur radius, normalized to canvas width
   visible: boolean
 }
-export type LayerEffect = DropShadowEffect | LayerBlurEffect
+// Shadow cast inward from the layer's silhouette edge (Figma inner shadow).
+export interface InnerShadowEffect {
+  type: 'inner_shadow'
+  color: string
+  x: number       // offset X, normalized to canvas width
+  y: number       // offset Y, normalized to canvas width
+  blur: number    // blur radius, normalized to canvas width
+  visible: boolean
+}
+// Blur what's BEHIND the layer, within its silhouette (Figma background blur).
+// Previews correctly wherever the full stack is painted (paintLayerStack); a
+// bake of locals alone can only blur the local backdrop below it — wired
+// pixels behind it composite server-side, so they can't be pre-blurred.
+export interface BackgroundBlurEffect {
+  type: 'background_blur'
+  radius: number  // blur radius, normalized to canvas width
+  visible: boolean
+}
+export type LayerEffect = DropShadowEffect | LayerBlurEffect | InnerShadowEffect | BackgroundBlurEffect
 
 // Clip mask: the layer is clipped to a rect/ellipse region in CANVAS space
 // (axis-aligned, normalized like everything else). For local layers this is
@@ -66,6 +83,9 @@ interface LayerCommon {
   y: number          // normalized center Y (0..1 of height)
   rotation: number   // degrees
   opacity: number    // 0..1
+  visible?: boolean  // false = hidden everywhere (render, bake, export); undefined = visible
+  locked?: boolean   // true = not selectable/editable from the canvas (panel still can)
+  blend?: string     // blend mode vs layers below ('normal' default; same names as wired)
   groupId?: string   // layers sharing a groupId select/move/transform together
   groupName?: string // display name for the group (mirrored on every member)
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
@@ -73,17 +93,24 @@ interface LayerCommon {
   maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
 }
 
+/** True when a layer is hidden (visible === false; undefined means visible). */
+export function layerHidden(l: { visible?: boolean } | null | undefined): boolean {
+  return l?.visible === false
+}
+
 export interface TextLayer extends LayerCommon {
   kind: 'text'
   text: string
   fontFamily: string
-  fontWeight: 400 | 700
+  fontWeight: number     // 100..900 (was 400 | 700 — old values stay valid)
   fontSize: number       // normalized to canvas width
   color: string
   align: 'left' | 'center' | 'right'
   lineHeight: number     // multiplier
   strokeColor: string
   strokeWidth: number    // normalized to canvas width (0 = no outline)
+  boxW?: number          // optional text-box width (normalized to canvas width);
+                         // set => words auto-wrap to fit, unset => explicit \n only
 }
 
 export interface RectLayer extends LayerCommon {
@@ -362,9 +389,35 @@ function resolvePaint(
   return g
 }
 
-/** Split text into lines on explicit newlines (no auto-wrap in v1). */
+/** Split text into explicit-newline lines. */
 function textLines(layer: TextLayer): string[] {
   return (layer.text ?? '').split('\n')
+}
+
+/**
+ * Final render lines: explicit newlines, then — when the layer has a text box
+ * (`boxW`) — greedy word-wrap each line to fit the box. A word longer than the
+ * box overflows on its own line rather than breaking mid-word. Needs a 2D
+ * context for measurement; without one, falls back to explicit lines only.
+ */
+function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer, W: number): string[] {
+  const manual = textLines(layer)
+  const boxPx = (layer.boxW ?? 0) * W
+  if (!ctx || !(boxPx > 0)) return manual
+  applyFont(ctx, layer, W)
+  const out: string[] = []
+  for (const line of manual) {
+    const words = line.split(/\s+/).filter(Boolean)
+    if (!words.length) { out.push(''); continue }
+    let cur = words[0]
+    for (let i = 1; i < words.length; i++) {
+      const candidate = `${cur} ${words[i]}`
+      if (ctx.measureText(candidate).width <= boxPx) cur = candidate
+      else { out.push(cur); cur = words[i] }
+    }
+    out.push(cur)
+  }
+  return out
 }
 
 function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
@@ -389,8 +442,13 @@ export function localLayerBox(
   H: number,
 ): { w: number; h: number } {
   if (layer.kind === 'text') {
-    const lines = textLines(layer)
+    const lines = wrappedTextLines(ctx, layer, W)
     const lineH = layer.fontSize * W * layer.lineHeight
+    // With a text box, the box width IS the layer width (selection/handles
+    // track the box, not the glyph extents).
+    if ((layer.boxW ?? 0) > 0) {
+      return { w: Math.max(layer.boxW! * W, 4), h: Math.max(lines.length * lineH, lineH) }
+    }
     let maxW = 0
     if (ctx) {
       applyFont(ctx, layer, W)
@@ -442,7 +500,12 @@ export function drawLocalLayer(
       octx.globalCompositeOperation = 'destination-in'
       drawLocalLayerSelf(octx, maskLayer, W, H)
       octx.globalCompositeOperation = 'source-over'
+      // The layer's blend mode applies at the final composite against the real
+      // backdrop (inside the offscreen it blends against transparency = no-op).
+      ctx.save()
+      ctx.globalCompositeOperation = localBlendOp(layer)
       ctx.drawImage(off, 0, 0)
+      ctx.restore()
       return
     }
   }
@@ -462,6 +525,49 @@ function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W:
   }
 }
 
+/** A local layer's blend mode → canvas composite op ('normal' = source-over). */
+export function localBlendOp(layer: { blend?: string }): GlobalCompositeOperation {
+  return WIRED_BLEND_OP[layer.blend ?? 'normal'] ?? 'source-over'
+}
+
+// Composite an inner shadow INTO a rendered layer offscreen. Standard recipe:
+// take the inverse of the content alpha, draw it with canvas shadow params (the
+// shadow spills inward across the silhouette edge), keep only the part inside
+// the content (destination-in), then stamp that over the content.
+function compositeInnerShadow(off: HTMLCanvasElement, fx: InnerShadowEffect, W: number) {
+  const mk = () => {
+    const c = document.createElement('canvas')
+    c.width = off.width; c.height = off.height
+    return c
+  }
+  const inv = mk()
+  const ictx = inv.getContext('2d')
+  const sh = mk()
+  const sctx = sh.getContext('2d')
+  if (!ictx || !sctx) return
+  ictx.fillStyle = '#000'
+  ictx.fillRect(0, 0, inv.width, inv.height)
+  ictx.globalCompositeOperation = 'destination-out'
+  ictx.drawImage(off, 0, 0)
+  sctx.shadowColor = fx.color
+  sctx.shadowBlur = Math.max(0, fx.blur * W)
+  sctx.shadowOffsetX = fx.x * W
+  sctx.shadowOffsetY = fx.y * W
+  sctx.drawImage(inv, 0, 0)
+  sctx.shadowColor = 'transparent'
+  sctx.globalCompositeOperation = 'destination-in'
+  sctx.drawImage(off, 0, 0)
+  // off's context still carries the layer's translate/rotate from the content
+  // draw — stamp the shadow in identity space or it lands displaced.
+  const octx = off.getContext('2d')
+  if (octx) {
+    octx.save()
+    octx.setTransform(1, 0, 0, 1, 0, 0)
+    octx.drawImage(sh, 0, 0)
+    octx.restore()
+  }
+}
+
 function paintLayer(
   ctx: CanvasRenderingContext2D,
   layer: LocalLayer,
@@ -469,18 +575,19 @@ function paintLayer(
   H: number,
 ) {
   const opacity = Math.max(0, Math.min(1, layer.opacity))
-  const shadow = layer.effects?.find(
-    (e): e is DropShadowEffect => e.type === 'drop_shadow' && e.visible,
-  )
-  const blur = layer.effects?.find(
-    (e): e is LayerBlurEffect => e.type === 'layer_blur' && e.visible,
-  )
+  const blendOp = localBlendOp(layer)
+  const fx = (layer.effects ?? []).filter(e => e.visible)
+  const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
+  const blur = fx.find((e): e is LayerBlurEffect => e.type === 'layer_blur')
+  const inner = fx.find((e): e is InnerShadowEffect => e.type === 'inner_shadow')
+  // (background_blur is a stack-level effect — paintLayerStack applies it
+  // against the backdrop before this layer paints.)
 
   // Effected path: render the layer to an offscreen at canvas size, then
-  // composite it with a drop shadow and/or blur. Works identically for text,
-  // shapes, vectors and images, and because bakeOverlay() renders through here
-  // the effects are baked into generation exactly as previewed.
-  if (shadow || blur) {
+  // composite it with inner shadow / drop shadow / blur. Works identically for
+  // text, shapes, vectors and images, and because bakeOverlay() renders through
+  // here the effects are baked into generation exactly as previewed.
+  if (shadow || blur || inner) {
     const off = document.createElement('canvas')
     off.width = Math.max(1, Math.round(W))
     off.height = Math.max(1, Math.round(H))
@@ -489,8 +596,10 @@ function paintLayer(
       octx.translate(layer.x * W, layer.y * H)
       if (layer.rotation) octx.rotate((layer.rotation * Math.PI) / 180)
       drawLayerContent(octx, layer, W)
+      if (inner) compositeInnerShadow(off, inner, W)
       ctx.save()
       ctx.globalAlpha = opacity
+      ctx.globalCompositeOperation = blendOp
       if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W)}px)`
       if (shadow) {
         ctx.shadowColor = shadow.color
@@ -507,6 +616,7 @@ function paintLayer(
   // Fast path (no effects): draw inline, identical to before.
   ctx.save()
   ctx.globalAlpha = opacity
+  ctx.globalCompositeOperation = blendOp
   ctx.translate(layer.x * W, layer.y * H)
   if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
   drawLayerContent(ctx, layer, W)
@@ -560,15 +670,20 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
 }
 
 function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
-  const lines = textLines(layer)
+  const lines = wrappedTextLines(ctx, layer, W)
   const lineH = layer.fontSize * W * layer.lineHeight
   applyFont(ctx, layer, W)
   ctx.textBaseline = 'middle'
   ctx.textAlign = layer.align
-  let maxW = 0
-  for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln || ' ').width)
-  // Anchor X per alignment (block is centered on origin).
-  const anchorX = layer.align === 'left' ? -maxW / 2 : layer.align === 'right' ? maxW / 2 : 0
+  // Alignment anchors against the text box when one is set, else the widest line.
+  let blockW: number
+  if ((layer.boxW ?? 0) > 0) {
+    blockW = layer.boxW! * W
+  } else {
+    blockW = 0
+    for (const ln of lines) blockW = Math.max(blockW, ctx.measureText(ln || ' ').width)
+  }
+  const anchorX = layer.align === 'left' ? -blockW / 2 : layer.align === 'right' ? blockW / 2 : 0
   const totalH = lines.length * lineH
   const startY = -totalH / 2 + lineH / 2
   const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
@@ -636,6 +751,48 @@ export type StackItem =
   | { type: 'wired'; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
   | { type: 'local'; layer: LocalLayer }
 
+// Figma background blur: blur the ALREADY-PAINTED backdrop within the layer's
+// silhouette, then the layer paints on top. Operates in device space so it's
+// correct under the dpr transform renderers apply to the stack canvas.
+function applyBackdropBlur(
+  ctx: CanvasRenderingContext2D,
+  layer: LocalLayer,
+  localLayers: LocalLayer[],
+  W: number,
+  H: number,
+  radius: number,
+) {
+  if (!(radius > 0)) return
+  const t = ctx.getTransform()
+  const dev = ctx.canvas
+  const mk = () => {
+    const c = document.createElement('canvas')
+    c.width = dev.width; c.height = dev.height
+    return c
+  }
+  // Silhouette: the layer's own alpha (full opacity, no effects) at device scale.
+  const sil = mk()
+  const silctx = sil.getContext('2d')
+  if (!silctx) return
+  silctx.setTransform(t)
+  const ghost = { ...layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
+  const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+  drawLocalLayer(silctx, ghost, W, H, maskLayer)
+  // Blur the current backdrop, clip to the silhouette, stamp it back.
+  const out = mk()
+  const octx = out.getContext('2d')
+  if (!octx) return
+  octx.filter = `blur(${Math.max(0, radius * W * t.a)}px)`
+  octx.drawImage(dev, 0, 0)
+  octx.filter = 'none'
+  octx.globalCompositeOperation = 'destination-in'
+  octx.drawImage(sil, 0, 0)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.drawImage(out, 0, 0)
+  ctx.restore()
+}
+
 export function paintLayerStack(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -651,8 +808,13 @@ export function paintLayerStack(
   for (const item of items) {
     if (item.type === 'wired') { item.draw(ctx, W, H); continue }
     const layer = item.layer
+    if (layerHidden(layer)) continue
     if (skip?.(layer)) continue
     if (maskIds.has(layer.id)) continue
+    const bgBlur = layer.effects?.find(
+      (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
+    )
+    if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
     const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
     drawLocalLayer(ctx, layer, W, H, maskLayer)
   }

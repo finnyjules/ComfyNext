@@ -148,6 +148,34 @@ CompositorModal used 1-based — so wired-layer z-orders saved in one surface
 were silently dropped by the others (filtered as "not present"). All three now
 agree; pre-fix frame-saved orders fall back to the default stacking.
 
+## Layer parity batch (2026-06-09, second pass)
+
+- **Per-layer visibility + lock.** Locals carry `visible`/`locked` on the layer;
+  wired layers persist 1-based slot arrays (`comfynext_hiddenWired` /
+  `comfynext_lockedWired`) on node properties. Hidden layers drop out of
+  render, bake, export; at submit a hidden wired slot gets opacity 0 stamped on
+  the outgoing copy only. Locked layers ignore canvas hits everywhere (the
+  shared `useLocalLayerEditor.hitTest` + both wired hit-tests) but stay
+  selectable from the layers panel — Figma behavior. Eye/lock buttons on every
+  modal stack row.
+- **Blend modes for local layers** (`blend` on LayerCommon, same names as the
+  backend's `layer{N}_blend`). Live preview via `globalCompositeOperation`; at
+  submit a non-normal local bakes as its own single-layer run so the backend
+  applies the mode against the real backdrop.
+- **Text: full weight range + wrapping.** `fontWeight` is any 100–900 (select
+  in modal + inline toolbar); the Google-font loader optimistically requests
+  the `wght@100..900` variable range (static families fail that stylesheet
+  silently and snap to the nearest loaded weight). Optional `boxW` turns a
+  text layer into a wrapping text box (greedy word-wrap in `wrappedTextLines`,
+  alignment anchored to the box).
+- **Inner shadow + background blur effects.** Inner shadow composites the
+  inverted-silhouette shadow back into the layer offscreen (mind the gotcha:
+  the offscreen ctx still carries the layer transform — stamp in identity
+  space). Background blur blurs the already-painted backdrop within the
+  layer's silhouette inside `paintLayerStack` (device-space, dpr-aware). Bake
+  caveat: a baked locals-run can only background-blur the locals below it —
+  wired pixels behind it composite server-side and can't be pre-blurred.
+
 ## Implementation notes
 
 - No `@vue-flow/node-resizer` dependency — resize manually, zoom-aware, mirroring
