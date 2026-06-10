@@ -148,7 +148,7 @@ Culling removes the element; nothing reflows into freed space (predictability ov
 
 ### Type scale
 
-`fontSize(level) = typeScale.base × typeScale.ratio^levelIndex × s × m(C)` where levelIndex is caption=0 … display=4, `s = min(w,h) / min(masterW,masterH)`, and `m(C)` is a class multiplier compensating extreme aspects: square/portrait/landscape = 1, skyscraper = 2, strip = 3. Absolute floor: 10 px. Line heights snap to the scaled baseline grid. The multipliers and floor are named constants in the resolver — tunable in one place.
+`fontSize(level) = typeScale.base × typeScale.ratio^levelIndex × s × m(C)` where levelIndex is caption=0 … display=4, `s = min(w,h) / min(masterW,masterH)`, and `m(C)` is a class multiplier compensating extreme aspects: square/portrait/landscape = 1, skyscraper = 2, strip = 3. Absolute floor: 10 px. The baseline grid is an authoring guide (editor overlay); snapping line-heights to it is a fast-follow because it interacts with auto-fit and adds no determinism in v1. The multipliers and floor are named constants in the resolver — tunable in one place.
 
 ### Overflow policy (copy fitting)
 
