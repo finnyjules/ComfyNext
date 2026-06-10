@@ -53,7 +53,12 @@ def _check_decode_budget(v, clip_name: str,
     (VideoFromFile probes the container without decoding frames), bounded by
     what the timeline will actually decode: at most `max_frames` frames at the
     downscaled (`max_dim`) resolution. If metadata is unavailable, stay
-    permissive — decode as before the guard."""
+    permissive — decode as before the guard.
+
+    NOTE: trimmed sources (VideoFromFile with start_time/duration) fall back to
+    a full-range get_components() decode of the trimmed window, and their
+    get_frame_count() can under-report the trimmed range (known upstream bug,
+    tracked separately) — the guard still refuses anything estimated over budget."""
     try:
         w, h = v.get_dimensions()
         frames = v.get_frame_count()
@@ -79,13 +84,18 @@ def _needed_source_frames(kwargs: dict, state: dict | None, port_idx: int) -> in
     port `port_idx`. Edit-state clips index `(local + in_frame) % src_T`, so a
     clip needs the first `in_frame + length` frames (wrap ⇒ everything, which
     the caller caps at the source frame count). Legacy widget path: the first
-    `clip{i}_length` frames. None ⇒ unknown (decode everything under budget)."""
+    `clip{i}_length` frames. None ⇒ unknown (decode everything under budget).
+
+    NOTE: assumes in_frame ≥ 0 and ignores speed/reverse (the render path
+    ignores them too — when Phase 2 implements reverse, this bound must
+    account for tail frames)."""
     if state is not None:
         needed = 0
         for track in state.get("tracks", []):
             for clip in track.get("clips", []):
                 if clip.get("kind") == "workflow" and int(clip.get("port_index", -1) or -1) == port_idx:
-                    needed = max(needed, int(clip.get("in_frame", 0) or 0) + max(1, int(clip.get("length", 1) or 1)))
+                    # default must match _execute_edit_state's clip length default (30)
+                    needed = max(needed, int(clip.get("in_frame", 0) or 0) + max(1, int(clip.get("length", 30) or 30)))
         return needed or None
     length = kwargs.get(f"clip{port_idx}_length")
     if length is None:
@@ -93,23 +103,34 @@ def _needed_source_frames(kwargs: dict, state: dict | None, port_idx: int) -> in
     return max(1, int(length))
 
 
+def _is_untrimmed_stream_source(video) -> bool:
+    """Stream-decode only when the raw container equals what get_components()
+    would return: the class overrides get_stream_source (the base impl ENCODES
+    in-memory frames — lossy) AND no trim window is set. Trim offsets live in
+    VideoFromFile's private fields; absent attributes mean untrimmed. Anything
+    else falls back to the exact (trim-honoring) get_components path."""
+    if not hasattr(video, "get_stream_source"):
+        return False
+    base_impl = getattr(Input.Video, "get_stream_source", None)
+    if getattr(type(video), "get_stream_source", None) is base_impl:
+        return False
+    start = getattr(video, "_VideoFromFile__start_time", 0) or 0
+    duration = getattr(video, "_VideoFromFile__duration", 0) or 0
+    return start == 0 and duration == 0
+
+
 def _decode_video_bounded(video, max_frames: int | None, max_dim: int | None):
     """Decode a VIDEO object to a float32 [T,H,W,3] tensor, reading at most
     `max_frames` frames and downscaling so max(H, W) ≤ `max_dim` (aspect kept,
     never upscaled). Streams via PyAV when the source exposes a file/stream
-    (VideoFromFile.get_stream_source) so unused frames are never materialized;
-    in-memory videos (VideoFromComponents) are sliced instead."""
+    (VideoFromFile.get_stream_source) AND is untrimmed — get_stream_source
+    returns the RAW container, so trimmed sources must take the exact
+    get_components() path or the untrimmed head would be composited; see
+    `_is_untrimmed_stream_source`. In-memory videos (VideoFromComponents)
+    are sliced instead."""
     import av
 
-    # Only use get_stream_source when the video class actually overrides it:
-    # the VideoInput base provides a default that ENCODES the in-memory frames
-    # to a BytesIO (lossy h264 round-trip) — for those (VideoFromComponents),
-    # slicing get_components() is both cheaper and exact.
-    src = None
-    if hasattr(video, "get_stream_source"):
-        base_impl = getattr(Input.Video, "get_stream_source", None)
-        if getattr(type(video), "get_stream_source", None) is not base_impl:
-            src = video.get_stream_source()
+    src = video.get_stream_source() if _is_untrimmed_stream_source(video) else None
     if src is None:
         frames = video.get_components().images
         if max_frames is not None and frames.shape[0] > max_frames:

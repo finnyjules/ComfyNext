@@ -155,3 +155,19 @@ def test_budget_uses_bounded_estimate():
     kwargs = {"clip1": BigMetaVideo()}
     with pytest.raises(AssertionError, match="budget must pass"):
         NT._coerce_video_clips(kwargs, state)   # reaching decode proves the budget passed
+
+
+def test_decode_video_bounded_honors_trims():
+    """Video Slice → Timeline: trimmed sources must NOT stream the raw file
+    (regression: the untrimmed head was composited silently)."""
+    from comfy_api.latest import InputImpl
+    mp4 = os.path.join(REPO_ROOT, "tests-unit", "timeline_fixtures", "assets", "counter_30f.mp4")
+    trimmed = InputImpl.VideoFromFile(mp4, start_time=10 / 30.0)
+    frames = NT._decode_video_bounded(trimmed, max_frames=5, max_dim=None)
+    g0 = float(frames[0, 32, 32, 0]) * 255.0
+    assert abs(g0 - (8 + 10 * 8)) <= 4, f"expected source frame 10 (gray~88), got {g0}"
+
+
+def test_needed_source_frames_missing_length_matches_renderer_default():
+    state = {"tracks": [{"clips": [{"kind": "workflow", "port_index": 1, "in_frame": 5}]}]}
+    assert NT._needed_source_frames({}, state, 1) == 35   # 5 + renderer default 30
