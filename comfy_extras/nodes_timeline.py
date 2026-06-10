@@ -226,7 +226,7 @@ class TimelineNode(IO.ComfyNode):
                 state = json.loads(raw_state) if isinstance(raw_state, str) else raw_state
             except Exception:
                 state = None
-            if isinstance(state, dict) and state.get("version") == 1:
+            if _is_edit_state(state):
                 return cls._execute_edit_state(kwargs, state)
 
         # Gather connected layers.
@@ -315,7 +315,7 @@ class TimelineNode(IO.ComfyNode):
 
     @classmethod
     def _execute_edit_state(cls, kwargs: dict, state: dict) -> IO.NodeOutput:
-        """Render from the editor's EditState (version 1). Resolves each clip
+        """Render from the editor's EditState (any supported version, see `_is_edit_state`). Resolves each clip
         to a source tensor and composites frame-by-frame with keyframed
         transforms — the same math as the editor preview and FFmpeg export.
 
@@ -522,16 +522,31 @@ def _decoded_frame_at(av_container, video_stream, target_sec: float):
     return last
 
 
+_EDIT_STATE_VERSIONS = (1, 2)
+
+
+def _is_edit_state(state) -> bool:
+    """True when `state` is the editor's EditState (shared/timeline/types.ts),
+    any supported version. v2 adds transitions[], per-clip speed/reverse/filters,
+    captions, mattes — fields this renderer doesn't draw yet (Phase 2+); it must
+    still accept v2 and render the parts it knows."""
+    return (
+        isinstance(state, dict)
+        and state.get("version") in _EDIT_STATE_VERSIONS
+        and isinstance(state.get("tracks"), list)
+    )
+
+
 def _adapt_edit_state(state: dict) -> dict:
-    """If `state` is an EditState (version: 1 with tracks[]), flatten it into
-    the legacy `{fps, canvas_*, clips: [...]}` shape that render_timeline_to_file
-    expects. Pass-through anything else.
+    """If `state` is an EditState (any supported version, see `_is_edit_state`)
+    with tracks[], flatten it into the legacy `{fps, canvas_*, clips: [...]}`
+    shape that render_timeline_to_file expects. Pass-through anything else.
 
     Audio clips are extracted: the first audio clip becomes `audio_path` for
     compatibility with the existing single-track audio mux. Multi-track audio
     mixing is a future improvement.
     """
-    if state.get("version") != 1:
+    if not _is_edit_state(state):
         return state
 
     canvas = state.get("canvas", {})
@@ -559,6 +574,9 @@ def _adapt_edit_state(state: dict) -> dict:
             if kind == "audio":
                 if not audio_path:
                     audio_path = clip.get("path") or clip.get("asset_path")
+                continue
+            if kind == "caption":
+                # v2 captions have no export rendering yet (Phase 3 adds it).
                 continue
             out["clips"].append({
                 "kind":        kind,
@@ -819,7 +837,7 @@ try:
 
         input_dir = folder_paths.get_input_directory()
         output_dir = folder_paths.get_output_directory()
-        if state.get("version") == 1:
+        if _is_edit_state(state):
             state = _adapt_edit_state(state)
         for c in state.get("clips", []):
             p = c.get("path")
@@ -877,9 +895,9 @@ try:
         input_dir = folder_paths.get_input_directory()
         output_dir = folder_paths.get_output_directory()
 
-        # Accept the new EditState (version: 1, tracks[]) by flattening to the
-        # legacy shape before path resolution + render.
-        if state.get("version") == 1:
+        # Accept the editor's EditState (any supported version) by flattening to
+        # the legacy shape before path resolution + render.
+        if _is_edit_state(state):
             state = _adapt_edit_state(state)
 
         # Resolve clip paths: accept either absolute paths or filenames under input/.
