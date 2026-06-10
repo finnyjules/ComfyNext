@@ -21,7 +21,7 @@ from PIL import Image as PILImage
 from typing_extensions import override
 
 import folder_paths
-from comfy_api.latest import ComfyExtension, IO
+from comfy_api.latest import ComfyExtension, IO, InputImpl, Types
 from comfy_extras._live_preview import save_live_preview
 from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, _transform
 
@@ -30,6 +30,25 @@ from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, 
 # dynamic-grow logic only renders "connected + 1 trailing empty" so the user
 # sees a clean node until they wire more clips.
 _MAX_CLIPS = 16
+
+
+def _coerce_video_clips(kwargs: dict) -> None:
+    """Modern video nodes output VIDEO objects; the Timeline composites frame
+    batches. Decode each VIDEO clip input to its frame tensor once, in place —
+    both the legacy widget path and the edit-state path then see tensors.
+    (Audio inside wired videos is dropped here — node-run audio is a later
+    phase; the editor's audio tracks are unaffected.)"""
+    for i in range(1, _MAX_CLIPS + 1):
+        v = kwargs.get(f"clip{i}")
+        if v is not None and not isinstance(v, torch.Tensor) and hasattr(v, "get_components"):
+            kwargs[f"clip{i}"] = v.get_components().images
+
+
+def _frames_to_video(frames, fps) -> "InputImpl.VideoFromComponents":
+    """Wrap rendered frames as a VIDEO object so SaveVideo/CreateVideo-style
+    consumers connect directly (mirrors CreateVideo in nodes_video.py)."""
+    return InputImpl.VideoFromComponents(
+        Types.VideoComponents(images=frames, audio=None, frame_rate=Fraction(fps)))
 
 
 def _ease(t: float, ease) -> float:
@@ -146,8 +165,11 @@ def _clip_inputs(idx: int, optional: bool):
     """Per-clip input declarations. clip1 is required (defines canvas size)."""
     start_default = (idx - 1) * 12   # stagger clips by default so they don't overlap fully
     return [
-        IO.Image.Input(f"clip{idx}", optional=optional,
-                      tooltip=f"Clip {idx}" + (" (sets canvas size)" if idx == 1 else "")),
+        IO.MultiType.Input(
+            IO.Image.Input(f"clip{idx}", optional=optional,
+                           tooltip=f"Clip {idx}" + (" (sets canvas size)" if idx == 1 else "")),
+            [IO.Video],
+        ),
         IO.Int.Input(f"clip{idx}_start",    default=start_default, min=-1000, max=10000, step=1,
                     tooltip="When this clip begins on the global timeline, in frames."),
         IO.Int.Input(f"clip{idx}_length",   default=30, min=1, max=10000, step=1,
@@ -208,13 +230,14 @@ class TimelineNode(IO.ComfyNode):
             description="Composite multiple clips on a timeline with per-clip start, transform, opacity, blend, and fades.",
             category="video",
             inputs=inputs,
-            outputs=[IO.Image.Output(display_name="frames")],
+            outputs=[IO.Image.Output(display_name="frames"), IO.Video.Output(display_name="video")],
             hidden=[IO.Hidden.unique_id],
             is_output_node=True,
         )
 
     @classmethod
     def execute(cls, **kwargs) -> IO.NodeOutput:
+        _coerce_video_clips(kwargs)
         # Prefer the editor's rich edit_state (tracks, clips, keyframes) when
         # the frontend injected it at submit. This is what makes node-run agree
         # with the editor preview and the FFmpeg export. Absent/blank → fall
@@ -252,7 +275,8 @@ class TimelineNode(IO.ComfyNode):
 
         if not layers:
             blank = torch.zeros(1, 16, 16, 3)
-            return IO.NodeOutput(blank, ui=save_live_preview(blank, str(cls.hidden.unique_id)))
+            return IO.NodeOutput(blank, _frames_to_video(blank, 30),
+                                 ui=save_live_preview(blank, str(cls.hidden.unique_id)))
 
         # Canvas size = first connected clip's frame size.
         first = layers[0]["clip"]
@@ -311,7 +335,9 @@ class TimelineNode(IO.ComfyNode):
         if pf < 0 or pf >= total:
             pf = total // 2
         preview = output[pf:pf + 1]
-        return IO.NodeOutput(output, ui=save_live_preview(preview, str(cls.hidden.unique_id)))
+        # legacy widget path has no fps; 30 matches the editor default
+        return IO.NodeOutput(output, _frames_to_video(output, 30),
+                             ui=save_live_preview(preview, str(cls.hidden.unique_id)))
 
     @classmethod
     def _execute_edit_state(cls, kwargs: dict, state: dict) -> IO.NodeOutput:
@@ -430,7 +456,8 @@ class TimelineNode(IO.ComfyNode):
 
         output = output.clamp(0.0, 1.0)
         pf = total // 2
-        return IO.NodeOutput(output, ui=save_live_preview(output[pf:pf + 1], str(cls.hidden.unique_id)))
+        return IO.NodeOutput(output, _frames_to_video(output, fps),
+                             ui=save_live_preview(output[pf:pf + 1], str(cls.hidden.unique_id)))
 
 
 # ---------------------------------------------------------------------------
