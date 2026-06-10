@@ -77,6 +77,9 @@ importers:
       marked:
         specifier: ^17.0.5
         version: 17.0.5
+      mp4box:
+        specifier: ^2.3.0
+        version: 2.3.0
       nanostores:
         specifier: ^1.2.0
         version: 1.2.0
@@ -3147,6 +3150,10 @@ packages:
 
   mocked-exports@0.1.1:
     resolution: {integrity: sha512-aF7yRQr/Q0O2/4pIXm6PZ5G+jAd7QS4Yu8m+WEeEHGnbo+7mE36CbLSDQiXYV8bVL3NfmdeqPJct0tUlnjVSnA==}
+
+  mp4box@2.3.0:
+    resolution: {integrity: sha512-nnABYbdh4UguEYyV+uRwQBi1tbb8kXka2Fx9yKzmDKAeh8gkvRKYxoK1XDd8GQIjSfN4rvsXrW1CBo4yRQJZDA==}
+    engines: {node: '>=20.8.1'}
 
   mrmime@2.0.1:
     resolution: {integrity: sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ==}
@@ -7240,6 +7247,8 @@ snapshots:
       ufo: 1.6.3
 
   mocked-exports@0.1.1: {}
+
+  mp4box@2.3.0: {}
 
   mrmime@2.0.1: {}
 
