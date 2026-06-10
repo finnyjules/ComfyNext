@@ -167,7 +167,13 @@ class VideoFromFile(VideoInput):
                     duration_from_start = min(raw_duration, -self.__start_time)
                 else:
                     duration_from_start = raw_duration - self.__start_time
-                duration_seconds = min(self.__duration, duration_from_start)
+                # duration == 0 means "to end of file" (the Video Slice node's
+                # convention), not a zero-length window.
+                duration_seconds = (
+                    duration_from_start
+                    if not self.__duration
+                    else min(self.__duration, duration_from_start)
+                )
                 estimated_frames = int(round(duration_seconds * float(video_stream.average_rate)))
                 if estimated_frames > 0:
                     return estimated_frames
@@ -179,7 +185,13 @@ class VideoFromFile(VideoInput):
                 start_time = self.__start_time
             frame_count = 1
             start_pts = int(start_time / video_stream.time_base)
-            end_pts = int((start_time + self.__duration) / video_stream.time_base)
+            # duration == 0 ⇒ count to end of file (otherwise end_pts == start_pts
+            # and exactly one frame is counted).
+            end_pts = (
+                float("inf")
+                if not self.__duration
+                else int((start_time + self.__duration) / video_stream.time_base)
+            )
             container.seek(start_pts, stream=video_stream)
             frame_iterator = (
                 container.decode(video_stream)
