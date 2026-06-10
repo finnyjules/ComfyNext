@@ -27,3 +27,4 @@ uv.lock
 
 # Playwright output (root-level)
 /test-results/
+.superpowers/
