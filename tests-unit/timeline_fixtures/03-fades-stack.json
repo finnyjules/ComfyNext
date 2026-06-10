@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "_golden": { "frames": [0, 3, 8, 15, 21, 23] },
+  "canvas": { "width": 640, "height": 360, "fps": 30, "bg_color": "#000000" },
+  "total_frames": 24,
+  "transitions": [],
+  "tracks": [
+    {
+      "id": "t1", "kind": "video", "name": "Back", "muted": false, "locked": false,
+      "clips": [
+        { "id": "f1", "kind": "image", "asset_id": "gradient_a", "path": "assets/gradient_a.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1, "blend": "normal",
+          "fade_in": 6, "fade_out": 6 }
+      ]
+    },
+    {
+      "id": "t2", "kind": "video", "name": "Front", "muted": false, "locked": false,
+      "clips": [
+        { "id": "f2", "kind": "image", "asset_id": "gradient_b", "path": "assets/gradient_b.png",
+          "start_frame": 4, "in_frame": 3, "length": 14,
+          "x": 0.1, "y": 0.1, "rotation": 0, "scale": 0.55, "opacity": 0.9, "blend": "normal",
+          "fade_in": 4, "fade_out": 5 },
+        { "id": "f3", "kind": "image", "asset_id": "checker", "path": "assets/checker.png",
+          "start_frame": 16, "in_frame": 0, "length": 8,
+          "x": -0.15, "y": -0.1, "rotation": 5, "scale": 0.4, "opacity": 1, "blend": "normal",
+          "fade_in": 2, "fade_out": 0 }
+      ]
+    },
+    {
+      "id": "t3", "kind": "video", "name": "Muted", "muted": true, "locked": false,
+      "clips": [
+        { "id": "f4", "kind": "image", "asset_id": "solid_orange", "path": "assets/solid_orange.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1, "blend": "normal" }
+      ]
+    }
+  ]
+}

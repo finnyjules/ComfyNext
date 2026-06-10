@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "_golden": { "frames": [0, 6, 12, 18, 23] },
+  "canvas": { "width": 640, "height": 360, "fps": 30, "bg_color": "#101018" },
+  "total_frames": 24,
+  "transitions": [],
+  "tracks": [
+    {
+      "id": "t1", "kind": "video", "name": "Video 1", "muted": false, "locked": false,
+      "clips": [
+        { "id": "k1", "kind": "image", "asset_id": "solid_orange", "path": "assets/solid_orange.png",
+          "start_frame": 0, "in_frame": 0, "length": 24, "blend": "normal",
+          "keyframes": [
+            { "frame": 0,  "x": -0.3, "y": -0.2, "rotation": 0,   "scale": 0.3, "opacity": 0.2, "ease": "linear" },
+            { "frame": 12, "x": 0.0,  "y": 0.0,  "rotation": 180, "scale": 0.6, "opacity": 1.0, "ease": "easeInOut" },
+            { "frame": 23, "x": 0.3,  "y": 0.2,  "rotation": 360, "scale": 0.3, "opacity": 0.4 }
+          ] },
+        { "id": "k2", "kind": "image", "asset_id": "checker", "path": "assets/checker.png",
+          "start_frame": 4, "in_frame": 0, "length": 16, "blend": "screen",
+          "keyframes": [
+            { "frame": 0,  "x": 0.25,  "y": 0.0, "rotation": 0,  "scale": 0.5, "opacity": 1.0, "ease": "easeInOut" },
+            { "frame": 15, "x": -0.25, "y": 0.0, "rotation": 45, "scale": 0.25, "opacity": 0.5 }
+          ] }
+      ]
+    }
+  ]
+}

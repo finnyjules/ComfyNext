@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "_golden": { "frames": [0, 12, 23] },
+  "canvas": { "width": 640, "height": 360, "fps": 30, "bg_color": "#202020" },
+  "total_frames": 24,
+  "transitions": [],
+  "tracks": [
+    {
+      "id": "t1", "kind": "video", "name": "Video 1", "muted": false, "locked": false,
+      "clips": [
+        { "id": "c1", "kind": "image", "asset_id": "gradient_a", "path": "assets/gradient_a.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1, "blend": "normal" },
+        { "id": "c2", "kind": "image", "asset_id": "checker", "path": "assets/checker.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": -0.18, "y": -0.12, "rotation": 15, "scale": 0.5, "opacity": 1, "blend": "multiply" },
+        { "id": "c3", "kind": "image", "asset_id": "gradient_b", "path": "assets/gradient_b.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": 0.18, "y": -0.12, "rotation": -10, "scale": 0.5, "opacity": 0.85, "blend": "screen" },
+        { "id": "c4", "kind": "image", "asset_id": "solid_orange", "path": "assets/solid_orange.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": -0.18, "y": 0.14, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "overlay" },
+        { "id": "c5", "kind": "image", "asset_id": "gradient_a", "path": "assets/gradient_a.png",
+          "start_frame": 0, "in_frame": 0, "length": 24,
+          "x": 0.18, "y": 0.14, "rotation": 30, "scale": 0.4, "opacity": 0.7, "blend": "difference" },
+        { "id": "c6", "kind": "image", "asset_id": "gradient_b", "path": "assets/gradient_b.png",
+          "start_frame": 6, "in_frame": 0, "length": 12,
+          "x": 0, "y": 0.25, "rotation": 0, "scale": 0.3, "opacity": 1, "blend": "add" }
+      ]
+    }
+  ]
+}
