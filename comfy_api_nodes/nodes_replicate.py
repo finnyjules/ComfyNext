@@ -25,6 +25,7 @@ Video
 -  Seedance2RemoteNode      — Generate a video · Seedance 2.0 (best general quality)
 -  Veo3RemoteNode           — Generate a video · Veo 3 (with synced audio)
 -  KlingVideoRemoteNode     — Generate a video · Kling 2.1
+-  FilmShotNode             — Direct a video · cinematic shot presets over the video-model registry
 -  LipsyncRemoteNode        — Sync lips to audio · sync/lipsync-2-pro
 
 Audio
@@ -2865,6 +2866,15 @@ class FilmShotNode(IO.ComfyNode):
                 f"Connect an Image to the optional `image` input."
             )
 
+        # Fabric is a lip-sync model that always requires audio; it cannot
+        # produce a cinematography shot. Fail early with a meaningful message
+        # instead of letting its build_input demand an audio clip.
+        if model == "fabric-1.0":
+            raise RuntimeError(
+                "VEED Fabric 1.0 is a lip-sync model and can't be used with "
+                "'Film a shot'. Pick a camera-language model (Kling, Seedance, Veo, …)."
+            )
+
         recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,
                                       camera_movement, lens_look, composition)
         dialect = _shot_dialect_for_model(model)
@@ -2888,7 +2898,7 @@ class FilmShotNode(IO.ComfyNode):
                                       image_data_url, None, advanced)
         print(
             f"[FilmShot] preset={recipe.id!r} dialect={dialect!r} model={model!r} "
-            f"slug={spec.replicate_slug!r} phrase={shot_phrase!r}",
+            f"slug={spec.replicate_slug!r} advanced={advanced} phrase={shot_phrase!r}",
             flush=True,
         )
         pred = await _run_prediction(spec.replicate_slug, input_dict,
