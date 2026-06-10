@@ -9,7 +9,10 @@ export type BlendMode =
 export type TransitionKind = 'crossfade' | 'wipe_left' | 'wipe_right' | 'slide_up' | 'slide_down'
 
 /** A transition lives on the junction between two adjacent clips on one track,
- *  overlapping `duration` frames centered on the cut. */
+ *  overlapping `duration` frames centered on the cut. The overlap spans
+ *  `floor(duration/2)` frames before the cut and `duration - floor(duration/2)`
+ *  frames after. When a neighboring clip is shorter than its half, the overlap
+ *  clamps to the available frames — the cut point never shifts. */
 export interface Transition {
   id: string
   track_id: string
@@ -22,7 +25,9 @@ export interface Transition {
 
 /** Per-clip color adjustments. Identity when a field is absent:
  *  brightness 0 (additive −1..1), contrast 1 (×, pivot 0.5), saturation 1 (×),
- *  hue 0 (degrees −180..180), temperature 0 (warm/cool −1..1). */
+ *  hue 0 (degrees −180..180), temperature 0 (warm/cool −1..1).
+ *  Applied in declaration order (brightness → contrast → saturation → hue →
+ *  temperature), in sRGB, output clamped to [0,1] after each step. */
 export interface ClipFilters {
   brightness?: number
   contrast?: number
@@ -43,6 +48,7 @@ export interface BakeRef {
 export interface CaptionWord {
   text: string
   start_frame: number
+  /** Exclusive end frame (half-open interval, matching clipsAtFrame convention). */
   end_frame: number
 }
 
@@ -53,7 +59,10 @@ export interface CaptionSpec {
   font_size: number        // normalized to canvas height (0..1)
   color: string
   highlight_color: string
-  y: number                // vertical anchor 0..1 from top (default 0.85)
+  /** Vertical anchor 0..1 from top for the text block's layout position; presets
+   *  typically use 0.85. The inherited BaseClip transform (x/y/scale/rotation)
+   *  composes ON TOP of this anchor. */
+  y: number
 }
 
 export const EDIT_STATE_VERSION = 2
@@ -111,9 +120,9 @@ export interface BaseClip {
   audio_fade_out?: number
   /** Animation keyframes (clip-local frames). Present ⇒ transform animates. */
   keyframes?: Keyframe[]
-  /** Playback rate (v2). 1 = normal; source advances local_frame × speed. */
+  /** Playback rate (v2). 1 = normal. source_frame = in_frame + floor((frame - start_frame) * speed). */
   speed?: number
-  /** Play the source backwards (v2). */
+  /** Play the source backwards (v2). Applied after speed: the mapped source range plays from its last frame to its first. */
   reverse?: boolean
   /** Per-clip color adjustments (v2). Absent ⇒ identity. */
   filters?: ClipFilters
@@ -126,19 +135,21 @@ export interface BaseClip {
 export interface VideoClip extends BaseClip {
   kind: 'video'
   asset_id: string
-  /** Absolute or input-relative file path, inlined for the export/render path. */
+  /** File path for the export/render path: absolute, or relative to the ComfyUI input directory. */
   path?: string
 }
 
 export interface ImageClip extends BaseClip {
   kind: 'image'
   asset_id: string
+  /** File path for the export/render path: absolute, or relative to the ComfyUI input directory. */
   path?: string
 }
 
 export interface AudioClip extends BaseClip {
   kind: 'audio'
   asset_id: string
+  /** File path for the export/render path: absolute, or relative to the ComfyUI input directory. */
   path?: string
 }
 
@@ -200,6 +211,9 @@ export interface LowerThirdClip extends BaseClip {
   lower_third: LowerThirdSpec
 }
 
+/** NOTE: deliberate asymmetry — track kind is plural `'captions'`, clip kind is
+ *  singular `'caption'`. Do not "fix" either side; cross-language implementers
+ *  must mirror both spellings exactly. */
 export interface CaptionClip extends BaseClip {
   kind: 'caption'
   caption: CaptionSpec
@@ -239,6 +253,7 @@ export function migrateEditState(raw: unknown): EditState | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Record<string, any>
   if (s.version !== 1 && s.version !== EDIT_STATE_VERSION) return null
+  if (!s.canvas || typeof s.canvas !== 'object') return null
   if (!Array.isArray(s.tracks)) return null
   s.version = EDIT_STATE_VERSION
   if (!Array.isArray(s.transitions)) s.transitions = []

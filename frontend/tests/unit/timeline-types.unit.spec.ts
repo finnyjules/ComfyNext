@@ -36,6 +36,42 @@ describe('migrateEditState', () => {
     expect(migrateEditState('nope')).toBeNull()
     expect(migrateEditState({ version: 99, tracks: [] })).toBeNull()
     expect(migrateEditState({ version: 2 })).toBeNull() // no tracks array
+    expect(migrateEditState({ version: 2, tracks: [] })).toBeNull() // no canvas
+  })
+
+  it('v1 clip payloads survive migration untouched', () => {
+    const clip = {
+      id: 'c1', kind: 'video', asset_id: 'a1',
+      start_frame: 0, in_frame: 0, length: 30,
+      keyframes: [{ frame: 0, x: 0, y: 0, rotation: 0, scale: 1, opacity: 1 }],
+      blend: 'multiply',
+      fade_in: 5,
+    }
+    const v1 = {
+      version: 1,
+      canvas: { width: 1280, height: 720, fps: 30, bg_color: '#000000' },
+      tracks: [{ id: 't1', kind: 'video', name: 'Video 1', muted: false, locked: false, clips: [clip] }],
+      total_frames: 0,
+    }
+    const out = migrateEditState(v1)
+    expect(out).not.toBeNull()
+    const outClip = out!.tracks[0]!.clips[0]!
+    expect(outClip).toEqual(expect.objectContaining({
+      keyframes: clip.keyframes,
+      blend: 'multiply',
+      fade_in: 5,
+    }))
+  })
+
+  it('returns the same object reference (in-place mutation)', () => {
+    const input = {
+      version: 1 as const,
+      canvas: { width: 1920, height: 1080, fps: 24, bg_color: '#000000' },
+      tracks: [],
+      total_frames: 0,
+    }
+    const out = migrateEditState(input)
+    expect(out).toBe(input)
   })
 
   it('createDefaultEditState is a valid v2 state', () => {
