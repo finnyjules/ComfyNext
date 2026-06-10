@@ -3,9 +3,12 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as path from 'node:path'
 
-// Frame-source contracts against the counter fixture (frame i = gray 8+i*8).
-// WebCodecs: exact index recovery, including a mid-GOP seek (frame 13 forces
-// decode from keyframe 10) and a seek-back (LRU/decoder reset path).
+// Frame-source contracts against the counter fixture (frame i = gray 8+i*8;
+// 30 frames, keyframes at 0/10/20; CACHE_FRAMES=24, DECODE_AHEAD=6).
+// WebCodecs: exact index recovery across three provably-cold paths — a cold
+// mid-GOP first request (13 → decode from keyframe 10), a full 0..29 sweep
+// (>24 distinct frames, so LRU evictions fire), and a post-evict seek-back
+// (5, evicted during the sweep → cold re-decode from keyframe 0).
 // VideoElement: best-effort — index within ±1.
 
 const thisDir = fileURLToPath(new URL('.', import.meta.url))
@@ -51,7 +54,7 @@ async function setup(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => !!(window as any).__engineTest, { timeout: 10_000 })
 }
 
-test('WebCodecsSource decodes exact frames (keyframe seeks, seek-back, cache)', async ({ page }) => {
+test('WebCodecsSource decodes exact frames (cold mid-GOP, LRU eviction, post-evict re-decode)', async ({ page }) => {
   await setup(page)
   const hasWebCodecs: boolean = await page.evaluate(() => (window as any).__engineTest.hasWebCodecs())
   test.skip(!hasWebCodecs, 'WebCodecs unavailable in this browser build — fallback ladder covers it')
@@ -60,7 +63,11 @@ test('WebCodecsSource decodes exact frames (keyframe seeks, seek-back, cache)', 
     (window as any).__engineTest.loadSource('/__fixture_media/counter.mp4', 'webcodecs', 30))
   expect(dims).toEqual({ width: 64, height: 64 })
 
-  for (const n of [0, 7, 13, 29, 5, 13]) {
+  // 1) Cold mid-GOP: very first request is 13 → must decode from keyframe 10.
+  // 2) Sequential sweep 0..29 → >24 distinct frames → LRU evictions fire.
+  // 3) Post-evict seek-back: 5 was evicted during the sweep → cold re-decode from keyframe 0.
+  const probes: number[] = [13, ...Array.from({ length: 30 }, (_, i) => i), 5]
+  for (const n of probes) {
     const [r] = await page.evaluate((f) => (window as any).__engineTest.frameValue(f), n)
     expect(indexOf(r), `frame ${n} decoded gray ${r}`).toBe(n)
   }

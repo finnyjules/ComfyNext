@@ -10,20 +10,27 @@ const CACHE_FRAMES = 24   // decoded VideoFrames kept (closed on evict)
 const DECODE_AHEAD = 6    // extra frames decoded past the request
 
 interface Sample {
-  index: number          // presentation index (by cts order)
   isKey: boolean
-  timestampUs: number
+  timestampUs: number    // presentation timestamp (cts)
   durationUs: number
   data: Uint8Array
 }
 
 /** Frame-exact MP4 video source: mp4box demux once at load, VideoDecoder
- *  decode-from-nearest-keyframe on cache miss. Compressed samples stay in
- *  memory (clip-scale files); decoded frames are the bounded LRU. VFR files
+ *  decode-from-nearest-keyframe on cache miss. Samples are kept and fed to
+ *  the decoder in DECODE order (exactly as mp4box delivers them) and outputs
+ *  are mapped back to presentation indices by exact timestamp lookup, so
+ *  B-frame files (presentation ≠ decode order) decode correctly. Compressed
+ *  samples stay in memory (clip-scale files); decoded frames are the bounded
+ *  LRU. The public getFrame(n) contract stays presentation-indexed. VFR files
  *  are rejected (UnsupportedSourceError) — constant frame duration is the
- *  index-mapping assumption. */
+ *  frame↔time mapping assumption. */
 export class WebCodecsSource implements FrameSource {
-  private samples: Sample[] = []
+  private samples: Sample[] = []                 // DECODE order, as demuxed
+  /** presentationOrder[p] = decode-order index of presentation frame p. */
+  private presentationOrder: number[] = []
+  /** Exact timestampUs → presentation index (no arithmetic rounding). */
+  private indexByTimestamp = new Map<number, number>()
   private config!: VideoDecoderConfig
   private cache = new Map<number, VideoFrame>()  // insertion order = LRU
   private decoding: Promise<void> | null = null
@@ -59,12 +66,25 @@ export class WebCodecsSource implements FrameSource {
       const finalize = () => {
         if (settled) return
         settled = true
-        this.samples.sort((a, b) => a.timestampUs - b.timestampUs)
-        this.samples.forEach((s, i) => { s.index = i })
+        // samples stay in decode order; build the presentation↔decode maps
+        this.presentationOrder = this.samples
+          .map((_, dec) => dec)
+          .sort((a, b) => this.samples[a]!.timestampUs - this.samples[b]!.timestampUs)
+        // VFR rejection: constant frame duration is the frame↔time mapping
+        // assumption. Checked on presentation-timestamp deltas rather than
+        // per-sample stts durations — FFmpeg's muxer pads the last
+        // decode-order sample's duration on B-frame files (dts ends before
+        // the presentation end), which would falsely trip a per-sample check.
+        const ts = (p: number) => this.samples[this.presentationOrder[p]!]!.timestampUs
         const d0 = this.samples[0]!.durationUs
-        if (this.samples.some(s => Math.abs(s.durationUs - d0) > 1)) {
-          return reject(new UnsupportedSourceError('variable frame rate unsupported'))
+        for (let p = 1; p < this.presentationOrder.length; p++) {
+          if (Math.abs(ts(p) - ts(p - 1) - d0) > 1) {
+            return reject(new UnsupportedSourceError('variable frame rate unsupported'))
+          }
         }
+        this.presentationOrder.forEach((dec, p) => {
+          this.indexByTimestamp.set(this.samples[dec]!.timestampUs, p)
+        })
         resolve()
       }
       file.onError = (module: string, message: string) =>
@@ -93,7 +113,6 @@ export class WebCodecsSource implements FrameSource {
         for (const s of samples) {
           if (!s.data) continue
           this.samples.push({
-            index: 0, // assigned after sort
             isKey: !!s.is_sync,
             timestampUs: Math.round((s.cts * 1_000_000) / s.timescale),
             durationUs: Math.round((s.duration * 1_000_000) / s.timescale),
@@ -139,29 +158,36 @@ export class WebCodecsSource implements FrameSource {
     return frame
   }
 
-  /** Decode from the nearest keyframe ≤ target through target + DECODE_AHEAD. */
-  private decodeRange(target: number): Promise<void> {
-    let start = target
-    while (start > 0 && !this.samples[start]!.isKey) start--
-    const end = Math.min(this.samples.length - 1, target + DECODE_AHEAD)
-    const t0 = this.samples[0]!.timestampUs
-    const dur = this.samples[0]!.durationUs
+  /** Decode (in decode order) from the nearest keyframe at or before the
+   *  target's decode position through targetDec + DECODE_AHEAD. Outputs are
+   *  mapped back to presentation indices by exact timestamp — with B-frames
+   *  the ahead window may emit slightly different presentation frames;
+   *  correctness comes from the flush + timestamp mapping. */
+  private decodeRange(targetPres: number): Promise<void> {
+    const targetDec = this.presentationOrder[targetPres]!
+    let startDec = targetDec
+    while (startDec > 0 && !this.samples[startDec]!.isKey) startDec--
+    const endDec = Math.min(this.samples.length - 1, targetDec + DECODE_AHEAD)
 
     return new Promise((resolve, reject) => {
+      const fail = (e: unknown) => {
+        try { decoder.close() } catch {}
+        reject(e)
+      }
       const decoder = new VideoDecoder({
         output: (frame) => {
-          const i = Math.round((frame.timestamp - t0) / dur)
-          if (i >= start && i <= end && !this.cache.has(i) && !this.disposed) {
-            this.cache.set(i, frame)
+          const p = this.indexByTimestamp.get(frame.timestamp)
+          if (p !== undefined && !this.cache.has(p) && !this.disposed) {
+            this.cache.set(p, frame)
             this.evict()
           } else {
-            frame.close()
+            frame.close()  // unknown timestamp, duplicate, or disposed
           }
         },
-        error: (e) => reject(e),
+        error: fail,
       })
       decoder.configure(this.config)
-      for (let i = start; i <= end; i++) {
+      for (let i = startDec; i <= endDec; i++) {
         const s = this.samples[i]!
         decoder.decode(new EncodedVideoChunk({
           type: s.isKey ? 'key' : 'delta',
@@ -173,7 +199,7 @@ export class WebCodecsSource implements FrameSource {
       decoder.flush().then(() => {
         decoder.close()
         resolve()
-      }, reject)
+      }, fail)
     })
   }
 
@@ -190,6 +216,8 @@ export class WebCodecsSource implements FrameSource {
     for (const f of this.cache.values()) f.close()
     this.cache.clear()
     this.samples = []
+    this.presentationOrder = []
+    this.indexByTimestamp.clear()
   }
 }
 
