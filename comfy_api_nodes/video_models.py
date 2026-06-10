@@ -214,17 +214,18 @@ def _b_kling_v3(prompt, ar, dur, seed, image, audio, adv):
 
 
 def _b_kling_v2_5_turbo_pro(prompt, ar, dur, seed, image, audio, adv):
+    # kwaivgi/kling-v2.5-turbo-pro rejects unknown fields with a 422
+    # ("Unexpected field 'cfg_scale'" / "'seed'", observed 2026-06-10), so
+    # unlike Kling v3 this builder must NOT send cfg_scale or seed.
     inp: dict[str, Any] = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_KLING_AR, ar, "16:9"),
         "duration": _dur_or([5, 10], dur, 5),
-        "cfg_scale": _opt_float(adv, "cfg_scale", 0.5),
     }
     if neg := _opt_str(adv, "negative_prompt", ""):
         inp["negative_prompt"] = neg
     if image:
         inp["start_image"] = image
-    _maybe_set_seed(inp, seed)
     return inp
 
 
