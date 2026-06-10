@@ -117,10 +117,19 @@ context on select/hover, renders, and on deselect captures a final frame to an
 behavior (one scene animating at a time).
 
 **Chained previews (in scope for v1):** stacking effects is core to the Unicorn
-look. If a ShaderEffect's upstream is another ShaderEffect with no executed output,
-the preview walks the upstream chain (until it hits a real image or the chain ends),
-and renders each shader as a pass in its own loop — so stacked, unexecuted effect
-nodes still preview correctly and animate together.
+look, and chaining ShaderEffect nodes is how you stack. If a ShaderEffect's upstream
+is another ShaderEffect with no executed output, the preview walks the upstream
+chain (until it hits a real image or the chain ends) and renders each shader as a
+pass in its own loop — so each node's canvas shows the stack up to and including
+itself, animating on a shared clock. The most-downstream node is the "full scene"
+view.
+
+**Downstream refresh:** when params change on any ShaderEffect, every downstream
+ShaderEffect in the chain re-renders **one frame** via the shared offscreen context
+and updates its frozen preview. Tweaking an upstream effect therefore never leaves a
+stale composite downstream: the node being touched runs the live 60fps loop, and the
+rest of the chain follows with near-live single-frame updates — without violating
+the one-animating-context rule.
 
 ### Mouse interactivity
 
