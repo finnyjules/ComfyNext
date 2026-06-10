@@ -40,7 +40,11 @@ export function audioScheduleFor(clip: AudioClipLike, positionSec: number, fps: 
   const gainPoints: [number, number][] = []
   if (fiSec > 0) gainPoints.push([0, 0], [fiSec, volume])
   else gainPoints.push([0, volume])
-  if (foSec > 0) gainPoints.push([lengthSec - foSec, volume], [lengthSec, 0])
+  // Overlapping fades (fi + fo > length): the fade-out may never start before
+  // the fade-in ends — clamp so anchors stay monotonic (out-of-order ramp
+  // times are undefined behavior in Web Audio).
+  const foStart = Math.max(fiSec, lengthSec - foSec)
+  if (foSec > 0) gainPoints.push([foStart, volume], [lengthSec, 0])
   else gainPoints.push([lengthSec, volume])
 
   return {
