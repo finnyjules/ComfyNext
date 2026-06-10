@@ -1,4 +1,4 @@
-import type { EditState } from '~~/shared/timeline/types'
+import type { EditState, Clip } from '~~/shared/timeline/types'
 
 // Web Audio playback for timeline audio clips. Pure scheduling math
 // (audioScheduleFor — unit-tested) + a thin graph: one AudioBufferSourceNode +
@@ -77,10 +77,9 @@ export class AudioEngine {
   private voices: Voice[] = []
   private fps = 30
 
-  /** Decode every unmuted audio clip's asset. resolveUrl maps a clip's path to
-   *  a fetchable URL (harness routes fixture media; the editor (M3) resolves
-   *  via the asset library). */
-  async load(state: EditState, resolveUrl: (path: string) => string): Promise<void> {
+  /** Decode every unmuted audio clip's asset. resolveClipUrl maps an audio
+   *  CLIP to a fetchable URL (editor: asset library; harness: clip.path). */
+  async load(state: EditState, resolveClipUrl: (clip: Clip) => string | null): Promise<void> {
     this.disposeVoices()
     this.buffers.clear()
     this.fps = state.canvas.fps
@@ -90,8 +89,9 @@ export class AudioEngine {
     for (const track of state.tracks) {
       if (track.muted || track.kind !== 'audio') continue
       for (const clip of track.clips) {
-        if (clip.kind !== 'audio' || !clip.path) continue
-        const url = resolveUrl(clip.path)
+        if (clip.kind !== 'audio') continue
+        const url = resolveClipUrl(clip)
+        if (!url) continue
         jobs.push(
           fetch(url)
             .then(r => {

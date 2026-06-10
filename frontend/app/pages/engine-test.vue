@@ -62,7 +62,7 @@ onMounted(() => {
       audio = new AudioEngine()
       await Promise.all([
         renderer.load(state),
-        audio.load(state, (p) => p),   // harness paths are already URLs
+        audio.load(state, (c) => ('path' in c ? c.path ?? null : null)),   // harness paths are already URLs
       ])
       clock = new PlaybackClock({ audio: audio.timebase })
       playState = state
