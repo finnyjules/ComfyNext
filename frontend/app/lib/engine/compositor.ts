@@ -84,7 +84,7 @@ function fittedSize(srcW: number, srcH: number, W: number, H: number, scale: num
  * Visible image layers at `frame`, in paint order (track order, clip order
  * within track — later entries on top), with all scalar math resolved.
  * `srcDims` maps clip id → natural source pixel size (known after load()).
- * Non-image clips and clips without a path/dims are skipped (M1 scope).
+ * Clips outside RENDERABLE_KINDS or without registered dims are skipped (plain 'text' is Phase 2/3).
  */
 export function buildDrawList(
   state: EditState,
