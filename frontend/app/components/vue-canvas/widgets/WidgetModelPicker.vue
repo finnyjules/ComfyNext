@@ -86,8 +86,8 @@ function openGallery() {
   <button
     class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-colors cursor-pointer text-left group"
     :title="model
-      ? `${model.label} — click to change model`
-      : `Pick a model (current: ${modelValue || '—'})`"
+      ? `${model.label} — click to change ${kind === 'shot_preset' ? 'shot' : 'model'}`
+      : `Pick a ${kind === 'shot_preset' ? 'shot' : 'model'} (current: ${modelValue || '—'})`"
     @click="openGallery"
   >
     <!-- Neutral frame. Priority order, top to bottom:
