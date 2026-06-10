@@ -7,6 +7,7 @@ import os
 import sys
 from fractions import Fraction
 
+import pytest
 import torch
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -50,6 +51,42 @@ def test_coerce_video_clips_decodes_video_objects():
     assert torch.equal(kwargs["clip1"], frames)
     assert isinstance(kwargs["clip2"], torch.Tensor)   # tensors pass through
     assert kwargs["clip3"] is None
+
+
+def test_coerce_video_clips_refuses_oversized_video():
+    # A 30s 4K clip decodes to ~70 GB of float32 frames — the guard must
+    # refuse from container metadata alone, never calling get_components().
+    class HugeFakeVideo:
+        def get_dimensions(self):
+            return (3840, 2160)
+
+        def get_frame_count(self):
+            return 30 * 30  # 30s @ 30fps
+
+        def get_components(self):
+            raise AssertionError("must not decode an over-budget video")
+
+    kwargs = {"clip1": HugeFakeVideo()}
+    with pytest.raises(ValueError, match="too large to composite"):
+        NT._coerce_video_clips(kwargs)
+
+
+def test_coerce_video_clips_decodes_when_metadata_unavailable():
+    # If metadata probing fails, fall back to decoding as before the guard.
+    frames = torch.rand(2, 8, 8, 3)
+
+    class NoMetadataVideo:
+        def get_dimensions(self):
+            raise RuntimeError("no container metadata")
+
+        def get_components(self):
+            from comfy_api.latest import Types
+            return Types.VideoComponents(
+                images=frames, audio=None, frame_rate=Fraction(30))
+
+    kwargs = {"clip1": NoMetadataVideo()}
+    NT._coerce_video_clips(kwargs)
+    assert torch.equal(kwargs["clip1"], frames)
 
 
 def test_frames_to_video_round_trips():

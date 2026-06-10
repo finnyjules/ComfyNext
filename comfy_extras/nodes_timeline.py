@@ -31,6 +31,30 @@ from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, 
 # sees a clean node until they wire more clips.
 _MAX_CLIPS = 16
 
+# Composite-time frame batches are float32 [T,H,W,3] — a 30s 4K source is
+# ~70GB and kills the server. Refuse with a guided error instead.
+_DECODE_BUDGET_BYTES = 8 * 1024**3
+
+
+def _check_decode_budget(v, clip_name: str) -> None:
+    """Estimate the decoded float32 [T,H,W,3] size from container metadata
+    (VideoFromFile probes the container without decoding frames). If metadata
+    is unavailable, stay permissive — decode as before the guard."""
+    try:
+        w, h = v.get_dimensions()
+        frames = v.get_frame_count()
+    except Exception:
+        return
+    est_bytes = frames * h * w * 3 * 4
+    if est_bytes > _DECODE_BUDGET_BYTES:
+        est_gb = est_bytes / 1024**3
+        budget_gb = _DECODE_BUDGET_BYTES / 1024**3
+        raise ValueError(
+            f"{clip_name}: video is too large to composite directly "
+            f"(~{est_gb:.1f} GB of frames at {w}x{h}; budget {budget_gb:.0f} GB). "
+            "Use a lower-resolution proxy, trim the source, or wire it through "
+            "GetVideoComponents with a downscale before the Timeline.")
+
 
 def _coerce_video_clips(kwargs: dict) -> None:
     """Modern video nodes output VIDEO objects; the Timeline composites frame
@@ -41,6 +65,7 @@ def _coerce_video_clips(kwargs: dict) -> None:
     for i in range(1, _MAX_CLIPS + 1):
         v = kwargs.get(f"clip{i}")
         if v is not None and not isinstance(v, torch.Tensor) and hasattr(v, "get_components"):
+            _check_decode_budget(v, f"clip{i}")
             kwargs[f"clip{i}"] = v.get_components().images
 
 
