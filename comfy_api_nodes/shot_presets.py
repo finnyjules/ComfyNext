@@ -13,7 +13,7 @@ Design doc: docs/plans/2026-06-10-film-a-shot-node-design.md
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 
 # Sentinel for the ADVANCED override combos: keep the preset's own value.
@@ -89,7 +89,7 @@ PRESETS: list[ShotPreset] = [
         "zoom lens",
         "subject suddenly fills the frame", "a grindhouse exclamation mark"),
     ShotPreset("snorricam", "Snorricam", "movement",
-        "close-up, body-rigged", "facing the actor",
+        "close-up, body-rigged", "a body-rigged mount facing the actor",
         "a snorricam locked to the actor's body, the world lurching and swimming behind them",
         "28mm lens",
         "face pinned center while the background reels", "panic and unraveling"),
@@ -131,7 +131,7 @@ PRESETS: list[ShotPreset] = [
         "40mm lens with shallow depth of field",
         "off-balance rule-of-thirds framing", "something is quietly wrong"),
     ShotPreset("worms-eye", "Worm's-eye sky", "angle",
-        "extreme low angle shot", "looking straight up from the ground",
+        "extreme wide shot", "looking straight up from the ground",
         "the camera holds static, rolling slowly",
         "18mm ultra-wide lens",
         "towers and sky swallowing the frame", "vertigo in reverse"),
@@ -220,7 +220,7 @@ LENS_OPTIONS = [AUTO, "18mm ultra-wide lens", "24mm wide-angle lens", "35mm lens
                 "50mm lens with shallow depth of field",
                 "85mm lens with razor-thin depth of field",
                 "300mm telephoto lens compressing the planes",
-                "anamorphic lens with horizontal flares and oval bokeh",
+                "anamorphic lens with horizontal blue flares and oval bokeh",
                 "macro lens with razor-thin depth of field"]
 
 COMPOSITION_OPTIONS = [AUTO, "subject centered in frame", "rule-of-thirds framing",
