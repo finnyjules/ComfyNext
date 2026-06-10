@@ -56,4 +56,22 @@ describe('PlaybackClock', () => {
     ft.advance(0.3)
     expect(clock.now()).toBeCloseTo(0.3, 10)
   })
+
+  it('holds position when the audio clock suspends mid-play, resumes without a jump', () => {
+    const ft = fakeTime()
+    let audioT: number | null = 50
+    const clock = new PlaybackClock({ fallback: ft.now, audio: () => audioT })
+    clock.play()
+    audioT = 50.4
+    expect(clock.now()).toBeCloseTo(0.4, 10)
+    audioT = null                       // context suspended
+    expect(clock.now()).toBeCloseTo(0.4, 10)   // held, not -anchor garbage
+    audioT = 99                         // resumed much later
+    expect(clock.now()).toBeCloseTo(0.4, 10)   // re-anchored: no jump
+    audioT = 99.3
+    expect(clock.now()).toBeCloseTo(0.7, 10)   // advancing again
+    audioT = null
+    clock.pause()
+    expect(clock.now()).toBeCloseTo(0.7, 10)   // pause after hold keeps position
+  })
 })
