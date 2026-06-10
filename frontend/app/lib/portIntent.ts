@@ -1,5 +1,7 @@
 // Pure helpers for the port-intent popover. No Vue/Nuxt imports — unit-testable.
 
+import { typesCompatible } from '~/utils/portTypes'
+
 export interface PortAnchor {
   nodeId: string
   nodeType: string
@@ -18,10 +20,11 @@ export interface NodeTypeLite {
   outputs: { name: string; type: string }[]
 }
 
-// Same semantics as typesCompatible() in VueNodeCanvas.vue, plus an empty guard.
+// Shared semantics with the canvas (utils/portTypes): exact match, '*'
+// wildcard, and comma-union intersection — so the popover offers the Timeline
+// (clip inputs declare "IMAGE,VIDEO") for a VIDEO output anchor, etc.
 export function isTypeCompatible(a: string, b: string): boolean {
-  if (!a || !b) return false
-  return a === b || a === '*' || b === '*'
+  return typesCompatible(a, b)
 }
 
 /** The port on `node` that could legally connect to the anchor, if any.

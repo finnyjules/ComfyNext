@@ -32,6 +32,7 @@ import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
 import type { PortAnchor } from '~/lib/portIntent'
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
+import { bestPortPair, findCompatiblePortIndex, typesCompatible } from '~/utils/portTypes'
 import { usePortIntent } from '~/composables/usePortIntent'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
 import StickyAnnotation from '~/components/vue-canvas/StickyAnnotation.vue'
@@ -634,26 +635,33 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
 // ── Wire splicing ────────────────────────────────────────────────────────────
 // Insert a node between two already-connected nodes (drop-on-wire, edge "+"),
 // or after a node across all its matching output edges (artifact effect actions).
-function typesCompatible(a: string, b: string): boolean {
-  return a === b || a === '*' || b === '*'
+// Type rules live in utils/portTypes (exact → union/wildcard, never index 0):
+// the old "no compatible port → fall back to slot 0" is what wired a
+// Timeline's IMAGE `frames` output into SaveVideo's VIDEO-only input.
+function outputHandleFor(node: any, wantType?: string): string | null {
+  const idx = findCompatiblePortIndex(node?.data?.outputs, wantType || '*')
+  return idx >= 0 ? `output-${idx}` : null
 }
-function outputHandleFor(node: any, wantType?: string): string {
-  const outs = node?.data?.outputs ?? []
-  let idx = wantType ? outs.findIndex((o: any) => typesCompatible(o.type, wantType)) : -1
-  if (idx < 0) idx = 0
-  return `output-${idx}`
+/** True when no live edge feeds this input slot (saved link refs count too). */
+function inputSlotFree(node: any, idx: number): boolean {
+  if (node?.data?.inputs?.[idx]?.link != null) return false
+  return !(edges.value as any[]).some(
+    (e) => e.target === node.id && e.targetHandle === `input-${idx}`,
+  )
 }
-function inputHandleFor(node: any, wantType?: string): string {
-  const ins = node?.data?.inputs ?? []
-  let idx = wantType ? ins.findIndex((i: any) => typesCompatible(i.type, wantType)) : -1
-  if (idx < 0) idx = 0
-  return `input-${idx}`
+function inputHandleFor(node: any, wantType?: string): string | null {
+  const idx = findCompatiblePortIndex(
+    node?.data?.inputs,
+    wantType || '*',
+    (i) => inputSlotFree(node, i),
+  )
+  return idx >= 0 ? `input-${idx}` : null
 }
-function typeOfOutputHandle(node: any, handle?: string): string {
+function typeOfOutputHandle(node: any, handle?: string | null): string {
   const i = parseInt(String(handle ?? '').replace('output-', '') || '0')
   return node?.data?.outputs?.[i]?.type ?? '*'
 }
-function typeOfInputHandle(node: any, handle?: string): string {
+function typeOfInputHandle(node: any, handle?: string | null): string {
   const i = parseInt(String(handle ?? '').replace('input-', '') || '0')
   return node?.data?.inputs?.[i]?.type ?? '*'
 }
@@ -679,11 +687,28 @@ async function spliceIntoEdge(edgeId: string, nodeType: string, widgetOverrides?
   // Wait for VueFlow to register the new node (and mount its handles) before
   // wiring edges to it — otherwise edges referencing it are pruned as invalid.
   await nextTick()
-  removeEdges([edgeId])
-  addEdges([
-    { source: edge.source, sourceHandle: edge.sourceHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: srcOutType } },
-    { source: node.id, sourceHandle: outHandle, target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
-  ])
+  if (inHandle && outHandle) {
+    removeEdges([edgeId])
+    addEdges([
+      { source: edge.source, sourceHandle: edge.sourceHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: srcOutType } },
+      { source: node.id, sourceHandle: outHandle, target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
+    ])
+    return
+  }
+  // The node can't sit INSIDE this wire (no type-compatible in/out pair —
+  // e.g. SaveVideo dropped on a Timeline frames→X IMAGE wire: SaveVideo has
+  // no IMAGE input). Never force slot 0: that poisons the graph with an
+  // IMAGE→VIDEO link the backend rejects at run time. Instead, keep the
+  // original edge and tap the node off ANY compatible output of the wire's
+  // source (exact type first) — the Timeline case lands on `video` (VIDEO).
+  const pair = bestPortPair(src.data?.outputs, node.data?.inputs)
+  if (pair) {
+    const dataType = String(src.data?.outputs?.[pair.outputIndex]?.type ?? '*')
+    addEdges([
+      { source: edge.source, sourceHandle: `output-${pair.outputIndex}`, target: node.id, targetHandle: `input-${pair.inputIndex}`, type: 'comfy', data: { dataType } },
+    ])
+  }
+  // No compatible pair at all → leave the node placed but unwired.
 }
 
 /** Apply a transform after a node: feed it from the node and re-point every
@@ -693,22 +718,29 @@ async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAG
   if (!objectInfo.value[nodeType]) await fetchObjectInfo()
   const src = (nodes.value as any[]).find(n => n.id === nodeId)
   if (!src) return
-  const srcOutHandle = outputHandleFor(src, outType)
-  const downstream = (edges.value as any[]).filter(e => e.source === nodeId && e.sourceHandle === srcOutHandle)
   const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
   const node = createNodeData(nodeType, pos, widgetOverrides)
+  const srcOutHandle = outputHandleFor(src, outType)
   const inHandle = inputHandleFor(node, outType)
   const outHandle = outputHandleFor(node, outType)
   nodes.value.push(node)
   // Wait for VueFlow to register the new node before wiring edges to it.
   await nextTick()
+  // No type-compatible feed → just place the node; wiring slot 0 regardless
+  // of type would create a link the backend rejects at run time.
+  if (!srcOutHandle || !inHandle) return
+  const downstream = (edges.value as any[]).filter(e => e.source === nodeId && e.sourceHandle === srcOutHandle)
   const newEdges: any[] = [
     { source: nodeId, sourceHandle: srcOutHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: outType } },
   ]
-  for (const e of downstream) {
-    newEdges.push({ source: node.id, sourceHandle: outHandle, target: e.target, targetHandle: e.targetHandle, type: 'comfy', data: { dataType: outType } })
+  // Re-point downstream consumers through the new node only when it has a
+  // matching output to hand them; otherwise leave them on the source.
+  if (outHandle) {
+    for (const e of downstream) {
+      newEdges.push({ source: node.id, sourceHandle: outHandle, target: e.target, targetHandle: e.targetHandle, type: 'comfy', data: { dataType: outType } })
+    }
+    if (downstream.length) removeEdges(downstream.map((e: any) => e.id))
   }
-  if (downstream.length) removeEdges(downstream.map((e: any) => e.id))
   addEdges(newEdges)
 }
 
@@ -736,10 +768,13 @@ function spliceExistingNodeIntoEdge(nodeId: string, edgeId: string) {
   const tgt = (nodes.value as any[]).find(n => n.id === edge.target)
   const srcOutType = typeOfOutputHandle(src, edge.sourceHandle)
   const tgtInType = typeOfInputHandle(tgt, edge.targetHandle)
+  const inHandle = inputHandleFor(node, srcOutType)
+  const outHandle = outputHandleFor(node, tgtInType)
+  if (!inHandle || !outHandle) return // canNodeSpliceEdge guarantees these; belt-and-braces
   removeEdges([edgeId])
   addEdges([
-    { source: edge.source, sourceHandle: edge.sourceHandle, target: nodeId, targetHandle: inputHandleFor(node, srcOutType), type: 'comfy', data: { dataType: srcOutType } },
-    { source: nodeId, sourceHandle: outputHandleFor(node, tgtInType), target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
+    { source: edge.source, sourceHandle: edge.sourceHandle, target: nodeId, targetHandle: inHandle, type: 'comfy', data: { dataType: srcOutType } },
+    { source: nodeId, sourceHandle: outHandle, target: edge.target, targetHandle: edge.targetHandle, type: 'comfy', data: { dataType: tgtInType } },
   ])
 }
 
@@ -981,13 +1016,47 @@ watch(objectInfo, (info) => {
   }
 })
 
-// Handle new connections
+// Handle new connections.
+//
+// Vue Flow completes a drag on the CLOSEST handle within its 20px snap
+// radius, with zero type awareness — on a Timeline card the IMAGE `frames`
+// and VIDEO `video` outputs sit ~25% of the card height apart, so a drop
+// aimed between them routinely landed on `frames` and wired IMAGE into
+// SaveVideo's VIDEO input. When the snapped pair is type-incompatible but
+// the SAME node has a compatible port (exact match first, then ComfyUI
+// union/wildcard rules), retarget to it: the snapped end first (that's the
+// end the user was imprecise about), then the grabbed end. A mismatch with
+// no compatible alternative is kept as the user made it — deliberate wiring
+// stays possible, and run-time validation surfaces it (toast + red node).
 onConnect((params) => {
   connectionMade = true
   const sourceNode = (nodes.value as any[]).find(n => n.id === params.source)
-  const outputIndex = parseInt(params.sourceHandle?.replace('output-', '') || '0')
+  const targetNode = (nodes.value as any[]).find(n => n.id === params.target)
+  let sourceHandle = params.sourceHandle
+  let targetHandle = params.targetHandle
+  const srcType = typeOfOutputHandle(sourceNode, sourceHandle)
+  const tgtType = typeOfInputHandle(targetNode, targetHandle)
+  if (!typesCompatible(srcType, tgtType)) {
+    const grabbedSource = connectStartInfo?.handleType === 'source'
+    const fixTarget = () => {
+      const fixed = inputHandleFor(targetNode, srcType)
+      if (fixed) targetHandle = fixed
+      return !!fixed
+    }
+    const fixSource = () => {
+      const fixed = outputHandleFor(sourceNode, tgtType)
+      if (fixed) sourceHandle = fixed
+      return !!fixed
+    }
+    const fixed = grabbedSource ? (fixTarget() || fixSource()) : (fixSource() || fixTarget())
+    if (fixed) {
+      console.debug('[ComfyNext] retargeted snapped connection to type-compatible port:',
+        { from: { sourceHandle: params.sourceHandle, targetHandle: params.targetHandle }, to: { sourceHandle, targetHandle } })
+    }
+  }
+  const outputIndex = parseInt(sourceHandle?.replace('output-', '') || '0')
   const dataType = sourceNode?.data?.outputs?.[outputIndex]?.type || '*'
-  addEdges([{ ...params, type: 'comfy', data: { dataType } }])
+  addEdges([{ ...params, sourceHandle, targetHandle, type: 'comfy', data: { dataType } }])
 })
 
 // ── Port intent popover ──────────────────────────────────────────────────────
@@ -1034,15 +1103,48 @@ onConnectEnd((event) => {
     && me.clientY >= canvasRect.top && me.clientY <= canvasRect.bottom
   if (!insideCanvas) return
   const flow = project({ x: me.clientX, y: me.clientY })
-  const overNode = (nodes.value as any[]).some((n) => {
+  const overNode = (nodes.value as any[]).find((n) => {
     const w = n.dimensions?.width || n.data?.size?.[0] || 220
     const h = n.dimensions?.height || n.data?.size?.[1] || 120
     return flow.x >= n.position.x && flow.x <= n.position.x + w
       && flow.y >= n.position.y && flow.y <= n.position.y + h
   })
-  if (overNode) return
+  if (overNode) {
+    // Wire dropped on a node BODY (outside any handle's snap radius). This
+    // used to be a silent dead zone — the wire vanished and users assumed it
+    // connected. Complete it onto a TYPE-COMPATIBLE port of that node (exact
+    // match first, then union/wildcard; free inputs preferred), never by
+    // index. No compatible port → keep the old no-op.
+    if (overNode.id !== anchor.nodeId) completeConnectionOnNode(anchor, overNode)
+    return
+  }
   openPortIntent(anchor, { x: me.clientX + 12, y: me.clientY + 12 }, flow)
 })
+
+/** Complete a wire released on a node body: pick the type-compatible port on
+ *  `node` for the grabbed anchor (output anchor → node input, input anchor →
+ *  node output). Does nothing when nothing on the node is compatible. */
+function completeConnectionOnNode(anchor: PortAnchor, node: any) {
+  if (anchor.direction === 'output') {
+    const targetHandle = inputHandleFor(node, anchor.portType)
+    if (!targetHandle) return
+    addEdges([{
+      source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`,
+      target: node.id, targetHandle,
+      type: 'comfy', data: { dataType: anchor.portType },
+    }])
+  }
+  else {
+    const sourceHandle = outputHandleFor(node, anchor.portType)
+    if (!sourceHandle) return
+    const oIdx = parseInt(sourceHandle.replace('output-', ''))
+    addEdges([{
+      source: node.id, sourceHandle,
+      target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`,
+      type: 'comfy', data: { dataType: String(node.data?.outputs?.[oIdx]?.type ?? '*') },
+    }])
+  }
+}
 
 function anchorFromHandle(nodeId: string, handleId: string, handleType: string): PortAnchor | null {
   const node = (nodes.value as any[]).find(n => n.id === nodeId)
@@ -1082,27 +1184,36 @@ async function insertSuggestion(result: Awaited<ReturnType<typeof suggestPortInt
   })
   await nextTick()
 
+  // Resolve a validated suggestion's port by name; if the name misses (model
+  // drift), fall back by TYPE compatibility — never blindly to slot 0.
+  const portIdx = (ports: any[], name: string | undefined, wantType: string): number => {
+    const byName = (ports ?? []).findIndex((p: any) => p.name === name)
+    if (byName >= 0) return byName
+    const byType = findCompatiblePortIndex(ports, wantType)
+    return byType >= 0 ? byType : 0
+  }
   const newEdges: any[] = []
   for (const e of result.edges) {
     if (e.fromAnchor) {
       const to = created.get(e.toId!)
       if (!to) continue
-      const idx = Math.max(0, to.data.inputs.findIndex((p: any) => p.name === e.toPort))
+      const idx = portIdx(to.data.inputs, e.toPort, anchor.portType)
       newEdges.push({ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: to.id, targetHandle: `input-${idx}`, type: 'comfy', data: { dataType: anchor.portType } })
     }
     else if (e.toAnchor) {
       const from = created.get(e.fromId!)
       if (!from) continue
-      const idx = Math.max(0, from.data.outputs.findIndex((p: any) => p.name === e.fromPort))
+      const idx = portIdx(from.data.outputs, e.fromPort, anchor.portType)
       newEdges.push({ source: from.id, sourceHandle: `output-${idx}`, target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } })
     }
     else {
       const from = created.get(e.fromId!)
       const to = created.get(e.toId!)
       if (!from || !to) continue
-      const oIdx = Math.max(0, from.data.outputs.findIndex((p: any) => p.name === e.fromPort))
-      const iIdx = Math.max(0, to.data.inputs.findIndex((p: any) => p.name === e.toPort))
-      newEdges.push({ source: from.id, sourceHandle: `output-${oIdx}`, target: to.id, targetHandle: `input-${iIdx}`, type: 'comfy', data: { dataType: from.data.outputs[oIdx]?.type ?? '*' } })
+      const oIdx = portIdx(from.data.outputs, e.fromPort, '*')
+      const outType = String(from.data.outputs[oIdx]?.type ?? '*')
+      const iIdx = portIdx(to.data.inputs, e.toPort, outType)
+      newEdges.push({ source: from.id, sourceHandle: `output-${oIdx}`, target: to.id, targetHandle: `input-${iIdx}`, type: 'comfy', data: { dataType: outType } })
     }
   }
   addEdges(newEdges)
@@ -1124,11 +1235,19 @@ async function handlePortIntentSelect(nodeType: string) {
   const node = createNodeData(nodeType, pos)
   nodes.value.push(node)
   await nextTick()
+  // Wire only onto a type-compatible port (the catalog is type-filtered, but
+  // never fall back to slot 0 — a wrong-typed link fails at run time).
   if (anchor.direction === 'output') {
-    addEdges([{ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: node.id, targetHandle: inputHandleFor(node, anchor.portType), type: 'comfy', data: { dataType: anchor.portType } }])
+    const targetHandle = inputHandleFor(node, anchor.portType)
+    if (targetHandle) {
+      addEdges([{ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: node.id, targetHandle, type: 'comfy', data: { dataType: anchor.portType } }])
+    }
   }
   else {
-    addEdges([{ source: node.id, sourceHandle: outputHandleFor(node, anchor.portType), target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } }])
+    const sourceHandle = outputHandleFor(node, anchor.portType)
+    if (sourceHandle) {
+      addEdges([{ source: node.id, sourceHandle, target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } }])
+    }
   }
 }
 
