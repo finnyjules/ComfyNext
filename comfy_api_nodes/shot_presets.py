@@ -13,7 +13,7 @@ Design doc: docs/plans/2026-06-10-film-a-shot-node-design.md
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 # Sentinel for the ADVANCED override combos: keep the preset's own value.
@@ -229,3 +229,84 @@ COMPOSITION_OPTIONS = [AUTO, "subject centered in frame", "rule-of-thirds framin
                        "first-person POV framing",
                        "framed through a doorway",
                        "leading room ahead of the subject"]
+
+
+# ---------- Recipe resolution ------------------------------------------------
+
+def resolve_recipe(preset_id: str, size: str, angle: str, movement: str,
+                   lens: str, composition: str) -> ShotPreset:
+    """Preset + ADVANCED overrides → final recipe. AUTO keeps the preset value.
+    Unknown preset ids fall back to the default (old workflows, manual edits)."""
+    base = PRESETS_BY_ID.get(preset_id) or PRESETS_BY_ID[DEFAULT_PRESET_ID]
+    overrides = {}
+    for field, value in (("size", size), ("angle", angle), ("movement", movement),
+                         ("lens", lens), ("composition", composition)):
+        if value and value != AUTO:
+            overrides[field] = value
+    return replace(base, **overrides) if overrides else base
+
+
+# ---------- Dialect compiler ---------------------------------------------------
+# Hailuo (MiniMax) Director-mode bracket commands, matched by keyword against the
+# movement clause. Multiple matches combine: "[Push in, Zoom out]".
+_HAILUO_COMMANDS: list[tuple[str, str]] = [
+    ("dollies in", "Push in"),
+    ("pushes in", "Push in"),
+    ("punches toward", "Zoom in"),
+    ("dollies out", "Pull out"),
+    ("zooms out", "Zoom out"),
+    ("cranes up", "Pedestal up"),
+    ("descends", "Pedestal down"),
+    ("tilts up", "Tilt up"),
+    ("whips violently sideways", "Pan right"),
+    ("orbit", "Tracking shot"),
+    ("tracks laterally", "Tracking shot"),
+    ("glide", "Tracking shot"),
+    ("dives", "Tracking shot"),
+    ("skims", "Tracking shot"),
+    ("handheld", "Shake"),
+    ("lurching", "Shake"),
+    ("static", "Static shot"),
+    ("holds still", "Static shot"),
+    ("holds nearly still", "Static shot"),
+]
+
+
+def _hailuo_brackets(movement: str) -> str:
+    m = movement.lower()
+    cmds: list[str] = []
+    for keyword, cmd in _HAILUO_COMMANDS:
+        if keyword in m and cmd not in cmds:
+            cmds.append(cmd)
+    return f"[{', '.join(cmds)}]" if cmds else ""
+
+
+def _cap(s: str) -> str:
+    return s[0].upper() + s[1:] if s else s
+
+
+def build_shot_phrase(recipe: ShotPreset, dialect: str = "standard") -> str:
+    """Compile a recipe into prompt language. Unknown dialect → standard."""
+    if dialect == "veo":
+        # Lens-forward phrasing — Google documents Veo parsing shot vocabulary
+        # ("18mm low-angle tracking shot"), so lead with the lens + framing.
+        return (f"{_cap(recipe.lens)}, {recipe.size} from {recipe.angle}. "
+                f"{_cap(recipe.movement)}; {recipe.composition}. "
+                f"{_cap(recipe.note)}. Cinematic.")
+    if dialect == "hailuo":
+        brackets = _hailuo_brackets(recipe.movement)
+        std = build_shot_phrase(recipe, "standard")
+        return f"{brackets} {std}".strip()
+    # standard — director's-note prose (the proven RotateCameraNode approach).
+    return (f"Cinematic {recipe.size} from {recipe.angle}. "
+            f"{_cap(recipe.movement)}. {_cap(recipe.lens)}; "
+            f"{recipe.composition} — {recipe.note}.")
+
+
+def dialect_for_model(model_id: str) -> str:
+    mid = (model_id or "").lower()
+    if mid.startswith("veo"):
+        return "veo"
+    if mid.startswith("hailuo"):
+        return "hailuo"
+    return "standard"
