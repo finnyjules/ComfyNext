@@ -156,6 +156,15 @@ describe('applyCommand', () => {
     expect(s.transitions).toEqual([])
   })
 
+  it('add_transition leaves state untouched when validation fails, and clones on success', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })
+    const t = tr('t1', videoTrackId, 'a', 'b')
+    applyCommand(s, { type: 'add_transition', transition: t })
+    t.duration = 999
+    expect(s.transitions[0]!.duration).toBe(10)
+  })
+
   it('add_clip clones its payload — caller mutations do not leak into state', () => {
     const clip = img('a', 0, 30)
     applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })

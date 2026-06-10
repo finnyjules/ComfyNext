@@ -47,6 +47,13 @@ function clampLocal(clip: Clip, frame: number): number {
   return Math.max(0, Math.min(Math.round(frame), Math.max(0, clip.length - 1)))
 }
 
+/** Commands own their payloads. JSON clone (not structuredClone): the schema is
+ *  JSON-serializable by design, and this also accepts Vue reactive proxies,
+ *  which structuredClone rejects with DataCloneError. */
+function clonePayload<T>(x: T): T {
+  return JSON.parse(JSON.stringify(x)) as T
+}
+
 /** Snapshot keyframe at clip-local `lf`, capturing the current transform. */
 function keyframeAt(clip: Clip, lf: number): Keyframe {
   return { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
@@ -71,8 +78,7 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
     case 'add_clip': {
       const track = findTrack(s, cmd.track_id)
       if (!track) return false
-      // commands own their payloads — cloning keeps a replayed command log deterministic and prevents callers holding live references into state
-      track.clips.push(structuredClone(cmd.clip))
+      track.clips.push(clonePayload(cmd.clip))
       return true
     }
 
@@ -226,10 +232,10 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
       if (!track) return false
       if (!track.clips.some(c => c.id === t.from_clip_id)) return false
       if (!track.clips.some(c => c.id === t.to_clip_id)) return false
+      const stored = clonePayload(t)
       // One transition per junction: replace any existing one on the same pair.
       s.transitions = s.transitions.filter(x => !(x.from_clip_id === t.from_clip_id && x.to_clip_id === t.to_clip_id))
-      // commands own their payloads — cloning keeps a replayed command log deterministic and prevents callers holding live references into state
-      s.transitions.push(structuredClone(t))
+      s.transitions.push(stored)
       return true
     }
 

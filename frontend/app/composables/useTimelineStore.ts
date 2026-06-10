@@ -53,6 +53,9 @@ export function useTimelineStore() {
     _nodeId = nodeId
     _getValue = getValue
     _setValue = setValue
+    // Fresh node = fresh history: never let Cmd+Z replay another node's states.
+    undoStack.value = []
+    redoStack.value = []
     const raw = getValue('edit_state')
     if (raw) {
       try {
@@ -87,11 +90,13 @@ export function useTimelineStore() {
   // that can't apply (unknown id, invalid cut) leaves state AND undo untouched.
   function dispatch(cmd: TimelineCommand) {
     pushUndo()
-    if (!applyCommand(state.value, cmd)) {
-      undoStack.value.pop()
-      return
+    let changed = false
+    try {
+      changed = applyCommand(state.value, cmd)
+    } finally {
+      if (!changed) undoStack.value.pop()
     }
-    syncToWidget()
+    if (changed) syncToWidget()
   }
 
   function undo() {
