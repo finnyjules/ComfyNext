@@ -6,7 +6,12 @@
  * shape directly. Keeps the dep tree clean.
  */
 
+import { resolveFormat } from '../../shared/template-grid/resolve'
+import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { resolveTokens } from '../../shared/template-grid/tokens'
+import type {
+  ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
+} from '../../shared/template-grid/types'
 import type {
   AspectSpec, BackgroundSpec, ImageElement, LayoutElement, Length, RenderBrand,
   RenderProps, ShapeElement, Template, TextElement,
@@ -245,6 +250,17 @@ export interface TranslatedLayout {
 }
 
 export function templateToSatori(
+  template: Template | TemplateV2, aspectKey: string | undefined,
+  props: RenderProps = {}, brand: RenderBrand = {},
+  explicitSize?: { width: number; height: number },
+): TranslatedLayout {
+  if ((template as TemplateV2).version === 2) {
+    return templateV2ToSatori(template as TemplateV2, aspectKey, props, brand, explicitSize)
+  }
+  return templateV1ToSatori(template as Template, aspectKey, props, brand, explicitSize)
+}
+
+function templateV1ToSatori(
   template: Template, aspectKey: string | undefined,
   props: RenderProps = {}, brand: RenderBrand = {},
   explicitSize?: { width: number; height: number },
@@ -281,4 +297,117 @@ export function templateToSatori(
   })
 
   return { width: effectiveAspect.w, height: effectiveAspect.h, tree: root }
+}
+
+// ---------- v2 (Swiss grid) ----------
+// All layout math (regions, culling, copy fitting) happens in the shared
+// resolver; this only turns resolved rects into satori nodes.
+
+function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBrand): SatoriNode | null {
+  const base: Record<string, unknown> = {
+    position: 'absolute',
+    left: `${r.rect.x}px`, top: `${r.rect.y}px`,
+    width: `${r.rect.w}px`, height: `${r.rect.h}px`,
+    display: 'flex',
+  }
+  switch (r.el.type) {
+    case 'text': {
+      const t = r.el as TextElementV2
+      const s = t.style ?? {}
+      const align = s.align ?? 'left'
+      const valign = s.valign ?? 'top'
+      return el('div', {
+        style: {
+          ...base,
+          color: resolveTokens(s.color ?? '#fff', props, brand),
+          fontSize: r.text!.fontSize,
+          fontWeight: s.fontWeight ?? 400,
+          fontFamily: s.fontFamily ?? 'Inter',
+          textAlign: align,
+          lineHeight: s.lineHeight ?? 1.1,
+          letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
+          flexDirection: 'column',
+          justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
+          alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+          overflow: 'hidden',
+        },
+        children: r.text!.content,
+      })
+    }
+    case 'image': {
+      const im = r.el as ImageElementV2
+      const s = im.style ?? {}
+      const focal = im.focal ?? { x: 0.5, y: 0.5 }
+      const fit = s.fit ?? 'cover'
+      return el('div', {
+        style: { ...base, overflow: 'hidden', borderRadius: s.borderRadius ?? 0 },
+        children: el('img', {
+          src: String(resolveTokens(im.content, props, brand)),
+          width: '100%' as unknown as number,
+          height: '100%' as unknown as number,
+          style: {
+            objectFit: fit === 'contain' ? 'contain' : fit === 'stretch' ? 'fill' : 'cover',
+            objectPosition: `${Math.round(focal.x * 100)}% ${Math.round(focal.y * 100)}%`,
+            width: '100%', height: '100%',
+          },
+        }),
+      })
+    }
+    case 'shape': {
+      const sh = r.el as ShapeElementV2
+      const s = sh.style ?? {}
+      const style: Record<string, unknown> = {
+        ...base,
+        background: resolveTokens(s.fill ?? '#000', props, brand),
+        borderRadius: sh.shape === 'circle' ? 9999 : (s.borderRadius ?? 0),
+      }
+      if (s.borderWidth) {
+        style.border = `${s.borderWidth}px solid ${resolveTokens(s.borderColor ?? '#000', props, brand)}`
+      }
+      return el('div', { style })
+    }
+    default:
+      return null
+  }
+}
+
+function templateV2ToSatori(
+  template: TemplateV2, formatKey: string | undefined,
+  props: RenderProps, brand: RenderBrand,
+  explicitSize?: { width: number; height: number },
+): TranslatedLayout {
+  let tpl = template
+  let key = formatKey ?? template.master ?? Object.keys(template.formats)[0]
+  if (explicitSize) {
+    // Explicit w/h renders through a transient format so all grid math
+    // (classification, scaling, culling) still applies.
+    tpl = {
+      ...template,
+      formats: { ...template.formats, __explicit__: { w: explicitSize.width, h: explicitSize.height } },
+    }
+    key = '__explicit__'
+  } else if (!template.formats[key]) {
+    throw new Error(`Unknown format '${key}' on template '${template.id}'.`)
+  }
+
+  const resolved = resolveFormat(tpl, key, props as Record<string, unknown>, brand as Record<string, unknown>)
+  const { w, h } = resolved.format
+
+  const children: SatoriNode[] = []
+  const bg = backgroundNode(tpl.background, { w, h }, props, brand)
+  if (bg) children.push(bg)
+  for (const r of resolved.elements) {
+    if (r.culled) continue
+    const node = v2ElementNode(r, props, brand)
+    if (node) children.push(node)
+  }
+
+  const root: SatoriNode = el('div', {
+    style: {
+      position: 'relative', width: w, height: h,
+      display: 'flex', background: '#000', overflow: 'hidden',
+    },
+    children,
+  })
+  return { width: w, height: h, tree: root }
 }

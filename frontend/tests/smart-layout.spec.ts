@@ -108,6 +108,39 @@ test.describe('SmartLayout render endpoint', () => {
     expect(buf.length).toBeGreaterThan(1000)
   })
 
+  const TEMPLATE_V2 = {
+    version: 2 as const,
+    id: 'pw-v2', name: 'Playwright V2',
+    master: '1x1',
+    formats: {
+      '1x1': { w: 512, h: 512 },
+      '728x90': { w: 728, h: 90 },
+      '160x600': { w: 160, h: 600 },
+    },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    background: { fill: '#101418' },
+    elements: [
+      { id: 'headline', type: 'text', content: '{{ props.text_layer_1 }}', level: 'display', priority: 1,
+        region: { col: 1, colSpan: 6, row: 4, rowSpan: 2 }, style: { color: '#ffffff' } },
+      { id: 'cta', type: 'text', content: 'Shop now', level: 'caption', role: 'CTA', priority: 2,
+        region: { col: 5, colSpan: 2, row: 6, rowSpan: 1 }, style: { color: '#ffffff' } },
+    ],
+  }
+
+  for (const [key, w, h] of [['1x1', 512, 512], ['728x90', 728, 90], ['160x600', 160, 600]] as const) {
+    test(`v2 grid template renders ${key} at declared size`, async ({ request }) => {
+      const res = await request.post('/api/render-template', {
+        data: { template: TEMPLATE_V2, aspect: key, props: { text_layer_1: 'Brew bold' } },
+      })
+      expect(res.status()).toBe(200)
+      const buf = await res.body()
+      expect(buf.subarray(0, 8).toString('hex').toLowerCase()).toBe('89504e470d0a1a0a')
+      expect(buf.readUInt32BE(16)).toBe(w)
+      expect(buf.readUInt32BE(20)).toBe(h)
+    })
+  }
+
   test('missing template field returns 400', async ({ request }) => {
     const res = await request.post('/api/render-template', {
       data: { aspect: '1x1' },
