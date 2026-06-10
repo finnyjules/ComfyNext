@@ -7,6 +7,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { migrateEditState } from '~~/shared/timeline/types'
 import type { PreviewRenderer } from '~~/shared/timeline/previewRenderer'
 import { ServerFrameRenderer } from '~/lib/serverFrameRenderer'
+import { WebGLPreviewRenderer } from '~/lib/engine/webglPreviewRenderer'
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const status = ref('idle')
@@ -14,11 +15,11 @@ let renderer: PreviewRenderer | null = null
 
 onMounted(() => {
   ;(window as any).__timelineHarness = {
-    async load(stateJson: string, kind: 'server' = 'server'): Promise<void> {
+    async load(stateJson: string, kind: 'server' | 'webgl' = 'server'): Promise<void> {
       const state = migrateEditState(JSON.parse(stateJson))
       if (!state) throw new Error('invalid edit state')
       renderer?.dispose()
-      renderer = new ServerFrameRenderer()
+      renderer = kind === 'webgl' ? new WebGLPreviewRenderer() : new ServerFrameRenderer()
       await renderer.load(state)
       status.value = `loaded (${kind})`
     },
