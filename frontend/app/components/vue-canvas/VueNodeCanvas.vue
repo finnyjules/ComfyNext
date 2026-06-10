@@ -1189,8 +1189,9 @@ async function insertSuggestion(result: Awaited<ReturnType<typeof suggestPortInt
   const portIdx = (ports: any[], name: string | undefined, wantType: string): number => {
     const byName = (ports ?? []).findIndex((p: any) => p.name === name)
     if (byName >= 0) return byName
-    const byType = findCompatiblePortIndex(ports, wantType)
-    return byType >= 0 ? byType : 0
+    // -1 ⇒ caller skips the edge: an unwirable suggestion creates NO edge
+    // rather than a wrong one (never blindly slot 0).
+    return findCompatiblePortIndex(ports, wantType)
   }
   const newEdges: any[] = []
   for (const e of result.edges) {
@@ -1198,12 +1199,14 @@ async function insertSuggestion(result: Awaited<ReturnType<typeof suggestPortInt
       const to = created.get(e.toId!)
       if (!to) continue
       const idx = portIdx(to.data.inputs, e.toPort, anchor.portType)
+      if (idx < 0) continue
       newEdges.push({ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: to.id, targetHandle: `input-${idx}`, type: 'comfy', data: { dataType: anchor.portType } })
     }
     else if (e.toAnchor) {
       const from = created.get(e.fromId!)
       if (!from) continue
       const idx = portIdx(from.data.outputs, e.fromPort, anchor.portType)
+      if (idx < 0) continue
       newEdges.push({ source: from.id, sourceHandle: `output-${idx}`, target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } })
     }
     else {
@@ -1211,8 +1214,10 @@ async function insertSuggestion(result: Awaited<ReturnType<typeof suggestPortInt
       const to = created.get(e.toId!)
       if (!from || !to) continue
       const oIdx = portIdx(from.data.outputs, e.fromPort, '*')
+      if (oIdx < 0) continue
       const outType = String(from.data.outputs[oIdx]?.type ?? '*')
       const iIdx = portIdx(to.data.inputs, e.toPort, outType)
+      if (iIdx < 0) continue
       newEdges.push({ source: from.id, sourceHandle: `output-${oIdx}`, target: to.id, targetHandle: `input-${iIdx}`, type: 'comfy', data: { dataType: outType } })
     }
   }
