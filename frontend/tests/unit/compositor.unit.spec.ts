@@ -135,3 +135,41 @@ describe('buildDrawList — sourceFrame threading', () => {
     expect(e.sourceFrame).toBe(3 + 8)             // in_frame 3 + floor(4*2)
   })
 })
+
+describe('buildDrawList — title/lower_third admission', () => {
+  it('admits title clips with registered dims as full-canvas entries', () => {
+    const state = migrateEditState({
+      version: 2,
+      canvas: { width: 640, height: 360, fps: 30, bg_color: '#000000' },
+      total_frames: 20, transitions: [],
+      tracks: [{ id: 't', kind: 'video', name: 'V', muted: false, locked: false, clips: [
+        { id: 'ttl', kind: 'title', start_frame: 0, in_frame: 0, length: 20, opacity: 0.9,
+          title: { text: 'Hi', font_family: 'Inter', font_weight: 700, font_size: 0.1,
+                   color: '#fff', animation_in: 'stagger-up', animation_out: 'fade-out-up',
+                   hold_frames: 10, stagger: 0.05, ease: 'power2.out' } },
+      ] }],
+    })!
+    // Renderer registers the CANVAS size as the title source's dims.
+    const dims = new Map([['ttl', { w: 640, h: 360 }]])
+    const e = buildDrawList(state, 5, dims)[0]!
+    expect(e.clipId).toBe('ttl')
+    expect(e.widthPx).toBe(640)    // full canvas (same aspect → exact fit)
+    expect(e.heightPx).toBe(360)
+    expect(e.centerX).toBe(320)
+    expect(e.alpha).toBeCloseTo(0.9, 10)
+    expect(e.sourceFrame).toBe(5)
+  })
+
+  it('still skips unsupported kinds', () => {
+    const state = migrateEditState({
+      version: 2,
+      canvas: { width: 640, height: 360, fps: 30, bg_color: '#000000' },
+      total_frames: 20, transitions: [],
+      tracks: [{ id: 't', kind: 'video', name: 'V', muted: false, locked: false, clips: [
+        { id: 'txt', kind: 'text', start_frame: 0, in_frame: 0, length: 20,
+          text: { text: 'x', font_size: 72, color: '#fff', bg_color: '#000', align: 'center', v_align: 'middle', padding: 0.06, line_spacing: 1.2 } },
+      ] }],
+    })!
+    expect(buildDrawList(state, 5, new Map())).toEqual([])
+  })
+})

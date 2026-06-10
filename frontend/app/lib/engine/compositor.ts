@@ -12,9 +12,12 @@ import { sourceFrameAt } from '~~/shared/timeline/sourceFrame'
 // 0.5 px off a true center; PIL BILINEAR resampling ≠ GPU linear filtering on
 // rotated/scaled edges.
 
+const RENDERABLE_KINDS = new Set(['image', 'video', 'title', 'lower_third'])
+
 export interface DrawEntry {
   clipId: string
-  /** Fetchable source URL (the clip's `path` as provided in the state). */
+  /** Fetchable source URL (the clip's `path` as provided in the state).
+   *  Empty for canvas-rasterized sources (title/lower_third). */
   url: string
   /** Layer size in px after aspect-fit + scale, pre-rotation (Python dw/dh). */
   widthPx: number
@@ -95,10 +98,10 @@ export function buildDrawList(
   for (const track of state.tracks) {
     if (track.muted || track.kind === 'audio') continue // Audio TRACKS skipped wholesale (Python skips audio CLIPS; an image clip hand-edited onto an audio track would render there — unreachable via the editor, divergence accepted).
     for (const clip of track.clips as Clip[]) {
-      if (clip.kind !== 'image' && clip.kind !== 'video') continue // M2: images + video
-      const url = clip.path
+      if (!RENDERABLE_KINDS.has(clip.kind)) continue // M3: media + animated text (plain 'text' is Phase 2/3)
+      const url = 'path' in clip ? clip.path ?? '' : ''   // canvas-rasterized sources have no URL
       const dims = srcDims.get(clip.id)
-      if (!url || !dims) continue
+      if (!dims) continue
 
       const length = Math.max(1, clip.length)
       const start = clip.start_frame

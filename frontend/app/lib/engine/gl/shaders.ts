@@ -61,10 +61,13 @@ void main() {
   vec2 uv = local / u_size + 0.5;
 
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-  vec3 src = texture(u_src, clamp(uv, 0.0, 1.0)).rgb;
+  vec4 srcTex = texture(u_src, clamp(uv, 0.0, 1.0));
+  vec3 src = srcTex.rgb;
 
-  // Python: result = base*(1-a) + blend(base, src)*a   (a = 0 outside the layer)
-  float a = u_alpha * inside;
+  // Python: result = base*(1-a) + blend(base, src)*a  (a = 0 outside the layer;
+  // src alpha modulates coverage — opaque media uploads with alpha=1 so this is
+  // a no-op for image/video layers and only bites for rasterized text).
+  float a = u_alpha * inside * srcTex.a;
   outColor = vec4(mix(base, blendMode(base, src, u_mode), a), 1.0);
 }
 `
