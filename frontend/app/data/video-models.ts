@@ -9,6 +9,8 @@
  * the node's optional image input is honored when present and the picked
  * model supports I2V.
  *
+ * `supportsSeed` mirrors the Python builders — see _maybe_set_seed call sites.
+ *
  * Skipped on purpose: AnimateDiff/CogVideoX-era models (older lineage),
  * SAM/DeOldify/super-res (not text-to-video), VEED Fabric / DreamActor
  * (specialty avatars — better as separate "talking head" node later).
@@ -68,6 +70,10 @@ export interface VideoModel {
   description?: string             // longer body for the detail pane
   tags: VideoModelTag[]
   modes: VideoModelMode[]          // ['t2v'] | ['i2v'] | ['t2v', 'i2v']
+  // Whether the model's Replicate schema accepts a seed. Mirrors which Python
+  // builders call _maybe_set_seed in comfy_api_nodes/video_models.py — keep in
+  // sync when adding models. false ⇒ the node hides its seed widget.
+  supportsSeed: boolean
   // Free-form price hint, since video pricing varies wildly by duration /
   // resolution. The Python side enforces actual cost via Replicate.
   priceHint: string | null         // e.g. '$0.40 / 5s' or '~$0.10–0.60'
@@ -126,6 +132,7 @@ export const VIDEO_MODELS: VideoModel[] = [
       + 'expensive but consistent.',
     tags: ['flagship', 'audio', '4k', 'cinematic'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.50 / 8s',
     aspectRatios: ['16:9', '9:16'],
     defaultAspectRatio: '16:9',
@@ -146,6 +153,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Same Veo lineage at ~3× speed; quality slightly compressed.',
     tags: ['fast', 'audio'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.20 / 8s',
     aspectRatios: ['16:9', '9:16'],
     defaultAspectRatio: '16:9',
@@ -169,6 +177,7 @@ export const VIDEO_MODELS: VideoModel[] = [
       + 'Strong on dynamic camera work and naturalistic motion. T2V only on Replicate.',
     tags: ['flagship', 'audio', 'cinematic'],
     modes: ['t2v'],
+    supportsSeed: true,
     priceHint: '~$0.30 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -184,6 +193,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Pro tier of Sora 2 — better motion, longer reach, premium price.',
     tags: ['flagship', 'audio', 'cinematic', '4k'],
     modes: ['t2v'],
+    supportsSeed: true,
     priceHint: '~$0.90 / 5s',
     aspectRatios: ['16:9', '9:16'],
     defaultAspectRatio: '16:9',
@@ -204,6 +214,7 @@ export const VIDEO_MODELS: VideoModel[] = [
       + 'Analysis. Strong physical realism and fine detail coherence; no audio yet.',
     tags: ['flagship', 'cinematic', 'photoreal'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.80 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
     defaultAspectRatio: '16:9',
@@ -228,6 +239,7 @@ export const VIDEO_MODELS: VideoModel[] = [
       + 'string up to 6 connected shots in a single prediction. Native audio.',
     tags: ['flagship', 'audio', 'long', 'multi-shot', 'cinematic'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.60 / 10s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -247,6 +259,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Pro-tier Kling tuned for cinematic depth and reliability.',
     tags: ['cinematic', '4k', 'reference'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: false,  // Replicate 422s on seed (2026-06-10)
     priceHint: '~$0.50 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -271,6 +284,7 @@ export const VIDEO_MODELS: VideoModel[] = [
       + 'quality; deepest control surface in the catalog.',
     tags: ['flagship', 'reference', 'audio', '4k'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.60 / 5s',
     aspectRatios: FULL_AR,
     defaultAspectRatio: '16:9',
@@ -292,6 +306,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Speed-optimized Seedance 2.0 with native audio.',
     tags: ['fast', 'audio'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.30 / 5s',
     aspectRatios: STANDARD_AR,
     defaultAspectRatio: '16:9',
@@ -313,6 +328,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Reliable mid-tier — good motion, predictable cost.',
     tags: ['cinematic'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.35 / 6s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -335,6 +351,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Open-source flagship — 27B MoE, the best open T2V right now.',
     tags: ['open-source', 'flagship'],
     modes: ['t2v'],
+    supportsSeed: true,
     priceHint: '~$0.15 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -357,6 +374,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Cheap, fast open-source image-to-video.',
     tags: ['open-source', 'fast', 'cheap'],
     modes: ['i2v'],
+    supportsSeed: true,
     priceHint: '~$0.06 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -378,6 +396,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Luma\'s flagship at 720p — smooth motion, clean aesthetics.',
     tags: ['cinematic'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.40 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
     defaultAspectRatio: '16:9',
@@ -398,6 +417,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'DiT model that renders 24 fps faster than real-time playback.',
     tags: ['fast', 'cheap', 'open-source'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.04 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -421,6 +441,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     pitch: 'Synced audio + multi-shot at a friendly price.',
     tags: ['audio', 'multi-shot', 'cheap'],
     modes: ['t2v', 'i2v'],
+    supportsSeed: true,
     priceHint: '~$0.20 / 5s',
     aspectRatios: ['16:9', '9:16', '1:1'],
     defaultAspectRatio: '16:9',
@@ -453,6 +474,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     // is the primary visual input. The lip-sync tag is the cue that audio is
     // also required — modal surfaces it via a dedicated chip.
     modes: ['i2v'],
+    supportsSeed: false,  // lip-sync model, no seed input
     priceHint: '~$0.20 / 30s',
     // Output framing matches the input image, but we need _something_ in the
     // array for the modal's "supported aspect ratios" panel; document that

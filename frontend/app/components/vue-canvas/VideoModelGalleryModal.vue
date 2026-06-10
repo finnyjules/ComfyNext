@@ -19,6 +19,7 @@ import {
   type VideoModel, type VideoModelTag, type VideoModelMode,
 } from '~/data/video-models'
 import { BRAND_COLORS, getBrandIcon } from '~/data/brand-icons'
+import { snapWidgetsToModel } from '~/lib/videoModelAdapt'
 
 // -- Replicate cover image fetch + cache -----------------------------------
 // Same /api/replicate-cover endpoint as the image gallery. Video models
@@ -206,6 +207,13 @@ function onConfirm(item: VideoModel) {
   const idx = modelWidgetIdx.value
   if (idx < 0) { emit('close'); return }
   node.value!.data.widgetsValues[idx] = item.id
+  // Snap duration/aspect to the new model's supported values so a Veo→Kling
+  // switch doesn't leave duration '8' stranded on a 5/10 model.
+  const snapDefs = node.value!.data.widgetDefs ?? []
+  for (const fix of snapWidgetsToModel(snapDefs, node.value!.data.widgetsValues ?? [], item.id)) {
+    const i = snapDefs.findIndex((d: any) => d?.name === fix.name)
+    if (i >= 0) node.value!.data.widgetsValues[i] = fix.value
+  }
   setModelOptions(item.id, draftOptions.value)
   emit('close')
 }

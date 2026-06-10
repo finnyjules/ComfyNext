@@ -2,6 +2,7 @@
 import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
+import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
@@ -232,6 +233,17 @@ const LIVE_PREVIEW_NODES = new Set([
   'SmartLayout',
 ])
 
+// Video nodes: hide the seed widget (and its hidden control companion) when
+// the selected model's API takes no seed (registry flag supportsSeed — e.g.
+// Kling v2.5 Turbo Pro 422s on it). Visibility is render-only; the positional
+// widgets_values slots are untouched, so alignment is safe.
+const videoSeedGate = (name: string, values: any[], defs: any[]): boolean => {
+  if (name !== 'seed' && name !== 'seed_control') return true
+  const modelIdx = defs.findIndex((d: any) => d?.name === 'model')
+  if (modelIdx < 0) return true
+  return modelSupportsSeed(String(values[modelIdx] ?? ''))
+}
+
 // Per-node conditional widget visibility. Return true to show the widget,
 // false to hide it based on another widget's current value.
 const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs: any[]) => boolean> = {
@@ -258,13 +270,12 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // "More options" right panel.
   Ascii: () => false,
 
-  // Replicate use-case nodes — hide model-specific widgets when the user
-  // selects a different model in the `model` combo. Single source of truth
-  // for which widget belongs to which model lives in MODEL_GATED_WIDGETS.
-  // GenerateImageNode no longer needs gating: model-specific advanced settings
-  // moved into the ModelGalleryModal, so the node body only ever shows the
-  // shared widgets (model picker, prompt, aspect_ratio, seed).
-  GenerateVideoNode: (name, values, defs) => isVisibleForModel('GenerateVideoNode', name, values, defs),
+  // Video generation nodes: hide the seed/seed_control widgets when the
+  // selected model's API takes no seed parameter (registry flag supportsSeed).
+  // Model-specific advanced settings live in the ModelGalleryModal bag, so the
+  // node body only shows shared widgets (model, prompt, aspect_ratio, seed).
+  GenerateVideoNode: videoSeedGate,
+  FilmShotNode: videoSeedGate,
   // Upscalers expose very different controls per engine — Clarity has the full
   // diffusion knob set, Real-ESRGAN/Topaz just face-enhance + scale, Recraft
   // Crisp takes nothing but the image. Gate them so the node only shows what
@@ -275,21 +286,32 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
 }
 
+// Sibling of WIDGET_VISIBILITY: per-node option FILTERS for combo widgets.
+// A rule returns the allowed values for a widget (null = leave schema options
+// alone). The filtered list is intersected with the schema options and falls
+// back to the schema when the intersection is empty — we never invent values
+// the backend combo would reject.
+const videoOptionsFilter = (name: string, values: any[], defs: any[]): string[] | null => {
+  if (name !== 'duration' && name !== 'aspect_ratio') return null
+  const modelIdx = defs.findIndex((d: any) => d?.name === 'model')
+  if (modelIdx < 0) return null
+  const id = String(values[modelIdx] ?? '')
+  return name === 'duration' ? allowedDurations(id) : allowedAspectRatios(id)
+}
+
+const WIDGET_OPTIONS: Record<string, (name: string, values: any[], defs: any[]) => string[] | null> = {
+  GenerateVideoNode: videoOptionsFilter,
+  FilmShotNode: videoOptionsFilter,
+}
+
 // For each use-case node, map model-gated widget names → the Model combo value
 // they belong to. If a widget appears here and the current model doesn't
 // match, the widget is hidden. Widgets NOT in this map are always visible
 // (the shared inputs at the top of each node).
 const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
-  // GenerateImageNode entry removed — its advanced settings live in the
-  // ModelGalleryModal (per-model bag) instead of as gated widgets on the node.
-  GenerateVideoNode: {
-    // Seedance 2.0
-    resolution:        'Seedance 2.0',
-    camera_fixed:      'Seedance 2.0',
-    // Veo 3 + Kling 2.1 share negative_prompt; Kling adds cfg_scale
-    negative_prompt:   ['Veo 3', 'Kling 2.1'],
-    cfg_scale:         'Kling 2.1',
-  },
+  // GenerateImageNode and GenerateVideoNode entries removed — their advanced
+  // settings live in the ModelGalleryModal (per-model bag) instead of as
+  // gated widgets on the node. Video seed gating is handled by videoSeedGate.
   // Upscale engines. `model` is ungated (always shown). Recraft Crisp takes
   // only the image, so none of these match it → it shows just the model picker.
   UpscaleImageNode: {
@@ -334,6 +356,19 @@ function isWidgetVisible(widget: any): boolean {
   const rule = WIDGET_VISIBILITY[props.data.nodeType]
   if (!rule) return true
   return rule(widget.name, props.data.widgetsValues || [], props.data.widgetDefs || [])
+}
+
+// The widget def handed to ComfyNodeWidget — the original, or a shallow clone
+// with filtered options. node.data.widgetDefs is NEVER mutated.
+function effectiveWidgetDef(widget: any): any {
+  const rule = WIDGET_OPTIONS[props.data.nodeType]
+  if (!rule) return widget
+  const allowed = rule(widget.name, props.data.widgetsValues || [], props.data.widgetDefs || [])
+  if (!allowed) return widget
+  const schema: string[] = Array.isArray(widget.options) ? widget.options : []
+  const filtered = schema.filter((o: any) => allowed.includes(String(o)))
+  if (filtered.length === 0 || filtered.length === schema.length) return widget
+  return { ...widget, options: filtered }
 }
 
 // Per-node widget groupings. Widgets in a group render together under a
@@ -1111,7 +1146,7 @@ watch(previewImages, (urls) => {
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
           v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
-          :widget-def="widget"
+          :widget-def="effectiveWidgetDef(widget)"
           :node-type="data.nodeType"
           :node-id="id"
           :model-value="data.widgetsValues?.[i]"
@@ -1137,7 +1172,7 @@ watch(previewImages, (urls) => {
           <VueCanvasComfyNodeWidget
             v-for="widget in widgetsInGroup(group.title)"
             :key="widget.name"
-            :widget-def="widget"
+            :widget-def="effectiveWidgetDef(widget)"
             :node-type="data.nodeType"
             :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
             :is-fixed="isSeedFixed(widget, widgetIndex(widget.name))"
@@ -1164,7 +1199,7 @@ watch(previewImages, (urls) => {
           <VueCanvasComfyNodeWidget
             v-for="widget in advancedWidgets"
             :key="widget.name"
-            :widget-def="widget"
+            :widget-def="effectiveWidgetDef(widget)"
             :node-type="data.nodeType"
             :node-id="id"
             :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
