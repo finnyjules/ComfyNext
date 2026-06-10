@@ -800,7 +800,9 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
 
     # Frame-by-frame composite + encode.
     for f in range(total_frames):
-        out_frame_arr = (render_frame_np(state, clips, f) * 255.0).astype(np.uint8)
+        # .round() matches the golden CLI and /timeline/render_frame exactly —
+        # truncation here would put exported video ±1 off every other surface.
+        out_frame_arr = (render_frame_np(state, clips, f) * 255.0).round().astype(np.uint8)
         av_frame = av.VideoFrame.from_ndarray(out_frame_arr, format="rgb24")
         for packet in out_stream.encode(av_frame):
             out.mux(packet)
@@ -960,7 +962,10 @@ try:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
         state = body.get("state")
-        frame = int(body.get("frame", 0))
+        try:
+            frame = int(body.get("frame", 0))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "invalid frame"}, status=400)
         if _is_edit_state(state):
             state = _adapt_edit_state(state)
         if not isinstance(state, dict) or not isinstance(state.get("clips"), list):
