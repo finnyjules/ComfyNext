@@ -41,7 +41,7 @@ import {
   // Unicorn batch
   Map as MapIcon, Cuboid, Spline, FlipHorizontal, Rainbow, Dot, Star, Sun as SunIcon, Wind,
   // Domain icons
-  Image as ImageDomainIcon, AudioWaveform as AudioIcon, Video as VideoIcon, Box as BoxIcon,
+  Clapperboard, Image as ImageDomainIcon, AudioWaveform as AudioIcon, Video as VideoIcon, Box as BoxIcon,
   // Video effects
   Footprints, Wind as WindIcon2, RectangleHorizontal, Shuffle, Rewind, Scissors, MoveRight, Hourglass,
   GalleryHorizontal, FileVideo,
@@ -446,6 +446,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Generate',
     items: [
       { nodeType: 'GenerateVideoNode',    label: 'Generate Video',     description: 'Text or image to video — 16 models (Veo 3.1, Sora 2, Runway, Kling, Seedance, Wan, Fabric…) picked in the gallery. Cloud.', icon: Film },
+      { nodeType: 'FilmShotNode',         label: 'Film a Shot',        description: 'Direct a video like a cinematographer — 28 shot presets (push-in, dolly zoom, god shot…) write the camera language for you. Cloud.', icon: Clapperboard },
       { nodeType: 'AnimatedNoise',        label: 'Animated Noise',     description: 'Generate a clip of evolving value noise — pans, breathes, or swirls.', icon: Hourglass },
     ],
   },

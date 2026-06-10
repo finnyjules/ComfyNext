@@ -29,6 +29,7 @@ import {
   MessageSquareText,
   ScanText,
   Crosshair,
+  Clapperboard,
   Film,
   Mic,
   Captions,
@@ -65,6 +66,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
 
   // ----- Video -----
   GenerateVideoNode:    Film,
+  FilmShotNode:         Clapperboard,
   EnhanceVideoNode:     Wand2,
   DescribeVideoNode:    MessageSquareText,
   LipsyncNode:          Mic,
@@ -127,6 +129,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
 
   // ----- Video -----
   GenerateVideoNode:    null,                 // Multi: Seedance / Veo / Kling
+  FilmShotNode:         null,                 // Multi: full video gallery
   EnhanceVideoNode:     'Topaz',
   DescribeVideoNode:    'Gemini',
   LipsyncNode:          null,                 // sync.so 2-pro
