@@ -1,5 +1,6 @@
 import type { Node, Edge } from '@vue-flow/core'
 import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } from '~/composables/useFilteredPrompt'
+import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 
 // LiteGraph workflow format
 export interface LiteGraphNode {
@@ -410,7 +411,14 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
           outputNode: !!objectInfo.value[lgNode.type]?.output_node,
           priceBadge: objectInfo.value[lgNode.type]?.price_badge || null,
           inputs: lgNode.inputs || [],
-          outputs: lgNode.outputs || [],
+          // Append-only schema sync: saves made before a node type grew extra
+          // outputs carry a short snapshot forever — append the missing
+          // trailing outputs from /object_info (never reorder/remove; edges
+          // reference outputs by index). No-op when the type is unknown.
+          outputs: syncNodeOutputsWithSchema(
+            lgNode.outputs,
+            schemaOutputsFromInfo(objectInfo.value[lgNode.type]),
+          ) ?? (lgNode.outputs || []),
           widgetsValues: lgNode.widgets_values || [],
           widgetDefs: getWidgetDefs(lgNode.type),
           properties: lgNode.properties || {},

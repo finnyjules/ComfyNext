@@ -29,6 +29,7 @@ const MAX_CLIPS = 16
 const isMuted = computed(() => props.data.mode === 2)
 const isBypassed = computed(() => props.data.mode === 4)
 const imageColor = computed(() => getTypeColor('IMAGE'))
+const videoColor = computed(() => getTypeColor('VIDEO'))
 const injectedEdges = inject<any>('vueFlowEdges', null)
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -39,6 +40,9 @@ function outputIdx(name: string): number {
 function widgetIdx(name: string): number { return props.data.widgetDefs?.findIndex((w: any) => w.name === name) ?? -1 }
 function widgetVal(name: string): number { const i = widgetIdx(name); return i >= 0 ? Number(props.data.widgetsValues?.[i] ?? 0) : 0 }
 const framesOutIdx = computed(() => outputIdx('frames'))
+// No 0-fallback here (unlike outputIdx): -1 means "no video output" — stale
+// saved data that skipped the schema sync — and the handle simply doesn't render.
+const videoOutIdx = computed(() => props.data.outputs?.findIndex(o => o.name === 'video') ?? -1)
 
 // ── Clip input handles (grow-on-connect, mirrors the Frame's layerSlots) ─────
 function slotConnected(slotIdx: number): boolean {
@@ -132,11 +136,20 @@ function runThisNode() {
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
       :style="{ borderColor: imageColor, top: handleTop(i, clipSlots.length) }"
     />
-    <!-- Frames output (right) -->
+    <!-- Outputs (right): frames (IMAGE) + video (VIDEO). With only one output
+         (stale saved data) frames stays centered at 50% as before. -->
     <Handle
       :id="`output-${framesOutIdx}`" type="source" :position="Position.Right"
+      title="frames"
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: '50%' }"
+      :style="{ borderColor: imageColor, top: videoOutIdx >= 0 ? '38%' : '50%' }"
+    />
+    <Handle
+      v-if="videoOutIdx >= 0"
+      :id="`output-${videoOutIdx}`" type="source" :position="Position.Right"
+      title="video"
+      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
+      :style="{ borderColor: videoColor, top: '62%' }"
     />
 
     <div

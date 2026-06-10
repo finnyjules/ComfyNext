@@ -31,6 +31,7 @@ import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
 import type { PortAnchor } from '~/lib/portIntent'
+import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { usePortIntent } from '~/composables/usePortIntent'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
 import StickyAnnotation from '~/components/vue-canvas/StickyAnnotation.vue'
@@ -963,16 +964,9 @@ watch(objectInfo, (info) => {
     }
 
     // Sync outputs from object_info if the node has fewer outputs than defined
-    const expectedOutputs = (nodeInfo.output || []).map((type: string, i: number) => ({
-      name: nodeInfo.output_name?.[i] || type,
-      type,
-      links: null,
-    }))
-    if (expectedOutputs.length > (n.data.outputs?.length || 0)) {
-      // Preserve existing link data for outputs that already exist
-      const merged = expectedOutputs.map((eo: any, i: number) => n.data.outputs?.[i] || eo)
-      updates.outputs = merged
-    }
+    // (append-only: existing outputs keep their link data and indices)
+    const synced = syncNodeOutputsWithSchema(n.data.outputs, schemaOutputsFromInfo(nodeInfo))
+    if (synced) updates.outputs = synced
 
     if (!n.data.category && nodeInfo.category) {
       updates.category = nodeInfo.category
