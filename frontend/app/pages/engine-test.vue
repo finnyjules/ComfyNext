@@ -71,6 +71,7 @@ onMounted(() => {
     },
     async play(): Promise<void> {
       if (!clock || !playState || !renderer || !canvas.value) throw new Error('loadTimeline first')
+      cancelAnimationFrame(rafId)   // double-play guard: never run two tick loops
       await audio!.resume()
       clock.play()
       audio!.play(playState, clock.now())
@@ -95,6 +96,8 @@ onMounted(() => {
     pause(): void {
       clock?.pause()
       audio?.stop()
+      // An in-flight renderFrame may still resolve after this — harmless: it
+      // draws the frame at the pause position and the rAF chain is dead.
       cancelAnimationFrame(rafId)
       status.value = 'paused'
     },
