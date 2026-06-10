@@ -28,7 +28,7 @@ export type TimelineCommand =
   | { type: 'set_keyframe_ease'; clip_id: string; frame: number; ease: Keyframe['ease'] }
   | { type: 'set_clip_transform'; clip_id: string; frame: number; patch: Partial<ClipTransform> }
   | { type: 'add_transition'; transition: Transition }
-  | { type: 'update_transition'; transition_id: string; patch: Partial<Omit<Transition, 'id'>> }
+  | { type: 'update_transition'; transition_id: string; patch: Partial<Pick<Transition, 'kind' | 'duration' | 'params'>> } // re-wiring a junction = remove + add
   | { type: 'remove_transition'; transition_id: string }
 
 function findTrack(s: EditState, trackId: string): Track | null {
@@ -71,7 +71,8 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
     case 'add_clip': {
       const track = findTrack(s, cmd.track_id)
       if (!track) return false
-      track.clips.push(cmd.clip)
+      // commands own their payloads — cloning keeps a replayed command log deterministic and prevents callers holding live references into state
+      track.clips.push(structuredClone(cmd.clip))
       return true
     }
 
@@ -104,13 +105,14 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
       const hit = findClip(s, cmd.clip_id)
       if (!hit) return false
       const { track, clip, index } = hit
-      if (cmd.frame <= clip.start_frame || cmd.frame >= clip.start_frame + clip.length) return false
+      const frame = Math.round(cmd.frame)
+      if (frame <= clip.start_frame || frame >= clip.start_frame + clip.length) return false
 
-      const splitPoint = cmd.frame - clip.start_frame
+      const splitPoint = frame - clip.start_frame
       const right: Clip = {
         ...JSON.parse(JSON.stringify(clip)),
         id: cmd.new_clip_id,
-        start_frame: cmd.frame,
+        start_frame: frame,
         in_frame: (clip.in_frame ?? 0) + splitPoint,
         length: clip.length - splitPoint,
       }
@@ -172,11 +174,13 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
 
     case 'remove_keyframe': {
       const hit = findClip(s, cmd.clip_id)
-      if (!hit?.clip.keyframes) return false
-      const before = hit.clip.keyframes.length
-      hit.clip.keyframes = hit.clip.keyframes.filter(k => k.frame !== cmd.frame)
-      if (!hit.clip.keyframes.length) delete hit.clip.keyframes
-      return hit.clip.keyframes?.length !== before
+      const kfs = hit?.clip.keyframes
+      if (!kfs) return false
+      const i = kfs.findIndex(k => k.frame === cmd.frame)
+      if (i < 0) return false
+      kfs.splice(i, 1)
+      if (!kfs.length) delete hit!.clip.keyframes
+      return true
     }
 
     case 'move_keyframe': {
@@ -217,10 +221,15 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
 
     case 'add_transition': {
       const t = cmd.transition
-      if (!findClip(s, t.from_clip_id) || !findClip(s, t.to_clip_id)) return false
+      // Both clips must exist on the track named by t.track_id (not just anywhere).
+      const track = findTrack(s, t.track_id)
+      if (!track) return false
+      if (!track.clips.some(c => c.id === t.from_clip_id)) return false
+      if (!track.clips.some(c => c.id === t.to_clip_id)) return false
       // One transition per junction: replace any existing one on the same pair.
       s.transitions = s.transitions.filter(x => !(x.from_clip_id === t.from_clip_id && x.to_clip_id === t.to_clip_id))
-      s.transitions.push(t)
+      // commands own their payloads — cloning keeps a replayed command log deterministic and prevents callers holding live references into state
+      s.transitions.push(structuredClone(t))
       return true
     }
 

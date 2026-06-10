@@ -86,7 +86,8 @@ describe('applyCommand', () => {
     clip.scale = 2
     applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
     expect(applyCommand(s, { type: 'add_keyframe', clip_id: 'a', frame: 15 })).toBe(true)
-    expect(clip.keyframes).toEqual([
+    const stateClip = s.tracks[0]!.clips[0]!
+    expect(stateClip.keyframes).toEqual([
       { frame: 5, x: 0.4, y: 0, rotation: 0, scale: 2, opacity: 1, ease: 'linear' },
     ])
   })
@@ -95,13 +96,14 @@ describe('applyCommand', () => {
     const clip = img('a', 0, 30)
     applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
     applyCommand(s, { type: 'set_clip_transform', clip_id: 'a', frame: 5, patch: { x: 0.25 } })
-    expect(clip.x).toBe(0.25)
-    expect(clip.keyframes).toBeUndefined()
+    const stateClip = s.tracks[0]!.clips[0]!
+    expect(stateClip.x).toBe(0.25)
+    expect(stateClip.keyframes).toBeUndefined()
 
     applyCommand(s, { type: 'add_keyframe', clip_id: 'a', frame: 0 })
     applyCommand(s, { type: 'set_clip_transform', clip_id: 'a', frame: 10, patch: { x: 0.9 } })
-    expect(clip.keyframes).toHaveLength(2)
-    expect(clip.keyframes![1]).toMatchObject({ frame: 10, x: 0.9 })
+    expect(stateClip.keyframes).toHaveLength(2)
+    expect(stateClip.keyframes![1]).toMatchObject({ frame: 10, x: 0.9 })
   })
 
   it('add_transition requires both clips and replaces the same junction', () => {
@@ -126,6 +128,41 @@ describe('applyCommand', () => {
     expect(s.transitions).toEqual([])
   })
 
+  it('remove_keyframe returns false without mutating on miss or empty array', () => {
+    const clip = img('a', 0, 30)
+    ;(clip as any).keyframes = []
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    const before = JSON.stringify(s)
+    expect(applyCommand(s, { type: 'remove_keyframe', clip_id: 'a', frame: 5 })).toBe(false)
+    expect(JSON.stringify(s)).toBe(before)
+  })
+
+  it('split_clip rounds fractional cut frames', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 20) })
+    expect(applyCommand(s, { type: 'split_clip', clip_id: 'a', frame: 10.4, new_clip_id: 'a2' })).toBe(true)
+    const [left, right] = s.tracks[0]!.clips
+    expect(left!.length).toBe(10)
+    expect(right!.start_frame).toBe(10)
+    expect(right!.in_frame).toBe(10)
+    expect(right!.length).toBe(10)
+  })
+
+  it('add_transition rejects clips not on the named track', () => {
+    applyCommand(s, { type: 'add_track', track_id: 'v2', kind: 'video', name: 'Video 2' })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: 'v2', clip: img('b', 30, 30) })
+    expect(applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'b') })).toBe(false)
+    expect(applyCommand(s, { type: 'add_transition', transition: tr('t1', 'bogus', 'a', 'b') })).toBe(false)
+    expect(s.transitions).toEqual([])
+  })
+
+  it('add_clip clones its payload — caller mutations do not leak into state', () => {
+    const clip = img('a', 0, 30)
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    clip.start_frame = 999
+    expect(s.tracks[0]!.clips[0]!.start_frame).toBe(0)
+  })
+
   it('keyframe maintenance: remove / move / ease (clip-local frames)', () => {
     const clip = img('a', 0, 30)
     clip.keyframes = [
@@ -133,12 +170,13 @@ describe('applyCommand', () => {
       { frame: 20, x: 1, y: 0, rotation: 0, scale: 1, opacity: 1 },
     ]
     applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    const stateClip = s.tracks[0]!.clips[0]!
     expect(applyCommand(s, { type: 'move_keyframe', clip_id: 'a', from_frame: 20, to_frame: 10 })).toBe(true)
-    expect(clip.keyframes![1]!.frame).toBe(10)
+    expect(stateClip.keyframes![1]!.frame).toBe(10)
     expect(applyCommand(s, { type: 'set_keyframe_ease', clip_id: 'a', frame: 10, ease: 'easeInOut' })).toBe(true)
-    expect(clip.keyframes![1]!.ease).toBe('easeInOut')
+    expect(stateClip.keyframes![1]!.ease).toBe('easeInOut')
     expect(applyCommand(s, { type: 'remove_keyframe', clip_id: 'a', frame: 10 })).toBe(true)
     expect(applyCommand(s, { type: 'remove_keyframe', clip_id: 'a', frame: 0 })).toBe(true)
-    expect(clip.keyframes).toBeUndefined()
+    expect(stateClip.keyframes).toBeUndefined()
   })
 })
