@@ -55,7 +55,9 @@ export class GlRenderer {
   private layerProg: WebGLProgram
   private presentProg: WebGLProgram
   private targets: [Target, Target]
-  private srcTextures = new Map<string, WebGLTexture>()
+  private srcTextures = new Map<string, { tex: WebGLTexture; version: number }>()
+  private layerU!: { [k: string]: WebGLUniformLocation | null } & { u_base: WebGLUniformLocation | null; u_src: WebGLUniformLocation | null; u_canvas: WebGLUniformLocation | null; u_center: WebGLUniformLocation | null; u_size: WebGLUniformLocation | null; u_rotation: WebGLUniformLocation | null; u_alpha: WebGLUniformLocation | null; u_mode: WebGLUniformLocation | null }
+  private presentU!: { [k: string]: WebGLUniformLocation | null } & { u_tex: WebGLUniformLocation | null; u_flipY: WebGLUniformLocation | null }
   private width = 0
   private height = 0
 
@@ -74,6 +76,14 @@ export class GlRenderer {
 
     this.layerProg = link(gl, VERTEX_SRC, FRAGMENT_SRC)
     this.presentProg = link(gl, VERTEX_SRC, PRESENT_FS)
+
+    const cacheUniforms = (prog: WebGLProgram, names: string[]) =>
+      Object.fromEntries(names.map(n => [n, gl.getUniformLocation(prog, n)])) as any
+    this.layerU = cacheUniforms(this.layerProg, [
+      'u_base', 'u_src', 'u_canvas', 'u_center', 'u_size', 'u_rotation', 'u_alpha', 'u_mode',
+    ])
+    this.presentU = cacheUniforms(this.presentProg, ['u_tex', 'u_flipY'])
+
     this.targets = [this.makeTarget(1, 1), this.makeTarget(1, 1)]
   }
 
@@ -107,21 +117,25 @@ export class GlRenderer {
     this.targets = [this.makeTarget(w, h), this.makeTarget(w, h)]
   }
 
-  /** Upload (or fetch cached) source texture for a draw entry. LINEAR filtering
-   *  — the GPU analogue of the Python renderer's BILINEAR resampling. */
-  uploadSource(key: string, image: TexImageSource): void {
+  /** Upload or update the source texture for a draw key. Re-uploads only when
+   *  `version` changes — static images pass a constant, animated sources pass
+   *  the source frame index. LINEAR filtering (GPU analogue of PIL BILINEAR). */
+  setSource(key: string, image: TexImageSource, version = 0): void {
     const gl = this.gl
-    if (this.srcTextures.has(key)) return
-    const tex = gl.createTexture()!
+    const existing = this.srcTextures.get(key)
+    if (existing && existing.version === version) return
+    const tex = existing?.tex ?? gl.createTexture()!
     gl.bindTexture(gl.TEXTURE_2D, tex)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-    this.srcTextures.set(key, tex)
+    if (!existing) {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    }
+    this.srcTextures.set(key, { tex, version })
   }
 
   /** Render the draw list over bg color; result lands on this.canvas. */
@@ -139,27 +153,26 @@ export class GlRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT)
 
     gl.useProgram(this.layerProg)
-    const u = (name: string) => gl.getUniformLocation(this.layerProg, name)
 
     for (const e of entries) {
-      const srcTex = this.srcTextures.get(e.clipId)
-      if (!srcTex) continue
+      const src = this.srcTextures.get(e.clipId)
+      if (!src) continue
       const write = 1 - read
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets[write]!.fbo)
 
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, this.targets[read]!.tex)
-      gl.uniform1i(u('u_base'), 0)
+      gl.uniform1i(this.layerU.u_base, 0)
       gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, srcTex)
-      gl.uniform1i(u('u_src'), 1)
+      gl.bindTexture(gl.TEXTURE_2D, src.tex)
+      gl.uniform1i(this.layerU.u_src, 1)
 
-      gl.uniform2f(u('u_canvas'), w, h)
-      gl.uniform2f(u('u_center'), e.centerX, e.centerY)
-      gl.uniform2f(u('u_size'), e.widthPx, e.heightPx)
-      gl.uniform1f(u('u_rotation'), (e.rotationDeg * Math.PI) / 180)
-      gl.uniform1f(u('u_alpha'), e.alpha)
-      gl.uniform1i(u('u_mode'), BLEND_MODE_INDEX[e.blend])
+      gl.uniform2f(this.layerU.u_canvas, w, h)
+      gl.uniform2f(this.layerU.u_center, e.centerX, e.centerY)
+      gl.uniform2f(this.layerU.u_size, e.widthPx, e.heightPx)
+      gl.uniform1f(this.layerU.u_rotation, (e.rotationDeg * Math.PI) / 180)
+      gl.uniform1f(this.layerU.u_alpha, e.alpha)
+      gl.uniform1i(this.layerU.u_mode, BLEND_MODE_INDEX[e.blend])
 
       gl.drawArrays(gl.TRIANGLES, 0, 3)
       read = write
@@ -170,13 +183,13 @@ export class GlRenderer {
     gl.useProgram(this.presentProg)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.targets[read]!.tex)
-    gl.uniform1i(gl.getUniformLocation(this.presentProg, 'u_tex'), 0)
-    gl.uniform1f(gl.getUniformLocation(this.presentProg, 'u_flipY'), PRESENT_FLIP ? 1 : 0)
+    gl.uniform1i(this.presentU.u_tex, 0)
+    gl.uniform1f(this.presentU.u_flipY, PRESENT_FLIP ? 1 : 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
   clearSources(): void {
-    for (const tex of this.srcTextures.values()) this.gl.deleteTexture(tex)
+    for (const entry of this.srcTextures.values()) this.gl.deleteTexture(entry.tex)
     this.srcTextures.clear()
   }
 

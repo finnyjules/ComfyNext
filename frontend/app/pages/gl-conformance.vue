@@ -28,8 +28,8 @@ onMounted(async () => {
   renderer = new GlRenderer()
   const base = await createImageBitmap(rampBitmap(true))   // value = x
   const top = await createImageBitmap(rampBitmap(false))   // value = y
-  renderer.uploadSource('base-ramp', base)
-  renderer.uploadSource('top-ramp', top)
+  renderer.setSource('base-ramp', base)
+  renderer.setSource('top-ramp', top)
 
   ;(window as any).__glConformance = {
     run(mode: BlendMode): string {

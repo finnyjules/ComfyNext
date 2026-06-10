@@ -46,8 +46,8 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
     const entries = buildDrawList(this.state, frame, dims)
 
     for (const e of entries) {
-      const frameImg = await this.sources.get(e.clipId)!.getFrame(0)
-      this.gl.uploadSource(e.clipId, frameImg) // no-op when already uploaded
+      const frameImg = await this.sources.get(e.clipId)!.getFrame(e.sourceFrame)
+      this.gl.setSource(e.clipId, frameImg, e.sourceFrame)
     }
     this.gl.render(entries, hexToRgb(this.state.canvas.bg_color), W, H)
 
