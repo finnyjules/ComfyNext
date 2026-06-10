@@ -1,4 +1,9 @@
 <script setup lang="ts">
+// Dev/test-only surface — 404 in production builds (the M1 deferral, closed in M3).
+if (!import.meta.dev) {
+  throw createError({ statusCode: 404, statusMessage: 'Not found' })
+}
+
 // Dev/test-only: Playwright drives window.__glConformance to render the full
 // (base, top) value grid through the REAL GlRenderer layer pass for one blend
 // mode and read pixels back. The base ramp is drawn first as a 'normal'

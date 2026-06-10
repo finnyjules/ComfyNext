@@ -1,4 +1,9 @@
 <script setup lang="ts">
+// Dev/test-only surface — 404 in production builds (the M1 deferral, closed in M3).
+if (!import.meta.dev) {
+  throw createError({ statusCode: 404, statusMessage: 'Not found' })
+}
+
 // Dev/test-only surface: Playwright drives window.__timelineHarness to render
 // fixture frames through a PreviewRenderer and read pixels back. Not linked
 // from anywhere in the app UI. Phase 1 registers 'webgl' as a second renderer

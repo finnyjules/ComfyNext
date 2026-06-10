@@ -1,4 +1,9 @@
 <script setup lang="ts">
+// Dev/test-only surface — 404 in production builds (the M1 deferral, closed in M3).
+if (!import.meta.dev) {
+  throw createError({ statusCode: 404, statusMessage: 'Not found' })
+}
+
 // Dev/test-only: Playwright drives window.__engineTest to exercise frame
 // sources against the counter fixture (each frame's gray level encodes its
 // index) and, from Task 7, real-time playback. Not linked from the app UI.
