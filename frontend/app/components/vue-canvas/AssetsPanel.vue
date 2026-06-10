@@ -79,7 +79,11 @@ function onPanelDrop(e: DragEvent) {
 }
 
 onMounted(async () => {
-  await fetchGenerations()
+  // Force a fresh read each time the panel opens. fetchGenerations caches on a
+  // module-level `fetchedOnce`, so a plain call returns stale data after the
+  // first open — meaning generations produced since (a run, another tab) never
+  // show up until a full page reload.
+  await fetchGenerations(true)
   await loadImports()
   // Default to the current project if it has generations, else show all.
   const hasCurrent = currentProjectId.value
