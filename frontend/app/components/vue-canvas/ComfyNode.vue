@@ -2,6 +2,7 @@
 import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
+import { modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
@@ -232,6 +233,17 @@ const LIVE_PREVIEW_NODES = new Set([
   'SmartLayout',
 ])
 
+// Video nodes: hide the seed widget (and its hidden control companion) when
+// the selected model's API takes no seed (registry flag supportsSeed — e.g.
+// Kling v2.5 Turbo Pro 422s on it). Visibility is render-only; the positional
+// widgets_values slots are untouched, so alignment is safe.
+const videoSeedGate = (name: string, values: any[], defs: any[]): boolean => {
+  if (name !== 'seed' && name !== 'seed_control') return true
+  const modelIdx = defs.findIndex((d: any) => d?.name === 'model')
+  if (modelIdx < 0) return true
+  return modelSupportsSeed(String(values[modelIdx] ?? ''))
+}
+
 // Per-node conditional widget visibility. Return true to show the widget,
 // false to hide it based on another widget's current value.
 const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs: any[]) => boolean> = {
@@ -258,13 +270,12 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // "More options" right panel.
   Ascii: () => false,
 
-  // Replicate use-case nodes — hide model-specific widgets when the user
-  // selects a different model in the `model` combo. Single source of truth
-  // for which widget belongs to which model lives in MODEL_GATED_WIDGETS.
-  // GenerateImageNode no longer needs gating: model-specific advanced settings
-  // moved into the ModelGalleryModal, so the node body only ever shows the
-  // shared widgets (model picker, prompt, aspect_ratio, seed).
-  GenerateVideoNode: (name, values, defs) => isVisibleForModel('GenerateVideoNode', name, values, defs),
+  // Video generation nodes: hide the seed/seed_control widgets when the
+  // selected model's API takes no seed parameter (registry flag supportsSeed).
+  // Model-specific advanced settings live in the ModelGalleryModal bag, so the
+  // node body only shows shared widgets (model, prompt, aspect_ratio, seed).
+  GenerateVideoNode: videoSeedGate,
+  FilmShotNode: videoSeedGate,
   // Upscalers expose very different controls per engine — Clarity has the full
   // diffusion knob set, Real-ESRGAN/Topaz just face-enhance + scale, Recraft
   // Crisp takes nothing but the image. Gate them so the node only shows what
@@ -280,16 +291,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
 // match, the widget is hidden. Widgets NOT in this map are always visible
 // (the shared inputs at the top of each node).
 const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
-  // GenerateImageNode entry removed — its advanced settings live in the
-  // ModelGalleryModal (per-model bag) instead of as gated widgets on the node.
-  GenerateVideoNode: {
-    // Seedance 2.0
-    resolution:        'Seedance 2.0',
-    camera_fixed:      'Seedance 2.0',
-    // Veo 3 + Kling 2.1 share negative_prompt; Kling adds cfg_scale
-    negative_prompt:   ['Veo 3', 'Kling 2.1'],
-    cfg_scale:         'Kling 2.1',
-  },
+  // GenerateImageNode and GenerateVideoNode entries removed — their advanced
+  // settings live in the ModelGalleryModal (per-model bag) instead of as
+  // gated widgets on the node. Video seed gating is handled by videoSeedGate.
   // Upscale engines. `model` is ungated (always shown). Recraft Crisp takes
   // only the image, so none of these match it → it shows just the model picker.
   UpscaleImageNode: {
