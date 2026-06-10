@@ -21,4 +21,10 @@ describe('shot-presets catalog', () => {
   it('ids match the backend catalog convention (kebab-case)', () => {
     for (const p of SHOT_PRESETS) expect(p.id).toMatch(/^[a-z0-9-]+$/)
   })
+
+  it('category counts match the Python catalog (15/4/4/5)', () => {
+    const counts = { movement: 0, angle: 0, lens: 0, composition: 0 }
+    for (const p of SHOT_PRESETS) counts[p.category]++
+    expect(counts).toEqual({ movement: 15, angle: 4, lens: 4, composition: 5 })
+  })
 })

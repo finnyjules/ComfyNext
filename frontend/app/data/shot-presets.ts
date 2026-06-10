@@ -62,7 +62,7 @@ export const SHOT_PRESETS: ShotPreset[] = [
     pitch: 'Walk-and-talk energy', thumb: { scale: 1, arrow: 'right' } },
   { id: 'handheld', label: 'Handheld urgency', category: 'movement',
     recipe: 'MCU · shaky handheld follow · 28mm · loose framing',
-    pitch: 'Documentary adrenaline', thumb: { scale: 1.1, tilt: 1.5, arrow: 'shake' } },
+    pitch: 'Documentary urgency', thumb: { scale: 1.1, tilt: 1.5, arrow: 'shake' } },
   { id: 'dolly-zoom', label: 'Dolly zoom (Vertigo)', category: 'movement',
     recipe: 'MCU · dolly in + zoom out · warping background · centered',
     pitch: 'Reality bends around them', thumb: { scale: 1.2, arrow: 'in', overlay: 'streak' } },
@@ -89,7 +89,7 @@ export const SHOT_PRESETS: ShotPreset[] = [
     pitch: 'The opening-credits shot', thumb: { scale: 0.45, top: 48, arrow: 'orbit' } },
   { id: 'ground-rush', label: 'Ground-rush tracking', category: 'movement',
     recipe: 'Low MS · inches off the floor · fast forward skim · 24mm',
-    pitch: 'Road-blur menace', thumb: { scale: 0.85, top: 16, arrow: 'right', overlay: 'streak' } },
+    pitch: 'Road-blur menace', thumb: { scale: 0.85, top: 16, arrow: 'in', overlay: 'streak' } },
 
   // ── Angle ────────────────────────────────────────────────────────────────
   { id: 'god-shot', label: 'Overhead god shot', category: 'angle',
@@ -103,7 +103,7 @@ export const SHOT_PRESETS: ShotPreset[] = [
     pitch: 'Something is quietly wrong', thumb: { scale: 1.1, tilt: -8, arrow: 'right' } },
   { id: 'worms-eye', label: "Worm's-eye sky", category: 'angle',
     recipe: 'Extreme low, looking straight up · 18mm · towers swallow the frame',
-    pitch: 'Vertigo in reverse', thumb: { scale: 1.25, top: 2, arrow: 'up' } },
+    pitch: 'Vertigo in reverse', thumb: { scale: 1.25, top: 2, arrow: 'none' } }, // camera rolls; no roll arrow available
 
   // ── Lens ─────────────────────────────────────────────────────────────────
   { id: 'anamorphic', label: 'Anamorphic dream', category: 'lens',
@@ -122,7 +122,7 @@ export const SHOT_PRESETS: ShotPreset[] = [
   // ── Composition ──────────────────────────────────────────────────────────
   { id: 'locked-off', label: 'Symmetrical one-point', category: 'composition',
     recipe: 'Wide · locked-off static · 32mm deep · dead-center symmetry',
-    pitch: 'An unblinking formal stare', thumb: { scale: 0.9, overlay: 'thirds', arrow: 'none' } },
+    pitch: 'An unblinking formal stare', thumb: { scale: 0.9, overlay: 'none', arrow: 'none' } }, // dead-center symmetry; thirds grid would contradict
   { id: 'ots', label: 'Over-the-shoulder', category: 'composition',
     recipe: 'MCU · 65mm shallow · framed over a foreground shoulder',
     pitch: 'Conversation intimacy', thumb: { scale: 1, overlay: 'shoulder', arrow: 'none' } },
@@ -134,8 +134,12 @@ export const SHOT_PRESETS: ShotPreset[] = [
     pitch: 'Being watched', thumb: { scale: 0.95, overlay: 'doorframe', arrow: 'none' } },
   { id: 'mirror', label: 'Mirror double', category: 'composition',
     recipe: 'MCU · subject + reflection share frame · 50mm · slow push',
-    pitch: 'Two truths at once', thumb: { scale: 0.9, overlay: 'mirror', arrow: 'none' } },
+    pitch: 'Two truths at once', thumb: { scale: 0.9, overlay: 'mirror', arrow: 'in' } },
 ]
 
 export const SHOT_PRESETS_BY_ID: Record<string, ShotPreset> =
   Object.fromEntries(SHOT_PRESETS.map(p => [p.id, p]))
+
+// Fallback for unknown/old workflow preset ids — mirrors DEFAULT_PRESET_ID in
+// comfy_api_nodes/shot_presets.py.
+export const DEFAULT_SHOT_PRESET_ID = 'push-in'
