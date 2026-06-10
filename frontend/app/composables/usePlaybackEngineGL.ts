@@ -51,6 +51,7 @@ export function usePlaybackEngineGL(
   async function reload(): Promise<void> {
     if (loading) return
     loading = true
+    const sigAtStart = lastSignature
     try {
       await Promise.all([
         renderer.load(state.value, { resolve: resolveClipPreview }),
@@ -65,6 +66,10 @@ export function usePlaybackEngineGL(
       }
     } finally {
       loading = false
+      // If the clip set changed again while this load was in flight (rapid
+      // clip adds), run again with the new set — the in-flight guard would
+      // otherwise silently drop it.
+      if (lastSignature !== sigAtStart) void reload()
     }
   }
 
