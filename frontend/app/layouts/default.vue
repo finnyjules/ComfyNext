@@ -17,6 +17,7 @@ import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
@@ -1817,10 +1818,20 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   // Queue failed inside the canvas (validation / unknown node / serialization)
-  // before anything ran — surface it instead of failing silently.
+  // before anything ran — surface it instead of failing silently. When the
+  // bridge forwards ComfyUI's structured node_errors map (prompt validation:
+  // type mismatches, missing inputs, bad combo values), show a per-node
+  // summary. The offending nodes get their red rings via VueNodeCanvas, which
+  // listens to the same bridge postMessage directly (the exact path
+  // execution_error events take — no re-dispatch needed).
   if (event.data.event === 'queue_error') {
-    const msg = event.data.message || 'The canvas could not start this run.'
-    toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+    const { description } = summarizeNodeErrors(event.data.node_errors)
+    if (description) {
+      toast.error('Workflow validation failed', { description })
+    } else {
+      const msg = event.data.message || 'The canvas could not start this run.'
+      toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+    }
     // Clear any pending run state so spinners don't hang.
     if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
     currentRunSilent.value = false

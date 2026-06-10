@@ -1093,13 +1093,39 @@ app.registerExtension({
 
       if (action === "queuePrompt") {
         // Trigger ComfyUI's native queue prompt (same as clicking Run).
-        // queuePrompt is async — await it so validation/serialization failures
-        // (e.g. an unknown node type, or a node missing required inputs) are
-        // caught and surfaced to the parent instead of dying silently here.
+        //
+        // Observed behavior (comfyui-frontend-package 1.41.20): when /prompt
+        // returns HTTP 400 (validation failure — type mismatch, missing input,
+        // bad combo value), the raw api.queuePrompt throws a
+        // PromptExecutionError whose `.response` is the parsed body
+        // ({ error: {...}, node_errors: { "<id>": { errors: [...],
+        // class_type } } }). But app.queuePrompt CATCHES it itself: it shows
+        // ComfyUI's own error dialog (invisible — this iframe is hidden),
+        // stores app.lastNodeErrors, and returns `false` WITHOUT rethrowing.
+        // So a plain try/catch here never fires and the failure is silent.
+        // (Its boolean return is unusable too: a 200 response carries
+        // `node_errors: {}`, the store keeps the truthy `{}`, and
+        // `return !lastNodeErrors` yields false even on success.)
+        // Fix: wrap api.queuePrompt to capture the thrown error's structured
+        // response; failure = captured 400 body OR non-empty lastNodeErrors.
         try {
           if (window.app?.queuePrompt) {
+            ensurePromptErrorCapture();
+            window._comfynextLastPromptError = null;
             await window.app.queuePrompt(0); // 0 = front of queue
-            console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
+            const resp = window._comfynextLastPromptError; // parsed 400 body, if any
+            const lastErrs = window.app?.lastNodeErrors;
+            const hasNodeErrors = !!(lastErrs && typeof lastErrs === "object" && Object.keys(lastErrs).length);
+            if (resp || hasNodeErrors) {
+              const nodeErrors = resp?.node_errors || (hasNodeErrors ? lastErrs : null);
+              const message =
+                (resp?.error && (resp.error.message || String(resp.error))) ||
+                "The workflow failed validation.";
+              console.error("[ComfyNext Bridge] prompt validation failed:", message, nodeErrors);
+              postToParent({ event: "queue_error", message, node_errors: nodeErrors });
+            } else {
+              console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
+            }
           } else {
             // Fallback: try the command system
             tryExecuteCommand("Comfy.QueuePrompt");
@@ -1109,6 +1135,7 @@ app.registerExtension({
           postToParent({
             event: "queue_error",
             message: (e && (e.message || String(e))) || "Failed to queue the prompt.",
+            node_errors: (e && (e.response?.node_errors || e.body?.node_errors)) || null,
           });
         }
       }
@@ -1176,6 +1203,26 @@ app.registerExtension({
     }, true); // capture phase to beat LiteGraph's handler
 
     // Forward ComfyUI execution events to parent
+    // Wrap the raw api.queuePrompt once so the structured /prompt 400 body
+    // (error + node_errors) survives app.queuePrompt's internal catch — see
+    // the "queuePrompt" action handler above for the observed build behavior.
+    function ensurePromptErrorCapture() {
+      const api = window.comfyAPI?.api?.api || window.app?.api;
+      if (!api || typeof api.queuePrompt !== "function" || api._comfynextWrapped) return;
+      const original = api.queuePrompt.bind(api);
+      api.queuePrompt = async function (...args) {
+        try {
+          return await original(...args);
+        } catch (e) {
+          // PromptExecutionError carries the parsed response body on .response
+          // (older builds used .body). Stash it for the action handler.
+          window._comfynextLastPromptError = (e && (e.response || e.body)) || null;
+          throw e;
+        }
+      };
+      api._comfynextWrapped = true;
+    }
+
     function postToParent(data) {
       console.log("[ComfyNext Bridge] postToParent:", data.event || data.status || "unknown");
       if (window.parent !== window) {

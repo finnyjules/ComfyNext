@@ -11,6 +11,7 @@ import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoin
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
+import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
@@ -1348,6 +1349,23 @@ function handleBridgeMessage(event: MessageEvent) {
 
   const { event: evt, node_id, node, percent, progress: prog } = event.data
   const nodeId = node_id || node // bridge sends node_id, normalize
+
+  // Prompt validation failed before anything ran (bridge `queue_error`
+  // carrying ComfyUI's structured node_errors map — type mismatch, missing
+  // input, …). Mark each offending node exactly like execution_error does
+  // (red ring + persisted message); it clears the same way too — the node's
+  // next 'executing' event resets error state below. Handled before the
+  // worker/scope gates: no run started, so no run scope or worker applies.
+  if (evt === 'queue_error') {
+    const { perNode } = summarizeNodeErrors(event.data.node_errors)
+    for (const [id, msg] of Object.entries(perNode)) {
+      const target = (nodes.value as any[]).find((n: any) => n.id === String(id))
+      if (target) {
+        target.data = { ...target.data, running: false, error: true, errorMessage: msg }
+      }
+    }
+    return
+  }
 
   // Parallel-run pool: track every worker's currently-running node, but only let
   // the worker behind the *active* tab drive this canvas's animation — otherwise
