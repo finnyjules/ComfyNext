@@ -6,43 +6,11 @@
  * shape directly. Keeps the dep tree clean.
  */
 
+import { resolveTokens } from '../../shared/template-grid/tokens'
 import type {
   AspectSpec, BackgroundSpec, ImageElement, LayoutElement, Length, RenderBrand,
   RenderProps, ShapeElement, Template, TextElement,
 } from './schema'
-
-// ---------- Token interpolation ----------
-
-const TOKEN_RE = /\{\{\s*([\w.]+)\s*\}\}/g
-
-/**
- * Resolve `{{ props.headline }}` / `{{ brand.primary }}` against the provided
- * data. Whole-string tokens (no surrounding text) return the typed value so
- * non-strings (e.g. numbers) survive; mixed strings are coerced to strings.
- */
-function resolveTokens<T>(
-  value: T,
-  props: RenderProps = {},
-  brand: RenderBrand = {},
-): T {
-  if (typeof value !== 'string') return value
-  const lookup = (path: string): unknown => {
-    const [scope, key] = path.split('.')
-    if (scope === 'props') return props[key]
-    if (scope === 'brand') return (brand as Record<string, unknown>)[key]
-    return undefined
-  }
-  // Whole-string single token → preserve original type.
-  const whole = value.match(/^\{\{\s*([\w.]+)\s*\}\}$/)
-  if (whole) {
-    const v = lookup(whole[1])
-    return (v ?? value) as unknown as T
-  }
-  return value.replace(TOKEN_RE, (_, path) => {
-    const v = lookup(path)
-    return v == null ? '' : String(v)
-  }) as unknown as T
-}
 
 // ---------- Length resolution ----------
 
