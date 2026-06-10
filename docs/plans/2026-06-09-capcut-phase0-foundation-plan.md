@@ -942,6 +942,16 @@ In the returned object, after `mutate,` add:
     dispatch,
 ```
 
+- [ ] **Step 4b: Migrate the other `version === 1` readers** (found during Task 2: these components would reject the v2 states the store now writes)
+
+- `frontend/app/components/vue-canvas/VueNodeCanvas.vue:2250` — `if (state?.version === 1 ...)`
+- `frontend/app/components/vue-canvas/TimelineNodePreview.vue:82` — `if (st?.version === 1 ...)`
+- `frontend/app/components/vue-canvas/ArtifactTimelineNode.vue:70` — `if (es?.version === 1)`
+
+In each, parse-then-migrate: run the parsed object through `migrateEditState(...)` and use the non-null result instead of gating on `version === 1` (preserve each site's existing fallback behavior when the result is null). Read each call site's surrounding code first — match local patterns; don't restructure.
+
+Also check `frontend/app/components/vue-canvas/SmartLayoutEditorModal.vue:55` — a hardcoded `version: 1` literal. If it constructs a timeline EditState, update it to build via `createDefaultEditState()` or `version: EDIT_STATE_VERSION`; if it's an unrelated versioned object, leave it and say so in the report.
+
 - [ ] **Step 5: Typecheck + unit tests**
 
 Run: `cd frontend && npx nuxt typecheck 2>&1 | tail -20` (if the project has no typecheck setup, `npx vue-tsc --noEmit -p .` — and if neither works cleanly on pre-existing code, confirm no NEW errors mention `useTimelineStore`, `commands`, or `types`)
