@@ -8,6 +8,8 @@ import {
 import { useTimelineStore } from '~/composables/useTimelineStore'
 import { useAssetLibrary } from '~/composables/useAssetLibrary'
 import { usePlaybackEngine } from '~/composables/usePlaybackEngine'
+import { usePlaybackEngineGL, webglPreviewSupported } from '~/composables/usePlaybackEngineGL'
+import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
 import type { Clip, Track, BlendMode } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
@@ -168,7 +170,22 @@ function resolveClipPreview(clip: Clip): { url: string; kind: 'video' | 'image' 
   return null
 }
 
-const engine = usePlaybackEngine(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview)
+function resolveAudioUrl(clip: Clip): string | null {
+  if (clip.kind !== 'audio') return null
+  const asset = getAsset((clip as any).asset_id)
+  return asset ? getAssetUrl(asset) : null
+}
+
+// WebGL preview engine (Phase 1 M3): opt-in via
+//   localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
+// Falls back to the Canvas2D engine when WebGL2 is unavailable.
+const { getLocalSetting } = useLocalSettings()
+const wantGl = getLocalSetting('Engine.WebGLPreview') === 'true'
+const useGl = wantGl && webglPreviewSupported()
+if (wantGl && !useGl) console.warn('TimelineEditor: WebGL preview flag set but WebGL2 unavailable — Canvas2D fallback')
+const engine = useGl
+  ? usePlaybackEngineGL(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview, resolveAudioUrl)
+  : usePlaybackEngine(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview)
 
 // Tick playhead in rAF
 let playRafId: number | null = null
