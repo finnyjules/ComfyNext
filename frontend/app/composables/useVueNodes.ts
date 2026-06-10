@@ -1,4 +1,5 @@
 import type { Node, Edge } from '@vue-flow/core'
+import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } from '~/composables/useFilteredPrompt'
 
 // LiteGraph workflow format
 export interface LiteGraphNode {
@@ -120,8 +121,11 @@ export function getWidgetDefs(nodeType: string): any[] {
       // in LiteGraph's widgets_values. Add a hidden placeholder to keep
       // widgetDefs aligned with widgetsValues. Default to "randomize" so
       // new generators randomize their seed on each Run — `WidgetSeed.vue`
-      // lets the user flip this to "fixed" via a lock icon.
-      if (type === 'INT' && config.control_after_generate) {
+      // lets the user flip this to "fixed" via a lock icon. The slot is added
+      // whenever ComfyUI's frontend would (explicit flag OR seed/noise_seed
+      // name) — a name-only seed without the slot shifts every later widget by
+      // one and breaks validation downstream.
+      if (seedHasControlWidget(name, type, config)) {
         defs.push({ name: `${name}_control`, type: 'SEED_CONTROL', default: 'randomize', hidden: true })
       }
     }
@@ -262,6 +266,15 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
   let lastWorkflow: LiteGraphWorkflow | null = null
 
   function convertFromLiteGraph(workflow: LiteGraphWorkflow, definitions?: { subgraphs?: any[] }) {
+    // Heal nodes saved with an invalid id (null/NaN/"null") before anything reads
+    // them — otherwise their links serialize with null endpoints and the run
+    // breaks with "No link found in parent graph". Self-perpetuating corruption,
+    // so we fix it on load (mutates workflow in place) and remap links by the
+    // node's own link refs.
+    const repairedIds = repairInvalidNodeIds(workflow as any)
+    if (repairedIds.length) {
+      console.warn('[ComfyNext] repaired node(s) with invalid id on load:', repairedIds)
+    }
     lastWorkflow = workflow
     opts.groupsBridge?.load(workflow.groups)
     // Annotations live under workflow.extra.comfynext — a namespaced sub-object
@@ -472,38 +485,13 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       }
     })
 
-    // Rebuild links and update node references
-    const lgLinks: any[] = []
-    let linkId = 0
-    // Clear existing link refs
-    for (const node of lgNodes) {
-      for (const input of node.inputs || []) input.link = null
-      for (const output of node.outputs || []) output.links = []
-    }
-
-    for (const edge of edges.value) {
-      linkId++
-      const originSlot = parseInt(edge.sourceHandle?.replace('output-', '') || '0')
-      const targetSlot = parseInt(edge.targetHandle?.replace('input-', '') || '0')
-      lgLinks.push([
-        linkId,
-        Number(edge.source),
-        originSlot,
-        Number(edge.target),
-        targetSlot,
-        edge.data?.dataType || '*',
-      ])
-
-      const sourceNode = lgNodes.find((n) => n.id === Number(edge.source))
-      const targetNode = lgNodes.find((n) => n.id === Number(edge.target))
-      if (sourceNode?.outputs?.[originSlot]) {
-        if (!sourceNode.outputs[originSlot].links) sourceNode.outputs[originSlot].links = []
-        sourceNode.outputs[originSlot].links!.push(linkId)
-      }
-      if (targetNode?.inputs?.[targetSlot]) {
-        targetNode.inputs[targetSlot].link = linkId
-      }
-    }
+    // Rebuild links and update node references. assembleWorkflowLinks clears
+    // existing refs, skips orphaned edges (endpoint node absent from lgNodes —
+    // which would otherwise emit a phantom-origin link that ComfyUI's loader
+    // turns into a dangling input → "No link found in parent graph" run abort),
+    // and returns 1..N contiguous link ids so last_link_id == link count.
+    const lgLinks = assembleWorkflowLinks(lgNodes, edges.value as any[])
+    const linkId = lgLinks.length
 
     // Merge annotations into `extra.comfynext`, preserving any sibling keys
     // the rest of ComfyNext (or other tools) might have stashed there.

@@ -7,6 +7,7 @@ import {
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { healDanglingLinks } from '~/composables/useFilteredPrompt'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -1199,6 +1200,18 @@ function endWorkflowLoading() {
 }
 
 async function sendLoadWorkflow(workflow: any, workerIdx = 0) {
+  // Final-boundary invariant: null any input.link that doesn't resolve to a
+  // link in links[]. ComfyUI's graphToPrompt aborts the whole run on the first
+  // dangling ref ("No link found in parent graph for id [N] slot [S]"), so we
+  // heal here — the last place the workflow is ours before it crosses into the
+  // bridge iframe. The warn surfaces the exact node/link when it fires so a
+  // recurring source can be traced.
+  const healed = healDanglingLinks(workflow)
+  if (healed.length) {
+    console.warn('[ComfyNext] healed dangling input link(s) before load:', healed,
+      '| has definitions:', !!workflow?.definitions,
+      '| nodes:', workflow?.nodes?.length, '| links:', workflow?.links?.length)
+  }
   beginWorkflowLoading()
   await waitForWorkerReady(workerIdx)
   const iframe = getWorkerIframe(workerIdx)
