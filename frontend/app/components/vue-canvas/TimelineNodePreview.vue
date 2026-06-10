@@ -10,6 +10,7 @@
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import type { Keyframe } from '~~/shared/timeline/types'
+import { migrateEditState } from '~~/shared/timeline/types'
 
 const props = defineProps<{ nodeId: string }>()
 
@@ -78,8 +79,9 @@ const layers = computed<PreviewLayer[]>(() => {
   const rawState = n.data?.properties?.edit_state
   if (rawState) {
     try {
-      const st = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
-      if (st?.version === 1 && Array.isArray(st.tracks)) {
+      const parsed = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
+      const st = migrateEditState(parsed)
+      if (st && Array.isArray(st.tracks)) {
         const out: PreviewLayer[] = []
         for (const track of st.tracks) {
           if (track.muted || track.kind === 'audio') continue

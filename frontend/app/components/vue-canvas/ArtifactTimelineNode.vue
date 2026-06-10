@@ -2,6 +2,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Loader2, RefreshCw, Pencil, Clapperboard } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import { migrateEditState } from '~~/shared/timeline/types'
 
 // The "Timeline" as a first-class artifact card — same visual language as the
 // Frame / Image / Video artifacts. Edge-mounted round handles, a tight dark
@@ -66,8 +67,9 @@ const editState = computed<any>(() => {
   try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return null }
 })
 const summary = computed<string>(() => {
-  const es = editState.value
-  if (es?.version === 1) {
+  const raw = editState.value
+  const es = raw ? migrateEditState(raw) : null
+  if (es) {
     const fps = es.canvas?.fps || 30
     const frames = es.total_frames || 0
     const clips = (es.tracks ?? []).reduce((n: number, t: any) => n + (t.clips?.length ?? 0), 0)

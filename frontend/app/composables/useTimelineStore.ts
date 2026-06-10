@@ -1,7 +1,8 @@
 import { ref, computed, watch } from 'vue'
 import type { EditState, Track, Clip, Asset, Keyframe } from '~~/shared/timeline/types'
-import { createDefaultEditState, computeTotalFrames } from '~~/shared/timeline/types'
-import { interpolateClipAt, type ClipTransform } from '~~/shared/timeline/interpolate'
+import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
+import type { ClipTransform } from '~~/shared/timeline/interpolate'
+import { applyCommand, type TimelineCommand } from '~~/shared/timeline/commands'
 
 const MAX_UNDO = 100
 
@@ -56,8 +57,10 @@ export function useTimelineStore() {
     if (raw) {
       try {
         const parsed = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw))
-        if (parsed?.version === 1) {
-          state.value = parsed
+        const migrated = migrateEditState(parsed)
+        if (migrated) {
+          state.value = migrated
+          syncToWidget()   // persist the migrated (v2) shape back
           return
         }
       } catch {}
@@ -80,6 +83,17 @@ export function useTimelineStore() {
     syncToWidget()
   }
 
+  // Single entry point for state mutations: snapshot → apply → sync. A command
+  // that can't apply (unknown id, invalid cut) leaves state AND undo untouched.
+  function dispatch(cmd: TimelineCommand) {
+    pushUndo()
+    if (!applyCommand(state.value, cmd)) {
+      undoStack.value.pop()
+      return
+    }
+    syncToWidget()
+  }
+
   function undo() {
     const prev = undoStack.value.pop()
     if (!prev) return
@@ -98,113 +112,46 @@ export function useTimelineStore() {
 
   function addTrack(kind: 'video' | 'audio', name?: string) {
     const count = state.value.tracks.filter(t => t.kind === kind).length
-    mutate(s => {
-      s.tracks.push({
-        id: crypto.randomUUID(),
-        kind,
-        name: name ?? `${kind === 'video' ? 'Video' : 'Audio'} ${count + 1}`,
-        muted: false,
-        locked: false,
-        clips: [],
-      })
+    dispatch({
+      type: 'add_track',
+      track_id: crypto.randomUUID(),
+      kind,
+      name: name ?? `${kind === 'video' ? 'Video' : 'Audio'} ${count + 1}`,
     })
   }
 
   function removeTrack(trackId: string) {
-    mutate(s => {
-      s.tracks = s.tracks.filter(t => t.id !== trackId)
-    })
+    dispatch({ type: 'remove_track', track_id: trackId })
   }
 
   function addClip(trackId: string, clip: Clip) {
-    mutate(s => {
-      const track = s.tracks.find(t => t.id === trackId)
-      if (track) track.clips.push(clip)
-    })
+    dispatch({ type: 'add_clip', track_id: trackId, clip })
   }
 
   function removeClip(clipId: string) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        track.clips = track.clips.filter(c => c.id !== clipId)
-      }
-    })
+    dispatch({ type: 'remove_clip', clip_id: clipId })
     if (selectedClipId.value === clipId) selectedClipId.value = null
   }
 
   function updateClip(clipId: string, patch: Partial<Clip>) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const clip = track.clips.find(c => c.id === clipId)
-        if (clip) {
-          Object.assign(clip, patch)
-          return
-        }
-      }
-    })
+    dispatch({ type: 'update_clip', clip_id: clipId, patch })
   }
 
   function moveClip(clipId: string, toTrackId: string, newStartFrame: number) {
-    mutate(s => {
-      let clip: Clip | undefined
-      for (const track of s.tracks) {
-        const idx = track.clips.findIndex(c => c.id === clipId)
-        if (idx >= 0) {
-          clip = track.clips.splice(idx, 1)[0]
-          break
-        }
-      }
-      if (!clip) return
-      clip.start_frame = Math.max(0, newStartFrame)
-      const target = s.tracks.find(t => t.id === toTrackId)
-      if (target) target.clips.push(clip)
-    })
+    dispatch({ type: 'move_clip', clip_id: clipId, to_track_id: toTrackId, start_frame: newStartFrame })
   }
 
   function splitAtPlayhead(clipId: string) {
-    const frame = playheadFrame.value
-    mutate(s => {
-      for (const track of s.tracks) {
-        const idx = track.clips.findIndex(c => c.id === clipId)
-        if (idx < 0) continue
-        const clip = track.clips[idx]
-        if (frame <= clip.start_frame || frame >= clip.start_frame + clip.length) return
-
-        const splitPoint = frame - clip.start_frame
-        const rightClip: Clip = {
-          ...JSON.parse(JSON.stringify(clip)),
-          id: crypto.randomUUID(),
-          start_frame: frame,
-          in_frame: (clip.in_frame ?? 0) + splitPoint,
-          length: clip.length - splitPoint,
-        }
-        clip.length = splitPoint
-        track.clips.splice(idx + 1, 0, rightClip)
-        return
-      }
-    })
+    dispatch({ type: 'split_clip', clip_id: clipId, frame: playheadFrame.value, new_clip_id: crypto.randomUUID() })
   }
 
   function rippleDelete(clipId: string) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const idx = track.clips.findIndex(c => c.id === clipId)
-        if (idx < 0) continue
-        const clip = track.clips[idx]
-        const gap = clip.length
-        const after = clip.start_frame
-        track.clips.splice(idx, 1)
-        for (const c of track.clips) {
-          if (c.start_frame > after) c.start_frame -= gap
-        }
-        return
-      }
-    })
+    dispatch({ type: 'ripple_delete', clip_id: clipId })
     if (selectedClipId.value === clipId) selectedClipId.value = null
   }
 
   function setCanvas(patch: Partial<EditState['canvas']>) {
-    mutate(s => { Object.assign(s.canvas, patch) })
+    dispatch({ type: 'set_canvas', patch })
   }
 
   // -- Keyframes --
@@ -217,79 +164,26 @@ export function useTimelineStore() {
   // Add (or update) a keyframe at the playhead, capturing the clip's current
   // transform — its static scalars, or the interpolated value if already keyed.
   function addKeyframe(clipId: string) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const clip = track.clips.find(c => c.id === clipId)
-        if (!clip) continue
-        const lf = clipLocalFrame(clip)
-        const kf: Keyframe = { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
-        if (!clip.keyframes) clip.keyframes = []
-        const i = clip.keyframes.findIndex(k => k.frame === lf)
-        if (i >= 0) clip.keyframes[i] = { ...clip.keyframes[i], ...kf }
-        else clip.keyframes.push(kf)
-        clip.keyframes.sort((a, b) => a.frame - b.frame)
-        return
-      }
-    })
+    dispatch({ type: 'add_keyframe', clip_id: clipId, frame: playheadFrame.value })
   }
 
   function removeKeyframeAt(clipId: string, frame: number) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const clip = track.clips.find(c => c.id === clipId)
-        if (!clip?.keyframes) continue
-        clip.keyframes = clip.keyframes.filter(k => k.frame !== frame)
-        if (!clip.keyframes.length) delete clip.keyframes
-        return
-      }
-    })
+    dispatch({ type: 'remove_keyframe', clip_id: clipId, frame })
   }
 
   function moveKeyframe(clipId: string, fromFrame: number, toFrame: number) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const clip = track.clips.find(c => c.id === clipId)
-        const k = clip?.keyframes?.find(kf => kf.frame === fromFrame)
-        if (!clip || !k) continue
-        k.frame = Math.max(0, Math.min(Math.round(toFrame), Math.max(0, clip.length - 1)))
-        clip.keyframes!.sort((a, b) => a.frame - b.frame)
-        return
-      }
-    })
+    dispatch({ type: 'move_keyframe', clip_id: clipId, from_frame: fromFrame, to_frame: toFrame })
   }
 
   function setKeyframeEase(clipId: string, frame: number, ease: Keyframe['ease']) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const k = track.clips.find(c => c.id === clipId)?.keyframes?.find(kf => kf.frame === frame)
-        if (k) { k.ease = ease; return }
-      }
-    })
+    dispatch({ type: 'set_keyframe_ease', clip_id: clipId, frame, ease })
   }
 
   // Transform edit that respects keyframes: when the clip is keyframed, write to
   // (or create) the keyframe at the playhead; otherwise edit the static scalars.
   // Transform controls call this instead of updateClip.
   function updateClipTransform(clipId: string, patch: Partial<ClipTransform>) {
-    mutate(s => {
-      for (const track of s.tracks) {
-        const clip = track.clips.find(c => c.id === clipId)
-        if (!clip) continue
-        if (clip.keyframes && clip.keyframes.length) {
-          const lf = clipLocalFrame(clip)
-          let k = clip.keyframes.find(kf => kf.frame === lf)
-          if (!k) {
-            k = { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
-            clip.keyframes.push(k)
-            clip.keyframes.sort((a, b) => a.frame - b.frame)
-          }
-          Object.assign(k, patch)
-        } else {
-          Object.assign(clip, patch)
-        }
-        return
-      }
-    })
+    dispatch({ type: 'set_clip_transform', clip_id: clipId, frame: playheadFrame.value, patch })
   }
 
   // -- Playback transport --
@@ -357,6 +251,7 @@ export function useTimelineStore() {
     bind,
     unbind,
     mutate,
+    dispatch,
     undo,
     redo,
     canUndo: computed(() => undoStack.value.length > 0),
