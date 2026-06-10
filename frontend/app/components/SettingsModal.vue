@@ -28,7 +28,9 @@ const categories = [
 interface SettingDef {
   id: string
   label: string
-  type: 'toggle' | 'select' | 'number' | 'slider' | 'text'
+  // 'secret' = server-held token: saved via POST /api/secrets, never echoed
+  // back in full (the UI only shows a masked tail).
+  type: 'toggle' | 'select' | 'number' | 'slider' | 'text' | 'secret'
   local?: boolean
   options?: { label: string, value: any }[]
   min?: number
@@ -127,7 +129,8 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.PromptFilename', label: 'Prompt for filename when saving', type: 'toggle' },
   ],
   ai: [
-    { id: 'ComfyNext.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Required for the Explain feature. Your key is sent directly to Anthropic and never stored on our servers.' },
+    { id: 'ComfyNext.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Powers Explain and AI node suggestions. Stored in this browser and sent directly to Anthropic — never kept on a server.' },
+    { id: 'replicateToken', label: 'Replicate API token', type: 'secret', description: 'Powers cloud LoRA training, vectorize, background removal and other Replicate features. Stored on this machine (frontend/.data); paste a new value to replace, clear the field to remove.' },
   ],
 }
 
@@ -163,6 +166,7 @@ watch(settingsOpen, (open) => {
   if (open) {
     activeCategory.value = 'general'
     fetchSettings()
+    fetchSecretsStatus()
     // Load local settings into cache
     const localDefs = Object.values(settingsByCategory).flat().filter((s) => s.local)
     for (const def of localDefs) {
@@ -170,6 +174,39 @@ watch(settingsOpen, (open) => {
     }
   }
 })
+
+// Server-held secrets (POST /api/secrets) — only masked status reaches the browser.
+interface SecretStatus { set: boolean, masked: string | null, source: 'settings' | 'env' | null }
+const serverSecrets = ref<Record<string, SecretStatus>>({})
+const secretDrafts = ref<Record<string, string>>({})
+const secretSaved = ref<Record<string, boolean>>({})
+
+async function fetchSecretsStatus() {
+  try {
+    serverSecrets.value = await $fetch<Record<string, SecretStatus>>('/api/secrets')
+  }
+  catch (e) {
+    console.error('[Settings] Failed to load secrets status:', e)
+  }
+}
+
+async function saveSecret(setting: SettingDef) {
+  const value = (secretDrafts.value[setting.id] ?? '').trim()
+  // An untouched empty field is a no-op; an emptied field clears a stored token.
+  if (!value && serverSecrets.value[setting.id]?.source !== 'settings') return
+  try {
+    serverSecrets.value = await $fetch<Record<string, SecretStatus>>('/api/secrets', {
+      method: 'POST',
+      body: { [setting.id]: value },
+    })
+    secretDrafts.value[setting.id] = ''
+    secretSaved.value[setting.id] = true
+    setTimeout(() => { secretSaved.value[setting.id] = false }, 2000)
+  }
+  catch (e) {
+    console.error('[Settings] Failed to save secret:', setting.id, e)
+  }
+}
 
 // Local settings (stored in localStorage, not ComfyUI)
 const localSettingsCache = ref<Record<string, string>>({})
@@ -338,6 +375,22 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                   <span class="text-[11px] text-white/50 w-8 text-right tabular-nums">
                     {{ Number(getSettingValue(setting.id, setting.min ?? 0)).toFixed(1) }}
                   </span>
+                </div>
+
+                <!-- Secret (server-held token) -->
+                <div v-else-if="setting.type === 'secret'" class="flex items-center gap-2 shrink-0">
+                  <span v-if="secretSaved[setting.id]" class="text-[11px] text-emerald-400">Saved ✓</span>
+                  <span v-else-if="serverSecrets[setting.id]?.set" class="text-[11px] text-white/35 font-mono" :title="serverSecrets[setting.id]?.source === 'env' ? 'From NUXT_REPLICATE_TOKEN in .env' : 'Pasted in Settings'">
+                    {{ serverSecrets[setting.id]?.masked }}
+                  </span>
+                  <input
+                    type="password"
+                    class="w-52 bg-[#2a2a2a] border border-[#3a3a3a] rounded-lg px-3 py-1.5 text-xs text-white/80 focus:outline-none focus:border-white/30 font-mono"
+                    :value="secretDrafts[setting.id] ?? ''"
+                    :placeholder="serverSecrets[setting.id]?.set ? 'paste to replace' : 'r8_...'"
+                    @input="secretDrafts[setting.id] = ($event.target as HTMLInputElement).value"
+                    @change="saveSecret(setting)"
+                  />
                 </div>
 
                 <!-- Text -->

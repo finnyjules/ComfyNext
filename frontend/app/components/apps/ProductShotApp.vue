@@ -123,7 +123,7 @@ function humanizeError(msg: string): string {
     return 'The background-remover model isn’t installed yet. Open a canvas, find “Background Remove” in the toolbox, and click it to download (~179 MB), then try again.'
   }
   if (msg.includes('REPLICATE_API_TOKEN') || /token/i.test(msg)) {
-    return 'Replicate API token missing. Add REPLICATE_API_TOKEN to frontend/.env and restart.'
+    return 'Replicate API token missing. Paste it in Settings → AI.'
   }
   return msg
 }

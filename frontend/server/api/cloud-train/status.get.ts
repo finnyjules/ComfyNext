@@ -67,11 +67,7 @@ async function downloadAndPlace(
 }
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) {
-    throw createError({ statusCode: 500, message: 'Replicate token not configured.' })
-  }
+  const token = requireReplicateToken()
 
   const query = getQuery(event)
   const id = String(query.id ?? '')

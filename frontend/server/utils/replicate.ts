@@ -84,9 +84,9 @@ export function firstOutputUrl(output: unknown): string | null {
   return null
 }
 
-/** Read the Replicate token from runtimeConfig, or throw a clear 500. */
+/** Read the Replicate token (Settings → AI, falling back to NUXT_REPLICATE_TOKEN), or throw a clear 500. */
 export function requireReplicateToken(): string {
-  const token = (useRuntimeConfig() as any).replicateToken
-  if (!token) throw createError({ statusCode: 500, message: 'Replicate token not configured. Set NUXT_REPLICATE_TOKEN.' })
+  const token = getReplicateToken()
+  if (!token) throw createError({ statusCode: 500, message: 'Replicate token not configured. Paste it in Settings → AI (or set NUXT_REPLICATE_TOKEN).' })
   return token
 }

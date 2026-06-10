@@ -1382,7 +1382,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="text-[11px] text-white/40 mt-2 leading-relaxed">
           <span v-if="computeMode === 'local'">Runs on this machine. Free, but slow on Apple Silicon (Flux ~8–16 hours).</span>
-          <span v-else>Runs on a Replicate GPU. ~$3–5 per Flux style, ~20–40 min wall time. Requires <code class="text-white/65 bg-white/[0.04] px-1 py-0.5 rounded">NUXT_REPLICATE_TOKEN</code>.</span>
+          <span v-else>Runs on a Replicate GPU. ~$3–5 per Flux style, ~20–40 min wall time. Requires a Replicate token (Settings → AI).</span>
         </p>
       </section>
 

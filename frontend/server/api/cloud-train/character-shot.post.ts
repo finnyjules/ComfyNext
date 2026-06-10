@@ -20,11 +20,7 @@ const MODEL = 'ideogram-ai/ideogram-character'
 const VALID_AR = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '16:10', '10:16'])
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) {
-    throw createError({ statusCode: 500, message: 'Replicate token not configured.' })
-  }
+  const token = requireReplicateToken()
 
   const body = await readBody(event) as {
     referenceImageDataUrl?: string

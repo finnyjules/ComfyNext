@@ -20,9 +20,7 @@ function safeBase(name: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) throw createError({ statusCode: 500, message: 'Replicate token not configured.' })
+  const token = requireReplicateToken()
 
   const body = await readBody(event) as { name?: string }
   const name = String(body?.name ?? '')

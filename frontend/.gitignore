@@ -17,7 +17,8 @@ playwright-report/
 *.log
 logs/
 
-# Local env
+# Local env + server-held secrets (Settings → AI)
+.data/
 .env
 .env.local
 .env.*.local

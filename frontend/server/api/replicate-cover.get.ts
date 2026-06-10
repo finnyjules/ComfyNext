@@ -16,14 +16,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'slug must be "owner/name"' })
   }
 
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) {
-    throw createError({
-      statusCode: 500,
-      message: 'Replicate token not configured. Set NUXT_REPLICATE_TOKEN.',
-    })
-  }
+  const token = requireReplicateToken()
 
   let info: any
   try {

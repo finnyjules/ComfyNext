@@ -22,11 +22,7 @@ function sanitize(name: string): string {
 }
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) {
-    throw createError({ statusCode: 500, message: 'Replicate token not configured. Set NUXT_REPLICATE_TOKEN.' })
-  }
+  const token = requireReplicateToken()
 
   const body = await readBody(event) as {
     family?: 'flux' | 'sdxl_sd15'

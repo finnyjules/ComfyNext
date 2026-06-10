@@ -9,14 +9,7 @@
  * NUXT_REPLICATE_TOKEN) and is never exposed to the browser.
  */
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const token = (config as any).replicateToken
-  if (!token) {
-    throw createError({
-      statusCode: 500,
-      message: 'Replicate token not configured. Set NUXT_REPLICATE_TOKEN and restart the Nuxt server.',
-    })
-  }
+  const token = requireReplicateToken()
 
   const parts = await readMultipartFormData(event)
   const zipPart = parts?.find((p) => p.name === 'file')
