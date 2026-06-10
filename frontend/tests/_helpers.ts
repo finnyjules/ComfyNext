@@ -26,12 +26,19 @@ export async function openBlankWorkflow(page: Page) {
   await page.locator('.vue-flow').first().waitFor({ state: 'visible', timeout: 20_000 })
 }
 
+/** The timeline editor's full-screen overlay. Several modals share the
+ *  `.fixed.inset-0.z-[100]` shell (intent picker, pose editor, …), so scope
+ *  by the editor's header text to stay unambiguous in strict mode. */
+export function timelineEditorOverlay(page: Page) {
+  return page.locator('.fixed.inset-0.z-\\[100\\]').filter({ hasText: 'Timeline Editor' })
+}
+
 /** Wait for the timeline editor overlay to appear. */
 export async function openTimelineEditor(page: Page) {
   await page.evaluate(() =>
     window.dispatchEvent(new CustomEvent('comfynext:openTimeline', { detail: { nodeId: 'pw-fake' } })),
   )
-  await page.locator('.fixed.inset-0.z-\\[100\\]').waitFor({ state: 'visible', timeout: 10_000 })
+  await timelineEditorOverlay(page).waitFor({ state: 'visible', timeout: 10_000 })
 }
 
 /** Wait for the SmartLayout editor overlay to appear (uses its own modal). */

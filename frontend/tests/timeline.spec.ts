@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { openBlankWorkflow, openTimelineEditor, waitForBackend } from './_helpers'
+import { openBlankWorkflow, openTimelineEditor, timelineEditorOverlay, waitForBackend } from './_helpers'
 
 test.describe('Timeline editor', () => {
   test.beforeEach(async ({ page }) => {
@@ -8,12 +8,12 @@ test.describe('Timeline editor', () => {
     await openTimelineEditor(page)
     // Asset rows are fetched async; wait for at least one to land before tests
     // probe the list. Tests that genuinely need ≥2 use their own gate.
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     await expect(editor.locator('[data-testid="asset-row"]').first()).toBeVisible({ timeout: 15_000 })
   })
 
   test('shell renders the expected structural elements', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     await expect(editor.getByText('Timeline Editor')).toBeVisible()
     // Tabs
     await expect(editor.getByRole('button', { name: /AI Ports/ })).toBeVisible()
@@ -30,7 +30,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('ruler shows clean second-based labels', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     // After mount the ruler should have at least 3 distinct major labels
     // ending in "s". Read all candidate label divs.
     const labels = await editor.locator('div').evaluateAll((els) =>
@@ -45,7 +45,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('clicking an input file appends a clip with a filmstrip', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     // Find first video file in the Browse list.
     const fileRow = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp4|mov|webm|mxf)/i }).first()
     if ((await fileRow.count()) === 0) {
@@ -62,7 +62,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('cmd+scroll zooms the timeline', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     const zoomBtn = editor.locator('button').filter({ hasText: /^\d+(\.\d+)?x$/ }).first()
     const before = await zoomBtn.textContent()
     const strip = editor.locator('.strip-bg').first()
@@ -77,7 +77,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('shift-click multi-selects two clips', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     const rows = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp4|mov|webm|mxf)/i })
     if ((await rows.count()) < 2) test.skip(true, 'need at least 2 input files')
     const clips = editor.locator('.strip-bg .cursor-grab')
@@ -99,7 +99,7 @@ test.describe('Timeline editor', () => {
     // through synthetic DataTransfer. Instead we dispatch the real DnD event
     // chain ourselves with a populated DataTransfer (which IS allowed via
     // `new DragEvent` in Chromium).
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     // Pick the first asset row and the second-row track lane element.
     const sourceHandle = await editor.locator('[data-testid="asset-row"]').first().elementHandle()
     const trackEl = await editor.locator('.strip-bg').locator('div').filter({ has: page.locator('') }).nth(2).elementHandle().catch(() => null)
@@ -135,7 +135,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('snap guideline appears when a clip drag aligns with the playhead', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     const row = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp4|mov|webm|mxf)/i }).first()
     if ((await row.count()) === 0) test.skip(true, 'no files')
     await row.click()
@@ -159,7 +159,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('audio file renders a waveform inside its clip', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     const mp3Row = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp3|wav|flac|m4a|ogg)$/i }).first()
     if ((await mp3Row.count()) === 0) test.skip(true, 'no audio in input/')
     await mp3Row.click()
@@ -170,7 +170,7 @@ test.describe('Timeline editor', () => {
   })
 
   test('Backspace deletes the selected clip and does NOT remove the Timeline node', async ({ page }) => {
-    const editor = page.locator('.fixed.inset-0.z-\\[100\\]')
+    const editor = timelineEditorOverlay(page)
     const row = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp4|mov|webm|mxf)/i }).first()
     if ((await row.count()) === 0) test.skip(true)
     await row.click()
