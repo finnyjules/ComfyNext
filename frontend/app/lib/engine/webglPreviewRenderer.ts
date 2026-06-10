@@ -63,8 +63,12 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
     const entries = buildDrawList(this.state, frame, dims)
 
     for (const e of entries) {
-      const frameImg = await this.sources.get(e.clipId)!.getFrame(e.sourceFrame)
-      this.gl.setSource(e.clipId, frameImg, e.sourceFrame)
+      const src = this.sources.get(e.clipId)!
+      const frameImg = await src.getFrame(e.sourceFrame)
+      // Static images get a constant version so their texture uploads once;
+      // animated sources re-upload per source frame (see GlRenderer.setSource).
+      const version = src instanceof ImageSource ? 0 : e.sourceFrame
+      this.gl.setSource(e.clipId, frameImg, version)
     }
     this.gl.render(entries, hexToRgb(this.state.canvas.bg_color), W, H)
 
