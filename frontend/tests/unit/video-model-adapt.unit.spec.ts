@@ -61,6 +61,14 @@ describe('videoModelAdapt', () => {
     expect(kling.aspectRatios).toContain(aspectFix!.value)
   })
 
+  it('never snaps aspect to a placeholder non-ratio (fabric-1.0)', () => {
+    const defs = [{ name: 'model' }, { name: 'duration' }, { name: 'aspect_ratio' }]
+    // fabric-1.0's aspectRatios is ['matches image'] — not a real W:H ratio the
+    // schema combo can display, so the aspect slot must be left alone.
+    const fixes = snapWidgetsToModel(defs, ['fabric-1.0', '5', '16:9'], 'fabric-1.0')
+    expect(fixes.find(f => f.name === 'aspect_ratio')).toBeUndefined()
+  })
+
   it('snapWidgetsToModel leaves valid values alone and tolerates unknowns', () => {
     const defs = [{ name: 'model' }, { name: 'duration' }, { name: 'aspect_ratio' }]
     expect(snapWidgetsToModel(defs, ['veo-3.1', '8', '16:9'], 'veo-3.1')).toEqual([])

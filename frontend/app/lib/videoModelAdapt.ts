@@ -53,7 +53,10 @@ export function snapWidgetsToModel(
   const arIdx = idxOf('aspect_ratio')
   if (arIdx >= 0) {
     const cur = String(widgetsValues?.[arIdx] ?? '')
-    if (!m.aspectRatios.includes(cur)) {
+    // Only snap to a real W:H ratio. Some entries use placeholder strings
+    // (fabric-1.0's 'matches image') that the schema combo can't display —
+    // for those, leave the current value alone (the backend ignores it).
+    if (!m.aspectRatios.includes(cur) && m.defaultAspectRatio.includes(':')) {
       out.push({ name: 'aspect_ratio', value: m.defaultAspectRatio })
     }
   }
