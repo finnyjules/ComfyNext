@@ -25,6 +25,7 @@ Video
 -  Seedance2RemoteNode      — Generate a video · Seedance 2.0 (best general quality)
 -  Veo3RemoteNode           — Generate a video · Veo 3 (with synced audio)
 -  KlingVideoRemoteNode     — Generate a video · Kling 2.1
+-  FilmShotNode             — Direct a video · cinematic shot presets over the video-model registry
 -  LipsyncRemoteNode        — Sync lips to audio · sync/lipsync-2-pro
 
 Audio
@@ -2754,6 +2755,160 @@ class GenerateVideoNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Film a shot — cinematic framing presets over the video registry
+# =============================================================================
+#
+# 28 named shot presets (slow push-in, dolly zoom, overhead god shot, …), each
+# a full recipe across five dimensions: size, angle, movement, lens,
+# composition. The recipe compiles into model-appropriate prompt language
+# (per-model dialects: Veo gets lens-forward vocabulary, Hailuo gets Director
+# bracket commands) and dispatches through the same video-model registry as
+# GenerateVideoNode. Design: docs/plans/2026-06-10-film-a-shot-node-design.md
+
+from comfy_api_nodes.shot_presets import (
+    AUTO as _SHOT_AUTO,
+    ANGLE_OPTIONS as _SHOT_ANGLE_OPTIONS,
+    COMPOSITION_OPTIONS as _SHOT_COMPOSITION_OPTIONS,
+    DEFAULT_PRESET_ID as _SHOT_DEFAULT_PRESET_ID,
+    LENS_OPTIONS as _SHOT_LENS_OPTIONS,
+    MOVEMENT_OPTIONS as _SHOT_MOVEMENT_OPTIONS,
+    PRESET_IDS as _SHOT_PRESET_IDS,
+    SIZE_OPTIONS as _SHOT_SIZE_OPTIONS,
+    build_shot_phrase as _build_shot_phrase,
+    dialect_for_model as _shot_dialect_for_model,
+    resolve_recipe as _resolve_shot_recipe,
+)
+
+_FILM_SHOT_DEFAULT_MODEL_ID = "kling-v2.5-turbo-pro"
+
+
+class FilmShotNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="FilmShotNode",
+            display_name="Film a shot",
+            category="api node/video/Replicate",
+            description=(
+                "Direct a video like a cinematographer: pick a shot preset "
+                "(slow push-in, dolly zoom, overhead god shot, …) and describe "
+                "the subject — the node writes the camera language for you. "
+                "28 presets across movement, angle, lens and composition; "
+                "per-dimension overrides under ADVANCED."
+            ),
+            inputs=[
+                IO.Combo.Input(
+                    "preset",
+                    options=_SHOT_PRESET_IDS,
+                    default=_SHOT_DEFAULT_PRESET_ID,
+                    tooltip="Click to choose a shot from the preset gallery.",
+                    extra_dict={"comfynext_widget": "shot_preset_picker"},
+                ),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="The subject of the shot — who/what and where. "
+                                        "The preset supplies the cinematography."),
+                IO.Image.Input("image", optional=True,
+                               tooltip="Optional first frame — turns this into "
+                                       "image-to-video."),
+                IO.Combo.Input(
+                    "model",
+                    options=_VIDEO_GEN_MODEL_IDS,
+                    default=_FILM_SHOT_DEFAULT_MODEL_ID,
+                    tooltip="Video model. Kling v2.5 Turbo Pro recommended for "
+                            "camera-language adherence.",
+                    extra_dict={"comfynext_widget": "video_model_picker"},
+                ),
+                IO.Combo.Input("aspect_ratio", options=_VIDEO_GEN_ASPECT_RATIOS, default="16:9",
+                               tooltip="Auto-falls back to the model's nearest supported ratio."),
+                IO.Combo.Input("duration", options=_VIDEO_GEN_DURATION_OPTS, default="5",
+                               tooltip="Seconds. Remapped to the model's nearest supported value.",
+                               control_after_generate=False),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+                IO.String.Input(
+                    "model_options",
+                    default="{}",
+                    multiline=False,
+                    extra_dict={"comfynext_widget": "internal"},
+                    tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
+                ),
+                # ADVANCED per-dimension overrides. Option strings ARE the
+                # substitution phrases (see shot_presets.py); AUTO keeps the preset.
+                IO.Combo.Input("shot_size", options=_SHOT_SIZE_OPTIONS, default=_SHOT_AUTO,
+                               advanced=True, tooltip="Override the preset's shot size."),
+                IO.Combo.Input("camera_angle", options=_SHOT_ANGLE_OPTIONS, default=_SHOT_AUTO,
+                               advanced=True, tooltip="Override the preset's camera angle."),
+                IO.Combo.Input("camera_movement", options=_SHOT_MOVEMENT_OPTIONS, default=_SHOT_AUTO,
+                               advanced=True, tooltip="Override the preset's camera movement."),
+                IO.Combo.Input("lens_look", options=_SHOT_LENS_OPTIONS, default=_SHOT_AUTO,
+                               advanced=True, tooltip="Override the preset's lens & depth of field."),
+                IO.Combo.Input("composition", options=_SHOT_COMPOSITION_OPTIONS, default=_SHOT_AUTO,
+                               advanced=True, tooltip="Override the preset's composition."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.40,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, preset, prompt, model, aspect_ratio, duration, seed,
+                      model_options="{}", image=None,
+                      shot_size=_SHOT_AUTO, camera_angle=_SHOT_AUTO,
+                      camera_movement=_SHOT_AUTO, lens_look=_SHOT_AUTO,
+                      composition=_SHOT_AUTO):
+        spec = _VIDEO_MODELS_BY_ID.get(model)
+        if spec is None:
+            raise RuntimeError(
+                f"Unknown video model id: {model!r}. Known: {list(_VIDEO_MODELS_BY_ID)}"
+            )
+
+        # Fabric is a lip-sync model that always requires audio; it cannot
+        # produce a cinematography shot. Fail early with a meaningful message
+        # instead of letting its build_input demand an audio clip.
+        if model == "fabric-1.0":
+            raise RuntimeError(
+                "VEED Fabric 1.0 is a lip-sync model and can't be used with "
+                "'Film a shot'. Pick a camera-language model (Kling, Seedance, Veo, …)."
+            )
+
+        if "t2v" not in spec.modes and image is None:
+            raise RuntimeError(
+                f"Model {spec.label!r} requires an input image (image-to-video only). "
+                f"Connect an Image to the optional `image` input."
+            )
+
+        recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,
+                                      camera_movement, lens_look, composition)
+        dialect = _shot_dialect_for_model(model)
+        shot_phrase = _build_shot_phrase(recipe, dialect)
+        full_prompt = f"{shot_phrase} {(prompt or '').strip()}".strip()
+
+        try:
+            advanced = json.loads(model_options or "{}")
+            if not isinstance(advanced, dict):
+                advanced = {}
+        except json.JSONDecodeError:
+            advanced = {}
+
+        try:
+            dur_int = int(duration)
+        except (TypeError, ValueError):
+            dur_int = spec.default_duration
+
+        image_data_url = _image_tensor_to_data_url(image) if image is not None else None
+        input_dict = spec.build_input(full_prompt, aspect_ratio, dur_int, int(seed or 0),
+                                      image_data_url, None, advanced)
+        print(
+            f"[FilmShot] preset={recipe.id!r} dialect={dialect!r} model={model!r} "
+            f"slug={spec.replicate_slug!r} advanced={advanced} phrase={shot_phrase!r}",
+            flush=True,
+        )
+        pred = await _run_prediction(spec.replicate_slug, input_dict,
+                                     poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+# =============================================================================
 # Use case: Upscale an image
 # =============================================================================
 
@@ -4580,6 +4735,7 @@ class ReplicateExtension(ComfyExtension):
             FindObjectsNode,            # Find objects in an image · YOLO-World
             # Video
             GenerateVideoNode,          # Generate a video · Seedance / Veo 3 / Kling
+            FilmShotNode,               # Film a shot · cinematic framing presets
             EnhanceVideoNode,           # Enhance a video · Topaz
             DescribeVideoNode,          # Describe a video · Gemini 2.5 Flash
             LipsyncNode,                # Sync lips to audio · sync.so 2-pro

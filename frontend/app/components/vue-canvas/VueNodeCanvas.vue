@@ -1741,6 +1741,7 @@ function handleOpenSmartLayout(e: Event) {
 const modelGalleryOpenForId = ref<string | null>(null)
 const videoModelGalleryOpenForId = ref<string | null>(null)
 const textEffectGalleryOpenForId = ref<string | null>(null)
+const shotPresetGalleryOpenForId = ref<string | null>(null)
 const loraGalleryOpenForId = ref<string | null>(null)
 const loraGalleryWidgetName = ref<string>('lora_name')
 const loraGalleryKind = ref<'character' | 'style'>('style')
@@ -1752,7 +1753,7 @@ const anyEditorModalOpen = computed(() => !!(
   poseOpenForId.value ||
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
-  textEffectGalleryOpenForId.value || loraGalleryOpenForId.value
+  textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
@@ -1767,6 +1768,7 @@ function handleOpenModelGallery(e: Event) {
   if (!nodeId) return
   if (detail?.kind === 'video') videoModelGalleryOpenForId.value = nodeId
   else if (detail?.kind === 'text_effect') textEffectGalleryOpenForId.value = nodeId
+  else if (detail?.kind === 'shot_preset') shotPresetGalleryOpenForId.value = nodeId
   else modelGalleryOpenForId.value = nodeId
 }
 function handleOpenLoraGallery(e: Event) {
@@ -4206,6 +4208,14 @@ defineExpose({
       :node-id="textEffectGalleryOpenForId"
       :nodes="nodes as any[]"
       @close="textEffectGalleryOpenForId = null"
+    />
+
+    <!-- Shot preset gallery — opened from the FilmShotNode launcher. -->
+    <VueCanvasShotPresetGalleryModal
+      v-if="shotPresetGalleryOpenForId"
+      :node-id="shotPresetGalleryOpenForId"
+      :nodes="nodes as any[]"
+      @close="shotPresetGalleryOpenForId = null"
     />
 
     <!-- Port intent popover — port click / wire-drop-on-canvas. -->

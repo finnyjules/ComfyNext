@@ -58,6 +58,8 @@ export const CAPABILITIES: Capability[] = [
   // ---------- Video · generation ----------
   { nodeType: 'GenerateVideoNode', useCase: 'Generate a video',           model: 'Seedance / Veo 3 / Kling',      from: 'prompt', to: 'video' },
   { nodeType: 'GenerateVideoNode', useCase: 'Animate an image into video', model: 'Seedance / Veo 3 / Kling',     from: 'image',  to: 'video' },
+  { nodeType: 'FilmShotNode',      useCase: 'Film a cinematic shot',      model: 'Kling / full gallery',          from: 'prompt', to: 'video' },
+  { nodeType: 'FilmShotNode',      useCase: 'Film a shot from an image',  model: 'Kling / full gallery',          from: 'image',  to: 'video' },
 
   // ---------- Video · from a video ----------
   { nodeType: 'EnhanceVideoNode',  useCase: 'Enhance a video',           model: 'Topaz',                          from: 'video', to: 'video' },
