@@ -85,6 +85,8 @@ rAF tick → sample `PlaybackClock` → visible clips at frame → clip-local �
 3. **M3 — Editor flag.** `usePlaybackEngineGL` selectable in TimelineEditor via localStorage flag (default off); kinetic/text/sequence sources wired through the editor's clip-resolution callback; dogfooding on real projects.
 4. **M4 — Default on.** Flag defaults to the engine; Canvas2D path remains as automatic fallback. Exit criteria: no fallback triggers and no visual complaints across a week of real use.
 
+**Accepted deferral:** the `/timeline-harness` and `/gl-conformance` pages ship in production builds (dev/test surfaces, not linked from the UI; local-first app). Strip or dev-gate them via route rules during M3/M4.
+
 ## Out of scope (Phase 1)
 
 Rendering transitions/filters/captions (Phase 2 adds them to all renderers together); client-side export; WebGPU; Firefox verification; waveform drawing changes; TimelineEditor UI restructuring beyond the engine swap point; video fixtures for goldens (added once the engine exists to define deterministic decode expectations).
