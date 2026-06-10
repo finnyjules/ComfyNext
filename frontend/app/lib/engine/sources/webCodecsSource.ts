@@ -22,8 +22,10 @@ interface Sample {
  *  are mapped back to presentation indices by exact timestamp lookup, so
  *  B-frame files (presentation ≠ decode order) decode correctly. Compressed
  *  samples stay in memory (clip-scale files); decoded frames are the bounded
- *  LRU. The public getFrame(n) contract stays presentation-indexed. VFR files
- *  are rejected (UnsupportedSourceError) — constant frame duration is the
+ *  LRU. The public getFrame(n) contract stays presentation-indexed. Out-of-range
+ *  frames WRAP (n % src length) to match the Python exporter and the Canvas2D
+ *  preview — when a timeline clip outlasts its source, it loops. VFR files are
+ *  rejected (UnsupportedSourceError) — constant frame duration is the
  *  frame↔time mapping assumption. */
 export class WebCodecsSource implements FrameSource {
   private samples: Sample[] = []                 // DECODE order, as demuxed
@@ -138,7 +140,10 @@ export class WebCodecsSource implements FrameSource {
   get frameCount(): number { return this.samples.length }
 
   async getFrame(n: number): Promise<TexImageSource> {
-    const idx = Math.max(0, Math.min(n, this.samples.length - 1))
+    const len = this.samples.length
+    if (!len) throw new Error('WebCodecsSource: no samples')
+    // Loop like the exporter (render_frame_np: % src_T) and the old preview.
+    const idx = ((Math.trunc(n) % len) + len) % len
     const hit = this.cache.get(idx)
     if (hit) {
       this.cache.delete(idx)   // refresh LRU position

@@ -9,6 +9,8 @@ import * as path from 'node:path'
 // mid-GOP first request (13 → decode from keyframe 10), a full 0..29 sweep
 // (>24 distinct frames, so LRU evictions fire), and a post-evict seek-back
 // (5, evicted during the sweep → cold re-decode from keyframe 0).
+// Out-of-range frames WRAP (% src length) to match the Python exporter
+// (render_frame_np: ct = local_t % src_T) and the old Canvas2D preview.
 // VideoElement: best-effort — index within ±1.
 
 const thisDir = fileURLToPath(new URL('.', import.meta.url))
@@ -71,8 +73,12 @@ test('WebCodecsSource decodes exact frames (cold mid-GOP, LRU eviction, post-evi
     const [r] = await page.evaluate((f) => (window as any).__engineTest.frameValue(f), n)
     expect(indexOf(r), `frame ${n} decoded gray ${r}`).toBe(n)
   }
-  const [rLast] = await page.evaluate(() => (window as any).__engineTest.frameValue(99))
-  expect(indexOf(rLast)).toBe(29)
+  // Looping parity with the Python exporter (render_frame_np: ct = local % src_T)
+  // and the Canvas2D preview (% duration): out-of-range frames WRAP, not clamp.
+  const [rWrap] = await page.evaluate(() => (window as any).__engineTest.frameValue(35))
+  expect(indexOf(rWrap)).toBe(5)
+  const [rWrap2] = await page.evaluate(() => (window as any).__engineTest.frameValue(99))
+  expect(indexOf(rWrap2)).toBe(9)   // 99 % 30
   await page.evaluate(() => (window as any).__engineTest.disposeSource())
 })
 
@@ -80,9 +86,10 @@ test('VideoElementSource recovers frames within ±1', async ({ page }) => {
   await setup(page)
   await page.evaluate(() =>
     (window as any).__engineTest.loadSource('/__fixture_media/counter.mp4', 'element', 30))
-  for (const n of [0, 7, 13, 29]) {
+  for (const n of [0, 7, 13, 29, 33]) {
+    const want = n % 30
     const [r] = await page.evaluate((f) => (window as any).__engineTest.frameValue(f), n)
-    expect(Math.abs(indexOf(r) - n), `frame ${n} → gray ${r}`).toBeLessThanOrEqual(1)
+    expect(Math.abs(indexOf(r) - want), `frame ${n} → gray ${r}`).toBeLessThanOrEqual(1)
   }
   await page.evaluate(() => (window as any).__engineTest.disposeSource())
 })
