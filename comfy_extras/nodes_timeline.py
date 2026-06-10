@@ -950,6 +950,36 @@ try:
             )
         return web.json_response(result)
 
+    @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
+    async def _render_frame_route(request):
+        """Render one composited frame of an edit state to PNG. Harness/debug
+        surface: the browser golden harness compares PreviewRenderer output
+        against this — the same render_frame_np the export uses."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        state = body.get("state")
+        frame = int(body.get("frame", 0))
+        if _is_edit_state(state):
+            state = _adapt_edit_state(state)
+        if not isinstance(state, dict) or not isinstance(state.get("clips"), list):
+            return web.json_response({"error": "not an edit state"}, status=400)
+
+        def _render() -> bytes:
+            from io import BytesIO
+            clips = _prepare_render_clips(state)
+            try:
+                arr = render_frame_np(state, clips, frame)
+            finally:
+                _close_render_clips(clips)
+            buf = BytesIO()
+            PILImage.fromarray((arr * 255.0).round().astype(np.uint8)).save(buf, format="PNG")
+            return buf.getvalue()
+
+        data = await asyncio.get_event_loop().run_in_executor(None, _render)
+        return web.Response(body=data, content_type="image/png")
+
     # ── Media listing endpoint ──────────────────────────────────────────────
     #
     # Comfy's /history is in-memory and lost on every server restart, and
