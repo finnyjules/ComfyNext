@@ -601,48 +601,14 @@ def _adapt_edit_state(state: dict) -> dict:
     return out
 
 
-def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict:
-    """Render the edit `state` to a video file in `output_dir`. Returns metadata.
-
-    `state` shape:
-      {
-        "fps": 30,
-        "total_frames": 120,
-        "canvas_width": 1280, "canvas_height": 720,
-        "bg_color": "#000000",
-        "output_basename": "timeline",  # optional
-        "audio_path": "/abs/path.mp3",  # optional
-        "clips": [
-          { "path": "/abs/path.mp4", "is_image": false,
-            "start_frame": 0, "length": 60,
-            "x": 0, "y": 0, "rotation": 0, "scale": 1,
-            "opacity": 1, "blend": "normal",
-            "fade_in": 0, "fade_out": 0 },
-          ...
-        ]
-      }
-    """
+def _prepare_render_clips(state: dict) -> list[dict]:
+    """Open per-clip decoders / pre-load images / pre-render text for
+    render_frame_np. The caller owns the returned containers — close with
+    _close_render_clips()."""
     import av
 
-    fps = int(state.get("fps", 30))
-    total_frames = int(state.get("total_frames", 0))
-    if total_frames <= 0:
-        total_frames = max((int(c.get("start_frame", 0)) + int(c.get("length", 0)) for c in state.get("clips", [])), default=1)
-    total_frames = max(1, total_frames)
     W = int(state.get("canvas_width", 1280))
     H = int(state.get("canvas_height", 720))
-    bg_rgb = _hex_rgb_safe(state.get("bg_color"), (0.0, 0.0, 0.0))
-    bg = np.array(bg_rgb, dtype=np.float32).reshape(1, 1, 3)
-
-    # Build a sane output filename in output_dir.
-    base = (str(state.get("output_basename") or "timeline") + "_").rstrip(".")
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    out_name = f"{base}{stamp}.mp4"
-    out_path = os.path.join(output_dir, out_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Open per-clip containers / pre-load images / pre-render text. Containers
-    # are lazy decoders so we can seek per output frame.
     clips: list[dict] = []
     for c in state.get("clips", []):
         kind = str(c.get("kind") or ("image" if c.get("is_image") else "video"))
@@ -694,6 +660,117 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
             entry["stream"] = vs
             entry["duration"] = float(vs.duration * vs.time_base) if vs.duration else None
         clips.append(entry)
+    return clips
+
+
+def _close_render_clips(clips: list[dict]) -> None:
+    for L in clips:
+        if "container" in L:
+            try:
+                L["container"].close()
+            except Exception:
+                pass
+
+
+def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
+    """Composite output frame `f` of the flat timeline `state` (the
+    render_timeline_to_file shape) over its bg color. Returns float32 [H,W,3]
+    in [0,1]. Single source of export-path pixel math: the FFmpeg export loop,
+    the golden-frame harness, and /comfynext/timeline/render_frame all call
+    this — divergence between them is impossible by construction."""
+    fps = int(state.get("fps", 30))
+    W = int(state.get("canvas_width", 1280))
+    H = int(state.get("canvas_height", 720))
+    bg_rgb = _hex_rgb_safe(state.get("bg_color"), (0.0, 0.0, 0.0))
+    bg = np.array(bg_rgb, dtype=np.float32).reshape(1, 1, 3)
+    canvas = np.broadcast_to(bg, (H, W, 3)).copy()
+
+    for L in clips:
+        start, length = L["start"], max(1, L["length"])
+        if f < start or f >= start + length:
+            continue
+        local_f = f - start
+
+        # Fade alpha
+        fade = 1.0
+        if L["fade_in"] > 0 and local_f < L["fade_in"]:
+            fade *= local_f / L["fade_in"]
+        if L["fade_out"] > 0 and local_f > length - L["fade_out"]:
+            fade *= (length - local_f) / L["fade_out"]
+        fade = max(0.0, min(1.0, fade))
+
+        # Get source PIL for this frame.
+        if L["kind"] in ("image", "text"):
+            src_pil = L["pil"]
+        else:  # video
+            vs = L["stream"]
+            container = L["container"]
+            local_sec = (local_f + L.get("in_frame", 0)) / fps
+            clip_dur = L.get("duration")
+            if clip_dur is not None and clip_dur > 0:
+                src_sec = local_sec % clip_dur
+            else:
+                src_sec = local_sec
+            try:
+                frame = _decoded_frame_at(container, vs, src_sec)
+            except Exception:
+                frame = None
+            if frame is None:
+                continue
+            src_pil = PILImage.fromarray(frame.to_ndarray(format="rgb24"))
+
+        # Keyframed transform at this clip-local frame (static if none).
+        static = {"x": L["x"], "y": L["y"], "rotation": L["rot"], "scale": L["scl"], "opacity": L["op"]}
+        tf = _interp_transform(static, L.get("keyframes"), local_f)
+        rgb, alpha = _transform_and_alpha(src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"])
+        a = alpha * tf["opacity"] * fade
+        blended = _blend_np(canvas, rgb, L["blend"])
+        canvas = canvas * (1.0 - a) + blended * a
+
+    return np.clip(canvas, 0.0, 1.0)
+
+
+def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict:
+    """Render the edit `state` to a video file in `output_dir`. Returns metadata.
+
+    `state` shape:
+      {
+        "fps": 30,
+        "total_frames": 120,
+        "canvas_width": 1280, "canvas_height": 720,
+        "bg_color": "#000000",
+        "output_basename": "timeline",  # optional
+        "audio_path": "/abs/path.mp3",  # optional
+        "clips": [
+          { "path": "/abs/path.mp4", "is_image": false,
+            "start_frame": 0, "length": 60,
+            "x": 0, "y": 0, "rotation": 0, "scale": 1,
+            "opacity": 1, "blend": "normal",
+            "fade_in": 0, "fade_out": 0 },
+          ...
+        ]
+      }
+    """
+    import av
+
+    fps = int(state.get("fps", 30))
+    total_frames = int(state.get("total_frames", 0))
+    if total_frames <= 0:
+        total_frames = max((int(c.get("start_frame", 0)) + int(c.get("length", 0)) for c in state.get("clips", [])), default=1)
+    total_frames = max(1, total_frames)
+    W = int(state.get("canvas_width", 1280))
+    H = int(state.get("canvas_height", 720))
+
+    # Build a sane output filename in output_dir.
+    base = (str(state.get("output_basename") or "timeline") + "_").rstrip(".")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out_name = f"{base}{stamp}.mp4"
+    out_path = os.path.join(output_dir, out_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Open per-clip containers / pre-load images / pre-render text. Containers
+    # are lazy decoders so we can seek per output frame.
+    clips = _prepare_render_clips(state)
 
     # Output container + video stream.
     out = av.open(out_path, mode="w")
@@ -723,60 +800,16 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
 
     # Frame-by-frame composite + encode.
     for f in range(total_frames):
-        canvas = np.broadcast_to(bg, (H, W, 3)).copy()  # writable
-
-        for L in clips:
-            start, length = L["start"], max(1, L["length"])
-            if f < start or f >= start + length:
-                continue
-            local_f = f - start
-
-            # Fade alpha
-            fade = 1.0
-            if L["fade_in"] > 0 and local_f < L["fade_in"]:
-                fade *= local_f / L["fade_in"]
-            if L["fade_out"] > 0 and local_f > length - L["fade_out"]:
-                fade *= (length - local_f) / L["fade_out"]
-            fade = max(0.0, min(1.0, fade))
-
-            # Get source PIL for this frame.
-            if L["kind"] in ("image", "text"):
-                src_pil = L["pil"]
-            else:  # video
-                vs = L["stream"]
-                container = L["container"]
-                local_sec = (local_f + L.get("in_frame", 0)) / fps
-                clip_dur = L.get("duration")
-                if clip_dur is not None and clip_dur > 0:
-                    src_sec = local_sec % clip_dur
-                else:
-                    src_sec = local_sec
-                try:
-                    frame = _decoded_frame_at(container, vs, src_sec)
-                except Exception:
-                    frame = None
-                if frame is None:
-                    continue
-                src_pil = PILImage.fromarray(frame.to_ndarray(format="rgb24"))
-
-            # Keyframed transform at this clip-local frame (static if none).
-            static = {"x": L["x"], "y": L["y"], "rotation": L["rot"], "scale": L["scl"], "opacity": L["op"]}
-            tf = _interp_transform(static, L.get("keyframes"), local_f)
-            rgb, alpha = _transform_and_alpha(src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"])
-            a = alpha * tf["opacity"] * fade
-            blended = _blend_np(canvas, rgb, L["blend"])
-            canvas = canvas * (1.0 - a) + blended * a
-
-        # Encode this frame.
-        out_frame_arr = np.clip(canvas, 0.0, 1.0)
-        out_frame_arr = (out_frame_arr * 255.0).astype(np.uint8)
+        out_frame_arr = (render_frame_np(state, clips, f) * 255.0).astype(np.uint8)
         av_frame = av.VideoFrame.from_ndarray(out_frame_arr, format="rgb24")
         for packet in out_stream.encode(av_frame):
             out.mux(packet)
 
         if progress is not None:
-            try: progress(f + 1, total_frames)
-            except Exception: pass
+            try:
+                progress(f + 1, total_frames)
+            except Exception:
+                pass
 
     # Flush encoder.
     for packet in out_stream.encode():
@@ -799,10 +832,7 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
             pass
 
     # Close inputs + output.
-    for L in clips:
-        if "container" in L:
-            try: L["container"].close()
-            except Exception: pass
+    _close_render_clips(clips)
     if audio_in_container is not None:
         try: audio_in_container.close()
         except Exception: pass
