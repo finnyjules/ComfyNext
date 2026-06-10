@@ -11,6 +11,7 @@ import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoin
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
+import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
@@ -27,6 +28,9 @@ import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
 import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
+import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
+import type { PortAnchor } from '~/lib/portIntent'
+import { usePortIntent } from '~/composables/usePortIntent'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
 import StickyAnnotation from '~/components/vue-canvas/StickyAnnotation.vue'
 import ChecklistAnnotationView from '~/components/vue-canvas/ChecklistAnnotation.vue'
@@ -165,6 +169,7 @@ provide('vueFlowEdges', edges)
 const {
   onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut,
   project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
+  onConnectStart, onConnectEnd,
 } = useVueFlow()
 
 // Selection helpers — Vue Flow marks selected nodes with `selected: true`.
@@ -983,11 +988,178 @@ watch(objectInfo, (info) => {
 
 // Handle new connections
 onConnect((params) => {
+  connectionMade = true
   const sourceNode = (nodes.value as any[]).find(n => n.id === params.source)
   const outputIndex = parseInt(params.sourceHandle?.replace('output-', '') || '0')
   const dataType = sourceNode?.data?.outputs?.[outputIndex]?.type || '*'
   addEdges([{ ...params, type: 'comfy', data: { dataType } }])
 })
+
+// ── Port intent popover ──────────────────────────────────────────────────────
+// Click a port (no drag) or drop a wire on empty canvas → intent popover with
+// type-filtered search plus an "Ask AI" escalation (see docs/plans/
+// 2026-06-09-port-intent-popover-design.md).
+const portIntent = ref<{ anchor: PortAnchor, screen: { x: number, y: number }, dropFlow?: { x: number, y: number } } | null>(null)
+const portIntentAiState = ref<'idle' | 'loading' | 'error' | 'done'>('idle')
+const portIntentAiError = ref<string | null>(null)
+const portIntentAiNote = ref<string | null>(null)
+const { suggest: suggestPortIntent } = usePortIntent()
+
+let connectStartInfo: { nodeId: string, handleId: string, handleType: string, x: number, y: number } | null = null
+let connectionMade = false
+
+onConnectStart(({ event, nodeId, handleId, handleType }) => {
+  connectionMade = false
+  const me = event as MouseEvent | undefined
+  connectStartInfo = nodeId && handleId && me && 'clientX' in me
+    ? { nodeId, handleId, handleType: handleType || 'source', x: me.clientX, y: me.clientY }
+    : null
+})
+
+onConnectEnd((event) => {
+  const start = connectStartInfo
+  connectStartInfo = null
+  if (!start || connectionMade) return
+  const me = event as MouseEvent | undefined
+  if (!me || !('clientX' in me)) return
+  const anchor = anchorFromHandle(start.nodeId, start.handleId, start.handleType)
+  if (!anchor) return
+  const travel = Math.hypot(me.clientX - start.x, me.clientY - start.y)
+  if (travel <= 6) {
+    // Stationary click on the port itself.
+    openPortIntent(anchor, { x: start.x + 12, y: start.y + 12 })
+    return
+  }
+  // Wire dragged out and released on empty canvas. Vue Flow disables pointer
+  // events during the drag, so the mouseup target is useless (<html>) — test
+  // the release point geometrically instead: inside the canvas, not on a node.
+  const canvasRect = document.querySelector('.vue-flow')?.getBoundingClientRect()
+  const insideCanvas = !!canvasRect
+    && me.clientX >= canvasRect.left && me.clientX <= canvasRect.right
+    && me.clientY >= canvasRect.top && me.clientY <= canvasRect.bottom
+  if (!insideCanvas) return
+  const flow = project({ x: me.clientX, y: me.clientY })
+  const overNode = (nodes.value as any[]).some((n) => {
+    const w = n.dimensions?.width || n.data?.size?.[0] || 220
+    const h = n.dimensions?.height || n.data?.size?.[1] || 120
+    return flow.x >= n.position.x && flow.x <= n.position.x + w
+      && flow.y >= n.position.y && flow.y <= n.position.y + h
+  })
+  if (overNode) return
+  openPortIntent(anchor, { x: me.clientX + 12, y: me.clientY + 12 }, flow)
+})
+
+function anchorFromHandle(nodeId: string, handleId: string, handleType: string): PortAnchor | null {
+  const node = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!node) return null
+  const direction = handleType === 'source' ? 'output' as const : 'input' as const
+  const prefix = direction === 'output' ? 'output-' : 'input-'
+  if (!handleId.startsWith(prefix)) return null
+  const portIndex = parseInt(handleId.slice(prefix.length) || '0')
+  const port = direction === 'output' ? node.data?.outputs?.[portIndex] : node.data?.inputs?.[portIndex]
+  if (!port) return null
+  return { nodeId, nodeType: node.data?.nodeType || '', portName: port.name, portType: port.type || '*', portIndex, direction }
+}
+
+function openPortIntent(anchor: PortAnchor, screen: { x: number, y: number }, dropFlow?: { x: number, y: number }) {
+  portIntentAiState.value = 'idle'
+  portIntentAiError.value = null
+  portIntentAiNote.value = null
+  portIntent.value = { anchor, screen, dropFlow }
+}
+
+/** Insert a validated AI suggestion: lay nodes out from the anchor, wire them up.
+ *  The debounced history snapshot makes the whole insert one undo step. */
+async function insertSuggestion(result: Awaited<ReturnType<typeof suggestPortIntent>>, anchor: PortAnchor, dropFlow?: { x: number, y: number }) {
+  const anchorNode = (nodes.value as any[]).find(n => n.id === anchor.nodeId)
+  const dir = anchor.direction === 'output' ? 1 : -1
+  const base = dropFlow ?? {
+    x: (anchorNode?.position?.x ?? 0) + dir * 360,
+    y: anchorNode?.position?.y ?? 0,
+  }
+  const created = new Map<string, any>()
+  result.nodes.forEach((sn, i) => {
+    const node = createNodeData(sn.type, { x: base.x + dir * i * 360, y: base.y }, sn.widgetOverrides)
+    node.id = `${Date.now()}-${i}` // createNodeData's Date.now() id collides within one tick
+    node.selected = true
+    created.set(sn.localId, node)
+    nodes.value.push(node)
+  })
+  await nextTick()
+
+  const newEdges: any[] = []
+  for (const e of result.edges) {
+    if (e.fromAnchor) {
+      const to = created.get(e.toId!)
+      if (!to) continue
+      const idx = Math.max(0, to.data.inputs.findIndex((p: any) => p.name === e.toPort))
+      newEdges.push({ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: to.id, targetHandle: `input-${idx}`, type: 'comfy', data: { dataType: anchor.portType } })
+    }
+    else if (e.toAnchor) {
+      const from = created.get(e.fromId!)
+      if (!from) continue
+      const idx = Math.max(0, from.data.outputs.findIndex((p: any) => p.name === e.fromPort))
+      newEdges.push({ source: from.id, sourceHandle: `output-${idx}`, target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } })
+    }
+    else {
+      const from = created.get(e.fromId!)
+      const to = created.get(e.toId!)
+      if (!from || !to) continue
+      const oIdx = Math.max(0, from.data.outputs.findIndex((p: any) => p.name === e.fromPort))
+      const iIdx = Math.max(0, to.data.inputs.findIndex((p: any) => p.name === e.toPort))
+      newEdges.push({ source: from.id, sourceHandle: `output-${oIdx}`, target: to.id, targetHandle: `input-${iIdx}`, type: 'comfy', data: { dataType: from.data.outputs[oIdx]?.type ?? '*' } })
+    }
+  }
+  addEdges(newEdges)
+}
+
+/** Free tier: a node picked from the fuzzy list, wired straight to the anchor. */
+async function handlePortIntentSelect(nodeType: string) {
+  const ctx = portIntent.value
+  if (!ctx) return
+  portIntent.value = null
+  if (!objectInfo.value[nodeType]) await fetchObjectInfo()
+  const anchor = ctx.anchor
+  const anchorNode = (nodes.value as any[]).find(n => n.id === anchor.nodeId)
+  const dir = anchor.direction === 'output' ? 1 : -1
+  const pos = ctx.dropFlow ?? {
+    x: (anchorNode?.position?.x ?? 0) + dir * 360,
+    y: anchorNode?.position?.y ?? 0,
+  }
+  const node = createNodeData(nodeType, pos)
+  nodes.value.push(node)
+  await nextTick()
+  if (anchor.direction === 'output') {
+    addEdges([{ source: anchor.nodeId, sourceHandle: `output-${anchor.portIndex}`, target: node.id, targetHandle: inputHandleFor(node, anchor.portType), type: 'comfy', data: { dataType: anchor.portType } }])
+  }
+  else {
+    addEdges([{ source: node.id, sourceHandle: outputHandleFor(node, anchor.portType), target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`, type: 'comfy', data: { dataType: anchor.portType } }])
+  }
+}
+
+/** AI tier: resolve the intent, insert the validated result, show the note. */
+async function handlePortIntentAi(intent: string) {
+  const ctx = portIntent.value
+  if (!ctx) return
+  portIntentAiState.value = 'loading'
+  portIntentAiError.value = null
+  try {
+    await fetchObjectInfo()
+    const result = await suggestPortIntent(intent, ctx.anchor, {
+      objectInfo: objectInfo.value,
+      nodes: nodes.value as any[],
+      edges: edges.value as any[],
+    })
+    await insertSuggestion(result, ctx.anchor, ctx.dropFlow)
+    portIntentAiNote.value = result.note || 'Done'
+    portIntentAiState.value = 'done'
+    setTimeout(() => { portIntent.value = null }, 2000)
+  }
+  catch (err: any) {
+    portIntentAiState.value = 'error'
+    portIntentAiError.value = err?.data?.message || err?.message || 'AI suggestion failed'
+  }
+}
 
 // Listen for addNode events from NodeSearchDialog
 async function handleAddNode(e: Event) {
@@ -2246,8 +2418,9 @@ function collectTimelineLayers(node: any): any[] {
   const rawState = node.data?.properties?.edit_state
   if (rawState) {
     try {
-      const state = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
-      if (state?.version === 1 && Array.isArray(state.tracks)) {
+      const parsed = typeof rawState === 'string' ? JSON.parse(rawState) : rawState
+      const state = migrateEditState(parsed)
+      if (state && Array.isArray(state.tracks)) {
         const out: any[] = []
         for (const track of state.tracks) {
           if (track.muted || track.kind === 'audio') continue
@@ -3984,6 +4157,19 @@ defineExpose({
       :node-id="textEffectGalleryOpenForId"
       :nodes="nodes as any[]"
       @close="textEffectGalleryOpenForId = null"
+    />
+
+    <!-- Port intent popover — port click / wire-drop-on-canvas. -->
+    <PortIntentPopover
+      v-if="portIntent"
+      :anchor="portIntent.anchor"
+      :screen="portIntent.screen"
+      :ai-state="portIntentAiState"
+      :ai-error="portIntentAiError"
+      :ai-note="portIntentAiNote"
+      @select-node="handlePortIntentSelect"
+      @ask-ai="handlePortIntentAi"
+      @close="portIntent = null"
     />
   </div>
 </template>
