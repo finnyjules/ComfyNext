@@ -8,6 +8,9 @@ from comfy_api_nodes.shot_presets import (
     MOVEMENT_OPTIONS,
     LENS_OPTIONS,
     COMPOSITION_OPTIONS,
+    build_shot_phrase,
+    dialect_for_model,
+    resolve_recipe,
 )
 
 VALID_CATEGORIES = {"movement", "angle", "lens", "composition"}
@@ -40,13 +43,6 @@ def test_override_option_lists_start_with_auto():
         assert opts[0] == AUTO
         assert len(opts) > 3
         assert len(set(opts)) == len(opts)
-
-
-from comfy_api_nodes.shot_presets import (  # noqa: E402
-    build_shot_phrase,
-    dialect_for_model,
-    resolve_recipe,
-)
 
 
 def test_resolve_all_auto_returns_preset_unchanged():
@@ -108,3 +104,17 @@ def test_dialect_for_model():
     assert dialect_for_model("hailuo-2.3") == "hailuo"
     assert dialect_for_model("kling-v2.5-turbo-pro") == "standard"
     assert dialect_for_model("unknown-model") == "standard"
+
+
+def test_hailuo_mirror_pushes_in():
+    phrase = build_shot_phrase(PRESETS_BY_ID["mirror"], "hailuo")
+    assert phrase.startswith("[Push in]")
+
+
+def test_hailuo_no_bracket_falls_back_to_standard():
+    std = build_shot_phrase(PRESETS_BY_ID["dutch"], "standard")
+    assert build_shot_phrase(PRESETS_BY_ID["dutch"], "hailuo") == std
+
+
+def test_dialect_for_model_handles_none():
+    assert dialect_for_model(None) == "standard"
