@@ -2,7 +2,7 @@
 import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Play, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
-import { modelSupportsSeed } from '~/lib/videoModelAdapt'
+import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
@@ -286,6 +286,24 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
 }
 
+// Sibling of WIDGET_VISIBILITY: per-node option FILTERS for combo widgets.
+// A rule returns the allowed values for a widget (null = leave schema options
+// alone). The filtered list is intersected with the schema options and falls
+// back to the schema when the intersection is empty — we never invent values
+// the backend combo would reject.
+const videoOptionsFilter = (name: string, values: any[], defs: any[]): string[] | null => {
+  if (name !== 'duration' && name !== 'aspect_ratio') return null
+  const modelIdx = defs.findIndex((d: any) => d?.name === 'model')
+  if (modelIdx < 0) return null
+  const id = String(values[modelIdx] ?? '')
+  return name === 'duration' ? allowedDurations(id) : allowedAspectRatios(id)
+}
+
+const WIDGET_OPTIONS: Record<string, (name: string, values: any[], defs: any[]) => string[] | null> = {
+  GenerateVideoNode: videoOptionsFilter,
+  FilmShotNode: videoOptionsFilter,
+}
+
 // For each use-case node, map model-gated widget names → the Model combo value
 // they belong to. If a widget appears here and the current model doesn't
 // match, the widget is hidden. Widgets NOT in this map are always visible
@@ -338,6 +356,19 @@ function isWidgetVisible(widget: any): boolean {
   const rule = WIDGET_VISIBILITY[props.data.nodeType]
   if (!rule) return true
   return rule(widget.name, props.data.widgetsValues || [], props.data.widgetDefs || [])
+}
+
+// The widget def handed to ComfyNodeWidget — the original, or a shallow clone
+// with filtered options. node.data.widgetDefs is NEVER mutated.
+function effectiveWidgetDef(widget: any): any {
+  const rule = WIDGET_OPTIONS[props.data.nodeType]
+  if (!rule) return widget
+  const allowed = rule(widget.name, props.data.widgetsValues || [], props.data.widgetDefs || [])
+  if (!allowed) return widget
+  const schema: string[] = Array.isArray(widget.options) ? widget.options : []
+  const filtered = schema.filter((o: any) => allowed.includes(String(o)))
+  if (filtered.length === 0 || filtered.length === schema.length) return widget
+  return { ...widget, options: filtered }
 }
 
 // Per-node widget groupings. Widgets in a group render together under a
@@ -1115,7 +1146,7 @@ watch(previewImages, (urls) => {
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
           v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
-          :widget-def="widget"
+          :widget-def="effectiveWidgetDef(widget)"
           :node-type="data.nodeType"
           :node-id="id"
           :model-value="data.widgetsValues?.[i]"
@@ -1141,7 +1172,7 @@ watch(previewImages, (urls) => {
           <VueCanvasComfyNodeWidget
             v-for="widget in widgetsInGroup(group.title)"
             :key="widget.name"
-            :widget-def="widget"
+            :widget-def="effectiveWidgetDef(widget)"
             :node-type="data.nodeType"
             :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
             :is-fixed="isSeedFixed(widget, widgetIndex(widget.name))"
@@ -1168,7 +1199,7 @@ watch(previewImages, (urls) => {
           <VueCanvasComfyNodeWidget
             v-for="widget in advancedWidgets"
             :key="widget.name"
-            :widget-def="widget"
+            :widget-def="effectiveWidgetDef(widget)"
             :node-type="data.nodeType"
             :node-id="id"
             :model-value="data.widgetsValues?.[widgetIndex(widget.name)]"
