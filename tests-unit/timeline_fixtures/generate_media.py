@@ -1,7 +1,10 @@
 """Deterministic PLAYBACK fixtures for the engine specs.
 
   counter_30f.mp4 — 30 frames, 64×64, 30 fps, H.264 yuv420p, near-lossless
-    (qp 0), no B-frames, keyframe every 10 frames (so frame 13 forces a
+    (qp 1 — NOT qp 0: x264 lossless is only representable in the High 4:4:4
+    Predictive profile, which Safari/AVFoundation cannot decode; qp 1 stays
+    in High profile and keeps the webkit-engine specs honest), no B-frames,
+    keyframe every 10 frames (so frame 13 forces a
     decode-from-keyframe-10 path). Frame i is solid gray value = 8 + i*8
     (max 240). Gray ⇒ chroma constant ⇒ 4:2:0 subsampling is harmless; the
     decoder-side index recovery is round((v - 8) / 8) with ±3 tolerance for
@@ -32,7 +35,7 @@ def gen_video() -> None:
     stream.width = SIZE
     stream.height = SIZE
     stream.pix_fmt = "yuv420p"
-    stream.options = {"qp": "0", "bf": "0", "g": "10"}
+    stream.options = {"qp": "1", "bf": "0", "g": "10", "profile": "high"}
     for i in range(FRAMES):
         v = 8 + i * 8
         arr = np.full((SIZE, SIZE, 3), v, dtype=np.uint8)

@@ -35,5 +35,18 @@ export default defineConfig({
         launchOptions: { args: ['--autoplay-policy=no-user-gesture-required'] },
       },
     },
+    {
+      // Safari-engine verification for the WebGL/WebCodecs engine ONLY.
+      // The golden gate is excluded: its tolerances are calibrated on
+      // Chromium's GPU stack (see timeline-golden.spec.ts) — per-engine
+      // recalibration is deliberately deferred to M3 dogfooding.
+      name: 'webkit-engine',
+      use: { ...devices['Desktop Safari'] },
+      testMatch: [
+        '**/gl-blend-conformance.spec.ts',
+        '**/video-source.spec.ts',
+        '**/engine-playback.spec.ts',
+      ],
+    },
   ],
 })
