@@ -21,7 +21,7 @@ from PIL import Image as PILImage
 from typing_extensions import override
 
 import folder_paths
-from comfy_api.latest import ComfyExtension, IO, InputImpl, Types
+from comfy_api.latest import ComfyExtension, Input, IO, InputImpl, Types
 from comfy_extras._live_preview import save_live_preview
 from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, _transform
 
@@ -36,37 +36,132 @@ _MAX_CLIPS = 16
 _DECODE_BUDGET_BYTES = 8 * 1024**3
 
 
-def _check_decode_budget(v, clip_name: str) -> None:
+def _bounded_dims(w: int, h: int, max_dim: int | None) -> tuple[int, int]:
+    """Output dimensions after downscaling so max(W, H) ≤ `max_dim`, aspect
+    kept, never upscaled. Even dims keep every pixel format happy."""
+    if max_dim is None or max(w, h) <= max_dim:
+        return w, h
+    scale = max_dim / max(w, h)
+    return (max(2, int(w * scale) // 2 * 2),
+            max(2, int(h * scale) // 2 * 2))
+
+
+def _check_decode_budget(v, clip_name: str,
+                         max_frames: int | None = None,
+                         max_dim: int | None = None) -> None:
     """Estimate the decoded float32 [T,H,W,3] size from container metadata
-    (VideoFromFile probes the container without decoding frames). If metadata
-    is unavailable, stay permissive — decode as before the guard."""
+    (VideoFromFile probes the container without decoding frames), bounded by
+    what the timeline will actually decode: at most `max_frames` frames at the
+    downscaled (`max_dim`) resolution. If metadata is unavailable, stay
+    permissive — decode as before the guard."""
     try:
         w, h = v.get_dimensions()
         frames = v.get_frame_count()
     except Exception:
         return
-    est_bytes = frames * h * w * 3 * 4
+    if max_frames is not None:
+        frames = min(frames, max_frames)
+    bw, bh = _bounded_dims(w, h, max_dim)
+    est_bytes = frames * bh * bw * 3 * 4
     if est_bytes > _DECODE_BUDGET_BYTES:
         est_gb = est_bytes / 1024**3
         budget_gb = _DECODE_BUDGET_BYTES / 1024**3
         raise ValueError(
             f"{clip_name}: video is too large to composite directly "
-            f"(~{est_gb:.1f} GB of frames at {w}x{h}; budget {budget_gb:.0f} GB). "
+            f"(~{est_gb:.1f} GB of frames: {frames} frames at {bw}x{bh}; "
+            f"budget {budget_gb:.0f} GB). "
             "Use a lower-resolution proxy, trim the source, or wire it through "
             "GetVideoComponents with a downscale before the Timeline.")
 
 
-def _coerce_video_clips(kwargs: dict) -> None:
+def _needed_source_frames(kwargs: dict, state: dict | None, port_idx: int) -> int | None:
+    """How many leading source frames the timeline can possibly use from clip
+    port `port_idx`. Edit-state clips index `(local + in_frame) % src_T`, so a
+    clip needs the first `in_frame + length` frames (wrap ⇒ everything, which
+    the caller caps at the source frame count). Legacy widget path: the first
+    `clip{i}_length` frames. None ⇒ unknown (decode everything under budget)."""
+    if state is not None:
+        needed = 0
+        for track in state.get("tracks", []):
+            for clip in track.get("clips", []):
+                if clip.get("kind") == "workflow" and int(clip.get("port_index", -1) or -1) == port_idx:
+                    needed = max(needed, int(clip.get("in_frame", 0) or 0) + max(1, int(clip.get("length", 1) or 1)))
+        return needed or None
+    length = kwargs.get(f"clip{port_idx}_length")
+    if length is None:
+        return None
+    return max(1, int(length))
+
+
+def _decode_video_bounded(video, max_frames: int | None, max_dim: int | None):
+    """Decode a VIDEO object to a float32 [T,H,W,3] tensor, reading at most
+    `max_frames` frames and downscaling so max(H, W) ≤ `max_dim` (aspect kept,
+    never upscaled). Streams via PyAV when the source exposes a file/stream
+    (VideoFromFile.get_stream_source) so unused frames are never materialized;
+    in-memory videos (VideoFromComponents) are sliced instead."""
+    import av
+
+    # Only use get_stream_source when the video class actually overrides it:
+    # the VideoInput base provides a default that ENCODES the in-memory frames
+    # to a BytesIO (lossy h264 round-trip) — for those (VideoFromComponents),
+    # slicing get_components() is both cheaper and exact.
+    src = None
+    if hasattr(video, "get_stream_source"):
+        base_impl = getattr(Input.Video, "get_stream_source", None)
+        if getattr(type(video), "get_stream_source", None) is not base_impl:
+            src = video.get_stream_source()
+    if src is None:
+        frames = video.get_components().images
+        if max_frames is not None and frames.shape[0] > max_frames:
+            frames = frames[:max_frames]
+        return frames
+
+    container = av.open(src, mode="r")
+    try:
+        stream = container.streams.video[0]
+        w, h = stream.codec_context.width, stream.codec_context.height
+        out_w, out_h = _bounded_dims(w, h, max_dim)
+        arrs = []
+        for frame in container.decode(stream):
+            if out_w != w or out_h != h:
+                frame = frame.reformat(width=out_w, height=out_h, format="rgb24")
+                arr = frame.to_ndarray()
+            else:
+                arr = frame.to_ndarray(format="rgb24")
+            arrs.append(arr)
+            if max_frames is not None and len(arrs) >= max_frames:
+                break
+        if not arrs:
+            raise ValueError("video source contained no decodable frames")
+        return torch.from_numpy(np.stack(arrs).astype(np.float32) / 255.0)
+    finally:
+        container.close()
+
+
+def _coerce_video_clips(kwargs: dict, state: dict | None = None) -> None:
     """Modern video nodes output VIDEO objects; the Timeline composites frame
     batches. Decode each VIDEO clip input to its frame tensor once, in place —
-    both the legacy widget path and the edit-state path then see tensors.
-    (Audio inside wired videos is dropped here — node-run audio is a later
-    phase; the editor's audio tracks are unaffected.)"""
+    both the legacy widget path and the edit-state path then see tensors. The
+    decode is BOUNDED: only the frames the timeline references (per
+    `_needed_source_frames`), downscaled toward the canvas on the edit-state
+    path, with the budget guard applied to that bounded estimate. (Audio
+    inside wired videos is dropped here — node-run audio is a later phase;
+    the editor's audio tracks are unaffected.)"""
+    # Edit-state path: canvas is fixed by the state → downscale big sources to
+    # 2× the canvas's larger dimension (headroom for the scale widget, ≤3×,
+    # at slight softness beyond 2×). Legacy path: canvas IS clip1's native
+    # size — downscaling would change the output resolution, so bound frames only.
+    max_dim = None
+    if state is not None:
+        canvas = state.get("canvas", {})
+        max_dim = 2 * max(int(canvas.get("width", 1280) or 1280), int(canvas.get("height", 720) or 720))
     for i in range(1, _MAX_CLIPS + 1):
         v = kwargs.get(f"clip{i}")
-        if v is not None and not isinstance(v, torch.Tensor) and hasattr(v, "get_components"):
-            _check_decode_budget(v, f"clip{i}")
-            kwargs[f"clip{i}"] = v.get_components().images
+        if v is None or isinstance(v, torch.Tensor) or not hasattr(v, "get_components"):
+            continue
+        needed = _needed_source_frames(kwargs, state, i)
+        _check_decode_budget(v, f"clip{i}", max_frames=needed, max_dim=max_dim)
+        kwargs[f"clip{i}"] = _decode_video_bounded(v, needed, max_dim)
 
 
 def _frames_to_video(frames, fps) -> "InputImpl.VideoFromComponents":
@@ -262,20 +357,25 @@ class TimelineNode(IO.ComfyNode):
 
     @classmethod
     def execute(cls, **kwargs) -> IO.NodeOutput:
-        _coerce_video_clips(kwargs)
         # Prefer the editor's rich edit_state (tracks, clips, keyframes) when
         # the frontend injected it at submit. This is what makes node-run agree
         # with the editor preview and the FFmpeg export. Absent/blank → fall
         # back to the legacy flat clip{i}_* widget path below (back-compat for
-        # graphs wired without the editor).
+        # graphs wired without the editor). Parsed BEFORE the video coercion so
+        # the bounded decoder knows which source frames the state references
+        # and how big the canvas is.
+        state = None
         raw_state = kwargs.get("edit_state")
         if raw_state:
             try:
                 state = json.loads(raw_state) if isinstance(raw_state, str) else raw_state
             except Exception:
                 state = None
-            if _is_edit_state(state):
-                return cls._execute_edit_state(kwargs, state)
+            if not _is_edit_state(state):
+                state = None
+        _coerce_video_clips(kwargs, state)
+        if state is not None:
+            return cls._execute_edit_state(kwargs, state)
 
         # Gather connected layers.
         layers = []

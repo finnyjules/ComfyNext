@@ -95,3 +95,63 @@ def test_frames_to_video_round_trips():
     comps = video.get_components()
     assert torch.equal(comps.images, frames)
     assert comps.frame_rate == Fraction(24)
+
+
+def test_needed_source_frames_legacy_and_state():
+    assert NT._needed_source_frames({"clip1_length": 45}, None, 1) == 45
+    state = {"tracks": [{"clips": [
+        {"kind": "workflow", "port_index": 1, "in_frame": 10, "length": 20},
+        {"kind": "workflow", "port_index": 1, "in_frame": 0, "length": 50},
+        {"kind": "workflow", "port_index": 2, "in_frame": 0, "length": 999},
+        {"kind": "video", "asset_id": "x", "length": 7},
+    ]}]}
+    assert NT._needed_source_frames({}, state, 1) == 50
+    assert NT._needed_source_frames({}, state, 2) == 999
+    assert NT._needed_source_frames({}, state, 3) is None
+    assert NT._needed_source_frames({}, None, 1) is None
+
+
+def test_decode_video_bounded_frames_and_downscale():
+    from comfy_api.latest import InputImpl
+    mp4 = os.path.join(REPO_ROOT, "tests-unit", "timeline_fixtures", "assets", "counter_30f.mp4")
+    video = InputImpl.VideoFromFile(mp4)
+    frames = NT._decode_video_bounded(video, max_frames=10, max_dim=None)
+    assert frames.shape[0] == 10
+    # self-describing: frame i is gray ~ (8 + i*8)/255
+    for i in (0, 5, 9):
+        g = float(frames[i, 32, 32, 0]) * 255.0
+        assert abs(g - (8 + i * 8)) <= 3
+    small = NT._decode_video_bounded(InputImpl.VideoFromFile(mp4), max_frames=4, max_dim=32)
+    assert small.shape[0] == 4
+    assert max(small.shape[1], small.shape[2]) <= 32
+
+
+def test_coerce_uses_bounds_from_legacy_widgets():
+    from comfy_api.latest import InputImpl
+    mp4 = os.path.join(REPO_ROOT, "tests-unit", "timeline_fixtures", "assets", "counter_30f.mp4")
+    kwargs = {"clip1": InputImpl.VideoFromFile(mp4), "clip1_length": 6}
+    NT._coerce_video_clips(kwargs)
+    assert kwargs["clip1"].shape[0] == 6
+
+
+def test_budget_uses_bounded_estimate():
+    # A '4K, 1000-frame' source that would blow the budget unbounded is FINE
+    # when only 8 frames are needed at a small canvas.
+    class BigMetaVideo:
+        def get_dimensions(self):
+            return (3840, 2160)
+
+        def get_frame_count(self):
+            return 1000
+
+        def get_stream_source(self):
+            raise AssertionError("budget must pass before any decode in this test")
+
+        def get_components(self):
+            raise AssertionError("must not full-decode")
+
+    state = {"canvas": {"width": 640, "height": 360},
+             "tracks": [{"clips": [{"kind": "workflow", "port_index": 1, "in_frame": 0, "length": 8}]}]}
+    kwargs = {"clip1": BigMetaVideo()}
+    with pytest.raises(AssertionError, match="budget must pass"):
+        NT._coerce_video_clips(kwargs, state)   # reaching decode proves the budget passed
