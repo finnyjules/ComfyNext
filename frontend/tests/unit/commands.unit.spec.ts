@@ -1,0 +1,144 @@
+import { describe, it, expect, beforeEach } from 'vitest'
+import { applyCommand } from '../../shared/timeline/commands'
+import { createDefaultEditState, type EditState, type ImageClip, type Transition } from '../../shared/timeline/types'
+
+function img(id: string, start: number, length: number): ImageClip {
+  return { id, kind: 'image', asset_id: `asset-${id}`, start_frame: start, in_frame: 0, length }
+}
+
+function tr(id: string, trackId: string, from: string, to: string): Transition {
+  return { id, track_id: trackId, from_clip_id: from, to_clip_id: to, kind: 'crossfade', duration: 10 }
+}
+
+describe('applyCommand', () => {
+  let s: EditState
+  let videoTrackId: string
+
+  beforeEach(() => {
+    s = createDefaultEditState()
+    videoTrackId = s.tracks[0]!.id
+  })
+
+  it('add_clip / remove_clip round-trips; remove drops referencing transitions', () => {
+    expect(applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })).toBe(true)
+    expect(applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })).toBe(true)
+    expect(applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'b') })).toBe(true)
+    expect(s.transitions).toHaveLength(1)
+    expect(applyCommand(s, { type: 'remove_clip', clip_id: 'a' })).toBe(true)
+    expect(s.tracks[0]!.clips.map(c => c.id)).toEqual(['b'])
+    expect(s.transitions).toEqual([])
+  })
+
+  it('returns false (and leaves state untouched) for unknown targets', () => {
+    const before = JSON.stringify(s)
+    expect(applyCommand(s, { type: 'remove_clip', clip_id: 'ghost' })).toBe(false)
+    expect(applyCommand(s, { type: 'move_clip', clip_id: 'ghost', to_track_id: videoTrackId, start_frame: 0 })).toBe(false)
+    expect(JSON.stringify(s)).toBe(before)
+  })
+
+  it('split_clip splits length/in_frame and rebases keyframes onto the halves', () => {
+    const clip = img('a', 10, 20)
+    clip.keyframes = [
+      { frame: 0, x: 0, y: 0, rotation: 0, scale: 1, opacity: 1 },
+      { frame: 15, x: 1, y: 0, rotation: 0, scale: 1, opacity: 1 },
+    ]
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    expect(applyCommand(s, { type: 'split_clip', clip_id: 'a', frame: 18, new_clip_id: 'a2' })).toBe(true)
+
+    const [left, right] = s.tracks[0]!.clips
+    expect(left!.id).toBe('a')
+    expect(left!.length).toBe(8)
+    expect(left!.keyframes).toEqual([{ frame: 0, x: 0, y: 0, rotation: 0, scale: 1, opacity: 1 }])
+    expect(right!.id).toBe('a2')
+    expect(right!.start_frame).toBe(18)
+    expect(right!.in_frame).toBe(8)
+    expect(right!.length).toBe(12)
+    expect(right!.keyframes).toEqual([{ frame: 7, x: 1, y: 0, rotation: 0, scale: 1, opacity: 1 }])
+  })
+
+  it('split_clip rejects cuts outside the clip body', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 10, 20) })
+    expect(applyCommand(s, { type: 'split_clip', clip_id: 'a', frame: 10, new_clip_id: 'x' })).toBe(false)
+    expect(applyCommand(s, { type: 'split_clip', clip_id: 'a', frame: 30, new_clip_id: 'x' })).toBe(false)
+  })
+
+  it('split_clip remaps an end-junction transition to the new right half', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })
+    applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'b') })
+    applyCommand(s, { type: 'split_clip', clip_id: 'a', frame: 15, new_clip_id: 'a2' })
+    expect(s.transitions[0]!.from_clip_id).toBe('a2')
+    expect(s.transitions[0]!.to_clip_id).toBe('b')
+  })
+
+  it('ripple_delete closes the gap on that track only', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('c', 60, 30) })
+    expect(applyCommand(s, { type: 'ripple_delete', clip_id: 'b' })).toBe(true)
+    const ids = s.tracks[0]!.clips.map(c => [c.id, c.start_frame])
+    expect(ids).toEqual([['a', 0], ['c', 30]])
+  })
+
+  it('add_keyframe captures the interpolated transform at a global frame', () => {
+    const clip = img('a', 10, 20)
+    clip.x = 0.4
+    clip.scale = 2
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    expect(applyCommand(s, { type: 'add_keyframe', clip_id: 'a', frame: 15 })).toBe(true)
+    expect(clip.keyframes).toEqual([
+      { frame: 5, x: 0.4, y: 0, rotation: 0, scale: 2, opacity: 1, ease: 'linear' },
+    ])
+  })
+
+  it('set_clip_transform writes scalars when unkeyed, keyframe at frame when keyed', () => {
+    const clip = img('a', 0, 30)
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    applyCommand(s, { type: 'set_clip_transform', clip_id: 'a', frame: 5, patch: { x: 0.25 } })
+    expect(clip.x).toBe(0.25)
+    expect(clip.keyframes).toBeUndefined()
+
+    applyCommand(s, { type: 'add_keyframe', clip_id: 'a', frame: 0 })
+    applyCommand(s, { type: 'set_clip_transform', clip_id: 'a', frame: 10, patch: { x: 0.9 } })
+    expect(clip.keyframes).toHaveLength(2)
+    expect(clip.keyframes![1]).toMatchObject({ frame: 10, x: 0.9 })
+  })
+
+  it('add_transition requires both clips and replaces the same junction', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })
+    expect(applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'ghost') })).toBe(false)
+    applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'b') })
+    applyCommand(s, { type: 'add_transition', transition: { ...tr('t2', videoTrackId, 'a', 'b'), kind: 'wipe_left' } })
+    expect(s.transitions).toHaveLength(1)
+    expect(s.transitions[0]!.id).toBe('t2')
+    expect(applyCommand(s, { type: 'update_transition', transition_id: 't2', patch: { duration: 4 } })).toBe(true)
+    expect(s.transitions[0]!.duration).toBe(4)
+    expect(applyCommand(s, { type: 'remove_transition', transition_id: 't2' })).toBe(true)
+    expect(s.transitions).toEqual([])
+  })
+
+  it('remove_track drops its transitions', () => {
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('a', 0, 30) })
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip: img('b', 30, 30) })
+    applyCommand(s, { type: 'add_transition', transition: tr('t1', videoTrackId, 'a', 'b') })
+    expect(applyCommand(s, { type: 'remove_track', track_id: videoTrackId })).toBe(true)
+    expect(s.transitions).toEqual([])
+  })
+
+  it('keyframe maintenance: remove / move / ease (clip-local frames)', () => {
+    const clip = img('a', 0, 30)
+    clip.keyframes = [
+      { frame: 0, x: 0, y: 0, rotation: 0, scale: 1, opacity: 1 },
+      { frame: 20, x: 1, y: 0, rotation: 0, scale: 1, opacity: 1 },
+    ]
+    applyCommand(s, { type: 'add_clip', track_id: videoTrackId, clip })
+    expect(applyCommand(s, { type: 'move_keyframe', clip_id: 'a', from_frame: 20, to_frame: 10 })).toBe(true)
+    expect(clip.keyframes![1]!.frame).toBe(10)
+    expect(applyCommand(s, { type: 'set_keyframe_ease', clip_id: 'a', frame: 10, ease: 'easeInOut' })).toBe(true)
+    expect(clip.keyframes![1]!.ease).toBe('easeInOut')
+    expect(applyCommand(s, { type: 'remove_keyframe', clip_id: 'a', frame: 10 })).toBe(true)
+    expect(applyCommand(s, { type: 'remove_keyframe', clip_id: 'a', frame: 0 })).toBe(true)
+    expect(clip.keyframes).toBeUndefined()
+  })
+})
