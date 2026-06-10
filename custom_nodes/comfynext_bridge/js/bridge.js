@@ -1112,17 +1112,33 @@ app.registerExtension({
           if (window.app?.queuePrompt) {
             ensurePromptErrorCapture();
             window._comfynextLastPromptError = null;
+            window._comfynextLastPromptOk = null;
             await window.app.queuePrompt(0); // 0 = front of queue
             const resp = window._comfynextLastPromptError; // parsed 400 body, if any
             const lastErrs = window.app?.lastNodeErrors;
             const hasNodeErrors = !!(lastErrs && typeof lastErrs === "object" && Object.keys(lastErrs).length);
             if (resp || hasNodeErrors) {
-              const nodeErrors = resp?.node_errors || (hasNodeErrors ? lastErrs : null);
+              // IMPORTANT: app.lastNodeErrors is a Pinia-store getter that
+              // returns a Vue reactive Proxy. structuredClone (and therefore
+              // postMessage) ALWAYS throws DataCloneError on it, even though
+              // JSON.stringify succeeds — so sanitize before posting, or the
+              // clone failure masks the real validation error.
+              const nodeErrors = toCloneable(resp?.node_errors) || (hasNodeErrors ? toCloneable(lastErrs) : null);
               const message =
                 (resp?.error && (resp.error.message || String(resp.error))) ||
                 "The workflow failed validation.";
               console.error("[ComfyNext Bridge] prompt validation failed:", message, nodeErrors);
               postToParent({ event: "queue_error", message, node_errors: nodeErrors });
+            } else if (!window._comfynextLastPromptOk) {
+              // No error evidence AND no success evidence: the /prompt request
+              // never reached the server (network failure, ComfyUI restarting).
+              // Without this, the bridge would post nothing and the run would
+              // silently never queue.
+              console.error("[ComfyNext Bridge] prompt never reached the server (no success, no error)");
+              postToParent({
+                event: "queue_error",
+                message: "Run did not reach the ComfyUI server (network or server restart?) — try again.",
+              });
             } else {
               console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
             }
@@ -1135,7 +1151,8 @@ app.registerExtension({
           postToParent({
             event: "queue_error",
             message: (e && (e.message || String(e))) || "Failed to queue the prompt.",
-            node_errors: (e && (e.response?.node_errors || e.body?.node_errors)) || null,
+            // Sanitized: error bodies can carry reactive Proxies too (see above).
+            node_errors: toCloneable(e && (e.response?.node_errors || e.body?.node_errors)) || null,
           });
         }
       }
@@ -1202,17 +1219,34 @@ app.registerExtension({
       }
     }, true); // capture phase to beat LiteGraph's handler
 
+    // Strip Vue reactivity before postMessage. app.lastNodeErrors (a Pinia
+    // getter) returns a reactive Proxy that structuredClone — and thus
+    // postMessage — always rejects with DataCloneError, while JSON.stringify
+    // handles it fine. A JSON round-trip yields a plain, cloneable object.
+    function toCloneable(x) {
+      try {
+        return x == null ? null : JSON.parse(JSON.stringify(x));
+      } catch {
+        return null;
+      }
+    }
+
     // Forward ComfyUI execution events to parent
     // Wrap the raw api.queuePrompt once so the structured /prompt 400 body
     // (error + node_errors) survives app.queuePrompt's internal catch — see
     // the "queuePrompt" action handler above for the observed build behavior.
+    // Also stash success ({prompt_id}) so the action handler can distinguish
+    // "queued fine" from "request never reached the server" (both leave the
+    // error stashes empty).
     function ensurePromptErrorCapture() {
       const api = window.comfyAPI?.api?.api || window.app?.api;
       if (!api || typeof api.queuePrompt !== "function" || api._comfynextWrapped) return;
       const original = api.queuePrompt.bind(api);
       api.queuePrompt = async function (...args) {
         try {
-          return await original(...args);
+          const res = await original(...args);
+          window._comfynextLastPromptOk = { prompt_id: (res && res.prompt_id) || null };
+          return res;
         } catch (e) {
           // PromptExecutionError carries the parsed response body on .response
           // (older builds used .body). Stash it for the action handler.
