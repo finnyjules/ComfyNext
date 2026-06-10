@@ -39,6 +39,7 @@ export function usePlaybackEngineGL(
   let dirty = true
   let loading = false
   let failedOnce = false
+  let destroyed = false
 
   /** Clip set signature — reload sources when it changes. */
   const clipSignature = () =>
@@ -49,7 +50,7 @@ export function usePlaybackEngineGL(
   let lastSignature = ''
 
   async function reload(): Promise<void> {
-    if (loading) return
+    if (loading || destroyed) return
     loading = true
     const sigAtStart = lastSignature
     try {
@@ -69,7 +70,7 @@ export function usePlaybackEngineGL(
       // If the clip set changed again while this load was in flight (rapid
       // clip adds), run again with the new set — the in-flight guard would
       // otherwise silently drop it.
-      if (lastSignature !== sigAtStart) void reload()
+      if (!destroyed && lastSignature !== sigAtStart) void reload()
     }
   }
 
@@ -118,6 +119,7 @@ export function usePlaybackEngineGL(
   }
 
   function destroy() {
+    destroyed = true
     stop()
     audio.dispose()
     renderer.dispose()
@@ -131,6 +133,10 @@ export function usePlaybackEngineGL(
     if (sig !== lastSignature) {
       lastSignature = sig
       void reload()
+    } else {
+      // Undo/redo replaces the whole state tree without changing the clip set —
+      // re-point the renderer so it never composites a detached snapshot.
+      renderer.setState(state.value)
     }
     dirty = true
   }, { deep: true })

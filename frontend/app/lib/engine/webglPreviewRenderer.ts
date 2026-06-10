@@ -58,11 +58,13 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
   private state: EditState | null = null
   private gl: GlRenderer | null = null
   private sources = new Map<string, FrameSource>()
+  private disposed = false
 
   /** Per-clip load failures (clip id → message). Cleared per load(). */
   readonly loadWarnings = new Map<string, string>()
 
   async load(state: EditState, opts: RendererLoadOptions = {}): Promise<void> {
+    if (this.disposed) return
     this.disposeSources()
     this.loadWarnings.clear()
     this.gl ??= new GlRenderer()
@@ -83,7 +85,10 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
         }
         loads.push(
           this.loadSource(clip, plan, W, H, fps)
-            .then(src => { this.sources.set(clip.id, src) })
+            .then(src => {
+              if (this.disposed) { src.dispose(); return }
+              this.sources.set(clip.id, src)
+            })
             .catch((e) => {
               // Per-clip resilience: a failed source must not kill the preview.
               const msg = e instanceof Error ? e.message : String(e)
@@ -94,6 +99,13 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
       }
     }
     await Promise.all(loads)
+  }
+
+  /** Re-point composition at a replaced state tree WITHOUT reloading sources —
+   *  sources are keyed by clip id and stay valid when the clip set is
+   *  unchanged (undo/redo replaces the whole tree; see useTimelineStore). */
+  setState(state: EditState): void {
+    if (this.state) this.state = state
   }
 
   private async loadSource(clip: Clip, plan: Exclude<ResolutionPlan, null>, W: number, H: number, fps: number): Promise<FrameSource> {
@@ -163,6 +175,7 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
   }
 
   dispose(): void {
+    this.disposed = true
     this.disposeSources()
     this.gl?.dispose()
     this.gl = null
