@@ -80,7 +80,7 @@ rAF tick → sample `PlaybackClock` → visible clips at frame → clip-local �
 
 ## Rollout milestones
 
-1. **M1 — Harness parity (visual, deterministic).** `WebGLPreviewRenderer` passes the golden spec on the three Phase-0 fixtures (static blends → keyframes → fades, in that order), GLSL conformance green, tolerances calibrated and locked. No editor changes.
+1. **M1 — Harness parity (visual, deterministic).** ✅ Completed 2026-06-09 (plan: `docs/plans/2026-06-09-phase1-m1-webgl-harness-parity-plan.md`). `WebGLPreviewRenderer` passes the golden spec on all three fixtures; GLSL conformance green over the full 8-bit grid; WebGL tolerances calibrated and recorded in `frontend/tests/timeline-golden.spec.ts` (mean ≤ 2.5/255, pctOver(8/255) ≤ 6%; measured worst 1.343/255 / 3.94%). Bonus: the gate exposed and fixed a real ground-truth bug — rotated clips exported with opaque black expand-bboxes (`_transform_and_alpha` now rotates in RGBA; goldens regenerated).
 2. **M2 — Playback.** Clock + decode-ahead + audio engine driving the harness page in real time; A/V sync test green; Safari manual verification (WebCodecs detection, fallback ladder exercised, audio unlock on gesture).
 3. **M3 — Editor flag.** `usePlaybackEngineGL` selectable in TimelineEditor via localStorage flag (default off); kinetic/text/sequence sources wired through the editor's clip-resolution callback; dogfooding on real projects.
 4. **M4 — Default on.** Flag defaults to the engine; Canvas2D path remains as automatic fallback. Exit criteria: no fallback triggers and no visual complaints across a week of real use.
