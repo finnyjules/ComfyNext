@@ -103,6 +103,31 @@ def test_keyframed_opacity_interpolates(tmp_path):
     assert np.allclose(arr[18, 32], [0.5, 0.5, 0.5], atol=2 / 255)
 
 
+def test_rotated_clip_corners_are_transparent(tmp_path):
+    """Rotating must not paint the PIL expand-bbox: the area outside the
+    rotated quad but inside its bounding box shows the BACKGROUND, not black.
+    Regression for the black-box-around-rotated-clips export bug."""
+    path = _solid_png(tmp_path, "white.png", (255, 255, 255), size=(64, 64))
+    state = _flat_state([{
+        "kind": "image", "path": path, "start_frame": 0, "length": 10,
+        "x": 0, "y": 0, "rotation": 45, "scale": 0.5, "opacity": 1,
+        "blend": "normal", "fade_in": 0, "fade_out": 0,
+    }], w=128, h=128, bg="#336699")
+    clips = NT._prepare_render_clips(state)
+    try:
+        arr = NT.render_frame_np(state, clips, 0)
+    finally:
+        NT._close_render_clips(clips)
+    bg = [0x33 / 255, 0x66 / 255, 0x99 / 255]
+    # 64x64 source aspect-fit into 128x128 -> 128x128, scale 0.5 -> 64x64
+    # square centered at (64, 64), rotated 45 deg -> diamond: inside iff
+    # |dx| + |dy| <= ~45. Its expand-bbox spans ~[19, 109]. Point (24, 24):
+    # |dx| + |dy| = 80 > 45 -> outside the diamond, inside the bbox.
+    assert np.allclose(arr[24, 24], bg, atol=2 / 255), f"bbox corner shows {arr[24, 24]}, expected bg"
+    # Center is inside the diamond -> white.
+    assert np.allclose(arr[64, 64], [1, 1, 1], atol=2 / 255)
+
+
 def test_render_timeline_to_file_still_works(tmp_path):
     path = _solid_png(tmp_path, "red.png", (255, 0, 0))
     state = _flat_state([{

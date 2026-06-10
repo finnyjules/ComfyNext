@@ -489,17 +489,20 @@ def _transform_and_alpha(src_pil: "PILImage.Image", canvas_w: int, canvas_h: int
             (max(1, int(round(fit_w * s))), max(1, int(round(fit_h * s)))),
             PILImage.BILINEAR,
         )
-    # Rotate (with expand to avoid clipping during rotation).
+    # Rotate (with expand to avoid clipping during rotation). Rotate in RGBA so
+    # the expanded corners are TRANSPARENT — rotating in RGB fills them opaque
+    # black, which then composites as a black bounding box around the layer
+    # (the bug that made rotated clips export with black boxes; the editor
+    # preview never had it, and the WebGL engine's parity gate caught it).
+    rgba = fitted.convert("RGBA")
     if rotation != 0.0:
-        fitted = fitted.rotate(-float(rotation), resample=PILImage.BILINEAR, expand=True)
-    fw, fh = fitted.size
+        rgba = rgba.rotate(-float(rotation), resample=PILImage.BILINEAR, expand=True)
+    fw, fh = rgba.size
 
     # Paste fitted on a transparent RGBA canvas at center + offset.
     canvas = PILImage.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     cx = canvas_w // 2 + int(round(float(x) * canvas_w)) - fw // 2
     cy = canvas_h // 2 + int(round(float(y) * canvas_h)) - fh // 2
-    # Build alpha-bearing version of the fitted layer.
-    rgba = fitted.convert("RGBA")
     canvas.paste(rgba, (cx, cy), rgba)
     rgba_np = np.asarray(canvas, dtype=np.float32) / 255.0
     return rgba_np[..., :3], rgba_np[..., 3:4]
