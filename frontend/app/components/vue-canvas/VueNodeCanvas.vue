@@ -3787,7 +3787,13 @@ defineExpose({
     const aligned = realignWidgetValues(wf, objectInfo.value)
     const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
     const backfilled = backfillStandaloneArtifactImages(unlocked, nodes.value as any[], objectInfo.value)
-    return applyVariantFanOut(backfilled, objectInfo.value)
+    const withFanOut = applyVariantFanOut(backfilled, objectInfo.value)
+    // Force `export` on for wired artifact sinks — same as getFilteredWorkflow.
+    // Without this, a global Run saves captured results to temp only, so they
+    // never write to output/ and never register in the Assets panel / durable
+    // generation records (which keep type:'output' files only).
+    forceExportOnCapturedArtifacts(withFanOut)
+    return withFanOut
   },
   getFilteredWorkflow,
   refreshSchema,

@@ -1,6 +1,227 @@
 import type { LiteGraphWorkflow, LiteGraphNode } from '~/composables/useVueNodes'
 
 /**
+ * Whether an INT widget carries a sibling `control_after_generate` slot in
+ * `widgets_values`. Mirrors ComfyUI's bundled frontend EXACTLY:
+ *
+ *   control_after_generate ?? ["seed","noise_seed"].includes(name)
+ *
+ * i.e. an explicit schema flag wins; when the flag is unset, any INT named
+ * `seed`/`noise_seed` still gets the control widget. ComfyNext must agree, or
+ * every widget after the seed shifts by one slot when the graph round-trips
+ * through the iframe's LiteGraph. That shift is what made EditImageNode's
+ * `safety_tolerance` read the next value (`0`, below its min of 1): ComfyUI then
+ * fails validation for that node and silently drops the whole downstream branch
+ * from the run (the Edit + its output never execute).
+ */
+export function seedHasControlWidget(name: string, type: string, config: any): boolean {
+  if (String(type) !== 'INT') return false
+  return Boolean(config?.control_after_generate ?? ['seed', 'noise_seed'].includes(name))
+}
+
+/** Minimal shape of a Vue Flow edge that link assembly reads. */
+export interface VueEdgeLike {
+  source: string | number
+  target: string | number
+  sourceHandle?: string | null
+  targetHandle?: string | null
+  data?: { dataType?: string } | null
+}
+
+/** A node whose id was invalid (null/NaN/non-numeric) and got reassigned. */
+export interface RepairedNodeId {
+  oldId: any
+  newId: number
+  type: string
+}
+
+/**
+ * Heal nodes persisted with an invalid `id` (null, NaN, or a non-numeric
+ * string like "null"). Such a node poisons the whole workflow: `convertTo
+ * LiteGraph` does `Number(id)` → NaN → serializes as `null`, so every link
+ * touching it ends up with a `null` origin/target. ComfyUI then can't resolve
+ * those links, drops them, and the downstream input dangles → "No link found in
+ * parent graph" aborts the run (or, once that input is healed, the chain is
+ * silently severed and the run produces nothing).
+ *
+ * The root: a Vue node id of `"null"`/undefined round-trips through
+ * `Number()`→NaN→`null` and re-loads as `"null"` again, so the corruption is
+ * self-perpetuating until repaired. We assign each invalid-id node a fresh
+ * unique numeric id and remap the links **structurally** — via the node's own
+ * `inputs[].link` (rewrite that link's target) and `outputs[].links` (rewrite
+ * its origin) — which is unambiguous even when several nodes are corrupt.
+ *
+ * Mutates `workflow` in place; returns the list of reassignments (empty = the
+ * workflow's ids were all valid).
+ */
+export function repairInvalidNodeIds(workflow: any): RepairedNodeId[] {
+  const repaired: RepairedNodeId[] = []
+  if (!workflow?.nodes?.length) return repaired
+
+  const isValidId = (id: any) =>
+    (typeof id === 'number' && Number.isFinite(id)) ||
+    (typeof id === 'string' && /^\d+$/.test(id))
+
+  const links: any[] = Array.isArray(workflow.links) ? workflow.links : []
+  let next = 1
+  for (const n of workflow.nodes) {
+    if (isValidId(n.id)) next = Math.max(next, Number(n.id) + 1)
+  }
+
+  for (const node of workflow.nodes) {
+    if (isValidId(node.id)) continue
+    const newId = next++
+    for (const inp of node.inputs || []) {
+      if (inp?.link == null) continue
+      const l = links.find((t) => Array.isArray(t) && t[0] === inp.link)
+      if (l) l[3] = newId // target id
+    }
+    for (const out of node.outputs || []) {
+      for (const L of out?.links || []) {
+        const l = links.find((t) => Array.isArray(t) && t[0] === L)
+        if (l) l[1] = newId // origin id
+      }
+    }
+    repaired.push({ oldId: node.id, newId, type: String(node.type ?? '') })
+    node.id = newId
+  }
+
+  if (repaired.length) {
+    const ids = workflow.nodes.map((n: any) => Number(n.id)).filter(Number.isFinite)
+    workflow.last_node_id = ids.length ? Math.max(...ids) : 0
+  }
+  return repaired
+}
+
+/** A node input whose `link` referenced a link id absent from `links[]`. */
+export interface DanglingLinkReport {
+  nodeId: number | string
+  nodeType: string
+  slot: number
+  inputName: string
+  linkId: number
+}
+
+/**
+ * Final-boundary invariant: every `node.inputs[].link` MUST point at a link id
+ * present in `links[]`. ComfyUI's `graphToPrompt` resolves each input via
+ * `graph.getLink(input.linkId)` and throws "No link found in parent graph for
+ * id [N] slot [S]" (aborting the entire run) the instant one input references a
+ * link the table doesn't contain. A dangling ref can survive any number of
+ * transforms (a link dropped by filtering/locks, a node swapped out, ComfyUI's
+ * own configure-time link repair), so we enforce the invariant once, in place,
+ * right before the workflow crosses into the bridge iframe.
+ *
+ * Heals by nulling each dangling `input.link` (the node then serializes as a
+ * leaf on that slot) and pruning stale ids from `output.links`. Returns the list
+ * of healed inputs so the caller can log what it found — an empty list means the
+ * workflow was already consistent. Also walks `definitions[].nodes` so subgraph
+ * bodies (the "parent graph" the error names) are covered too.
+ */
+export function healDanglingLinks(workflow: any): DanglingLinkReport[] {
+  const report: DanglingLinkReport[] = []
+  if (!workflow || typeof workflow !== 'object') return report
+
+  const healGraph = (graph: any) => {
+    if (!graph?.nodes) return
+    const linkIds = new Set<number>()
+    for (const l of graph.links || []) {
+      if (Array.isArray(l) && l.length) linkIds.add(Number(l[0]))
+      else if (l && typeof l === 'object' && 'id' in l) linkIds.add(Number(l.id))
+    }
+    for (const node of graph.nodes) {
+      const inputs = node?.inputs
+      for (let s = 0; s < (inputs?.length || 0); s++) {
+        const inp = inputs[s]
+        if (inp && inp.link != null && !linkIds.has(Number(inp.link))) {
+          report.push({
+            nodeId: node.id,
+            nodeType: String(node.type ?? ''),
+            slot: s,
+            inputName: String(inp.name ?? ''),
+            linkId: Number(inp.link),
+          })
+          inp.link = null
+        }
+      }
+      for (const out of node?.outputs || []) {
+        if (Array.isArray(out?.links)) {
+          out.links = out.links.filter((id: any) => linkIds.has(Number(id)))
+        }
+      }
+    }
+  }
+
+  healGraph(workflow)
+  const defs = workflow.definitions
+  if (Array.isArray(defs)) for (const d of defs) healGraph(d)
+  else if (defs && typeof defs === 'object') for (const d of Object.values(defs)) healGraph(d)
+  return report
+}
+
+/**
+ * Build the LiteGraph `links` table from Vue Flow edges, wiring each link onto
+ * both endpoint nodes' `outputs[].links` / `inputs[].link`. Clears every node's
+ * existing link refs first, then rebuilds from `edges`. Mutates `lgNodes`
+ * in place and returns the link tuples ([id, originId, originSlot, targetId,
+ * targetSlot, type]); link ids are 1..N contiguous, so the caller can take
+ * `last_link_id` from the returned length.
+ *
+ * Orphaned edges — ones whose source OR target node isn't in `lgNodes` — are
+ * skipped entirely (no tuple emitted, no input.link set). This is load-bearing:
+ * a node can be removed from the serialized set while an edge to it lingers
+ * (e.g. a leftover auto-materialized sink whose generator was deleted, or an
+ * edge to a synthetic subgraph-I/O node the serializer drops). Emitting a link
+ * for such an edge yields a tuple that references a non-existent node. ComfyUI's
+ * `loadGraphData` then deletes that invalid link during its configure pass, but
+ * the surviving node input keeps the dangling `link` id — so `graphToPrompt`
+ * aborts the whole run with "No link found in parent graph for id [N] slot [S]".
+ * Skipping the orphan leaves the node serializing cleanly as a leaf instead.
+ */
+export function assembleWorkflowLinks(
+  lgNodes: LiteGraphNode[],
+  edges: VueEdgeLike[],
+): any[] {
+  const nodeById = new Map<number, LiteGraphNode>()
+  for (const n of lgNodes) nodeById.set(n.id, n)
+
+  for (const node of lgNodes) {
+    for (const input of node.inputs || []) input.link = null
+    for (const output of node.outputs || []) output.links = []
+  }
+
+  const lgLinks: any[] = []
+  let linkId = 0
+  for (const edge of edges) {
+    const sourceNode = nodeById.get(Number(edge.source))
+    const targetNode = nodeById.get(Number(edge.target))
+    // Orphaned edge — would emit a link referencing a node not in the graph.
+    if (!sourceNode || !targetNode) continue
+
+    const originSlot = parseInt(edge.sourceHandle?.replace('output-', '') || '0')
+    const targetSlot = parseInt(edge.targetHandle?.replace('input-', '') || '0')
+    linkId++
+    lgLinks.push([
+      linkId,
+      Number(edge.source),
+      originSlot,
+      Number(edge.target),
+      targetSlot,
+      edge.data?.dataType || '*',
+    ])
+
+    if (sourceNode.outputs?.[originSlot]) {
+      if (!sourceNode.outputs[originSlot].links) sourceNode.outputs[originSlot].links = []
+      sourceNode.outputs[originSlot].links!.push(linkId)
+    }
+    if (targetNode.inputs?.[targetSlot]) {
+      targetNode.inputs[targetSlot].link = linkId
+    }
+  }
+  return lgLinks
+}
+
+/**
  * Build a snapshot of `workflow` that runs only the work needed to produce
  * outputs from `targetNodeIds`. Forgiving semantics: any nodes the targets
  * depend on (transitively) stay active too — so users can right-click a
@@ -157,8 +378,8 @@ export function realignWidgetValues(
           expected.push({ name, defaultValue: cfg.default ?? null })
           // Seed-type INT inputs carry a sibling control_after_generate slot
           // in LiteGraph's widgets_values — preserve it so our positional
-          // mapping matches Comfy's bundled frontend.
-          if (type === 'INT' && cfg.control_after_generate) {
+          // mapping matches Comfy's bundled frontend (flag OR seed/noise_seed name).
+          if (seedHasControlWidget(name, String(type), cfg)) {
             expected.push({ name: `${name}_control`, defaultValue: 'randomize', control: true })
           }
         }
@@ -172,10 +393,22 @@ export function realignWidgetValues(
     // Rebuild only when the length drifted; otherwise keep positions as-is.
     let realigned = current
     let changed = false
+    const controlCount = expected.filter((e: any) => e.control).length
     if (current.length !== expected.length) {
-      realigned = expected.map((e, i) =>
-        i < current.length ? current[i] : e.defaultValue,
-      )
+      if (controlCount > 0 && current.length === expected.length - controlCount) {
+        // Legacy array saved before a seed's control_after_generate slot was
+        // accounted for (a name-only `seed` whose slot ComfyNext used to omit).
+        // Interleave the control defaults back in, consuming a current value
+        // only for non-control slots. The naive positional rebuild below would
+        // otherwise shift every post-seed widget by one — the bug that fed `0`
+        // into EditImageNode's min=1 `safety_tolerance` and got it dropped.
+        let ci = 0
+        realigned = expected.map((e: any) => (e.control ? e.defaultValue : current[ci++]))
+      } else {
+        realigned = expected.map((e, i) =>
+          i < current.length ? current[i] : e.defaultValue,
+        )
+      }
       changed = true
     }
 
