@@ -13,4 +13,8 @@ describe('sequenceIndex', () => {
     expect(sequenceIndex(5, 0, 0)).toBe(0)
     expect(sequenceIndex(5, 0, 1)).toBe(0)
   })
+  it('handles negative localFrame (double-modulo safety)', () => {
+    expect(sequenceIndex(-1, 0, 10)).toBe(9)
+    expect(sequenceIndex(-3, 0, 10)).toBe(7)
+  })
 })
