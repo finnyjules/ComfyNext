@@ -2860,11 +2860,6 @@ class FilmShotNode(IO.ComfyNode):
             raise RuntimeError(
                 f"Unknown video model id: {model!r}. Known: {list(_VIDEO_MODELS_BY_ID)}"
             )
-        if "t2v" not in spec.modes and image is None:
-            raise RuntimeError(
-                f"Model {spec.label!r} requires an input image (image-to-video only). "
-                f"Connect an Image to the optional `image` input."
-            )
 
         # Fabric is a lip-sync model that always requires audio; it cannot
         # produce a cinematography shot. Fail early with a meaningful message
@@ -2873,6 +2868,12 @@ class FilmShotNode(IO.ComfyNode):
             raise RuntimeError(
                 "VEED Fabric 1.0 is a lip-sync model and can't be used with "
                 "'Film a shot'. Pick a camera-language model (Kling, Seedance, Veo, …)."
+            )
+
+        if "t2v" not in spec.modes and image is None:
+            raise RuntimeError(
+                f"Model {spec.label!r} requires an input image (image-to-video only). "
+                f"Connect an Image to the optional `image` input."
             )
 
         recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,

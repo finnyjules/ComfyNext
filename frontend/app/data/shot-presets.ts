@@ -24,7 +24,7 @@ export type ShotArrow =
   | 'orbit' | 'shake' | 'dive' | 'flow' | 'rack' | 'none'
 
 export type ShotOverlay =
-  | 'thirds' | 'doorframe' | 'mirror' | 'blur' | 'streak' | 'shoulder' | 'hands' | 'none'
+  | 'doorframe' | 'mirror' | 'blur' | 'streak' | 'shoulder' | 'hands' | 'none'
 
 export interface ShotThumb {
   scale?: number    // person scale (1 = medium); 0 hides the person

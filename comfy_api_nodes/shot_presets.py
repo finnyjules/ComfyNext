@@ -258,6 +258,7 @@ _HAILUO_COMMANDS: list[tuple[str, str]] = [
     ("cranes up", "Pedestal up"),
     ("descends", "Pedestal down"),
     ("tilts up", "Tilt up"),
+    ("pans", "Pan right"),
     ("whips violently sideways", "Pan right"),
     ("orbit", "Tracking shot"),
     ("tracks laterally", "Tracking shot"),

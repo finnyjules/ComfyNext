@@ -118,3 +118,10 @@ def test_hailuo_no_bracket_falls_back_to_standard():
 
 def test_dialect_for_model_handles_none():
     assert dialect_for_model(None) == "standard"
+
+
+def test_hailuo_pan_override_gets_bracket():
+    r = resolve_recipe("push-in", AUTO, AUTO,
+                       "the camera pans slowly left to right", AUTO, AUTO)
+    phrase = build_shot_phrase(r, "hailuo")
+    assert phrase.startswith("[Pan right]")
