@@ -3,12 +3,15 @@ import type { PreviewRenderer } from '~~/shared/timeline/previewRenderer'
 import { buildDrawList, hexToRgb } from './compositor'
 import { GlRenderer } from './gl/glRenderer'
 import { ImageSource } from './sources/imageSource'
+import { WebCodecsSource, UnsupportedSourceError } from './sources/webCodecsSource'
+import { VideoElementSource } from './sources/videoElementSource'
 import type { FrameSource } from './sources/frameSource'
 
 // Deterministic WebGL implementation of the PreviewRenderer seam: load()
-// fetches every image clip's source (clip.path must be a fetchable URL in
-// this context — the golden spec rewrites fixture paths to routed URLs),
-// renderFrame() composites exactly frame n. No clock, no audio (M2).
+// fetches every image/video clip's source (clip.path must be a fetchable URL
+// in this context — the golden spec rewrites fixture paths to routed URLs),
+// renderFrame() composites exactly frame n. Video uses the source ladder:
+// WebCodecs (frame-exact) with video-element fallback when unsupported.
 export class WebGLPreviewRenderer implements PreviewRenderer {
   private state: EditState | null = null
   private gl: GlRenderer | null = null
@@ -23,14 +26,28 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
     for (const track of state.tracks) {
       if (track.kind === 'audio') continue
       for (const clip of track.clips) {
-        if (clip.kind !== 'image' || !clip.path) {
-          if (clip.kind !== 'image') console.warn(`WebGLPreviewRenderer: skipping unsupported clip kind '${clip.kind}' (M1)`)
+        if ((clip.kind !== 'image' && clip.kind !== 'video') || !clip.path) {
+          if (clip.kind !== 'image' && clip.kind !== 'video') {
+            console.warn(`WebGLPreviewRenderer: skipping unsupported clip kind '${clip.kind}' (M2)`)
+          }
           continue
         }
         const url = clip.path
-        loads.push(ImageSource.load(url).then(src => {
-          this.sources.set(clip.id, src)
-        }))
+        if (clip.kind === 'video') {
+          loads.push(
+            WebCodecsSource.load(url)
+              .catch((e) => {
+                if (e instanceof UnsupportedSourceError) {
+                  console.warn(`WebGLPreviewRenderer: WebCodecs unavailable for ${url} (${e.message}) — video-element fallback`)
+                  return VideoElementSource.load(url, state.canvas.fps)
+                }
+                throw e
+              })
+              .then((src) => { this.sources.set(clip.id, src) }),
+          )
+        } else {
+          loads.push(ImageSource.load(url).then(src => { this.sources.set(clip.id, src) }))
+        }
       }
     }
     await Promise.all(loads)
