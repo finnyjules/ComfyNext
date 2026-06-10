@@ -21,16 +21,29 @@ export interface DrawEntry {
   /** Layer center in canvas px (Python W//2 + round(x*W), H//2 + round(y*H)). */
   centerX: number
   centerY: number
+  /** Degrees, positive = clockwise in screen coords (Python applies PIL rotate(-rotation)). */
   rotationDeg: number
   /** opacity × fade, clamped [0,1] (Python: tf.opacity * fade). */
   alpha: number
   blend: BlendMode
 }
 
+/** Python round(): banker's rounding (half-to-even). The Python renderer uses
+ *  it at every quantization site; Math.round (half-up) drifts by 1px on exact
+ *  .5 inputs (e.g. fitting 1080×1920 into 640×360 → 202.5). */
+function pyRound(v: number): number {
+  const floor = Math.floor(v)
+  const diff = v - floor
+  if (diff < 0.5) return floor
+  if (diff > 0.5) return floor + 1
+  return floor % 2 === 0 ? floor : floor + 1
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex?.trim() ?? '')
-  if (!m) return [0, 0, 0]
-  const v = parseInt(m[1]!, 16)
+  let h = (hex ?? '').trim().replace(/^#/, '')
+  if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map(c => c + c).join('')
+  if (!/^[0-9a-f]{6}$/i.test(h)) return [0, 0, 0]
+  const v = parseInt(h, 16)
   return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]
 }
 
@@ -50,14 +63,14 @@ function fittedSize(srcW: number, srcH: number, W: number, H: number, scale: num
   let fitW: number, fitH: number
   if (sAspect > cAspect) {
     fitW = W
-    fitH = Math.max(1, Math.round(W / sAspect))
+    fitH = Math.max(1, pyRound(W / sAspect))
   } else {
     fitH = H
-    fitW = Math.max(1, Math.round(H * sAspect))
+    fitW = Math.max(1, pyRound(H * sAspect))
   }
   const s = Math.max(0.01, scale)
   if (s === 1) return [fitW, fitH]
-  return [Math.max(1, Math.round(fitW * s)), Math.max(1, Math.round(fitH * s))]
+  return [Math.max(1, pyRound(fitW * s)), Math.max(1, pyRound(fitH * s))]
 }
 
 /**
@@ -76,7 +89,7 @@ export function buildDrawList(
   const out: DrawEntry[] = []
 
   for (const track of state.tracks) {
-    if (track.muted || track.kind === 'audio') continue
+    if (track.muted || track.kind === 'audio') continue // Audio TRACKS skipped wholesale (Python skips audio CLIPS; an image clip hand-edited onto an audio track would render there — unreachable via the editor, divergence accepted).
     for (const clip of track.clips as Clip[]) {
       if (clip.kind !== 'image') continue // M1: images only (matches golden fixtures)
       const url = clip.path
@@ -97,8 +110,8 @@ export function buildDrawList(
         url,
         widthPx: dw,
         heightPx: dh,
-        centerX: Math.floor(W / 2) + Math.round(tf.x * W),
-        centerY: Math.floor(H / 2) + Math.round(tf.y * H),
+        centerX: Math.floor(W / 2) + pyRound(tf.x * W),
+        centerY: Math.floor(H / 2) + pyRound(tf.y * H),
         rotationDeg: tf.rotation,
         alpha: Math.max(0, Math.min(1, tf.opacity * fade)),
         blend: clip.blend ?? 'normal',

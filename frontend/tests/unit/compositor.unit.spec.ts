@@ -96,3 +96,26 @@ describe('buildDrawList — fixture 01 (blends, time window)', () => {
     expect(list.map(e => e.blend)).toEqual(['normal', 'multiply', 'screen', 'overlay', 'difference', 'add'])
   })
 })
+
+describe('pyRound parity', () => {
+  it('hexToRgb expands 3-digit shorthand like _hex_rgb', () => {
+    expect(hexToRgb('#fff')).toEqual([1, 1, 1])
+    expect(hexToRgb('#abc')).toEqual([0xaa / 255, 0xbb / 255, 0xcc / 255])
+  })
+
+  it('quantizes .5 cases half-to-even like Python round()', () => {
+    // 1080×1920 portrait on 640×360: fit_w = 360 * (1080/1920) = 202.5 → 202 (even), not 203.
+    const state = migrateEditState({
+      version: 2,
+      canvas: { width: 640, height: 360, fps: 30, bg_color: '#000000' },
+      total_frames: 10, transitions: [],
+      tracks: [{ id: 't', kind: 'video', name: 'V', muted: false, locked: false, clips: [
+        { id: 'p', kind: 'image', asset_id: 'p', path: 'x.png', start_frame: 0, in_frame: 0, length: 10 },
+      ] }],
+    })!
+    const dims = new Map([['p', { w: 1080, h: 1920 }]])
+    const e = buildDrawList(state, 0, dims)[0]!
+    expect(e.widthPx).toBe(202)
+    expect(e.heightPx).toBe(360)
+  })
+})
