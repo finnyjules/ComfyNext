@@ -37,6 +37,7 @@ onMounted(async () => {
       const full = {
         url: '', widthPx: SIZE, heightPx: SIZE,
         centerX: SIZE / 2, centerY: SIZE / 2, rotationDeg: 0, alpha: 1,
+        sourceFrame: 0,
       }
       const entries: DrawEntry[] = [
         { ...full, clipId: 'base-ramp', blend: 'normal' },

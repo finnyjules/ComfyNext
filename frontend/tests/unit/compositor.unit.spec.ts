@@ -119,3 +119,19 @@ describe('pyRound parity', () => {
     expect(e.heightPx).toBe(360)
   })
 })
+
+describe('buildDrawList — sourceFrame threading', () => {
+  it('computes sourceFrame from in_frame/speed/reverse', () => {
+    const state = migrateEditState({
+      version: 2,
+      canvas: { width: 640, height: 360, fps: 30, bg_color: '#000000' },
+      total_frames: 20, transitions: [],
+      tracks: [{ id: 't', kind: 'video', name: 'V', muted: false, locked: false, clips: [
+        { id: 'v', kind: 'video', asset_id: 'v', path: 'v.mp4', start_frame: 2, in_frame: 3, length: 10, speed: 2, reverse: false },
+      ] }],
+    })!
+    const dims = new Map([['v', { w: 64, h: 64 }]])
+    const e = buildDrawList(state, 6, dims)[0]!   // localF = 4
+    expect(e.sourceFrame).toBe(3 + 8)             // in_frame 3 + floor(4*2)
+  })
+})

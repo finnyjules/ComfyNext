@@ -1,5 +1,6 @@
 import type { EditState, Clip, BlendMode } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
+import { sourceFrameAt } from '~~/shared/timeline/sourceFrame'
 
 // Pure draw-list derivation for the WebGL engine — the TS twin of the per-frame
 // logic in comfy_extras/nodes_timeline.py::render_frame_np + _transform_and_alpha.
@@ -26,6 +27,9 @@ export interface DrawEntry {
   /** opacity × fade, clamped [0,1] (Python: tf.opacity * fade). */
   alpha: number
   blend: BlendMode
+  /** Clip-local SOURCE frame (in_frame/speed/reverse applied — sourceFrameAt).
+   *  Image layers ignore it; video/sequence sources index by it. */
+  sourceFrame: number
 }
 
 /** Python round(): banker's rounding (half-to-even). The Python renderer uses
@@ -91,7 +95,7 @@ export function buildDrawList(
   for (const track of state.tracks) {
     if (track.muted || track.kind === 'audio') continue // Audio TRACKS skipped wholesale (Python skips audio CLIPS; an image clip hand-edited onto an audio track would render there — unreachable via the editor, divergence accepted).
     for (const clip of track.clips as Clip[]) {
-      if (clip.kind !== 'image') continue // M1: images only (matches golden fixtures)
+      if (clip.kind !== 'image' && clip.kind !== 'video') continue // M2: images + video
       const url = clip.path
       const dims = srcDims.get(clip.id)
       if (!url || !dims) continue
@@ -115,6 +119,7 @@ export function buildDrawList(
         rotationDeg: tf.rotation,
         alpha: Math.max(0, Math.min(1, tf.opacity * fade)),
         blend: clip.blend ?? 'normal',
+        sourceFrame: sourceFrameAt(clip, localF),
       })
     }
   }
