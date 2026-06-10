@@ -458,12 +458,14 @@ async function runVueWorkflow(
   }
 
   // Push each Timeline node's editor state (keyframes, multi-track clips) into
-  // its edit_state widget so node-run renders what the editor shows.
+  // its edit_state widget so node-run renders what the editor shows. Async:
+  // it may force a fresh /object_info fetch to self-heal a stale schema cache,
+  // and throws (→ toast with the remedy) if the widget is still missing.
   try {
-    vueCanvasRef.value.injectTimelineEditState?.(plainWorkflow)
+    await vueCanvasRef.value.injectTimelineEditState?.(plainWorkflow)
   } catch (err) {
     console.error('[Run] timeline edit_state injection failed', err)
-    toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 120) })
+    toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 160) })
   }
 
   // Pick the worker for the tab being run (always 0 when the pool is off), so
@@ -1835,6 +1837,15 @@ function handleBridgeMessage(event: MessageEvent) {
     // Clear any pending run state so spinners don't hang.
     if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
     currentRunSilent.value = false
+    return
+  }
+
+  // Non-fatal bridge diagnostics that the user must act on — e.g. the iframe's
+  // LiteGraph node registry is stale after a ComfyUI restart (it dropped a
+  // Timeline's edit_state at configure) and only a page reload can fix it.
+  if (event.data.event === 'bridge_warning') {
+    const msg = String(event.data.message || 'The ComfyUI canvas reported a problem.')
+    toast.warning('ComfyUI needs a reload', { description: msg.slice(0, 160) })
     return
   }
 

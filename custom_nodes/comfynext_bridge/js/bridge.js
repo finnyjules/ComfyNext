@@ -593,10 +593,42 @@ app.registerExtension({
       try {
         window.app.loadGraphData(workflow);
         console.log("[ComfyNext Bridge] Loaded workflow");
+        warnIfEditStateDropped(workflow);
         postToParent({ event: "workflow_loaded" });
       } catch (e) {
         console.error("[ComfyNext Bridge] Failed to load workflow:", e);
         postToParent({ event: "workflow_loaded" }); // still signal so overlay clears
+      }
+    }
+
+    // Stale-iframe guard for Timeline edit_state: if this ComfyUI page was
+    // loaded BEFORE a server restart that added the `edit_state` input, the
+    // node definitions LiteGraph registered here predate the schema — at
+    // `configure` it drops unknown trailing widgets_values, so even a correct
+    // parent-side injection silently vanishes and the backend runs the legacy
+    // path. We can't heal the iframe's registry without a reload, so detect it:
+    // any workflow node that arrived with `properties.edit_state` must end up
+    // with an `edit_state` widget on the constructed LiteGraph node. If not,
+    // tell the parent to ask the user for a page reload.
+    function warnIfEditStateDropped(workflow) {
+      try {
+        const nodes = workflow?.nodes || [];
+        for (const wfNode of nodes) {
+          if (!wfNode?.properties || wfNode.properties.edit_state == null) continue;
+          const live = window.app?.graph?.getNodeById?.(wfNode.id);
+          if (!live) continue;
+          const hasWidget = Array.isArray(live.widgets) && live.widgets.some((w) => w?.name === "edit_state");
+          if (!hasWidget) {
+            console.warn("[ComfyNext Bridge] node", wfNode.id, "(", wfNode.type, ") lost edit_state — stale node definitions in this iframe");
+            postToParent({
+              event: "bridge_warning",
+              message: "ComfyUI canvas schema is out of date — reload the page to run timelines.",
+            });
+            return; // one warning is enough
+          }
+        }
+      } catch (e) {
+        console.warn("[ComfyNext Bridge] warnIfEditStateDropped error:", e);
       }
     }
 

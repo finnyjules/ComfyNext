@@ -566,7 +566,9 @@ export function applyVariantFanOut(
 /**
  * Set a positional widget value on a LiteGraph node by widget name. Uses
  * objectInfo to find the index of the named widget in the node type's
- * declared input order. No-op if the node type doesn't have that widget.
+ * declared input order. Returns false (without writing) when the node type —
+ * per the *cached* objectInfo — doesn't have that widget, so callers can tell
+ * a real write from a stale-schema no-op instead of failing silently.
  */
 /**
  * The ordered list of widget names for a node type, matching the positional
@@ -605,16 +607,17 @@ export function setNamedWidget(
   widgetName: string,
   value: any,
   objectInfo: Record<string, any>,
-): void {
+): boolean {
   const info = objectInfo[node.type]
-  if (!info) return
+  if (!info) return false
   const idx = orderedWidgetNames(info).indexOf(widgetName)
-  if (idx < 0) return  // node type doesn't have this widget — silent no-op
+  if (idx < 0) return false  // widget not in the (possibly stale) cached schema
 
   // Ensure widgets_values is an array of the right length.
   if (!Array.isArray(node.widgets_values)) node.widgets_values = []
   while (node.widgets_values.length <= idx) node.widgets_values.push(null)
   node.widgets_values[idx] = value
+  return true
 }
 
 /** Read the current value of a named widget (null/undefined if unset). */

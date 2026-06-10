@@ -2387,19 +2387,40 @@ function injectProtectMaskWiring(workflow: any): void {
 // hidden `edit_state` widget so the backend render matches the editor preview
 // and FFmpeg export — keyframed transforms included. The editor already
 // persists this JSON on the node (data.properties.edit_state); we just copy it
-// into widgets_values at submit. No-op until the backend exposes the
-// `edit_state` input in object_info (requires a ComfyUI restart after the
-// schema change).
-function injectTimelineEditState(workflow: any): void {
+// into widgets_values at submit.
+//
+// Stale-schema handling: if the cached objectInfo predates a ComfyUI restart
+// that added the `edit_state` input, setNamedWidget can't find the widget. A
+// silent skip here meant the backend ran the legacy full-res path (budget
+// refusals on 4K) with zero feedback. Instead we self-heal — force one fresh
+// /object_info fetch and retry — and if the widget is STILL missing, throw so
+// the caller's toast tells the user the remedy.
+//
+// Limitation: this heals only the PARENT's cache. If the ComfyUI iframe itself
+// was loaded before the restart, its LiteGraph node registry is also stale and
+// drops the injected trailing widget value at `configure`; that layer is
+// covered by the bridge's warnIfEditStateDropped → `bridge_warning` toast
+// (bridge.js), since only a page reload can refresh the iframe's registry.
+async function injectTimelineEditState(workflow: any): Promise<void> {
   if (!workflow?.nodes?.length) return
   const timelines = (workflow.nodes as any[]).filter(n => n.type === 'Timeline')
+  let schemaRefetched = false
   for (const tl of timelines) {
     if ((tl.mode ?? 0) !== 0) continue // muted/bypassed won't execute
     const liveNode = (nodes.value as any[]).find(n => n.id === String(tl.id))
     const raw = liveNode?.data?.properties?.edit_state ?? tl.properties?.edit_state
     if (!raw) continue
     const json = typeof raw === 'string' ? raw : JSON.stringify(raw)
-    setNamedWidget(tl, 'edit_state', json, objectInfo.value)
+    if (setNamedWidget(tl, 'edit_state', json, objectInfo.value)) continue
+    // Cheap self-heal: the cached schema may simply be stale — refetch once
+    // (bypassing the once-per-session gate) and retry the lookup.
+    if (!schemaRefetched) {
+      schemaRefetched = true
+      console.warn('[Timeline] edit_state missing from cached schema — forcing /object_info refetch')
+      await refreshSchema(true)
+      if (setNamedWidget(tl, 'edit_state', json, objectInfo.value)) continue
+    }
+    throw new Error('Timeline schema is out of date — reload the page (ComfyUI restarted with new node definitions)')
   }
 }
 
@@ -3472,8 +3493,12 @@ function forceExportOnCapturedArtifacts(wf: any) {
 // realign aligns arrays to the wrong width. Force one fresh fetch before the
 // first run, then realign every live Compositor against the real schema.
 let schemaForcedOnce = false
-async function refreshSchema() {
-  if (!schemaForcedOnce) {
+async function refreshSchema(force = false) {
+  // `force` bypasses the once-per-session gate: used by stale-schema
+  // self-healing (injectTimelineEditState) when a widget that must exist is
+  // missing from the cached objectInfo — e.g. ComfyUI restarted with new node
+  // definitions after this page session already did its one forced fetch.
+  if (force || !schemaForcedOnce) {
     schemaForcedOnce = true
     await fetchObjectInfo(true)
   }
