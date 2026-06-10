@@ -14,6 +14,7 @@ import { ChevronRight } from 'lucide-vue-next'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { VIDEO_MODELS_BY_ID } from '~/data/video-models'
 import { TEXT_EFFECTS_BY_ID } from '~/data/text-effects'
+import { SHOT_PRESETS_BY_ID } from '~/data/shot-presets'
 import { getBrandIcon } from '~/data/brand-icons'
 
 const props = defineProps<{
@@ -22,7 +23,7 @@ const props = defineProps<{
   // Catalog kind. Defaults to 'image' for backwards compatibility with the
   // existing GenerateImageNode wiring. Video node passes 'video', the text
   // effect node passes 'text_effect'.
-  kind?: 'image' | 'video' | 'text_effect'
+  kind?: 'image' | 'video' | 'text_effect' | 'shot_preset'
 }>()
 
 // The widget framework still expects update:modelValue even though we don't
@@ -46,6 +47,10 @@ const item = computed<PickerItem | null>(() => {
     const e = TEXT_EFFECTS_BY_ID[id]
     return e ? { label: e.label, accent: e.accent } : null
   }
+  if (kind.value === 'shot_preset') {
+    const p = SHOT_PRESETS_BY_ID[id]
+    return p ? { label: p.label, accent: '#5b8dd9' } : null
+  }
   const m = IMAGE_MODELS_BY_ID[id]
   return m ? { label: m.label, brand: m.brand } : null
 })
@@ -59,7 +64,7 @@ const COVER_CACHE_KEY = computed(() =>
   kind.value === 'video' ? 'video-models.coverCache.v1' : 'image-models.coverCache.v1',
 )
 const cachedCoverUrl = computed<string | null>(() => {
-  if (!model.value || kind.value === 'text_effect') return null  // effects have no cover
+  if (!model.value || kind.value === 'text_effect' || kind.value === 'shot_preset') return null  // effects have no cover
   try {
     const raw = localStorage.getItem(COVER_CACHE_KEY.value)
     if (!raw) return null
@@ -120,13 +125,16 @@ function openGallery() {
     <!-- Label stack -->
     <span class="flex flex-col min-w-0 flex-1">
       <span class="text-[11px] font-medium text-white/90 truncate leading-tight">
-        {{ model?.label ?? modelValue ?? (kind === 'text_effect' ? 'Pick an effect' : 'Pick a model') }}
+        {{ model?.label ?? modelValue ?? (kind === 'text_effect' ? 'Pick an effect' : kind === 'shot_preset' ? 'Pick a shot' : 'Pick a model') }}
       </span>
       <span v-if="model?.brand" class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
         {{ model.brand }}
       </span>
       <span v-else-if="kind === 'text_effect'" class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
         Text effect
+      </span>
+      <span v-else-if="kind === 'shot_preset'" class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
+        Shot preset
       </span>
     </span>
     <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />

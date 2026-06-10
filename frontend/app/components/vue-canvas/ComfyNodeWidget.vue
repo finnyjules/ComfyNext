@@ -416,11 +416,11 @@ function formatLabel(name: string): string {
     <!-- Backend-marked custom widget: skip the standard label + renderer chain
          and hand the whole slot to the model picker (it owns its own label).
          `video_model_picker` is the same widget pointed at the video catalog. -->
-    <template v-if="widgetDef.comfynext_widget === 'model_picker' || widgetDef.comfynext_widget === 'video_model_picker' || widgetDef.comfynext_widget === 'text_effect_picker'">
+    <template v-if="widgetDef.comfynext_widget === 'model_picker' || widgetDef.comfynext_widget === 'video_model_picker' || widgetDef.comfynext_widget === 'text_effect_picker' || widgetDef.comfynext_widget === 'shot_preset_picker'">
       <VueCanvasWidgetsWidgetModelPicker
         :model-value="modelValue"
         :node-id="nodeId"
-        :kind="widgetDef.comfynext_widget === 'video_model_picker' ? 'video' : widgetDef.comfynext_widget === 'text_effect_picker' ? 'text_effect' : 'image'"
+        :kind="widgetDef.comfynext_widget === 'video_model_picker' ? 'video' : widgetDef.comfynext_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.comfynext_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
