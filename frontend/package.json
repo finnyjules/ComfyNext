@@ -57,7 +57,9 @@
     "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.1",
     "@types/node": "24.12.4",
+    "@types/pngjs": "^6.0.5",
     "@types/three": "^0.171.0",
+    "pngjs": "^7.0.0",
     "tailwindcss": "^4.2.1",
     "vitest": "^4.1.8"
   }
