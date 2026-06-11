@@ -191,3 +191,34 @@ def test_catalog_payload_inlines_sources():
     assert by_id["halftone"]["source"].startswith("#version 300 es")
     assert by_id["halftone"]["params"][0]["uniform"] == "u_size"
     assert by_id["noise_distortion"]["animated"] is True
+
+
+import os
+
+
+def test_server_render_matches_goldens():
+    """Catches shader regressions; loops the whole catalog so new effects are auto-covered."""
+    from PIL import Image
+
+    golden_dir = os.path.join(os.path.dirname(__file__), "..", "shaderfx_golden")
+    catalog = load_catalog(refresh=True)
+    for size in (128, 256):
+        fixture = np.asarray(
+            Image.open(os.path.join(golden_dir, f"fixture_{size}.png")).convert("RGB"),
+            dtype=np.float32) / 255.0
+        for eff in catalog.effects.values():
+            golden_path = os.path.join(golden_dir, f"{eff.id}_{size}.png")
+            assert os.path.isfile(golden_path), f"missing golden for {eff.id} at {size} — run generate_goldens.py"
+            golden = np.asarray(Image.open(golden_path).convert("RGB"), dtype=np.float32) / 255.0
+            uniforms = resolve_params(eff, "{}")
+            textures = {}
+            for t in eff.textures:
+                from comfy_extras._shader_effects import ASSETS_DIR
+                tex = Image.open(os.path.join(ASSETS_DIR, t["file"])).convert("RGBA")
+                textures[t["uniform"]] = np.asarray(tex, dtype=np.float32) / 255.0
+                for k, v in t.get("extraUniforms", {}).items():
+                    uniforms[k] = float(v)
+            jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0}}]
+            out = render_effect(eff.source, size, size, jobs, extra_textures=textures)[0][..., :3]
+            diff = np.abs(out - golden)
+            assert diff.max() <= 2.0 / 255.0, f"{eff.id}@{size}: max diff {diff.max() * 255:.2f}/255"
