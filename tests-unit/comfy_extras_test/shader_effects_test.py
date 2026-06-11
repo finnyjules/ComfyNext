@@ -247,4 +247,6 @@ def test_node_no_image_non_generative_raises():
 def test_catalog_payload_includes_generative():
     payload = catalog_payload()
     assert all("generative" in e for e in payload["effects"])
-    assert all(e["generative"] is False for e in payload["effects"])  # none generative yet
+    by_id = {e["id"]: e for e in payload["effects"]}
+    assert by_id["aurora"]["generative"] is True       # synthesizes, no input needed
+    assert by_id["halftone"]["generative"] is False    # image-processing effect
