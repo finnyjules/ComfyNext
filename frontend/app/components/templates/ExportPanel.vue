@@ -104,6 +104,46 @@ async function downloadAll() {
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
+/** Composite every rendered format onto one labelled sheet for client/
+ * stakeholder approval, downloaded as PNG. */
+async function downloadContactSheet() {
+  if (!rows.value.some(r => r.url)) await run()
+  const ready = rows.value.filter(r => r.url)
+  if (!ready.length) return
+  const COLS = 3, CELL = 360, PAD = 24, LABEL = 28, GAP = 16
+  const colW = CELL, rowH = CELL + LABEL
+  const n = ready.length
+  const gridRows = Math.ceil(n / COLS)
+  const W = PAD * 2 + COLS * colW + (COLS - 1) * GAP
+  const H = PAD * 2 + 48 + gridRows * rowH + (gridRows - 1) * GAP
+  const canvas = document.createElement('canvas')
+  canvas.width = W; canvas.height = H
+  const cx = canvas.getContext('2d')!
+  cx.fillStyle = '#0e0e10'; cx.fillRect(0, 0, W, H)
+  cx.fillStyle = '#ffffff'; cx.font = '600 22px sans-serif'
+  cx.fillText(template.value.name || 'Ad set', PAD, PAD + 22)
+  for (let i = 0; i < n; i++) {
+    const row = ready[i]
+    const bmp = await createImageBitmap(await fetch(row.url!).then(r => r.blob()))
+    const cellX = PAD + (i % COLS) * (colW + GAP)
+    const cellY = PAD + 48 + Math.floor(i / COLS) * (rowH + GAP)
+    // contain the thumb in the cell box
+    const sc = Math.min(CELL / bmp.width, CELL / bmp.height)
+    const dw = bmp.width * sc, dh = bmp.height * sc
+    cx.fillStyle = '#000000'; cx.fillRect(cellX, cellY, CELL, CELL)
+    cx.drawImage(bmp, cellX + (CELL - dw) / 2, cellY + (CELL - dh) / 2, dw, dh)
+    cx.fillStyle = '#aaaaaa'; cx.font = '13px sans-serif'
+    cx.fillText(`${row.label} · ${row.w}×${row.h}`, cellX, cellY + CELL + 18)
+  }
+  const blob = await new Promise<Blob>(res => canvas.toBlob(b => res(b!), 'image/png'))
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${(template.value.name || 'layout').toLowerCase().replace(/[^a-z0-9]+/g, '-')}_contact-sheet.png`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
 onMounted(run)
 onBeforeUnmount(() => urls.forEach(u => URL.revokeObjectURL(u)))
 const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50'
@@ -141,6 +181,14 @@ const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded t
           </select>
         </label>
         <div class="flex-1" />
+        <button
+          class="h-8 px-3 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/70 transition-colors cursor-pointer disabled:opacity-40"
+          :disabled="running"
+          title="One image with every format laid out, for client approval"
+          @click="downloadContactSheet"
+        >
+          Contact sheet
+        </button>
         <button
           class="h-8 px-3 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer disabled:opacity-40"
           :disabled="running"
