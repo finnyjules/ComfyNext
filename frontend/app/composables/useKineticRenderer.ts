@@ -21,6 +21,12 @@ import {
   type KineticOpts,
   type KineticBuildContext,
 } from '~/data/kinetic-presets'
+import { interpolateAxes, axesToVariationSettings, type AxisKeyframe } from '~/lib/motion/axes'
+
+// Re-exported so existing importers (KineticTypeModal, AxisKeyframeEditor,
+// WidgetKineticType) keep resolving AxisKeyframe from this module. The
+// canonical home is now ~/lib/motion/axes.
+export type { AxisKeyframe } from '~/lib/motion/axes'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,17 +41,6 @@ export interface KineticFontState {
   sizePx: number
   color: string
   bgColor: string   // 'transparent' or hex
-}
-
-/** A keyframe for variable-font axis animation. Axes interpolate between
- *  keyframes over the animation's duration using GSAP easing. */
-export interface AxisKeyframe {
-  /** Normalized time 0..1 within the animation duration. */
-  t: number
-  /** Axis values at this keyframe. Only axes present are animated;
-   *  missing axes hold their static value from KineticFontState. */
-  axes: Record<string, number>
-  ease?: string  // GSAP ease for the segment *from* this keyframe to the next
 }
 
 export interface KineticState {
@@ -63,63 +58,8 @@ export interface KineticState {
 // The bake reads each char's live computed transform/opacity from the
 // on-screen DOM (renderFrameFromDom) — no intermediate snapshot struct.
 
-// ── Axis keyframe interpolation ─────────────────────────────────────────────
-
-/**
- * Interpolate variable-font axis values at a normalized time `t` (0..1).
- * Returns the interpolated axes merged with static defaults.
- */
-function interpolateAxes(
-  keyframes: AxisKeyframe[],
-  t: number,
-  staticAxes: Record<string, number>,
-): Record<string, number> {
-  if (!keyframes.length) return staticAxes
-
-  const sorted = keyframes.length > 1
-    ? [...keyframes].sort((a, b) => a.t - b.t)
-    : keyframes
-
-  // Clamp t
-  const ct = Math.max(0, Math.min(1, t))
-
-  // Before first keyframe or only one keyframe
-  if (ct <= sorted[0].t || sorted.length === 1) {
-    return { ...staticAxes, ...sorted[0].axes }
-  }
-  // After last keyframe
-  const last = sorted[sorted.length - 1]
-  if (ct >= last.t) {
-    return { ...staticAxes, ...last.axes }
-  }
-
-  // Find bracketing keyframes
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const a = sorted[i]
-    const b = sorted[i + 1]
-    if (ct >= a.t && ct <= b.t) {
-      const span = b.t - a.t
-      const frac = span > 0 ? (ct - a.t) / span : 0
-
-      // Collect all axis tags that appear in either keyframe
-      const allTags = new Set([...Object.keys(a.axes), ...Object.keys(b.axes)])
-      const result = { ...staticAxes }
-      for (const tag of allTags) {
-        const va = a.axes[tag] ?? staticAxes[tag] ?? 0
-        const vb = b.axes[tag] ?? staticAxes[tag] ?? 0
-        result[tag] = va + (vb - va) * frac
-      }
-      return result
-    }
-  }
-
-  return { ...staticAxes, ...last.axes }
-}
-
-/** Build a CSS `font-variation-settings` string from an axes record. */
-function axesToVariationSettings(axes: Record<string, number>): string {
-  return Object.entries(axes).map(([t, v]) => `"${t}" ${v}`).join(', ')
-}
+// Axis keyframe interpolation (interpolateAxes / axesToVariationSettings) and
+// the AxisKeyframe type now live in ~/lib/motion/axes — imported above.
 
 // ── Font loading (shared with Font Playground) ──────────────────────────────
 
