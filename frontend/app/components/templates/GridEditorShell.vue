@@ -19,6 +19,8 @@ const props = defineProps<{
   initial: TemplateV2
   initialProps?: Record<string, string>
   initialBrand?: Record<string, string>
+  /** Legacy aspects CSV — migrates a pre-outputs template into an outputs list. */
+  aspects?: string
   /** The project's active brand kit — slots between template defaults and
    *  the wired socket brand in the shared effectiveBrand merge. */
   activeKit?: BrandKit
@@ -26,7 +28,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ save: [layout: TemplateV2] }>()
 
-const ctx = useGridEditor(props.initial, { activeKit: toRef(props, 'activeKit') })
+const ctx = useGridEditor(props.initial, { activeKit: toRef(props, 'activeKit'), aspects: props.aspects })
 provide('gridEditor', ctx)
 provide('templateEditor', ctx as any)
 // Optional per-layer controls consumed by the reused LayersPanel — present
@@ -210,7 +212,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       </div>
 
       <div class="flex-1 min-w-0">
-        <TemplatesGridFormatTabs />
+        <TemplatesOutputsRail />
       </div>
 
       <div class="relative">

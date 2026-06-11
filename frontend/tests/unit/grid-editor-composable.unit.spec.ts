@@ -21,12 +21,25 @@ function fixture(): TemplateV2 {
   }
 }
 
+/** Resolved layout for a given output id (from resolvedByOutput). */
+function byOut(ed: ReturnType<typeof useGridEditor>, id: string) {
+  return ed.resolvedByOutput.value.find(r => r.output.id === id)!.layout
+}
+
 describe('useGridEditor', () => {
-  it('starts on the master format', () => {
+  it('starts on the master format with a single derived output', () => {
     const ed = useGridEditor(fixture())
     expect(ed.currentFormat.value).toBe('1x1')
     expect(ed.isMaster.value).toBe(true)
     expect(ed.formatClass.value).toBe('square')
+    expect(ed.outputs.value).toHaveLength(1)
+    expect(ed.outputs.value[0].format).toBe('1x1')
+  })
+
+  it('derives one output per aspect key on construction', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90,970x250' })
+    expect(ed.outputs.value.map(o => o.format)).toEqual(['1x1', '728x90', '970x250'])
+    expect(ed.outputs.value.map(o => o.id)).toEqual(['1x1', '728x90', '970x250'])
   })
 
   it('setRegion writes the base region on the master', () => {
@@ -37,9 +50,9 @@ describe('useGridEditor', () => {
     expect(ed.dirty.value).toBe(true)
   })
 
-  it('setRegion on a non-master format writes regionByClass for its class', () => {
-    const ed = useGridEditor(fixture())
-    ed.setFormat('728x90')
+  it('setRegion on a non-master output writes regionByClass for its class', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90,970x250' })
+    ed.selectOutput('728x90')
     expect(ed.formatClass.value).toBe('strip')
     ed.setRegion('headline', { col: 1, colSpan: 8, row: 1, rowSpan: 1 })
     expect(ed.template.value.elements[0].regionByClass).toEqual({
@@ -47,42 +60,42 @@ describe('useGridEditor', () => {
     })
     // base region untouched
     expect(ed.template.value.elements[0].region).toEqual({ col: 1, colSpan: 6, row: 4, rowSpan: 2 })
-    // the edit affects every strip format
-    expect(ed.resolvedAll.value['970x250'].elements[0].region).toEqual({ col: 1, colSpan: 8, row: 1, rowSpan: 1 })
+    // the edit affects every strip output
+    expect(byOut(ed, '970x250').elements[0].region).toEqual({ col: 1, colSpan: 8, row: 1, rowSpan: 1 })
     expect(ed.hasClassRegion('headline')).toBe(true)
   })
 
-  it('regionScope "format" writes a per-format-key override, not the whole class', () => {
-    const ed = useGridEditor(fixture())
-    ed.setFormat('728x90')           // strip
-    ed.regionScope.value = 'format'
+  it('regionScope "output" writes a per-output override that diverges one variation', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90,970x250' })
+    ed.selectOutput('728x90')        // strip
+    ed.regionScope.value = 'output'
     ed.setRegion('headline', { col: 1, colSpan: 5, row: 1, rowSpan: 1 })
-    // overrides[728x90], not regionByClass
+    // overrides[outputId], not regionByClass
     expect(ed.template.value.elements[0].overrides).toEqual({
       '728x90': { region: { col: 1, colSpan: 5, row: 1, rowSpan: 1 } },
     })
     expect(ed.template.value.elements[0].regionByClass).toBeUndefined()
-    expect(ed.hasFormatOverride('headline')).toBe(true)
-    // only 728x90 changes; the other strip (970x250) keeps the default
-    expect(ed.resolvedAll.value['728x90'].elements[0].region).toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
-    expect(ed.resolvedAll.value['970x250'].elements[0].region).not.toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    expect(ed.hasOutputOverride('headline')).toBe(true)
+    // only this output changes; the other strip (970x250) keeps the default
+    expect(byOut(ed, '728x90').elements[0].region).toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    expect(byOut(ed, '970x250').elements[0].region).not.toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
     // clearing removes just that override
-    ed.clearFormatOverride('headline')
+    ed.clearOutputOverride('headline')
     expect(ed.template.value.elements[0].overrides).toBeUndefined()
-    expect(ed.hasFormatOverride('headline')).toBe(false)
+    expect(ed.hasOutputOverride('headline')).toBe(false)
   })
 
-  it('switching format resets the region scope to class', () => {
-    const ed = useGridEditor(fixture())
-    ed.setFormat('728x90')
-    ed.regionScope.value = 'format'
-    ed.setFormat('970x250')
+  it('selecting an output resets the region scope to class', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90,970x250' })
+    ed.selectOutput('728x90')
+    ed.regionScope.value = 'output'
+    ed.selectOutput('970x250')
     expect(ed.regionScope.value).toBe('class')
   })
 
   it('clearClassRegion removes the class entry', () => {
-    const ed = useGridEditor(fixture())
-    ed.setFormat('728x90')
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90' })
+    ed.selectOutput('728x90')
     ed.setRegion('headline', { col: 1, colSpan: 8, row: 1, rowSpan: 1 })
     ed.clearClassRegion('headline')
     expect(ed.template.value.elements[0].regionByClass).toBeUndefined()
@@ -100,12 +113,89 @@ describe('useGridEditor', () => {
     expect(ed.sampleProps.value.text_layer_1).toBe('Short')  // source untouched
   })
 
-  it('resolvedAll reports culling per format (subhead drops on strips)', () => {
+  it('resolvedByOutput reports culling per output (subhead drops on strips)', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90' })
+    expect(byOut(ed, '728x90').elements.find(e => e.el.id === 'subhead')!.culled).toBe(true)
+    expect(byOut(ed, '1x1').elements.find(e => e.el.id === 'subhead')!.culled).toBe(false)
+  })
+
+  // -- Outputs (chosen deliverables) -----------------------------------------
+
+  it('addOutput adds a deliverable and selects it', () => {
     const ed = useGridEditor(fixture())
-    const strip = ed.resolvedAll.value['728x90']
-    expect(strip.elements.find(e => e.el.id === 'subhead')!.culled).toBe(true)
-    const square = ed.resolvedAll.value['1x1']
-    expect(square.elements.find(e => e.el.id === 'subhead')!.culled).toBe(false)
+    const id = ed.addOutput('728x90')!
+    expect(ed.outputs.value).toHaveLength(2)
+    expect(ed.currentOutputId.value).toBe(id)
+    expect(ed.currentFormat.value).toBe('728x90')
+  })
+
+  it('addOutput allows the same format twice (variations)', () => {
+    const ed = useGridEditor(fixture())     // outputs: [1x1]
+    const id2 = ed.addOutput('1x1')!
+    expect(ed.outputs.value).toHaveLength(2)
+    expect(ed.outputs.value.every(o => o.format === '1x1')).toBe(true)
+    expect(ed.outputs.value[0].id).not.toBe(id2)
+  })
+
+  it('addOutput rejects unknown formats', () => {
+    const ed = useGridEditor(fixture())
+    expect(ed.addOutput('nope')).toBeNull()
+    expect(ed.outputs.value).toHaveLength(1)
+  })
+
+  it('duplicateOutput copies the output + its overrides and diverges independently', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90' })
+    ed.selectOutput('728x90')
+    ed.regionScope.value = 'output'
+    ed.setRegion('headline', { col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    const newId = ed.duplicateOutput('728x90')!
+    expect(ed.outputs.value).toHaveLength(3)
+    expect(ed.currentOutputId.value).toBe(newId)
+    expect(ed.regionScope.value).toBe('output')
+    // overrides carried over so the copy starts identical
+    expect(ed.template.value.elements[0].overrides![newId].region).toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    // editing the copy doesn't touch the source variation
+    ed.setRegion('headline', { col: 2, colSpan: 4, row: 1, rowSpan: 1 })
+    expect(ed.template.value.elements[0].overrides!['728x90'].region).toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    expect(ed.template.value.elements[0].overrides![newId].region).toEqual({ col: 2, colSpan: 4, row: 1, rowSpan: 1 })
+  })
+
+  it('removeOutput removes the deliverable and cleans its overrides', () => {
+    const ed = useGridEditor(fixture(), { aspects: '1x1,728x90' })
+    ed.selectOutput('728x90')
+    ed.regionScope.value = 'output'
+    ed.setRegion('headline', { col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    ed.removeOutput('728x90')
+    expect(ed.outputs.value.map(o => o.id)).toEqual(['1x1'])
+    expect(ed.template.value.elements[0].overrides).toBeUndefined()
+    expect(ed.currentOutputId.value).toBe('1x1')
+  })
+
+  it('removeOutput keeps at least one deliverable', () => {
+    const ed = useGridEditor(fixture())
+    ed.removeOutput('1x1')
+    expect(ed.outputs.value).toHaveLength(1)
+  })
+
+  it('renameOutput sets and clears the label', () => {
+    const ed = useGridEditor(fixture())
+    ed.renameOutput('1x1', 'Hero square')
+    expect(ed.outputs.value[0].label).toBe('Hero square')
+    ed.renameOutput('1x1', '   ')
+    expect(ed.outputs.value[0].label).toBeUndefined()
+  })
+
+  it('setHiddenInOutput hides an element in just that output', () => {
+    const ed = useGridEditor(fixture())
+    const id2 = ed.addOutput('1x1')!     // a second square variation
+    ed.selectOutput(id2)
+    ed.setHiddenInOutput('subhead', true)
+    expect(ed.isHiddenInOutput('subhead')).toBe(true)
+    expect(byOut(ed, id2).elements.find(e => e.el.id === 'subhead')!.culled).toBe(true)
+    expect(byOut(ed, '1x1').elements.find(e => e.el.id === 'subhead')!.culled).toBe(false)
+    ed.setHiddenInOutput('subhead', false)
+    expect(ed.isHiddenInOutput('subhead')).toBe(false)
+    expect(ed.template.value.elements.find(e => e.id === 'subhead')!.overrides).toBeUndefined()
   })
 
   it('addText assigns the next priority and selects the element', () => {

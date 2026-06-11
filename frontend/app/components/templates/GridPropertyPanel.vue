@@ -12,13 +12,18 @@ import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
-  metrics, formatClass, isMaster, currentFormat, regionScope,
+  metrics, formatClass, isMaster, currentFormat, currentOutput, outputs, regionScope,
   selectedElement, selectedResolved, sampleProps, effectiveBrand,
-  setRegion, hasClassRegion, clearClassRegion, hasFormatOverride, clearFormatOverride,
+  setRegion, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
+  isHiddenInOutput, setHiddenInOutput,
   patchElement, patchStyle, removeElement,
 } = ctx
 
 const el = selectedElement
+
+/** Display name for the current output (variation-aware). */
+const outputLabel = computed(() =>
+  currentOutput.value?.label ?? ctx.template.value.formats[currentFormat.value]?.label ?? currentFormat.value)
 const region = computed<Region | null>(() => selectedResolved.value?.region ?? null)
 
 function setRegionField(field: keyof Region, raw: string) {
@@ -211,38 +216,47 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
     </div>
 
-    <!-- Format-class banner + edit scope -->
-    <div v-if="!isMaster" class="rounded-md bg-[#96b4ff]/[0.08] border border-[#96b4ff]/20 px-2.5 py-2 leading-snug">
+    <!-- Edit scope + per-output controls. Shown whenever there's more than one
+         output to diverge between (variations or different formats). -->
+    <div v-if="outputs.length > 1" class="rounded-md bg-[#96b4ff]/[0.08] border border-[#96b4ff]/20 px-2.5 py-2 leading-snug">
       <div class="flex gap-1 mb-2">
         <button
-          v-for="opt in (['class', 'format'] as const)" :key="opt"
+          v-for="opt in (['class', 'output'] as const)" :key="opt"
           class="flex-1 h-6 rounded text-[10px] transition-colors cursor-pointer"
           :class="regionScope === opt ? 'bg-[#96b4ff]/30 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
           @click="regionScope = opt"
-        >{{ opt === 'class' ? `All ${formatClass}` : 'Only this' }}</button>
+        >{{ opt === 'class' ? (isMaster ? 'All formats' : `All ${formatClass}`) : 'Only this' }}</button>
       </div>
       <p class="text-[11px] text-[#c9d6ff]/90">
         <template v-if="regionScope === 'class'">
-          Region edits apply to every <span class="font-medium">{{ formatClass }}</span> format.
+          <template v-if="isMaster">Edits apply to <span class="font-medium">all formats</span>.</template>
+          <template v-else>Region edits apply to every <span class="font-medium">{{ formatClass }}</span> format.</template>
         </template>
         <template v-else>
-          Region edits apply only to <span class="font-medium">{{ currentFormat }}</span>.
+          Edits apply only to <span class="font-medium">{{ outputLabel }}</span> — diverge this variation.
         </template>
       </p>
       <button
-        v-if="regionScope === 'class' && hasClassRegion(el.id)"
+        v-if="regionScope === 'class' && !isMaster && hasClassRegion(el.id)"
         class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
         @click="clearClassRegion(el.id)"
       >
         Reset {{ formatClass }} to automatic
       </button>
       <button
-        v-if="regionScope === 'format' && hasFormatOverride(el.id)"
+        v-if="regionScope === 'output' && hasOutputOverride(el.id)"
         class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
-        @click="clearFormatOverride(el.id)"
+        @click="clearOutputOverride(el.id)"
       >
-        Clear {{ currentFormat }} override
+        Clear this output's override
       </button>
+      <label class="mt-2 pt-2 border-t border-white/[0.06] flex items-center gap-2 text-[11px] text-white/70 cursor-pointer">
+        <input
+          type="checkbox" :checked="isHiddenInOutput(el.id)"
+          @change="(e: any) => setHiddenInOutput(el!.id, e.target.checked)"
+        >
+        <span>Hide in <span class="font-medium">{{ outputLabel }}</span> only</span>
+      </label>
     </div>
 
     <!-- Region -->

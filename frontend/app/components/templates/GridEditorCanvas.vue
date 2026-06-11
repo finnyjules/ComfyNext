@@ -13,7 +13,7 @@ import type { Region } from '~~/shared/template-grid/types'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
-  template, format, formatClass, currentFormat, metrics, resolved, selectedId,
+  template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion,
 } = ctx
 
@@ -32,7 +32,7 @@ async function loadPreview() {
     const res = await fetch('/api/render-template', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        template: template.value, aspect: currentFormat.value,
+        template: template.value, aspect: currentFormat.value, outputId: currentOutputId.value,
         props: sampleProps.value, brand: effectiveBrand.value,
       }),
     })
@@ -59,7 +59,7 @@ function togglePreview() {
 }
 
 // Keep the preview current with edits + format switches while it's on.
-watch([currentFormat, template], schedulePreview, { deep: true })
+watch([currentFormat, currentOutputId, template], schedulePreview, { deep: true })
 onBeforeUnmount(() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl) })
 
 // -- Container sizing (same model as the v1 canvas) -------------------------

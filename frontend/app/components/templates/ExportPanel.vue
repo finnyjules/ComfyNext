@@ -13,7 +13,7 @@ import type { GridEditorContext } from '~/composables/useGridEditor'
 const emit = defineEmits<{ close: [] }>()
 
 const ctx = inject<GridEditorContext>('gridEditor')!
-const { template, sampleProps, effectiveBrand } = ctx
+const { template, outputs, sampleProps, effectiveBrand } = ctx
 
 type Fmt = 'png' | 'jpeg' | 'webp'
 const fileFormat = ref<Fmt>('png')
@@ -22,12 +22,31 @@ const scale = ref(1)
 const IAB_CAP = 150 * 1024   // IAB LEAN initial-load budget
 
 interface Row {
-  key: string; label: string; w: number; h: number
+  id: string; key: string; file: string; label: string; w: number; h: number
   url: string | null; bytes: number; over: boolean; error: boolean; busy: boolean
 }
 const rows = ref<Row[]>([])
 const running = ref(false)
 let urls: string[] = []
+
+/** One unique, filesystem-safe stem per output (variations of the same format
+ *  get a numeric suffix) so the ZIP/contact-sheet filenames don't collide. */
+function buildRows(): Row[] {
+  const seen = new Map<string, number>()
+  return outputs.value.map((o) => {
+    const f = template.value.formats[o.format]
+    const label = o.label ?? f?.label ?? o.format
+    let stem = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || o.format
+    const n = (seen.get(stem) ?? 0) + 1
+    seen.set(stem, n)
+    if (n > 1) stem = `${stem}-${n}`
+    return {
+      id: o.id, key: o.format, file: stem, label,
+      w: Math.round((f?.w ?? 0) * scale.value), h: Math.round((f?.h ?? 0) * scale.value),
+      url: null, bytes: 0, over: false, error: false, busy: true,
+    }
+  })
+}
 
 const mime = computed(() => fileFormat.value === 'png' ? 'image/png' : fileFormat.value === 'jpeg' ? 'image/jpeg' : 'image/webp')
 const ext = computed(() => fileFormat.value === 'jpeg' ? 'jpg' : fileFormat.value)
@@ -49,12 +68,12 @@ async function reencode(png: Blob): Promise<Blob> {
   return await new Promise<Blob>((res) => canvas.toBlob(b => res(b!), mime.value, quality.value))
 }
 
-async function renderOne(key: string): Promise<Blob | null> {
-  const f = template.value.formats[key]
+async function renderOne(row: Row): Promise<Blob | null> {
+  const f = template.value.formats[row.key]
   const res = await fetch('/api/render-template', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      template: template.value, aspect: key,
+      template: template.value, aspect: row.key, outputId: row.id,
       width: Math.round(f.w * scale.value), height: Math.round(f.h * scale.value),
       props: sampleProps.value, brand: effectiveBrand.value,
     }),
@@ -66,13 +85,10 @@ async function renderOne(key: string): Promise<Blob | null> {
 async function run() {
   running.value = true
   urls.forEach(u => URL.revokeObjectURL(u)); urls = []
-  rows.value = Object.entries(template.value.formats).map(([key, f]) => ({
-    key, label: f.label ?? key, w: Math.round(f.w * scale.value), h: Math.round(f.h * scale.value),
-    url: null, bytes: 0, over: false, error: false, busy: true,
-  }))
+  rows.value = buildRows()
   for (const row of rows.value) {
     try {
-      const blob = await renderOne(row.key)
+      const blob = await renderOne(row)
       if (!blob) { row.error = true; row.busy = false; continue }
       const url = URL.createObjectURL(blob); urls.push(url)
       row.url = url; row.bytes = blob.size; row.over = blob.size > IAB_CAP; row.busy = false
@@ -84,7 +100,7 @@ async function run() {
 function downloadOne(row: Row) {
   if (!row.url) return
   const a = document.createElement('a')
-  a.href = row.url; a.download = `${template.value.name || 'layout'}_${row.key}.${ext.value}`
+  a.href = row.url; a.download = `${template.value.name || 'layout'}_${row.file}.${ext.value}`
   a.click()
 }
 
@@ -95,7 +111,7 @@ async function downloadAll() {
   for (const row of rows.value) {
     if (!row.url) continue
     const blob = await fetch(row.url).then(r => r.blob())
-    zip.file(`${base}_${row.key}.${ext.value}`, blob)
+    zip.file(`${base}_${row.file}.${ext.value}`, blob)
   }
   const out = await zip.generateAsync({ type: 'blob' })
   const url = URL.createObjectURL(out)
@@ -155,7 +171,7 @@ const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded t
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-[15px] text-white/90 font-medium">Export ad set</h2>
-          <p class="text-[12px] text-white/45 mt-1">Every format, rendered through the real pipeline. IAB display needs ≤ 150&nbsp;KB initial load.</p>
+          <p class="text-[12px] text-white/45 mt-1">Every output, rendered through the real pipeline. IAB display needs ≤ 150&nbsp;KB initial load.</p>
         </div>
         <button class="size-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-white/70 cursor-pointer" @click="emit('close')">✕</button>
       </div>

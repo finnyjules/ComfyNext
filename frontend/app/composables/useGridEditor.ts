@@ -15,9 +15,9 @@ import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
 import type { BrandKit } from '~~/shared/brand/types'
 import { applyArchetype, classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
-import type { ResolvedLayout } from '~~/shared/template-grid/resolve'
+import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import type {
-  ElementV2, ImageElementV2, Region, ShapeElementV2, TemplateV2, TextElementV2,
+  ElementV2, ImageElementV2, OutputSpec, Region, ShapeElementV2, TemplateV2, TextElementV2,
 } from '~~/shared/template-grid/types'
 
 const WORST_CASE_COPY
@@ -30,17 +30,29 @@ function uid(prefix: string): string {
 
 export function useGridEditor(
   initial: TemplateV2,
-  opts?: { activeKit?: Ref<BrandKit | undefined> },
+  opts?: { activeKit?: Ref<BrandKit | undefined>; aspects?: string },
 ) {
+  // Ensure the template carries an explicit `outputs` list — migrate from the
+  // node's `aspects` for pre-outputs templates so the rest of the editor can
+  // assume outputs exist.
+  if (!initial.outputs?.length) initial.outputs = deriveOutputs(initial, opts?.aspects)
+
   const template = ref<TemplateV2>(initial)
-  const currentFormat = ref<string>(initial.master in initial.formats
-    ? initial.master
-    : Object.keys(initial.formats)[0])
+  const currentOutputId = ref<string>(initial.outputs[0]?.id ?? initial.master)
   const selectedId = ref<string | null>(null)
   const dirty = ref(false)
   const sampleProps = ref<Record<string, unknown>>({})
   const sampleBrand = ref<Record<string, unknown>>({})
   const worstCase = ref(false)
+
+  const outputs = computed<OutputSpec[]>(() => template.value.outputs ?? [])
+  const currentOutput = computed<OutputSpec | undefined>(() =>
+    outputs.value.find(o => o.id === currentOutputId.value) ?? outputs.value[0])
+  // The format key of the current output (drives all grid math / consumers).
+  const currentFormat = computed<string>(() =>
+    currentOutput.value?.format ?? (template.value.master in template.value.formats
+      ? template.value.master
+      : Object.keys(template.value.formats)[0]))
 
   const format = computed(() => template.value.formats[currentFormat.value])
   const formatClass = computed(() => classifyFormat(format.value))
@@ -63,11 +75,15 @@ export function useGridEditor(
     mergeBrand(template.value.brand, opts?.activeKit?.value, sampleBrand.value as BrandKit))
 
   const resolved = computed<ResolvedLayout>(() =>
-    resolveFormat(template.value, currentFormat.value, effectiveProps.value, effectiveBrand.value))
+    resolveFormat(template.value, currentFormat.value, effectiveProps.value, effectiveBrand.value,
+      { outputId: currentOutputId.value }))
 
-  const resolvedAll = computed<Record<string, ResolvedLayout>>(() =>
-    Object.fromEntries(Object.keys(template.value.formats).map(k =>
-      [k, resolveFormat(template.value, k, effectiveProps.value, effectiveBrand.value)])))
+  // One resolved layout per output (for the Outputs rail thumbnails + previews).
+  const resolvedByOutput = computed<Array<{ output: OutputSpec; layout: ResolvedLayout }>>(() =>
+    outputs.value.map(o => ({
+      output: o,
+      layout: resolveFormat(template.value, o.format, effectiveProps.value, effectiveBrand.value, { outputId: o.id }),
+    })))
 
   const selectedElement = computed<ElementV2 | null>(() =>
     template.value.elements.find(e => e.id === selectedId.value) ?? null)
@@ -79,11 +95,71 @@ export function useGridEditor(
     return template.value.elements.find(e => e.id === id)
   }
 
-  function setFormat(key: string) {
-    if (template.value.formats[key]) {
-      currentFormat.value = key
-      regionScope.value = 'class'   // don't carry the per-format scope across tabs
+  // -- Outputs (chosen deliverables) -----------------------------------------
+
+  function selectOutput(id: string) {
+    if (outputs.value.some(o => o.id === id)) {
+      currentOutputId.value = id
+      regionScope.value = 'class'   // don't carry per-output scope across outputs
     }
+  }
+
+  /** Add a deliverable for `format`. The same format may be added repeatedly
+   * (variations); each gets a unique id. Returns the new output id. */
+  function addOutput(format: string): string | null {
+    if (!template.value.formats[format]) return null
+    const id = uid('out')
+    const label = template.value.formats[format]?.label
+    ;(template.value.outputs ??= []).push({ id, format, label })
+    currentOutputId.value = id
+    regionScope.value = 'class'
+    dirty.value = true
+    return id
+  }
+
+  /** Duplicate an output into a variation: a fresh id right after the source,
+   * copying its per-output overrides so it starts identical, then diverges. */
+  function duplicateOutput(id: string): string | null {
+    const list = template.value.outputs
+    const idx = list?.findIndex(o => o.id === id) ?? -1
+    if (!list || idx < 0) return null
+    const src = list[idx]
+    const newId = uid('out')
+    const baseLabel = src.label ?? template.value.formats[src.format]?.label ?? src.format
+    list.splice(idx + 1, 0, { id: newId, format: src.format, label: `${baseLabel} copy` })
+    // Carry over this output's per-element overrides so the variation matches.
+    for (const el of template.value.elements) {
+      const ov = el.overrides?.[id]
+      if (ov) el.overrides![newId] = JSON.parse(JSON.stringify(ov))
+    }
+    currentOutputId.value = newId
+    regionScope.value = 'output'   // a duplicate is meant to diverge per-output
+    dirty.value = true
+    return newId
+  }
+
+  function removeOutput(id: string) {
+    const list = template.value.outputs
+    if (!list || list.length <= 1) return   // keep at least one deliverable
+    const idx = list.findIndex(o => o.id === id)
+    if (idx < 0) return
+    list.splice(idx, 1)
+    // Drop this output's per-element overrides.
+    for (const el of template.value.elements) {
+      if (el.overrides?.[id]) {
+        delete el.overrides[id]
+        if (!Object.keys(el.overrides).length) delete el.overrides
+      }
+    }
+    if (currentOutputId.value === id) currentOutputId.value = list[Math.min(idx, list.length - 1)].id
+    dirty.value = true
+  }
+
+  function renameOutput(id: string, label: string) {
+    const o = template.value.outputs?.find(o => o.id === id)
+    if (!o) return
+    o.label = label.trim() || undefined
+    dirty.value = true
   }
 
   /** Override (or reset, by passing undefined) a format's grid dimensions.
@@ -149,18 +225,19 @@ export function useGridEditor(
     dirty.value = true
   }
 
-  // Where region edits on a non-master format land: 'class' (every format of
-  // this class, regionByClass) or 'format' (only this exact format key,
-  // overrides[key]). Reset to 'class' whenever the format changes.
-  const regionScope = ref<'class' | 'format'>('class')
+  // Where region edits land: 'class' (every format of this class via
+  // regionByClass — or the base region when on the master) or 'output' (only
+  // the current output, via overrides[outputId] — diverges a variation).
+  // Reset to 'class' whenever the output changes.
+  const regionScope = ref<'class' | 'output'>('class')
 
   function setRegion(id: string, region: Region) {
     const el = elById(id)
     if (!el) return
-    if (isMaster.value) {
+    if (regionScope.value === 'output') {
+      el.overrides = { ...el.overrides, [currentOutputId.value]: { ...el.overrides?.[currentOutputId.value], region } }
+    } else if (isMaster.value) {
       el.region = region
-    } else if (regionScope.value === 'format') {
-      el.overrides = { ...el.overrides, [currentFormat.value]: { ...el.overrides?.[currentFormat.value], region } }
     } else {
       el.regionByClass = { ...el.regionByClass, [formatClass.value]: region }
     }
@@ -170,8 +247,9 @@ export function useGridEditor(
   function hasClassRegion(id: string): boolean {
     return elById(id)?.regionByClass?.[formatClass.value] != null
   }
-  function hasFormatOverride(id: string): boolean {
-    return elById(id)?.overrides?.[currentFormat.value]?.region != null
+  function hasOutputOverride(id: string): boolean {
+    const ov = elById(id)?.overrides?.[currentOutputId.value]
+    return ov?.region != null || ov?.hidden != null
   }
 
   function clearClassRegion(id: string) {
@@ -181,13 +259,29 @@ export function useGridEditor(
     if (!Object.keys(el.regionByClass).length) delete el.regionByClass
     dirty.value = true
   }
-  function clearFormatOverride(id: string) {
+  function clearOutputOverride(id: string) {
     const el = elById(id)
-    const ov = el?.overrides?.[currentFormat.value]
-    if (!ov) return
-    delete ov.region
-    if (!Object.keys(ov).length) delete el!.overrides![currentFormat.value]
-    if (el!.overrides && !Object.keys(el!.overrides).length) delete el!.overrides
+    if (!el?.overrides?.[currentOutputId.value]) return
+    delete el.overrides[currentOutputId.value]
+    if (!Object.keys(el.overrides).length) delete el.overrides
+    dirty.value = true
+  }
+
+  // Per-output visibility: hide an element in just the current output (vs the
+  // global `hidden` toggled from the layers panel).
+  function isHiddenInOutput(id: string): boolean {
+    return elById(id)?.overrides?.[currentOutputId.value]?.hidden === true
+  }
+  function setHiddenInOutput(id: string, hidden: boolean) {
+    const el = elById(id)
+    if (!el) return
+    if (hidden) {
+      el.overrides = { ...el.overrides, [currentOutputId.value]: { ...el.overrides?.[currentOutputId.value], hidden: true } }
+    } else if (el.overrides?.[currentOutputId.value]) {
+      delete el.overrides[currentOutputId.value].hidden
+      if (!Object.keys(el.overrides[currentOutputId.value]).length) delete el.overrides[currentOutputId.value]
+      if (!Object.keys(el.overrides).length) delete el.overrides
+    }
     dirty.value = true
   }
 
@@ -367,8 +461,8 @@ export function useGridEditor(
   function restore(snap: string) {
     const parsed = JSON.parse(snap) as TemplateV2
     template.value = parsed
-    if (!parsed.formats[currentFormat.value]) {
-      currentFormat.value = parsed.master in parsed.formats ? parsed.master : Object.keys(parsed.formats)[0]
+    if (!parsed.outputs?.some(o => o.id === currentOutputId.value)) {
+      currentOutputId.value = parsed.outputs?.[0]?.id ?? parsed.master
     }
     if (selectedId.value && !parsed.elements.some(e => e.id === selectedId.value)) {
       selectedId.value = null
@@ -394,11 +488,14 @@ export function useGridEditor(
   watch(template, scheduleCommit, { deep: true })
 
   return {
-    template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
-    format, formatClass, isMaster, metrics, resolved, resolvedAll, effectiveBrand,
+    template, currentFormat, currentOutputId, selectedId, dirty, sampleProps, sampleBrand, worstCase,
+    format, formatClass, isMaster, metrics, resolved, resolvedByOutput, effectiveBrand,
+    outputs, currentOutput,
     selectedElement, selectedResolved,
-    setFormat, setFormatDims, setGridSpec, setBrand, setRegion,
-    regionScope, hasClassRegion, clearClassRegion, hasFormatOverride, clearFormatOverride,
+    selectOutput, addOutput, duplicateOutput, removeOutput, renameOutput,
+    setFormatDims, setGridSpec, setBrand, setRegion,
+    regionScope, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
+    isHiddenInOutput, setHiddenInOutput,
     loadTemplate, loadArchetype,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,

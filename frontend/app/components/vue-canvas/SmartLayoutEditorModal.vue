@@ -337,6 +337,15 @@ const initialBrand = computed<Record<string, string>>(() =>
   readUpstreamKv('brand'),
 )
 
+// The node's legacy `aspects` CSV. Used only to migrate pre-outputs templates
+// into an explicit `outputs` list inside the editor; once saved, the template
+// carries its own outputs and this is ignored.
+const initialAspects = computed<string>(() => {
+  const i = widgetIdx('aspects')
+  if (i < 0 || !node.value) return ''
+  return String(node.value.data.widgetsValues?.[i] ?? '')
+})
+
 // The project's active brand kit, provided by the layout (default.vue).
 // Slots between template defaults and the wired socket brand in the editor's
 // shared effectiveBrand merge.
@@ -464,6 +473,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
       :initial="initial as any"
       :initial-props="initialProps"
       :initial-brand="initialBrand"
+      :aspects="initialAspects"
       :active-kit="activeKit"
       @save="onLayoutSaved"
     >
