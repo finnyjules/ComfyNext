@@ -19,6 +19,7 @@ import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/us
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
+import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play } from 'lucide-vue-next'
@@ -154,7 +155,7 @@ const editor = useLocalLayerEditor({
   getRect: () => canvasRect(),
 })
 const {
-  localLayers, setLocal, deleteLocal, selectLocal,
+  localLayers, setLocal, addLocal, deleteLocal, selectLocal,
   selectedId: selectedLocalId, selected: selectedLocal,
   editingId, editingLayer, beginEdit, endEdit,
   boxPx, handlePositions: localHandlePositions,
@@ -866,6 +867,15 @@ function exitMotionPreview() {
   previewT.value = null
   bakeError.value = ''
   renderStack()
+}
+
+// Dev-only: load the LIV-style slate fixture (acceptance choreography for the
+// motion engine). Uses addLocal so history/persistence behave like hand-adds.
+const isDev = import.meta.dev
+function loadSlateFixture() {
+  for (const l of createSlateFixtureLayers()) addLocal(l)
+  setMotion(SLATE_FIXTURE_MOTION)
+  scrubTo(0)
 }
 
 // ── Motion bake (PNG sequence → motion_params) ──────────────────────────────
@@ -1896,6 +1906,13 @@ onUnmounted(() => {
           @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
         >
           <Play class="size-4" />
+        </button>
+        <button v-if="isDev"
+          class="flex items-center justify-center h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
+          title="Dev: load the LIV-style slate acceptance fixture"
+          @click="loadSlateFixture"
+        >
+          Slate fixture
         </button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
         <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />

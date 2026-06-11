@@ -521,9 +521,20 @@ export function drawLocalLayer(
     const octx = off.getContext('2d')
     if (octx) {
       drawLocalLayerSelf(octx, layer, W, H)
-      octx.globalCompositeOperation = 'destination-in'
-      drawLocalLayerSelf(octx, maskLayer, W, H)
-      octx.globalCompositeOperation = 'source-over'
+      // The mask must be rendered on its OWN offscreen and composited with
+      // drawImage: paintLayer (inside drawLocalLayerSelf) sets
+      // globalCompositeOperation itself, which would silently overwrite a
+      // destination-in set here and paint the mask instead of clipping with it.
+      const maskOff = document.createElement('canvas')
+      maskOff.width = off.width
+      maskOff.height = off.height
+      const mctx = maskOff.getContext('2d')
+      if (mctx) {
+        drawLocalLayerSelf(mctx, maskLayer, W, H)
+        octx.globalCompositeOperation = 'destination-in'
+        octx.drawImage(maskOff, 0, 0)
+        octx.globalCompositeOperation = 'source-over'
+      }
       // The layer's blend mode applies at the final composite against the real
       // backdrop (inside the offscreen it blends against transparency = no-op).
       ctx.save()
