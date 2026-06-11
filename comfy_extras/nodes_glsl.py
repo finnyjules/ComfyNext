@@ -301,7 +301,7 @@ def _init_cgl():
     kCGLPFAColorSize = 8
     kCGLPFAAllowOfflineRenderers = 96
 
-    attrs = (ctypes.c_int * 9)(
+    attrs = (ctypes.c_int * 7)(
         kCGLPFAOpenGLProfile, kCGLOGLPVersion_3_2_Core,
         kCGLPFAAccelerated,
         kCGLPFAColorSize, 32,
@@ -364,7 +364,7 @@ def _init_osmesa():
 class GLContext:
     """Manages OpenGL context and resources for shader execution.
 
-    Tries backends in order: GLFW (desktop) → EGL (headless GPU) → OSMesa (software).
+    Tries backends in order: GLFW (desktop) → CGL (macOS) → EGL (headless GPU) → OSMesa (software).
     """
 
     _instance = None
