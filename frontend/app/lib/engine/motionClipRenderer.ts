@@ -6,7 +6,7 @@ import type { MotionClip, MotionTextLayer } from '~~/shared/timeline/types'
 import { createTextLayer, type TextLayer } from '~/composables/useCompositorLayers'
 import { evaluateAnimation } from '~/lib/motion/evaluate'
 import { drawAnimatedTextLayer } from '~/lib/motion/animatedText'
-import { interpolateAxes, axesToVariationSettings } from '~/lib/motion/axes'
+import { interpolateAxes } from '~/lib/motion/axes'
 
 const IDENTITY_ANIM = { offset: 0 } // no in/out/loop ⇒ always-visible, static units
 
@@ -47,10 +47,13 @@ export function renderMotionClip(
   if (!state.visible || !state.units) return
 
   // Variable-font axes: base values, interpolated over normalized clip time.
+  // Attach them to the draw layer so applyFont drives the numeric weight in the
+  // `font` shorthand (the cross-browser variable path) and applies the full axis
+  // set via fontVariationSettings where supported.
   const base = l.axes ?? {}
   const axes = interpolateAxes((l.axisKeyframes ?? []) as any, duration > 0 ? t / duration : 0, base)
-  const variation = axesToVariationSettings(axes)
-  ;(ctx as any).fontVariationSettings = variation || 'normal'
+  const layer = toTextLayer(l)
+  layer.axes = axes
 
-  drawAnimatedTextLayer(ctx, toTextLayer(l), canvasW, canvasH, state.units)
+  drawAnimatedTextLayer(ctx, layer, canvasW, canvasH, state.units)
 }

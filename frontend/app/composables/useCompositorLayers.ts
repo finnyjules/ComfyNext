@@ -24,6 +24,7 @@ export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
 // (evaluate.ts/types.ts don't import this file).
 import type { LayerMotionState } from '~/lib/motion/evaluate'
 import type { FrameMotion } from '~/lib/motion/types'
+import { axesToVariationSettings } from '~/lib/motion/axes'
 
 interface MotionPainter {
   motionStateFor: (layer: LocalLayer, t: number, motion: FrameMotion) => LayerMotionState | null
@@ -135,6 +136,11 @@ export interface TextLayer extends LayerCommon {
   strokeWidth: number    // normalized to canvas width (0 = no outline)
   boxW?: number          // optional text-box width (normalized to canvas width);
                          // set => words auto-wrap to fit, unset => explicit \n only
+  /** Live variable-font axis values (wght/wdth/slnt/…). When present, `wght`
+   *  drives the numeric font-weight in the canvas `font` shorthand (the only
+   *  variable-axis path that renders on every browser); the full set is also
+   *  applied via `fontVariationSettings` where the canvas supports it. */
+  axes?: Record<string, number>
 }
 
 export interface RectLayer extends LayerCommon {
@@ -445,7 +451,19 @@ export function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: Te
 }
 
 export function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
-  ctx.font = `${layer.fontWeight} ${layer.fontSize * W}px ${cssFontStack(layer.fontFamily)}`
+  // A live `wght` axis drives the numeric weight in the `font` shorthand — the
+  // one variable-axis path canvas honors on every browser (when a variable face
+  // is loaded). Without this, an animated weight silently renders the static one.
+  const wght = layer.axes?.wght
+  const weight = wght != null && Number.isFinite(wght) ? Math.round(wght) : layer.fontWeight
+  ctx.font = `${weight} ${layer.fontSize * W}px ${cssFontStack(layer.fontFamily)}`
+  // Progressive enhancement: apply the FULL axis set (slnt/wdth/opsz/custom) via
+  // fontVariationSettings, in the correct order (AFTER `font`, which resets it),
+  // on browsers that expose the (non-standard) canvas property.
+  if (layer.axes && 'fontVariationSettings' in ctx) {
+    ;(ctx as unknown as { fontVariationSettings: string }).fontVariationSettings =
+      axesToVariationSettings(layer.axes) || 'normal'
+  }
 }
 
 function cssFontStack(family: string): string {

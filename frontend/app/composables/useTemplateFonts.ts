@@ -8,10 +8,12 @@
  */
 import { googleFontCssUrl } from '~~/shared/google-fonts'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
+import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { EditState } from '~~/shared/timeline/types'
 
 const CURATED = new Set(TEMPLATE_FONTS.map((f) => f.name))
 const ensured = new Set<string>()  // module-scoped — survives component remounts
+const ensuredAxes = new Set<string>()  // families whose FULL axis-range face is loaded
 
 export function useGoogleFontPreview() {
   /** Make sure the browser will render `family` with the real face. */
@@ -54,6 +56,17 @@ export function ensureMotionFonts(state: EditState | null | undefined) {
       if (clip.kind !== 'motion') continue
       const family = clip.layer?.fontFamily
       if (!family) continue
+      // Known variable fonts: load the FULL axis-range face (all axes, not just
+      // wght) from the catalog so slnt/wdth/opsz render where supported.
+      const def = VARIABLE_FONTS.find((f) => f.family === family)
+      if (def && !ensuredAxes.has(family)) {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = def.cssUrl
+        link.dataset.googleFont = `${family}:axes`
+        document.head.appendChild(link)
+        ensuredAxes.add(family)
+      }
       ensure(family)
       // Force the variable face to actually download/parse so canvas draws it.
       document.fonts?.load(`700 32px "${family}"`).catch(() => {})

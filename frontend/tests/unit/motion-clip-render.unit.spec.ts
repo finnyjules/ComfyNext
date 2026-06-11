@@ -16,7 +16,7 @@ function recCtx() {
     beginPath(){}, rect(){}, roundRect(){}, ellipse(){}, moveTo(){}, lineTo(){}, clip(){}, clearRect(){},
     measureText: (s: string) => ({ width: s.length * 10 }),
     createLinearGradient: () => ({ addColorStop(){} }), createRadialGradient: () => ({ addColorStop(){} }),
-    fillText: (s: string) => calls.push(['fillText', s, variation]),
+    fillText: (s: string) => calls.push(['fillText', s, variation, ctx.font]),
     strokeText(){}, drawImage(){}, fill(){}, stroke(){}, fillRect(){},
   }
   return { ctx: ctx as CanvasRenderingContext2D, calls }
@@ -42,6 +42,16 @@ describe('renderMotionClip', () => {
     const wght = Number(/"wght"\s*([\d.]+)/.exec(v![1])![1])
     expect(wght).toBeGreaterThan(100)
     expect(wght).toBeLessThan(900)
+  })
+  it('drives the interpolated weight into ctx.font (works even where canvas fontVariationSettings is unsupported)', () => {
+    const { ctx, calls } = recCtx()
+    // mid-clip → wght ~500; the rendered font weight must reflect the axis, not the static layer.fontWeight (400)
+    renderMotionClip(ctx, CLIP, 60, 100, 100, 30)
+    const draw = calls.find(c => c[0] === 'fillText')
+    expect(draw).toBeTruthy()
+    const w = Number(/^\s*(\d+(?:\.\d+)?)\s/.exec(draw![3])![1])
+    expect(w).toBeGreaterThan(400)
+    expect(w).toBeLessThan(600)
   })
   it('does not throw and sets a variation string at t=0', () => {
     const { ctx, calls } = recCtx()
