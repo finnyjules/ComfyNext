@@ -3,7 +3,7 @@
  * this output; neither does grid math of its own. */
 
 import {
-  FONT_FLOOR, MIN_VISIBLE, classifyFormat, formatDims, gridMetrics,
+  FONT_FLOOR, MIN_VISIBLE, bleedToEdges, classifyFormat, formatDims, gridMetrics,
   regionToRect, remapRegion,
 } from './grid'
 import type { GridMetrics, Rect } from './grid'
@@ -96,11 +96,15 @@ export function resolveFormat(
         return { el, region, rect, culled: true, cullReason: 'too-small' }
       }
       // An explicit fontSize is the user's exact target — don't auto-shrink it.
+      // Text fits inside the un-bled (margin-respecting) box, so lines wrap on
+      // the grid; bleed only extends the container rect (for panel/scrim) past
+      // the margin. This matches "text respects the margin, panel goes wider".
       const text = fitText({
         content, maxFontSize, w: rect.w, h: rect.h, lineHeight, overflow,
         maxLines: el.maxLines, autoShrink: el.style?.fontSize == null,
       })
-      return { el, region, rect, culled: false, text }
+      const outRect = el.bleed ? bleedToEdges(rect, region, m, format.w, format.h) : rect
+      return { el, region, rect: outRect, culled: false, text }
     }
 
     const rect = regionToRect(region, m)
@@ -113,7 +117,8 @@ export function resolveFormat(
     if (rect.w < MIN_VISIBLE || rect.h < MIN_VISIBLE) {
       return { el, region, rect, culled: true, cullReason: 'too-small' }
     }
-    return { el, region, rect, culled: false }
+    const outRect = el.bleed ? bleedToEdges(rect, region, m, format.w, format.h) : rect
+    return { el, region, rect: outRect, culled: false }
   })
 
   return { formatKey, format, formatClass: cls, metrics: m, elements }

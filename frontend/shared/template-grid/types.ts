@@ -35,6 +35,12 @@ export interface ElementV2Base {
   overrides?: Record<string, { region?: Region }>   // per-format-key escape hatch
   hidden?: boolean               // excluded from render + canvas (toggle in layers)
   locked?: boolean               // editor-only: blocks canvas selection/drag
+  /** Extend to the canvas edge on every side that the element's region
+   *  borders. A region spanning the full grid → covers the whole canvas
+   *  (full-bleed background); a half-grid region → bleeds on its three
+   *  outer sides, keeps the grid line on the inner side. Ignores safe
+   *  areas — for backgrounds that should fill behind platform UI chrome. */
+  bleed?: boolean
 }
 
 export interface TextStyleV2 {

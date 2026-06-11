@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  classifyFormat, formatDims, gridMetrics, regionToRect, remapRegion,
+  bleedToEdges, classifyFormat, formatDims, gridMetrics, regionToRect, remapRegion,
 } from '~~/shared/template-grid/grid'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
@@ -79,6 +79,43 @@ describe('regionToRect', () => {
     const m = gridMetrics(T, '1x1')
     const r = regionToRect({ col: 5, colSpan: 9, row: 1, rowSpan: 1 }, m)
     expect(r.x + r.w).toBeLessThanOrEqual(1080 - 72 + 0.001)
+  })
+})
+
+describe('bleedToEdges', () => {
+  it('full-grid region covers the whole canvas', () => {
+    const m = gridMetrics(T, '1x1')
+    const region = { col: 1, colSpan: 6, row: 1, rowSpan: 6 }
+    const rect = regionToRect(region, m)
+    const bled = bleedToEdges(rect, region, m, 1080, 1080)
+    expect(bled).toEqual({ x: 0, y: 0, w: 1080, h: 1080 })
+  })
+  it('left-half full-height bleeds left/top/bottom, keeps grid line on right', () => {
+    const m = gridMetrics(T, '1x1')
+    const region = { col: 1, colSpan: 3, row: 1, rowSpan: 6 }
+    const rect = regionToRect(region, m)
+    const bled = bleedToEdges(rect, region, m, 1080, 1080)
+    expect(bled.x).toBe(0)
+    expect(bled.y).toBe(0)
+    expect(bled.h).toBe(1080)
+    // right edge stays at rect.x + rect.w (the grid line, not the canvas edge)
+    expect(bled.x + bled.w).toBeCloseTo(rect.x + rect.w, 5)
+  })
+  it('inner region (not touching any edge) is unchanged', () => {
+    const m = gridMetrics(T, '1x1')
+    const region = { col: 2, colSpan: 4, row: 2, rowSpan: 4 }
+    const rect = regionToRect(region, m)
+    const bled = bleedToEdges(rect, region, m, 1080, 1080)
+    expect(bled).toEqual(rect)
+  })
+  it('ignores safe areas — full-bleed reaches platform UI zones', () => {
+    // 9x16 has top: 270, bottom: 380 safe areas. A full-grid bleed should
+    // still cover the entire 1080×1920, not just the safe-area-inset box.
+    const m = gridMetrics(T, '9x16')
+    const region = { col: 1, colSpan: 4, row: 1, rowSpan: 8 }
+    const rect = regionToRect(region, m)
+    const bled = bleedToEdges(rect, region, m, 1080, 1920)
+    expect(bled).toEqual({ x: 0, y: 0, w: 1080, h: 1920 })
   })
 })
 
