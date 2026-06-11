@@ -11,10 +11,11 @@ import { usePlaybackEngine } from '~/composables/usePlaybackEngine'
 import { usePlaybackEngineGL, webglPreviewSupported } from '~/composables/usePlaybackEngineGL'
 import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
-import type { Clip, Track, BlendMode } from '~~/shared/timeline/types'
+import type { Clip, Track, BlendMode, MotionClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
+import MotionClipInspector from '~/components/vue-canvas/timeline/MotionClipInspector.vue'
 
 const props = defineProps<{
   nodeId: string
@@ -972,6 +973,10 @@ function handleKeydown(e: KeyboardEvent) {
 
 const selectedClipData = computed(() => store.selectedClip.value)
 
+// Narrowed to a Motion clip for the Motion inspector (null otherwise).
+const selectedMotionClip = computed<MotionClip | null>(() =>
+  selectedClipData.value?.kind === 'motion' ? selectedClipData.value : null)
+
 function clipIcon(kind: string) {
   if (kind === 'video') return Film
   if (kind === 'audio') return Music
@@ -1346,6 +1351,13 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               <component :is="clipIcon(selectedClipData.kind)" class="size-3" />
               {{ selectedClipData.kind }}
             </div>
+
+            <MotionClipInspector
+              v-if="selectedMotionClip"
+              :clip="selectedMotionClip"
+              class="pb-2 border-b border-white/5"
+              @update="p => store.updateClip(selectedMotionClip!.id, p)"
+            />
 
             <div class="grid grid-cols-2 gap-2">
               <div>
