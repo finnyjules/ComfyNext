@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { shaderFx } from '~/lib/shaderfx/renderer'
+import { expandPasses, shaderFx } from '~/lib/shaderfx/renderer'
 
 interface HarnessJob {
   effectId: string
@@ -14,6 +14,8 @@ interface HarnessJob {
   baseDataUrl: string
   width: number
   height: number
+  /** Multi-pass ping-pong count (default 1). */
+  passes?: number
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -29,10 +31,8 @@ async function renderJob(job: HarnessJob): Promise<string> {
   const base = await loadImage(job.baseDataUrl)
   const textures: Record<string, TexImageSource> = {}
   for (const [name, url] of Object.entries(job.textures)) textures[name] = await loadImage(url)
-  const canvas = shaderFx.render(
-    [{ id: job.effectId, source: job.source, uniforms: job.uniforms, textures }],
-    base, job.width, job.height,
-  )
+  const passes = expandPasses(job.effectId, job.source, job.uniforms, textures, job.passes ?? 1)
+  const canvas = shaderFx.render(passes, base, job.width, job.height)
   return canvas.toDataURL('image/png')
 }
 

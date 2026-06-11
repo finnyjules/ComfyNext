@@ -12,6 +12,22 @@ export interface ShaderPass {
   textures?: Record<string, TexImageSource>
 }
 
+/** Expand one effect into N ping-pong passes (u_pass / u_passCount set per pass). */
+export function expandPasses(
+  id: string,
+  source: string,
+  uniforms: Uniforms,
+  textures: Record<string, TexImageSource> | undefined,
+  passCount: number,
+): ShaderPass[] {
+  const n = Math.max(1, Math.floor(passCount))
+  const out: ShaderPass[] = []
+  for (let k = 0; k < n; k++) {
+    out.push({ id, source, uniforms: { ...uniforms, u_pass: k, u_passCount: n }, textures })
+  }
+  return out
+}
+
 const VS = `#version 300 es
 out vec2 v_texCoord;
 void main() {
@@ -160,7 +176,13 @@ class ShaderFxRenderer {
       const imgLoc = gl.getUniformLocation(prog, 'u_image0')
       if (imgLoc) gl.uniform1i(imgLoc, 0)
 
-      let unit = 1
+      // u_source = the original input, available to every pass (e.g. bloom composite)
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, this.baseTex!)
+      const srcLoc = gl.getUniformLocation(prog, 'u_source')
+      if (srcLoc) gl.uniform1i(srcLoc, 1)
+
+      let unit = 2
       for (const [name, src] of Object.entries(pass.textures ?? {})) {
         let tex = this.extraTexCache.get(src)
         gl.activeTexture(gl.TEXTURE0 + unit)

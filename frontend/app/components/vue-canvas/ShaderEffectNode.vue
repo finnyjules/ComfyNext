@@ -6,7 +6,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { walkShaderChain } from '~/lib/shaderfx/chain'
 import { parseParams, resolveUniforms, serializeParams } from '~/lib/shaderfx/params'
-import { shaderFx } from '~/lib/shaderfx/renderer'
+import { expandPasses, shaderFx } from '~/lib/shaderfx/renderer'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 
 // ShaderEffect artifact node: live WebGL preview (shared singleton renderer)
@@ -126,18 +126,15 @@ let frozenTime = 0.7
 
 function buildPasses(t: number) {
   if (!catalog.value) return []
+  // Each effect expands into N ping-pong passes (multi-pass blur/bloom); chained
+  // effects concatenate, so the renderer ping-pongs the whole flattened list.
   return chain.value.passes
-    .map((p) => {
+    .flatMap((p) => {
       const def = catalog.value!.effects.find(e => e.id === p.effectId)
-      if (!def) return null
-      return {
-        id: def.id,
-        source: def.source,
-        uniforms: { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, ...textureUniforms(def) },
-        textures: textureSources(def),
-      }
-    })
-    .filter(Boolean) as any[]
+      if (!def) return []
+      const uniforms = { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, ...textureUniforms(def) }
+      return expandPasses(def.id, def.source, uniforms, textureSources(def), def.passes ?? 1)
+    }) as any[]
 }
 
 // Catalog textures (e.g. glyph atlas) — loaded lazily, cached module-wide

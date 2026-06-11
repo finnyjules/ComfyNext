@@ -1347,6 +1347,27 @@
           "step": 0.05
         }
       ]
+    },
+    {
+      "id": "gaussian_blur",
+      "name": "Gaussian Blur",
+      "category": "blur",
+      "animated": false,
+      "passes": 2,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.002,
+          "max": 0.08,
+          "default": 0.02,
+          "step": 0.002
+        }
+      ]
     }
   ]
 }
