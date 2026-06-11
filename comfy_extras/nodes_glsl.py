@@ -278,6 +278,58 @@ def _init_egl():
         raise
 
 
+def _init_cgl():
+    """Initialize CGL (macOS native OpenGL, headless, GPU). Returns (context, opengl_lib)."""
+    import ctypes
+    import ctypes.util
+
+    if sys.platform != "darwin":
+        raise RuntimeError("CGL backend is macOS-only")
+
+    logger.debug("_init_cgl: starting")
+    opengl_path = ctypes.util.find_library("OpenGL")
+    if not opengl_path:
+        raise RuntimeError("Could not find OpenGL framework")
+    opengl = ctypes.cdll.LoadLibrary(opengl_path)
+
+    CGLPixelFormatObj = ctypes.c_void_p
+    CGLContextObj = ctypes.c_void_p
+
+    kCGLPFAOpenGLProfile = 99
+    kCGLOGLPVersion_3_2_Core = 0x3200
+    kCGLPFAAccelerated = 73
+    kCGLPFAColorSize = 8
+    kCGLPFAAllowOfflineRenderers = 96
+
+    attrs = (ctypes.c_int * 9)(
+        kCGLPFAOpenGLProfile, kCGLOGLPVersion_3_2_Core,
+        kCGLPFAAccelerated,
+        kCGLPFAColorSize, 32,
+        kCGLPFAAllowOfflineRenderers,
+        0,  # terminator
+    )
+
+    pix_fmt = CGLPixelFormatObj()
+    npix = ctypes.c_int(0)
+    err = opengl.CGLChoosePixelFormat(attrs, ctypes.byref(pix_fmt), ctypes.byref(npix))
+    if err != 0 or not pix_fmt:
+        raise RuntimeError(f"CGLChoosePixelFormat() failed with error {err}")
+
+    ctx = CGLContextObj()
+    err = opengl.CGLCreateContext(pix_fmt, None, ctypes.byref(ctx))
+    opengl.CGLDestroyPixelFormat(pix_fmt)
+    if err != 0 or not ctx:
+        raise RuntimeError(f"CGLCreateContext() failed with error {err}")
+
+    err = opengl.CGLSetCurrentContext(ctx)
+    if err != 0:
+        opengl.CGLDestroyContext(ctx)
+        raise RuntimeError(f"CGLSetCurrentContext() failed with error {err}")
+
+    logger.debug("_init_cgl: completed successfully")
+    return ctx, opengl
+
+
 def _init_osmesa():
     """Initialize OSMesa for software rendering. Returns (context, buffer). Raises RuntimeError on failure."""
     import ctypes
@@ -342,9 +394,11 @@ class GLContext:
         self._egl_surface = None
         self._osmesa_ctx = None
         self._osmesa_buffer = None
+        self._cgl_ctx = None
+        self._cgl_lib = None
         self._vao = None
 
-        # Try backends in order: GLFW → EGL → OSMesa
+        # Try backends in order: GLFW → CGL → EGL → OSMesa
         errors = []
 
         logger.debug("GLContext.__init__: trying GLFW backend")
@@ -355,6 +409,16 @@ class GLContext:
         except Exception as e:
             logger.debug(f"GLContext.__init__: GLFW backend failed: {e}")
             errors.append(("GLFW", e))
+
+        if self._backend is None:
+            logger.debug("GLContext.__init__: trying CGL backend")
+            try:
+                self._cgl_ctx, self._cgl_lib = _init_cgl()
+                self._backend = "cgl"
+                logger.debug("GLContext.__init__: CGL backend succeeded")
+            except Exception as e:
+                logger.debug(f"GLContext.__init__: CGL backend failed: {e}")
+                errors.append(("CGL", e))
 
         if self._backend is None:
             logger.debug("GLContext.__init__: trying EGL backend")
@@ -384,9 +448,8 @@ class GLContext:
                 )
             elif sys.platform == "darwin":
                 platform_help = (
-                    "macOS: GLFW is not supported.\n"
-                    "  Install OSMesa via Homebrew: brew install mesa\n"
-                    "  Then: pip install PyOpenGL PyOpenGL-accelerate"
+                    "macOS: native CGL backend failed unexpectedly.\n"
+                    "  Fallback: brew install mesa && pip install PyOpenGL PyOpenGL-accelerate"
                 )
             else:
                 platform_help = (
@@ -443,6 +506,8 @@ class GLContext:
         elif self._backend == "egl":
             from OpenGL.EGL import eglMakeCurrent
             eglMakeCurrent(self._egl_display, self._egl_surface, self._egl_surface, self._egl_context)
+        elif self._backend == "cgl":
+            self._cgl_lib.CGLSetCurrentContext(self._cgl_ctx)
         elif self._backend == "osmesa":
             from OpenGL.osmesa import OSMesaMakeCurrent
             OSMesaMakeCurrent(self._osmesa_ctx, self._osmesa_buffer, gl.GL_UNSIGNED_BYTE, 64, 64)
