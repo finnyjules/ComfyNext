@@ -15,6 +15,27 @@
 
 export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
 
+// ── Motion painter indirection ───────────────────────────────────────────────
+// paintLayerStack(t) needs the motion module, but motion/paint.ts imports
+// drawLocalLayer from THIS file — a static import here would be a cycle.
+// paint.ts registers its functions on first import; callers that pass a time
+// (modal preview, bake) import '~/lib/motion/paint' and guarantee registration.
+// Type-only imports are erased at runtime, so they don't create a cycle
+// (evaluate.ts/types.ts don't import this file).
+import type { LayerMotionState } from '~/lib/motion/evaluate'
+import type { FrameMotion } from '~/lib/motion/types'
+
+interface MotionPainter {
+  motionStateFor: (layer: LocalLayer, t: number, motion: FrameMotion) => LayerMotionState | null
+  drawLayerWithMotion: (
+    ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number,
+    maskLayer: LocalLayer | null, st: LayerMotionState, maskState: LayerMotionState | null,
+  ) => void
+  identityState: () => LayerMotionState
+}
+let _motionPainterImpl: MotionPainter | null = null
+export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl = impl }
+
 // ── Paint (solid color or gradient) ──────────────────────────────────────────
 // A fill/stroke can be a plain CSS color string, or a gradient. Gradient
 // geometry is resolution-independent: it's resolved against the layer's local
@@ -91,6 +112,9 @@ interface LayerCommon {
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
   maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
+  /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
+   *  Absent ⇒ the layer is static and always visible. */
+  animation?: import('~/lib/motion/types').LayerAnimation
 }
 
 /** True when a layer is hidden (visible === false; undefined means visible). */
@@ -400,7 +424,7 @@ function textLines(layer: TextLayer): string[] {
  * box overflows on its own line rather than breaking mid-word. Needs a 2D
  * context for measurement; without one, falls back to explicit lines only.
  */
-function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer, W: number): string[] {
+export function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer, W: number): string[] {
   const manual = textLines(layer)
   const boxPx = (layer.boxW ?? 0) * W
   if (!ctx || !(boxPx > 0)) return manual
@@ -420,7 +444,7 @@ function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer
   return out
 }
 
-function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
+export function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   ctx.font = `${layer.fontWeight} ${layer.fontSize * W}px ${cssFontStack(layer.fontFamily)}`
 }
 
@@ -800,6 +824,9 @@ export function paintLayerStack(
   items: StackItem[],
   localLayers: LocalLayer[],
   skip?: (layer: LocalLayer) => boolean,
+  /** Motion time in seconds. Undefined ⇒ static render, exactly as before. */
+  t?: number,
+  motion?: { fps: number; duration: number },
 ) {
   // Layers used as a mask (referenced by another's maskedById) only clip — they
   // don't paint on their own.
@@ -811,11 +838,32 @@ export function paintLayerStack(
     if (layerHidden(layer)) continue
     if (skip?.(layer)) continue
     if (maskIds.has(layer.id)) continue
+    const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+    // Enter the motion path when the layer OR its mask animates (a static
+    // photo masked by an animated numeral must still track the mask). Backdrop
+    // blur runs only for layers that actually draw, so an off-screen layer
+    // never smears the backdrop.
+    const motionActive = t !== undefined && motion && _motionPainterImpl
+      && (layer.animation || maskLayer?.animation)
+    if (motionActive) {
+      const { motionStateFor, drawLayerWithMotion, identityState } = _motionPainterImpl!
+      const st = layer.animation ? motionStateFor(layer, t!, motion!) : identityState()
+      if (st) {
+        if (!st.visible) continue
+        const maskState = maskLayer?.animation ? motionStateFor(maskLayer, t!, motion!) : null
+        if (maskState && !maskState.visible) continue // content hidden until its mask is on screen
+        const bgBlur = layer.effects?.find(
+          (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
+        )
+        if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
+        drawLayerWithMotion(ctx, layer, W, H, maskLayer, st, maskState)
+        continue
+      }
+    }
     const bgBlur = layer.effects?.find(
       (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
     )
     if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
-    const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
     drawLocalLayer(ctx, layer, W, H, maskLayer)
   }
 }

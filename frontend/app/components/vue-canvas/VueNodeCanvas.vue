@@ -2544,6 +2544,34 @@ async function injectTimelineEditState(workflow: any): Promise<void> {
   }
 }
 
+// Inject each Compositor node's baked motion params (Kinetic Slates) into its
+// `motion_params` widget at submit. The Frame editor's bake persists
+// {fps, duration, rendered: [...input PNGs...], source_key} on the node
+// (data.properties.comfynext_motionParams — see CompositorModal.vue); we pass
+// the stored JSON through verbatim. No staleness recompute here — the editor's
+// stale badge is the user-facing guard, and the backend gets source_key for
+// future use. Same stale-schema self-heal as injectTimelineEditState above.
+async function injectCompositorMotionParams(workflow: any): Promise<void> {
+  if (!workflow?.nodes?.length) return
+  const comps = (workflow.nodes as any[]).filter(n => n.type === 'Compositor')
+  let schemaRefetched = false
+  for (const comp of comps) {
+    if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
+    const raw = liveNode?.data?.properties?.comfynext_motionParams ?? comp.properties?.comfynext_motionParams
+    if (!raw) continue
+    const json = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    if (setNamedWidget(comp, 'motion_params', json, objectInfo.value)) continue
+    if (!schemaRefetched) {
+      schemaRefetched = true
+      console.warn('[Compositor] motion_params missing from cached schema — forcing /object_info refetch')
+      await refreshSchema(true)
+      if (setNamedWidget(comp, 'motion_params', json, objectInfo.value)) continue
+    }
+    throw new Error('Frame schema is out of date — reload the page (ComfyUI restarted with new node definitions)')
+  }
+}
+
 // ── Client-side Timeline preview ────────────────────────────────────────────
 // Mirrors the Compositor pattern but for video sources: each connected clip
 // has a hidden <video>; we seek each one to the timeline's middle frame and
@@ -3963,6 +3991,7 @@ defineExpose({
   injectCompositorOverlays,
   injectProtectMaskWiring,
   injectTimelineEditState,
+  injectCompositorMotionParams,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
   getEdges: () => edges.value,

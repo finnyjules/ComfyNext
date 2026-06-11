@@ -16,7 +16,12 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical } from 'lucide-vue-next'
+import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
+import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
+import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
+import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
+import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play } from 'lucide-vue-next'
 import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -681,6 +686,7 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   if (pen.active.value) { onPenPointerDown(e); return } // pen mode owns the canvas
   if (nodeEdit.active.value) { onNodePointerDown(e); return } // node edit owns the canvas
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
+  if ((e.target as HTMLElement)?.closest?.('[data-motion-transport]')) return // transport owns its events
   const key = hitTopStackKey(e.clientX, e.clientY)
   const res = key ? resolveStackKey(key) : null
   if (res?.type === 'wired') {
@@ -805,6 +811,149 @@ function toggleRowLocked(row: any) {
   else if (row.layer) setLocal(row.layer.id, { locked: !row.layer.locked } as any)
 }
 
+// ── Motion preview (kinetic slates) ──────────────────────────────────────────
+// The frame-level motion doc (fps/duration) persists on the node like the
+// local layers do: a direct property write that Vue reactivity picks up and
+// the workflow save serializes (see useLocalLayerEditor.commit).
+const motionDoc = computed<FrameMotion>(() => {
+  const p = compositor.value?.data?.properties as Record<string, any> | undefined
+  return { ...DEFAULT_FRAME_MOTION, ...(p?.comfynext_motion ?? {}) }
+})
+function setMotion(patch: Partial<FrameMotion>) {
+  const node = compositor.value
+  if (!node) return
+  const p = (node.data.properties ||= {})
+  p.comfynext_motion = { ...motionDoc.value, ...patch }
+  if (previewT.value != null) {
+    // Read the new duration from the patch — the computed may lag the in-place
+    // properties mutation depending on the node object's reactivity depth.
+    previewT.value = Math.min(previewT.value, patch.duration ?? motionDoc.value.duration)
+    renderStack()
+  }
+}
+
+const previewT = ref<number | null>(null)
+const playing = ref(false)
+let rafId = 0
+let playStartWall = 0
+let playStartT = 0
+
+function tickPlayback(now: number) {
+  if (!playing.value) return
+  const t = (playStartT + (now - playStartWall) / 1000) % motionDoc.value.duration
+  previewT.value = t
+  renderStack()
+  rafId = requestAnimationFrame(tickPlayback)
+}
+function play() {
+  cancelAnimationFrame(rafId) // never stack a second rAF chain
+  playing.value = true
+  playStartT = previewT.value ?? 0
+  playStartWall = performance.now()
+  rafId = requestAnimationFrame(tickPlayback)
+}
+function pause() {
+  playing.value = false
+  cancelAnimationFrame(rafId)
+}
+function scrubTo(t: number) {
+  pause()
+  previewT.value = Math.max(0, Math.min(motionDoc.value.duration, t))
+  renderStack()
+}
+function exitMotionPreview() {
+  pause()
+  previewT.value = null
+  bakeError.value = ''
+  renderStack()
+}
+
+// ── Motion bake (PNG sequence → motion_params) ──────────────────────────────
+// Bake renders every frame through the same buildStackItems()/paintLayerStack
+// path as the preview, uploads PNGs to /upload/image, and persists the result
+// on node properties.
+//
+// Params are stored at node.data.properties.comfynext_motionParams and stamped
+// into the backend's `motion_params` widget at submit time by
+// injectCompositorMotionParams (VueNodeCanvas.vue, called from the Run path in
+// layouts/default.vue — same pattern as the Timeline's edit_state injection).
+// When `rendered` is non-empty the backend Compositor returns the baked frame
+// batch + a real VIDEO output instead of the static server-side composite.
+//
+// NOTE: source_key hashes local layers + motion + size only — wired-layer
+// PIXEL content is not hashed, so an upstream graph re-run does not flip the
+// stale badge. Known v1 limitation.
+const baking = ref(false)
+const bakeProgress = ref(0)
+const bakeError = ref('')
+
+/** Read a numeric node widget by name (0 when unset/absent). */
+function readNodeIntWidget(name: string): number {
+  const node = compositor.value
+  const defs = node?.data?.widgetDefs as any[] | undefined
+  const wv = node?.data?.widgetsValues as any[] | undefined
+  const wi = defs?.findIndex((d: any) => d.name === name) ?? -1
+  return wi >= 0 ? Number(wv?.[wi]) || 0 : 0
+}
+
+// Bake at the explicit artboard resolution when set; else the editor canvas.
+function bakeSize(): { W: number; H: number } {
+  const w = readNodeIntWidget('width')
+  const h = readNodeIntWidget('height')
+  if (w > 0 && h > 0) return { W: w, H: h }
+  if (w > 0) return { W: w, H: Math.round(w * canvasDisplay.h / canvasDisplay.w) }
+  return { W: canvasDisplay.w, H: canvasDisplay.h }
+}
+
+const storedMotionParams = computed<MotionParams | null>(() => {
+  const p = compositor.value?.data?.properties as Record<string, any> | undefined
+  return (p?.comfynext_motionParams as MotionParams | undefined) ?? null
+})
+const motionStale = computed(() => {
+  const stored = storedMotionParams.value
+  if (!stored) return false
+  const { W, H } = bakeSize()
+  return stored.source_key !== motionSourceKey(localLayers.value as LocalLayer[], motionDoc.value, W, H)
+})
+
+async function bakeMotion() {
+  if (baking.value) return
+  const node = compositor.value
+  if (!node) return
+  baking.value = true
+  bakeProgress.value = 0
+  bakeError.value = ''
+  pause() // don't fight the rAF preview loop for the layer state
+  try {
+    const { W, H } = bakeSize()
+    const params = await bakeAndUpload(
+      () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motionDoc.value,
+      (done, total) => { bakeProgress.value = done / total },
+    )
+    const p = (node.data.properties ||= {})
+    p.comfynext_motionParams = params
+  } catch (err: any) {
+    console.error('[compositor motion bake]', err)
+    bakeError.value = err?.message || 'Motion bake failed'
+  } finally {
+    baking.value = false
+  }
+}
+
+// One StackItem builder shared by the live preview AND the motion bake, so the
+// baked frames render exactly what the editor shows (wired layers included).
+function buildStackItems(): StackItem[] {
+  return stackKeys.value.map((key): StackItem | null => {
+    const r = resolveStackKey(key)
+    if (!r) return null
+    if (r.type === 'wired') {
+      if (hiddenWired.value.has((r.layer as Layer).slot)) return null
+      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+    }
+    return { type: 'local', layer: r.layer as LocalLayer }
+  }).filter((x): x is StackItem => x != null)
+}
+
 const overlayCanvas = ref<HTMLCanvasElement | null>(null)
 function renderStack() {
   const cv = overlayCanvas.value
@@ -816,17 +965,10 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  const items = stackKeys.value.map((key): StackItem | null => {
-    const r = resolveStackKey(key)
-    if (!r) return null
-    if (r.type === 'wired') {
-      if (hiddenWired.value.has((r.layer as Layer).slot)) return null
-      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
-    }
-    return { type: 'local', layer: r.layer as LocalLayer }
-  }).filter((x): x is StackItem => x != null)
+  const items = buildStackItems()
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
-    l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value))
+    l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
+    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined)
 }
 watch(
   () => [
@@ -1283,6 +1425,7 @@ onMounted(() => window.addEventListener('keydown', handleKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   detachPointerListeners()
+  pause()
 })
 </script>
 
@@ -1431,6 +1574,22 @@ onUnmounted(() => {
           class="absolute inset-0 pointer-events-none"
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
+
+        <!-- Motion preview transport (play/scrub the kinetic timeline) -->
+        <MotionTransport
+          v-if="previewT != null"
+          data-motion-transport
+          class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20"
+          :motion="motionDoc" :t="previewT" :playing="playing"
+          :baking="baking" :bake-progress="bakeProgress" :stale="motionStale"
+          @play="play" @pause="pause" @scrub="scrubTo" @exit="exitMotionPreview" @bake="bakeMotion"
+          @update:motion="setMotion"
+          @click.stop @pointerdown.stop @pointerup.stop @dblclick.stop
+        />
+        <div
+          v-if="previewT != null && bakeError"
+          class="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 px-2 py-1 rounded bg-[#111111]/95 border border-rose-500/30 text-[11px] text-rose-400"
+        >{{ bakeError }}</div>
 
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
@@ -1729,6 +1888,14 @@ onUnmounted(() => {
         </button>
         <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="previewT != null ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="Motion — preview layer animations on the kinetic timeline"
+          @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
+        >
+          <Play class="size-4" />
         </button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
         <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />
@@ -2152,6 +2319,13 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+
+          <!-- Animation (kinetic motion presets, previewed via the Motion toolbar button) -->
+          <LayerMotionPanel
+            class="mt-3"
+            :animation="(selectedLocal as any).animation"
+            @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
+          />
 
           <!-- Image AI actions -->
           <div v-if="selectedLocal.kind === 'image'" class="mt-3 flex flex-col gap-1.5">

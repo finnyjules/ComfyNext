@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import math
+from fractions import Fraction
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image as PILImage, ImageOps
 from typing_extensions import override
 
-from comfy_api.latest import ComfyExtension, IO
+import folder_paths
+from comfy_api.latest import ComfyExtension, IO, InputImpl, Types
 from comfy_extras._live_preview import save_live_preview
 
 
@@ -180,6 +185,32 @@ def _protect_coverage(layers: list[dict], canvas_h: int, canvas_w: int):
     return cov
 
 
+def _load_motion_frame(filename: str):
+    """Uploaded PNG → (IMAGE [H,W,3] float 0..1, alpha [H,W] float 0..1).
+
+    Adapted from nodes_kinetic_type._load_frame, but returns the RAW alpha
+    (1 = covered) rather than the inverted ComfyUI MASK convention — the
+    motion path unions these alphas into the protect_mask output, which is
+    1 where a layer covers.
+    """
+    path = folder_paths.get_annotated_filepath(filename)
+    img = PILImage.open(path)
+    img = ImageOps.exif_transpose(img)
+    if "A" in img.getbands():
+        alpha = torch.from_numpy(np.array(img.getchannel("A")).astype(np.float32) / 255.0)
+    else:
+        alpha = torch.ones(img.height, img.width, dtype=torch.float32)
+    rgb = torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32) / 255.0)
+    return rgb, alpha
+
+
+def _video_from(images: torch.Tensor, fps: int | Fraction):
+    """Wrap an IMAGE batch [N,H,W,3] as a VIDEO output (CreateVideo's pattern)."""
+    return InputImpl.VideoFromComponents(
+        Types.VideoComponents(images=images, audio=None, frame_rate=Fraction(fps))
+    )
+
+
 def _layer_inputs(idx: int, optional: bool):
     """Build the per-layer input declarations for layer N."""
     return [
@@ -245,6 +276,15 @@ class CompositorNode(IO.ComfyNode):
         for i in range(1, _MAX_LAYERS + 1):
             inputs.append(IO.Boolean.Input(f"layer{i}_protect", optional=True, default=False,
                                            tooltip="Keep this layer pixel-exact when the scene is blended (Blend Scene)."))
+        # Motion (Kinetic Slates): when the Frame has been animated and baked
+        # client-side, this JSON carries {fps, duration, rendered: [...input
+        # filenames...], source_key}. When rendered is non-empty the node
+        # returns the baked frame batch + a real video instead of the static
+        # server-side composite (the bake IS the composition, like `overlay`
+        # but over time). Injected at submit from the editor; not hand-edited.
+        inputs.append(IO.String.Input("motion_params", optional=True, default="",
+                                      multiline=True,
+                                      tooltip="Baked motion frames (managed by the Frame editor)."))
         return IO.Schema(
             node_id="Compositor",
             display_name="Compositor",
@@ -257,6 +297,9 @@ class CompositorNode(IO.ComfyNode):
                 # Union of layers flagged "protect" — 1 where a protected layer
                 # covers the canvas. Feeds Blend Scene's keep_subject.
                 IO.Mask.Output(display_name="protect_mask"),
+                # 1-frame video of the static composite normally; the baked
+                # animation at its fps when motion_params has rendered frames.
+                IO.Video.Output(display_name="video"),
             ],
             hidden=[IO.Hidden.unique_id],
             is_output_node=True,
@@ -264,6 +307,38 @@ class CompositorNode(IO.ComfyNode):
 
     @classmethod
     def execute(cls, **kwargs) -> IO.NodeOutput:
+        # Motion path (Kinetic Slates): when the Frame was animated and baked
+        # client-side, motion_params carries the uploaded PNG frame filenames.
+        # The bake REPLACES the server-side composite entirely — it already
+        # contains wired + local layers as composited in the editor — so we
+        # load the frames, return them as the image batch, and wrap them as a
+        # real video at the baked fps. The protect mask is the per-pixel MAX
+        # of frame alphas (everywhere the slate ever draws).
+        try:
+            motion = json.loads(kwargs.get("motion_params") or "{}")
+            if not isinstance(motion, dict):
+                motion = {}
+        except json.JSONDecodeError:
+            motion = {}
+        rendered = motion.get("rendered")
+        if isinstance(rendered, list) and rendered:
+            frames, alphas = [], []
+            for filename in rendered:
+                try:
+                    rgb, alpha = _load_motion_frame(str(filename))
+                    frames.append(rgb)
+                    alphas.append(alpha)
+                except Exception:
+                    continue  # skip frames that went missing from input/
+            if frames:
+                batch = torch.stack(frames, dim=0)            # [N,H,W,3]
+                fps = max(1, int(motion.get("fps", 30)))
+                video = _video_from(batch, fps)
+                protect = torch.stack(alphas, dim=0).amax(dim=0, keepdim=True)  # [1,H,W]
+                protect = protect.clamp(0.0, 1.0).to(batch.dtype)
+                return IO.NodeOutput(batch, protect, video,
+                                     ui=save_live_preview(batch[:1], str(cls.hidden.unique_id)))
+
         # Gather provided layers in order. Unconnected slots return None and
         # are skipped — the composite uses only the layers that have an image.
         layers = []
@@ -292,7 +367,8 @@ class CompositorNode(IO.ComfyNode):
             # Nothing connected and no explicit size — return a tiny black image.
             blank = torch.zeros(1, 16, 16, 3)
             blank_mask = torch.zeros(1, 16, 16)
-            return IO.NodeOutput(blank, blank_mask, ui=save_live_preview(blank, str(cls.hidden.unique_id)))
+            return IO.NodeOutput(blank, blank_mask, _video_from(blank, 1),
+                                 ui=save_live_preview(blank, str(cls.hidden.unique_id)))
 
         if explicit:
             canvas_h, canvas_w = height, width
@@ -341,7 +417,10 @@ class CompositorNode(IO.ComfyNode):
         else:
             protect_mask = cov.squeeze(1).clamp(0.0, 1.0).to(out.dtype)
 
-        return IO.NodeOutput(out, protect_mask, ui=save_live_preview(out, str(cls.hidden.unique_id)))
+        # Static composites still emit a video output — a 1-frame video of the
+        # composite — so downstream VIDEO consumers can wire unconditionally.
+        return IO.NodeOutput(out, protect_mask, _video_from(out, 1),
+                             ui=save_live_preview(out, str(cls.hidden.unique_id)))
 
 
 class CompositorExtension(ComfyExtension):
