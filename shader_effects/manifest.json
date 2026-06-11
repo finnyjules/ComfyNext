@@ -1647,6 +1647,204 @@
           "step": 0.1
         }
       ]
+    },
+    {
+      "id": "duotone",
+      "name": "Duotone",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_shadowHue",
+          "label": "Shadow Hue",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.6,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_lightHue",
+          "label": "Light Hue",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.1,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_contrast",
+          "label": "Contrast",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.4,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "gradient_map",
+      "name": "Gradient Map",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_hue",
+          "label": "Hue",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.0,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_spread",
+          "label": "Spread",
+          "type": "float",
+          "min": 0.3,
+          "max": 2.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_contrast",
+          "label": "Contrast",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.3,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "posterize",
+      "name": "Posterize",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_levels",
+          "label": "Levels",
+          "type": "float",
+          "min": 2.0,
+          "max": 12.0,
+          "default": 5.0,
+          "step": 1.0
+        }
+      ]
+    },
+    {
+      "id": "threshold",
+      "name": "Threshold",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_threshold",
+          "label": "Threshold",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_softness",
+          "label": "Softness",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.05,
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "id": "hue_shift",
+      "name": "Hue Shift",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_hue",
+          "label": "Hue",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_saturation",
+          "label": "Saturation",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_value",
+          "label": "Brightness",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 1.0,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "color_temperature",
+      "name": "Color Temperature",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_temperature",
+          "label": "Temperature",
+          "type": "float",
+          "min": -1.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_tint",
+          "label": "Tint",
+          "type": "float",
+          "min": -1.0,
+          "max": 1.0,
+          "default": 0.0,
+          "step": 0.02
+        }
+      ]
     }
   ]
 }
