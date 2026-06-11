@@ -5,12 +5,16 @@ defineProps<{
   motion: FrameMotion
   t: number | null
   playing: boolean
+  baking?: boolean
+  bakeProgress?: number
+  stale?: boolean
 }>()
 const emit = defineEmits<{
   play: []
   pause: []
   scrub: [t: number]
   exit: []
+  bake: []
   'update:motion': [patch: Partial<FrameMotion>]
 }>()
 
@@ -46,6 +50,15 @@ function fmt(s: number) { return s.toFixed(2) + 's' }
         @change="emit('update:motion', { fps: Math.max(1, Math.min(60, Number(($event.target as HTMLInputElement).value) || 30)) })"
       >
     </label>
+    <button
+      class="px-2 py-0.5 rounded font-medium"
+      :class="stale ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'"
+      :disabled="baking"
+      :title="stale ? 'Layers changed since last bake' : 'Bake motion to frames'"
+      @click="emit('bake')"
+    >
+      {{ baking ? `Baking ${Math.round((bakeProgress ?? 0) * 100)}%` : stale ? 'Re-bake' : 'Bake' }}
+    </button>
     <button class="ml-1 px-2 py-0.5 rounded cursor-pointer hover:bg-white/10 text-white/85" title="Exit motion preview" @click="emit('exit')">✕</button>
   </div>
 </template>

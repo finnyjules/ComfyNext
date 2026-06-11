@@ -18,6 +18,7 @@ import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
+import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play } from 'lucide-vue-next'
@@ -866,6 +867,89 @@ function exitMotionPreview() {
   renderStack()
 }
 
+// ── Motion bake (PNG sequence → motion_params) ──────────────────────────────
+// Bake renders every frame through the same buildStackItems()/paintLayerStack
+// path as the preview, uploads PNGs to /upload/image, and persists the result
+// on node properties.
+//
+// TODO(Task 8): params are stored at node.data.properties.comfynext_motionParams
+// because the Compositor backend has no `motion_params` widget yet — the cached
+// object_info schema doesn't know the name, so setNamedWidget() refuses to
+// write it (returns false for unknown widgets). Once Task 8 adds the widget to
+// the backend schema, either (a) read comfynext_motionParams from properties at
+// submit time and stamp it into the widget via setNamedWidget, or (b) re-point
+// this write to the widget directly.
+const baking = ref(false)
+const bakeProgress = ref(0)
+const bakeError = ref('')
+
+/** Read a numeric node widget by name (0 when unset/absent). */
+function readNodeIntWidget(name: string): number {
+  const node = compositor.value
+  const defs = node?.data?.widgetDefs as any[] | undefined
+  const wv = node?.data?.widgetsValues as any[] | undefined
+  const wi = defs?.findIndex((d: any) => d.name === name) ?? -1
+  return wi >= 0 ? Number(wv?.[wi]) || 0 : 0
+}
+
+// Bake at the explicit artboard resolution when set; else the editor canvas.
+function bakeSize(): { W: number; H: number } {
+  const w = readNodeIntWidget('width')
+  const h = readNodeIntWidget('height')
+  if (w > 0 && h > 0) return { W: w, H: h }
+  if (w > 0) return { W: w, H: Math.round(w * canvasDisplay.h / canvasDisplay.w) }
+  return { W: canvasDisplay.w, H: canvasDisplay.h }
+}
+
+const storedMotionParams = computed<MotionParams | null>(() => {
+  const p = compositor.value?.data?.properties as Record<string, any> | undefined
+  return (p?.comfynext_motionParams as MotionParams | undefined) ?? null
+})
+const motionStale = computed(() => {
+  const stored = storedMotionParams.value
+  if (!stored) return false
+  const { W, H } = bakeSize()
+  return stored.source_key !== motionSourceKey(localLayers.value as LocalLayer[], motionDoc.value, W, H)
+})
+
+async function bakeMotion() {
+  if (baking.value) return
+  const node = compositor.value
+  if (!node) return
+  baking.value = true
+  bakeProgress.value = 0
+  bakeError.value = ''
+  pause() // don't fight the rAF preview loop for the layer state
+  try {
+    const { W, H } = bakeSize()
+    const params = await bakeAndUpload(
+      () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motionDoc.value,
+      (done, total) => { bakeProgress.value = done / total },
+    )
+    const p = (node.data.properties ||= {})
+    p.comfynext_motionParams = params
+  } catch (err: any) {
+    console.error('[compositor motion bake]', err)
+    bakeError.value = err?.message || 'Motion bake failed'
+  } finally {
+    baking.value = false
+  }
+}
+
+// One StackItem builder shared by the live preview AND the motion bake, so the
+// baked frames render exactly what the editor shows (wired layers included).
+function buildStackItems(): StackItem[] {
+  return stackKeys.value.map((key): StackItem | null => {
+    const r = resolveStackKey(key)
+    if (!r) return null
+    if (r.type === 'wired') {
+      if (hiddenWired.value.has((r.layer as Layer).slot)) return null
+      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+    }
+    return { type: 'local', layer: r.layer as LocalLayer }
+  }).filter((x): x is StackItem => x != null)
+}
+
 const overlayCanvas = ref<HTMLCanvasElement | null>(null)
 function renderStack() {
   const cv = overlayCanvas.value
@@ -877,15 +961,7 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  const items = stackKeys.value.map((key): StackItem | null => {
-    const r = resolveStackKey(key)
-    if (!r) return null
-    if (r.type === 'wired') {
-      if (hiddenWired.value.has((r.layer as Layer).slot)) return null
-      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
-    }
-    return { type: 'local', layer: r.layer as LocalLayer }
-  }).filter((x): x is StackItem => x != null)
+  const items = buildStackItems()
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined)
@@ -1501,10 +1577,15 @@ onUnmounted(() => {
           data-motion-transport
           class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20"
           :motion="motionDoc" :t="previewT" :playing="playing"
-          @play="play" @pause="pause" @scrub="scrubTo" @exit="exitMotionPreview"
+          :baking="baking" :bake-progress="bakeProgress" :stale="motionStale"
+          @play="play" @pause="pause" @scrub="scrubTo" @exit="exitMotionPreview" @bake="bakeMotion"
           @update:motion="setMotion"
           @click.stop @pointerdown.stop @pointerup.stop @dblclick.stop
         />
+        <div
+          v-if="previewT != null && bakeError"
+          class="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 px-2 py-1 rounded bg-[#111111]/95 border border-rose-500/30 text-[11px] text-rose-400"
+        >{{ bakeError }}</div>
 
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
