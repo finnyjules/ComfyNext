@@ -9,11 +9,17 @@ import type { TemplateV2, TextLevel, TextOverflow } from './types'
 export const LEVELS: TextLevel[] = ['caption', 'body', 'subhead', 'headline', 'display']
 export const CHAR_W = 0.55
 
-export function typeSize(level: TextLevel, template: TemplateV2, formatKey: string): number {
+/** Level-derived size for a format. `basePxOverride` (master px, from
+ * style.fontSize) replaces the modular-scale base but keeps the per-format
+ * scaling, so manual sizes still reflow across formats. */
+export function typeSize(
+  level: TextLevel, template: TemplateV2, formatKey: string,
+  basePxOverride?: number,
+): number {
   const f = template.formats[formatKey]
   if (!f) throw new Error(`Unknown format '${formatKey}' on template '${template.id}'`)
-  const raw = template.typeScale.base
-    * template.typeScale.ratio ** LEVELS.indexOf(level)
+  const base = basePxOverride ?? (template.typeScale.base * template.typeScale.ratio ** LEVELS.indexOf(level))
+  const raw = base
     * metricScale(template, f)
     * CLASS_DEFAULTS[classifyFormat(f)].typeMultiplier
   return Math.max(FONT_FLOOR, Math.round(raw))

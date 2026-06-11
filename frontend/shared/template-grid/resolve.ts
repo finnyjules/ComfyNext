@@ -73,8 +73,11 @@ export function resolveFormat(
     if (el.type === 'text') {
       const lineHeight = el.style?.lineHeight ?? 1.1
       const overflow = el.overflow ?? 'shrink-then-truncate'
-      const content = String(resolveTokens(el.content, props, brand) ?? '')
-      const maxFontSize = typeSize(el.level, template, formatKey)
+      let content = String(resolveTokens(el.content, props, brand) ?? '')
+      // Transform happens here so copy fitting, the editor canvas, and the
+      // satori render all see the same final string.
+      if (el.style?.transform === 'uppercase') content = content.toUpperCase()
+      const maxFontSize = typeSize(el.level, template, formatKey, el.style?.fontSize)
       let rect = regionToRect(region, m)
       if (overflow === 'grow') {
         const fullFits = () => {

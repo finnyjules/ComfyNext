@@ -85,4 +85,24 @@ describe('resolveFormat', () => {
   it('throws on unknown format keys', () => {
     expect(() => resolveFormat(fixture(), 'nope')).toThrow(/Unknown format/)
   })
+
+  it('style.fontSize overrides the level size but still scales per format', () => {
+    const t = fixture()
+    ;(t.elements[1] as any).style = { fontSize: 60 }
+    const master = resolveFormat(t, '1x1', { text_layer_1: 'Hi' })
+      .elements.find(e => e.el.id === 'headline')!
+    expect(master.text!.fontSize).toBe(60)
+    // 728x90: 60 × (90/1080) × 3 = 15
+    const strip = resolveFormat(t, '728x90', { text_layer_1: 'Hi' })
+      .elements.find(e => e.el.id === 'headline')!
+    expect(strip.text!.fontSize).toBe(15)
+  })
+
+  it('style.transform uppercases the resolved content before fitting', () => {
+    const t = fixture()
+    ;(t.elements[1] as any).style = { transform: 'uppercase' }
+    const r = resolveFormat(t, '1x1', { text_layer_1: 'Brew bold' })
+      .elements.find(e => e.el.id === 'headline')!
+    expect(r.text!.content).toBe('BREW BOLD')
+  })
 })

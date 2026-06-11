@@ -141,6 +141,28 @@ test.describe('SmartLayout render endpoint', () => {
     })
   }
 
+  test('curated non-Inter fonts actually change the render', async ({ request }) => {
+    // Same template, two families — if the server ignored fontFamily the
+    // bytes would be identical.
+    const render = async (fontFamily: string) => {
+      const res = await request.post('/api/render-template', {
+        data: {
+          template: {
+            ...TEMPLATE_V2,
+            elements: [{ ...TEMPLATE_V2.elements[0], style: { color: '#ffffff', fontFamily } }],
+          },
+          aspect: '1x1',
+          props: { text_layer_1: 'Typography' },
+        },
+      })
+      expect(res.status()).toBe(200)
+      return res.body()
+    }
+    const inter = await render('Inter')
+    const bebas = await render('Bebas Neue')
+    expect(inter.equals(bebas)).toBe(false)
+  })
+
   test('missing template field returns 400', async ({ request }) => {
     const res = await request.post('/api/render-template', {
       data: { aspect: '1x1' },

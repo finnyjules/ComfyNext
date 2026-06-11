@@ -17,6 +17,7 @@ import satori from 'satori'
 
 import type { RenderRequest } from '~~/server/templates/schema'
 import { templateToSatori } from '~~/server/templates/translate'
+import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 
 interface LoadedFont {
   name: string
@@ -25,22 +26,89 @@ interface LoadedFont {
   style: 'normal'
 }
 
-// Lazy-loaded font cache. Satori needs ArrayBuffers, and disk reads are slow
-// enough that we don't want to repeat them per request.
-let fontsCache: LoadedFont[] | null = null
+function toArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+}
 
-async function loadFonts(): Promise<LoadedFont[]> {
-  if (fontsCache) return fontsCache
-  const fontsDir = join(process.cwd(), 'server', 'templates', 'fonts')
-  const [regular, bold] = await Promise.all([
-    readFile(join(fontsDir, 'Inter-Regular.woff')),
-    readFile(join(fontsDir, 'Inter-Bold.woff')),
-  ])
-  fontsCache = [
-    { name: 'Inter', data: regular.buffer.slice(regular.byteOffset, regular.byteOffset + regular.byteLength), weight: 400, style: 'normal' },
-    { name: 'Inter', data: bold.buffer.slice(bold.byteOffset, bold.byteOffset + bold.byteLength), weight: 700, style: 'normal' },
-  ]
-  return fontsCache
+// Curated families (shared/template-fonts.ts) — read once from node_modules.
+let curatedCache: LoadedFont[] | null = null
+
+async function loadCuratedFonts(): Promise<LoadedFont[]> {
+  if (curatedCache) return curatedCache
+  const out: LoadedFont[] = []
+  for (const fam of TEMPLATE_FONTS) {
+    for (const w of fam.weights) {
+      try {
+        const buf = await readFile(join(process.cwd(), 'node_modules', w.modulePath))
+        out.push({ name: fam.name, data: toArrayBuffer(buf), weight: w.weight, style: 'normal' })
+      } catch {
+        // Missing fontsource file — skip; Inter (also curated) still covers.
+      }
+    }
+  }
+  curatedCache = out
+  return out
+}
+
+// Non-curated families picked in the editor's font picker: fetch TTFs from
+// Google Fonts on first use and cache for the process lifetime. A non-browser
+// User-Agent makes Google return TTF sources — satori can't parse woff2.
+const googleCache = new Map<string, LoadedFont[]>()
+const googleFailed = new Set<string>()
+
+async function loadGoogleFamily(family: string): Promise<LoadedFont[]> {
+  const cached = googleCache.get(family)
+  if (cached) return cached
+  if (googleFailed.has(family)) return []
+  try {
+    const f = encodeURIComponent(family).replace(/%20/g, '+')
+    const cssRes = await fetch(
+      `https://fonts.googleapis.com/css2?family=${f}:wght@400;700&display=swap`,
+      { headers: { 'User-Agent': 'curl/8' } },
+    )
+    if (!cssRes.ok) throw new Error(`css ${cssRes.status}`)
+    const css = await cssRes.text()
+    const fonts: LoadedFont[] = []
+    for (const block of css.split('@font-face').slice(1)) {
+      const weight = /font-weight:\s*(\d+)/.exec(block)?.[1]
+      const url = /src:\s*url\(([^)]+\.ttf)\)/.exec(block)?.[1]
+      if (!url || (weight !== '400' && weight !== '700')) continue
+      const ttf = await fetch(url)
+      if (!ttf.ok) continue
+      fonts.push({ name: family, data: await ttf.arrayBuffer(), weight: Number(weight) as 400 | 700, style: 'normal' })
+    }
+    if (!fonts.length) throw new Error('no ttf faces')
+    googleCache.set(family, fonts)
+    return fonts
+  } catch {
+    googleFailed.add(family)  // don't re-fetch a broken family every render
+    return []
+  }
+}
+
+/** Every fontFamily referenced by the template (v1 incl. per-aspect
+ * overrides, v2 element styles). */
+function collectFamilies(template: unknown): string[] {
+  const fams = new Set<string>()
+  const elements = (template as { elements?: unknown[] })?.elements ?? []
+  for (const el of elements as any[]) {
+    const f = el?.style?.fontFamily
+    if (typeof f === 'string' && f.trim()) fams.add(f.trim())
+    for (const ov of Object.values(el?.overrides ?? {})) {
+      const of = (ov as any)?.style?.fontFamily
+      if (typeof of === 'string' && of.trim()) fams.add(of.trim())
+    }
+  }
+  return [...fams]
+}
+
+async function loadFonts(template: unknown): Promise<LoadedFont[]> {
+  const curated = await loadCuratedFonts()
+  const curatedNames = new Set(curated.map(f => f.name))
+  const extra = (await Promise.all(
+    collectFamilies(template).filter(n => !curatedNames.has(n)).map(loadGoogleFamily),
+  )).flat()
+  return [...curated, ...extra]
 }
 
 export default defineEventHandler(async (event) => {
@@ -49,7 +117,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing `template` in request body.' })
   }
 
-  const fonts = await loadFonts()
+  const fonts = await loadFonts(body.template)
 
   const { tree, width, height } = templateToSatori(
     body.template,

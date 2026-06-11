@@ -232,11 +232,51 @@ function readUpstreamKv(inputName: string): Record<string, string> {
 const _MAX_TEXT_LAYERS = 8
 const _MAX_IMAGE_LAYERS = 8
 
+/** All entries of an upstream multi-entry Text node (the canvas Text artifact
+ * stores them on data.properties.textEntries), falling back to the single
+ * widget value. At run time the node fans out one render per entry; in the
+ * editor the active variant drives the preview via the cycler. */
+function readUpstreamTextVariants(inputName: string): string[] {
+  const node = props.nodes.find((n: any) => n.id === props.nodeId)
+  if (!node) return []
+  const inputs = node.data?.inputs as any[] | undefined
+  if (!inputs) return []
+  const idx = inputs.findIndex((i: any) => i.name === inputName)
+  if (idx < 0) return []
+  const edge = props.edges.find((e: any) =>
+    e.target === props.nodeId && e.targetHandle === `input-${idx}`)
+  if (!edge) return []
+  const source = props.nodes.find((n: any) => n.id === edge.source)
+  if (!source || source.data?.nodeType !== 'Text') return []
+  const entries = (source.data.properties?.textEntries as unknown[] | undefined)
+    ?.map(s => String(s ?? '').trim()).filter(Boolean)
+  if (entries?.length) return entries
+  const single = readUpstreamText(inputName)
+  return single ? [single] : []
+}
+
+const variantsByLayer = computed<Record<string, string[]>>(() => {
+  const out: Record<string, string[]> = {}
+  for (let i = 1; i <= _MAX_TEXT_LAYERS; i++) {
+    const v = readUpstreamTextVariants(`text_layer_${i}`)
+    if (v.length) out[`text_layer_${i}`] = v
+  }
+  return out
+})
+const activeVariantByLayer = ref<Record<string, number>>({})
+
+// Consumed by the variant cycler in both property panels (v1 + grid).
+provide('smartLayoutVariants', { variantsByLayer, activeVariantByLayer })
+
 const initialProps = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {}
   for (let i = 1; i <= _MAX_TEXT_LAYERS; i++) {
-    const raw = readUpstreamText(`text_layer_${i}`)
-    if (raw) out[`text_layer_${i}`] = raw
+    const key = `text_layer_${i}`
+    const variants = variantsByLayer.value[key]
+    if (variants?.length) {
+      const idx = Math.min(variants.length - 1, Math.max(0, activeVariantByLayer.value[key] ?? 0))
+      out[key] = variants[idx]
+    }
   }
   // For image layers, the editor doesn't actually need the upstream URL to
   // *create* the element — the renderer fills it at execution time. We only

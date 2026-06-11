@@ -10,6 +10,7 @@
  */
 import { CaseSensitive, ImagePlus, Save, Square, Type as TypeIcon } from 'lucide-vue-next'
 
+import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
@@ -36,6 +37,15 @@ if (props.initialBrand && Object.keys(props.initialBrand).length > 0) {
 watch(() => props.initialProps, (next) => {
   if (next && Object.keys(next).length > 0) Object.assign(sampleProps.value, next)
 }, { deep: true })
+
+// Make sure the browser can render every family the template references —
+// curated families are bundled; anything else lazy-loads from Google Fonts.
+const { ensure: ensureFont } = useGoogleFontPreview()
+watch(template, (tpl) => {
+  for (const el of tpl.elements) {
+    if (el.type === 'text' && el.style?.fontFamily) ensureFont(el.style.fontFamily)
+  }
+}, { immediate: true, deep: true })
 
 function handleSave() {
   emit('save', JSON.parse(JSON.stringify(template.value)))

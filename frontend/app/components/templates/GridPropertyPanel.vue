@@ -4,8 +4,9 @@
  * setRegion so master vs format-class semantics live in one place; everything
  * else patches the element directly (v2 has no per-aspect style overrides).
  */
-import { Trash2, Type as TypeIcon, Image as ImageIcon, Square } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square } from 'lucide-vue-next'
 
+import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 
@@ -46,6 +47,53 @@ function styleOf(): Record<string, any> {
 
 const textEl = computed(() => (el.value?.type === 'text' ? el.value as TextElementV2 : null))
 
+// -- Variant cycler (multi-entry upstream Text nodes) ------------------------
+// Provided by SmartLayoutEditorModal; layer ids match element ids.
+const variantCtx = inject<{
+  variantsByLayer: { value: Record<string, string[]> }
+  activeVariantByLayer: { value: Record<string, number> }
+} | null>('smartLayoutVariants', null)
+
+const variantsForSelected = computed<string[]>(() => {
+  if (!variantCtx || !el.value) return []
+  return variantCtx.variantsByLayer.value[el.value.id] ?? []
+})
+const activeVariantIdx = computed<number>({
+  get() {
+    if (!variantCtx || !el.value) return 0
+    const n = variantsForSelected.value.length
+    return Math.min(Math.max(0, variantCtx.activeVariantByLayer.value[el.value.id] ?? 0), Math.max(0, n - 1))
+  },
+  set(v) {
+    if (!variantCtx || !el.value) return
+    variantCtx.activeVariantByLayer.value = {
+      ...variantCtx.activeVariantByLayer.value,
+      [el.value.id]: v,
+    }
+  },
+})
+function cycleVariant(dir: 1 | -1) {
+  const n = variantsForSelected.value.length
+  if (n < 2) return
+  activeVariantIdx.value = (activeVariantIdx.value + dir + n) % n
+}
+
+// -- Font preview loading -----------------------------------------------------
+const { ensure: ensureFont } = useGoogleFontPreview()
+function setFontFamily(family: string) {
+  if (!el.value) return
+  ensureFont(family)
+  patchStyle(el.value.id, { fontFamily: family })
+}
+
+/** Placeholder for the size input: the level-derived size in master px. */
+const levelSizePlaceholder = computed(() => {
+  if (!textEl.value) return ''
+  const t = ctx.template.value
+  const idx = ['caption', 'body', 'subhead', 'headline', 'display'].indexOf(textEl.value.level)
+  return String(Math.round(t.typeScale.base * t.typeScale.ratio ** idx))
+})
+
 const focalSrc = computed(() => {
   if (el.value?.type !== 'image') return undefined
   const resolved = String(el.value.content ?? '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
@@ -80,6 +128,32 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       >
         <Trash2 class="size-3.5" />
       </button>
+    </div>
+
+    <!-- Variant cycler — visible when this element is wired to a multi-entry
+         Text node. Picks which variant the canvas previews; run time still
+         fans out one image per variant. -->
+    <div v-if="variantsForSelected.length > 1" class="rounded-md bg-[#96b4ff]/[0.06] border border-[#96b4ff]/15 px-2.5 py-2 flex flex-col gap-1.5">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-[#c9d6ff]/85 font-medium">
+          <Layers class="size-3" />
+          <span>Variant {{ activeVariantIdx + 1 }} of {{ variantsForSelected.length }}</span>
+        </div>
+        <div class="flex items-center gap-0.5">
+          <button class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Previous variant" @click="cycleVariant(-1)">
+            <ChevronLeft class="size-3.5" />
+          </button>
+          <button class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Next variant" @click="cycleVariant(1)">
+            <ChevronRight class="size-3.5" />
+          </button>
+        </div>
+      </div>
+      <div class="text-[11px] text-white/65 leading-snug italic line-clamp-3 font-mono">
+        "{{ variantsForSelected[activeVariantIdx] }}"
+      </div>
+      <div class="text-[10px] text-white/35 leading-snug">
+        Run time renders one image per variant — this just picks which one to lay out against.
+      </div>
     </div>
 
     <!-- Format-class banner -->
@@ -146,6 +220,13 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
         />
       </div>
+      <div>
+        <p :class="labelCls" class="mb-1.5">Font</p>
+        <TemplatesFontPicker
+          :model-value="styleOf().fontFamily ?? 'Inter'"
+          @update:model-value="setFontFamily"
+        />
+      </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
           <p :class="labelCls" class="mb-1.5">Level</p>
@@ -154,11 +235,39 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           </select>
         </div>
         <div>
+          <p :class="labelCls" class="mb-1.5" title="Master-format px. Still scales per format and auto-fits.">Size (px)</p>
+          <input
+            type="number" min="1" :value="styleOf().fontSize ?? ''" :placeholder="levelSizePlaceholder" :class="inputCls"
+            @change="(e: any) => patchStyle(el!.id, { fontSize: e.target.value ? Math.max(1, Math.round(Number(e.target.value))) : undefined })"
+          >
+        </div>
+        <div>
           <p :class="labelCls" class="mb-1.5">Weight</p>
           <select :value="styleOf().fontWeight ?? 400" :class="inputCls" @change="(e: any) => patchStyle(el!.id, { fontWeight: Number(e.target.value) })">
             <option :value="400">Regular</option>
             <option :value="700">Bold</option>
           </select>
+        </div>
+        <div>
+          <p :class="labelCls" class="mb-1.5">Case</p>
+          <select :value="styleOf().transform ?? 'none'" :class="inputCls" @change="(e: any) => patchStyle(el!.id, { transform: e.target.value === 'none' ? undefined : e.target.value })">
+            <option value="none">As typed</option>
+            <option value="uppercase">UPPERCASE</option>
+          </select>
+        </div>
+        <div>
+          <p :class="labelCls" class="mb-1.5" title="Unitless multiplier">Line height</p>
+          <input
+            type="number" step="0.05" min="0.5" :value="styleOf().lineHeight ?? 1.1" :class="inputCls"
+            @change="(e: any) => patchStyle(el!.id, { lineHeight: Math.max(0.5, Number(e.target.value) || 1.1) })"
+          >
+        </div>
+        <div>
+          <p :class="labelCls" class="mb-1.5" title="Kerning, px">Letter spacing</p>
+          <input
+            type="number" step="0.5" :value="styleOf().letterSpacing ?? 0" :class="inputCls"
+            @change="(e: any) => patchStyle(el!.id, { letterSpacing: Number(e.target.value) || 0 })"
+          >
         </div>
         <div>
           <p :class="labelCls" class="mb-1.5">Overflow</p>

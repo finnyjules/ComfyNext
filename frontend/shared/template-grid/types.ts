@@ -42,7 +42,11 @@ export interface TextStyleV2 {
   align?: 'left' | 'center' | 'right'
   valign?: 'top' | 'middle' | 'bottom'
   lineHeight?: number
-  letterSpacing?: number
+  letterSpacing?: number               // px, kerning control
+  /** Master-format px. Overrides the level-derived size but still scales per
+   *  format (min-dim × class multiplier) and auto-fits within the region. */
+  fontSize?: number
+  transform?: 'none' | 'uppercase'
 }
 
 export interface TextElementV2 extends ElementV2Base {
