@@ -48,11 +48,15 @@ everything.
   (list), `PUT /api/brand-kits/:id` (upsert), `DELETE /api/brand-kits/:id` —
   writing `server/brand-kits/{id}.json`, the exact file-based pattern the
   template endpoints use.
-- **Active kit (per workflow):** `workflow.extra.comfynext_brandKitId`
-  (ComfyUI workflows carry an `extra` object that round-trips save/load; this
-  follows that convention). Unset ⇒ no active kit ⇒ all consumers behave
-  exactly as today. The active kit travels with the workflow, so renders are
-  reproducible and two open workflows can carry different brands.
+- **Active kit (per project):** `ProjectDoc.brandKitId?: string | null`
+  (`frontend/app/lib/projectDoc.ts`). The top-left menu is the PROJECT menu
+  and the ProjectDoc is already "the unit of persistence everywhere —
+  sessionStorage, durable autosave, and named versions", so the active kit
+  rides along and version snapshots capture it for free. All canvases of a
+  project share one brand (the user's mental model: "this project is LIV
+  Golf"). Unset ⇒ no active kit ⇒ all consumers behave exactly as today.
+  (Supersedes the earlier `workflow.extra` idea — per-canvas brand wasn't the
+  goal, and ProjectDoc needs no server-side changes.)
 
 ### Resolution (`frontend/shared/brand/resolve.ts`)
 
@@ -124,7 +128,8 @@ only what's passed as its `brand` scope changes. Smart Layout's editor
 
 - **Partial-kit clobbering** is the subtle bug class — hence undefined/empty
   stripping in `effectiveBrand` and a dedicated test.
-- **Workflow `extra` round-trip:** verify the id survives save/load through
-  both the Vue canvas and the iframe/LiteGraph path before building UI on it.
+- **ProjectDoc round-trip:** `toProjectDoc` wraps legacy bare workflows —
+  ensure `brandKitId` survives that wrapper and the autosave/version paths
+  (it's a plain optional field on the doc, but pin it with a test).
 - **GridEditorShell swap** must not regress Smart Layout's brand editing —
   the panel extraction is a refactor with identical fields plus accent2.
