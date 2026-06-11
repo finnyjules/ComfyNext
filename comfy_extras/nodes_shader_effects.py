@@ -35,6 +35,9 @@ def _effect_ids() -> list[str]:
         return []
 
 
+_texture_cache: dict[str, np.ndarray] = {}
+
+
 def _load_effect_textures(effect) -> tuple[dict[str, np.ndarray], dict[str, float]]:
     """Load catalog texture assets for an effect. Returns (textures, extra_uniforms)."""
     from PIL import Image as PILImage
@@ -42,10 +45,12 @@ def _load_effect_textures(effect) -> tuple[dict[str, np.ndarray], dict[str, floa
     textures: dict[str, np.ndarray] = {}
     extra_uniforms: dict[str, float] = {}
     for t in effect.textures:
-        path = os.path.join(ASSETS_DIR, t["file"])
-        img = PILImage.open(path).convert("RGBA")
-        arr = np.asarray(img, dtype=np.float32) / 255.0
-        textures[t["uniform"]] = arr
+        fname = t["file"]
+        if fname not in _texture_cache:
+            path = os.path.join(ASSETS_DIR, fname)
+            img = PILImage.open(path).convert("RGBA")
+            _texture_cache[fname] = np.asarray(img, dtype=np.float32) / 255.0
+        textures[t["uniform"]] = _texture_cache[fname]
         for k, v in t.get("extraUniforms", {}).items():
             extra_uniforms[k] = float(v)
     return textures, extra_uniforms

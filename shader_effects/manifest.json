@@ -106,6 +106,65 @@
         { "uniform": "u_scale", "label": "Scale", "type": "float", "min": 0.5, "max": 12.0, "default": 3.0, "step": 0.25 },
         { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 2.0, "default": 0.4, "step": 0.05 }
       ]
+    },
+    {
+      "id": "pixelate",
+      "name": "Pixelate",
+      "category": "stylize",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        { "uniform": "u_size", "label": "Pixel Size", "type": "float", "min": 0.002, "max": 0.2, "default": 0.03, "step": 0.002 }
+      ]
+    },
+    {
+      "id": "outline",
+      "name": "Outline",
+      "category": "stylize",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        { "uniform": "u_thickness", "label": "Thickness", "type": "float", "min": 0.001, "max": 0.012, "default": 0.003, "step": 0.0005 },
+        { "uniform": "u_threshold", "label": "Threshold", "type": "float", "min": 0.0, "max": 1.0, "default": 0.2, "step": 0.01 },
+        { "uniform": "u_softness", "label": "Softness", "type": "float", "min": 0.0, "max": 1.0, "default": 0.25, "step": 0.01 },
+        { "uniform": "u_intensity", "label": "Intensity", "type": "float", "min": 0.0, "max": 2.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_background", "label": "Background", "type": "float", "min": 0.0, "max": 1.0, "default": 0.15, "step": 0.01 }
+      ]
+    },
+    {
+      "id": "ascii_dither",
+      "name": "ASCII Dither",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [{ "uniform": "u_glyphs", "file": "glyph_atlas.png", "extraUniforms": { "u_glyphCount": 10 } }],
+      "params": [
+        { "uniform": "u_cell", "label": "Cell Size", "type": "float", "min": 0.01, "max": 0.1, "default": 0.03, "step": 0.002 },
+        { "uniform": "u_jitter", "label": "Jitter", "type": "float", "min": 0.0, "max": 0.5, "default": 0.08, "step": 0.01 },
+        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_colored", "label": "Colored", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 1.0 }
+      ]
+    },
+    {
+      "id": "glyph_dither",
+      "name": "Glyph Dither",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        { "uniform": "u_cellW", "label": "Cell Width", "type": "float", "min": 0.01, "max": 0.15, "default": 0.05, "step": 0.005 },
+        { "uniform": "u_cellH", "label": "Cell Height", "type": "float", "min": 0.005, "max": 0.08, "default": 0.018, "step": 0.002 },
+        { "uniform": "u_jitter", "label": "Jitter", "type": "float", "min": 0.0, "max": 0.5, "default": 0.1, "step": 0.01 },
+        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_colored", "label": "Colored", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 1.0 }
+      ]
     }
   ]
 }
