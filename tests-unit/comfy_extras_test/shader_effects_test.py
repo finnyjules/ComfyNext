@@ -48,3 +48,68 @@ def test_frame_plan_semantics():
     # Batch input -> one output frame per input frame, duration ignored
     plan = frame_plan(3, 1.0, 99.0, 2)
     assert plan == [(0, 1.0), (1, 1.5), (2, 2.0)]
+
+
+import numpy as np
+
+from comfy_extras._shader_effects import render_effect
+
+_UNIFORM_MIX_FRAG = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform float u_seed;
+uniform float u_mix;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    vec3 col = texture(u_image0, v_texCoord).rgb;
+    fragColor0 = vec4(mix(col, vec3(u_time), u_mix), 1.0);
+}
+"""
+
+
+def _img(w=32, h=32, value=0.25):
+    return np.full((h, w, 3), value, dtype=np.float32)
+
+
+def test_render_effect_named_uniforms_and_passthrough():
+    # u_mix=0 -> passthrough
+    outs = render_effect(_UNIFORM_MIX_FRAG, 32, 32, [{"image": _img(), "uniforms": {"u_mix": 0.0, "u_time": 0.0}}])
+    assert len(outs) == 1 and outs[0].shape == (32, 32, 4)
+    assert np.abs(outs[0][..., :3] - 0.25).max() < 1.0 / 255.0
+
+
+def test_render_effect_per_job_uniforms_differ():
+    jobs = [
+        {"image": _img(), "uniforms": {"u_mix": 1.0, "u_time": 0.0}},
+        {"image": _img(), "uniforms": {"u_mix": 1.0, "u_time": 1.0}},
+    ]
+    outs = render_effect(_UNIFORM_MIX_FRAG, 32, 32, jobs)
+    assert np.abs(outs[0][..., :3] - 0.0).max() < 1.0 / 255.0
+    assert np.abs(outs[1][..., :3] - 1.0).max() < 1.0 / 255.0
+
+
+def test_render_effect_compile_error_raises_with_log():
+    import pytest
+    with pytest.raises(RuntimeError, match="(?i)compil"):
+        render_effect("#version 300 es\nvoid main() { bogus }", 8, 8, [{"image": _img(8, 8), "uniforms": {}}])
+
+
+def test_render_effect_extra_texture_binds():
+    frag = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform sampler2D u_lut;
+uniform vec2 u_resolution;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() { fragColor0 = vec4(texture(u_lut, v_texCoord).rgb, 1.0); }
+"""
+    lut = np.zeros((4, 4, 4), dtype=np.float32)
+    lut[..., 1] = 1.0  # green
+    lut[..., 3] = 1.0
+    outs = render_effect(frag, 16, 16, [{"image": _img(16, 16), "uniforms": {}}], extra_textures={"u_lut": lut})
+    assert np.abs(outs[0][..., 1] - 1.0).max() < 1.0 / 255.0
+    assert np.abs(outs[0][..., 0]).max() < 1.0 / 255.0
