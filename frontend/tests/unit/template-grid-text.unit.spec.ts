@@ -71,4 +71,35 @@ describe('fitText', () => {
     const r = fitText({ content: long, maxFontSize: 30, w: 300, h: 500, lineHeight: 1.1, overflow: 'shrink-then-truncate', maxLines: 2 })
     expect(r.lines.length).toBeLessThanOrEqual(2)
   })
+
+  // -- Explicit size (autoShrink: false) — the user's typed size is honoured --
+
+  it('autoShrink:false keeps the exact size even when it overflows', () => {
+    // 300px "Headline goes here" in a 936×296 box would normally shrink hard.
+    const r = fitText({
+      content: 'Headline goes here', maxFontSize: 300, w: 936, h: 296,
+      lineHeight: 1.1, overflow: 'shrink', autoShrink: false,
+    })
+    expect(r.fontSize).toBe(300)        // not shrunk
+    expect(r.clipped).toBe(true)        // it overflows → clipped
+  })
+
+  it('autoShrink:false truncates at the exact size under shrink-then-truncate', () => {
+    const r = fitText({
+      content: 'word '.repeat(40).trim(), maxFontSize: 120, w: 400, h: 300,
+      lineHeight: 1.1, overflow: 'shrink-then-truncate', autoShrink: false,
+    })
+    expect(r.fontSize).toBe(120)        // size honoured
+    expect(r.content.endsWith('…')).toBe(true)
+    expect(r.clipped).toBe(false)
+  })
+
+  it('autoShrink:false still returns the size cleanly when copy fits', () => {
+    const r = fitText({
+      content: 'Hi', maxFontSize: 300, w: 936, h: 400,
+      lineHeight: 1.1, overflow: 'shrink', autoShrink: false,
+    })
+    expect(r.fontSize).toBe(300)
+    expect(r.clipped).toBe(false)
+  })
 })

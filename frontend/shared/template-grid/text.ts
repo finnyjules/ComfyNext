@@ -60,16 +60,44 @@ export function fitText(opts: {
   lineHeight: number
   overflow: TextOverflow
   maxLines?: number
+  /** Auto-shrink the size down to fit the region (default true). When false —
+   *  the user set an explicit fontSize — the size is honoured exactly and the
+   *  overflow policy handles the doesn't-fit case (truncate / clip). */
+  autoShrink?: boolean
 }): FitResult {
   const { content, lineHeight } = opts
   const maxLines = opts.maxLines ?? Number.POSITIVE_INFINITY
+  const autoShrink = opts.autoShrink !== false
   const tryFit = (fs: number): string[] | null => {
     const lines = wrapLines(content, fs, opts.w)
     const ok = lines.length <= maxLines && lines.length * fs * lineHeight <= opts.h
     return ok ? lines : null
   }
 
-  let fs = Math.max(FONT_FLOOR, Math.round(opts.maxFontSize))
+  // Truncate `content` to the lines that fit `h` at `fs`, with an ellipsis.
+  const truncateAt = (fs: number): FitResult => {
+    const full = wrapLines(content, fs, opts.w)
+    const byHeight = Math.floor(opts.h / (fs * lineHeight))
+    const keep = Math.max(1, Math.min(Number.isFinite(maxLines) ? maxLines : byHeight, byHeight))
+    const kept = full.slice(0, keep)
+    const last = kept[kept.length - 1] ?? ''
+    kept[kept.length - 1] = `${last.slice(0, Math.max(0, last.length - 1))}…`
+    return { fontSize: fs, content: kept.join(' '), lines: kept, clipped: false }
+  }
+
+  const startFs = Math.max(FONT_FLOOR, Math.round(opts.maxFontSize))
+
+  // Explicit size: keep it; only handle overflow.
+  if (!autoShrink) {
+    const lines = tryFit(startFs)
+    if (lines) return { fontSize: startFs, content, lines, clipped: false }
+    if (opts.overflow === 'shrink-then-truncate') return truncateAt(startFs)
+    // 'shrink' (now "keep size, clip") or 'grow' with rows exhausted → clip.
+    return { fontSize: startFs, content, lines: wrapLines(content, startFs, opts.w), clipped: true }
+  }
+
+  // Auto (level-derived) size: shrink toward the floor until it fits.
+  let fs = startFs
   for (;;) {
     const lines = tryFit(fs)
     if (lines) return { fontSize: fs, content, lines, clipped: false }
@@ -77,18 +105,9 @@ export function fitText(opts: {
     fs = Math.max(FONT_FLOOR, Math.floor(fs * 0.9))
   }
 
-  const floorLines = wrapLines(content, FONT_FLOOR, opts.w)
   if (opts.overflow !== 'shrink-then-truncate') {
     // 'shrink' clips; 'grow' only reaches here when the grid ran out of rows.
-    return { fontSize: FONT_FLOOR, content, lines: floorLines, clipped: true }
+    return { fontSize: FONT_FLOOR, content, lines: wrapLines(content, FONT_FLOOR, opts.w), clipped: true }
   }
-  const byHeight = Math.floor(opts.h / (FONT_FLOOR * lineHeight))
-  const keep = Math.max(1, Math.min(
-    Number.isFinite(maxLines) ? maxLines : byHeight,
-    byHeight,
-  ))
-  const kept = floorLines.slice(0, keep)
-  const last = kept[kept.length - 1] ?? ''
-  kept[kept.length - 1] = `${last.slice(0, Math.max(0, last.length - 1))}…`
-  return { fontSize: FONT_FLOOR, content: kept.join(' '), lines: kept, clipped: false }
+  return truncateAt(FONT_FLOOR)
 }

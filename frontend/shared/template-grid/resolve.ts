@@ -95,7 +95,11 @@ export function resolveFormat(
       if (rect.h < FONT_FLOOR * lineHeight) {
         return { el, region, rect, culled: true, cullReason: 'too-small' }
       }
-      const text = fitText({ content, maxFontSize, w: rect.w, h: rect.h, lineHeight, overflow, maxLines: el.maxLines })
+      // An explicit fontSize is the user's exact target — don't auto-shrink it.
+      const text = fitText({
+        content, maxFontSize, w: rect.w, h: rect.h, lineHeight, overflow,
+        maxLines: el.maxLines, autoShrink: el.style?.fontSize == null,
+      })
       return { el, region, rect, culled: false, text }
     }
 
