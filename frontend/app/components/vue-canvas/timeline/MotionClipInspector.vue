@@ -21,6 +21,26 @@ function patchAxis(tag: string, v: number) {
   patchLayer({ axes: { ...(L().axes ?? {}), [tag]: v } })
 }
 
+function axisAnimated(tag: string): boolean {
+  return !!L().axisKeyframes?.some(k => tag in k.axes)
+}
+function axisFrom(tag: string): number | undefined { return L().axisKeyframes?.[0]?.axes?.[tag] }
+function axisTo(tag: string): number | undefined {
+  const kfs = L().axisKeyframes
+  return kfs?.[kfs.length - 1]?.axes?.[tag]
+}
+
+/** Write/clear a single axis's from→to animation. `from === null` clears it. */
+function setAxisAnim(tag: string, from: number | null, to: number | null) {
+  const cur = L().axisKeyframes
+  const start: Record<string, number> = { ...(cur?.[0]?.axes ?? {}) }
+  const end: Record<string, number> = { ...(cur?.[cur.length - 1]?.axes ?? {}) }
+  if (from === null) { delete start[tag]; delete end[tag] }
+  else { start[tag] = from; end[tag] = to ?? from }
+  const anyAnimated = Object.keys(start).length > 0
+  patchLayer({ axisKeyframes: anyAnimated ? [{ t: 0, axes: start }, { t: 1, axes: end }] : undefined })
+}
+
 const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
 </script>
 
@@ -74,19 +94,49 @@ const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
 
     <div v-if="fontDef()" class="space-y-1.5 pt-2 border-t border-white/5">
       <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Axes</div>
-      <label v-for="ax in fontDef()!.axes" :key="ax.tag" class="flex items-center gap-2">
-        <span class="w-20 shrink-0 text-white/60">{{ ax.label }}</span>
-        <input
-          type="range"
-          class="flex-1 accent-emerald-400"
-          :min="ax.min"
-          :max="ax.max"
-          :step="ax.step ?? 1"
-          :value="clip.layer.axes?.[ax.tag] ?? ax.default"
-          @input="patchAxis(ax.tag, Number(($event.target as HTMLInputElement).value))"
-        />
-        <span class="w-10 text-right tabular-nums text-white/50">{{ clip.layer.axes?.[ax.tag] ?? ax.default }}</span>
-      </label>
+      <div v-for="ax in fontDef()!.axes" :key="ax.tag" class="space-y-1">
+        <label class="flex items-center gap-2">
+          <span class="w-20 shrink-0 text-white/60">{{ ax.label }}</span>
+          <input
+            type="range"
+            class="flex-1 accent-emerald-400"
+            :min="ax.min"
+            :max="ax.max"
+            :step="ax.step ?? 1"
+            :value="clip.layer.axes?.[ax.tag] ?? ax.default"
+            @input="patchAxis(ax.tag, Number(($event.target as HTMLInputElement).value))"
+          />
+          <span class="w-10 text-right tabular-nums text-white/50">{{ clip.layer.axes?.[ax.tag] ?? ax.default }}</span>
+        </label>
+        <div class="flex items-center gap-2 pl-[5.5rem] text-[10px]">
+          <label class="flex items-center gap-1 text-white/50">
+            <input
+              type="checkbox"
+              class="accent-emerald-400"
+              :checked="axisAnimated(ax.tag)"
+              @change="($event.target as HTMLInputElement).checked
+                ? setAxisAnim(ax.tag, clip.layer.axes?.[ax.tag] ?? ax.default, ax.max)
+                : setAxisAnim(ax.tag, null, null)"
+            >
+            animate
+          </label>
+          <template v-if="axisAnimated(ax.tag)">
+            <input
+              type="number"
+              class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none tabular-nums"
+              :value="axisFrom(ax.tag)"
+              @change="setAxisAnim(ax.tag, Number(($event.target as HTMLInputElement).value), axisTo(ax.tag) ?? null)"
+            >
+            <span class="text-white/40">→</span>
+            <input
+              type="number"
+              class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none tabular-nums"
+              :value="axisTo(ax.tag)"
+              @change="setAxisAnim(ax.tag, axisFrom(ax.tag) ?? null, Number(($event.target as HTMLInputElement).value))"
+            >
+          </template>
+        </div>
+      </div>
     </div>
 
     <div class="space-y-1.5 pt-2 border-t border-white/5">
