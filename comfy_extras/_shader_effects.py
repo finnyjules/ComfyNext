@@ -136,6 +136,8 @@ def render_effect(
     """Render `fragment_code` once per job. Compiles once; per-job image + uniforms.
 
     jobs: [{"image": (H, W, 3|4) float32 [0,1] or None, "uniforms": {name: float}}]
+    A job with image=None reuses the previously uploaded frame; the FIRST job must
+    therefore carry an image (the input texture is otherwise uninitialized).
     extra_textures: {uniform_name: (H, W, 4) float32} — bound NEAREST (parity with browser).
     Returns one (height, width, 4) float32 array per job.
     """
@@ -151,6 +153,8 @@ def render_effect(
         return []
     if width > MAX_RENDER_DIM or height > MAX_RENDER_DIM:
         raise ValueError(f"ShaderEffect: render size {width}x{height} exceeds {MAX_RENDER_DIM}")
+    if jobs[0].get("image") is None:
+        raise ValueError("ShaderEffect: the first job must include an image")
 
     ctx = GLContext()
     ctx.make_current()
@@ -247,6 +251,9 @@ def render_effect(
             data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
             out = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
             outputs.append(out[::-1, :, :].copy())
+            # Readback bound out_tex on unit 0 — restore the input so a later
+            # image=None job samples the previous frame, not the FBO attachment.
+            gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
 
         return outputs
     finally:

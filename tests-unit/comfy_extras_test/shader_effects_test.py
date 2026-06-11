@@ -113,3 +113,18 @@ void main() { fragColor0 = vec4(texture(u_lut, v_texCoord).rgb, 1.0); }
     outs = render_effect(frag, 16, 16, [{"image": _img(16, 16), "uniforms": {}}], extra_textures={"u_lut": lut})
     assert np.abs(outs[0][..., 1] - 1.0).max() < 1.0 / 255.0
     assert np.abs(outs[0][..., 0]).max() < 1.0 / 255.0
+
+
+def test_render_effect_none_image_reuses_previous_frame():
+    jobs = [
+        {"image": _img(value=0.5), "uniforms": {"u_mix": 0.0, "u_time": 0.0}},
+        {"image": None, "uniforms": {"u_mix": 0.0, "u_time": 0.0}},
+    ]
+    outs = render_effect(_UNIFORM_MIX_FRAG, 32, 32, jobs)
+    assert np.abs(outs[1][..., :3] - 0.5).max() < 1.0 / 255.0
+
+
+def test_render_effect_first_job_requires_image():
+    import pytest
+    with pytest.raises(ValueError, match="first job"):
+        render_effect(_UNIFORM_MIX_FRAG, 32, 32, [{"image": None, "uniforms": {}}])
