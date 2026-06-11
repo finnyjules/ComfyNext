@@ -1030,6 +1030,15 @@
           "max": 1.0,
           "default": 0.3,
           "step": 0.02
+        },
+        {
+          "uniform": "u_mix",
+          "label": "Image Mix",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.05
         }
       ]
     },

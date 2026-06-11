@@ -64,7 +64,7 @@ for (const eff of manifest.effects as ManifestEffect[]) {
       const goldenPath = path.join(GOLDEN, `${eff.id}_${size}.png`)
       expect(fs.existsSync(goldenPath), `missing golden ${goldenPath} — run generate_goldens.py`).toBe(true)
 
-      const uniforms: Record<string, number> = { u_time: GOLDEN_TIME, u_seed: GOLDEN_SEED }
+      const uniforms: Record<string, number> = { u_time: GOLDEN_TIME, u_seed: GOLDEN_SEED, u_hasInput: 1 }
       for (const p of eff.params) uniforms[p.uniform] = p.default
       const textures: Record<string, string> = {}
       for (const t of eff.textures) {

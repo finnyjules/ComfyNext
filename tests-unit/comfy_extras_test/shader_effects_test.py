@@ -218,7 +218,7 @@ def test_server_render_matches_goldens():
                 textures[t["uniform"]] = np.asarray(tex, dtype=np.float32) / 255.0
                 for k, v in t.get("extraUniforms", {}).items():
                     uniforms[k] = float(v)
-            jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0}}]
+            jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0, "u_hasInput": 1.0}}]
             out = render_effect(eff.source, size, size, jobs, extra_textures=textures, passes=eff.passes)[0][..., :3]
             diff = np.abs(out - golden)
             assert diff.max() <= 2.0 / 255.0, f"{eff.id}@{size}: max diff {diff.max() * 255:.2f}/255"
