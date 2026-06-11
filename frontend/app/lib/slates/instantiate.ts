@@ -37,6 +37,12 @@ function resolvePaint(p: SlatePaintDef, texts: Record<string, string>, brand: Br
   } as Gradient
 }
 
+/** Resolve a template's 3 thumbnail token-colors against a brand kit (empty
+ *  kit ⇒ neutrals), for the gallery card preview. */
+export function resolveThumb(colors: [string, string, string], brand: BrandKit): string[] {
+  return colors.map(c => resolveStr(c, {}, brand))
+}
+
 export function instantiateSlate(
   template: SlateTemplate,
   opts: InstantiateOptions,
