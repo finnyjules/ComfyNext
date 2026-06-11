@@ -87,10 +87,11 @@ motion?: { fps: number; duration: number; loop?: boolean }
   Kinetic Typography node; new engine work does not depend on it.
 - `paintLayerStack` gains an optional time argument: `paintLayerStack(..., t)`.
   With `t` undefined, behavior is exactly today's static render.
-- Wired video layers evaluated at time `t` sample the source video at `t`
-  (FrameSource abstraction from the playback engine). This is what makes
-  photo-in-type and video-behind-mask compositions possible: a text layer
-  acting as a silhouette mask over a wired video layer.
+- Wired layers are image-typed today (the Compositor has no video inputs), so
+  v1 animates local layers and treats wired image layers as static backdrops.
+  Photo-in-type works now (text layer as silhouette mask over an image/wired
+  layer); video-in-type needs video-typed Compositor inputs and is deferred to
+  Phase 3 alongside the FrameSource sampling work.
 - Per-unit (char/word/line) states apply to text layers; other layer kinds
   animate as whole units.
 
@@ -172,9 +173,11 @@ interface BrandKit {
 
 - **Phase 1 — Engine:** data model, `evaluate.ts`, `paintLayerStack(t)`,
   preview play/scrub in the Compositor, bake → PNG sequence → Frame node
-  video output via backend assemble node. Acceptance: a hand-built animated
-  Frame (text + bar + wired video + mask) plays in the editor and its baked
-  clip overlays correctly in the timeline and over a Film a Shot output.
+  video output (the Compositor backend node gains a `motion_params` input and
+  a VIDEO output, following the KineticType params/rendered pattern).
+  Acceptance: a hand-built animated Frame (text + bar + image-in-type mask)
+  plays in the editor and its baked clip overlays correctly in the timeline
+  and over a Film a Shot output.
 - **Phase 2 — Templates:** BrandKit storage + editor, slot system, 6 templates,
   gallery modal. Acceptance: pick template → fill text/media → branded slate
   clip in under a minute, no animation knowledge required.
@@ -197,7 +200,9 @@ interface BrandKit {
   interpolation parity with `shared/timeline/interpolate.ts` semantics.
 - Golden-frame tests: fixture Frame docs rendered at fixed `t` values,
   compared against committed PNGs (tolerance-based), following the timeline
-  golden-harness workflow.
+  golden-harness workflow. These land with the bake (end of Phase 1 / Phase 2)
+  where PNG frames are the natural artifact; Phase 1's evaluator is covered by
+  pure unit tests.
 - Manual visual pass per template at 16:9 / 9:16 / 1:1.
 
 ## Risks
