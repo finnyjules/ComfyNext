@@ -22,6 +22,7 @@ import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
+import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import { PhCheckerboard } from '@phosphor-icons/vue'
@@ -1609,7 +1610,7 @@ onUnmounted(() => {
 
         <!-- Motion preview transport (play/scrub the kinetic timeline) -->
         <MotionTransport
-          v-if="previewT != null"
+          v-if="KINETIC_ENABLED && previewT != null"
           data-motion-transport
           class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20"
           :motion="motionDoc" :t="previewT" :playing="playing"
@@ -1931,6 +1932,7 @@ onUnmounted(() => {
           <ImageIcon class="size-4" />
         </button>
         <button
+          v-if="KINETIC_ENABLED"
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
           :class="previewT != null ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
           title="Motion — preview layer animations on the kinetic timeline"
@@ -1946,7 +1948,7 @@ onUnmounted(() => {
         >
           <Palette class="size-4" />
         </button>
-        <button v-if="isDev"
+        <button v-if="isDev && KINETIC_ENABLED"
           class="flex items-center justify-center h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
           title="Dev: load the LIV-style slate acceptance fixture"
           @click="loadSlateFixture"
@@ -2378,6 +2380,7 @@ onUnmounted(() => {
 
           <!-- Animation (kinetic motion presets, previewed via the Motion toolbar button) -->
           <LayerMotionPanel
+            v-if="KINETIC_ENABLED"
             class="mt-3"
             :animation="(selectedLocal as any).animation"
             @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"

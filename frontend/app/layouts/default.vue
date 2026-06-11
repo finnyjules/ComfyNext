@@ -9,6 +9,7 @@ import {
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
 import { brandKitToKv } from '~~/shared/brand/resolve'
+import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -106,7 +107,8 @@ const sidebarItems = [
 const loadOptions = [
   // Composition surfaces — spatial (Frame) + temporal (Timeline) — grouped up top.
   { label: 'Frame',    icon: Frame,        nodeType: 'Compositor' },
-  { label: 'Slate',    icon: Clapperboard, special: 'slate-gallery' },
+  // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
+  ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
@@ -2701,7 +2703,7 @@ function dismissRunResult() {
         <!-- Slate gallery: pick a Kinetic Slate template, fill its slots, and
              drop a pre-animated Frame (Compositor) node onto the canvas. -->
         <VueCanvasSlateGalleryModal
-          v-if="slateGalleryOpen"
+          v-if="KINETIC_ENABLED && slateGalleryOpen"
           :active-kit="brandLib.activeKit.value ?? null"
           @close="slateGalleryOpen = false"
           @create="onCreateSlate"
