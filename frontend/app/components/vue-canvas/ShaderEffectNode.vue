@@ -174,9 +174,13 @@ async function openPicker() {
   if (!catalog.value) return
   for (const def of catalog.value.effects) {
     if (!thumbCache[def.id]) {
+      // Don't cache while texture assets are still loading — a render without the
+      // atlas bound would poison the cache with a wrong-looking thumbnail forever.
+      const texs = textureSources(def)
+      if (def.textures.length && Object.keys(texs).length < def.textures.length) continue
       try {
         const out = shaderFx.render(
-          [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: textureSources(def) }],
+          [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: texs }],
           placeholder, 96, 54,
         )
         thumbCache[def.id] = out.toDataURL('image/jpeg', 0.8)
