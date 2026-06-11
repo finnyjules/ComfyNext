@@ -40,6 +40,23 @@ describe('resolveFormat', () => {
     expect(headline.text!.content).toBe('Brew bold')
     expect(headline.text!.fontSize).toBeGreaterThan(50)
   })
+  it('honours an explicit style.fontSize exactly on the master (no auto-shrink)', () => {
+    const t = fixture()
+    ;(t.elements[1] as any).style = { fontSize: 300 }   // headline, master 1x1
+    const r = resolveFormat(t, '1x1', { text_layer_1: 'Headline goes here' })
+    const headline = r.elements.find(e => e.el.id === 'headline')!
+    expect(headline.text!.fontSize).toBe(300)            // exactly what was typed
+  })
+
+  it('still auto-shrinks level-derived sizes to fit', () => {
+    const t = fixture()
+    // very long copy, no explicit size → shrinks below the display size
+    const r = resolveFormat(t, '1x1', { text_layer_1: 'word '.repeat(60).trim() })
+    const headline = r.elements.find(e => e.el.id === 'headline')!
+    const displayMax = Math.round(28 * 1.414 ** 4)
+    expect(headline.text!.fontSize).toBeLessThan(displayMax)
+  })
+
   it('keeps template order for z, assigns slots by priority', () => {
     const r = resolveFormat(fixture(), '728x90', { text_layer_1: 'Brew bold' })
     expect(r.elements.map(e => e.el.id)).toEqual(['hero', 'headline', 'subhead', 'cta', 'logo'])

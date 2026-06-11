@@ -323,7 +323,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           </select>
         </div>
         <div>
-          <p :class="labelCls" class="mb-1.5" title="Master-format px. Still scales per format and auto-fits.">Size (px)</p>
+          <p :class="labelCls" class="mb-1.5" title="Exact master-format px (scales down on smaller formats). Leave blank to auto-size from the level and fit the region.">Size (px)</p>
           <input
             type="number" min="1" :value="styleOf().fontSize ?? ''" :placeholder="levelSizePlaceholder" :class="inputCls"
             @change="(e: any) => patchStyle(el!.id, { fontSize: e.target.value ? Math.max(1, Math.round(Number(e.target.value))) : undefined })"
