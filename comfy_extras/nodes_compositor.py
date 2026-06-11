@@ -442,3 +442,56 @@ class CompositorExtension(ComfyExtension):
 
 async def comfy_entrypoint() -> CompositorExtension:
     return CompositorExtension()
+
+
+# ── Bake-frame cleanup route ─────────────────────────────────────────────────
+# The Frame editor uploads every motion bake as a fresh PNG sequence (prefix
+# 'slate', see frontend bake.ts); on a successful re-bake it calls this route
+# to delete the superseded sequence. Strictly scoped: bare filenames matching
+# the slate frame pattern in the input/ ROOT only — no subfolders, no
+# traversal — and anything listed in `keep` survives, so frames referenced by
+# the node's current motion_params can never be deleted.
+try:
+    import os
+    import re as _re
+
+    from aiohttp import web
+    from server import PromptServer
+
+    _SLATE_FRAME_RE = _re.compile(r"^slate_\d+_\d{4}\.png$")
+
+    @PromptServer.instance.routes.post("/comfynext/motion/cleanup_frames")
+    async def _cleanup_motion_frames(request):
+        """Body: {delete: string[], keep?: string[]} → {deleted, skipped}."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        delete = body.get("delete")
+        keep = body.get("keep") or []
+        if not isinstance(delete, list) or not isinstance(keep, list):
+            return web.json_response({"error": "bad payload"}, status=400)
+        keep_set = {os.path.basename(k) for k in keep if isinstance(k, str)}
+        input_dir = folder_paths.get_input_directory()
+        deleted = 0
+        skipped = 0
+        for name in delete:
+            # Reject anything that isn't a bare, pattern-matching slate frame.
+            if (not isinstance(name, str)
+                    or os.path.basename(name) != name
+                    or not _SLATE_FRAME_RE.match(name)
+                    or name in keep_set):
+                skipped += 1
+                continue
+            try:
+                os.remove(os.path.join(input_dir, name))
+                deleted += 1
+            except OSError:  # missing already, or filesystem refusal
+                skipped += 1
+        if deleted:
+            logging.info("[Compositor] motion cleanup: deleted %d superseded bake frames", deleted)
+        return web.json_response({"deleted": deleted, "skipped": skipped})
+except ImportError:
+    # Running outside the ComfyUI server (e.g. unit tests importing the node
+    # module directly) — the route simply isn't registered.
+    pass

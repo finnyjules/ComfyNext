@@ -936,12 +936,23 @@ async function bakeMotion() {
   pause() // don't fight the rAF preview loop for the layer state
   try {
     const { W, H } = bakeSize()
+    const previousFrames = storedMotionParams.value?.rendered ?? []
     const params = await bakeAndUpload(
       () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motionDoc.value,
       (done, total) => { bakeProgress.value = done / total },
     )
     const p = (node.data.properties ||= {})
     p.comfynext_motionParams = params
+    // The new bake supersedes the old PNG sequence — delete it server-side.
+    // Best-effort: stale frames are harmless, so failures are swallowed.
+    const superseded = previousFrames.filter(f => !params.rendered.includes(f))
+    if (superseded.length) {
+      fetch('/comfynext/motion/cleanup_frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delete: superseded, keep: params.rendered }),
+      }).catch(() => {})
+    }
   } catch (err: any) {
     console.error('[compositor motion bake]', err)
     bakeError.value = err?.message || 'Motion bake failed'
