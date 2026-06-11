@@ -468,6 +468,16 @@ async function runVueWorkflow(
     toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 160) })
   }
 
+  // Push each Compositor node's baked motion (Kinetic Slates PNG sequence)
+  // into its motion_params widget so the backend returns the baked animation
+  // as its image batch + video output instead of the static composite.
+  try {
+    await vueCanvasRef.value.injectCompositorMotionParams?.(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] compositor motion_params injection failed', err)
+    toast.error('Frame motion state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+  }
+
   // Pick the worker for the tab being run (always 0 when the pool is off), so
   // separate canvases queue to separate ComfyUI servers and run concurrently.
   const runTabId = activeTab.value?.id || ''

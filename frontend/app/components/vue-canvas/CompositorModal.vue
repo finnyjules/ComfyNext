@@ -873,13 +873,12 @@ function exitMotionPreview() {
 // path as the preview, uploads PNGs to /upload/image, and persists the result
 // on node properties.
 //
-// TODO(Task 8): params are stored at node.data.properties.comfynext_motionParams
-// because the Compositor backend has no `motion_params` widget yet — the cached
-// object_info schema doesn't know the name, so setNamedWidget() refuses to
-// write it (returns false for unknown widgets). Once Task 8 adds the widget to
-// the backend schema, either (a) read comfynext_motionParams from properties at
-// submit time and stamp it into the widget via setNamedWidget, or (b) re-point
-// this write to the widget directly.
+// Params are stored at node.data.properties.comfynext_motionParams and stamped
+// into the backend's `motion_params` widget at submit time by
+// injectCompositorMotionParams (VueNodeCanvas.vue, called from the Run path in
+// layouts/default.vue — same pattern as the Timeline's edit_state injection).
+// When `rendered` is non-empty the backend Compositor returns the baked frame
+// batch + a real VIDEO output instead of the static server-side composite.
 //
 // NOTE: source_key hashes local layers + motion + size only — wired-layer
 // PIXEL content is not hashed, so an upstream graph re-run does not flip the
