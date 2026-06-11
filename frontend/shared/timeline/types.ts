@@ -219,7 +219,57 @@ export interface CaptionClip extends BaseClip {
   caption: CaptionSpec
 }
 
-export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip
+// ── Motion clip (kinetic timeline) ──────────────────────────────────────────
+// A timeline clip whose content is a layer stack evaluated by lib/motion at the
+// playhead. v1 holds exactly one text layer. Generalizes later to N layers
+// (a Frame on the timeline) and to vector layers — text is the one-layer case.
+
+/** Variable-font axis keyframe, normalized time 0..1 within the clip. */
+export interface MotionAxisKeyframe {
+  t: number
+  axes: Record<string, number>
+  ease?: string
+}
+
+/** In/out/loop preset animation — structurally mirrors lib/motion's
+ *  LayerAnimation so the renderer can pass it straight to evaluateAnimation,
+ *  WITHOUT shared/ importing an app/ type (keeps the layering clean). */
+export interface MotionLayerAnimation {
+  offset: number
+  duration?: number
+  in?: { presetId: string; duration: number; stagger?: number; ease?: string }
+  out?: { presetId: string; duration: number; stagger?: number; ease?: string }
+  loop?: { presetId: string; duration: number; stagger?: number; ease?: string }
+}
+
+export interface MotionTextLayer {
+  id: string
+  kind: 'text'
+  text: string
+  fontFamily: string
+  fontWeight?: number
+  fontSize: number                 // normalized to canvas WIDTH (lib/motion convention)
+  color: string
+  align?: 'left' | 'center' | 'right'
+  lineHeight?: number
+  strokeColor?: string
+  strokeWidth?: number             // normalized to canvas width
+  x?: number; y?: number           // normalized centers; default 0.5/0.5
+  /** Base variable-font axis values (wght/wdth/opsz/slnt/custom). */
+  axes?: Record<string, number>
+  /** Variable-font axis animation (clip-local, normalized 0..1). */
+  axisKeyframes?: MotionAxisKeyframe[]
+  /** In/out/loop preset animation — structurally compatible with lib/motion's
+   *  LayerAnimation (the renderer passes it to evaluateAnimation). */
+  animation?: MotionLayerAnimation
+}
+
+export interface MotionClip extends BaseClip {
+  kind: 'motion'
+  layer: MotionTextLayer           // v1: a single text layer
+}
+
+export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip | MotionClip
 
 export interface Asset {
   id: string
