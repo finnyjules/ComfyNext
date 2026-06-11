@@ -864,6 +864,7 @@ function scrubTo(t: number) {
 function exitMotionPreview() {
   pause()
   previewT.value = null
+  bakeError.value = ''
   renderStack()
 }
 
@@ -879,6 +880,10 @@ function exitMotionPreview() {
 // the backend schema, either (a) read comfynext_motionParams from properties at
 // submit time and stamp it into the widget via setNamedWidget, or (b) re-point
 // this write to the widget directly.
+//
+// NOTE: source_key hashes local layers + motion + size only — wired-layer
+// PIXEL content is not hashed, so an upstream graph re-run does not flip the
+// stale badge. Known v1 limitation.
 const baking = ref(false)
 const bakeProgress = ref(0)
 const bakeError = ref('')

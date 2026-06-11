@@ -45,6 +45,12 @@ export async function bakeMotionFrames(
 ): Promise<Blob[]> {
   await ensureLayerFonts(localLayers, W)
   await ensureLayerImages(localLayers)
+  // Snapshot the stack and layer list ONCE — buildItems() and localLayers
+  // close over live reactive state, and the bake loop yields to the event
+  // loop every frame (toBlob), so a user edit mid-bake would otherwise leak
+  // into later frames and produce an inconsistent sequence.
+  const items = buildItems()
+  const frozenLayers = [...localLayers]
   const total = Math.max(1, Math.round(motion.duration * motion.fps))
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(W))
@@ -55,7 +61,7 @@ export async function bakeMotionFrames(
     const t = i / motion.fps
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height) // transparent background
-    paintLayerStack(ctx, canvas.width, canvas.height, buildItems(), localLayers, undefined, t, motion)
+    paintLayerStack(ctx, canvas.width, canvas.height, items, frozenLayers, undefined, t, motion)
     const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
     if (!blob) throw new Error(`motion bake: frame ${i} produced no blob`)
     blobs.push(blob)
