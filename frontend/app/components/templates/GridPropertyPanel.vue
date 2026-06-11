@@ -12,9 +12,9 @@ import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
-  metrics, formatClass, isMaster, currentFormat,
+  metrics, formatClass, isMaster, currentFormat, regionScope,
   selectedElement, selectedResolved, sampleProps, effectiveBrand,
-  setRegion, hasClassRegion, clearClassRegion,
+  setRegion, hasClassRegion, clearClassRegion, hasFormatOverride, clearFormatOverride,
   patchElement, patchStyle, removeElement,
 } = ctx
 
@@ -211,15 +211,37 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
     </div>
 
-    <!-- Format-class banner -->
-    <div v-if="!isMaster" class="rounded-md bg-[#96b4ff]/[0.08] border border-[#96b4ff]/20 px-2.5 py-2 text-[11px] text-[#c9d6ff]/90 leading-snug">
-      Editing <span class="font-medium">{{ formatClass }}</span> placement — applies to every {{ formatClass }} format, not just {{ currentFormat }}.
+    <!-- Format-class banner + edit scope -->
+    <div v-if="!isMaster" class="rounded-md bg-[#96b4ff]/[0.08] border border-[#96b4ff]/20 px-2.5 py-2 leading-snug">
+      <div class="flex gap-1 mb-2">
+        <button
+          v-for="opt in (['class', 'format'] as const)" :key="opt"
+          class="flex-1 h-6 rounded text-[10px] transition-colors cursor-pointer"
+          :class="regionScope === opt ? 'bg-[#96b4ff]/30 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+          @click="regionScope = opt"
+        >{{ opt === 'class' ? `All ${formatClass}` : 'Only this' }}</button>
+      </div>
+      <p class="text-[11px] text-[#c9d6ff]/90">
+        <template v-if="regionScope === 'class'">
+          Region edits apply to every <span class="font-medium">{{ formatClass }}</span> format.
+        </template>
+        <template v-else>
+          Region edits apply only to <span class="font-medium">{{ currentFormat }}</span>.
+        </template>
+      </p>
       <button
-        v-if="hasClassRegion(el.id)"
+        v-if="regionScope === 'class' && hasClassRegion(el.id)"
         class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
         @click="clearClassRegion(el.id)"
       >
-        Reset to automatic placement
+        Reset {{ formatClass }} to automatic
+      </button>
+      <button
+        v-if="regionScope === 'format' && hasFormatOverride(el.id)"
+        class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+        @click="clearFormatOverride(el.id)"
+      >
+        Clear {{ currentFormat }} override
       </button>
     </div>
 

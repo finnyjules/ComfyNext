@@ -13,9 +13,54 @@ import type { Region } from '~~/shared/template-grid/types'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
-  template, format, formatClass, metrics, resolved, selectedId,
+  template, format, formatClass, currentFormat, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion,
 } = ctx
+
+// -- Render-true preview ------------------------------------------------------
+// Overlays the actual server render of the current format so designers confirm
+// satori wrapping/sizing before a run. Read-only while on.
+const previewMode = ref(false)
+const previewUrl = ref<string | null>(null)
+const previewLoading = ref(false)
+let previewBlobUrl: string | null = null
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadPreview() {
+  previewLoading.value = true
+  try {
+    const res = await fetch('/api/render-template', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: template.value, aspect: currentFormat.value,
+        props: sampleProps.value, brand: effectiveBrand.value,
+      }),
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl)
+    previewBlobUrl = URL.createObjectURL(await res.blob())
+    previewUrl.value = previewBlobUrl
+  } catch {
+    previewUrl.value = null
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function schedulePreview() {
+  if (!previewMode.value) return
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(loadPreview, 300)
+}
+
+function togglePreview() {
+  previewMode.value = !previewMode.value
+  if (previewMode.value) loadPreview()
+}
+
+// Keep the preview current with edits + format switches while it's on.
+watch([currentFormat, template], schedulePreview, { deep: true })
+onBeforeUnmount(() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl) })
 
 // -- Container sizing (same model as the v1 canvas) -------------------------
 
@@ -136,7 +181,7 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
   if (el.type !== 'text') return {}
   const s = el.style ?? {}
   const align = s.align ?? 'left'
-  const valign = s.valign ?? 'top'
+  const valign = s.valign ?? (formatClass.value === 'strip' ? 'middle' : 'top')
   const panel = s.panel
   return {
     color: resolve(s.color ?? '#fff'),
@@ -200,6 +245,7 @@ let dragState: {
 
 function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   e.stopPropagation()
+  if (previewMode.value) return        // read-only while previewing the render
   selectedId.value = r.el.id
   if (r.el.locked || !r.region) return
   dragState = {
@@ -388,6 +434,14 @@ function onCanvasClick(e: MouseEvent) {
           />
         </template>
       </div>
+
+      <!-- Render-true preview overlay (actual server render) -->
+      <img
+        v-if="previewMode && previewUrl"
+        :src="previewUrl"
+        class="absolute inset-0 w-full h-full"
+        :alt="`Rendered ${currentFormat}`"
+      >
     </div>
 
     <!-- Culled-here chips -->
@@ -405,8 +459,16 @@ function onCanvasClick(e: MouseEvent) {
       </button>
     </div>
 
-    <!-- Bottom-right: zoom controls + readout -->
+    <!-- Bottom-right: preview toggle + zoom controls + readout -->
     <div class="absolute bottom-3 right-3 flex items-center gap-2">
+      <button
+        class="h-7 px-2.5 rounded flex items-center gap-1.5 text-[11px] backdrop-blur-sm transition-colors cursor-pointer"
+        :class="previewMode ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-black/50 text-white/60 hover:text-white'"
+        :title="previewMode ? 'Editing view' : 'Preview the actual rendered output for this format'"
+        @click="togglePreview"
+      >
+        {{ previewLoading ? 'Rendering…' : previewMode ? 'Editing' : 'Preview' }}
+      </button>
       <div class="flex items-center gap-0.5 bg-black/50 rounded backdrop-blur-sm p-0.5">
         <button class="size-6 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white cursor-pointer text-sm leading-none" title="Zoom out" @click="zoomBy(1 / 1.2)">−</button>
         <button
