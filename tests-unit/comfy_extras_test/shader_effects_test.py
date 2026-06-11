@@ -173,3 +173,9 @@ def test_node_unknown_effect_raises():
     import pytest
     with pytest.raises(ValueError, match="bogus"):
         _run_node(torch.rand(1, 16, 16, 3), effect="bogus")
+
+
+def test_node_frame_cap_guards_memory():
+    import pytest
+    with pytest.raises(ValueError, match="frames requested"):
+        _run_node(torch.rand(1, 16, 16, 3), duration=60.0, fps=60)

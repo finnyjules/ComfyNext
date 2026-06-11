@@ -23,6 +23,11 @@ from comfy_extras._shader_effects import (
 )
 
 
+# All output frames are held in RAM before stacking; cap the count so an extreme
+# duration*fps cannot exhaust memory (300 ≈ 12.5s @ 24fps).
+MAX_OUTPUT_FRAMES = 300
+
+
 def _effect_ids() -> list[str]:
     try:
         return list(load_catalog().effects.keys())
@@ -82,13 +87,20 @@ class ShaderEffect(IO.ComfyNode):
         np_img = image.cpu().numpy().astype(np.float32)
         b, h, w, _ = np_img.shape
         plan = frame_plan(b, float(time), float(duration), int(fps))
+        if len(plan) > MAX_OUTPUT_FRAMES:
+            raise ValueError(
+                f"ShaderEffect: {len(plan)} frames requested (duration={duration}, fps={fps}); "
+                f"max is {MAX_OUTPUT_FRAMES}. Reduce duration or fps."
+            )
 
+        # image=None reuses the previous upload — the still+duration path renders the
+        # same frame at many times, so only upload when the source frame changes.
         jobs = [
             {
-                "image": np.ascontiguousarray(np_img[fi]),
+                "image": np.ascontiguousarray(np_img[fi]) if (i == 0 or fi != plan[i - 1][0]) else None,
                 "uniforms": {**uniforms, "u_time": t, "u_seed": float(seed % 10000)},
             }
-            for fi, t in plan
+            for i, (fi, t) in enumerate(plan)
         ]
         outs = render_effect(eff.source, w, h, jobs, extra_textures=textures)
         out = torch.from_numpy(np.stack([o[..., :3] for o in outs])).clamp(0, 1)
