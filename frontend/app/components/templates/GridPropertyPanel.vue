@@ -13,7 +13,7 @@ import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
   metrics, formatClass, isMaster, currentFormat,
-  selectedElement, selectedResolved, sampleProps,
+  selectedElement, selectedResolved, sampleProps, effectiveBrand,
   setRegion, hasClassRegion, clearClassRegion,
   patchElement, patchStyle, removeElement,
 } = ctx
@@ -85,6 +85,50 @@ function setFontFamily(family: string) {
   ensureFont(family)
   patchStyle(el.value.id, { fontFamily: family })
 }
+
+// -- Brand binding -----------------------------------------------------------
+// A style value bound to a brand slot is stored as a `{{ brand.<key> }}` token
+// and resolved live from the brand kit. Only show swatches for slots the kit
+// actually defines.
+
+const BRAND_COLOR_SLOTS = ['primary', 'secondary', 'accent', 'foreground', 'background'] as const
+const brandColorSlots = computed(() =>
+  BRAND_COLOR_SLOTS.filter(k => typeof (effectiveBrand.value as any)[k] === 'string'))
+
+function brandTokenKey(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const m = v.match(/^\{\{\s*brand\.(\w+)\s*\}\}$/)
+  return m ? m[1] : null
+}
+function brandSwatch(key: string): string {
+  return String((effectiveBrand.value as any)[key] ?? '#888')
+}
+/** Resolve a style colour through the brand kit for the native colour input. */
+function resolvedColor(v: unknown, fallback: string): string {
+  const k = brandTokenKey(v)
+  if (k) return brandSwatch(k)
+  return typeof v === 'string' && v.startsWith('#') ? v : fallback
+}
+function bindColorToBrand(styleKey: 'color' | 'fill', slot: string) {
+  if (el.value) patchStyle(el.value.id, { [styleKey]: `{{ brand.${slot} }}` })
+}
+
+const brandFontSlots = computed(() => {
+  const out: Array<{ slot: 'fontDisplay' | 'fontBody'; label: string; family: string }> = []
+  const b = effectiveBrand.value as any
+  if (typeof b.fontDisplay === 'string') out.push({ slot: 'fontDisplay', label: 'Brand display', family: b.fontDisplay })
+  if (typeof b.fontBody === 'string') out.push({ slot: 'fontBody', label: 'Brand body', family: b.fontBody })
+  return out
+})
+const fontBoundLabel = computed(() => {
+  const k = brandTokenKey(styleOf().fontFamily)
+  return k === 'fontDisplay' ? 'Brand display' : k === 'fontBody' ? 'Brand body' : null
+})
+function bindFontToBrand(slot: 'fontDisplay' | 'fontBody') {
+  if (el.value) patchStyle(el.value.id, { fontFamily: `{{ brand.${slot} }}` })
+}
+const hasBrandLogo = computed(() => typeof (effectiveBrand.value as any).logo === 'string')
+const usingBrandLogo = computed(() => el.value?.type === 'image' && (el.value as any).content === '{{ brand.logo }}')
 
 /** Placeholder for the size input: the level-derived size in master px. */
 const levelSizePlaceholder = computed(() => {
@@ -223,9 +267,20 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       <div>
         <p :class="labelCls" class="mb-1.5">Font</p>
         <TemplatesFontPicker
-          :model-value="styleOf().fontFamily ?? 'Inter'"
+          :model-value="fontBoundLabel ? (effectiveBrand as any)[brandTokenKey(styleOf().fontFamily)!] : (styleOf().fontFamily ?? 'Inter')"
           @update:model-value="setFontFamily"
         />
+        <div v-if="brandFontSlots.length" class="flex items-center gap-1 mt-1.5">
+          <span class="text-[10px] text-white/30">Brand:</span>
+          <button
+            v-for="f in brandFontSlots"
+            :key="f.slot"
+            class="px-1.5 h-6 rounded text-[10px] transition-colors cursor-pointer"
+            :class="fontBoundLabel === f.label ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+            :title="`Bind to ${f.label} (${f.family})`"
+            @click="bindFontToBrand(f.slot)"
+          >{{ f.label.replace('Brand ', '') }}</button>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
@@ -302,16 +357,29 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
       <div>
         <p :class="labelCls" class="mb-1.5">Color</p>
-        <div class="flex gap-2">
+        <div class="flex gap-2 items-center">
           <input
-            type="color" :value="styleOf().color ?? '#ffffff'"
+            type="color" :value="resolvedColor(styleOf().color, '#ffffff')"
             class="size-7 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
             @input="(e: any) => patchStyle(el!.id, { color: e.target.value })"
           >
           <input
-            :value="styleOf().color ?? '#ffffff'" :class="inputCls"
+            :value="brandTokenKey(styleOf().color) ? `brand.${brandTokenKey(styleOf().color)}` : (styleOf().color ?? '#ffffff')"
+            :class="[inputCls, brandTokenKey(styleOf().color) ? 'text-[#c9d6ff]' : '']"
             @change="(e: any) => patchStyle(el!.id, { color: e.target.value })"
           >
+        </div>
+        <div v-if="brandColorSlots.length" class="flex items-center gap-1 mt-1.5">
+          <span class="text-[10px] text-white/30">Brand:</span>
+          <button
+            v-for="slot in brandColorSlots"
+            :key="slot"
+            class="size-5 rounded-full border cursor-pointer transition"
+            :class="brandTokenKey(styleOf().color) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+            :style="{ background: brandSwatch(slot) }"
+            :title="`Bind to brand.${slot}`"
+            @click="bindColorToBrand('color', slot)"
+          />
         </div>
       </div>
     </template>
@@ -324,6 +392,14 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           :value="el.content" placeholder="URL or {{ props.image_layer_1 }}" :class="inputCls"
           @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
         >
+        <button
+          v-if="hasBrandLogo"
+          class="mt-1.5 px-2 h-6 rounded text-[10px] transition-colors cursor-pointer"
+          :class="usingBrandLogo ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+          @click="patchElement(el!.id, { content: '{{ brand.logo }}' })"
+        >
+          Use brand logo
+        </button>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
@@ -372,16 +448,29 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
       <div>
         <p :class="labelCls" class="mb-1.5">Fill</p>
-        <div class="flex gap-2">
+        <div class="flex gap-2 items-center">
           <input
-            type="color" :value="(styleOf().fill ?? '#000000').slice(0, 7)"
+            type="color" :value="resolvedColor(styleOf().fill, '#000000').slice(0, 7)"
             class="size-7 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
             @input="(e: any) => patchStyle(el!.id, { fill: e.target.value })"
           >
           <input
-            :value="styleOf().fill ?? '#000000'" :class="inputCls"
+            :value="brandTokenKey(styleOf().fill) ? `brand.${brandTokenKey(styleOf().fill)}` : (styleOf().fill ?? '#000000')"
+            :class="[inputCls, brandTokenKey(styleOf().fill) ? 'text-[#c9d6ff]' : '']"
             @change="(e: any) => patchStyle(el!.id, { fill: e.target.value })"
           >
+        </div>
+        <div v-if="brandColorSlots.length" class="flex items-center gap-1 mt-1.5">
+          <span class="text-[10px] text-white/30">Brand:</span>
+          <button
+            v-for="slot in brandColorSlots"
+            :key="slot"
+            class="size-5 rounded-full border cursor-pointer transition"
+            :class="brandTokenKey(styleOf().fill) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+            :style="{ background: brandSwatch(slot) }"
+            :title="`Bind to brand.${slot}`"
+            @click="bindColorToBrand('fill', slot)"
+          />
         </div>
       </div>
       <div v-if="el.shape === 'rect'">

@@ -8,10 +8,11 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { CaseSensitive, Grid3x3, ImagePlus, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { CaseSensitive, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
+import { BRAND_COLOR_KEYS } from '~~/shared/template-grid/types'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
 const props = defineProps<{
@@ -123,6 +124,22 @@ function onGrid(field: 'gutter' | 'margin', raw: string) {
   const v = Number(raw)
   if (Number.isFinite(v)) ctx.setGridSpec({ [field]: v })
 }
+
+// -- Brand kit popover --------------------------------------------------------
+
+const brandPanelOpen = ref(false)
+const COLOR_KEYS = BRAND_COLOR_KEYS
+const COLOR_LABELS: Record<string, string> = {
+  primary: 'Primary', secondary: 'Secondary', accent: 'Accent',
+  foreground: 'Text', background: 'Background',
+}
+function brandVal(key: string): string {
+  return (template.value.brand as any)?.[key] ?? ''
+}
+function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
+  ensureFont(family)
+  ctx.setBrand({ [key]: family })
+}
 </script>
 
 <template>
@@ -229,6 +246,65 @@ function onGrid(field: 'gutter' | 'margin', raw: string) {
               Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
             </p>
           </div>
+        </div>
+      </div>
+
+      <div class="relative">
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="brandPanelOpen ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+          title="Brand kit — colours, fonts and logo bound across every format"
+          @click="brandPanelOpen = !brandPanelOpen"
+        >
+          <Palette class="size-4" />
+          Brand
+        </button>
+        <div
+          v-if="brandPanelOpen"
+          class="absolute top-10 right-0 z-20 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
+        >
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-2">Brand colours</p>
+            <div class="flex flex-col gap-1.5">
+              <label v-for="k in COLOR_KEYS" :key="k" class="flex items-center gap-2">
+                <input
+                  type="color" :value="brandVal(k) || '#888888'"
+                  class="size-6 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
+                  @input="(e: any) => ctx.setBrand({ [k]: e.target.value })"
+                >
+                <span class="text-[11px] text-white/55 w-20">{{ COLOR_LABELS[k] }}</span>
+                <input
+                  :value="brandVal(k)" placeholder="unset"
+                  class="flex-1 h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50 font-mono"
+                  @change="(e: any) => ctx.setBrand({ [k]: e.target.value })"
+                >
+              </label>
+            </div>
+          </div>
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Brand fonts</p>
+            <div class="flex flex-col gap-1.5">
+              <div>
+                <span class="text-[10px] text-white/40">Display</span>
+                <TemplatesFontPicker :model-value="brandVal('fontDisplay') || 'Inter'" @update:model-value="(f) => setBrandFont('fontDisplay', f)" />
+              </div>
+              <div>
+                <span class="text-[10px] text-white/40">Body</span>
+                <TemplatesFontPicker :model-value="brandVal('fontBody') || 'Inter'" @update:model-value="(f) => setBrandFont('fontBody', f)" />
+              </div>
+            </div>
+          </div>
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Logo URL</p>
+            <input
+              :value="brandVal('logo')" placeholder="https://…  (bind on an image element)"
+              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+              @change="(e: any) => ctx.setBrand({ logo: e.target.value })"
+            >
+          </div>
+          <p class="text-[10px] text-white/30 leading-snug">
+            Bind an element's colour/font to a brand slot in its properties — swap the kit here and every format re-skins.
+          </p>
         </div>
       </div>
 
