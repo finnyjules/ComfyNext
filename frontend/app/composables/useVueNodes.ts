@@ -162,6 +162,8 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   PoseMannequin: 'pose-mannequin',
   // The 3D Model viewer: loads a GLB URL into an interactive Three.js viewer.
   Model3D: 'artifact-3d',
+  // Real-time GPU shader effects: live WebGL preview + manifest-driven sliders.
+  ShaderEffect: 'shader-effect',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

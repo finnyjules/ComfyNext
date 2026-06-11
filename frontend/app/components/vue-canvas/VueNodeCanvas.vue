@@ -26,6 +26,7 @@ import ArtifactVideoNode from '~/components/vue-canvas/ArtifactVideoNode.vue'
 import ArtifactFrameNode from '~/components/vue-canvas/ArtifactFrameNode.vue'
 import ArtifactTimelineNode from '~/components/vue-canvas/ArtifactTimelineNode.vue'
 import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
+import ShaderEffectNode from '~/components/vue-canvas/ShaderEffectNode.vue'
 import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -3992,7 +3993,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'artifact-3d': markRaw(Artifact3DNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
