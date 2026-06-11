@@ -22,7 +22,8 @@ import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play } from 'lucide-vue-next'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette } from 'lucide-vue-next'
+import type { ComputedRef } from 'vue'
 import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -878,6 +879,16 @@ function loadSlateFixture() {
   scrubTo(0)
 }
 
+// ── Brand library (project kit entry point) ─────────────────────────────────
+// The layout (default.vue) provides the project's active brand kit; this
+// toolbar entry opens the same library popover the project menu uses, so
+// "Set active" here and there write to the one doc-owned brandKitId.
+const projectBrand = inject<{
+  activeKitId: ComputedRef<string | null>
+  setBrandKit: (id: string | null) => void
+} | null>('comfynext:brand', null)
+const brandOpen = ref(false)
+
 // ── Motion bake (PNG sequence → motion_params) ──────────────────────────────
 // Bake renders every frame through the same buildStackItems()/paintLayerStack
 // path as the preview, uploads PNGs to /upload/image, and persists the result
@@ -1612,6 +1623,15 @@ onUnmounted(() => {
           class="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 px-2 py-1 rounded bg-[#111111]/95 border border-rose-500/30 text-[11px] text-rose-400"
         >{{ bakeError }}</div>
 
+        <!-- Brand kit library (project-level active kit, same source as the project menu) -->
+        <BrandLibraryPopover
+          v-if="brandOpen"
+          class="absolute top-12 right-4 z-30"
+          :active-kit-id="projectBrand?.activeKitId.value ?? null"
+          @set-active="(id) => projectBrand?.setBrandKit(id)"
+          @click.stop @pointerdown.stop @pointerup.stop @dblclick.stop
+        />
+
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
           v-show="genActive"
@@ -1917,6 +1937,14 @@ onUnmounted(() => {
           @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
         >
           <Play class="size-4" />
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          :class="brandOpen ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          title="Brand — pick the project's active brand kit"
+          @click="brandOpen = !brandOpen"
+        >
+          <Palette class="size-4" />
         </button>
         <button v-if="isDev"
           class="flex items-center justify-center h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
