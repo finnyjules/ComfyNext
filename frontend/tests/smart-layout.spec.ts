@@ -209,13 +209,16 @@ test.describe('SmartLayout node in the canvas', () => {
     const modal = page.locator('div.fixed.inset-0').last()
     await expect(modal).toBeVisible({ timeout: 5_000 })
 
-    // Fresh nodes default to the v2 grid starter → the visual grid editor
-    // opens with the format tab strip (incl. IAB sizes) and the grid canvas.
+    // Fresh empty layout → the archetype gallery is shown over the canvas.
+    // Pick one to populate the layout and reveal the canvas.
+    await expect(modal.getByText('Start from a layout')).toBeVisible()
+    await modal.getByText('Hero + headline band').click()
+
+    // The visual grid editor: format tab strip (incl. IAB sizes) + canvas.
     await expect(modal.getByRole('button', { name: /728x90/ })).toBeVisible()
     await expect(modal.getByText(/square · \d+×\d+ grid/)).toBeVisible()   // canvas readout
     await expect(modal.getByRole('button', { name: 'Save & close' })).toBeVisible()
-    // Undo starts disabled (no edits yet); zoom controls present.
-    await expect(modal.getByTitle('Undo (⌘Z)')).toBeDisabled()
+    // Zoom controls present.
     await expect(modal.getByTitle('Zoom in')).toBeVisible()
 
     // Switching to a strip format updates the canvas readout + class.

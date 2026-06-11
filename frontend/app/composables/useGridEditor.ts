@@ -118,8 +118,16 @@ export function useGridEditor(initial: TemplateV2) {
   }
 
   /** Apply an archetype's composition onto the current template (keeps the
-   * format matrix + grid). */
+   * format matrix + grid). Seeds editor-only placeholder copy for any unwired
+   * text layer so the archetype reads as intended in the canvas. */
   function loadArchetype(arch: Archetype) {
+    const placeholders: Record<string, string> = {
+      text_layer_1: 'Headline goes here',
+      text_layer_2: 'A supporting subhead line',
+    }
+    for (const [k, v] of Object.entries(placeholders)) {
+      if (sampleProps.value[k] == null || sampleProps.value[k] === '') sampleProps.value[k] = v
+    }
     loadTemplate(applyArchetype(template.value, arch))
   }
 

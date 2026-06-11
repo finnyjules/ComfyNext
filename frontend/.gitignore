@@ -31,3 +31,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# User-saved Smart Layout templates (runtime data, not source)
+server/templates/layouts/user-*.json

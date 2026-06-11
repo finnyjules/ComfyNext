@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { CaseSensitive, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -59,6 +59,39 @@ watch(template, (tpl) => {
 function handleSave() {
   emit('save', JSON.parse(JSON.stringify(template.value)))
   dirty.value = false
+}
+
+// -- Save as reusable template ------------------------------------------------
+
+const saveAsOpen = ref(false)
+const saveAsName = ref('')
+const saveAsState = ref<'idle' | 'saving' | 'done' | 'error'>('idle')
+
+function openSaveAs() {
+  saveAsName.value = template.value.name && template.value.name !== 'New Layout' ? template.value.name : ''
+  saveAsState.value = 'idle'
+  saveAsOpen.value = true
+}
+
+async function confirmSaveAs() {
+  const name = saveAsName.value.trim()
+  if (!name) return
+  // Slugify to a filesystem-safe id; the saved template keeps its own id so it
+  // can be reloaded from the gallery without colliding with the node's id.
+  const id = `user-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'template'}`
+  const payload = { ...JSON.parse(JSON.stringify(template.value)), id, name }
+  saveAsState.value = 'saving'
+  try {
+    const res = await fetch(`/api/templates/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    saveAsState.value = res.ok ? 'done' : 'error'
+    if (res.ok) setTimeout(() => { saveAsOpen.value = false }, 900)
+  } catch {
+    saveAsState.value = 'error'
+  }
 }
 
 // -- Keyboard shortcuts -------------------------------------------------------
@@ -332,6 +365,38 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
 
       <div class="flex items-center gap-2">
         <span v-if="dirty" class="size-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
+        <div class="relative">
+          <button
+            class="size-8 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center text-white/65 hover:text-white transition-colors cursor-pointer"
+            title="Save as a reusable template"
+            @click="saveAsOpen ? (saveAsOpen = false) : openSaveAs()"
+          >
+            <BookmarkPlus class="size-4" />
+          </button>
+          <div
+            v-if="saveAsOpen"
+            class="absolute top-10 right-0 z-20 w-64 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3"
+          >
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Save as template</p>
+            <input
+              v-model="saveAsName"
+              placeholder="Template name"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+              @keydown.enter="confirmSaveAs"
+            >
+            <div class="flex items-center gap-2 mt-2">
+              <button
+                class="px-3 h-7 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer disabled:opacity-40"
+                :disabled="!saveAsName.trim() || saveAsState === 'saving'"
+                @click="confirmSaveAs"
+              >
+                {{ saveAsState === 'saving' ? 'Saving…' : saveAsState === 'done' ? 'Saved ✓' : 'Save' }}
+              </button>
+              <span v-if="saveAsState === 'error'" class="text-[11px] text-red-400">Save failed</span>
+              <span class="text-[10px] text-white/30">Appears in the gallery.</span>
+            </div>
+          </div>
+        </div>
         <button
           class="h-8 px-3 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 flex items-center gap-1.5 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
           @click="handleSave"
@@ -349,6 +414,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       </div>
       <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
         <TemplatesGridEditorCanvas />
+        <TemplatesArchetypeGallery v-if="template.elements.length === 0" />
       </div>
       <div v-if="selectedElement" class="w-[300px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10]">
         <TemplatesGridPropertyPanel />
