@@ -115,7 +115,7 @@ const LOOP_EVAL: Record<string, LoopEval> = {
     const tick = Math.floor(p * 12)
     return u({ dx: (seeded(i * 131 + tick, 5) - 0.5) * 0.12, dy: (seeded(i * 131 + tick, 6) - 0.5) * 0.06 })
   },
-  'marquee':   (p) => u({ dx: (1 - 2 * p) * 2 }), // +2 → −2 unit-box sweep, painter scales by layer width
+  'marquee':   (p) => u({ dx: (1 - 2 * p) * 2 }), // +2 → −2 sweep in unit-box heights (the layer's own box drives the distance)
 }
 
 export const SUPPORTED_IN_IDS = Object.keys(IN_EVAL)

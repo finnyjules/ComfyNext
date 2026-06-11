@@ -6,7 +6,7 @@
  * can transform them individually.
  */
 import type { TextLayer } from '~/composables/useCompositorLayers'
-import { wrappedTextLines, applyFont } from '~/composables/useCompositorLayers'
+import { wrappedTextLines, applyFont, localBlendOp } from '~/composables/useCompositorLayers'
 import type { UnitState } from './evaluate'
 
 export interface CharCell {
@@ -64,6 +64,9 @@ export function layoutTextUnits(
  * cell with its UnitState transform. `units.length` should equal the cell
  * count (the evaluator is called with that n); missing entries fall back to
  * rest.
+ *
+ * v1 limitation: layer EFFECTS (shadow/blur) and maskedById are not applied
+ * during per-char animation frames — only blend, opacity, fill and stroke.
  */
 export function drawAnimatedTextLayer(
   ctx: CanvasRenderingContext2D,
@@ -74,6 +77,7 @@ export function drawAnimatedTextLayer(
 ): void {
   const cells = layoutTextUnits(ctx, layer, W, H)
   ctx.save()
+  ctx.globalCompositeOperation = localBlendOp(layer)
   ctx.translate(layer.x * W, layer.y * H)
   if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
   applyFont(ctx, layer, W)
