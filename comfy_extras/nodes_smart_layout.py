@@ -122,11 +122,19 @@ def _parse_layout(raw: str) -> dict:
     return layout
 
 
-def _render_one(template: dict, aspect_key: str, props: dict, brand: dict) -> torch.Tensor:
-    """POST one render request, decode the returned PNG into an IMAGE tensor."""
+def _render_one(
+    template: dict, aspect_key: str, props: dict, brand: dict,
+    output_id: str | None = None,
+) -> torch.Tensor:
+    """POST one render request, decode the returned PNG into an IMAGE tensor.
+
+    `output_id` selects per-output overrides for v2 templates (variations of the
+    same format); None resolves the format's shared layout.
+    """
     body = _json.dumps({
         "template": template,
         "aspect": aspect_key,
+        "outputId": output_id,
         "props": props,
         "brand": brand,
     }).encode("utf-8")
@@ -288,6 +296,37 @@ def _parse_aspects(aspects_str: str, template: dict) -> list[str]:
     return keys
 
 
+def _resolve_outputs(template: dict, aspects_str: str) -> list[dict]:
+    """The deliverables to render. Uses the template's explicit `outputs` list
+    (chosen in the editor, repeatable per format for variations); falls back to
+    one output per `aspects` key (id === format) for pre-outputs templates.
+    Mirrors deriveOutputs() in shared/template-grid/resolve.ts."""
+    outs = template.get("outputs")
+    if isinstance(outs, list):
+        clean = [o for o in outs if isinstance(o, dict) and o.get("format")]
+        if clean:
+            return clean
+    formats = template.get("formats") or {}
+    return [
+        {"id": k, "format": k, "label": (formats.get(k) or {}).get("label")}
+        for k in _parse_aspects(aspects_str, template)
+    ]
+
+
+def _output_labels(outputs: list[dict], template: dict) -> list[str]:
+    """Display/file labels for the node preview carousel, de-duplicated so two
+    variations of the same format don't clobber each other's download name."""
+    formats = template.get("formats") or {}
+    labels: list[str] = []
+    seen: dict[str, int] = {}
+    for o in outputs:
+        base = o.get("label") or (formats.get(o["format"]) or {}).get("label") or o["format"]
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        labels.append(base if n == 1 else f"{base} {n}")
+    return labels
+
+
 def _parse_text_layers(text: str, *, default_role: str = "headline") -> dict[str, str]:
     """Parse multiline text-layer overrides for SmartLayout.
 
@@ -429,7 +468,6 @@ class SmartLayoutNode(IO.ComfyNode):
     @classmethod
     def execute(cls, layout, aspects, brand=None, brand_kit=None, **layer_kwargs) -> IO.NodeOutput:
         template = _parse_layout(layout)
-        aspect_keys = _parse_aspects(aspects, template)
         # Collect text_layer_<N> + image_layer_<N> kwargs. Each becomes a
         # `{{ props.<key> }}` substitution. Unconnected slots come in as
         # None and are skipped.
@@ -467,23 +505,27 @@ class SmartLayoutNode(IO.ComfyNode):
         else:
             _autopopulate_elements(template, props_d)
 
+        # The chosen deliverables: the template's `outputs` (editor-picked,
+        # repeatable per format for variations) or one per `aspects` key.
+        outputs = _resolve_outputs(template, aspects)
         rendered: list[torch.Tensor] = []
-        for key in aspect_keys:
-            rendered.append(_render_one(template, key, props_d, brand_d))
+        for o in outputs:
+            rendered.append(_render_one(template, o["format"], props_d, brand_d, o.get("id")))
 
-        # Push *all* rendered aspects to the node-body preview so the frontend
-        # can show a carousel. Label each file by aspect key so the download
-        # buttons can name the file something the user recognises.
+        # Push *all* rendered outputs to the node-body preview so the frontend
+        # can show a carousel. Label each file by its output name (variation-
+        # unique) so the download buttons read something the user recognises.
+        labels = _output_labels(outputs, template)
         preview_ui = save_live_preview_multi(
             [t.unsqueeze(0) for t in rendered],
             str(cls.hidden.unique_id),
-            labels=aspect_keys,
+            labels=labels,
         )
 
-        # Always emit as a list (one [1, H, W, 3] tensor per aspect). Paired
-        # with `is_output_list=True` on the schema, this means a downstream
-        # SaveImage saves one file per aspect — mixed sizes Just Work because
-        # each item travels through the socket independently.
+        # Always emit as a list (one [1, H, W, 3] tensor per output). Paired
+        # with `is_output_list=True` on the schema, a downstream SaveImage saves
+        # one file per output — mixed sizes Just Work because each item travels
+        # through the socket independently.
         return IO.NodeOutput([t.unsqueeze(0) for t in rendered], ui=preview_ui)
 
 
