@@ -186,6 +186,10 @@ test.describe('SmartLayout node in the canvas', () => {
     // We assert the modal overlay exists by checking for the highest-z fixed inset element.
     const modal = page.locator('div.fixed.inset-0').last()
     await expect(modal).toBeVisible({ timeout: 5_000 })
+    // Fresh nodes default to the v2 grid starter → compat mode shows live
+    // format previews rendered through the real /api/render-template pipeline.
+    await expect(modal.getByText('Format previews')).toBeVisible()
+    await expect(modal.locator('img').first()).toBeVisible({ timeout: 20_000 })
   })
 
   test('execute path: queue a SmartLayout-only workflow and verify the output frame is a PNG', async ({ page, request }) => {
