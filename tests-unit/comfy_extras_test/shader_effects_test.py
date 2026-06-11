@@ -142,12 +142,12 @@ import torch
 from comfy_extras.nodes_shader_effects import ShaderEffect
 
 
-def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=0.0, fps=4, seed=42):
+def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=0.0, fps=4, seed=42, resolution=768, aspect="1:1"):
     # Execute the classmethod directly; hidden unique_id is only used for the ui preview.
     class _Hidden:
         unique_id = "test"
     ShaderEffect.hidden = _Hidden
-    return ShaderEffect.execute(image, effect, params, time, duration, fps, seed)
+    return ShaderEffect.execute(image, effect, params, time, duration, fps, seed, resolution, aspect)
 
 
 def test_node_still_returns_single_frame():
@@ -222,3 +222,29 @@ def test_server_render_matches_goldens():
             out = render_effect(eff.source, size, size, jobs, extra_textures=textures)[0][..., :3]
             diff = np.abs(out - golden)
             assert diff.max() <= 2.0 / 255.0, f"{eff.id}@{size}: max diff {diff.max() * 255:.2f}/255"
+
+
+from comfy_extras.nodes_shader_effects import _aspect_size
+
+
+def test_aspect_size_longest_edge_and_even():
+    assert _aspect_size(768, "1:1") == (768, 768)
+    assert _aspect_size(768, "16:9") == (768, 432)
+    assert _aspect_size(768, "9:16") == (432, 768)
+    w, h = _aspect_size(770, "3:2")
+    assert w % 2 == 0 and h % 2 == 0
+
+
+def test_node_no_image_non_generative_raises():
+    import pytest
+    class _Hidden:
+        unique_id = "test"
+    ShaderEffect.hidden = _Hidden
+    with pytest.raises(ValueError, match="needs an image input"):
+        ShaderEffect.execute(None, "halftone", "{}", 0.0, 0.0, 24, 42, 768, "1:1")
+
+
+def test_catalog_payload_includes_generative():
+    payload = catalog_payload()
+    assert all("generative" in e for e in payload["effects"])
+    assert all(e["generative"] is False for e in payload["effects"])  # none generative yet

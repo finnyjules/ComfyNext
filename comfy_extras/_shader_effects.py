@@ -38,6 +38,7 @@ class Effect:
     textures: list[dict]
     params: list[EffectParam]
     source: str
+    generative: bool = False
 
 
 @dataclass
@@ -78,6 +79,7 @@ def load_catalog(refresh: bool = False) -> Catalog:
             category=entry["category"],
             animated=entry["animated"],
             passes=entry.get("passes", 1),
+            generative=entry.get("generative", False),
             center_param=entry.get("centerParam"),
             textures=entry.get("textures", []),
             params=params,
