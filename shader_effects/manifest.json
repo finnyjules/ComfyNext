@@ -10,9 +10,33 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_amount", "label": "Amount", "type": "float", "min": 0.0, "max": 0.3, "default": 0.06, "step": 0.005 },
-        { "uniform": "u_scale", "label": "Scale", "type": "float", "min": 1.0, "max": 20.0, "default": 4.0, "step": 0.5 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 }
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.3,
+          "default": 0.06,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_scale",
+          "label": "Scale",
+          "type": "float",
+          "min": 1.0,
+          "max": 20.0,
+          "default": 4.0,
+          "step": 0.5
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        }
       ]
     },
     {
@@ -24,9 +48,33 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_size", "label": "Dot Size", "type": "float", "min": 0.004, "max": 0.1, "default": 0.02, "step": 0.002 },
-        { "uniform": "u_angle", "label": "Angle", "type": "float", "min": 0.0, "max": 180.0, "default": 45.0, "step": 1.0 },
-        { "uniform": "u_softness", "label": "Softness", "type": "float", "min": 0.01, "max": 0.5, "default": 0.12, "step": 0.01 }
+        {
+          "uniform": "u_size",
+          "label": "Dot Size",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.1,
+          "default": 0.02,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_angle",
+          "label": "Angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 180.0,
+          "default": 45.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_softness",
+          "label": "Softness",
+          "type": "float",
+          "min": 0.01,
+          "max": 0.5,
+          "default": 0.12,
+          "step": 0.01
+        }
       ]
     },
     {
@@ -38,10 +86,42 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_amplitude", "label": "Amplitude", "type": "float", "min": 0.0, "max": 0.2, "default": 0.03, "step": 0.002 },
-        { "uniform": "u_frequency", "label": "Frequency", "type": "float", "min": 1.0, "max": 50.0, "default": 10.0, "step": 0.5 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 0.8, "step": 0.05 },
-        { "uniform": "u_angle", "label": "Angle", "type": "float", "min": 0.0, "max": 360.0, "default": 90.0, "step": 1.0 }
+        {
+          "uniform": "u_amplitude",
+          "label": "Amplitude",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.2,
+          "default": 0.03,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_frequency",
+          "label": "Frequency",
+          "type": "float",
+          "min": 1.0,
+          "max": 50.0,
+          "default": 10.0,
+          "step": 0.5
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.8,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_angle",
+          "label": "Angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 360.0,
+          "default": 90.0,
+          "step": 1.0
+        }
       ]
     },
     {
@@ -50,14 +130,57 @@
       "category": "distortion",
       "animated": true,
       "passes": 1,
-      "centerParam": ["u_centerX", "u_centerY"],
+      "centerParam": [
+        "u_centerX",
+        "u_centerY"
+      ],
       "textures": [],
       "params": [
-        { "uniform": "u_strength", "label": "Strength", "type": "float", "min": -10.0, "max": 10.0, "default": 3.0, "step": 0.1 },
-        { "uniform": "u_radius", "label": "Radius", "type": "float", "min": 0.05, "max": 1.5, "default": 0.45, "step": 0.01 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 0.5, "step": 0.05 },
-        { "uniform": "u_centerX", "label": "Center X", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 },
-        { "uniform": "u_centerY", "label": "Center Y", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 }
+        {
+          "uniform": "u_strength",
+          "label": "Strength",
+          "type": "float",
+          "min": -10.0,
+          "max": 10.0,
+          "default": 3.0,
+          "step": 0.1
+        },
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.05,
+          "max": 1.5,
+          "default": 0.45,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.5,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
       ]
     },
     {
@@ -66,14 +189,57 @@
       "category": "distortion",
       "animated": true,
       "passes": 1,
-      "centerParam": ["u_centerX", "u_centerY"],
+      "centerParam": [
+        "u_centerX",
+        "u_centerY"
+      ],
       "textures": [],
       "params": [
-        { "uniform": "u_strength", "label": "Strength", "type": "float", "min": -0.9, "max": 2.0, "default": 0.6, "step": 0.05 },
-        { "uniform": "u_radius", "label": "Radius", "type": "float", "min": 0.05, "max": 1.5, "default": 0.5, "step": 0.01 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 0.0, "step": 0.05 },
-        { "uniform": "u_centerX", "label": "Center X", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 },
-        { "uniform": "u_centerY", "label": "Center Y", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 }
+        {
+          "uniform": "u_strength",
+          "label": "Strength",
+          "type": "float",
+          "min": -0.9,
+          "max": 2.0,
+          "default": 0.6,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.05,
+          "max": 1.5,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
       ]
     },
     {
@@ -82,15 +248,66 @@
       "category": "distortion",
       "animated": true,
       "passes": 1,
-      "centerParam": ["u_centerX", "u_centerY"],
+      "centerParam": [
+        "u_centerX",
+        "u_centerY"
+      ],
       "textures": [],
       "params": [
-        { "uniform": "u_amplitude", "label": "Amplitude", "type": "float", "min": 0.0, "max": 0.1, "default": 0.02, "step": 0.002 },
-        { "uniform": "u_wavelength", "label": "Wavelength", "type": "float", "min": 0.01, "max": 0.3, "default": 0.06, "step": 0.005 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 4.0, "default": 1.2, "step": 0.05 },
-        { "uniform": "u_decay", "label": "Decay", "type": "float", "min": 0.0, "max": 8.0, "default": 2.0, "step": 0.1 },
-        { "uniform": "u_centerX", "label": "Center X", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 },
-        { "uniform": "u_centerY", "label": "Center Y", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01 }
+        {
+          "uniform": "u_amplitude",
+          "label": "Amplitude",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.1,
+          "default": 0.02,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_wavelength",
+          "label": "Wavelength",
+          "type": "float",
+          "min": 0.01,
+          "max": 0.3,
+          "default": 0.06,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 4.0,
+          "default": 1.2,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_decay",
+          "label": "Decay",
+          "type": "float",
+          "min": 0.0,
+          "max": 8.0,
+          "default": 2.0,
+          "step": 0.1
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
       ]
     },
     {
@@ -102,9 +319,33 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_amount", "label": "Amount", "type": "float", "min": 0.0, "max": 0.4, "default": 0.12, "step": 0.005 },
-        { "uniform": "u_scale", "label": "Scale", "type": "float", "min": 0.5, "max": 12.0, "default": 3.0, "step": 0.25 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 2.0, "default": 0.4, "step": 0.05 }
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.4,
+          "default": 0.12,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_scale",
+          "label": "Scale",
+          "type": "float",
+          "min": 0.5,
+          "max": 12.0,
+          "default": 3.0,
+          "step": 0.25
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.4,
+          "step": 0.05
+        }
       ]
     },
     {
@@ -116,7 +357,15 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_size", "label": "Pixel Size", "type": "float", "min": 0.002, "max": 0.2, "default": 0.03, "step": 0.002 }
+        {
+          "uniform": "u_size",
+          "label": "Pixel Size",
+          "type": "float",
+          "min": 0.002,
+          "max": 0.2,
+          "default": 0.03,
+          "step": 0.002
+        }
       ]
     },
     {
@@ -128,11 +377,51 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_thickness", "label": "Thickness", "type": "float", "min": 0.001, "max": 0.012, "default": 0.003, "step": 0.0005 },
-        { "uniform": "u_threshold", "label": "Threshold", "type": "float", "min": 0.0, "max": 1.0, "default": 0.2, "step": 0.01 },
-        { "uniform": "u_softness", "label": "Softness", "type": "float", "min": 0.0, "max": 1.0, "default": 0.25, "step": 0.01 },
-        { "uniform": "u_intensity", "label": "Intensity", "type": "float", "min": 0.0, "max": 2.0, "default": 1.0, "step": 0.05 },
-        { "uniform": "u_background", "label": "Background", "type": "float", "min": 0.0, "max": 1.0, "default": 0.15, "step": 0.01 }
+        {
+          "uniform": "u_thickness",
+          "label": "Thickness",
+          "type": "float",
+          "min": 0.001,
+          "max": 0.012,
+          "default": 0.004,
+          "step": 0.0005
+        },
+        {
+          "uniform": "u_threshold",
+          "label": "Threshold",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.02,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_softness",
+          "label": "Softness",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.05,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_intensity",
+          "label": "Intensity",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 1.5,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_background",
+          "label": "Background",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.15,
+          "step": 0.01
+        }
       ]
     },
     {
@@ -142,12 +431,52 @@
       "animated": true,
       "passes": 1,
       "centerParam": null,
-      "textures": [{ "uniform": "u_glyphs", "file": "glyph_atlas.png", "extraUniforms": { "u_glyphCount": 10 } }],
+      "textures": [
+        {
+          "uniform": "u_glyphs",
+          "file": "glyph_atlas.png",
+          "extraUniforms": {
+            "u_glyphCount": 10
+          }
+        }
+      ],
       "params": [
-        { "uniform": "u_cell", "label": "Cell Size", "type": "float", "min": 0.01, "max": 0.1, "default": 0.03, "step": 0.002 },
-        { "uniform": "u_jitter", "label": "Jitter", "type": "float", "min": 0.0, "max": 0.5, "default": 0.08, "step": 0.01 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
-        { "uniform": "u_colored", "label": "Colored", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 1.0 }
+        {
+          "uniform": "u_cell",
+          "label": "Cell Size",
+          "type": "float",
+          "min": 0.01,
+          "max": 0.1,
+          "default": 0.03,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_jitter",
+          "label": "Jitter",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.08,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_colored",
+          "label": "Colored",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 1.0,
+          "step": 1.0
+        }
       ]
     },
     {
@@ -159,11 +488,51 @@
       "centerParam": null,
       "textures": [],
       "params": [
-        { "uniform": "u_cellW", "label": "Cell Width", "type": "float", "min": 0.01, "max": 0.15, "default": 0.05, "step": 0.005 },
-        { "uniform": "u_cellH", "label": "Cell Height", "type": "float", "min": 0.005, "max": 0.08, "default": 0.018, "step": 0.002 },
-        { "uniform": "u_jitter", "label": "Jitter", "type": "float", "min": 0.0, "max": 0.5, "default": 0.1, "step": 0.01 },
-        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
-        { "uniform": "u_colored", "label": "Colored", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 1.0 }
+        {
+          "uniform": "u_cellW",
+          "label": "Cell Width",
+          "type": "float",
+          "min": 0.01,
+          "max": 0.15,
+          "default": 0.05,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_cellH",
+          "label": "Cell Height",
+          "type": "float",
+          "min": 0.005,
+          "max": 0.08,
+          "default": 0.018,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_jitter",
+          "label": "Jitter",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.1,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_colored",
+          "label": "Colored",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 1.0,
+          "step": 1.0
+        }
       ]
     }
   ]
