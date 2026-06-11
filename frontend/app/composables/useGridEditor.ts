@@ -9,9 +9,10 @@
  *  - On any other format, region edits write `el.regionByClass[class]` —
  *    one edit adjusts every format of that class.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import { classifyFormat, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import { applyArchetype, classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import type { Archetype } from '~~/shared/template-grid/archetypes'
 import type { ResolvedLayout } from '~~/shared/template-grid/resolve'
 import type {
   ElementV2, ImageElementV2, Region, ShapeElementV2, TemplateV2, TextElementV2,
@@ -50,12 +51,19 @@ export function useGridEditor(initial: TemplateV2) {
     return out
   })
 
+  // What {{ brand.* }} resolves to in the editor: the template's own brand kit
+  // under any wired socket brand (sampleBrand) — same precedence as render.
+  const effectiveBrand = computed<Record<string, unknown>>(() => ({
+    ...(template.value.brand ?? {}),
+    ...sampleBrand.value,
+  }))
+
   const resolved = computed<ResolvedLayout>(() =>
-    resolveFormat(template.value, currentFormat.value, effectiveProps.value, sampleBrand.value))
+    resolveFormat(template.value, currentFormat.value, effectiveProps.value, effectiveBrand.value))
 
   const resolvedAll = computed<Record<string, ResolvedLayout>>(() =>
     Object.fromEntries(Object.keys(template.value.formats).map(k =>
-      [k, resolveFormat(template.value, k, effectiveProps.value, sampleBrand.value)])))
+      [k, resolveFormat(template.value, k, effectiveProps.value, effectiveBrand.value)])))
 
   const selectedElement = computed<ElementV2 | null>(() =>
     template.value.elements.find(e => e.id === selectedId.value) ?? null)
@@ -92,6 +100,45 @@ export function useGridEditor(initial: TemplateV2) {
         ;(template.value.grid as any)[k] = Math.max(0, Math.round(v))
       }
     }
+    dirty.value = true
+  }
+
+  /** Replace the working template wholesale (e.g. loading a saved template),
+   * keeping the editor pointed at a valid format. */
+  function loadTemplate(next: TemplateV2) {
+    template.value = JSON.parse(JSON.stringify(next))
+    if (!template.value.formats[currentFormat.value]) {
+      currentFormat.value = template.value.master in template.value.formats
+        ? template.value.master
+        : Object.keys(template.value.formats)[0]
+    }
+    selectedId.value = null
+    dirty.value = true
+    commitNow()
+  }
+
+  /** Apply an archetype's composition onto the current template (keeps the
+   * format matrix + grid). Seeds editor-only placeholder copy for any unwired
+   * text layer so the archetype reads as intended in the canvas. */
+  function loadArchetype(arch: Archetype) {
+    const placeholders: Record<string, string> = {
+      text_layer_1: 'Headline goes here',
+      text_layer_2: 'A supporting subhead line',
+    }
+    for (const [k, v] of Object.entries(placeholders)) {
+      if (sampleProps.value[k] == null || sampleProps.value[k] === '') sampleProps.value[k] = v
+    }
+    loadTemplate(applyArchetype(template.value, arch))
+  }
+
+  /** Patch the template's brand kit. Empty-string values clear a key. */
+  function setBrand(patch: Record<string, string | undefined>) {
+    const brand = (template.value.brand ??= {})
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null || v === '') delete (brand as any)[k]
+      else (brand as any)[k] = v
+    }
+    if (!Object.keys(brand).length) delete template.value.brand
     dirty.value = true
   }
 
@@ -174,6 +221,71 @@ export function useGridEditor(initial: TemplateV2) {
     dirty.value = true
   }
 
+  // -- Lock / hide ------------------------------------------------------------
+
+  function toggleHidden(id: string) {
+    const el = elById(id)
+    if (!el) return
+    if (el.hidden) delete el.hidden
+    else el.hidden = true
+    dirty.value = true
+  }
+  function toggleLocked(id: string) {
+    const el = elById(id)
+    if (!el) return
+    if (el.locked) delete el.locked
+    else el.locked = true
+    dirty.value = true
+  }
+  function isHidden(id: string): boolean {
+    return elById(id)?.hidden === true
+  }
+  function isLocked(id: string): boolean {
+    return elById(id)?.locked === true
+  }
+
+  // -- Duplicate --------------------------------------------------------------
+
+  /** Deep-clone an element with a fresh id, region shifted one cell down-right
+   * (clamped to the master grid), and the next priority. Returns the new id. */
+  function duplicateElement(id: string): string | null {
+    const el = elById(id)
+    if (!el) return null
+    const masterDims = formatDims(template.value.formats[template.value.master])
+    const r = el.region
+    const region: Region = {
+      col: Math.min(masterDims.cols - r.colSpan + 1, r.col + 1),
+      row: Math.min(masterDims.rows - r.rowSpan + 1, r.row + 1),
+      colSpan: r.colSpan,
+      rowSpan: r.rowSpan,
+    }
+    const clone = {
+      ...JSON.parse(JSON.stringify(el)),   // strip Vue proxy; elements are plain JSON
+      id: uid(el.type),
+      priority: nextPriority(),
+      region,
+    } as ElementV2
+    delete (clone as any).role   // a duplicate isn't the wired layer
+    template.value.elements.push(clone)
+    selectedId.value = clone.id
+    dirty.value = true
+    return clone.id
+  }
+
+  // -- Nudge ------------------------------------------------------------------
+
+  /** Move the selected element's region by whole cells (clamped). Region
+   * target follows the master/class rule via setRegion. */
+  function nudgeSelected(dCol: number, dRow: number) {
+    const r = selectedResolved.value?.region
+    if (!r || !selectedId.value) return
+    const m = metrics.value
+    const col = Math.min(m.cols - r.colSpan + 1, Math.max(1, r.col + dCol))
+    const row = Math.min(m.rows - r.rowSpan + 1, Math.max(1, r.row + dRow))
+    if (col === r.col && row === r.row) return
+    setRegion(selectedId.value, { ...r, col, row })
+  }
+
   // Array order is z-order (later = on top) — same contract as
   // useTemplateEditor so LayersPanel can be reused verbatim.
   function moveElementTo(id: string, targetIdx: number) {
@@ -192,13 +304,77 @@ export function useGridEditor(initial: TemplateV2) {
     moveElementTo(id, dir === 'up' ? idx + 1 : idx - 1)
   }
 
+  // -- Undo / redo ------------------------------------------------------------
+  // History holds JSON snapshots of `template`. `cursor` points at the entry
+  // matching the last *committed* state; the live template may have drifted
+  // ahead of it (uncommitted edits) until commitNow() captures them. A deep
+  // watch debounces commits so a drag burst or rapid stepper edits collapse
+  // into one history step.
+
+  const HISTORY_CAP = 60
+  const history = ref<string[]>([JSON.stringify(template.value)])
+  const cursor = ref(0)
+  let commitTimer: ReturnType<typeof setTimeout> | null = null
+
+  const canUndo = computed(() => cursor.value > 0)
+  const canRedo = computed(() => cursor.value < history.value.length - 1)
+
+  function commitNow() {
+    if (commitTimer) { clearTimeout(commitTimer); commitTimer = null }
+    const snap = JSON.stringify(template.value)
+    if (snap === history.value[cursor.value]) return
+    const next = history.value.slice(0, cursor.value + 1)
+    next.push(snap)
+    while (next.length > HISTORY_CAP) next.shift()
+    history.value = next
+    cursor.value = next.length - 1
+  }
+
+  function scheduleCommit() {
+    if (commitTimer) clearTimeout(commitTimer)
+    commitTimer = setTimeout(commitNow, 350)
+  }
+
+  function restore(snap: string) {
+    const parsed = JSON.parse(snap) as TemplateV2
+    template.value = parsed
+    if (!parsed.formats[currentFormat.value]) {
+      currentFormat.value = parsed.master in parsed.formats ? parsed.master : Object.keys(parsed.formats)[0]
+    }
+    if (selectedId.value && !parsed.elements.some(e => e.id === selectedId.value)) {
+      selectedId.value = null
+    }
+  }
+
+  function undo() {
+    commitNow()                      // finalize any in-flight edit first
+    if (cursor.value <= 0) return
+    cursor.value--
+    restore(history.value[cursor.value])
+  }
+  function redo() {
+    if (commitTimer) { clearTimeout(commitTimer); commitTimer = null }
+    if (cursor.value >= history.value.length - 1) return
+    cursor.value++
+    restore(history.value[cursor.value])
+  }
+
+  // Auto-commit anything that mutates the template (drag, panel edits, adds).
+  // Restores re-assign `template`, which also fires this — harmless: the
+  // snapshot already equals history[cursor], so commitNow() no-ops.
+  watch(template, scheduleCommit, { deep: true })
+
   return {
     template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
-    format, formatClass, isMaster, metrics, resolved, resolvedAll,
+    format, formatClass, isMaster, metrics, resolved, resolvedAll, effectiveBrand,
     selectedElement, selectedResolved,
-    setFormat, setFormatDims, setGridSpec, setRegion, hasClassRegion, clearClassRegion,
+    setFormat, setFormatDims, setGridSpec, setBrand, setRegion, hasClassRegion, clearClassRegion,
+    loadTemplate, loadArchetype,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
+    toggleHidden, toggleLocked, isHidden, isLocked,
+    duplicateElement, nudgeSelected,
+    commitNow, undo, redo, canUndo, canRedo,
   }
 }
 

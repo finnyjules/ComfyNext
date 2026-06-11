@@ -322,7 +322,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
           color: resolveTokens(s.color ?? '#fff', props, brand),
           fontSize: r.text!.fontSize,
           fontWeight: s.fontWeight ?? 400,
-          fontFamily: s.fontFamily ?? 'Inter',
+          fontFamily: String(resolveTokens(s.fontFamily ?? 'Inter', props, brand)),
           textAlign: align,
           lineHeight: s.lineHeight ?? 1.1,
           letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
@@ -390,15 +390,19 @@ function templateV2ToSatori(
     throw new Error(`Unknown format '${key}' on template '${template.id}'.`)
   }
 
-  const resolved = resolveFormat(tpl, key, props as Record<string, unknown>, brand as Record<string, unknown>)
+  // Template-default brand under any wired socket brand — so a template's own
+  // {{ brand.* }} tokens resolve, while a wired kit can re-skin it.
+  const brandMerged = { ...(template.brand ?? {}), ...brand } as RenderBrand
+
+  const resolved = resolveFormat(tpl, key, props as Record<string, unknown>, brandMerged as Record<string, unknown>)
   const { w, h } = resolved.format
 
   const children: SatoriNode[] = []
-  const bg = backgroundNode(tpl.background, { w, h }, props, brand)
+  const bg = backgroundNode(tpl.background, { w, h }, props, brandMerged)
   if (bg) children.push(bg)
   for (const r of resolved.elements) {
     if (r.culled) continue
-    const node = v2ElementNode(r, props, brand)
+    const node = v2ElementNode(r, props, brandMerged)
     if (node) children.push(node)
   }
 

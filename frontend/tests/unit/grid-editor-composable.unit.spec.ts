@@ -131,4 +131,113 @@ describe('useGridEditor', () => {
     // inner = 1080 - 240 = 840; cell = (840 - 5*48)/6 = 100
     expect(ed.metrics.value.cellW).toBeCloseTo(100, 5)
   })
+
+  // -- Lock / hide -----------------------------------------------------------
+
+  it('toggleHidden flips the flag and culls in the resolver', () => {
+    const ed = useGridEditor(fixture())
+    ed.toggleHidden('subhead')
+    expect(ed.template.value.elements[1].hidden).toBe(true)
+    const r = ed.resolved.value.elements.find(e => e.el.id === 'subhead')!
+    expect(r.culled).toBe(true)
+    expect(r.cullReason).toBe('hidden')
+    ed.toggleHidden('subhead')
+    expect(ed.template.value.elements[1].hidden).toBeUndefined()
+  })
+
+  it('toggleLocked flips the editor-only flag', () => {
+    const ed = useGridEditor(fixture())
+    ed.toggleLocked('headline')
+    expect(ed.template.value.elements[0].locked).toBe(true)
+    expect(ed.isLocked('headline')).toBe(true)
+    ed.toggleLocked('headline')
+    expect(ed.isLocked('headline')).toBe(false)
+  })
+
+  // -- Duplicate -------------------------------------------------------------
+
+  it('duplicateElement clones with a new id, shifted region, next priority, and selects it', () => {
+    const ed = useGridEditor(fixture())
+    // subhead: col1 colSpan4 row6 rowSpan1 — has room to shift col, clamps row.
+    const newId = ed.duplicateElement('subhead')
+    expect(ed.template.value.elements).toHaveLength(3)
+    const clone = ed.template.value.elements.find(e => e.id === newId)!
+    expect(clone.id).not.toBe('subhead')
+    expect(clone.type).toBe('text')
+    expect(clone.priority).toBe(6)   // max(1,5)+1
+    expect(clone.region).toEqual({ col: 2, colSpan: 4, row: 6, rowSpan: 1 })
+    expect(ed.selectedId.value).toBe(newId)
+  })
+
+  it('duplicate clamps a full-width element instead of shifting off-grid', () => {
+    const ed = useGridEditor(fixture())   // headline spans all 6 cols
+    const newId = ed.duplicateElement('headline')
+    const clone = ed.template.value.elements.find(e => e.id === newId)!
+    expect(clone.region).toEqual({ col: 1, colSpan: 6, row: 5, rowSpan: 2 })
+  })
+
+  // -- Nudge -----------------------------------------------------------------
+
+  it('nudgeSelected moves the region by whole cells, clamped', () => {
+    const ed = useGridEditor(fixture())
+    ed.selectedId.value = 'subhead'   // region col1 colSpan4 row6 rowSpan1
+    ed.nudgeSelected(1, 0)
+    expect(ed.template.value.elements[1].region.col).toBe(2)
+    ed.nudgeSelected(0, -1)
+    expect(ed.template.value.elements[1].region.row).toBe(5)
+    // clamp at the grid edge (row can't exceed rows - rowSpan + 1 = 6)
+    ed.nudgeSelected(0, 99)
+    expect(ed.template.value.elements[1].region.row).toBe(6)
+  })
+
+  // -- Undo / redo -----------------------------------------------------------
+
+  it('commit/undo/redo round-trips template state', () => {
+    const ed = useGridEditor(fixture())
+    expect(ed.canUndo.value).toBe(false)
+    expect(ed.canRedo.value).toBe(false)
+
+    ed.addText()
+    ed.commitNow()
+    expect(ed.template.value.elements).toHaveLength(3)
+    expect(ed.canUndo.value).toBe(true)
+
+    ed.undo()
+    expect(ed.template.value.elements).toHaveLength(2)
+    expect(ed.canRedo.value).toBe(true)
+
+    ed.redo()
+    expect(ed.template.value.elements).toHaveLength(3)
+  })
+
+  it('undo captures an uncommitted edit before stepping back', () => {
+    const ed = useGridEditor(fixture())
+    ed.patchStyle('headline', { color: '#ff0000' })   // no explicit commit
+    ed.undo()
+    expect((ed.template.value.elements[0] as any).style?.color).toBeUndefined()
+    ed.redo()
+    expect((ed.template.value.elements[0] as any).style?.color).toBe('#ff0000')
+  })
+
+  it('a new edit after undo truncates the redo tail', () => {
+    const ed = useGridEditor(fixture())
+    ed.addText(); ed.commitNow()           // state A (3 els)
+    ed.addShape(); ed.commitNow()          // state B (4 els)
+    ed.undo()                              // back to A
+    expect(ed.template.value.elements).toHaveLength(3)
+    ed.addImage(); ed.commitNow()          // new branch from A
+    expect(ed.canRedo.value).toBe(false)
+    expect(ed.template.value.elements).toHaveLength(4)
+    expect(ed.template.value.elements.some(e => e.type === 'shape')).toBe(false)
+  })
+
+  it('undo clears a dangling selection', () => {
+    const ed = useGridEditor(fixture())
+    ed.addText(); ed.commitNow()
+    // selectedId is the new element after addText
+    const newId = ed.selectedId.value
+    ed.undo()
+    expect(ed.template.value.elements.some(e => e.id === newId)).toBe(false)
+    expect(ed.selectedId.value).toBeNull()
+  })
 })

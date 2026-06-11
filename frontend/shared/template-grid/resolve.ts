@@ -15,7 +15,7 @@ import { resolveTokens } from './tokens'
 import type { TokenScope } from './tokens'
 import type { ElementV2, FormatClass, FormatSpec, Region, TemplateV2 } from './types'
 
-export type CullReason = 'no-slot' | 'too-small'
+export type CullReason = 'no-slot' | 'too-small' | 'hidden'
 
 export interface ResolvedElement {
   el: ElementV2
@@ -67,6 +67,8 @@ export function resolveFormat(
   }
 
   const elements = template.elements.map((el): ResolvedElement => {
+    // Hidden elements never render — drop before any geometry work.
+    if (el.hidden) return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' }
     let region = regions.get(el.id) ?? null
     if (!region) return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'no-slot' }
 
