@@ -280,7 +280,11 @@ function readUpstreamImageUrl(inputName: string): string | null {
     const filename = wIdx >= 0 ? wv?.[wIdx] : undefined
     if (filename) return `/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`
   }
-  // Connected but the source isn't introspectable — return empty so the
+  // Generated images: once the upstream node has executed, its output lands
+  // in data.images (same source the node-body thumbnails use) — borrow the
+  // latest frame so the editor previews real campaign imagery.
+  if (source.data?.images?.length) return String(source.data.images[0])
+  // Connected but never run and not introspectable — return empty so the
   // editor places a placeholder element. Actual image fills at render time.
   return ''
 }

@@ -337,8 +337,8 @@ function onCanvasClick(e: MouseEvent) {
         <template v-else-if="r.el.type === 'image'">
           <div class="size-full overflow-hidden">
             <img v-if="imageSrc(r)" :src="imageSrc(r)" :style="imageStyle(r)" draggable="false">
-            <div v-else class="size-full bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
-              {{ r.mark ? 'mark' : 'image' }}
+            <div v-else class="size-full bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-center text-white/30 text-xs p-2">
+              {{ r.mark ? 'mark' : 'image — wired preview appears after the first run' }}
             </div>
           </div>
         </template>
