@@ -1,7 +1,7 @@
 # Shader Effects — Unicorn Studio-style shader nodes
 
 **Date:** 2026-06-10
-**Status:** Approved design, pending implementation plan
+**Status:** v1 implemented (feat/shader-effects, 2026-06-10) — 14 effects, parity-verified
 
 ## Goal
 
@@ -60,8 +60,8 @@ at ~300px while the server renders at full resolution; pixel-unit params would m
 the run output visibly different from the preview. Enforced in shader review and by
 the golden tests running at two resolutions.
 
-The ComfyUI server exposes `GET /comfynext/shader_effects` (manifest) and
-`GET /comfynext/shader_effects/{file}` (shader sources, texture assets). The Nuxt frontend fetches
+The ComfyUI server exposes `GET /comfynext/shader_effects` (manifest with .frag
+sources inlined) and `GET /comfynext/shader_effects/assets/{name}` (texture assets). The Nuxt frontend fetches
 from it at runtime — no copies in the frontend bundle, so browser preview and server
 render can never drift to different sources.
 

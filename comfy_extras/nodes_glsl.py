@@ -301,7 +301,7 @@ def _init_cgl():
     kCGLPFAColorSize = 8
     kCGLPFAAllowOfflineRenderers = 96
 
-    attrs = (ctypes.c_int * 9)(
+    attrs = (ctypes.c_int * 7)(
         kCGLPFAOpenGLProfile, kCGLOGLPVersion_3_2_Core,
         kCGLPFAAccelerated,
         kCGLPFAColorSize, 32,

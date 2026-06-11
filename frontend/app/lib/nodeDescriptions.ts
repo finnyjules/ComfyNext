@@ -512,6 +512,7 @@ export const NODE_DESCRIPTIONS: Record<string, string> = {
   'SetHookKeyframes': 'Assigns timing keyframes to control when hooks activate during generation.',
   'SetLatentNoiseMask': 'Applies a mask to the AI\'s internal image data to define inpainting regions.',
   'SetUnionControlNetType': 'Sets the control type for a union control net to guide image generation.',
+  'ShaderEffect': 'Real-time shader effects — distortion, halftone, dither, and more. Live animated preview; renders locally on your GPU at no credit cost.',
   'ShuffleDataset': 'Randomly reorders a batch of training images using a seed value.',
   'ShuffleImageTextDataset': 'Randomly reorders paired images and text together using a seed value.',
   'SkipLayerGuidanceDiT': 'Skips specific model layers during generation to change the output style.',
