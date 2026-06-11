@@ -1,4 +1,5 @@
 export * from './convert'
+export * from './editor'
 export * from './grid'
 export * from './layouts'
 export * from './resolve'

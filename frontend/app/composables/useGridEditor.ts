@@ -1,0 +1,181 @@
+/**
+ * Reactive state for the v2 (Swiss grid) layout editor. The geometry twin of
+ * useTemplateEditor: elements place by grid region, the canvas renders what
+ * the shared resolver says (culling, copy fitting and all), and per-format
+ * adjustments write `regionByClass` entries instead of per-aspect overrides.
+ *
+ * Editing semantics:
+ *  - On the master format, edits write `el.region`.
+ *  - On any other format, region edits write `el.regionByClass[class]` —
+ *    one edit adjusts every format of that class.
+ */
+import { computed, ref } from 'vue'
+
+import { classifyFormat, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import type { ResolvedLayout } from '~~/shared/template-grid/resolve'
+import type {
+  ElementV2, ImageElementV2, Region, ShapeElementV2, TemplateV2, TextElementV2,
+} from '~~/shared/template-grid/types'
+
+const WORST_CASE_COPY
+  = 'A worst-case headline that runs far longer than anyone planned, stretching '
+  + 'across the layout to stress-test wrapping, shrinking and truncation'
+
+function uid(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+export function useGridEditor(initial: TemplateV2) {
+  const template = ref<TemplateV2>(initial)
+  const currentFormat = ref<string>(initial.master in initial.formats
+    ? initial.master
+    : Object.keys(initial.formats)[0])
+  const selectedId = ref<string | null>(null)
+  const dirty = ref(false)
+  const sampleProps = ref<Record<string, unknown>>({})
+  const sampleBrand = ref<Record<string, unknown>>({})
+  const worstCase = ref(false)
+
+  const format = computed(() => template.value.formats[currentFormat.value])
+  const formatClass = computed(() => classifyFormat(format.value))
+  const isMaster = computed(() => currentFormat.value === template.value.master)
+  const metrics = computed(() => gridMetrics(template.value, currentFormat.value))
+
+  const effectiveProps = computed<Record<string, unknown>>(() => {
+    if (!worstCase.value) return sampleProps.value
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(sampleProps.value)) {
+      out[k] = typeof v === 'string' && k.startsWith('text_layer_') ? WORST_CASE_COPY : v
+    }
+    return out
+  })
+
+  const resolved = computed<ResolvedLayout>(() =>
+    resolveFormat(template.value, currentFormat.value, effectiveProps.value, sampleBrand.value))
+
+  const resolvedAll = computed<Record<string, ResolvedLayout>>(() =>
+    Object.fromEntries(Object.keys(template.value.formats).map(k =>
+      [k, resolveFormat(template.value, k, effectiveProps.value, sampleBrand.value)])))
+
+  const selectedElement = computed<ElementV2 | null>(() =>
+    template.value.elements.find(e => e.id === selectedId.value) ?? null)
+
+  const selectedResolved = computed(() =>
+    resolved.value.elements.find(r => r.el.id === selectedId.value) ?? null)
+
+  function elById(id: string): ElementV2 | undefined {
+    return template.value.elements.find(e => e.id === id)
+  }
+
+  function setFormat(key: string) {
+    if (template.value.formats[key]) currentFormat.value = key
+  }
+
+  function setRegion(id: string, region: Region) {
+    const el = elById(id)
+    if (!el) return
+    if (isMaster.value) el.region = region
+    else el.regionByClass = { ...el.regionByClass, [formatClass.value]: region }
+    dirty.value = true
+  }
+
+  function hasClassRegion(id: string): boolean {
+    return elById(id)?.regionByClass?.[formatClass.value] != null
+  }
+
+  function clearClassRegion(id: string) {
+    const el = elById(id)
+    if (!el?.regionByClass) return
+    delete el.regionByClass[formatClass.value]
+    if (!Object.keys(el.regionByClass).length) delete el.regionByClass
+    dirty.value = true
+  }
+
+  function patchElement(id: string, patch: Partial<ElementV2>) {
+    const el = elById(id)
+    if (!el) return
+    Object.assign(el, patch)
+    dirty.value = true
+  }
+
+  function patchStyle(id: string, patch: Record<string, unknown>) {
+    const el = elById(id)
+    if (!el) return
+    ;(el as any).style = { ...(el as any).style, ...patch }
+    dirty.value = true
+  }
+
+  function nextPriority(): number {
+    return Math.max(0, ...template.value.elements.map(e => e.priority)) + 1
+  }
+
+  function addElement(el: ElementV2) {
+    template.value.elements.push(el)
+    selectedId.value = el.id
+    dirty.value = true
+  }
+
+  function addText() {
+    addElement({
+      id: uid('text'), type: 'text', priority: nextPriority(),
+      level: 'body', content: 'New text',
+      region: { col: 1, colSpan: 3, row: 1, rowSpan: 1 },
+      style: { color: '#ffffff' },
+    } satisfies TextElementV2)
+  }
+
+  function addImage() {
+    addElement({
+      id: uid('image'), type: 'image', priority: nextPriority(),
+      content: '',
+      region: { col: 2, colSpan: 4, row: 2, rowSpan: 4 },
+      style: { fit: 'cover' },
+    } satisfies ImageElementV2)
+  }
+
+  function addShape() {
+    addElement({
+      id: uid('shape'), type: 'shape', priority: nextPriority(),
+      shape: 'rect',
+      region: { col: 1, colSpan: 2, row: 1, rowSpan: 2 },
+      style: { fill: '#96b4ff55' },
+    } satisfies ShapeElementV2)
+  }
+
+  function removeElement(id: string) {
+    const idx = template.value.elements.findIndex(e => e.id === id)
+    if (idx < 0) return
+    template.value.elements.splice(idx, 1)
+    if (selectedId.value === id) selectedId.value = null
+    dirty.value = true
+  }
+
+  // Array order is z-order (later = on top) — same contract as
+  // useTemplateEditor so LayersPanel can be reused verbatim.
+  function moveElementTo(id: string, targetIdx: number) {
+    const idx = template.value.elements.findIndex(e => e.id === id)
+    if (idx < 0) return
+    const clamped = Math.max(0, Math.min(template.value.elements.length - 1, targetIdx))
+    if (clamped === idx) return
+    const [el] = template.value.elements.splice(idx, 1)
+    template.value.elements.splice(clamped, 0, el)
+    dirty.value = true
+  }
+
+  function moveElement(id: string, dir: 'up' | 'down') {
+    const idx = template.value.elements.findIndex(e => e.id === id)
+    if (idx < 0) return
+    moveElementTo(id, dir === 'up' ? idx + 1 : idx - 1)
+  }
+
+  return {
+    template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
+    format, formatClass, isMaster, metrics, resolved, resolvedAll,
+    selectedElement, selectedResolved,
+    setFormat, setRegion, hasClassRegion, clearClassRegion,
+    patchElement, patchStyle,
+    addText, addImage, addShape, removeElement, moveElement, moveElementTo,
+  }
+}
+
+export type GridEditorContext = ReturnType<typeof useGridEditor>
