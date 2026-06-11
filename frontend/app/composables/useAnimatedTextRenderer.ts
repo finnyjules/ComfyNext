@@ -16,7 +16,13 @@ import { powerOut, easeInOutQuad as easeInOut, elasticOut, bounceOut } from '~/l
 
 // ── Easing helpers (subset of GSAP eases, pure math) ────────────────────────
 
+// Pre-built so per-frame calls don't allocate a closure each time.
+const easeOutQuad = powerOut(2)
+const easeOutCubic = powerOut(3)
+
 function easeOut(t: number, power = 2): number {
+  if (power === 2) return easeOutQuad(t)
+  if (power === 3) return easeOutCubic(t)
   return powerOut(power)(t)
 }
 

@@ -30,13 +30,19 @@ export const bounceOut: EaseFn = (t) => {
   return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375
 }
 
+/** Quantized ease, CSS `steps(n, jump-none)` convention: n output levels
+ *  INCLUDING both endpoints, so f(1)=1 like every other ease here (GSAP's
+ *  SteppedEase is jump-end; for the flicker/glitch uses this feeds, the
+ *  difference is imperceptible and endpoint consistency wins). */
 export function steps(n: number): EaseFn {
   return t => (t >= 1 ? 1 : Math.floor(t * n) / Math.max(1, n - 1))
 }
 
 /** GSAP-style name → EaseFn. Handles the names appearing in kinetic-presets.ts:
  *  powerN.out / powerN.in, back.out(s) / back.in(s), elastic.out(...),
- *  bounce.out, sine.inOut, steps(n), none/linear. Unknown → power2.out. */
+ *  bounce.out, sine.inOut, steps(n), none/linear. Unknown → power2.out.
+ *  Known approximations: powerN.inOut maps to quad in-out (exact only for
+ *  N=2); elastic.* ignores GSAP's amplitude/period params (fixed 1/0.3). */
 export function resolveEase(name: string | undefined): EaseFn {
   if (!name || name === 'power2.out') return powerOut(2)
   if (name === 'none' || name === 'linear') return linear
