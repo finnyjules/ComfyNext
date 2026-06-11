@@ -184,10 +184,13 @@ function onUpstreamChange(ev: Event) {
   if (lastChainIds.includes(changedId) && !animating.value) renderOnce()
 }
 
+// Registered synchronously so the watcher lives in the component's effect scope
+// (registering after an await in onMounted would leak it past unmount).
+watch(() => chain.value.nodeIds, (ids) => { lastChainIds = ids; if (!animating.value) renderOnce() })
+
 onMounted(async () => {
   catalog.value = await fetchShaderFxCatalog().catch(() => null)
   lastChainIds = chain.value.nodeIds
-  watch(() => chain.value.nodeIds, ids => { lastChainIds = ids; if (!animating.value) renderOnce() })
   window.addEventListener('comfynext:shaderfx-changed', onUpstreamChange)
   renderOnce()
 })
