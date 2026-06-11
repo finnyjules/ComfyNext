@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Sparkles } from 'lucide-vue-next'
+import { ChevronDown, Pause, Play, Sparkles } from 'lucide-vue-next'
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import CatalogModal from '~/components/CatalogModal.vue'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { walkShaderChain } from '~/lib/shaderfx/chain'
@@ -163,12 +164,37 @@ function renderFrame(t: number) {
 
 function renderOnce() { renderFrame(frozenTime) }
 
-// ---- gallery picker ----------------------------------------------------------
+// ---- gallery picker (CatalogModal) -------------------------------------------
 const pickerOpen = ref(false)
+const pickerSearch = ref('')
+const pickerFilter = ref('all')
 const thumbs = ref<Record<string, string>>({})
 const thumbCache: Record<string, string> = ((globalThis as any).__shaderFxThumbs ??= {})
 
+function titleCase(s: string): string {
+  return s.replace(/(^|[_\s])(\w)/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase()).trim()
+}
+
+const pickerFilters = computed(() => {
+  const counts = new Map<string, number>()
+  for (const e of catalog.value?.effects ?? []) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
+  return [
+    { id: 'all', label: 'All', count: catalog.value?.effects.length ?? 0 },
+    ...[...counts].map(([id, count]) => ({ id, label: titleCase(id), count })),
+  ]
+})
+
+const pickerItems = computed<EffectDef[]>(() => {
+  const q = pickerSearch.value.trim().toLowerCase()
+  return (catalog.value?.effects ?? []).filter(e =>
+    (pickerFilter.value === 'all' || e.category === pickerFilter.value)
+    && (!q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)),
+  )
+})
+
 async function openPicker() {
+  pickerSearch.value = ''
+  pickerFilter.value = 'all'
   pickerOpen.value = true
   if (!catalog.value) return
   for (const def of catalog.value.effects) {
@@ -180,23 +206,14 @@ async function openPicker() {
       try {
         const out = shaderFx.render(
           [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: texs }],
-          placeholder, 96, 54,
+          placeholder, 192, 108,
         )
-        thumbCache[def.id] = out.toDataURL('image/jpeg', 0.8)
+        thumbCache[def.id] = out.toDataURL('image/jpeg', 0.82)
       } catch { thumbCache[def.id] = '' }
     }
   }
   thumbs.value = { ...thumbCache }
 }
-
-const categories = computed(() => {
-  const map = new Map<string, EffectDef[]>()
-  for (const e of catalog.value?.effects ?? []) {
-    if (!map.has(e.category)) map.set(e.category, [])
-    map.get(e.category)!.push(e)
-  }
-  return map
-})
 
 function pickEffect(id: string) {
   setWidget('effect', id)
@@ -291,17 +308,20 @@ onBeforeUnmount(() => {
     />
 
     <div
-      class="shader-shell rounded-lg overflow-hidden bg-[#0e0e0e] border backdrop-blur-sm"
+      class="shader-shell rounded-lg overflow-hidden bg-black/40 border backdrop-blur-sm"
       :class="data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10'"
     >
       <!-- Header -->
       <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-white/5">
-        <Sparkles class="size-3.5 text-cyan-400 shrink-0" />
+        <Sparkles class="size-3.5 text-white/70 shrink-0" :stroke-width="1.75" />
         <span class="text-[11px] text-white/70 font-medium truncate">{{ effectDef?.name || 'Shader Effect' }}</span>
         <button
-          class="nopan nodrag ml-auto text-[10px] text-white/50 hover:text-white/80 opacity-70 cursor-pointer"
+          class="nopan nodrag ml-auto shrink-0 size-5 rounded-md flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
           :title="playing ? 'Pause preview' : 'Play preview'" @click.stop="playing = !playing"
-        >{{ playing ? 'Pause' : 'Play' }}</button>
+        >
+          <Pause v-if="playing" class="size-3" />
+          <Play v-else class="size-3" />
+        </button>
       </div>
 
       <!-- Live preview -->
@@ -312,69 +332,71 @@ onBeforeUnmount(() => {
           <!-- Draggable center handle (only visible for effects with centerParam) -->
           <div
             v-if="hasCenter"
-            class="nopan nodrag absolute w-3 h-3 -ml-1.5 -mt-1.5 rounded-full border-2 border-white bg-blue-500/70 cursor-move"
+            class="nopan nodrag absolute size-3 -ml-1.5 -mt-1.5 rounded-full border-2 border-white bg-black/30 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] cursor-move"
             :style="centerStyle"
             @pointerdown="onCenterDown"
             @pointermove="onCenterMove"
             @pointerup="onCenterUp"
           />
         </div>
-        <div v-if="glError" class="text-xs text-red-400 p-1">{{ glError }}</div>
+        <div v-if="glError" class="text-[10px] text-red-300/90 px-2 py-1 truncate" :title="glError">{{ glError }}</div>
 
         <!-- Effect picker trigger + param sliders -->
-        <div class="p-2 space-y-1.5">
-          <!-- Gallery picker button -->
+        <div class="p-2 space-y-2">
+          <!-- Gallery picker trigger (field-style, opens CatalogModal) -->
           <button
-            class="nopan nodrag text-xs w-full text-left px-1 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/70 cursor-pointer"
+            class="nopan nodrag w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.06] hover:border-white/20 text-[11px] text-white/80 transition-colors cursor-pointer"
             @click="openPicker"
-          >{{ effectDef?.name ?? 'Choose effect…' }} ▾</button>
+          >
+            <span class="flex-1 min-w-0 truncate text-left">{{ effectDef?.name ?? 'Choose effect…' }}</span>
+            <ChevronDown class="size-3 text-white/40 shrink-0" />
+          </button>
 
           <!-- Manifest-driven param sliders -->
-          <div v-if="effectDef" class="space-y-1">
+          <div v-if="effectDef" class="space-y-1.5">
             <div v-for="p in effectDef.params" :key="p.uniform" class="flex items-center gap-2 text-xs text-white/80">
-              <span class="w-20 truncate opacity-70">{{ p.label }}</span>
+              <span class="w-20 shrink-0 truncate text-white/55">{{ p.label }}</span>
               <input
-                type="range" class="nopan nodrag flex-1 accent-cyan-400" :min="p.min" :max="p.max" :step="p.step"
+                type="range" class="nopan nodrag flex-1 min-w-0 accent-white" :min="p.min" :max="p.max" :step="p.step"
                 :value="uniforms[p.uniform]"
                 @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
               />
-              <span class="w-10 text-right tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+              <span class="w-10 shrink-0 text-right tabular-nums text-white/45">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- Effect gallery picker modal (Teleport to body) -->
-      <Teleport to="body">
-        <div
-          v-if="pickerOpen"
-          class="fixed inset-0 z-[100] flex items-center justify-center p-6"
-          @click.self="pickerOpen = false"
-        >
-          <!-- Backdrop (mirrors CatalogModal) -->
-          <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="pickerOpen = false" />
-          <!-- Panel (mirrors CatalogModal panel classes) -->
-          <div class="relative z-10 bg-[#161616] rounded-xl border border-white/10 shadow-[0_24px_64px_rgba(0,0,0,0.55)] p-4 max-h-[80vh] w-[560px] overflow-y-auto">
-            <div v-for="[cat, effects] in categories" :key="cat" class="mb-3">
-              <div class="text-xs uppercase opacity-50 mb-1">{{ cat }}</div>
-              <div class="grid grid-cols-4 gap-2">
-                <button
-                  v-for="e in effects"
-                  :key="e.id"
-                  class="nopan nodrag rounded-lg overflow-hidden text-left ring-1 ring-white/10 hover:ring-white/40 cursor-pointer"
-                  :class="{ 'ring-2 ring-blue-400': e.id === effectId }"
-                  @click="pickEffect(e.id)"
-                >
-                  <img v-if="thumbs[e.id]" :src="thumbs[e.id]" class="w-full aspect-video object-cover" />
-                  <div v-else class="w-full aspect-video bg-white/5" />
-                  <div class="text-xs p-1 truncate text-white/80">{{ e.name }}</div>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Teleport>
     </div>
+
+    <!-- Effect gallery picker — the app's canonical CatalogModal -->
+    <CatalogModal
+      :open="pickerOpen"
+      title="Shader Effects"
+      subtitle="Pick an effect to apply"
+      :items="pickerItems"
+      :selected-id="effectId"
+      :filters="pickerFilters"
+      :active-filter-id="pickerFilter"
+      :search-query="pickerSearch"
+      search-placeholder="Search effects…"
+      confirm-label="Use effect"
+      empty-message="No effects match your search."
+      @close="pickerOpen = false"
+      @confirm="pickEffect(($event as EffectDef).id)"
+      @update:active-filter-id="pickerFilter = $event"
+      @update:search-query="pickerSearch = $event"
+    >
+      <template #card="{ item }">
+        <div class="aspect-video bg-checker overflow-hidden">
+          <img v-if="thumbs[(item as EffectDef).id]" :src="thumbs[(item as EffectDef).id]" class="w-full h-full object-cover" />
+          <div v-else class="w-full h-full bg-white/[0.03]" />
+        </div>
+        <div class="px-2 py-1.5">
+          <div class="text-[11px] text-white/85 truncate">{{ (item as EffectDef).name }}</div>
+          <div class="text-[10px] text-white/35 capitalize">{{ (item as EffectDef).category }}</div>
+        </div>
+      </template>
+    </CatalogModal>
   </div>
 </template>
 
