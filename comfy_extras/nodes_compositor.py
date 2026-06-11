@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from fractions import Fraction
 
@@ -326,10 +327,20 @@ class CompositorNode(IO.ComfyNode):
             for filename in rendered:
                 try:
                     rgb, alpha = _load_motion_frame(str(filename))
+                    # A corrupt/partial upload can mix resolutions; torch.stack
+                    # would hard-error, so drop frames that disagree with frame 0
+                    # (the editor always re-bakes the whole sequence at one size).
+                    if frames and rgb.shape != frames[0].shape:
+                        logging.warning("[Compositor] motion frame %s has size %s != %s — skipped (re-bake to fix)",
+                                        filename, tuple(rgb.shape[:2]), tuple(frames[0].shape[:2]))
+                        continue
                     frames.append(rgb)
                     alphas.append(alpha)
                 except Exception:
                     continue  # skip frames that went missing from input/
+            if not frames and rendered:
+                logging.warning("[Compositor] motion path: all %d baked frames failed to load — "
+                                "falling back to the static composite (re-bake the Frame)", len(rendered))
             if frames:
                 batch = torch.stack(frames, dim=0)            # [N,H,W,3]
                 fps = max(1, int(motion.get("fps", 30)))
