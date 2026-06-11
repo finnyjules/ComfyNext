@@ -15,6 +15,22 @@
 
 export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
 
+// ── Motion painter indirection ───────────────────────────────────────────────
+// paintLayerStack(t) needs the motion module, but motion/paint.ts imports
+// drawLocalLayer from THIS file — a static import here would be a cycle.
+// paint.ts registers its functions on first import; callers that pass a time
+// (modal preview, bake) import '~/lib/motion/paint' and guarantee registration.
+interface MotionPainter {
+  motionStateFor: (layer: LocalLayer, t: number, motion: { fps: number; duration: number }) =>
+    { visible: boolean } | null
+  drawLayerWithMotion: (
+    ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number,
+    maskLayer: LocalLayer | null, st: any, maskState: any,
+  ) => void
+}
+let _motionPainterImpl: MotionPainter | null = null
+export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl = impl }
+
 // ── Paint (solid color or gradient) ──────────────────────────────────────────
 // A fill/stroke can be a plain CSS color string, or a gradient. Gradient
 // geometry is resolution-independent: it's resolved against the layer's local
@@ -803,6 +819,9 @@ export function paintLayerStack(
   items: StackItem[],
   localLayers: LocalLayer[],
   skip?: (layer: LocalLayer) => boolean,
+  /** Motion time in seconds. Undefined ⇒ static render, exactly as before. */
+  t?: number,
+  motion?: { fps: number; duration: number },
 ) {
   // Layers used as a mask (referenced by another's maskedById) only clip — they
   // don't paint on their own.
@@ -819,6 +838,21 @@ export function paintLayerStack(
     )
     if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
     const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+    if (t !== undefined && motion && layer.animation && _motionPainterImpl) {
+      const { motionStateFor, drawLayerWithMotion } = _motionPainterImpl
+      const st = motionStateFor(layer, t, motion)
+      if (st) {
+        if (!st.visible) continue
+        const maskState = maskLayer?.animation ? motionStateFor(maskLayer, t, motion) : null
+        if (maskState && !maskState.visible) {
+          // Mask layer is off-screen at t: draw the content unmasked.
+          drawLayerWithMotion(ctx, layer, W, H, null, st, null)
+        } else {
+          drawLayerWithMotion(ctx, layer, W, H, maskLayer, st, maskState)
+        }
+        continue
+      }
+    }
     drawLocalLayer(ctx, layer, W, H, maskLayer)
   }
 }
