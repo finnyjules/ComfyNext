@@ -16,6 +16,7 @@ import { Resvg } from '@resvg/resvg-js'
 import satori from 'satori'
 
 import type { RenderRequest } from '~~/server/templates/schema'
+import { readManifest, USER_FONTS_DIR } from '~~/server/templates/fonts-store'
 import { templateToSatori } from '~~/server/templates/translate'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import { resolveTokens } from '~~/shared/template-grid/tokens'
@@ -48,6 +49,32 @@ async function loadCuratedFonts(): Promise<LoadedFont[]> {
     }
   }
   curatedCache = out
+  return out
+}
+
+// Uploaded ("Brand fonts") families — read from the gitignored user dir each
+// render (few, small files; avoids cross-render staleness on re-upload). The
+// single-covers-both manifest mirror means a one-file family registers 400+700.
+async function loadUploadedFonts(): Promise<LoadedFont[]> {
+  const manifest = await readManifest()
+  const out: LoadedFont[] = []
+  const bytesByFile = new Map<string, ArrayBuffer>()  // mirror reads once per render
+  for (const fam of manifest) {
+    for (const weight of ['400', '700'] as const) {
+      const file = fam.weights[weight]
+      if (!file) continue
+      let data = bytesByFile.get(file)
+      if (!data) {
+        try {
+          data = toArrayBuffer(await readFile(join(USER_FONTS_DIR, file)))
+        } catch {
+          continue // file removed out from under the manifest — skip
+        }
+        bytesByFile.set(file, data)
+      }
+      out.push({ name: fam.family, data, weight: Number(weight) as 400 | 700, style: 'normal' })
+    }
+  }
   return out
 }
 
@@ -107,12 +134,15 @@ function collectFamilies(template: unknown, brand: Record<string, unknown>): str
 
 async function loadFonts(template: unknown, brand: Record<string, unknown>): Promise<LoadedFont[]> {
   const merged = { ...((template as any)?.brand ?? {}), ...brand }
+  // Tiers: curated → uploaded → Google. Google fills only families in neither
+  // local set, so an uploaded family wins a name collision with a Google one.
   const curated = await loadCuratedFonts()
-  const curatedNames = new Set(curated.map(f => f.name))
+  const uploaded = await loadUploadedFonts()
+  const localNames = new Set([...curated, ...uploaded].map(f => f.name))
   const extra = (await Promise.all(
-    collectFamilies(template, merged).filter(n => !curatedNames.has(n)).map(loadGoogleFamily),
+    collectFamilies(template, merged).filter(n => !localNames.has(n)).map(loadGoogleFamily),
   )).flat()
-  return [...curated, ...extra]
+  return [...curated, ...uploaded, ...extra]
 }
 
 export default defineEventHandler(async (event) => {

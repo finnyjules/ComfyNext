@@ -6,6 +6,7 @@ interface FontEntry {
   name: string
   category: string
   curated: boolean
+  uploaded?: boolean   // user-uploaded licensed font (top section)
 }
 
 const GOOGLE_FONT_LIST: Omit<FontEntry, 'curated'>[] = [
@@ -66,12 +67,27 @@ const GOOGLE_FONT_LIST: Omit<FontEntry, 'curated'>[] = [
 
 const CURATED_NAMES = new Set(TEMPLATE_FONTS.map(f => f.name))
 
-const ALL_FONTS: FontEntry[] = [
-  ...TEMPLATE_FONTS.map(f => ({ name: f.name, category: f.category as string, curated: true })),
-  ...GOOGLE_FONT_LIST.filter(f => !CURATED_NAMES.has(f.name)).map(f => ({ ...f, curated: false })),
-]
+const { fonts: uploadedFonts, ensure: ensureUploadedFont } = useUploadedFonts()
 
-const KNOWN_NAMES = new Set(ALL_FONTS.map(f => f.name))
+// Uploaded families take precedence over curated/Google of the same name.
+const ALL_FONTS = computed<FontEntry[]>(() => {
+  const uploadedNames = new Set(uploadedFonts.value.map(f => f.family))
+  return [
+    ...uploadedFonts.value.map(f => ({ name: f.family, category: 'brand', curated: false, uploaded: true })),
+    ...TEMPLATE_FONTS.filter(f => !uploadedNames.has(f.name))
+      .map(f => ({ name: f.name, category: f.category as string, curated: true })),
+    ...GOOGLE_FONT_LIST.filter(f => !CURATED_NAMES.has(f.name) && !uploadedNames.has(f.name))
+      .map(f => ({ ...f, curated: false })),
+  ]
+})
+
+const KNOWN_NAMES = computed(() => new Set(ALL_FONTS.value.map(f => f.name)))
+
+/** Load the real face for previews — uploaded via @font-face, else Google. */
+function ensurePreview(f: FontEntry) {
+  if (f.uploaded) ensureUploadedFont(f.name)
+  else if (!f.curated) ensureGoogleFont(f.name)
+}
 
 const props = defineProps<{ modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [v: string] }>()
@@ -86,19 +102,19 @@ const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return ALL_FONTS
-  return ALL_FONTS.filter(f => f.name.toLowerCase().includes(q))
+  if (!q) return ALL_FONTS.value
+  return ALL_FONTS.value.filter(f => f.name.toLowerCase().includes(q))
 })
 
 const showCustomApply = computed(() => {
   const q = search.value.trim()
-  return q.length > 2 && !KNOWN_NAMES.has(q) && filtered.value.length === 0
+  return q.length > 2 && !KNOWN_NAMES.value.has(q) && filtered.value.length === 0
 })
 
-// CSS for each Google Font is tiny — load eagerly so previews render on first paint.
-// Actual woff2 files only download when the browser encounters that font-family in DOM.
+// CSS for each preview face is tiny — load eagerly so previews render on first
+// paint. Uploaded faces inject an @font-face; Google fonts a <link>.
 watch(filtered, (fonts) => {
-  for (const f of fonts) if (!f.curated) ensureGoogleFont(f.name)
+  for (const f of fonts) ensurePreview(f)
 })
 
 function computePosition() {
@@ -116,8 +132,8 @@ function toggle() {
   open.value = true
   nextTick(() => {
     computePosition()
-    // Eagerly load all Google Font CSS previews
-    for (const f of ALL_FONTS) if (!f.curated) ensureGoogleFont(f.name)
+    // Eagerly load all non-curated preview faces (uploaded + Google)
+    for (const f of ALL_FONTS.value) ensurePreview(f)
     nextTick(() => searchRef.value?.focus())
   })
 }
@@ -125,7 +141,9 @@ function toggle() {
 function select(name: string) {
   const fam = name.trim()
   if (!fam) return
-  ensureGoogleFont(fam)
+  // Ensure the real face is available (uploaded → @font-face, else Google).
+  if (uploadedFonts.value.some(f => f.family === fam)) ensureUploadedFont(fam)
+  else ensureGoogleFont(fam)
   emit('update:modelValue', fam)
   open.value = false
 }
@@ -211,9 +229,32 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
           No fonts match "{{ search }}"
         </div>
 
+        <!-- Uploaded (brand) section -->
+        <template v-if="filtered.some(f => f.uploaded)">
+          <div class="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-[0.14em] text-[#96b4ff]/50 font-medium select-none">Brand fonts</div>
+          <button
+            v-for="f in filtered.filter(x => x.uploaded)"
+            :key="f.name"
+            type="button"
+            class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
+            :class="f.name === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            @click="select(f.name)"
+          >
+            <span
+              class="flex-1 text-left text-[15px] text-white leading-tight truncate"
+              :style="{ fontFamily: f.name }"
+            >{{ f.name }}</span>
+            <span class="text-[9px] text-[#96b4ff]/40 uppercase tracking-wider shrink-0 select-none">brand</span>
+            <Check v-if="f.name === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+          </button>
+        </template>
+
         <!-- Curated section -->
         <template v-if="filtered.some(f => f.curated)">
-          <div class="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-[0.14em] text-white/25 font-medium select-none">Curated</div>
+          <div
+            class="px-3 pb-1 text-[9px] uppercase tracking-[0.14em] text-white/25 font-medium select-none"
+            :class="filtered.some(f => f.uploaded) ? 'pt-2.5 border-t border-white/[0.05] mt-0.5' : 'pt-2.5'"
+          >Curated</div>
           <button
             v-for="f in filtered.filter(x => x.curated)"
             :key="f.name"
@@ -232,13 +273,13 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
         </template>
 
         <!-- Google Fonts section -->
-        <template v-if="filtered.some(f => !f.curated)">
+        <template v-if="filtered.some(f => !f.curated && !f.uploaded)">
           <div
             class="px-3 pb-1 text-[9px] uppercase tracking-[0.14em] text-white/25 font-medium select-none"
-            :class="filtered.some(f => f.curated) ? 'pt-2.5 border-t border-white/[0.05] mt-0.5' : 'pt-2.5'"
+            :class="filtered.some(f => f.curated || f.uploaded) ? 'pt-2.5 border-t border-white/[0.05] mt-0.5' : 'pt-2.5'"
           >Google Fonts</div>
           <button
-            v-for="f in filtered.filter(x => !x.curated)"
+            v-for="f in filtered.filter(x => !x.curated && !x.uploaded)"
             :key="f.name"
             type="button"
             class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"

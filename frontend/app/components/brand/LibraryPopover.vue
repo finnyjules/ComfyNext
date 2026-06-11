@@ -83,5 +83,10 @@ const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
       >
       <BrandKitPanel :kit="selected.kit" @update="patchKit" />
     </div>
+
+    <!-- App-wide brand fonts (shared across kits + projects) -->
+    <div class="pt-2 border-t border-white/10">
+      <BrandFontsPanel />
+    </div>
   </div>
 </template>
