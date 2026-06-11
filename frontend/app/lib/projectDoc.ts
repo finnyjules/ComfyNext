@@ -13,7 +13,13 @@
  */
 
 export interface ProjectCanvas { id: string; name: string; workflow: any }
-export interface ProjectDoc { canvases: ProjectCanvas[]; activeCanvasId: string }
+export interface ProjectDoc {
+  canvases: ProjectCanvas[]
+  activeCanvasId: string
+  /** Active brand-library kit for this project (id into /api/brand-kits).
+   *  Unset/null ⇒ no brand theming; all consumers behave as before. */
+  brandKitId?: string | null
+}
 
 export const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
 
