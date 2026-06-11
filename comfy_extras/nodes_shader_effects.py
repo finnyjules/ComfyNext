@@ -94,7 +94,10 @@ class ShaderEffect(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, effect, params, time, duration, fps, seed, resolution, aspect) -> IO.NodeOutput:
+    def execute(cls, effect, params, time, duration, fps, seed, resolution, aspect, image=None) -> IO.NodeOutput:
+        # `image` is an optional input: when unconnected, ComfyUI omits it entirely
+        # (doesn't pass None), so it must default. Inputs are passed by keyword, so
+        # signature order is free — `image` goes last to satisfy Python defaults.
         catalog = load_catalog()
         if effect not in catalog.effects:
             raise ValueError(f"ShaderEffect: unknown effect {effect!r}")

@@ -147,7 +147,7 @@ def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=
     class _Hidden:
         unique_id = "test"
     ShaderEffect.hidden = _Hidden
-    return ShaderEffect.execute(image, effect, params, time, duration, fps, seed, resolution, aspect)
+    return ShaderEffect.execute(effect, params, time, duration, fps, seed, resolution, aspect, image=image)
 
 
 def test_node_still_returns_single_frame():
@@ -241,7 +241,16 @@ def test_node_no_image_non_generative_raises():
         unique_id = "test"
     ShaderEffect.hidden = _Hidden
     with pytest.raises(ValueError, match="needs an image input"):
-        ShaderEffect.execute(None, "halftone", "{}", 0.0, 0.0, 24, 42, 768, "1:1")
+        ShaderEffect.execute("halftone", "{}", 0.0, 0.0, 24, 42, 768, "1:1", image=None)
+
+
+def test_node_generative_no_image_renders_at_aspect():
+    """Generative effect with no input image synthesizes at resolution/aspect."""
+    class _Hidden:
+        unique_id = "test"
+    ShaderEffect.hidden = _Hidden
+    out = ShaderEffect.execute("aurora", "{}", 0.7, 0.0, 24, 42, 512, "16:9", image=None).args[0]
+    assert out.shape == (1, 288, 512, 3)   # 512 longest edge, 16:9
 
 
 def test_catalog_payload_includes_generative():
