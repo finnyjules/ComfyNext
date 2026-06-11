@@ -11,7 +11,8 @@
  */
 import { computed, ref, watch } from 'vue'
 
-import { classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import { applyArchetype, classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import type { Archetype } from '~~/shared/template-grid/archetypes'
 import type { ResolvedLayout } from '~~/shared/template-grid/resolve'
 import type {
   ElementV2, ImageElementV2, Region, ShapeElementV2, TemplateV2, TextElementV2,
@@ -100,6 +101,26 @@ export function useGridEditor(initial: TemplateV2) {
       }
     }
     dirty.value = true
+  }
+
+  /** Replace the working template wholesale (e.g. loading a saved template),
+   * keeping the editor pointed at a valid format. */
+  function loadTemplate(next: TemplateV2) {
+    template.value = JSON.parse(JSON.stringify(next))
+    if (!template.value.formats[currentFormat.value]) {
+      currentFormat.value = template.value.master in template.value.formats
+        ? template.value.master
+        : Object.keys(template.value.formats)[0]
+    }
+    selectedId.value = null
+    dirty.value = true
+    commitNow()
+  }
+
+  /** Apply an archetype's composition onto the current template (keeps the
+   * format matrix + grid). */
+  function loadArchetype(arch: Archetype) {
+    loadTemplate(applyArchetype(template.value, arch))
   }
 
   /** Patch the template's brand kit. Empty-string values clear a key. */
@@ -340,6 +361,7 @@ export function useGridEditor(initial: TemplateV2) {
     format, formatClass, isMaster, metrics, resolved, resolvedAll, effectiveBrand,
     selectedElement, selectedResolved,
     setFormat, setFormatDims, setGridSpec, setBrand, setRegion, hasClassRegion, clearClassRegion,
+    loadTemplate, loadArchetype,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
     toggleHidden, toggleLocked, isHidden, isLocked,
