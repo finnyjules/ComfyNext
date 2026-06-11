@@ -18,6 +18,7 @@ import satori from 'satori'
 import type { RenderRequest } from '~~/server/templates/schema'
 import { templateToSatori } from '~~/server/templates/translate'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
+import { resolveTokens } from '~~/shared/template-grid/tokens'
 
 interface LoadedFont {
   name: string
@@ -87,26 +88,29 @@ async function loadGoogleFamily(family: string): Promise<LoadedFont[]> {
 }
 
 /** Every fontFamily referenced by the template (v1 incl. per-aspect
- * overrides, v2 element styles). */
-function collectFamilies(template: unknown): string[] {
+ * overrides, v2 element styles). `{{ brand.* }}` tokens resolve against the
+ * merged brand so brand-bound fonts are fetched too. */
+function collectFamilies(template: unknown, brand: Record<string, unknown>): string[] {
   const fams = new Set<string>()
+  const resolve = (f: unknown) => {
+    if (typeof f !== 'string' || !f.trim()) return
+    const r = String(resolveTokens(f.trim(), {}, brand)).trim()
+    if (r) fams.add(r)
+  }
   const elements = (template as { elements?: unknown[] })?.elements ?? []
   for (const el of elements as any[]) {
-    const f = el?.style?.fontFamily
-    if (typeof f === 'string' && f.trim()) fams.add(f.trim())
-    for (const ov of Object.values(el?.overrides ?? {})) {
-      const of = (ov as any)?.style?.fontFamily
-      if (typeof of === 'string' && of.trim()) fams.add(of.trim())
-    }
+    resolve(el?.style?.fontFamily)
+    for (const ov of Object.values(el?.overrides ?? {})) resolve((ov as any)?.style?.fontFamily)
   }
   return [...fams]
 }
 
-async function loadFonts(template: unknown): Promise<LoadedFont[]> {
+async function loadFonts(template: unknown, brand: Record<string, unknown>): Promise<LoadedFont[]> {
+  const merged = { ...((template as any)?.brand ?? {}), ...brand }
   const curated = await loadCuratedFonts()
   const curatedNames = new Set(curated.map(f => f.name))
   const extra = (await Promise.all(
-    collectFamilies(template).filter(n => !curatedNames.has(n)).map(loadGoogleFamily),
+    collectFamilies(template, merged).filter(n => !curatedNames.has(n)).map(loadGoogleFamily),
   )).flat()
   return [...curated, ...extra]
 }
@@ -117,7 +121,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing `template` in request body.' })
   }
 
-  const fonts = await loadFonts(body.template)
+  const fonts = await loadFonts(body.template, (body.brand ?? {}) as Record<string, unknown>)
 
   const { tree, width, height } = templateToSatori(
     body.template,

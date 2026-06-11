@@ -13,7 +13,7 @@ import type { Region } from '~~/shared/template-grid/types'
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
   template, format, formatClass, metrics, resolved, selectedId,
-  sampleProps, sampleBrand, setRegion,
+  sampleProps, effectiveBrand, setRegion,
 } = ctx
 
 // -- Container sizing (same model as the v1 canvas) -------------------------
@@ -70,7 +70,7 @@ function resolve(s: unknown): string {
   if (typeof s !== 'string') return String(s ?? '')
   return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
     const [scope, key] = path.split('.')
-    const dict = scope === 'props' ? sampleProps.value : scope === 'brand' ? sampleBrand.value : {}
+    const dict = scope === 'props' ? sampleProps.value : scope === 'brand' ? effectiveBrand.value : {}
     return String((dict as any)[key] ?? '')
   })
 }

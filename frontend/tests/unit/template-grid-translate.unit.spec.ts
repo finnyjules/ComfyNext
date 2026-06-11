@@ -61,4 +61,35 @@ describe('templateToSatori (v2)', () => {
     const { width } = templateToSatori(v1 as any, '1x1', {})
     expect(width).toBe(512)
   })
+
+  it('resolves brand tokens from the template-default brand kit', () => {
+    const branded: any = {
+      ...T,
+      brand: { primary: '#E2362B', fontDisplay: 'Bebas Neue' },
+      elements: [
+        { id: 'h', type: 'text', content: 'Hi', level: 'display', priority: 1,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 2 },
+          style: { color: '{{ brand.primary }}', fontFamily: '{{ brand.fontDisplay }}' } },
+      ],
+    }
+    const text = flatten(templateToSatori(branded, '1x1', {}).tree)
+      .find(n => n?.props?.children === 'Hi')
+    expect(text.props.style.color).toBe('#E2362B')
+    expect(text.props.style.fontFamily).toBe('Bebas Neue')
+  })
+
+  it('lets a wired brand socket override the template brand', () => {
+    const branded: any = {
+      ...T,
+      brand: { primary: '#E2362B' },
+      elements: [
+        { id: 'h', type: 'text', content: 'Hi', level: 'display', priority: 1,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 2 },
+          style: { color: '{{ brand.primary }}' } },
+      ],
+    }
+    const text = flatten(templateToSatori(branded, '1x1', {}, { primary: '#00A3FF' }).tree)
+      .find(n => n?.props?.children === 'Hi')
+    expect(text.props.style.color).toBe('#00A3FF')
+  })
 })

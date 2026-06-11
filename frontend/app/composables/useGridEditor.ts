@@ -50,12 +50,19 @@ export function useGridEditor(initial: TemplateV2) {
     return out
   })
 
+  // What {{ brand.* }} resolves to in the editor: the template's own brand kit
+  // under any wired socket brand (sampleBrand) — same precedence as render.
+  const effectiveBrand = computed<Record<string, unknown>>(() => ({
+    ...(template.value.brand ?? {}),
+    ...sampleBrand.value,
+  }))
+
   const resolved = computed<ResolvedLayout>(() =>
-    resolveFormat(template.value, currentFormat.value, effectiveProps.value, sampleBrand.value))
+    resolveFormat(template.value, currentFormat.value, effectiveProps.value, effectiveBrand.value))
 
   const resolvedAll = computed<Record<string, ResolvedLayout>>(() =>
     Object.fromEntries(Object.keys(template.value.formats).map(k =>
-      [k, resolveFormat(template.value, k, effectiveProps.value, sampleBrand.value)])))
+      [k, resolveFormat(template.value, k, effectiveProps.value, effectiveBrand.value)])))
 
   const selectedElement = computed<ElementV2 | null>(() =>
     template.value.elements.find(e => e.id === selectedId.value) ?? null)
@@ -92,6 +99,17 @@ export function useGridEditor(initial: TemplateV2) {
         ;(template.value.grid as any)[k] = Math.max(0, Math.round(v))
       }
     }
+    dirty.value = true
+  }
+
+  /** Patch the template's brand kit. Empty-string values clear a key. */
+  function setBrand(patch: Record<string, string | undefined>) {
+    const brand = (template.value.brand ??= {})
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null || v === '') delete (brand as any)[k]
+      else (brand as any)[k] = v
+    }
+    if (!Object.keys(brand).length) delete template.value.brand
     dirty.value = true
   }
 
@@ -319,9 +337,9 @@ export function useGridEditor(initial: TemplateV2) {
 
   return {
     template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
-    format, formatClass, isMaster, metrics, resolved, resolvedAll,
+    format, formatClass, isMaster, metrics, resolved, resolvedAll, effectiveBrand,
     selectedElement, selectedResolved,
-    setFormat, setFormatDims, setGridSpec, setRegion, hasClassRegion, clearClassRegion,
+    setFormat, setFormatDims, setGridSpec, setBrand, setRegion, hasClassRegion, clearClassRegion,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
     toggleHidden, toggleLocked, isHidden, isLocked,
