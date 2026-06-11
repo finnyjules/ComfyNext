@@ -133,10 +133,13 @@ class ShaderEffect(IO.ComfyNode):
         def base_for(fi: int):
             return np.ascontiguousarray(np_img[fi]) if np_img is not None else np.zeros((h, w, 3), dtype=np.float32)
 
+        # u_hasInput lets hybrid effects (e.g. fbm) modulate a connected image
+        # vs. synthesize from scratch when nothing is wired in.
+        has_input = 1.0 if image is not None else 0.0
         jobs = [
             {
                 "image": base_for(fi) if (i == 0 or fi != plan[i - 1][0]) else None,
-                "uniforms": {**uniforms, "u_time": t, "u_seed": float(seed % 10000)},
+                "uniforms": {**uniforms, "u_time": t, "u_seed": float(seed % 10000), "u_hasInput": has_input},
             }
             for i, (fi, t) in enumerate(plan)
         ]

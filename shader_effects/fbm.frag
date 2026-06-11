@@ -4,6 +4,7 @@ uniform sampler2D u_image0;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_seed;
+uniform float u_hasInput;
 in vec2 v_texCoord;
 layout(location = 0) out vec4 fragColor0;
 
@@ -31,6 +32,7 @@ uniform float u_speed;
 uniform float u_warp;
 uniform float u_hue;
 uniform float u_contrast;
+uniform float u_mix;
 
 vec3 pal(float t) {
     return 0.5 + 0.5 * cos(6.28318 * (vec3(1.0) * t + vec3(0.0, 0.33, 0.66) + u_hue));
@@ -43,9 +45,18 @@ void main() {
 
     // Domain-warped fractal field — flowing smoke / marble.
     vec2 q = vec2(fbm(p + vec2(0.0, t), u_seed), fbm(p + vec2(3.7, -t), u_seed + 5.0));
-    float v = fbm(p + u_warp * q + t * 0.5, u_seed + 17.0);
-    v = clamp((v - 0.5) * (1.0 + u_contrast * 2.0) + 0.5, 0.0, 1.0);
+    float vv = fbm(p + u_warp * q + t * 0.5, u_seed + 17.0);
+    vv = clamp((vv - 0.5) * (1.0 + u_contrast * 2.0) + 0.5, 0.0, 1.0);
+    vec3 field = pal(0.1 + vv + length(q) * 0.15);
 
-    vec3 col = pal(0.1 + v + length(q) * 0.15);
-    fragColor0 = vec4(col, 1.0);
+    if (u_hasInput > 0.5) {
+        // Modulate a connected image: warp it along the fbm flow, then tint by the field.
+        vec2 disp = (q - 0.5) * u_warp * 0.12;
+        vec3 img = texture(u_image0, clamp(v_texCoord + disp, 0.0, 1.0)).rgb;
+        vec3 tinted = img * (0.4 + 1.2 * field);            // field modulates the image colour
+        fragColor0 = vec4(clamp(mix(img, tinted, u_mix), 0.0, 1.0), 1.0);
+    } else {
+        // No input: the pure generative field.
+        fragColor0 = vec4(field, 1.0);
+    }
 }

@@ -58,7 +58,7 @@ def main() -> None:
                 textures[t["uniform"]] = np.asarray(tex, dtype=np.float32) / 255.0
                 for k, v in t.get("extraUniforms", {}).items():
                     uniforms[k] = float(v)
-            jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": GOLDEN_TIME, "u_seed": GOLDEN_SEED}}]
+            jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": GOLDEN_TIME, "u_seed": GOLDEN_SEED, "u_hasInput": 1.0}}]
             out = render_effect(eff.source, size, size, jobs, extra_textures=textures, passes=eff.passes)[0]
             save_png(out[..., :3], os.path.join(HERE, f"{eff.id}_{size}.png"))
             print(f"golden: {eff.id}_{size}.png")

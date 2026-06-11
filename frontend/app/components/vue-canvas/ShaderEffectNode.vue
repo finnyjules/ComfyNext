@@ -132,7 +132,9 @@ function buildPasses(t: number) {
     .flatMap((p) => {
       const def = catalog.value!.effects.find(e => e.id === p.effectId)
       if (!def) return []
-      const uniforms = { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, ...textureUniforms(def) }
+      // u_hasInput: 1 when a real image feeds the chain, 0 for standalone/placeholder
+      // — lets hybrid effects (fbm) modulate the image or synthesize from scratch.
+      const uniforms = { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, u_hasInput: chain.value.baseUrl ? 1 : 0, ...textureUniforms(def) }
       return expandPasses(def.id, def.source, uniforms, textureSources(def), def.passes ?? 1)
     }) as any[]
 }
