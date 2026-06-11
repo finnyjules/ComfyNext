@@ -82,6 +82,46 @@ function pick(key: string) {
   addOpen.value = false
 }
 
+// The popover is teleported to <body> so the rail's overflow-x-auto (which also
+// clips vertically) and the topbar height don't hide it — same fix as FontPicker.
+const addBtnRef = ref<HTMLButtonElement>()
+const addPos = ref({ top: 0, left: 0 })
+
+function openAdd() {
+  const r = addBtnRef.value?.getBoundingClientRect()
+  if (!r) return
+  const width = 240
+  addPos.value = {
+    top: r.bottom + 6,
+    left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
+  }
+  addOpen.value = true
+}
+function toggleAdd() {
+  if (addOpen.value) addOpen.value = false
+  else openAdd()
+}
+function onAddClickOutside(e: MouseEvent) {
+  if (!addOpen.value) return
+  const el = e.target as Node
+  if (addBtnRef.value?.contains(el)) return
+  if (document.getElementById('outputs-add-dp')?.contains(el)) return
+  addOpen.value = false
+}
+// Capture Escape before the host modal's window listener so it closes the
+// popover instead of the whole editor.
+function onAddKey(e: KeyboardEvent) {
+  if (addOpen.value && e.key === 'Escape') { e.stopPropagation(); addOpen.value = false }
+}
+onMounted(() => {
+  document.addEventListener('mousedown', onAddClickOutside, true)
+  window.addEventListener('keydown', onAddKey, true)
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onAddClickOutside, true)
+  window.removeEventListener('keydown', onAddKey, true)
+})
+
 // -- Inline rename ------------------------------------------------------------
 const renamingId = ref<string | null>(null)
 const renameDraft = ref('')
@@ -167,18 +207,25 @@ function commitRename() {
     </div>
 
     <!-- Add output -->
-    <div class="relative shrink-0 self-stretch flex">
+    <div class="shrink-0 self-stretch flex">
       <button
+        ref="addBtnRef"
         class="my-auto h-[52px] w-9 rounded-md border border-dashed flex items-center justify-center transition-colors cursor-pointer"
         :class="addOpen ? 'border-[#96b4ff]/60 bg-[#96b4ff]/10 text-[#c9d6ff]' : 'border-white/15 text-white/40 hover:text-white hover:border-white/30 hover:bg-white/[0.03]'"
         title="Add an output format"
-        @click="addOpen = !addOpen"
+        @click="toggleAdd"
       >
         <Plus class="size-4" />
       </button>
+    </div>
+
+    <!-- Teleported to body: the rail's overflow + the topbar would clip it. -->
+    <Teleport to="body">
       <div
         v-if="addOpen"
-        class="absolute top-[58px] left-0 z-30 w-60 max-h-80 overflow-y-auto rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-1.5"
+        id="outputs-add-dp"
+        class="fixed z-[9999] w-60 max-h-80 overflow-y-auto rounded-lg bg-[#161616] border border-white/10 shadow-[0_12px_48px_rgba(0,0,0,0.7)] p-1.5"
+        :style="{ top: `${addPos.top}px`, left: `${addPos.left}px` }"
       >
         <p class="px-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35">Add output</p>
         <button
@@ -198,6 +245,6 @@ function commitRename() {
           <span v-if="countFor(f.key)" class="shrink-0 text-[9px] text-[#96b4ff]/80">+ variation</span>
         </button>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
