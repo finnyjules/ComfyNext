@@ -42,7 +42,7 @@ function patchSpecNum(key: 'in' | 'out' | 'loop', field: 'duration' | 'stagger',
       <input
         type="number" min="0.1" step="0.1" :value="animation?.duration ?? ''" placeholder="to end"
         class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
-        @change="(e: Event) => { const v = (e.target as HTMLInputElement).value; patch({ duration: v === '' ? undefined : Math.max(0.1, Number(v)) }) }"
+        @change="(e: Event) => { const v = (e.target as HTMLInputElement).value; patch({ duration: v === '' ? undefined : Math.max(0.1, Number(v) || 0.1) }) }"
       >
     </label>
     <div v-for="key in (['in', 'out', 'loop'] as const)" :key="key" class="space-y-1">

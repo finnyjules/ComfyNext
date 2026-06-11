@@ -824,7 +824,9 @@ function setMotion(patch: Partial<FrameMotion>) {
   const p = (node.data.properties ||= {})
   p.comfynext_motion = { ...motionDoc.value, ...patch }
   if (previewT.value != null) {
-    previewT.value = Math.min(previewT.value, motionDoc.value.duration)
+    // Read the new duration from the patch — the computed may lag the in-place
+    // properties mutation depending on the node object's reactivity depth.
+    previewT.value = Math.min(previewT.value, patch.duration ?? motionDoc.value.duration)
     renderStack()
   }
 }
@@ -843,6 +845,7 @@ function tickPlayback(now: number) {
   rafId = requestAnimationFrame(tickPlayback)
 }
 function play() {
+  cancelAnimationFrame(rafId) // never stack a second rAF chain
   playing.value = true
   playStartT = previewT.value ?? 0
   playStartWall = performance.now()
