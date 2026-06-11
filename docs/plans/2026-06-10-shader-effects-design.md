@@ -1,7 +1,7 @@
 # Shader Effects — Unicorn Studio-style shader nodes
 
 **Date:** 2026-06-10
-**Status:** Approved design, pending implementation plan
+**Status:** v1 implemented (feat/shader-effects, 2026-06-10) — 14 effects, parity-verified
 
 ## Goal
 
