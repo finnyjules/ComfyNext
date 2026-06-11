@@ -1494,6 +1494,159 @@
           "step": 0.01
         }
       ]
+    },
+    {
+      "id": "chromatic_aberration",
+      "name": "Chromatic Aberration",
+      "category": "lens",
+      "animated": false,
+      "passes": 1,
+      "centerParam": [
+        "u_centerX",
+        "u_centerY"
+      ],
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.08,
+          "default": 0.02,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "id": "fisheye",
+      "name": "Fisheye",
+      "category": "lens",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_strength",
+          "label": "Strength",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.6,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_zoom",
+          "label": "Zoom",
+          "type": "float",
+          "min": 0.5,
+          "max": 1.5,
+          "default": 1.0,
+          "step": 0.02
+        }
+      ]
+    },
+    {
+      "id": "lens_distortion",
+      "name": "Lens Distortion",
+      "category": "lens",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": -0.6,
+          "max": 0.6,
+          "default": 0.25,
+          "step": 0.02
+        }
+      ]
+    },
+    {
+      "id": "dot_screen",
+      "name": "Dot Screen",
+      "category": "lens",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_size",
+          "label": "Dot Size",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.06,
+          "default": 0.016,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_angle",
+          "label": "Angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 90.0,
+          "default": 15.0,
+          "step": 1.0
+        }
+      ]
+    },
+    {
+      "id": "defocus_bokeh",
+      "name": "Defocus Bokeh",
+      "category": "lens",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.08,
+          "default": 0.025,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_highlight",
+          "label": "Highlight",
+          "type": "float",
+          "min": 0.0,
+          "max": 4.0,
+          "default": 1.5,
+          "step": 0.1
+        }
+      ]
     }
   ]
 }
