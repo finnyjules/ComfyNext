@@ -103,4 +103,32 @@ describe('useGridEditor', () => {
     expect(ed.template.value.elements).toHaveLength(1)
     expect(ed.selectedId.value).toBeNull()
   })
+
+  it('setFormatDims overrides and resets per-format grid dimensions', () => {
+    const ed = useGridEditor(fixture())
+    ed.setFormatDims('1x1', { cols: 12, rows: 8 })
+    expect(ed.template.value.formats['1x1'].cols).toBe(12)
+    expect(ed.metrics.value.cols).toBe(12)
+    expect(ed.metrics.value.rows).toBe(8)
+    ed.setFormatDims('1x1', { cols: undefined, rows: undefined })
+    expect(ed.template.value.formats['1x1'].cols).toBeUndefined()
+    expect(ed.metrics.value.cols).toBe(6)   // class default again
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('setFormatDims clamps to sane bounds', () => {
+    const ed = useGridEditor(fixture())
+    ed.setFormatDims('1x1', { cols: 99, rows: 0 })
+    expect(ed.template.value.formats['1x1'].cols).toBe(24)
+    expect(ed.template.value.formats['1x1'].rows).toBe(1)
+  })
+
+  it('setGridSpec patches gutter/margin and reflows metrics', () => {
+    const ed = useGridEditor(fixture())
+    ed.setGridSpec({ gutter: 48, margin: 120 })
+    expect(ed.template.value.grid.gutter).toBe(48)
+    expect(ed.metrics.value.margin).toBe(120)
+    // inner = 1080 - 240 = 840; cell = (840 - 5*48)/6 = 100
+    expect(ed.metrics.value.cellW).toBeCloseTo(100, 5)
+  })
 })

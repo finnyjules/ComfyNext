@@ -71,6 +71,30 @@ export function useGridEditor(initial: TemplateV2) {
     if (template.value.formats[key]) currentFormat.value = key
   }
 
+  /** Override (or reset, by passing undefined) a format's grid dimensions.
+   * Clamped to 1–24; the class default applies when unset. */
+  function setFormatDims(key: string, dims: { cols?: number | undefined; rows?: number | undefined }) {
+    const f = template.value.formats[key]
+    if (!f) return
+    for (const k of ['cols', 'rows'] as const) {
+      if (!(k in dims)) continue
+      const v = dims[k]
+      if (v == null) delete f[k]
+      else f[k] = Math.min(24, Math.max(1, Math.round(v)))
+    }
+    dirty.value = true
+  }
+
+  /** Patch template-wide grid metrics (gutter/margin/baseline, master px). */
+  function setGridSpec(patch: Partial<TemplateV2['grid']>) {
+    for (const [k, v] of Object.entries(patch)) {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        ;(template.value.grid as any)[k] = Math.max(0, Math.round(v))
+      }
+    }
+    dirty.value = true
+  }
+
   function setRegion(id: string, region: Region) {
     const el = elById(id)
     if (!el) return
@@ -172,7 +196,7 @@ export function useGridEditor(initial: TemplateV2) {
     template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
     format, formatClass, isMaster, metrics, resolved, resolvedAll,
     selectedElement, selectedResolved,
-    setFormat, setRegion, hasClassRegion, clearClassRegion,
+    setFormat, setFormatDims, setGridSpec, setRegion, hasClassRegion, clearClassRegion,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
   }

@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { CaseSensitive, ImagePlus, Save, Square, Type as TypeIcon } from 'lucide-vue-next'
+import { CaseSensitive, Grid3x3, ImagePlus, Save, Square, Type as TypeIcon } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -51,6 +51,25 @@ function handleSave() {
   emit('save', JSON.parse(JSON.stringify(template.value)))
   dirty.value = false
 }
+
+// -- Grid settings popover ----------------------------------------------------
+
+const gridPanelOpen = ref(false)
+const { currentFormat, format, formatClass, metrics } = ctx
+
+/** Class default dims, shown as placeholders so "unset" reads as automatic. */
+const classDefaultDims = computed(() => {
+  const d = { square: [6, 6], portrait: [4, 8], landscape: [8, 4], strip: [12, 1], skyscraper: [3, 10] }[formatClass.value]
+  return { cols: d[0], rows: d[1] }
+})
+
+function onDims(field: 'cols' | 'rows', raw: string) {
+  ctx.setFormatDims(currentFormat.value, { [field]: raw === '' ? undefined : Number(raw) })
+}
+function onGrid(field: 'gutter' | 'margin', raw: string) {
+  const v = Number(raw)
+  if (Number.isFinite(v)) ctx.setGridSpec({ [field]: v })
+}
 </script>
 
 <template>
@@ -65,6 +84,80 @@ function handleSave() {
 
       <div class="flex-1 min-w-0">
         <TemplatesGridFormatTabs />
+      </div>
+
+      <div class="relative">
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="gridPanelOpen ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+          title="Grid settings — columns, rows, gutter, margin"
+          @click="gridPanelOpen = !gridPanelOpen"
+        >
+          <Grid3x3 class="size-4" />
+          Grid
+        </button>
+        <div
+          v-if="gridPanelOpen"
+          class="absolute top-10 left-0 z-20 w-64 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
+        >
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
+              {{ currentFormat }} grid <span class="text-white/25 normal-case tracking-normal">· {{ formatClass }} default {{ classDefaultDims.cols }}×{{ classDefaultDims.rows }}</span>
+            </p>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-1.5">
+                <span class="text-[11px] text-white/40 w-8">Cols</span>
+                <input
+                  type="number" min="1" max="24" :value="format.cols ?? ''" :placeholder="String(classDefaultDims.cols)"
+                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+                  @change="(e: any) => onDims('cols', e.target.value)"
+                >
+              </label>
+              <label class="flex items-center gap-1.5">
+                <span class="text-[11px] text-white/40 w-8">Rows</span>
+                <input
+                  type="number" min="1" max="24" :value="format.rows ?? ''" :placeholder="String(classDefaultDims.rows)"
+                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+                  @change="(e: any) => onDims('rows', e.target.value)"
+                >
+              </label>
+            </div>
+            <button
+              v-if="format.cols != null || format.rows != null"
+              class="mt-1.5 text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+              @click="ctx.setFormatDims(currentFormat, { cols: undefined, rows: undefined })"
+            >
+              Reset to class default
+            </button>
+            <p class="mt-1 text-[10px] text-white/30 leading-snug">
+              Applies to this format only. Clear a field to go back to automatic.
+            </p>
+          </div>
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Spacing <span class="text-white/25 normal-case tracking-normal">· master px, scales per format</span></p>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-1.5">
+                <span class="text-[11px] text-white/40 w-11">Gutter</span>
+                <input
+                  type="number" min="0" :value="template.grid.gutter"
+                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+                  @change="(e: any) => onGrid('gutter', e.target.value)"
+                >
+              </label>
+              <label class="flex items-center gap-1.5">
+                <span class="text-[11px] text-white/40 w-11">Margin</span>
+                <input
+                  type="number" min="0" :value="template.grid.margin"
+                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+                  @change="(e: any) => onGrid('margin', e.target.value)"
+                >
+              </label>
+            </div>
+            <p class="mt-1 text-[10px] text-white/30 leading-snug tabular-nums">
+              Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
+            </p>
+          </div>
+        </div>
       </div>
 
       <button
