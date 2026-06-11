@@ -1173,6 +1173,9 @@ app.registerExtension({
               });
             } else {
               console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
+              // Terminal success ack: lets the parent's no-response watchdog
+              // distinguish "queued fine" from "message never reached me".
+              postToParent({ event: "queued", prompt_id: window._comfynextLastPromptOk?.prompt_id || null });
             }
           } else {
             // Fallback: try the command system

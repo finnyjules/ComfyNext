@@ -539,6 +539,9 @@ async function runVueWorkflow(
   await new Promise(r => setTimeout(r, 800))
   console.log('[Run] sending queuePrompt to worker', workerIdx)
   iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
+  // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
+  // continuously and silently by design, so they're exempt from the toast.
+  if (!opts.live) armQueueWatchdog(runTabId)
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
   // iframe sometimes retains focus after the postMessage handshake, and on
@@ -1067,6 +1070,31 @@ function autosaveCurrentWorkflow() {
 const pendingLiveRuns = ref(0)
 const currentRunSilent = ref(false)
 let pendingLiveRunsResetTimer: ReturnType<typeof setTimeout> | null = null
+
+// No-response watchdog for the queuePrompt handshake. We postMessage
+// `queuePrompt` to the bridge iframe and return immediately — but if the
+// iframe's LiteGraph registry is stale after a ComfyUI restart (it silently
+// drops nodes / no-ops the queue) or the message lands on a half-loaded frame,
+// the run fails with ZERO feedback: no /prompt POST, status stuck Idle, no
+// toast. The bridge posts a terminal event for every outcome it reaches
+// (`queued` on success, `queue_error` on any failure) — so silence past the
+// timeout means the handler never ran. Surface it instead of hanging.
+const QUEUE_WATCHDOG_MS = 8000
+let queueWatchdogTimer: ReturnType<typeof setTimeout> | null = null
+function clearQueueWatchdog() {
+  if (queueWatchdogTimer) { clearTimeout(queueWatchdogTimer); queueWatchdogTimer = null }
+}
+function armQueueWatchdog(tabId: string) {
+  clearQueueWatchdog()
+  queueWatchdogTimer = setTimeout(() => {
+    queueWatchdogTimer = null
+    console.error('[Run] no bridge response after queuePrompt — stale canvas or dropped message')
+    toast.error('Run didn’t start', {
+      description: 'The ComfyUI canvas didn’t respond — it can go stale after a restart. Reload the page and try again.',
+    })
+    if (tabId) updateTabStatus(tabId, 'idle')
+  }, QUEUE_WATCHDOG_MS)
+}
 
 function handleLiveRun() {
   pendingLiveRuns.value++
@@ -1903,6 +1931,7 @@ function handleBridgeMessage(event: MessageEvent) {
   // listens to the same bridge postMessage directly (the exact path
   // execution_error events take — no re-dispatch needed).
   if (event.data.event === 'queue_error') {
+    clearQueueWatchdog()
     const { description } = summarizeNodeErrors(event.data.node_errors)
     if (description) {
       toast.error('Workflow validation failed', { description })
@@ -1913,6 +1942,14 @@ function handleBridgeMessage(event: MessageEvent) {
     // Clear any pending run state so spinners don't hang.
     if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
     currentRunSilent.value = false
+    return
+  }
+
+  // Bridge acked a successful queue (POST /prompt returned a prompt_id) — the
+  // run is on its way, so cancel the no-response watchdog. (Bridges predating
+  // this event fall back to the execution_start clear below.)
+  if (event.data.event === 'queued') {
+    clearQueueWatchdog()
     return
   }
 
@@ -1986,6 +2023,7 @@ function handleBridgeMessage(event: MessageEvent) {
   if (!tabId) return
 
   if (evt === 'execution_start') {
+    clearQueueWatchdog() // run reached the server — fallback clear for older bridges
     // Claim this run as silent if a live-run is pending — must happen
     // before any UI updates so the tab indicator can skip too.
     if (pendingLiveRuns.value > 0) {
