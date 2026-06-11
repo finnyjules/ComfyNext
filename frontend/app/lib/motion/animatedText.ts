@@ -40,6 +40,10 @@ export function layoutTextUnits(
     const line = lines[li]
     const lineW = ctx.measureText(line || '').width
     // Line start X matches drawText's anchor math for each alignment.
+    // Known limitation: per-char advances (sum of measureText(char)) can
+    // differ from measureText(line) by kerning/shaping deltas, so the line's
+    // far edge may drift a px or two vs the static drawText render — inherent
+    // to per-character animation, acceptable at rest.
     let x = layer.align === 'left' ? -blockW / 2
       : layer.align === 'right' ? blockW / 2 - lineW
       : -lineW / 2
@@ -75,7 +79,8 @@ export function drawAnimatedTextLayer(
   applyFont(ctx, layer, W)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  const strokeOn = !!layer.strokeColor && layer.strokeColor !== 'none' && layer.strokeWidth > 0
+  const strokeOn = !!layer.strokeColor && layer.strokeColor !== 'none'
+    && layer.strokeColor !== 'transparent' && layer.strokeWidth > 0
   if (strokeOn) {
     ctx.lineJoin = 'round'
     ctx.lineWidth = layer.strokeWidth * W
