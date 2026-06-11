@@ -198,7 +198,7 @@ watch(() => props.projectId, (id) => {
     >
       <div
         v-if="open"
-        class="absolute top-full left-0 mt-2 w-[300px] bg-[#1a1a1a]/95 backdrop-blur-md border border-[#2a2a2a] rounded-[12px] shadow-2xl z-50 flex flex-col overflow-hidden"
+        class="absolute top-full left-0 mt-2 w-[300px] max-h-[80vh] bg-[#1a1a1a]/95 backdrop-blur-md border border-[#2a2a2a] rounded-[12px] shadow-2xl z-50 flex flex-col overflow-x-hidden overflow-y-auto"
       >
         <!-- Project name + rename -->
         <div class="flex items-center gap-2 px-3 py-2.5 border-b border-white/[0.06]">
