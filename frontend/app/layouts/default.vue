@@ -106,6 +106,7 @@ const sidebarItems = [
 const loadOptions = [
   // Composition surfaces — spatial (Frame) + temporal (Timeline) — grouped up top.
   { label: 'Frame',    icon: Frame,        nodeType: 'Compositor' },
+  { label: 'Slate',    icon: Clapperboard, special: 'slate-gallery' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
@@ -118,6 +119,31 @@ const loadMenuOpen = ref(false)
 function addLoadNode(nodeType: string) {
   window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType } }))
   loadMenuOpen.value = false
+}
+
+// Load submenu click: most items drop their artifact node, but "Slate" is a
+// special entry that opens the slate gallery instead of dispatching addNode.
+const slateGalleryOpen = ref(false)
+function onLoadOption(opt: { nodeType?: string; special?: string }) {
+  loadMenuOpen.value = false
+  if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
+  if (opt.nodeType) addLoadNode(opt.nodeType)
+}
+
+// Gallery → canvas: a placed slate is a Compositor (Frame) node whose
+// properties carry the instantiated local layers + motion doc. VueNodeCanvas's
+// handleAddNode already applies `propertyOverrides`, so we just dispatch.
+function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
+  slateGalleryOpen.value = false
+  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+    detail: {
+      nodeType: 'Compositor',
+      propertyOverrides: {
+        comfynext_localLayers: payload.layers,
+        comfynext_motion: payload.motion,
+      },
+    },
+  }))
 }
 
 // Annotate submenu — FigJam-style overlays on the canvas. Each option fires
@@ -2634,6 +2660,15 @@ function dismissRunResult() {
           @restore="onRestoreVersion"
         />
 
+        <!-- Slate gallery: pick a Kinetic Slate template, fill its slots, and
+             drop a pre-animated Frame (Compositor) node onto the canvas. -->
+        <VueCanvasSlateGalleryModal
+          v-if="slateGalleryOpen"
+          :active-kit="brandLib.activeKit.value ?? null"
+          @close="slateGalleryOpen = false"
+          @create="onCreateSlate"
+        />
+
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
         <div
           v-if="vueNodesEnabled && activeTab.type === 'project'"
@@ -2771,7 +2806,7 @@ function dismissRunResult() {
                     class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors"
                     :class="opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/[0.08] cursor-pointer'"
                     :disabled="opt.disabled"
-                    @click="!opt.disabled && addLoadNode(opt.nodeType)"
+                    @click="!opt.disabled && onLoadOption(opt)"
                   >
                     <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
                     <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
