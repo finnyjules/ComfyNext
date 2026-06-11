@@ -136,7 +136,7 @@ export function useTimelineStore() {
 
   function addMotionClip(trackId: string, startFrame: number, length = 90) {
     const clip = createMotionClip({ startFrame, length })
-    addClip(trackId, clip as any)
+    addClip(trackId, clip)
     selectedClipId.value = clip.id
     return clip
   }
