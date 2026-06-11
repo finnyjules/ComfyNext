@@ -12,7 +12,7 @@ import { sourceFrameAt } from '~~/shared/timeline/sourceFrame'
 // 0.5 px off a true center; PIL BILINEAR resampling ≠ GPU linear filtering on
 // rotated/scaled edges.
 
-const RENDERABLE_KINDS = new Set(['image', 'video', 'title', 'lower_third'])
+const RENDERABLE_KINDS = new Set(['image', 'video', 'title', 'lower_third', 'motion'])
 
 export interface DrawEntry {
   clipId: string
