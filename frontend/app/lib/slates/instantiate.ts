@@ -18,10 +18,15 @@ const NEUTRALS: Record<string, string> = {
 }
 
 function resolveStr(value: string, texts: Record<string, string>, brand: BrandKit): string {
-  const out = resolveTokens(value, texts, brand as Record<string, unknown>)
-  const miss = /^\{\{\s*brand\.(\w+)\s*\}\}$/.exec(String(out))
-  if (miss) return NEUTRALS[miss[1]] ?? '#888888'
-  return String(out)
+  const out = String(resolveTokens(value, texts, brand as Record<string, unknown>))
+  // resolveTokens returns the RAW token on a whole-string miss. Map an
+  // unresolved brand role to a visible neutral; drop any other stray token
+  // (e.g. a props.* typo in a template) to empty so `{{ }}` never reaches a
+  // layer's font/color/text.
+  const brandMiss = /^\{\{\s*brand\.(\w+)\s*\}\}$/.exec(out)
+  if (brandMiss) return NEUTRALS[brandMiss[1]] ?? '#888888'
+  if (/^\{\{\s*[\w.]+\s*\}\}$/.test(out)) return ''
+  return out
 }
 
 function resolvePaint(p: SlatePaintDef, texts: Record<string, string>, brand: BrandKit): string | Gradient {
