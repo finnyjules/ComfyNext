@@ -395,6 +395,19 @@ class SmartLayoutNode(IO.ComfyNode):
                     )
                     for i in range(1, _MAX_TEXT_LAYERS + 1)
                 ],
+                # Appended LAST so saved workflows' widget positions don't
+                # shift (the file's append-only convention). The project's
+                # active brand-library kit, injected at submit by the frontend
+                # (injectSmartLayoutBrand) as key=value lines. A wired `brand`
+                # socket overrides these per-key — the kit folds UNDER it.
+                IO.String.Input(
+                    "brand_kit",
+                    default="",
+                    multiline=True,
+                    optional=True,
+                    tooltip="Project brand kit (auto-injected from the active brand library kit). "
+                            "Values from a wired `brand` input override these per-key.",
+                ),
             ],
             outputs=[
                 # `is_output_list=True` so each rendered aspect flows downstream
@@ -414,7 +427,7 @@ class SmartLayoutNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, layout, aspects, brand=None, **layer_kwargs) -> IO.NodeOutput:
+    def execute(cls, layout, aspects, brand=None, brand_kit=None, **layer_kwargs) -> IO.NodeOutput:
         template = _parse_layout(layout)
         aspect_keys = _parse_aspects(aspects, template)
         # Collect text_layer_<N> + image_layer_<N> kwargs. Each becomes a
@@ -432,7 +445,19 @@ class SmartLayoutNode(IO.ComfyNode):
                 url = _image_layer_to_url(value, key)
                 if url:
                     props_d[key] = url
-        brand_d = _parse_kv(brand or "")
+        # Brand merge order: template defaults (translate-side) ← project kit
+        # (brand_kit, injected at submit) ← wired brand socket. The kit parses
+        # STRICTLY (k=v lines only — no friendly whole-blob fallback, it's
+        # machine-written), then wired values override per-key.
+        kit_d: dict[str, str] = {}
+        for line in (brand_kit or "").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            if k.strip() and v.strip():
+                kit_d[k.strip()] = v.strip()
+        brand_d = {**kit_d, **_parse_kv(brand or "")}
 
         # If the user hasn't opened the editor yet, the layout has no elements.
         # Inject defaults for any connected layer sockets so the preview shows

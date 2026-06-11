@@ -8,6 +8,7 @@ import {
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
+import { brandKitToKv } from '~~/shared/brand/resolve'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -476,6 +477,17 @@ async function runVueWorkflow(
   } catch (err) {
     console.error('[Run] compositor motion_params injection failed', err)
     toast.error('Frame motion state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+  }
+
+  // Fold the project's active brand kit under every SmartLayout node's wired
+  // brand, so Run output matches the kit-themed editor preview. No active
+  // kit ⇒ no-op (widgets untouched, byte-identical submit).
+  try {
+    const kit = brandLib.activeKit.value
+    await vueCanvasRef.value.injectSmartLayoutBrand?.(plainWorkflow, kit ? brandKitToKv(kit) : '')
+  } catch (err) {
+    console.error('[Run] smart layout brand_kit injection failed', err)
+    toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
   }
 
   // Pick the worker for the tab being run (always 0 when the pool is off), so

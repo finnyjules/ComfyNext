@@ -2573,6 +2573,28 @@ async function injectCompositorMotionParams(workflow: any): Promise<void> {
   }
 }
 
+/** Fold the project's active brand kit into every SmartLayout node at submit.
+ *  `kitKv` is the kit serialized as key=value lines (brandKitToKv); empty ⇒
+ *  no active kit ⇒ leave every widget untouched (byte-identical submit).
+ *  The kit lands in the `brand_kit` widget, which the node merges UNDER any
+ *  wired `brand` socket values — the graph stays the ultimate override. */
+async function injectSmartLayoutBrand(workflow: any, kitKv: string): Promise<void> {
+  if (!kitKv || !workflow?.nodes?.length) return
+  const layouts = (workflow.nodes as any[]).filter(n => n.type === 'SmartLayout')
+  let schemaRefetched = false
+  for (const node of layouts) {
+    if ((node.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    if (setNamedWidget(node, 'brand_kit', kitKv, objectInfo.value)) continue
+    if (!schemaRefetched) {
+      schemaRefetched = true
+      console.warn('[SmartLayout] brand_kit missing from cached schema — forcing /object_info refetch')
+      await refreshSchema(true)
+      if (setNamedWidget(node, 'brand_kit', kitKv, objectInfo.value)) continue
+    }
+    throw new Error('Smart Layout schema is out of date — reload the page (ComfyUI restarted with new node definitions)')
+  }
+}
+
 // ── Client-side Timeline preview ────────────────────────────────────────────
 // Mirrors the Compositor pattern but for video sources: each connected clip
 // has a hidden <video>; we seek each one to the timeline's middle frame and
@@ -3993,6 +4015,7 @@ defineExpose({
   injectProtectMaskWiring,
   injectTimelineEditState,
   injectCompositorMotionParams,
+  injectSmartLayoutBrand,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
   getEdges: () => edges.value,
