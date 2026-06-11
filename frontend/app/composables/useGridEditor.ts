@@ -9,8 +9,10 @@
  *  - On any other format, region edits write `el.regionByClass[class]` —
  *    one edit adjusts every format of that class.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 
+import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
+import type { BrandKit } from '~~/shared/brand/types'
 import { applyArchetype, classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import type { ResolvedLayout } from '~~/shared/template-grid/resolve'
@@ -26,7 +28,10 @@ function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-export function useGridEditor(initial: TemplateV2) {
+export function useGridEditor(
+  initial: TemplateV2,
+  opts?: { activeKit?: Ref<BrandKit | undefined> },
+) {
   const template = ref<TemplateV2>(initial)
   const currentFormat = ref<string>(initial.master in initial.formats
     ? initial.master
@@ -51,12 +56,11 @@ export function useGridEditor(initial: TemplateV2) {
     return out
   })
 
-  // What {{ brand.* }} resolves to in the editor: the template's own brand kit
-  // under any wired socket brand (sampleBrand) — same precedence as render.
-  const effectiveBrand = computed<Record<string, unknown>>(() => ({
-    ...(template.value.brand ?? {}),
-    ...sampleBrand.value,
-  }))
+  // What {{ brand.* }} resolves to in the editor: template defaults ← the
+  // project's active kit ← any wired socket brand (sampleBrand) — the shared
+  // merge, so the editor agrees with render precedence.
+  const effectiveBrand = computed<Record<string, unknown>>(() =>
+    mergeBrand(template.value.brand, opts?.activeKit?.value, sampleBrand.value as BrandKit))
 
   const resolved = computed<ResolvedLayout>(() =>
     resolveFormat(template.value, currentFormat.value, effectiveProps.value, effectiveBrand.value))

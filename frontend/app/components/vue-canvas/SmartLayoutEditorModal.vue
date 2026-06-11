@@ -8,8 +8,10 @@
  * just with a different data source + lifecycle.
  */
 import { X } from 'lucide-vue-next'
+import type { ComputedRef } from 'vue'
 
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
+import type { BrandKit } from '~~/shared/brand/types'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
@@ -335,6 +337,12 @@ const initialBrand = computed<Record<string, string>>(() =>
   readUpstreamKv('brand'),
 )
 
+// The project's active brand kit, provided by the layout (default.vue).
+// Slots between template defaults and the wired socket brand in the editor's
+// shared effectiveBrand merge.
+const projectBrand = inject<{ activeKit: ComputedRef<BrandKit | undefined> } | null>('comfynext:brand', null)
+const activeKit = computed(() => projectBrand?.activeKit.value)
+
 // Close on Escape.
 function onKey(e: KeyboardEvent) { if (e.key === 'Escape') emit('close') }
 onMounted(() => window.addEventListener('keydown', onKey))
@@ -456,6 +464,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
       :initial="initial as any"
       :initial-props="initialProps"
       :initial-brand="initialBrand"
+      :active-kit="activeKit"
       @save="onLayoutSaved"
     >
       <template #topbar-end>

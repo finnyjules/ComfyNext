@@ -968,6 +968,14 @@ function setBrandKit(id: string | null) {
   saveDurableVersion(tab, doc)
 }
 
+// Descendants (e.g. the Smart Layout editor modal in the canvas) read the
+// project's active kit through this — same merge inputs everywhere.
+provide('comfynext:brand', {
+  activeKit: brandLib.activeKit,
+  activeKitId: computed(() => activeProjectDoc.value?.brandKitId ?? null),
+  setBrandKit,
+})
+
 // Rename the project from the menu: tab label + recent-projects name +
 // durable project record, mirroring what the tab double-click rename does.
 function renameActiveProject(name: string) {

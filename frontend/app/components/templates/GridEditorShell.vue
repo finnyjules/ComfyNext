@@ -13,17 +13,20 @@ import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Palette, Red
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
 import { BRAND_COLOR_KEYS } from '~~/shared/template-grid/types'
-import type { TemplateV2 } from '~~/shared/template-grid/types'
+import type { BrandKit, TemplateV2 } from '~~/shared/template-grid/types'
 
 const props = defineProps<{
   initial: TemplateV2
   initialProps?: Record<string, string>
   initialBrand?: Record<string, string>
+  /** The project's active brand kit — slots between template defaults and
+   *  the wired socket brand in the shared effectiveBrand merge. */
+  activeKit?: BrandKit
 }>()
 
 const emit = defineEmits<{ save: [layout: TemplateV2] }>()
 
-const ctx = useGridEditor(props.initial)
+const ctx = useGridEditor(props.initial, { activeKit: toRef(props, 'activeKit') })
 provide('gridEditor', ctx)
 provide('templateEditor', ctx as any)
 // Optional per-layer controls consumed by the reused LayersPanel — present
@@ -298,6 +301,9 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
           v-if="brandPanelOpen"
           class="absolute top-10 right-0 z-20 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
         >
+          <div v-if="activeKit" class="text-[10px] text-white/40 px-1">
+            Project kit overrides these template defaults.
+          </div>
           <div>
             <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-2">Brand colours</p>
             <div class="flex flex-col gap-1.5">
