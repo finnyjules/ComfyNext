@@ -176,6 +176,11 @@ test.describe('SmartLayout node in the canvas', () => {
     await dropNode(page, 'SmartLayout', { x: 700, y: 400 })
     const node = page.locator('.vue-flow__node', { hasText: 'Smart Layout' }).first()
     await expect(node).toBeVisible({ timeout: 10_000 })
+    // Default placement can land the node body under the bottom HUD toolbar,
+    // which intercepts clicks. Zoom out so the node clears the toolbar.
+    await page.mouse.move(640, 300)
+    await page.mouse.wheel(0, 600)
+    await page.waitForTimeout(300)
     await node.getByRole('button', { name: /Edit layout/i }).click()
     // The SmartLayout modal renders a heavy editor with aspects on the left.
     // We assert the modal overlay exists by checking for the highest-z fixed inset element.
