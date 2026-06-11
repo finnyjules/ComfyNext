@@ -128,3 +128,48 @@ def test_render_effect_first_job_requires_image():
     import pytest
     with pytest.raises(ValueError, match="first job"):
         render_effect(_UNIFORM_MIX_FRAG, 32, 32, [{"image": None, "uniforms": {}}])
+
+
+def test_resolve_params_coerces_non_numeric_to_default():
+    cat = load_catalog(refresh=True)
+    eff = cat.effects["noise_distortion"]
+    u = resolve_params(eff, json.dumps({"u_amount": "bad"}))
+    assert u["u_amount"] == pytest.approx(0.06)
+
+
+import torch
+
+from comfy_extras.nodes_shader_effects import ShaderEffect
+
+
+def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=0.0, fps=4, seed=42):
+    # Execute the classmethod directly; hidden unique_id is only used for the ui preview.
+    class _Hidden:
+        unique_id = "test"
+    ShaderEffect.hidden = _Hidden
+    return ShaderEffect.execute(image, effect, params, time, duration, fps, seed)
+
+
+def test_node_still_returns_single_frame():
+    img = torch.rand(1, 48, 64, 3)
+    out = _run_node(img).args[0]
+    assert out.shape == (1, 48, 64, 3)
+
+
+def test_node_duration_returns_frame_batch_that_animates():
+    img = torch.rand(1, 32, 32, 3)
+    out = _run_node(img, duration=1.0, fps=4).args[0]
+    assert out.shape == (4, 32, 32, 3)
+    assert (out[0] - out[3]).abs().max() > 1.0 / 255.0  # noise_distortion is animated
+
+
+def test_node_batch_input_keeps_frame_count():
+    img = torch.rand(3, 32, 32, 3)
+    out = _run_node(img, duration=99.0).args[0]  # duration must be ignored
+    assert out.shape == (3, 32, 32, 3)
+
+
+def test_node_unknown_effect_raises():
+    import pytest
+    with pytest.raises(ValueError, match="bogus"):
+        _run_node(torch.rand(1, 16, 16, 3), effect="bogus")

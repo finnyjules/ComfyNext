@@ -2570,6 +2570,7 @@ async def init_builtin_extra_nodes():
         "nodes_glsl_fractal.py",
         "nodes_glsl_lab.py",
         "nodes_glsl_unicorn.py",
+        "nodes_shader_effects.py",
         "nodes_video_effects.py",
         "nodes_audio_effects.py",
         "nodes_audio_ml.py",

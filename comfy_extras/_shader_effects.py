@@ -91,7 +91,7 @@ def load_catalog(refresh: bool = False) -> Catalog:
 def resolve_params(effect: Effect, params_json: str) -> dict[str, float]:
     """Defaults merged with user JSON; clamped to [min, max]; unknown keys dropped."""
     try:
-        user = json.loads(params_json) if params_json.strip() else {}
+        user = json.loads(params_json) if params_json and params_json.strip() else {}
         if not isinstance(user, dict):
             raise ValueError
     except (json.JSONDecodeError, ValueError):
