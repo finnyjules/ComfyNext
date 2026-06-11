@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { CaseSensitive, Grid3x3, ImagePlus, Save, Square, Type as TypeIcon } from 'lucide-vue-next'
+import { CaseSensitive, Grid3x3, ImagePlus, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -25,8 +25,16 @@ const emit = defineEmits<{ save: [layout: TemplateV2] }>()
 const ctx = useGridEditor(props.initial)
 provide('gridEditor', ctx)
 provide('templateEditor', ctx as any)
+// Optional per-layer controls consumed by the reused LayersPanel — present
+// only in the grid editor, so the v1 editor's panel stays unchanged.
+provide('layerControls', {
+  toggleHidden: ctx.toggleHidden,
+  toggleLocked: ctx.toggleLocked,
+  isHidden: ctx.isHidden,
+  isLocked: ctx.isLocked,
+})
 
-const { template, dirty, worstCase, selectedElement, sampleProps, sampleBrand } = ctx
+const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand } = ctx
 
 if (props.initialProps && Object.keys(props.initialProps).length > 0) {
   Object.assign(sampleProps.value, props.initialProps)
@@ -51,6 +59,51 @@ function handleSave() {
   emit('save', JSON.parse(JSON.stringify(template.value)))
   dirty.value = false
 }
+
+// -- Keyboard shortcuts -------------------------------------------------------
+// Scoped to the editor root; ignored while typing in a field so the property
+// panel's inputs keep working.
+
+function isTyping(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
+function onKeydown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey
+  // While typing in a field, let the browser own Cmd+Z (native text undo) and
+  // arrow keys (caret movement) — don't hijack them for the canvas.
+  if (isTyping(e.target)) return
+
+  if (mod && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault()
+    if (e.shiftKey) ctx.redo()
+    else ctx.undo()
+    return
+  }
+  if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); ctx.redo(); return }
+
+  const id = selectedId.value
+  if (mod && (e.key === 'd' || e.key === 'D')) {
+    if (id) { e.preventDefault(); ctx.duplicateElement(id) }
+    return
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && id && !ctx.isLocked(id)) {
+    e.preventDefault(); ctx.removeElement(id); return
+  }
+  const nudges: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  }
+  if (id && nudges[e.key] && !ctx.isLocked(id)) {
+    e.preventDefault()
+    ctx.nudgeSelected(...nudges[e.key])
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 // -- Grid settings popover ----------------------------------------------------
 
@@ -81,6 +134,25 @@ function onGrid(field: 'gutter' | 'margin', raw: string) {
         class="w-40 h-8 px-2 bg-transparent border border-transparent hover:border-white/[0.06] focus:border-[#96b4ff]/50 rounded text-[13px] text-white font-medium focus:outline-none"
         @change="(e: any) => { template.name = e.target.value; dirty = true }"
       >
+
+      <div class="flex items-center gap-0.5 shrink-0">
+        <button
+          class="size-8 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed text-white/65 hover:text-white hover:bg-white/[0.08]"
+          title="Undo (⌘Z)"
+          :disabled="!ctx.canUndo.value"
+          @click="ctx.undo()"
+        >
+          <Undo2 class="size-4" />
+        </button>
+        <button
+          class="size-8 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed text-white/65 hover:text-white hover:bg-white/[0.08]"
+          title="Redo (⇧⌘Z)"
+          :disabled="!ctx.canRedo.value"
+          @click="ctx.redo()"
+        >
+          <Redo2 class="size-4" />
+        </button>
+      </div>
 
       <div class="flex-1 min-w-0">
         <TemplatesGridFormatTabs />

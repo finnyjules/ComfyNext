@@ -39,13 +39,30 @@ onMounted(() => {
   }
 })
 
-const scale = computed(() => {
+// Fit-to-container scale. `zoomOverride` (null = follow fit) lets the user
+// zoom in past fit; switching format resets to fit.
+const fitScale = computed(() => {
   if (!containerSize.value.w || !containerSize.value.h) return 1
   const padding = 64
   const sw = (containerSize.value.w - padding) / format.value.w
   const sh = (containerSize.value.h - padding) / format.value.h
   return Math.min(sw, sh, 1)
 })
+const zoomOverride = ref<number | null>(null)
+const scale = computed(() => zoomOverride.value ?? fitScale.value)
+
+watch(() => ctx.currentFormat.value, () => { zoomOverride.value = null })
+
+function zoomBy(factor: number) {
+  zoomOverride.value = Math.min(4, Math.max(0.05, (zoomOverride.value ?? fitScale.value) * factor))
+}
+function zoomFit() { zoomOverride.value = null }
+
+function onWheel(e: WheelEvent) {
+  if (!e.ctrlKey && !e.metaKey) return   // plain scroll left alone
+  e.preventDefault()
+  zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1)
+}
 
 // -- Token resolution for sample preview ------------------------------------
 
@@ -99,7 +116,9 @@ const safeStrips = computed(() => {
 // -- Element rendering (from resolver output) --------------------------------
 
 const visible = computed(() => resolved.value.elements.filter(r => !r.culled))
-const culled = computed(() => resolved.value.elements.filter(r => r.culled))
+// Hidden elements are intentional, not a layout problem — keep them out of the
+// "dropped here" chips.
+const culled = computed(() => resolved.value.elements.filter(r => r.culled && r.cullReason !== 'hidden'))
 
 function rectStyle(r: ResolvedElement): Record<string, string> {
   return {
@@ -177,7 +196,7 @@ let dragState: {
 function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   e.stopPropagation()
   selectedId.value = r.el.id
-  if (!r.region) return
+  if (r.el.locked || !r.region) return
   dragState = {
     id: r.el.id,
     startRegion: { ...r.region },
@@ -270,6 +289,7 @@ function onCanvasClick(e: MouseEvent) {
     class="absolute inset-0 flex items-center justify-center select-none"
     @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e) }"
     @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e) }"
+    @wheel="onWheel"
   >
     <!-- Scaled wrapper; inner div is template coordinate space. -->
     <div
@@ -325,10 +345,11 @@ function onCanvasClick(e: MouseEvent) {
       <div
         v-for="r in visible"
         :key="r.el.id"
-        :style="rectStyle(r)"
+        :style="[rectStyle(r), { cursor: r.el.locked ? 'default' : 'move' }]"
         class="group"
-        :class="selectedId === r.el.id ? 'outline outline-2 outline-[#96b4ff] outline-offset-0' : 'hover:outline hover:outline-1 hover:outline-white/30'"
-        style="cursor: move"
+        :class="selectedId === r.el.id
+          ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
+          : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
       >
         <template v-if="r.el.type === 'text'">
@@ -346,7 +367,7 @@ function onCanvasClick(e: MouseEvent) {
           <div :style="shapeStyle(r)" />
         </template>
 
-        <template v-if="selectedId === r.el.id">
+        <template v-if="selectedId === r.el.id && !r.el.locked">
           <div
             v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
             :key="dir"
@@ -379,9 +400,23 @@ function onCanvasClick(e: MouseEvent) {
       </button>
     </div>
 
-    <!-- Bottom-right readout -->
-    <div class="absolute bottom-3 right-3 text-[10px] text-white/40 tabular-nums bg-black/40 px-2 py-1 rounded backdrop-blur-sm">
-      {{ format.w }} × {{ format.h }} · {{ formatClass }} · {{ metrics.cols }}×{{ metrics.rows }} grid · {{ Math.round(scale * 100) }}%
+    <!-- Bottom-right: zoom controls + readout -->
+    <div class="absolute bottom-3 right-3 flex items-center gap-2">
+      <div class="flex items-center gap-0.5 bg-black/50 rounded backdrop-blur-sm p-0.5">
+        <button class="size-6 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white cursor-pointer text-sm leading-none" title="Zoom out" @click="zoomBy(1 / 1.2)">−</button>
+        <button
+          class="px-1.5 h-6 rounded hover:bg-white/10 flex items-center justify-center text-[10px] hover:text-white cursor-pointer tabular-nums min-w-[3.5rem]"
+          :class="zoomOverride === null ? 'text-white/60' : 'text-[#c9d6ff]'"
+          :title="zoomOverride === null ? 'Fitted to view' : 'Click to fit to view'"
+          @click="zoomFit"
+        >
+          {{ Math.round(scale * 100) }}%
+        </button>
+        <button class="size-6 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white cursor-pointer text-sm leading-none" title="Zoom in" @click="zoomBy(1.2)">+</button>
+      </div>
+      <div class="text-[10px] text-white/40 tabular-nums bg-black/40 px-2 py-1 rounded backdrop-blur-sm">
+        {{ format.w }} × {{ format.h }} · {{ formatClass }} · {{ metrics.cols }}×{{ metrics.rows }} grid
+      </div>
     </div>
   </div>
 </template>

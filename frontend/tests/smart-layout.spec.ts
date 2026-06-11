@@ -212,8 +212,11 @@ test.describe('SmartLayout node in the canvas', () => {
     // Fresh nodes default to the v2 grid starter → the visual grid editor
     // opens with the format tab strip (incl. IAB sizes) and the grid canvas.
     await expect(modal.getByRole('button', { name: /728x90/ })).toBeVisible()
-    await expect(modal.getByText(/grid ·/)).toBeVisible()          // canvas readout
+    await expect(modal.getByText(/square · \d+×\d+ grid/)).toBeVisible()   // canvas readout
     await expect(modal.getByRole('button', { name: 'Save & close' })).toBeVisible()
+    // Undo starts disabled (no edits yet); zoom controls present.
+    await expect(modal.getByTitle('Undo (⌘Z)')).toBeDisabled()
+    await expect(modal.getByTitle('Zoom in')).toBeVisible()
 
     // Switching to a strip format updates the canvas readout + class.
     await modal.getByRole('button', { name: /728x90/ }).click()

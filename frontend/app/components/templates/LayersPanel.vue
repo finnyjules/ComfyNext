@@ -12,14 +12,28 @@
 import {
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
   GripVertical,
   Image as ImageIcon,
+  Lock,
   Square,
   Type as TypeIcon,
+  Unlock,
 } from 'lucide-vue-next'
 
 const ctx = inject<ReturnType<typeof useTemplateEditor>>('templateEditor')!
 const { template, selectedId, moveElement, moveElementTo } = ctx
+
+// Optional per-layer controls — provided only by the v2 grid editor. When
+// absent (v1 editor) the eye/lock affordances simply don't render.
+interface LayerControls {
+  toggleHidden: (id: string) => void
+  toggleLocked: (id: string) => void
+  isHidden: (id: string) => boolean
+  isLocked: (id: string) => boolean
+}
+const layerControls = inject<LayerControls | null>('layerControls', null)
 
 const ICON_BY_TYPE = { text: TypeIcon, image: ImageIcon, shape: Square } as const
 
@@ -122,6 +136,7 @@ function onDragEnd() {
         <!-- Type icon + label (clickable to select) -->
         <button
           class="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer"
+          :class="layerControls?.isHidden(el.id) ? 'opacity-40' : ''"
           @click="selectedId = el.id"
         >
           <component :is="ICON_BY_TYPE[el.type]" class="size-3.5 shrink-0" />
@@ -130,6 +145,27 @@ function onDragEnd() {
             <div v-if="el.role" class="text-[10px] text-white/35 uppercase tracking-wider">{{ el.role }}</div>
           </div>
         </button>
+
+        <!-- Hide / lock toggles (grid editor only). Persist when active, else
+             reveal on hover. -->
+        <template v-if="layerControls">
+          <button
+            class="size-5 rounded hover:bg-white/[0.08] flex items-center justify-center transition cursor-pointer shrink-0"
+            :class="layerControls.isHidden(el.id) ? 'opacity-100 text-white/70' : 'opacity-0 group-hover:opacity-100 text-white/45'"
+            :title="layerControls.isHidden(el.id) ? 'Show layer' : 'Hide layer'"
+            @click.stop="layerControls.toggleHidden(el.id)"
+          >
+            <component :is="layerControls.isHidden(el.id) ? EyeOff : Eye" class="size-3" />
+          </button>
+          <button
+            class="size-5 rounded hover:bg-white/[0.08] flex items-center justify-center transition cursor-pointer shrink-0"
+            :class="layerControls.isLocked(el.id) ? 'opacity-100 text-white/70' : 'opacity-0 group-hover:opacity-100 text-white/45'"
+            :title="layerControls.isLocked(el.id) ? 'Unlock layer' : 'Lock layer (blocks canvas edits)'"
+            @click.stop="layerControls.toggleLocked(el.id)"
+          >
+            <component :is="layerControls.isLocked(el.id) ? Lock : Unlock" class="size-3" />
+          </button>
+        </template>
 
         <!-- One-step reorder buttons (hover-revealed) -->
         <div class="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
