@@ -136,7 +136,7 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
   if (el.type !== 'text') return {}
   const s = el.style ?? {}
   const align = s.align ?? 'left'
-  const valign = s.valign ?? 'top'
+  const valign = s.valign ?? (formatClass.value === 'strip' ? 'middle' : 'top')
   const panel = s.panel
   return {
     color: resolve(s.color ?? '#fff'),

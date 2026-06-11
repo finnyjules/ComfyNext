@@ -308,7 +308,7 @@ function templateV1ToSatori(
 // All layout math (regions, culling, copy fitting) happens in the shared
 // resolver; this only turns resolved rects into satori nodes.
 
-function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBrand): SatoriNode | null {
+function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBrand, formatClass?: string): SatoriNode | null {
   const base: Record<string, unknown> = {
     position: 'absolute',
     left: `${r.rect.x}px`, top: `${r.rect.y}px`,
@@ -320,7 +320,9 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       const t = r.el as TextElementV2
       const s = t.style ?? {}
       const align = s.align ?? 'left'
-      const valign = s.valign ?? 'top'
+      // Strips are a single short row — centre text vertically by default so a
+      // headline doesn't float at the top of a 90px banner.
+      const valign = s.valign ?? (formatClass === 'strip' ? 'middle' : 'top')
       const panel = s.panel
       return el('div', {
         style: {
@@ -420,7 +422,7 @@ function templateV2ToSatori(
   if (bg) children.push(bg)
   for (const r of resolved.elements) {
     if (r.culled) continue
-    const node = v2ElementNode(r, props, brandMerged)
+    const node = v2ElementNode(r, props, brandMerged, resolved.formatClass)
     if (node) children.push(node)
   }
 

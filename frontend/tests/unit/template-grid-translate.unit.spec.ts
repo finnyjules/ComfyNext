@@ -92,6 +92,20 @@ describe('templateToSatori (v2)', () => {
     expect(brokenImg).toBeUndefined()
   })
 
+  it('centres strip text vertically by default, keeps top elsewhere', () => {
+    const t: any = {
+      ...T,
+      elements: [
+        { id: 'h', type: 'text', content: 'Hi', level: 'headline', priority: 1,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 1 }, style: { color: '#fff' } },
+      ],
+    }
+    const strip = flatten(templateToSatori(t, '728x90', {}).tree).find(n => n?.props?.children === 'Hi')
+    expect(strip.props.style.justifyContent).toBe('center')   // strip → middle
+    const square = flatten(templateToSatori(t, '1x1', {}).tree).find(n => n?.props?.children === 'Hi')
+    expect(square.props.style.justifyContent).toBe('flex-start')  // square → top
+  })
+
   it('draws a text scrim/panel as a semi-transparent container background', () => {
     const t: any = {
       ...T,
