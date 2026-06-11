@@ -223,12 +223,16 @@ function backgroundNode(
 ): SatoriNode | null {
   if (!bg) return null
   if (bg.image) {
-    return el('img', {
-      src: resolveTokens(bg.image, props, brand),
-      width: aspect.w as unknown as number,
-      height: aspect.h as unknown as number,
-      style: { position: 'absolute', top: 0, left: 0, objectFit: 'cover', width: '100%', height: '100%' },
-    })
+    const src = String(resolveTokens(bg.image, props, brand))
+    // Skip an unresolved/empty background image rather than crash satori.
+    if (src && !src.includes('{{')) {
+      return el('img', {
+        src,
+        width: aspect.w as unknown as number,
+        height: aspect.h as unknown as number,
+        style: { position: 'absolute', top: 0, left: 0, objectFit: 'cover', width: '100%', height: '100%' },
+      })
+    }
   }
   if (bg.fill) {
     return el('div', {
@@ -347,10 +351,16 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       const s = im.style ?? {}
       const focal = im.focal ?? { x: 0.5, y: 0.5 }
       const fit = s.fit ?? 'cover'
+      const src = String(resolveTokens(im.content, props, brand))
+      // An unwired image (token unresolved or empty) is an empty slot, not a
+      // crash — satori rejects non-URL srcs, so emit a neutral placeholder.
+      if (!src || src.includes('{{')) {
+        return el('div', { style: { ...base, background: 'rgba(255,255,255,0.04)', borderRadius: s.borderRadius ?? 0 } })
+      }
       return el('div', {
         style: { ...base, overflow: 'hidden', borderRadius: s.borderRadius ?? 0 },
         children: el('img', {
-          src: String(resolveTokens(im.content, props, brand)),
+          src,
           width: '100%' as unknown as number,
           height: '100%' as unknown as number,
           style: {

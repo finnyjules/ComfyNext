@@ -78,6 +78,20 @@ describe('templateToSatori (v2)', () => {
     expect(text.props.style.fontFamily).toBe('Bebas Neue')
   })
 
+  it('renders an unwired image as a placeholder, not a broken <img> src', () => {
+    const t: any = {
+      ...T,
+      elements: [
+        { id: 'hero', type: 'image', content: '{{ props.image_layer_1 }}', priority: 4,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 6 } },
+      ],
+    }
+    // No props.image_layer_1 → must not emit an <img> with the literal token.
+    const nodes = flatten(templateToSatori(t, '1x1', {}).tree)
+    const brokenImg = nodes.find(n => n?.type === 'img' && String(n.props.src).includes('{{'))
+    expect(brokenImg).toBeUndefined()
+  })
+
   it('draws a text scrim/panel as a semi-transparent container background', () => {
     const t: any = {
       ...T,

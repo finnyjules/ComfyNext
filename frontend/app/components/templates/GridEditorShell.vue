@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -169,6 +169,8 @@ const COLOR_LABELS: Record<string, string> = {
 function brandVal(key: string): string {
   return (template.value.brand as any)?.[key] ?? ''
 }
+
+const exportOpen = ref(false)
 function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
   ensureFont(family)
   ctx.setBrand({ [key]: family })
@@ -365,6 +367,14 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
 
       <div class="flex items-center gap-2">
         <span v-if="dirty" class="size-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
+        <button
+          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/65 hover:text-white transition-colors cursor-pointer disabled:opacity-30"
+          title="Export the ad set (PNG/JPEG/WebP, ZIP)"
+          :disabled="template.elements.length === 0"
+          @click="exportOpen = true"
+        >
+          <Download class="size-4" /> Export
+        </button>
         <div class="relative">
           <button
             class="size-8 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center text-white/65 hover:text-white transition-colors cursor-pointer"
@@ -415,6 +425,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
         <TemplatesGridEditorCanvas />
         <TemplatesArchetypeGallery v-if="template.elements.length === 0" />
+        <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
       </div>
       <div v-if="selectedElement" class="w-[300px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10]">
         <TemplatesGridPropertyPanel />
