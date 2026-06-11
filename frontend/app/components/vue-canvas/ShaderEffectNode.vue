@@ -203,6 +203,36 @@ function pickEffect(id: string) {
   if (!animating.value) renderOnce()
 }
 
+// ---- center handle -----------------------------------------------------------
+const hasCenter = computed(() => (effectDef.value?.centerParam?.length ?? 0) === 2)
+const centerStyle = computed(() => {
+  if (!hasCenter.value) return {}
+  const [cx, cy] = effectDef.value!.centerParam!
+  const x = uniforms.value[cx!] ?? 0.5
+  const y = uniforms.value[cy!] ?? 0.5
+  return { left: `${x * 100}%`, top: `${(1 - y) * 100}%` }
+})
+
+let draggingCenter = false
+function onCenterDown(ev: PointerEvent) {
+  draggingCenter = true
+  ;(ev.target as HTMLElement).setPointerCapture(ev.pointerId)
+  ev.stopPropagation() // don't drag the node
+}
+function onCenterMove(ev: PointerEvent) {
+  if (!draggingCenter || !hasCenter.value || !previewCanvas.value) return
+  const r = previewCanvas.value.getBoundingClientRect()
+  const x = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1)
+  const y = 1 - Math.min(Math.max((ev.clientY - r.top) / r.height, 0), 1)
+  const [cx, cy] = effectDef.value!.centerParam!
+  if (!effectDef.value) return
+  const next = { ...uniforms.value, [cx!]: x, [cy!]: y }
+  setWidget('params', serializeParams(effectDef.value, next))
+  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  if (!animating.value) renderOnce()
+}
+function onCenterUp() { draggingCenter = false }
+
 // ---- animation lifecycle: only selected/hovered nodes run a rAF loop ---------
 const animating = computed(() => (props.selected || hovered.value) && playing.value && !glError.value)
 let raf = 0
@@ -273,7 +303,19 @@ onBeforeUnmount(() => {
 
       <!-- Live preview -->
       <div @mouseenter="hovered = true" @mouseleave="hovered = false">
-        <canvas ref="previewCanvas" class="w-full block bg-checker" />
+        <!-- Canvas wrapped in relative container for the center handle -->
+        <div class="relative">
+          <canvas ref="previewCanvas" class="w-full block bg-checker" />
+          <!-- Draggable center handle (only visible for effects with centerParam) -->
+          <div
+            v-if="hasCenter"
+            class="nopan nodrag absolute w-3 h-3 -ml-1.5 -mt-1.5 rounded-full border-2 border-white bg-blue-500/70 cursor-move"
+            :style="centerStyle"
+            @pointerdown="onCenterDown"
+            @pointermove="onCenterMove"
+            @pointerup="onCenterUp"
+          />
+        </div>
         <div v-if="glError" class="text-xs text-red-400 p-1">{{ glError }}</div>
 
         <!-- Effect picker trigger + param sliders -->
