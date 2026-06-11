@@ -23,6 +23,9 @@ const props = defineProps<{
   doc: ProjectDoc | null
   switching: boolean
   getProjectDoc: () => Promise<any | null>
+  brandKitId?: string | null
+  brandKitName?: string | null
+  brandSwatches?: string[]
 }>()
 const emit = defineEmits<{
   renameProject: [name: string]
@@ -31,6 +34,7 @@ const emit = defineEmits<{
   renameCanvas: [canvasId: string, name: string]
   deleteCanvas: [canvasId: string]
   restore: [body: any]
+  setBrandKit: [id: string | null]
 }>()
 
 const open = ref(false)
@@ -96,6 +100,10 @@ function onDeleteClick(id: string) {
   }
 }
 
+// ── Brand kit ───────────────────────────────────────────────────────────────
+// Inline brand-library popover; the parent owns the doc's brandKitId.
+const brandOpen = ref(false)
+
 // ── Versions ────────────────────────────────────────────────────────────────
 const { versions, loading, refresh, saveNamed, getVersionWorkflow } = useVersions()
 const saving = ref(false)
@@ -150,6 +158,7 @@ function timeAgo(ts: number | null): string {
 
 watch(open, (o) => {
   confirmDeleteId.value = null
+  brandOpen.value = false
   cancelRename()
   if (o) {
     refresh(props.projectId)
@@ -270,6 +279,35 @@ watch(() => props.projectId, (id) => {
             <Plus class="size-3.5 shrink-0" />
             New canvas
           </button>
+        </div>
+
+        <!-- Brand -->
+        <div class="border-t border-white/[0.06] px-2 pt-2 pb-2">
+          <button
+            class="w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
+            @click.stop="brandOpen = !brandOpen"
+          >
+            <span class="flex items-center gap-2 min-w-0">
+              <span v-if="brandSwatches?.length" class="flex gap-0.5 shrink-0">
+                <span
+                  v-for="(c, i) in brandSwatches"
+                  :key="i"
+                  class="size-3 rounded-sm border border-white/10"
+                  :style="{ background: c }"
+                />
+              </span>
+              <span class="text-xs truncate" :class="brandKitName ? 'text-white/85' : 'text-white/40'">
+                {{ brandKitName ?? 'No brand kit' }}
+              </span>
+            </span>
+            <span class="text-[10px] font-medium uppercase tracking-wider text-white/35 shrink-0">Brand</span>
+          </button>
+          <BrandLibraryPopover
+            v-if="brandOpen"
+            class="mt-1 !w-full"
+            :active-kit-id="brandKitId"
+            @set-active="(id) => emit('setBrandKit', id)"
+          />
         </div>
 
         <!-- Versions -->

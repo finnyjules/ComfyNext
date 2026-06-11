@@ -948,6 +948,26 @@ async function deleteProjectCanvas(canvasId: string) {
   saveDurableVersion(tab, doc)
 }
 
+// ── Brand kit (project menu) ────────────────────────────────────────────────
+// The doc owns brandKitId; the library composable resolves it to a kit entry.
+// Setting flows through the same doc-mutation + persistence path as the other
+// canvas edits (mutate the reactive doc, persistWorkflows, durable mirror).
+const brandLib = useBrandLibrary(computed(() => activeProjectDoc.value?.brandKitId))
+const brandKitName = computed(() => brandLib.activeEntry.value?.name ?? null)
+const brandSwatches = computed(() => {
+  const k = brandLib.activeEntry.value?.kit
+  return k ? [k.primary, k.accent, k.accent2].filter(Boolean) as string[] : []
+})
+function setBrandKit(id: string | null) {
+  const tab = activeTab.value
+  if (tab.type !== 'project') return
+  const doc = toProjectDoc(savedWorkflows[tab.id])
+  savedWorkflows[tab.id] = doc
+  doc.brandKitId = id
+  persistWorkflows()
+  saveDurableVersion(tab, doc)
+}
+
 // Rename the project from the menu: tab label + recent-projects name +
 // durable project record, mirroring what the tab double-click rename does.
 function renameActiveProject(name: string) {
@@ -2582,6 +2602,10 @@ function dismissRunResult() {
           :doc="activeProjectDoc"
           :switching="canvasSwitching"
           :get-project-doc="getProjectDocForVersionSave"
+          :brand-kit-id="activeProjectDoc?.brandKitId ?? null"
+          :brand-kit-name="brandKitName"
+          :brand-swatches="brandSwatches"
+          @set-brand-kit="setBrandKit"
           @rename-project="renameActiveProject"
           @switch-canvas="switchProjectCanvas"
           @add-canvas="addProjectCanvas"
