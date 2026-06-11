@@ -359,9 +359,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 // The EditorShell saves via fetch — but we want it to save to the node, not
 // to a file. So we listen for a custom save event the shell dispatches.
-function onLayoutSaved(layout: AnyTemplate) {
+//
+// Write the layout to the node AND refresh its live preview. The node's
+// reactive widget-watch normally auto-re-renders on change, but its required-
+// input guard bails the auto-run when an optional socket (Brand, an unused
+// Text/Image layer) is left unconnected — so the carousel would keep showing
+// the pre-edit render. Trigger the live run explicitly here: saving is exactly
+// when the user expects the node preview to reflect their edits.
+function commitLayout(layout: AnyTemplate) {
   writeLayout(layout)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('comfynext:liveRun'))
+  }
   emit('close')
+}
+
+function onLayoutSaved(layout: AnyTemplate) {
+  commitLayout(layout)
 }
 
 // -- v2 (Swiss grid) editing --------------------------------------------------
@@ -417,8 +431,7 @@ function applyV2Draft(): TemplateV2 | null {
 function saveV2() {
   const parsed = applyV2Draft()
   if (!parsed) return
-  writeLayout(parsed)
-  emit('close')
+  commitLayout(parsed)
 }
 
 /** Props for the preview renders: wired text/image values where readable. */
