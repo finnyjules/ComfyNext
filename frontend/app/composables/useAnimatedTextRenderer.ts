@@ -12,29 +12,12 @@ import {
   KINETIC_PRESETS_BY_ID,
   DEFAULT_KINETIC_PRESET_ID,
 } from '~/data/kinetic-presets'
+import { powerOut, easeInOutQuad as easeInOut, elasticOut, bounceOut } from '~/lib/motion/easing'
 
 // ── Easing helpers (subset of GSAP eases, pure math) ────────────────────────
 
 function easeOut(t: number, power = 2): number {
-  return 1 - Math.pow(1 - t, power)
-}
-
-function easeInOut(t: number): number {
-  return t < 0.5
-    ? 2 * t * t
-    : 1 - Math.pow(-2 * t + 2, 2) / 2
-}
-
-function elasticOut(t: number): number {
-  if (t === 0 || t === 1) return t
-  return Math.pow(2, -10 * t) * Math.sin((t - 0.075) * (2 * Math.PI) / 0.3) + 1
-}
-
-function bounceOut(t: number): number {
-  if (t < 1 / 2.75) return 7.5625 * t * t
-  if (t < 2 / 2.75) return 7.5625 * (t -= 1.5 / 2.75) * t + 0.75
-  if (t < 2.5 / 2.75) return 7.5625 * (t -= 2.25 / 2.75) * t + 0.9375
-  return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375
+  return powerOut(power)(t)
 }
 
 function resolveEase(name: string): (t: number) => number {
