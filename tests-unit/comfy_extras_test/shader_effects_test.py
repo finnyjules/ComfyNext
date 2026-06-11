@@ -219,7 +219,7 @@ def test_server_render_matches_goldens():
                 for k, v in t.get("extraUniforms", {}).items():
                     uniforms[k] = float(v)
             jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0}}]
-            out = render_effect(eff.source, size, size, jobs, extra_textures=textures)[0][..., :3]
+            out = render_effect(eff.source, size, size, jobs, extra_textures=textures, passes=eff.passes)[0][..., :3]
             diff = np.abs(out - golden)
             assert diff.max() <= 2.0 / 255.0, f"{eff.id}@{size}: max diff {diff.max() * 255:.2f}/255"
 
@@ -250,3 +250,45 @@ def test_catalog_payload_includes_generative():
     by_id = {e["id"]: e for e in payload["effects"]}
     assert by_id["aurora"]["generative"] is True       # synthesizes, no input needed
     assert by_id["halftone"]["generative"] is False    # image-processing effect
+
+
+_TWO_PASS_FRAG = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform vec2 u_resolution;
+uniform float u_pass;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    if (u_pass < 0.5) fragColor0 = vec4(vec3(0.5), 1.0);
+    else fragColor0 = vec4(texture(u_image0, v_texCoord).rgb + 0.25, 1.0);
+}
+"""
+
+_SOURCE_FRAG = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform sampler2D u_source;
+uniform vec2 u_resolution;
+uniform float u_pass;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    if (u_pass < 0.5) fragColor0 = vec4(0.0, 0.0, 0.0, 1.0);
+    else fragColor0 = texture(u_source, v_texCoord);
+}
+"""
+
+
+def test_render_effect_multipass_pingpong():
+    img = _img(16, 16, 0.1)
+    outs = render_effect(_TWO_PASS_FRAG, 16, 16, [{"image": img, "uniforms": {}}], passes=2)
+    # pass0 -> 0.5; pass1 reads pass0 via u_image0 and adds 0.25 -> ~0.75
+    assert np.abs(outs[0][..., :3] - 0.75).max() < 2.0 / 255.0
+
+
+def test_render_effect_u_source_persists():
+    img = _img(16, 16, 0.4)
+    outs = render_effect(_SOURCE_FRAG, 16, 16, [{"image": img, "uniforms": {}}], passes=2)
+    # pass1 reads u_source (original 0.4), not the black pass0 output
+    assert np.abs(outs[0][..., :3] - 0.4).max() < 2.0 / 255.0

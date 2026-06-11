@@ -134,14 +134,18 @@ def render_effect(
     height: int,
     jobs: list[dict],
     extra_textures: dict[str, "np.ndarray"] | None = None,
+    passes: int = 1,
 ) -> list["np.ndarray"]:
     """Render `fragment_code` once per job. Compiles once; per-job image + uniforms.
 
     jobs: [{"image": (H, W, 3|4) float32 [0,1] or None, "uniforms": {name: float}}]
     A job with image=None reuses the previously uploaded frame; the FIRST job must
     therefore carry an image (the input texture is otherwise uninitialized).
-    extra_textures: {uniform_name: (H, W, 4) float32} — bound NEAREST (parity with browser).
-    Returns one (height, width, 4) float32 array per job.
+    extra_textures: {uniform_name: (H, W, 4) float32} — bound NEAREST on units 2+.
+    passes: ping-pong passes per job. Pass 0 reads the source via u_image0; pass k>0
+    reads the previous pass output. u_source (unit 1) always holds the original input;
+    u_pass / u_passCount expose the index/count. Intermediates are RGBA8 to match the
+    browser renderer exactly. Returns one (height, width, 4) float32 array per job.
     """
     from comfy_extras.nodes_glsl import (
         GLContext,
@@ -158,6 +162,7 @@ def render_effect(
     if jobs[0].get("image") is None:
         raise ValueError("ShaderEffect: the first job must include an image")
 
+    n_passes = max(1, int(passes))
     ctx = GLContext()
     ctx.make_current()
     gl = _import_opengl()
@@ -170,11 +175,13 @@ def render_effect(
     out_tex = None
     in_tex = None
     extra_tex_ids = []
+    pp_tex = []
+    pp_fbo = []
     try:
         program = _create_program(VERTEX_SHADER, fragment_source)
         gl.glUseProgram(program)
 
-        # Output FBO
+        # Final output FBO (single-pass renders here; RGBA32F for clean readback).
         fbo = gl.glGenFramebuffers(1)
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
         out_tex = gl.glGenTextures(1)
@@ -187,29 +194,53 @@ def render_effect(
         if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError("ShaderEffect: framebuffer incomplete")
 
-        # Input image texture on unit 0
+        # Ping-pong RGBA8 textures for multi-pass (match browser 8-bit intermediates).
+        if n_passes > 1:
+            for _ in range(2):
+                t = gl.glGenTextures(1)
+                pp_tex.append(t)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, t)
+                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, width, height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+                for pn in (gl.GL_TEXTURE_MIN_FILTER, gl.GL_TEXTURE_MAG_FILTER):
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_LINEAR)
+                for pn in (gl.GL_TEXTURE_WRAP_S, gl.GL_TEXTURE_WRAP_T):
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_CLAMP_TO_EDGE)
+                f = gl.glGenFramebuffers(1)
+                pp_fbo.append(f)
+                gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, f)
+                gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, t, 0)
+                gl.glDrawBuffers(1, [gl.GL_COLOR_ATTACHMENT0])
+                if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
+                    raise RuntimeError("ShaderEffect: ping-pong framebuffer incomplete")
+
+        # Source texture: unit 0 = u_image0 (pass 0), unit 1 = u_source (persistent).
         in_tex = gl.glGenTextures(1)
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
-        for pname in (gl.GL_TEXTURE_MIN_FILTER, gl.GL_TEXTURE_MAG_FILTER):
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, gl.GL_LINEAR)
-        for pname in (gl.GL_TEXTURE_WRAP_S, gl.GL_TEXTURE_WRAP_T):
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, gl.GL_CLAMP_TO_EDGE)
+        for pn in (gl.GL_TEXTURE_MIN_FILTER, gl.GL_TEXTURE_MAG_FILTER):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_LINEAR)
+        for pn in (gl.GL_TEXTURE_WRAP_S, gl.GL_TEXTURE_WRAP_T):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_CLAMP_TO_EDGE)
         loc = gl.glGetUniformLocation(program, "u_image0")
         if loc >= 0:
             gl.glUniform1i(loc, 0)
+        gl.glActiveTexture(gl.GL_TEXTURE1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
+        sloc = gl.glGetUniformLocation(program, "u_source")
+        if sloc >= 0:
+            gl.glUniform1i(sloc, 1)
 
-        # Extra textures on units 1+ (NEAREST: glyph atlases must be sampled exactly)
+        # Extra textures on units 2+ (NEAREST: glyph atlases sampled exactly).
         for i, (uname, arr) in enumerate(sorted(extra_textures.items())):
-            unit = 1 + i
+            unit = 2 + i
             tex = gl.glGenTextures(1)
             extra_tex_ids.append(tex)
             gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
             gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-            for pname in (gl.GL_TEXTURE_MIN_FILTER, gl.GL_TEXTURE_MAG_FILTER):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, gl.GL_NEAREST)
-            for pname in (gl.GL_TEXTURE_WRAP_S, gl.GL_TEXTURE_WRAP_T):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, gl.GL_CLAMP_TO_EDGE)
+            for pn in (gl.GL_TEXTURE_MIN_FILTER, gl.GL_TEXTURE_MAG_FILTER):
+                gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_NEAREST)
+            for pn in (gl.GL_TEXTURE_WRAP_S, gl.GL_TEXTURE_WRAP_T):
+                gl.glTexParameteri(gl.GL_TEXTURE_2D, pn, gl.GL_CLAMP_TO_EDGE)
             th, tw, _ = arr.shape
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, tw, th, 0, gl.GL_RGBA, gl.GL_FLOAT,
                             np.ascontiguousarray(arr[::-1, :, :]))
@@ -220,6 +251,10 @@ def render_effect(
         loc = gl.glGetUniformLocation(program, "u_resolution")
         if loc >= 0:
             gl.glUniform2f(loc, float(width), float(height))
+        pcloc = gl.glGetUniformLocation(program, "u_passCount")
+        if pcloc >= 0:
+            gl.glUniform1f(pcloc, float(n_passes))
+        ploc = gl.glGetUniformLocation(program, "u_pass")
 
         gl.glViewport(0, 0, width, height)
         gl.glDisable(gl.GL_BLEND)
@@ -244,18 +279,39 @@ def render_effect(
                 if uloc >= 0:
                     gl.glUniform1f(uloc, float(val))
 
-            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
-            gl.glClearColor(0, 0, 0, 0)
-            gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
-
-            gl.glBindTexture(gl.GL_TEXTURE_2D, out_tex)
-            data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
-            out = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
-            outputs.append(out[::-1, :, :].copy())
-            # Readback bound out_tex on unit 0 — restore the input so a later
-            # image=None job samples the previous frame, not the FBO attachment.
-            gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
+            if n_passes == 1:
+                if ploc >= 0:
+                    gl.glUniform1f(ploc, 0.0)
+                gl.glActiveTexture(gl.GL_TEXTURE0)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
+                gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+                gl.glClearColor(0, 0, 0, 0)
+                gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, out_tex)
+                data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
+                out = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
+                outputs.append(out[::-1, :, :].copy())
+                gl.glActiveTexture(gl.GL_TEXTURE0)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
+            else:
+                for k in range(n_passes):
+                    if ploc >= 0:
+                        gl.glUniform1f(ploc, float(k))
+                    gl.glActiveTexture(gl.GL_TEXTURE0)
+                    src = in_tex if k == 0 else pp_tex[(k - 1) % 2]
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, src)
+                    gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, pp_fbo[k % 2])
+                    gl.glClearColor(0, 0, 0, 0)
+                    gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                    gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
+                final_tex = pp_tex[(n_passes - 1) % 2]
+                gl.glBindTexture(gl.GL_TEXTURE_2D, final_tex)
+                data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
+                out = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
+                outputs.append(out[::-1, :, :].copy())
+                gl.glActiveTexture(gl.GL_TEXTURE0)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, in_tex)
 
         return outputs
     finally:
@@ -267,7 +323,11 @@ def render_effect(
             gl.glDeleteTextures(int(out_tex))
         for tex in extra_tex_ids:
             gl.glDeleteTextures(int(tex))
+        for tex in pp_tex:
+            gl.glDeleteTextures(int(tex))
         if fbo is not None:
             gl.glDeleteFramebuffers(1, [fbo])
+        for f in pp_fbo:
+            gl.glDeleteFramebuffers(1, [f])
         if program is not None:
             gl.glDeleteProgram(program)
