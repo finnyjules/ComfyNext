@@ -124,17 +124,14 @@ motion?: { fps: number; duration: number; loop?: boolean }
 
 ### Brand kit
 
-Minimal v1, stored per-project (pattern: styles/character library):
-
-```ts
-interface BrandKit {
-  primary: string      // e.g. near-black
-  accent: string       // e.g. lime #C8F54A
-  accentGradient?: Gradient // e.g. green→cyan linear
-  fontFamily: string   // display font (Google/variable catalog)
-  logo?: AssetRef      // optional image/SVG
-}
-```
+SUPERSEDED by the shipped project brand library
+(docs/superpowers/specs/2026-06-10-brand-library-design.md, shipped
+2026-06-10): `BrandKit` lives in `frontend/shared/brand/types.ts` (primary,
+secondary, accent, **accent2**, foreground, background, fontDisplay,
+fontBody, logo); the active kit is `ProjectDoc.brandKitId` resolved via
+`useBrandLibrary().activeKit`; merging via `effectiveBrand()` from
+`shared/brand/resolve.ts`. Slate templates author `{{ brand.* }}` tokens and
+build gradients from `accent`→`accent2` color roles.
 
 ### Templates
 
