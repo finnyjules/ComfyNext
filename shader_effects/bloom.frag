@@ -34,7 +34,9 @@ void main() {
     int p = int(u_pass + 0.5);
     if (p == 0) {
         vec3 c = texture(u_image0, v_texCoord).rgb;
-        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        // Brightness from the max channel, not luma: saturated colour highlights
+        // (esp. blue, which luma weights at only 0.114) must bloom on neon imagery.
+        float l = max(max(c.r, c.g), c.b);
         float b = max(l - u_threshold, 0.0) / max(1.0 - u_threshold, 0.001);
         fragColor0 = vec4(c * b, 1.0);
     } else if (p == 1) {

@@ -35,7 +35,8 @@ void main() {
     int p = int(u_pass + 0.5);
     if (p == 0) {
         vec3 c = texture(u_image0, v_texCoord).rgb;
-        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        // Max-channel brightness so saturated colour highlights glow (luma buries blue).
+        float l = max(max(c.r, c.g), c.b);
         float b = smoothstep(u_threshold - 0.2, u_threshold + 0.2, l);
         fragColor0 = vec4(c * b, 1.0);
     } else if (p == 1) {
