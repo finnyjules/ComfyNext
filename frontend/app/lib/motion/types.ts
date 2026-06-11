@@ -19,8 +19,10 @@ export interface LayerAnimSpec {
 
 /** Transform/opacity keyframe, seconds relative to the layer's offset.
  *  Mirrors shared/timeline/types.ts Keyframe semantics (full snapshot,
- *  ease into the NEXT keyframe), but in seconds and with optional fields
- *  treated as "inherit identity". */
+ *  ease into the NEXT keyframe — hence the same narrow ease union, not the
+ *  GSAP names presets use), but in seconds and with optional fields treated
+ *  as "inherit identity". Unlike per-unit preset deltas (UNIT-BOX units),
+ *  keyframes move the WHOLE layer, so dx/dy are canvas-normalized. */
 export interface LayerKeyframe {
   t: number
   dx?: number           // normalized canvas-width offset (additive)
