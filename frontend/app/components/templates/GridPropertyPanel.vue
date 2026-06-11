@@ -273,6 +273,13 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       >
         Culled in this format — place it here
       </button>
+      <label class="mt-2 flex items-center gap-2 text-[12px] text-white/70 cursor-pointer">
+        <input
+          type="checkbox" :checked="el.bleed === true"
+          @change="(e: any) => patchElement(el!.id, { bleed: e.target.checked || undefined })"
+        >
+        <span>Bleed past margin <span class="text-white/35">(extend to canvas edge on the sides it borders)</span></span>
+      </label>
     </div>
 
     <!-- Priority -->

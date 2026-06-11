@@ -40,6 +40,49 @@ describe('resolveFormat', () => {
     expect(headline.text!.content).toBe('Brew bold')
     expect(headline.text!.fontSize).toBeGreaterThan(50)
   })
+  it('bleed:true on a full-grid image covers the whole canvas', () => {
+    const t = fixture()
+    ;(t.elements[0] as any).bleed = true   // hero, col1 colSpan6 row1 rowSpan6
+    const r = resolveFormat(t, '1x1', { image_layer_1: 'http://x/i.png' })
+    const hero = r.elements.find(e => e.el.id === 'hero')!
+    expect(hero.rect).toEqual({ x: 0, y: 0, w: 1080, h: 1080 })
+  })
+
+  it('bleed:false (default) keeps the image inside the margin', () => {
+    const t = fixture()
+    const r = resolveFormat(t, '1x1', { image_layer_1: 'http://x/i.png' })
+    const hero = r.elements.find(e => e.el.id === 'hero')!
+    expect(hero.rect.x).toBeGreaterThan(0)        // margin respected
+    expect(hero.rect.x + hero.rect.w).toBeLessThan(1080)
+  })
+
+  it('a half-grid bleed extends to canvas on its outer sides only', () => {
+    const t = fixture()
+    ;(t.elements[0] as any).region = { col: 1, colSpan: 3, row: 1, rowSpan: 6 }
+    ;(t.elements[0] as any).bleed = true
+    const r = resolveFormat(t, '1x1', { image_layer_1: 'http://x/i.png' })
+    const hero = r.elements.find(e => e.el.id === 'hero')!
+    expect(hero.rect.x).toBe(0)                          // bleeds left
+    expect(hero.rect.y).toBe(0)                          // bleeds top
+    expect(hero.rect.h).toBe(1080)                       // bleeds bottom (full height)
+    expect(hero.rect.x + hero.rect.w).toBeLessThan(1080) // keeps grid line on the right
+  })
+
+  it('text bleed extends the container but text still wraps within the margin box', () => {
+    const t = fixture()
+    ;(t.elements[1] as any).bleed = true
+    ;(t.elements[1] as any).style = { fontSize: 80 }
+    const longCopy = 'one two three four five six seven eight nine ten eleven'
+    const baselineLines = resolveFormat(fixture(), '1x1', { text_layer_1: longCopy })
+      .elements.find(e => e.el.id === 'headline')!.text!.lines.length
+    const bled = resolveFormat(t, '1x1', { text_layer_1: longCopy })
+      .elements.find(e => e.el.id === 'headline')!
+    // Same wrap (text uses the un-bled width); container bleeds to canvas.
+    expect(bled.text!.lines.length).toBe(baselineLines)
+    expect(bled.rect.x).toBe(0)
+    expect(bled.rect.x + bled.rect.w).toBe(1080)
+  })
+
   it('honours an explicit style.fontSize exactly on the master (no auto-shrink)', () => {
     const t = fixture()
     ;(t.elements[1] as any).style = { fontSize: 300 }   // headline, master 1x1

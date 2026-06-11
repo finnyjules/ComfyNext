@@ -85,6 +85,29 @@ export function regionToRect(region: Region, m: GridMetrics): Rect {
   }
 }
 
+/** Extend a region's rect to the canvas edge on each side its region touches —
+ * full-bleed semantics. A region spanning the full grid covers the whole
+ * canvas; a half-grid region bleeds on its three outer sides and keeps the
+ * grid line on the inner side. Safe areas are intentionally ignored: bleed is
+ * for backgrounds that should fill behind platform UI chrome. */
+export function bleedToEdges(
+  rect: Rect, region: Region, m: GridMetrics, formatW: number, formatH: number,
+): Rect {
+  const col = Math.min(m.cols, Math.max(1, Math.round(region.col)))
+  const row = Math.min(m.rows, Math.max(1, Math.round(region.row)))
+  const colSpan = Math.max(1, Math.min(m.cols - col + 1, Math.round(region.colSpan)))
+  const rowSpan = Math.max(1, Math.min(m.rows - row + 1, Math.round(region.rowSpan)))
+  const left = col === 1
+  const right = col + colSpan - 1 === m.cols
+  const top = row === 1
+  const bottom = row + rowSpan - 1 === m.rows
+  const x = left ? 0 : rect.x
+  const y = top ? 0 : rect.y
+  const w = (right ? formatW : rect.x + rect.w) - x
+  const h = (bottom ? formatH : rect.y + rect.h) - y
+  return { x, y, w, h }
+}
+
 /** Proportionally remap a region between grids of different dimensions.
  * Used between square/portrait/landscape only — strip and skyscraper get
  * default class layouts instead (see layouts.ts). */
