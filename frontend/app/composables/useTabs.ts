@@ -202,7 +202,7 @@ export function useTabs() {
 
     projectCounter++
     const label =
-      opts.label ?? (projectCounter === 1 ? 'New workflow' : `New workflow ${projectCounter}`)
+      opts.label ?? (projectCounter === 1 ? 'New Project' : `New Project ${projectCounter}`)
     const tab: Tab = {
       id: `project-${projectCounter}`,
       label,
