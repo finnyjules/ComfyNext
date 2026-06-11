@@ -115,3 +115,50 @@ class ShaderEffectsExtension(ComfyExtension):
 
 async def comfy_entrypoint() -> ShaderEffectsExtension:
     return ShaderEffectsExtension()
+
+
+def catalog_payload() -> dict:
+    """Manifest with .frag sources inlined — what the frontend preview consumes.
+
+    Re-reads from disk every call (cheap) so shader iteration only needs a
+    browser refresh, not a server restart. Node combo options DO need a restart.
+    """
+    catalog = load_catalog(refresh=True)
+    effects = []
+    for eff in catalog.effects.values():
+        effects.append({
+            "id": eff.id,
+            "name": eff.name,
+            "category": eff.category,
+            "animated": eff.animated,
+            "passes": eff.passes,
+            "centerParam": eff.center_param,
+            "textures": eff.textures,
+            "params": [vars(p) for p in eff.params],
+            "source": eff.source,
+        })
+    return {"version": catalog.version, "effects": effects}
+
+
+try:
+    from aiohttp import web
+
+    from server import PromptServer
+
+    @PromptServer.instance.routes.get("/comfynext/shader_effects")
+    async def _get_shader_effects(request):
+        try:
+            return web.json_response(catalog_payload())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    @PromptServer.instance.routes.get("/comfynext/shader_effects/assets/{name}")
+    async def _get_shader_asset(request):
+        name = os.path.basename(request.match_info["name"])  # no traversal
+        path = os.path.join(ASSETS_DIR, name)
+        if not os.path.isfile(path):
+            return web.json_response({"error": "not found"}, status=404)
+        return web.FileResponse(path)
+
+except Exception as e:  # imported headless (tests) — pure functions still work
+    print(f"[ComfyNext] shader_effects routes not registered: {e}")

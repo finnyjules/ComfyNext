@@ -179,3 +179,15 @@ def test_node_frame_cap_guards_memory():
     import pytest
     with pytest.raises(ValueError, match="frames requested"):
         _run_node(torch.rand(1, 16, 16, 3), duration=60.0, fps=60)
+
+
+from comfy_extras.nodes_shader_effects import catalog_payload
+
+
+def test_catalog_payload_inlines_sources():
+    payload = catalog_payload()
+    assert payload["version"] == 1
+    by_id = {e["id"]: e for e in payload["effects"]}
+    assert by_id["halftone"]["source"].startswith("#version 300 es")
+    assert by_id["halftone"]["params"][0]["uniform"] == "u_size"
+    assert by_id["noise_distortion"]["animated"] is True
