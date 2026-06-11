@@ -3,7 +3,7 @@ import { Handle, Position } from '@vue-flow/core'
 import { Sparkles } from 'lucide-vue-next'
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getTypeColor } from '~/composables/useVueNodes'
-import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { walkShaderChain } from '~/lib/shaderfx/chain'
 import { parseParams, resolveUniforms, serializeParams } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
@@ -68,7 +68,6 @@ const effectDef = computed<EffectDef | null>(
 const uniforms = computed<Record<string, number>>(() =>
   effectDef.value ? resolveUniforms(effectDef.value, parseParams(String(widgetVal('params') ?? '{}'))) : {},
 )
-const seed = computed<number>(() => Number(widgetVal('seed') ?? 42) % 10000)
 
 function setParam(uniform: string, value: number) {
   if (!effectDef.value) return
@@ -134,7 +133,7 @@ function textureSources(def: EffectDef): Record<string, TexImageSource> {
     else if (!img) {
       const el = new Image()
       el.onload = () => { if (!animating.value) renderOnce() }
-      el.src = `/comfynext/shader_effects/assets/${encodeURIComponent(t.file)}`
+      el.src = assetUrl(t.file)
       textureImages.set(t.file, el)
     }
   }
