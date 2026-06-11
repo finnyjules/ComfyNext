@@ -33,6 +33,8 @@ export interface ElementV2Base {
   region: Region                 // placement on the master grid
   regionByClass?: Partial<Record<FormatClass, Region>>
   overrides?: Record<string, { region?: Region }>   // per-format-key escape hatch
+  hidden?: boolean               // excluded from render + canvas (toggle in layers)
+  locked?: boolean               // editor-only: blocks canvas selection/drag
 }
 
 export interface TextStyleV2 {
