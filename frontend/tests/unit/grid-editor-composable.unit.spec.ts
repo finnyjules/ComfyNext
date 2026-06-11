@@ -52,6 +52,34 @@ describe('useGridEditor', () => {
     expect(ed.hasClassRegion('headline')).toBe(true)
   })
 
+  it('regionScope "format" writes a per-format-key override, not the whole class', () => {
+    const ed = useGridEditor(fixture())
+    ed.setFormat('728x90')           // strip
+    ed.regionScope.value = 'format'
+    ed.setRegion('headline', { col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    // overrides[728x90], not regionByClass
+    expect(ed.template.value.elements[0].overrides).toEqual({
+      '728x90': { region: { col: 1, colSpan: 5, row: 1, rowSpan: 1 } },
+    })
+    expect(ed.template.value.elements[0].regionByClass).toBeUndefined()
+    expect(ed.hasFormatOverride('headline')).toBe(true)
+    // only 728x90 changes; the other strip (970x250) keeps the default
+    expect(ed.resolvedAll.value['728x90'].elements[0].region).toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    expect(ed.resolvedAll.value['970x250'].elements[0].region).not.toEqual({ col: 1, colSpan: 5, row: 1, rowSpan: 1 })
+    // clearing removes just that override
+    ed.clearFormatOverride('headline')
+    expect(ed.template.value.elements[0].overrides).toBeUndefined()
+    expect(ed.hasFormatOverride('headline')).toBe(false)
+  })
+
+  it('switching format resets the region scope to class', () => {
+    const ed = useGridEditor(fixture())
+    ed.setFormat('728x90')
+    ed.regionScope.value = 'format'
+    ed.setFormat('970x250')
+    expect(ed.regionScope.value).toBe('class')
+  })
+
   it('clearClassRegion removes the class entry', () => {
     const ed = useGridEditor(fixture())
     ed.setFormat('728x90')

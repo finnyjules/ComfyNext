@@ -76,7 +76,10 @@ export function useGridEditor(initial: TemplateV2) {
   }
 
   function setFormat(key: string) {
-    if (template.value.formats[key]) currentFormat.value = key
+    if (template.value.formats[key]) {
+      currentFormat.value = key
+      regionScope.value = 'class'   // don't carry the per-format scope across tabs
+    }
   }
 
   /** Override (or reset, by passing undefined) a format's grid dimensions.
@@ -142,16 +145,29 @@ export function useGridEditor(initial: TemplateV2) {
     dirty.value = true
   }
 
+  // Where region edits on a non-master format land: 'class' (every format of
+  // this class, regionByClass) or 'format' (only this exact format key,
+  // overrides[key]). Reset to 'class' whenever the format changes.
+  const regionScope = ref<'class' | 'format'>('class')
+
   function setRegion(id: string, region: Region) {
     const el = elById(id)
     if (!el) return
-    if (isMaster.value) el.region = region
-    else el.regionByClass = { ...el.regionByClass, [formatClass.value]: region }
+    if (isMaster.value) {
+      el.region = region
+    } else if (regionScope.value === 'format') {
+      el.overrides = { ...el.overrides, [currentFormat.value]: { ...el.overrides?.[currentFormat.value], region } }
+    } else {
+      el.regionByClass = { ...el.regionByClass, [formatClass.value]: region }
+    }
     dirty.value = true
   }
 
   function hasClassRegion(id: string): boolean {
     return elById(id)?.regionByClass?.[formatClass.value] != null
+  }
+  function hasFormatOverride(id: string): boolean {
+    return elById(id)?.overrides?.[currentFormat.value]?.region != null
   }
 
   function clearClassRegion(id: string) {
@@ -159,6 +175,15 @@ export function useGridEditor(initial: TemplateV2) {
     if (!el?.regionByClass) return
     delete el.regionByClass[formatClass.value]
     if (!Object.keys(el.regionByClass).length) delete el.regionByClass
+    dirty.value = true
+  }
+  function clearFormatOverride(id: string) {
+    const el = elById(id)
+    const ov = el?.overrides?.[currentFormat.value]
+    if (!ov) return
+    delete ov.region
+    if (!Object.keys(ov).length) delete el!.overrides![currentFormat.value]
+    if (el!.overrides && !Object.keys(el!.overrides).length) delete el!.overrides
     dirty.value = true
   }
 
@@ -368,7 +393,8 @@ export function useGridEditor(initial: TemplateV2) {
     template, currentFormat, selectedId, dirty, sampleProps, sampleBrand, worstCase,
     format, formatClass, isMaster, metrics, resolved, resolvedAll, effectiveBrand,
     selectedElement, selectedResolved,
-    setFormat, setFormatDims, setGridSpec, setBrand, setRegion, hasClassRegion, clearClassRegion,
+    setFormat, setFormatDims, setGridSpec, setBrand, setRegion,
+    regionScope, hasClassRegion, clearClassRegion, hasFormatOverride, clearFormatOverride,
     loadTemplate, loadArchetype,
     patchElement, patchStyle,
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
