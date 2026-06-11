@@ -79,22 +79,11 @@ export interface ShapeElementV2 extends ElementV2Base {
 
 export type ElementV2 = TextElementV2 | ImageElementV2 | ShapeElementV2
 
-/** Brand kit baked into a template: the default values its `{{ brand.* }}`
- * tokens resolve to. A wired brand socket overrides these at render time, so
- * one template re-skins to a new brand by swapping the kit. */
-export interface BrandKit {
-  primary?: string
-  secondary?: string
-  accent?: string
-  foreground?: string
-  background?: string
-  fontDisplay?: string
-  fontBody?: string
-  logo?: string        // URL
-}
-
-export const BRAND_COLOR_KEYS = ['primary', 'secondary', 'accent', 'foreground', 'background'] as const
-export type BrandColorKey = typeof BRAND_COLOR_KEYS[number]
+/** Brand kit — re-exported from the app-wide brand module.
+ * @see ../brand/types.ts */
+export { BRAND_COLOR_KEYS } from '../brand/types'
+export type { BrandKit, BrandColorKey } from '../brand/types'
+import type { BrandKit } from '../brand/types'
 
 export interface TemplateV2 {
   version: 2

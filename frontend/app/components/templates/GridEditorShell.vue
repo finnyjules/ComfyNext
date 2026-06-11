@@ -163,7 +163,7 @@ function onGrid(field: 'gutter' | 'margin', raw: string) {
 const brandPanelOpen = ref(false)
 const COLOR_KEYS = BRAND_COLOR_KEYS
 const COLOR_LABELS: Record<string, string> = {
-  primary: 'Primary', secondary: 'Secondary', accent: 'Accent',
+  primary: 'Primary', secondary: 'Secondary', accent: 'Accent', accent2: 'Accent 2',
   foreground: 'Text', background: 'Background',
 }
 function brandVal(key: string): string {
