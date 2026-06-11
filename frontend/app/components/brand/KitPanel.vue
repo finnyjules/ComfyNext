@@ -34,8 +34,8 @@ async function onLogoFile(e: Event) {
         <input
           type="color" :value="kit[key] || '#000000'"
           class="size-6 rounded border border-white/10 bg-transparent p-0"
-          @input="setColor(key, ($event.target as HTMLInputElement).value)"
-        >
+          @change="setColor(key, ($event.target as HTMLInputElement).value)"
+        ><!-- @change, not @input: every update PUTs the whole kit; a picker drag would spam the API -->
         <input
           type="text" :value="kit[key] ?? ''" placeholder="unset"
           class="w-20 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
