@@ -270,6 +270,12 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // "More options" right panel.
   Ascii: () => false,
 
+  // SmartLayout: the raw widgets (layout JSON, aspects CSV, brand key=value)
+  // are designer-hostile. The node body renders friendly format chips + an
+  // Edit-layout button instead (SmartLayoutNodeBody); brand lives in the
+  // project brand kit + the editor's Brand panel + the wiring socket.
+  SmartLayout: () => false,
+
   // Video generation nodes: hide the seed/seed_control widgets when the
   // selected model's API takes no seed parameter (registry flag supportsSeed).
   // Model-specific advanced settings live in the ModelGalleryModal bag, so the
@@ -1135,8 +1141,8 @@ watch(previewImages, (urls) => {
       </button>
     </div>
 
-    <!-- Widgets (Compositor edits via its dedicated modal, so we hide its inline controls) -->
-    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline'" class="border-t border-[#2a2a2a] py-1.5 flex flex-col gap-1.5">
+    <!-- Widgets (Compositor / SmartLayout edit via their dedicated modal/body, so we hide the inline controls) -->
+    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="border-t border-[#2a2a2a] py-1.5 flex flex-col gap-1.5">
       <!-- Ungrouped widgets render first. Seed widgets carry a lock state
            that controls whether the pre-Run randomizer touches them. For
            Comfy-standard seeds it lives at widgets_values[i+1] (the
@@ -1265,15 +1271,13 @@ watch(previewImages, (urls) => {
       </button>
     </div>
 
-    <!-- SmartLayout: open the visual layout editor modal -->
-    <div v-if="data.nodeType === 'SmartLayout'" class="px-2 pb-2 nopan nodrag">
-      <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-[#96b4ff]/15 hover:bg-[#96b4ff]/25 text-[#c9d6ff] hover:text-white text-xs transition-colors cursor-pointer border border-[#96b4ff]/20"
-        @click="openSmartLayoutEditor"
-      >
-        Edit layout
-      </button>
-    </div>
+    <!-- SmartLayout: designer-friendly body — format chips + Edit layout
+         (replaces the raw layout JSON / aspects CSV / brand widgets). -->
+    <VueCanvasSmartLayoutNodeBody
+      v-if="data.nodeType === 'SmartLayout'"
+      :data="data"
+      @edit="openSmartLayoutEditor"
+    />
 
     <!-- LoadImage / LoadVideo / LoadVideoFrames / LoadAudio upload button -->
     <div v-if="['LoadImage', 'LoadVideo', 'LoadVideoFrames', 'LoadAudio'].includes(data.nodeType)" class="px-2 pb-2 nopan nodrag">
