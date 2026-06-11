@@ -1,4 +1,5 @@
 export * from './archetypes'
+export * from './color'
 export * from './convert'
 export * from './editor'
 export * from './grid'

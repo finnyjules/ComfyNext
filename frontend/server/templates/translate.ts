@@ -6,6 +6,7 @@
  * shape directly. Keeps the dep tree clean.
  */
 
+import { colorToRgba } from '../../shared/template-grid/color'
 import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { resolveTokens } from '../../shared/template-grid/tokens'
@@ -316,6 +317,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       const s = t.style ?? {}
       const align = s.align ?? 'left'
       const valign = s.valign ?? 'top'
+      const panel = s.panel
       return el('div', {
         style: {
           ...base,
@@ -330,6 +332,12 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
           justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
           alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
           overflow: 'hidden',
+          ...(panel?.fill
+            ? {
+                background: colorToRgba(String(resolveTokens(panel.fill, props, brand)), panel.opacity ?? 1),
+                borderRadius: panel.radius ?? 0,
+              }
+            : {}),
         },
         children: r.text!.content,
       })

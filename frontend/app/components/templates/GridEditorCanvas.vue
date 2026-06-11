@@ -6,6 +6,7 @@
  * to grid cells via shared/template-grid/editor.ts.
  */
 import type { GridEditorContext } from '~/composables/useGridEditor'
+import { colorToRgba } from '~~/shared/template-grid/color'
 import { dragRegion, resizeRegion } from '~~/shared/template-grid/editor'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
 import type { Region } from '~~/shared/template-grid/types'
@@ -136,6 +137,7 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
   const s = el.style ?? {}
   const align = s.align ?? 'left'
   const valign = s.valign ?? 'top'
+  const panel = s.panel
   return {
     color: resolve(s.color ?? '#fff'),
     fontSize: `${r.text?.fontSize ?? 16}px`,
@@ -151,6 +153,9 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
     overflow: 'hidden',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
+    ...(panel?.fill
+      ? { background: colorToRgba(resolve(panel.fill), panel.opacity ?? 1), borderRadius: `${panel.radius ?? 0}px` }
+      : {}),
   }
 }
 
