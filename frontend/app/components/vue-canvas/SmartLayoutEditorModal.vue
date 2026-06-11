@@ -9,7 +9,9 @@
  */
 import { X } from 'lucide-vue-next'
 
-import type { Template } from '~~/server/templates/schema'
+import type { AnyTemplate, Template } from '~~/server/templates/schema'
+import { makeStarterTemplate } from '~~/shared/template-grid/starter'
+import type { TemplateV2 } from '~~/shared/template-grid/types'
 
 const props = defineProps<{
   nodeId: string
@@ -28,67 +30,93 @@ function widgetIdx(name: string): number {
     ?.findIndex((d: any) => d.name === name) ?? -1
 }
 
-function readLayout(): Template {
+function readLayout(): AnyTemplate {
   const i = widgetIdx('layout')
   if (i < 0 || !node.value) return makeStarter()
   const raw = String(node.value.data.widgetsValues?.[i] ?? '').trim()
   if (!raw) return makeStarter()
   try {
-    return JSON.parse(raw) as Template
+    return JSON.parse(raw) as AnyTemplate
   } catch {
     return makeStarter()
   }
 }
 
-function writeLayout(layout: Template) {
+function writeLayout(layout: AnyTemplate) {
   const i = widgetIdx('layout')
   if (i < 0 || !node.value) return
   node.value.data.widgetsValues[i] = JSON.stringify(layout, null, 2)
 }
 
-// Starter layout for a freshly-dropped SmartLayout. Mirrors what the Python
-// _STARTER_LAYOUT looks like so visual editor + execution agree on defaults.
-// Ships with a centered headline placeholder so a wired Text node has
-// somewhere to land — same reasoning as the Python side.
-function makeStarter(): Template {
-  return {
-    version: 1,
-    id: `layout_${Math.random().toString(36).slice(2, 8)}`,
-    name: 'New Layout',
-    aspects: {
-      '1x1':  { w: 1080, h: 1080, label: 'Square' },
-      '9x16': { w: 1080, h: 1920, label: 'Vertical' },
-      '16x9': { w: 1920, h: 1080, label: 'Horizontal' },
-    },
-    defaultAspect: '1x1',
-    background: { fill: '#0a0a0a' },
-    elements: [
-      {
-        id: 'headline',
-        type: 'text',
-        role: 'HEADLINE',
-        anchor: 'center',
-        offset: { x: 0, y: 0 },
-        size: { w: '84%', h: 'auto' },
-        style: {
-          fontFamily: 'Inter',
-          fontSize: 96,
-          fontWeight: 700,
-          color: '#ffffff',
-          align: 'center',
-          lineHeight: 1.1,
-        },
-        content: '{{ props.headline }}',
-      } as any,
-    ],
+// Starter layout for a freshly-dropped SmartLayout: the v2 Swiss-grid starter,
+// mirroring the Python _STARTER_LAYOUT so editor + execution agree on defaults.
+function makeStarter(): AnyTemplate {
+  return makeStarterTemplate(`layout_${Math.random().toString(36).slice(2, 8)}`)
+}
+
+const isV2 = computed(() => (initial.value as any)?.version === 2)
+
+/** v2 twin of the Python _autopopulate_elements_v2: one grid-region element
+ * per connected layer socket, only when the template has none yet.
+ * Strip/skyscraper placement comes from the resolver's default class layouts. */
+function autopopulateV2(layout: TemplateV2, connected: Record<string, string>) {
+  if (layout.elements.length) return
+  const keys = Object.keys(connected).sort()
+  for (const key of keys) {
+    if (key.startsWith('image_layer_')) {
+      const idx = Number(key.slice('image_layer_'.length))
+      if (idx === 1) {
+        layout.elements.push({
+          id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 4,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 6 },
+          focal: { x: 0.5, y: 0.5 },
+          style: { fit: 'cover' },
+          content: `{{ props.${key} }}`,
+        })
+      } else {
+        layout.elements.push({
+          id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 5 + idx,
+          region: { col: 6, colSpan: 1, row: Math.min(6, idx - 1), rowSpan: 1 },
+          collapse: 'mark',
+          style: { fit: 'cover' },
+          content: `{{ props.${key} }}`,
+        })
+      }
+    } else if (key.startsWith('text_layer_')) {
+      const idx = Number(key.slice('text_layer_'.length))
+      if (idx === 1) {
+        layout.elements.push({
+          id: key, type: 'text', role: `TEXT_LAYER_${idx}`, priority: 1,
+          level: 'display',
+          region: { col: 1, colSpan: 6, row: 4, rowSpan: 2 },
+          overflow: 'shrink-then-truncate',
+          style: { fontWeight: 700, color: '#ffffff' },
+          content: `{{ props.${key} }}`,
+        })
+      } else {
+        layout.elements.push({
+          id: key, type: 'text', role: `TEXT_LAYER_${idx}`, priority: 5,
+          level: 'subhead',
+          region: { col: 1, colSpan: 4, row: 6, rowSpan: 1 },
+          style: { color: '#ffffff' },
+          content: `{{ props.${key} }}`,
+        })
+      }
+    }
   }
 }
 
 // Snapshot the initial layout once on mount — the editor mutates its own copy
 // and we only commit back on Save.
-const initial = ref<Template | null>(null)
+const initial = ref<AnyTemplate | null>(null)
 onMounted(() => {
   const layout = readLayout()
+  if ((layout as any).version === 2) {
+    autopopulateV2(layout as TemplateV2, initialProps.value)
+    initial.value = layout
+    jsonDraft.value = JSON.stringify(layout, null, 2)
+    return
+  }
   // Auto-create one element per connected layer socket if the user hasn't
   // already added one. Images stack on the top half (so they read as the
   // hero area); text stacks on the bottom half. Both centered horizontally.
@@ -274,6 +302,48 @@ function onLayoutSaved(layout: Template) {
   writeLayout(layout)
   emit('close')
 }
+
+// -- v2 (Swiss grid) compat mode --------------------------------------------
+// Visual grid editing is a follow-up; until then v2 templates get live format
+// previews (rendered by the real pipeline) + raw JSON editing.
+
+const jsonDraft = ref('')
+const jsonError = ref('')
+
+/** Parse the draft and refresh the previews without closing the modal. */
+function applyV2Draft(): TemplateV2 | null {
+  try {
+    const parsed = JSON.parse(jsonDraft.value)
+    if (parsed?.version !== 2 || typeof parsed.formats !== 'object') {
+      jsonError.value = 'Template must have "version": 2 and a "formats" object.'
+      return null
+    }
+    jsonError.value = ''
+    initial.value = parsed
+    return parsed as TemplateV2
+  } catch (e: any) {
+    jsonError.value = `Invalid JSON: ${e?.message ?? e}`
+    return null
+  }
+}
+
+function saveV2() {
+  const parsed = applyV2Draft()
+  if (!parsed) return
+  writeLayout(parsed)
+  emit('close')
+}
+
+/** Props for the preview renders: wired text/image values where readable. */
+const v2RenderProps = computed<Record<string, unknown>>(() => {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(initialProps.value)) {
+    // Empty string means "connected but not introspectable" — skip so the
+    // preview shows the slot culled/empty rather than a broken image.
+    if (v) out[k] = k.startsWith('image_layer_') ? new URL(v, window.location.origin).toString() : v
+  }
+  return out
+})
 </script>
 
 <template>
@@ -290,13 +360,56 @@ function onLayoutSaved(layout: Template) {
     <!-- The editor itself. EditorShell receives `initial` and mutates its
          own composable state; we re-read on Save via the @save event. -->
     <TemplatesEditorShell
-      v-if="initial"
+      v-if="initial && !isV2"
       :key="nodeId"
-      :initial="initial"
+      :initial="initial as any"
       :initial-props="initialProps"
       :initial-brand="initialBrand"
       embedded
       @save="onLayoutSaved"
     />
+
+    <!-- v2 (Swiss grid) compat mode: live per-format previews + JSON editing.
+         The visual grid editor replaces this panel in a follow-up. -->
+    <div v-else-if="initial" class="flex w-full h-full p-6 gap-4">
+      <div class="flex-1 min-w-0 flex flex-col rounded-xl bg-[#121212] border border-white/[0.06] overflow-hidden">
+        <div class="px-4 py-3 border-b border-white/[0.06] flex items-baseline gap-2">
+          <span class="text-[13px] text-white/85 font-medium">Format previews</span>
+          <span class="text-[11px] text-white/35">Swiss grid · one master, every format reflows</span>
+        </div>
+        <TemplatesGridFormatPreviews
+          :template="initial as any"
+          :render-props="v2RenderProps"
+          :brand="initialBrand"
+          class="flex-1"
+        />
+      </div>
+      <div class="w-[420px] shrink-0 flex flex-col rounded-xl bg-[#121212] border border-white/[0.06] overflow-hidden">
+        <div class="px-4 py-3 border-b border-white/[0.06]">
+          <span class="text-[13px] text-white/85 font-medium">Layout JSON</span>
+          <p class="text-[11px] text-white/35 mt-0.5">Visual grid editing is coming; for now edit regions here.</p>
+        </div>
+        <textarea
+          v-model="jsonDraft"
+          spellcheck="false"
+          class="flex-1 w-full resize-none bg-transparent text-[12px] font-mono text-white/80 p-4 outline-none"
+        />
+        <div class="px-4 py-3 border-t border-white/[0.06] flex items-center gap-2">
+          <button
+            class="px-3 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
+            @click="applyV2Draft"
+          >
+            Apply to previews
+          </button>
+          <button
+            class="px-3 h-8 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-xs text-[#c9d6ff] transition-colors cursor-pointer"
+            @click="saveV2"
+          >
+            Save to node
+          </button>
+          <span v-if="jsonError" class="text-[11px] text-red-400 truncate">{{ jsonError }}</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

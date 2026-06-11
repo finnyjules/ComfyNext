@@ -24,6 +24,14 @@ export async function openBlankWorkflow(page: Page) {
 
   await page.getByRole('button', { name: /^Start a blank project$/ }).click()
   await page.locator('.vue-flow').first().waitFor({ state: 'visible', timeout: 20_000 })
+
+  // Fresh blank projects pop the "Get Started" intent modal (StartProjectModal),
+  // which intercepts all canvas clicks. Skip it when it shows up.
+  const skipStartModal = page.getByRole('button', { name: /Skip — start with a blank canvas/i })
+  if (await skipStartModal.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await skipStartModal.click()
+    await skipStartModal.waitFor({ state: 'hidden', timeout: 5_000 })
+  }
 }
 
 /** The timeline editor's full-screen overlay. Several modals share the

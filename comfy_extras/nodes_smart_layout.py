@@ -71,16 +71,30 @@ _RENDER_ORIGIN = os.environ.get("COMFYNEXT_RENDER_ORIGIN", "http://127.0.0.1:300
 _RENDER_PATH = "/api/render-template"
 
 
+# Built-in format presets: social aspects + the IAB display set. Keys are what
+# users type into the `aspects` widget; safeArea reserves platform UI chrome.
+_FORMAT_PRESETS = {
+    "1x1":     {"w": 1080, "h": 1080, "label": "Square"},
+    "4x5":     {"w": 1080, "h": 1350, "label": "Feed portrait"},
+    "9x16":    {"w": 1080, "h": 1920, "label": "Story",
+                "safeArea": {"top": 270, "bottom": 380}},
+    "16x9":    {"w": 1920, "h": 1080, "label": "Wide"},
+    "300x250": {"w": 300,  "h": 250,  "label": "MPU"},
+    "300x600": {"w": 300,  "h": 600,  "label": "Half page"},
+    "728x90":  {"w": 728,  "h": 90,   "label": "Leaderboard"},
+    "970x250": {"w": 970,  "h": 250,  "label": "Billboard"},
+    "320x50":  {"w": 320,  "h": 50,   "label": "Mobile banner"},
+    "160x600": {"w": 160,  "h": 600,  "label": "Skyscraper"},
+}
+
 _STARTER_LAYOUT = {
-    "version": 1,
+    "version": 2,
     "id": "starter",
     "name": "New Layout",
-    "aspects": {
-        "1x1":  {"w": 1080, "h": 1080, "label": "Square"},
-        "9x16": {"w": 1080, "h": 1920, "label": "Vertical"},
-        "16x9": {"w": 1920, "h": 1080, "label": "Horizontal"},
-    },
-    "defaultAspect": "1x1",
+    "master": "1x1",
+    "formats": _FORMAT_PRESETS,
+    "grid": {"gutter": 24, "margin": 72, "baseline": 12},
+    "typeScale": {"base": 28, "ratio": 1.414},
     "background": {"fill": "#0a0a0a"},
     # Empty by default — text layers get auto-created in the editor as text
     # nodes are wired into the text_layer_<N> sockets.
@@ -103,8 +117,8 @@ def _parse_layout(raw: str) -> dict:
         layout = _json.loads(s)
     except _json.JSONDecodeError as e:
         raise RuntimeError(f"Layout JSON is malformed at line {e.lineno}: {e.msg}") from e
-    if not isinstance(layout, dict) or "aspects" not in layout:
-        raise RuntimeError("Layout must be a JSON object with at least an `aspects` field.")
+    if not isinstance(layout, dict) or ("aspects" not in layout and "formats" not in layout):
+        raise RuntimeError("Layout must be a JSON object with an `aspects` (v1) or `formats` (v2) field.")
     return layout
 
 
@@ -206,18 +220,71 @@ def _autopopulate_elements(template: dict, props: dict) -> None:
         })
 
 
+def _autopopulate_elements_v2(template: dict, props: dict) -> None:
+    """v2 twin of _autopopulate_elements: grid regions instead of anchors.
+    Strip/skyscraper placement comes from the resolver's default class
+    layouts, so only master regions are needed here. Priorities follow the
+    spec: headline 1, CTA 2, logo 3, hero 4, subhead 5.
+    """
+    if template.get("elements"):
+        return
+    image_keys = sorted([k for k in props if k.startswith("image_layer_")],
+                       key=lambda s: int(s.split("_")[-1]))
+    text_keys = sorted([k for k in props if k.startswith("text_layer_")],
+                      key=lambda s: int(s.split("_")[-1]))
+
+    for i, key in enumerate(image_keys):
+        idx = i + 1
+        if idx == 1:
+            template["elements"].append({
+                "id": key, "type": "image", "role": f"IMAGE_LAYER_{idx}", "priority": 4,
+                "region": {"col": 1, "colSpan": 6, "row": 1, "rowSpan": 6},
+                "focal": {"x": 0.5, "y": 0.5},
+                "style": {"fit": "cover"},
+                "content": "{{ props." + key + " }}",
+            })
+        else:
+            template["elements"].append({
+                "id": key, "type": "image", "role": f"IMAGE_LAYER_{idx}", "priority": 5 + idx,
+                "region": {"col": 6, "colSpan": 1, "row": min(6, idx - 1), "rowSpan": 1},
+                "collapse": "mark",
+                "style": {"fit": "cover"},
+                "content": "{{ props." + key + " }}",
+            })
+
+    for i, key in enumerate(text_keys):
+        idx = i + 1
+        if idx == 1:
+            template["elements"].append({
+                "id": key, "type": "text", "role": f"TEXT_LAYER_{idx}", "priority": 1,
+                "level": "display",
+                "region": {"col": 1, "colSpan": 6, "row": 4, "rowSpan": 2},
+                "overflow": "shrink-then-truncate",
+                "style": {"fontWeight": 700, "color": "#ffffff"},
+                "content": "{{ props." + key + " }}",
+            })
+        else:
+            template["elements"].append({
+                "id": key, "type": "text", "role": f"TEXT_LAYER_{idx}", "priority": 5,
+                "level": "subhead",
+                "region": {"col": 1, "colSpan": 4, "row": 6, "rowSpan": 1},
+                "style": {"color": "#ffffff"},
+                "content": "{{ props." + key + " }}",
+            })
+
+
 def _parse_aspects(aspects_str: str, template: dict) -> list[str]:
-    """Comma-separated aspect keys; empty falls back to default or first."""
+    """Comma-separated format keys; empty falls back to the template default."""
+    defined = template.get("formats") or template.get("aspects") or {}
     keys = [k.strip() for k in aspects_str.split(",") if k.strip()]
     if not keys:
-        default = template.get("defaultAspect") or next(iter(template.get("aspects", {})), None)
+        default = template.get("master") or template.get("defaultAspect") or next(iter(defined), None)
         if not default:
-            raise RuntimeError(f"Template has no aspects defined.")
+            raise RuntimeError("Template has no formats defined.")
         return [default]
-    valid = set(template.get("aspects", {}).keys())
-    bad = [k for k in keys if k not in valid]
+    bad = [k for k in keys if k not in defined]
     if bad:
-        raise RuntimeError(f"Unknown aspect(s) {bad}. Template defines: {sorted(valid)}")
+        raise RuntimeError(f"Unknown format(s) {bad}. Template defines: {sorted(defined)}")
     return keys
 
 
@@ -370,7 +437,10 @@ class SmartLayoutNode(IO.ComfyNode):
         # If the user hasn't opened the editor yet, the layout has no elements.
         # Inject defaults for any connected layer sockets so the preview shows
         # something meaningful instead of an empty canvas.
-        _autopopulate_elements(template, props_d)
+        if template.get("version") == 2:
+            _autopopulate_elements_v2(template, props_d)
+        else:
+            _autopopulate_elements(template, props_d)
 
         rendered: list[torch.Tensor] = []
         for key in aspect_keys:

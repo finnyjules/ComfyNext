@@ -139,11 +139,23 @@ export interface RenderBrand {
 }
 
 export interface RenderRequest {
-  template: Template
-  aspect?: string                      // key into template.aspects; defaults to defaultAspect or first
+  template: AnyTemplate
+  aspect?: string                      // key into template.aspects / formats; defaults to the template default
   props?: RenderProps
   brand?: RenderBrand
   // Explicit width/height override an aspect lookup. Either pass aspect or w/h.
   width?: number
   height?: number
 }
+
+// ---------- Schema v2 (Swiss grid) ----------
+// Types live in shared/ so the resolver, render path, and editor share one
+// definition. Re-exported here so existing `~~/server/templates/schema`
+// importers keep working.
+export type {
+  ElementV2, FormatClass, FormatSpec, GridSpec, ImageElementV2, Region,
+  SafeArea, ShapeElementV2, TemplateV2, TextElementV2, TextLevel,
+  TextOverflow, TypeScaleSpec,
+} from '../../shared/template-grid/types'
+
+export type AnyTemplate = Template | import('../../shared/template-grid/types').TemplateV2
