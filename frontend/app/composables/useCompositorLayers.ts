@@ -403,7 +403,7 @@ function textLines(layer: TextLayer): string[] {
  * box overflows on its own line rather than breaking mid-word. Needs a 2D
  * context for measurement; without one, falls back to explicit lines only.
  */
-function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer, W: number): string[] {
+export function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer, W: number): string[] {
   const manual = textLines(layer)
   const boxPx = (layer.boxW ?? 0) * W
   if (!ctx || !(boxPx > 0)) return manual
@@ -423,7 +423,7 @@ function wrappedTextLines(ctx: CanvasRenderingContext2D | null, layer: TextLayer
   return out
 }
 
-function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
+export function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   ctx.font = `${layer.fontWeight} ${layer.fontSize * W}px ${cssFontStack(layer.fontFamily)}`
 }
 
