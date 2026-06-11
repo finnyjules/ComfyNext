@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "effects": [
+    {
+      "id": "noise_distortion",
+      "name": "Noise Distortion",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        { "uniform": "u_amount", "label": "Amount", "type": "float", "min": 0.0, "max": 0.3, "default": 0.06, "step": 0.005 },
+        { "uniform": "u_scale", "label": "Scale", "type": "float", "min": 1.0, "max": 20.0, "default": 4.0, "step": 0.5 },
+        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 }
+      ]
+    },
+    {
+      "id": "halftone",
+      "name": "Halftone",
+      "category": "stylize",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        { "uniform": "u_size", "label": "Dot Size", "type": "float", "min": 0.004, "max": 0.1, "default": 0.02, "step": 0.002 },
+        { "uniform": "u_angle", "label": "Angle", "type": "float", "min": 0.0, "max": 180.0, "default": 45.0, "step": 1.0 },
+        { "uniform": "u_softness", "label": "Softness", "type": "float", "min": 0.01, "max": 0.5, "default": 0.12, "step": 0.01 }
+      ]
+    }
+  ]
+}
