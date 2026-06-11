@@ -142,12 +142,12 @@ import torch
 from comfy_extras.nodes_shader_effects import ShaderEffect
 
 
-def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=0.0, fps=4, seed=42):
+def _run_node(image, effect="noise_distortion", params="{}", time=0.0, duration=0.0, fps=4, seed=42, resolution=768, aspect="1:1"):
     # Execute the classmethod directly; hidden unique_id is only used for the ui preview.
     class _Hidden:
         unique_id = "test"
     ShaderEffect.hidden = _Hidden
-    return ShaderEffect.execute(image, effect, params, time, duration, fps, seed)
+    return ShaderEffect.execute(effect, params, time, duration, fps, seed, resolution, aspect, image=image)
 
 
 def test_node_still_returns_single_frame():
@@ -219,6 +219,85 @@ def test_server_render_matches_goldens():
                 for k, v in t.get("extraUniforms", {}).items():
                     uniforms[k] = float(v)
             jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0}}]
-            out = render_effect(eff.source, size, size, jobs, extra_textures=textures)[0][..., :3]
+            out = render_effect(eff.source, size, size, jobs, extra_textures=textures, passes=eff.passes)[0][..., :3]
             diff = np.abs(out - golden)
             assert diff.max() <= 2.0 / 255.0, f"{eff.id}@{size}: max diff {diff.max() * 255:.2f}/255"
+
+
+from comfy_extras.nodes_shader_effects import _aspect_size
+
+
+def test_aspect_size_longest_edge_and_even():
+    assert _aspect_size(768, "1:1") == (768, 768)
+    assert _aspect_size(768, "16:9") == (768, 432)
+    assert _aspect_size(768, "9:16") == (432, 768)
+    w, h = _aspect_size(770, "3:2")
+    assert w % 2 == 0 and h % 2 == 0
+
+
+def test_node_no_image_non_generative_raises():
+    import pytest
+    class _Hidden:
+        unique_id = "test"
+    ShaderEffect.hidden = _Hidden
+    with pytest.raises(ValueError, match="needs an image input"):
+        ShaderEffect.execute("halftone", "{}", 0.0, 0.0, 24, 42, 768, "1:1", image=None)
+
+
+def test_node_generative_no_image_renders_at_aspect():
+    """Generative effect with no input image synthesizes at resolution/aspect."""
+    class _Hidden:
+        unique_id = "test"
+    ShaderEffect.hidden = _Hidden
+    out = ShaderEffect.execute("aurora", "{}", 0.7, 0.0, 24, 42, 512, "16:9", image=None).args[0]
+    assert out.shape == (1, 288, 512, 3)   # 512 longest edge, 16:9
+
+
+def test_catalog_payload_includes_generative():
+    payload = catalog_payload()
+    assert all("generative" in e for e in payload["effects"])
+    by_id = {e["id"]: e for e in payload["effects"]}
+    assert by_id["aurora"]["generative"] is True       # synthesizes, no input needed
+    assert by_id["halftone"]["generative"] is False    # image-processing effect
+
+
+_TWO_PASS_FRAG = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform vec2 u_resolution;
+uniform float u_pass;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    if (u_pass < 0.5) fragColor0 = vec4(vec3(0.5), 1.0);
+    else fragColor0 = vec4(texture(u_image0, v_texCoord).rgb + 0.25, 1.0);
+}
+"""
+
+_SOURCE_FRAG = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform sampler2D u_source;
+uniform vec2 u_resolution;
+uniform float u_pass;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    if (u_pass < 0.5) fragColor0 = vec4(0.0, 0.0, 0.0, 1.0);
+    else fragColor0 = texture(u_source, v_texCoord);
+}
+"""
+
+
+def test_render_effect_multipass_pingpong():
+    img = _img(16, 16, 0.1)
+    outs = render_effect(_TWO_PASS_FRAG, 16, 16, [{"image": img, "uniforms": {}}], passes=2)
+    # pass0 -> 0.5; pass1 reads pass0 via u_image0 and adds 0.25 -> ~0.75
+    assert np.abs(outs[0][..., :3] - 0.75).max() < 2.0 / 255.0
+
+
+def test_render_effect_u_source_persists():
+    img = _img(16, 16, 0.4)
+    outs = render_effect(_SOURCE_FRAG, 16, 16, [{"image": img, "uniforms": {}}], passes=2)
+    # pass1 reads u_source (original 0.4), not the black pass0 output
+    assert np.abs(outs[0][..., :3] - 0.4).max() < 2.0 / 255.0

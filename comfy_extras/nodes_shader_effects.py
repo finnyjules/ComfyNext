@@ -27,6 +27,19 @@ from comfy_extras._shader_effects import (
 # duration*fps cannot exhaust memory (300 ≈ 12.5s @ 24fps).
 MAX_OUTPUT_FRAMES = 300
 
+# Output size for generative effects (no source image to inherit from).
+# resolution = longest edge; dims forced even.
+_ASPECT_RATIOS = {"1:1": (1, 1), "16:9": (16, 9), "9:16": (9, 16), "4:5": (4, 5), "3:2": (3, 2)}
+
+
+def _aspect_size(resolution: int, aspect: str) -> tuple[int, int]:
+    rw, rh = _ASPECT_RATIOS.get(aspect, (1, 1))
+    if rw >= rh:
+        w, h = resolution, round(resolution * rh / rw)
+    else:
+        w, h = round(resolution * rw / rh), resolution
+    return max(2, w - (w % 2)), max(2, h - (h % 2))
+
 
 def _effect_ids() -> list[str]:
     try:
@@ -65,13 +78,15 @@ class ShaderEffect(IO.ComfyNode):
             description="Real-time shader effects (distortion, dither, halftone…) with a live animated preview. Runs locally on the GPU.",
             category="image/effects",
             inputs=[
-                IO.Image.Input("image"),
+                IO.Image.Input("image", optional=True),
                 IO.Combo.Input("effect", options=_effect_ids() or ["noise_distortion"]),
                 IO.String.Input("params", default="{}", multiline=True),
                 IO.Float.Input("time", default=0.0, min=0.0, max=3600.0, step=0.05),
                 IO.Float.Input("duration", default=0.0, min=0.0, max=60.0, step=0.5),
                 IO.Int.Input("fps", default=24, min=1, max=60, step=1),
                 IO.Int.Input("seed", default=42, min=0, max=2 ** 31 - 1, step=1),
+                IO.Int.Input("resolution", default=768, min=256, max=2048, step=64),
+                IO.Combo.Input("aspect", options=["1:1", "16:9", "9:16", "4:5", "3:2"], default="1:1"),
             ],
             outputs=[IO.Image.Output(display_name="image")],
             hidden=[IO.Hidden.unique_id],
@@ -79,7 +94,10 @@ class ShaderEffect(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, effect, params, time, duration, fps, seed) -> IO.NodeOutput:
+    def execute(cls, effect, params, time, duration, fps, seed, resolution, aspect, image=None) -> IO.NodeOutput:
+        # `image` is an optional input: when unconnected, ComfyUI omits it entirely
+        # (doesn't pass None), so it must default. Inputs are passed by keyword, so
+        # signature order is free — `image` goes last to satisfy Python defaults.
         catalog = load_catalog()
         if effect not in catalog.effects:
             raise ValueError(f"ShaderEffect: unknown effect {effect!r}")
@@ -89,8 +107,19 @@ class ShaderEffect(IO.ComfyNode):
         textures, extra_uniforms = _load_effect_textures(eff)
         uniforms.update(extra_uniforms)
 
-        np_img = image.cpu().numpy().astype(np.float32)
-        b, h, w, _ = np_img.shape
+        if image is not None:
+            np_img = image.cpu().numpy().astype(np.float32)
+            b, h, w, _ = np_img.shape
+        else:
+            if not eff.generative:
+                raise ValueError(
+                    f"ShaderEffect: {effect!r} needs an image input. "
+                    f"Connect an image, or choose a generative effect."
+                )
+            np_img = None
+            w, h = _aspect_size(int(resolution), str(aspect))
+            b = 1
+
         plan = frame_plan(b, float(time), float(duration), int(fps))
         if len(plan) > MAX_OUTPUT_FRAMES:
             raise ValueError(
@@ -98,16 +127,20 @@ class ShaderEffect(IO.ComfyNode):
                 f"max is {MAX_OUTPUT_FRAMES}. Reduce duration or fps."
             )
 
-        # image=None reuses the previous upload — the still+duration path renders the
-        # same frame at many times, so only upload when the source frame changes.
+        # Base frame per job: the source frame, or a black canvas for generative
+        # effects (which ignore u_image0). image=None reuses the previous upload,
+        # so only the first job of each distinct source frame uploads.
+        def base_for(fi: int):
+            return np.ascontiguousarray(np_img[fi]) if np_img is not None else np.zeros((h, w, 3), dtype=np.float32)
+
         jobs = [
             {
-                "image": np.ascontiguousarray(np_img[fi]) if (i == 0 or fi != plan[i - 1][0]) else None,
+                "image": base_for(fi) if (i == 0 or fi != plan[i - 1][0]) else None,
                 "uniforms": {**uniforms, "u_time": t, "u_seed": float(seed % 10000)},
             }
             for i, (fi, t) in enumerate(plan)
         ]
-        outs = render_effect(eff.source, w, h, jobs, extra_textures=textures)
+        outs = render_effect(eff.source, w, h, jobs, extra_textures=textures, passes=eff.passes)
         out = torch.from_numpy(np.stack([o[..., :3] for o in outs])).clamp(0, 1)
         return IO.NodeOutput(out, ui=save_live_preview(out, str(cls.hidden.unique_id)))
 
@@ -137,6 +170,7 @@ def catalog_payload() -> dict:
             "category": eff.category,
             "animated": eff.animated,
             "passes": eff.passes,
+            "generative": eff.generative,
             "centerParam": eff.center_param,
             "textures": eff.textures,
             "params": [vars(p) for p in eff.params],

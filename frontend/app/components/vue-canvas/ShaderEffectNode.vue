@@ -6,7 +6,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { walkShaderChain } from '~/lib/shaderfx/chain'
 import { parseParams, resolveUniforms, serializeParams } from '~/lib/shaderfx/params'
-import { shaderFx } from '~/lib/shaderfx/renderer'
+import { expandPasses, shaderFx } from '~/lib/shaderfx/renderer'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 
 // ShaderEffect artifact node: live WebGL preview (shared singleton renderer)
@@ -69,6 +69,23 @@ const uniforms = computed<Record<string, number>>(() =>
   effectDef.value ? resolveUniforms(effectDef.value, parseParams(String(widgetVal('params') ?? '{}'))) : {},
 )
 
+// Generative effects synthesize from scratch (no source image), so their output
+// size comes from resolution + aspect controls instead of the input.
+const isGenerative = computed(() => !!effectDef.value?.generative)
+const RESOLUTIONS = [512, 768, 1024, 1536]
+const ASPECTS = ['1:1', '16:9', '9:16', '4:5', '3:2']
+const resolutionVal = computed(() => Number(widgetVal('resolution') ?? 768))
+const aspectVal = computed(() => String(widgetVal('aspect') ?? '1:1'))
+function aspectRatio(a: string): number {
+  const [w, h] = a.split(':').map(Number)
+  return w && h ? w / h : 1
+}
+function setSize(name: 'resolution' | 'aspect', value: number | string) {
+  setWidget(name, value)
+  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  if (!animating.value) renderOnce()
+}
+
 function setParam(uniform: string, value: number) {
   if (!effectDef.value) return
   const next = { ...uniforms.value, [uniform]: value }
@@ -109,18 +126,15 @@ let frozenTime = 0.7
 
 function buildPasses(t: number) {
   if (!catalog.value) return []
+  // Each effect expands into N ping-pong passes (multi-pass blur/bloom); chained
+  // effects concatenate, so the renderer ping-pongs the whole flattened list.
   return chain.value.passes
-    .map((p) => {
+    .flatMap((p) => {
       const def = catalog.value!.effects.find(e => e.id === p.effectId)
-      if (!def) return null
-      return {
-        id: def.id,
-        source: def.source,
-        uniforms: { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, ...textureUniforms(def) },
-        textures: textureSources(def),
-      }
-    })
-    .filter(Boolean) as any[]
+      if (!def) return []
+      const uniforms = { ...resolveUniforms(def, p.params), u_time: t, u_seed: p.seed % 10000, ...textureUniforms(def) }
+      return expandPasses(def.id, def.source, uniforms, textureSources(def), def.passes ?? 1)
+    }) as any[]
 }
 
 // Catalog textures (e.g. glyph atlas) — loaded lazily, cached module-wide
@@ -150,7 +164,11 @@ function renderFrame(t: number) {
   if (!canvas || !catalog.value) return
   const base = baseImage.value ?? placeholder
   const w = PREVIEW_W
-  const h = Math.max(16, Math.round((base.height / base.width) * w))
+  // Generative effects ignore the (placeholder) input — size the preview by the
+  // chosen aspect instead of the base image's shape.
+  const h = isGenerative.value
+    ? Math.max(16, Math.round(w / aspectRatio(aspectVal.value)))
+    : Math.max(16, Math.round((base.height / base.width) * w))
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
   try {
     const out = shaderFx.render(buildPasses(t), base, w, h)
@@ -370,6 +388,28 @@ onBeforeUnmount(() => {
           </span>
           <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
         </button>
+      </div>
+
+      <!-- Generative effects synthesize from scratch — pick output size here -->
+      <div v-if="isGenerative" class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-[9px] text-muted-foreground tracking-normal mb-0.5 block">Resolution</label>
+          <select
+            class="nopan nodrag w-full px-2 py-1 rounded border border-white/10 bg-white/[0.04] hover:border-white/20 text-[11px] text-white/85 outline-none cursor-pointer"
+            :value="resolutionVal" @change="setSize('resolution', Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="r in RESOLUTIONS" :key="r" :value="r">{{ r }}</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[9px] text-muted-foreground tracking-normal mb-0.5 block">Aspect</label>
+          <select
+            class="nopan nodrag w-full px-2 py-1 rounded border border-white/10 bg-white/[0.04] hover:border-white/20 text-[11px] text-white/85 outline-none cursor-pointer"
+            :value="aspectVal" @change="setSize('aspect', ($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="a in ASPECTS" :key="a" :value="a">{{ a }}</option>
+          </select>
+        </div>
       </div>
 
       <!-- Manifest-driven param sliders, as labeled fields -->

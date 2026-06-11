@@ -24,6 +24,7 @@ export interface EffectDef {
   textures: EffectTextureDef[]
   params: EffectParamDef[]
   source: string
+  generative?: boolean
 }
 
 export interface ShaderFxCatalog {

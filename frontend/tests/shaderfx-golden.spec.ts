@@ -84,6 +84,7 @@ for (const eff of manifest.effects as ManifestEffect[]) {
           baseDataUrl: dataUrl(path.join(GOLDEN, `fixture_${size}.png`)),
           width: size,
           height: size,
+          passes: (eff as any).passes ?? 1,
         },
       )
 
