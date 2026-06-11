@@ -20,12 +20,18 @@ void main() {
   gl_Position = vec4(verts[gl_VertexID], 0., 1.);
 }`
 
+// NOTE: no Y-flip here. Internal textures are GL y-up (flipped upload), and the
+// browser presents the WebGL drawing buffer y-up too (toDataURL/drawImage read
+// row height-1 as the image top), so a direct blit already lands in image
+// orientation. Flipping here double-flips — caught by the parity harness
+// (tests/shaderfx-golden.spec.ts): every effect diffed ~69/255 vs server
+// goldens direct, ~0.03/255 flipped.
 const BLIT_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_image0;
 in vec2 v_texCoord;
 layout(location = 0) out vec4 fragColor0;
-void main() { fragColor0 = texture(u_image0, vec2(v_texCoord.x, 1.0 - v_texCoord.y)); }`
+void main() { fragColor0 = texture(u_image0, v_texCoord); }`
 
 class ShaderFxRenderer {
   private canvas: HTMLCanvasElement | null = null
@@ -125,7 +131,9 @@ class ShaderFxRenderer {
   /**
    * Run `passes` over `base`, return the canvas (valid until the next render call).
    * Pass 0 reads base; pass N reads pass N-1's output. Internal orientation is
-   * GL y-up (matches the server's flipped upload); the final blit flips back.
+   * GL y-up (matches the server's flipped upload); the final blit samples
+   * directly — browser canvas readout (toDataURL/drawImage) is already
+   * top-row-last in GL terms, so no flip is needed (see BLIT_FS note).
    */
   render(passes: ShaderPass[], base: TexImageSource, width: number, height: number): HTMLCanvasElement {
     const gl = this.ensure(width, height)
@@ -186,7 +194,7 @@ class ShaderFxRenderer {
       readTex = this.fboTex[i % 2]!
     }
 
-    // Blit final texture to the canvas, flipping Y back to image orientation.
+    // Blit final texture to the canvas (no flip — see BLIT_FS note).
     if (!this.blit) this.blit = this.program('__blit__', BLIT_FS)
     gl.useProgram(this.blit)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
