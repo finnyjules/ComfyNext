@@ -3,6 +3,7 @@ import type { EditState, Track, Clip, Asset, Keyframe } from '~~/shared/timeline
 import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
 import type { ClipTransform } from '~~/shared/timeline/interpolate'
 import { applyCommand, type TimelineCommand } from '~~/shared/timeline/commands'
+import { createMotionClip } from '~/composables/timelineMotionClip'
 
 const MAX_UNDO = 100
 
@@ -131,6 +132,13 @@ export function useTimelineStore() {
 
   function addClip(trackId: string, clip: Clip) {
     dispatch({ type: 'add_clip', track_id: trackId, clip })
+  }
+
+  function addMotionClip(trackId: string, startFrame: number, length = 90) {
+    const clip = createMotionClip({ startFrame, length })
+    addClip(trackId, clip as any)
+    selectedClipId.value = clip.id
+    return clip
   }
 
   function removeClip(clipId: string) {
@@ -265,6 +273,7 @@ export function useTimelineStore() {
     addTrack,
     removeTrack,
     addClip,
+    addMotionClip,
     removeClip,
     updateClip,
     moveClip,

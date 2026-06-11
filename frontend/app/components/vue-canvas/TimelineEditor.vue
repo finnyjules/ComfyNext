@@ -144,6 +144,16 @@ async function addFileToTimeline(file: { filename: string; path: string }) {
   store.addClip(targetTrack!.id, clip)
 }
 
+// Add a Kinetic Text motion clip at the playhead on the first video track.
+function addKineticText() {
+  let targetTrack = store.state.value.tracks.find(t => t.kind === 'video' && !t.locked)
+  if (!targetTrack) {
+    store.addTrack('video')
+    targetTrack = store.state.value.tracks[store.state.value.tracks.length - 1]
+  }
+  store.addMotionClip(targetTrack!.id, store.playheadFrame.value)
+}
+
 // -- Playback engine --
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -1169,6 +1179,14 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             title="Redo (⌘⇧Z)"
             @click="store.redo()"
           ><Redo2 class="size-3.5" /></button>
+        </div>
+
+        <div class="flex items-center gap-1 ml-2">
+          <button
+            class="flex items-center gap-1.5 px-2 h-6 rounded text-xs text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+            title="Add Kinetic Text clip at playhead"
+            @click="addKineticText()"
+          ><Type class="size-3.5" /> Kinetic Text</button>
         </div>
 
         <div class="ml-auto flex items-center gap-2">
