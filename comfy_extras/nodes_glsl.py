@@ -364,7 +364,7 @@ def _init_osmesa():
 class GLContext:
     """Manages OpenGL context and resources for shader execution.
 
-    Tries backends in order: GLFW (desktop) → EGL (headless GPU) → OSMesa (software).
+    Tries backends in order: GLFW (desktop) → CGL (macOS GPU, headless) → EGL (headless GPU) → OSMesa (software).
     """
 
     _instance = None
