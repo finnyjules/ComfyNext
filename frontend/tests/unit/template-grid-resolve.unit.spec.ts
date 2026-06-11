@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveFormat } from '~~/shared/template-grid/resolve'
+import { deriveOutputs, resolveFormat } from '~~/shared/template-grid/resolve'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
 function fixture(): TemplateV2 {
@@ -144,6 +144,58 @@ describe('resolveFormat', () => {
   })
   it('throws on unknown format keys', () => {
     expect(() => resolveFormat(fixture(), 'nope')).toThrow(/Unknown format/)
+  })
+
+  // -- Per-output overrides (variations of the same format) -------------------
+
+  it('two outputs of the same format diverge via per-output region overrides', () => {
+    const t = fixture()
+    // headline has a per-output override only for output 'sq2'
+    ;(t.elements[1] as any).overrides = { sq2: { region: { col: 1, colSpan: 2, row: 1, rowSpan: 1 } } }
+    const base = resolveFormat(t, '1x1', { text_layer_1: 'Hi' }, {}, { outputId: 'sq1' })
+      .elements.find(e => e.el.id === 'headline')!
+    const variant = resolveFormat(t, '1x1', { text_layer_1: 'Hi' }, {}, { outputId: 'sq2' })
+      .elements.find(e => e.el.id === 'headline')!
+    // sq1 keeps the base region (row 4); sq2 uses the override (row 1)
+    expect(base.region).toEqual({ col: 1, colSpan: 6, row: 4, rowSpan: 2 })
+    expect(variant.region).toEqual({ col: 1, colSpan: 2, row: 1, rowSpan: 1 })
+  })
+
+  it('per-output hidden culls in only that output', () => {
+    const t = fixture()
+    ;(t.elements[3] as any).overrides = { sqB: { hidden: true } }   // cta hidden in sqB only
+    const a = resolveFormat(t, '1x1', {}, {}, { outputId: 'sqA' }).elements.find(e => e.el.id === 'cta')!
+    const b = resolveFormat(t, '1x1', {}, {}, { outputId: 'sqB' }).elements.find(e => e.el.id === 'cta')!
+    expect(a.culled).toBe(false)
+    expect(b.culled).toBe(true)
+    expect(b.cullReason).toBe('hidden')
+  })
+
+  it('outputId falls back to the format key (pre-outputs overrides still work)', () => {
+    const t = fixture()
+    ;(t.elements[1] as any).overrides = { '1x1': { region: { col: 2, colSpan: 2, row: 2, rowSpan: 1 } } }
+    // No outputId → oid defaults to formatKey '1x1' → the legacy override applies
+    const r = resolveFormat(t, '1x1', { text_layer_1: 'Hi' }).elements.find(e => e.el.id === 'headline')!
+    expect(r.region).toEqual({ col: 2, colSpan: 2, row: 2, rowSpan: 1 })
+  })
+
+  describe('deriveOutputs', () => {
+    it('uses explicit template.outputs when present', () => {
+      const t = { ...fixture(), outputs: [{ id: 'a', format: '1x1', label: 'A' }, { id: 'b', format: '1x1', label: 'B' }] }
+      expect(deriveOutputs(t).map(o => o.id)).toEqual(['a', 'b'])
+    })
+    it('derives one output per aspect key (id === format) when no outputs', () => {
+      const out = deriveOutputs(fixture(), '1x1,9x16,728x90')
+      expect(out).toEqual([
+        { id: '1x1', format: '1x1', label: undefined },
+        { id: '9x16', format: '9x16', label: undefined },
+        { id: '728x90', format: '728x90', label: undefined },
+      ])
+    })
+    it('falls back to the master when aspects is empty/unknown', () => {
+      expect(deriveOutputs(fixture(), '').map(o => o.format)).toEqual(['1x1'])
+      expect(deriveOutputs(fixture(), 'bogus').map(o => o.format)).toEqual(['1x1'])
+    })
   })
 
   it('style.fontSize overrides the level size but still scales per format', () => {

@@ -258,9 +258,10 @@ export function templateToSatori(
   template: Template | TemplateV2, aspectKey: string | undefined,
   props: RenderProps = {}, brand: RenderBrand = {},
   explicitSize?: { width: number; height: number },
+  outputId?: string,
 ): TranslatedLayout {
   if ((template as TemplateV2).version === 2) {
-    return templateV2ToSatori(template as TemplateV2, aspectKey, props, brand, explicitSize)
+    return templateV2ToSatori(template as TemplateV2, aspectKey, props, brand, explicitSize, outputId)
   }
   return templateV1ToSatori(template as Template, aspectKey, props, brand, explicitSize)
 }
@@ -395,6 +396,7 @@ function templateV2ToSatori(
   template: TemplateV2, formatKey: string | undefined,
   props: RenderProps, brand: RenderBrand,
   explicitSize?: { width: number; height: number },
+  outputId?: string,
 ): TranslatedLayout {
   let tpl = template
   let key = formatKey ?? template.master ?? Object.keys(template.formats)[0]
@@ -414,7 +416,7 @@ function templateV2ToSatori(
   // {{ brand.* }} tokens resolve, while a wired kit can re-skin it.
   const brandMerged = { ...(template.brand ?? {}), ...brand } as RenderBrand
 
-  const resolved = resolveFormat(tpl, key, props as Record<string, unknown>, brandMerged as Record<string, unknown>)
+  const resolved = resolveFormat(tpl, key, props as Record<string, unknown>, brandMerged as Record<string, unknown>, { outputId })
   const { w, h } = resolved.format
 
   const children: SatoriNode[] = []

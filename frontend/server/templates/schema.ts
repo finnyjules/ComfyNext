@@ -146,6 +146,8 @@ export interface RenderRequest {
   // Explicit width/height override an aspect lookup. Either pass aspect or w/h.
   width?: number
   height?: number
+  // v2 only: which output instance to render — selects per-output overrides.
+  outputId?: string
 }
 
 // ---------- Schema v2 (Swiss grid) ----------

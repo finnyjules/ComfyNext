@@ -32,7 +32,10 @@ export interface ElementV2Base {
   priority: number               // 1 = most important; drives slot assignment + culling
   region: Region                 // placement on the master grid
   regionByClass?: Partial<Record<FormatClass, Region>>
-  overrides?: Record<string, { region?: Region }>   // per-format-key escape hatch
+  /** Per-output overrides, keyed by output id (falls back to format key for
+   *  pre-outputs templates). Highest precedence — lets one output of a format
+   *  diverge into a variation. */
+  overrides?: Record<string, { region?: Region; hidden?: boolean }>
   hidden?: boolean               // excluded from render + canvas (toggle in layers)
   locked?: boolean               // editor-only: blocks canvas selection/drag
   /** Extend to the canvas edge on every side that the element's region
@@ -85,6 +88,15 @@ export interface ShapeElementV2 extends ElementV2Base {
 
 export type ElementV2 = TextElementV2 | ImageElementV2 | ShapeElementV2
 
+/** A chosen deliverable: an instance of a format. The same format may appear
+ *  more than once (variations), each with its own id so per-output overrides
+ *  and the rendered image are distinct. */
+export interface OutputSpec {
+  id: string
+  format: string        // key into TemplateV2.formats
+  label?: string        // display name (defaults to the format label)
+}
+
 /** Brand kit — re-exported from the app-wide brand module.
  * @see ../brand/types.ts */
 export { BRAND_COLOR_KEYS } from '../brand/types'
@@ -101,5 +113,8 @@ export interface TemplateV2 {
   typeScale: TypeScaleSpec
   background?: { fill?: string; image?: string }
   brand?: BrandKit                         // template-default brand; socket overrides
+  /** Chosen deliverables to render, in order. When absent, derived from the
+   *  node's `aspects` (one output per format) for back-compat. */
+  outputs?: OutputSpec[]
   elements: ElementV2[]
 }

@@ -13,7 +13,21 @@ import { fitText, typeSize, wrapLines } from './text'
 import type { FitResult } from './text'
 import { resolveTokens } from './tokens'
 import type { TokenScope } from './tokens'
-import type { ElementV2, FormatClass, FormatSpec, Region, TemplateV2 } from './types'
+import type { ElementV2, FormatClass, FormatSpec, OutputSpec, Region, TemplateV2 } from './types'
+
+/** The deliverables to render. Uses the template's explicit `outputs` when
+ * present; otherwise derives one output per format key in `aspectsCsv`
+ * (back-compat with the pre-outputs `aspects` widget), falling back to the
+ * master. Migrated outputs use id === format key so existing
+ * overrides[formatKey] keep resolving. */
+export function deriveOutputs(template: TemplateV2, aspectsCsv?: string): OutputSpec[] {
+  if (template.outputs?.length) return template.outputs
+  const keys = (aspectsCsv ?? '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .filter(k => k in template.formats)
+  const fallback = keys.length ? keys : [template.master]
+  return fallback.map(k => ({ id: k, format: k, label: template.formats[k]?.label }))
+}
 
 export type CullReason = 'no-slot' | 'too-small' | 'hidden'
 
@@ -43,12 +57,16 @@ export function resolveFormat(
   formatKey: string,
   props: TokenScope = {},
   brand: TokenScope = {},
+  opts: { outputId?: string } = {},
 ): ResolvedLayout {
   const format = template.formats[formatKey]
   if (!format) throw new Error(`Unknown format '${formatKey}' on template '${template.id}'`)
   const cls = classifyFormat(format)
   const m = gridMetrics(template, formatKey)
   const masterDims = formatDims(template.formats[template.master])
+  // Per-output overrides key. Falls back to the format key so single-output
+  // (pre-outputs) templates keep resolving their overrides[formatKey].
+  const oid = opts.outputId ?? formatKey
 
   // Region assignment runs in priority order so high-priority elements win
   // contested default slots. Rendering below keeps template order (z-order).
@@ -56,7 +74,7 @@ export function resolveFormat(
   const taken = new Set<Slot>()
   const byPriority = [...template.elements].sort((a, b) => a.priority - b.priority)
   for (const el of byPriority) {
-    const explicit = el.overrides?.[formatKey]?.region ?? el.regionByClass?.[cls]
+    const explicit = el.overrides?.[oid]?.region ?? el.regionByClass?.[cls]
     if (explicit) {
       regions.set(el.id, explicit)
     } else if (cls === 'strip' || cls === 'skyscraper') {
@@ -67,8 +85,10 @@ export function resolveFormat(
   }
 
   const elements = template.elements.map((el): ResolvedElement => {
-    // Hidden elements never render — drop before any geometry work.
-    if (el.hidden) return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' }
+    // Hidden globally or in this specific output — drop before geometry.
+    if (el.hidden || el.overrides?.[oid]?.hidden) {
+      return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' }
+    }
     let region = regions.get(el.id) ?? null
     if (!region) return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'no-slot' }
 

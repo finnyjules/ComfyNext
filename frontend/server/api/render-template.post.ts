@@ -129,6 +129,7 @@ export default defineEventHandler(async (event) => {
     body.props ?? {},
     body.brand ?? {},
     body.width && body.height ? { width: body.width, height: body.height } : undefined,
+    body.outputId,
   )
 
   // Satori's first arg is "any" because it accepts ReactNode-shaped objects.
