@@ -298,14 +298,40 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 // The EditorShell saves via fetch — but we want it to save to the node, not
 // to a file. So we listen for a custom save event the shell dispatches.
-function onLayoutSaved(layout: Template) {
+function onLayoutSaved(layout: AnyTemplate) {
   writeLayout(layout)
   emit('close')
 }
 
-// -- v2 (Swiss grid) compat mode --------------------------------------------
-// Visual grid editing is a follow-up; until then v2 templates get live format
-// previews (rendered by the real pipeline) + raw JSON editing.
+// -- v2 (Swiss grid) editing --------------------------------------------------
+// Default view is the visual grid editor; the JSON panel stays available as
+// an escape hatch (per-format-key overrides have no UI yet).
+
+const v2View = ref<'visual' | 'json'>('visual')
+const gridShellKey = ref(0)
+
+/** One-way v1 → v2 conversion. Only persists when the user saves afterwards;
+ * closing without saving leaves the node's v1 layout untouched. */
+function convertToGrid() {
+  if (!initial.value || (initial.value as any).version === 2) return
+  const converted = convertV1toV2(initial.value as Template)
+  initial.value = converted
+  jsonDraft.value = JSON.stringify(converted, null, 2)
+  v2View.value = 'visual'
+  gridShellKey.value++
+}
+
+function showJsonView() {
+  // Pick up whatever the visual editor changed before showing the draft.
+  jsonDraft.value = JSON.stringify(initial.value, null, 2)
+  v2View.value = 'json'
+}
+
+function showVisualView() {
+  // Remount the shell so it picks up a JSON draft applied in the meantime.
+  gridShellKey.value++
+  v2View.value = 'visual'
+}
 
 const jsonDraft = ref('')
 const jsonError = ref('')
@@ -357,7 +383,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
       <X class="size-4" />
     </button>
 
-    <!-- The editor itself. EditorShell receives `initial` and mutates its
+    <!-- The v1 editor. EditorShell receives `initial` and mutates its
          own composable state; we re-read on Save via the @save event. -->
     <TemplatesEditorShell
       v-if="initial && !isV2"
@@ -369,8 +395,37 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
       @save="onLayoutSaved"
     />
 
-    <!-- v2 (Swiss grid) compat mode: live per-format previews + JSON editing.
-         The visual grid editor replaces this panel in a follow-up. -->
+    <!-- v1 → v2 conversion affordance -->
+    <button
+      v-if="initial && !isV2"
+      class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 h-8 px-3 rounded-full bg-[#96b4ff]/15 hover:bg-[#96b4ff]/25 border border-[#96b4ff]/25 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
+      title="One-way conversion to the Swiss grid system (auto-reflow to every ad format). Takes effect when you save."
+      @click="convertToGrid"
+    >
+      Convert to grid layout
+    </button>
+
+    <!-- The v2 visual grid editor -->
+    <TemplatesGridEditorShell
+      v-else-if="initial && v2View === 'visual'"
+      :key="`${nodeId}-grid-${gridShellKey}`"
+      :initial="initial as any"
+      :initial-props="initialProps"
+      :initial-brand="initialBrand"
+      @save="onLayoutSaved"
+    >
+      <template #topbar-end>
+        <button
+          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/50 transition-colors cursor-pointer"
+          title="Edit the raw layout JSON (escape hatch)"
+          @click="showJsonView"
+        >
+          JSON
+        </button>
+      </template>
+    </TemplatesGridEditorShell>
+
+    <!-- v2 JSON escape hatch: live per-format previews + raw JSON -->
     <div v-else-if="initial" class="flex w-full h-full p-6 gap-4">
       <div class="flex-1 min-w-0 flex flex-col rounded-xl bg-[#121212] border border-white/[0.06] overflow-hidden">
         <div class="px-4 py-3 border-b border-white/[0.06] flex items-baseline gap-2">
@@ -395,6 +450,12 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
           class="flex-1 w-full resize-none bg-transparent text-[12px] font-mono text-white/80 p-4 outline-none"
         />
         <div class="px-4 py-3 border-t border-white/[0.06] flex items-center gap-2">
+          <button
+            class="px-3 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
+            @click="showVisualView"
+          >
+            Back to visual
+          </button>
           <button
             class="px-3 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
             @click="applyV2Draft"

@@ -19,7 +19,8 @@ export default defineConfig({
   expect: { timeout: 10_000 },
 
   use: {
-    baseURL: 'http://127.0.0.1:3002',
+    // PW_BASE_URL lets worktree/CI runs target their own dev server.
+    baseURL: process.env.PW_BASE_URL ?? 'http://127.0.0.1:3002',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

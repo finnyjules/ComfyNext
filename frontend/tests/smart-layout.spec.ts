@@ -186,10 +186,26 @@ test.describe('SmartLayout node in the canvas', () => {
     // We assert the modal overlay exists by checking for the highest-z fixed inset element.
     const modal = page.locator('div.fixed.inset-0').last()
     await expect(modal).toBeVisible({ timeout: 5_000 })
-    // Fresh nodes default to the v2 grid starter → compat mode shows live
-    // format previews rendered through the real /api/render-template pipeline.
-    await expect(modal.getByText('Format previews')).toBeVisible()
-    await expect(modal.locator('img').first()).toBeVisible({ timeout: 20_000 })
+
+    // Fresh nodes default to the v2 grid starter → the visual grid editor
+    // opens with the format tab strip (incl. IAB sizes) and the grid canvas.
+    await expect(modal.getByRole('button', { name: /728x90/ })).toBeVisible()
+    await expect(modal.getByText(/grid ·/)).toBeVisible()          // canvas readout
+    await expect(modal.getByRole('button', { name: 'Save & close' })).toBeVisible()
+
+    // Switching to a strip format updates the canvas readout + class.
+    await modal.getByRole('button', { name: /728x90/ }).click()
+    await expect(modal.getByText(/728 × 90 · strip/)).toBeVisible()
+
+    // The JSON escape hatch still exists.
+    await modal.getByRole('button', { name: 'JSON', exact: true }).click()
+    await expect(modal.getByText('Layout JSON')).toBeVisible()
+    await modal.getByRole('button', { name: 'Back to visual' }).click()
+    await expect(modal.getByRole('button', { name: 'Save & close' })).toBeVisible()
+
+    // Save writes back and closes.
+    await modal.getByRole('button', { name: 'Save & close' }).click()
+    await expect(modal).toBeHidden({ timeout: 5_000 })
   })
 
   test('execute path: queue a SmartLayout-only workflow and verify the output frame is a PNG', async ({ page, request }) => {
