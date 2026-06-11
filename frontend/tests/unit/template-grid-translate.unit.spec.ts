@@ -78,6 +78,35 @@ describe('templateToSatori (v2)', () => {
     expect(text.props.style.fontFamily).toBe('Bebas Neue')
   })
 
+  it('renders an unwired image as a placeholder, not a broken <img> src', () => {
+    const t: any = {
+      ...T,
+      elements: [
+        { id: 'hero', type: 'image', content: '{{ props.image_layer_1 }}', priority: 4,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 6 } },
+      ],
+    }
+    // No props.image_layer_1 → must not emit an <img> with the literal token.
+    const nodes = flatten(templateToSatori(t, '1x1', {}).tree)
+    const brokenImg = nodes.find(n => n?.type === 'img' && String(n.props.src).includes('{{'))
+    expect(brokenImg).toBeUndefined()
+  })
+
+  it('draws a text scrim/panel as a semi-transparent container background', () => {
+    const t: any = {
+      ...T,
+      brand: { primary: '#E2362B' },
+      elements: [
+        { id: 'h', type: 'text', content: 'Hi', level: 'display', priority: 1,
+          region: { col: 1, colSpan: 6, row: 1, rowSpan: 2 },
+          style: { color: '#fff', panel: { fill: '{{ brand.primary }}', opacity: 0.6, radius: 8 } } },
+      ],
+    }
+    const text = flatten(templateToSatori(t, '1x1', {}).tree).find(n => n?.props?.children === 'Hi')
+    expect(text.props.style.background).toBe('rgba(226, 54, 43, 0.6)')
+    expect(text.props.style.borderRadius).toBe(8)
+  })
+
   it('lets a wired brand socket override the template brand', () => {
     const branded: any = {
       ...T,

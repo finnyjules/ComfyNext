@@ -6,6 +6,7 @@
  * shape directly. Keeps the dep tree clean.
  */
 
+import { colorToRgba } from '../../shared/template-grid/color'
 import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { resolveTokens } from '../../shared/template-grid/tokens'
@@ -222,12 +223,16 @@ function backgroundNode(
 ): SatoriNode | null {
   if (!bg) return null
   if (bg.image) {
-    return el('img', {
-      src: resolveTokens(bg.image, props, brand),
-      width: aspect.w as unknown as number,
-      height: aspect.h as unknown as number,
-      style: { position: 'absolute', top: 0, left: 0, objectFit: 'cover', width: '100%', height: '100%' },
-    })
+    const src = String(resolveTokens(bg.image, props, brand))
+    // Skip an unresolved/empty background image rather than crash satori.
+    if (src && !src.includes('{{')) {
+      return el('img', {
+        src,
+        width: aspect.w as unknown as number,
+        height: aspect.h as unknown as number,
+        style: { position: 'absolute', top: 0, left: 0, objectFit: 'cover', width: '100%', height: '100%' },
+      })
+    }
   }
   if (bg.fill) {
     return el('div', {
@@ -316,6 +321,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       const s = t.style ?? {}
       const align = s.align ?? 'left'
       const valign = s.valign ?? 'top'
+      const panel = s.panel
       return el('div', {
         style: {
           ...base,
@@ -330,6 +336,12 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
           justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
           alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
           overflow: 'hidden',
+          ...(panel?.fill
+            ? {
+                background: colorToRgba(String(resolveTokens(panel.fill, props, brand)), panel.opacity ?? 1),
+                borderRadius: panel.radius ?? 0,
+              }
+            : {}),
         },
         children: r.text!.content,
       })
@@ -339,10 +351,16 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       const s = im.style ?? {}
       const focal = im.focal ?? { x: 0.5, y: 0.5 }
       const fit = s.fit ?? 'cover'
+      const src = String(resolveTokens(im.content, props, brand))
+      // An unwired image (token unresolved or empty) is an empty slot, not a
+      // crash — satori rejects non-URL srcs, so emit a neutral placeholder.
+      if (!src || src.includes('{{')) {
+        return el('div', { style: { ...base, background: 'rgba(255,255,255,0.04)', borderRadius: s.borderRadius ?? 0 } })
+      }
       return el('div', {
         style: { ...base, overflow: 'hidden', borderRadius: s.borderRadius ?? 0 },
         children: el('img', {
-          src: String(resolveTokens(im.content, props, brand)),
+          src,
           width: '100%' as unknown as number,
           height: '100%' as unknown as number,
           style: {

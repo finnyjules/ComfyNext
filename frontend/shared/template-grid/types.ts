@@ -49,6 +49,9 @@ export interface TextStyleV2 {
    *  format (min-dim × class multiplier) and auto-fits within the region. */
   fontSize?: number
   transform?: 'none' | 'uppercase'
+  /** Legibility panel/scrim drawn behind the text, filling its region. fill is
+   *  brand-bindable; opacity 0–1 makes it a scrim over imagery. */
+  panel?: { fill?: string; opacity?: number; radius?: number }
 }
 
 export interface TextElementV2 extends ElementV2Base {

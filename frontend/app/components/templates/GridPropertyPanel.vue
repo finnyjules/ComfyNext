@@ -130,6 +130,17 @@ function bindFontToBrand(slot: 'fontDisplay' | 'fontBody') {
 const hasBrandLogo = computed(() => typeof (effectiveBrand.value as any).logo === 'string')
 const usingBrandLogo = computed(() => el.value?.type === 'image' && (el.value as any).content === '{{ brand.logo }}')
 
+// -- Text panel / scrim ------------------------------------------------------
+const panel = computed(() => textEl.value?.style?.panel ?? null)
+function setPanel(patch: Record<string, unknown> | null) {
+  if (!el.value) return
+  if (patch === null) { patchStyle(el.value.id, { panel: undefined }); return }
+  patchStyle(el.value.id, { panel: { ...(panel.value ?? { fill: '#000000', opacity: 0.5 }), ...patch } })
+}
+function bindPanelToBrand(slot: string) {
+  setPanel({ fill: `{{ brand.${slot} }}` })
+}
+
 /** Placeholder for the size input: the level-derived size in master px. */
 const levelSizePlaceholder = computed(() => {
   if (!textEl.value) return ''
@@ -381,6 +392,63 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             @click="bindColorToBrand('color', slot)"
           />
         </div>
+      </div>
+
+      <!-- Legibility panel / scrim -->
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <p :class="labelCls">Panel / scrim</p>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" :checked="!!panel" @change="(e: any) => setPanel(e.target.checked ? {} : null)">
+            <span class="text-[11px] text-white/50">behind text</span>
+          </label>
+        </div>
+        <template v-if="panel">
+          <div class="flex gap-2 items-center">
+            <input
+              type="color" :value="resolvedColor(panel.fill, '#000000')"
+              class="size-7 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
+              @input="(e: any) => setPanel({ fill: e.target.value })"
+            >
+            <input
+              :value="brandTokenKey(panel.fill) ? `brand.${brandTokenKey(panel.fill)}` : (panel.fill ?? '#000000')"
+              :class="[inputCls, brandTokenKey(panel.fill) ? 'text-[#c9d6ff]' : '']"
+              @change="(e: any) => setPanel({ fill: e.target.value })"
+            >
+          </div>
+          <div v-if="brandColorSlots.length" class="flex items-center gap-1 mt-1.5">
+            <span class="text-[10px] text-white/30">Brand:</span>
+            <button
+              v-for="slot in brandColorSlots"
+              :key="slot"
+              class="size-5 rounded-full border cursor-pointer transition"
+              :class="brandTokenKey(panel.fill) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+              :style="{ background: brandSwatch(slot) }"
+              :title="`Bind panel to brand.${slot}`"
+              @click="bindPanelToBrand(slot)"
+            />
+          </div>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <p :class="labelCls" class="mb-1">Opacity</p>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range" min="0" max="1" step="0.05" :value="panel.opacity ?? 0.5"
+                  class="flex-1"
+                  @input="(e: any) => setPanel({ opacity: Number(e.target.value) })"
+                >
+                <span class="text-[11px] text-white/50 tabular-nums w-8">{{ Math.round((panel.opacity ?? 0.5) * 100) }}%</span>
+              </div>
+            </div>
+            <div>
+              <p :class="labelCls" class="mb-1">Radius</p>
+              <input
+                type="number" min="0" :value="panel.radius ?? 0" :class="inputCls"
+                @change="(e: any) => setPanel({ radius: Math.max(0, Number(e.target.value) || 0) })"
+              >
+            </div>
+          </div>
+        </template>
       </div>
     </template>
 
