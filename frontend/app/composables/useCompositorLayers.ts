@@ -91,6 +91,9 @@ interface LayerCommon {
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
   maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
+  /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
+   *  Absent ⇒ the layer is static and always visible. */
+  animation?: import('~/lib/motion/types').LayerAnimation
 }
 
 /** True when a layer is hidden (visible === false; undefined means visible). */
