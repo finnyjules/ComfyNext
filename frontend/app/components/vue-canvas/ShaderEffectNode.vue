@@ -164,6 +164,45 @@ function renderFrame(t: number) {
 
 function renderOnce() { renderFrame(frozenTime) }
 
+// ---- gallery picker ----------------------------------------------------------
+const pickerOpen = ref(false)
+const thumbs = ref<Record<string, string>>({})
+const thumbCache: Record<string, string> = ((globalThis as any).__shaderFxThumbs ??= {})
+
+async function openPicker() {
+  pickerOpen.value = true
+  if (!catalog.value) return
+  for (const def of catalog.value.effects) {
+    if (!thumbCache[def.id]) {
+      try {
+        const out = shaderFx.render(
+          [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: textureSources(def) }],
+          placeholder, 96, 54,
+        )
+        thumbCache[def.id] = out.toDataURL('image/jpeg', 0.8)
+      } catch { thumbCache[def.id] = '' }
+    }
+  }
+  thumbs.value = { ...thumbCache }
+}
+
+const categories = computed(() => {
+  const map = new Map<string, EffectDef[]>()
+  for (const e of catalog.value?.effects ?? []) {
+    if (!map.has(e.category)) map.set(e.category, [])
+    map.get(e.category)!.push(e)
+  }
+  return map
+})
+
+function pickEffect(id: string) {
+  setWidget('effect', id)
+  setWidget('params', '{}') // params are per-effect; reset on switch
+  pickerOpen.value = false
+  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  if (!animating.value) renderOnce()
+}
+
 // ---- animation lifecycle: only selected/hovered nodes run a rAF loop ---------
 const animating = computed(() => (props.selected || hovered.value) && playing.value && !glError.value)
 let raf = 0
@@ -237,19 +276,59 @@ onBeforeUnmount(() => {
         <canvas ref="previewCanvas" class="w-full block bg-checker" />
         <div v-if="glError" class="text-xs text-red-400 p-1">{{ glError }}</div>
 
-        <!-- Manifest-driven param sliders -->
-        <div v-if="effectDef" class="space-y-1 p-2">
-          <div v-for="p in effectDef.params" :key="p.uniform" class="flex items-center gap-2 text-xs text-white/80">
-            <span class="w-20 truncate opacity-70">{{ p.label }}</span>
-            <input
-              type="range" class="nopan nodrag flex-1 accent-cyan-400" :min="p.min" :max="p.max" :step="p.step"
-              :value="uniforms[p.uniform]"
-              @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
-            />
-            <span class="w-10 text-right tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+        <!-- Effect picker trigger + param sliders -->
+        <div class="p-2 space-y-1.5">
+          <!-- Gallery picker button -->
+          <button
+            class="nopan nodrag text-xs w-full text-left px-1 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/70 cursor-pointer"
+            @click="openPicker"
+          >{{ effectDef?.name ?? 'Choose effect…' }} ▾</button>
+
+          <!-- Manifest-driven param sliders -->
+          <div v-if="effectDef" class="space-y-1">
+            <div v-for="p in effectDef.params" :key="p.uniform" class="flex items-center gap-2 text-xs text-white/80">
+              <span class="w-20 truncate opacity-70">{{ p.label }}</span>
+              <input
+                type="range" class="nopan nodrag flex-1 accent-cyan-400" :min="p.min" :max="p.max" :step="p.step"
+                :value="uniforms[p.uniform]"
+                @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+              />
+              <span class="w-10 text-right tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+            </div>
           </div>
         </div>
       </div>
+
+      <!-- Effect gallery picker modal (Teleport to body) -->
+      <Teleport to="body">
+        <div
+          v-if="pickerOpen"
+          class="fixed inset-0 z-[100] flex items-center justify-center p-6"
+          @click.self="pickerOpen = false"
+        >
+          <!-- Backdrop (mirrors CatalogModal) -->
+          <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="pickerOpen = false" />
+          <!-- Panel (mirrors CatalogModal panel classes) -->
+          <div class="relative z-10 bg-[#161616] rounded-xl border border-white/10 shadow-[0_24px_64px_rgba(0,0,0,0.55)] p-4 max-h-[80vh] w-[560px] overflow-y-auto">
+            <div v-for="[cat, effects] in categories" :key="cat" class="mb-3">
+              <div class="text-xs uppercase opacity-50 mb-1">{{ cat }}</div>
+              <div class="grid grid-cols-4 gap-2">
+                <button
+                  v-for="e in effects"
+                  :key="e.id"
+                  class="nopan nodrag rounded-lg overflow-hidden text-left ring-1 ring-white/10 hover:ring-white/40 cursor-pointer"
+                  :class="{ 'ring-2 ring-blue-400': e.id === effectId }"
+                  @click="pickEffect(e.id)"
+                >
+                  <img v-if="thumbs[e.id]" :src="thumbs[e.id]" class="w-full aspect-video object-cover" />
+                  <div v-else class="w-full aspect-video bg-white/5" />
+                  <div class="text-xs p-1 truncate text-white/80">{{ e.name }}</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Teleport>
     </div>
   </div>
 </template>
