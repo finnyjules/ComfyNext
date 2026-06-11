@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { Handle, Position } from '@vue-flow/core'
-import { ChevronDown, Pause, Play, Sparkles } from 'lucide-vue-next'
+import { ChevronRight, Pause, Play, Sparkles } from 'lucide-vue-next'
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CatalogModal from '~/components/CatalogModal.vue'
 import { getTypeColor } from '~/composables/useVueNodes'
@@ -192,27 +191,35 @@ const pickerItems = computed<EffectDef[]>(() => {
   )
 })
 
+// Render a small still of an effect (on the placeholder gradient) for the
+// gallery cards and the picker-trigger badge. Returns '' if textures aren't
+// ready yet — we never cache a texture-less render (it would look wrong forever).
+function renderThumb(def: EffectDef): string {
+  const texs = textureSources(def)
+  if (def.textures.length && Object.keys(texs).length < def.textures.length) return ''
+  try {
+    const out = shaderFx.render(
+      [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: texs }],
+      placeholder, 192, 108,
+    )
+    return out.toDataURL('image/jpeg', 0.82)
+  } catch { return '' }
+}
+
+function ensureThumb(def: EffectDef | null | undefined) {
+  if (!def || thumbCache[def.id]) return
+  const t = renderThumb(def)
+  if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } }
+}
+
+const currentThumb = computed(() => (effectDef.value ? thumbs.value[effectDef.value.id] ?? '' : ''))
+
 async function openPicker() {
   pickerSearch.value = ''
   pickerFilter.value = 'all'
   pickerOpen.value = true
   if (!catalog.value) return
-  for (const def of catalog.value.effects) {
-    if (!thumbCache[def.id]) {
-      // Don't cache while texture assets are still loading — a render without the
-      // atlas bound would poison the cache with a wrong-looking thumbnail forever.
-      const texs = textureSources(def)
-      if (def.textures.length && Object.keys(texs).length < def.textures.length) continue
-      try {
-        const out = shaderFx.render(
-          [{ id: def.id, source: def.source, uniforms: { ...resolveUniforms(def, {}), u_time: 1.2, u_seed: 42, ...textureUniforms(def) }, textures: texs }],
-          placeholder, 192, 108,
-        )
-        thumbCache[def.id] = out.toDataURL('image/jpeg', 0.82)
-      } catch { thumbCache[def.id] = '' }
-    }
-  }
-  thumbs.value = { ...thumbCache }
+  for (const def of catalog.value.effects) ensureThumb(def)
 }
 
 function pickEffect(id: string) {
@@ -277,10 +284,14 @@ function onUpstreamChange(ev: Event) {
 // (registering after an await in onMounted would leak it past unmount).
 watch(() => chain.value.nodeIds, (ids) => { lastChainIds = ids; if (!animating.value) renderOnce() })
 
+// Keep the picker-trigger badge showing the current effect's thumbnail.
+watch(effectDef, def => ensureThumb(def))
+
 onMounted(async () => {
   catalog.value = await fetchShaderFxCatalog().catch(() => null)
   lastChainIds = chain.value.nodeIds
   window.addEventListener('comfynext:shaderfx-changed', onUpstreamChange)
+  ensureThumb(effectDef.value)
   renderOnce()
 })
 onBeforeUnmount(() => {
@@ -291,80 +302,87 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="shader-effect-node relative select-none w-[288px]"
-    :class="{ 'opacity-45 grayscale': isMuted, 'opacity-85': isBypassed }"
-    :style="{ '--port-color': imageColor } as any"
+    class="shader-effect-node relative rounded-xl border w-[288px] select-none backdrop-blur-sm"
+    :class="[
+      data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10',
+      { 'opacity-45 grayscale': isMuted, 'opacity-85': isBypassed },
+    ]"
+    :style="{ background: 'linear-gradient(180deg, #252525 0%, #1e1e1e 100%)', '--port-color': imageColor } as any"
     :data-running="data.running || undefined"
+    @mouseenter="hovered = true"
+    @mouseleave="hovered = false"
   >
-    <Handle
-      :id="`input-${imageInIdx}`" type="target" :position="Position.Left"
-      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: '50%' }"
-    />
-    <Handle
-      :id="`output-${imageOutIdx}`" type="source" :position="Position.Right"
-      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: '50%' }"
-    />
-
+    <!-- Header -->
     <div
-      class="shader-shell rounded-lg overflow-hidden bg-black/40 border backdrop-blur-sm"
-      :class="data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10'"
+      class="flex items-center gap-2 px-3 py-2 border-b border-white/5 rounded-t-xl"
+      :style="{ background: `linear-gradient(135deg, ${imageColor}15 0%, transparent 60%)` }"
     >
-      <!-- Header -->
-      <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-white/5">
-        <Sparkles class="size-3.5 text-white/70 shrink-0" :stroke-width="1.75" />
-        <span class="text-[11px] text-white/70 font-medium truncate">{{ effectDef?.name || 'Shader Effect' }}</span>
+      <Sparkles class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
+      <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ effectDef?.name || 'Shader Effect' }}</span>
+      <button
+        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        :title="playing ? 'Pause preview' : 'Play preview'" @click.stop="playing = !playing"
+      >
+        <Pause v-if="playing" class="size-3" />
+        <Play v-else class="size-3" />
+      </button>
+    </div>
+
+    <!-- Ports: image in (left) + image out (right), same row -->
+    <div class="py-2 flex flex-col gap-0.5 bg-black/15 shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)]">
+      <div class="flex items-center justify-between">
+        <VueCanvasComfyNodePort :id="`input-${imageInIdx}`" type="target" position="left" :data-type="'IMAGE'" label="image" />
+        <VueCanvasComfyNodePort :id="`output-${imageOutIdx}`" type="source" position="right" :data-type="'IMAGE'" label="image" />
+      </div>
+    </div>
+
+    <!-- Live preview (full-bleed band) -->
+    <div class="relative border-t border-[#2a2a2a]">
+      <canvas ref="previewCanvas" class="w-full block bg-checker" />
+      <!-- Draggable center handle (only for effects with centerParam) -->
+      <div
+        v-if="hasCenter"
+        class="nopan nodrag absolute size-3 -ml-1.5 -mt-1.5 rounded-full border-2 border-white bg-black/30 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] cursor-move"
+        :style="centerStyle"
+        @pointerdown="onCenterDown"
+        @pointermove="onCenterMove"
+        @pointerup="onCenterUp"
+      />
+    </div>
+    <div v-if="glError" class="border-t border-[#2a2a2a] text-[10px] text-red-300/90 px-3 py-1 truncate" :title="glError">{{ glError }}</div>
+
+    <!-- Controls -->
+    <div class="border-t border-[#2a2a2a] px-3 py-2.5 flex flex-col gap-2.5">
+      <!-- Effect picker — mirrors the model-picker row -->
+      <div>
+        <label class="text-[9px] text-muted-foreground tracking-normal mb-0.5 block">Effect</label>
         <button
-          class="nopan nodrag ml-auto shrink-0 size-5 rounded-md flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
-          :title="playing ? 'Pause preview' : 'Play preview'" @click.stop="playing = !playing"
+          class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-colors cursor-pointer text-left group"
+          @click="openPicker"
         >
-          <Pause v-if="playing" class="size-3" />
-          <Play v-else class="size-3" />
+          <span class="size-5 rounded-md shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden relative">
+            <img v-if="currentThumb" :src="currentThumb" class="absolute inset-0 w-full h-full object-cover" />
+            <Sparkles v-else class="size-3 text-white/70" :stroke-width="1.75" />
+          </span>
+          <span class="flex flex-col min-w-0 flex-1">
+            <span class="text-[11px] font-medium text-white/90 truncate leading-tight">{{ effectDef?.name ?? 'Pick an effect' }}</span>
+            <span class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">{{ effectDef ? titleCase(effectDef.category) : 'Shader effect' }}</span>
+          </span>
+          <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
         </button>
       </div>
 
-      <!-- Live preview -->
-      <div @mouseenter="hovered = true" @mouseleave="hovered = false">
-        <!-- Canvas wrapped in relative container for the center handle -->
-        <div class="relative">
-          <canvas ref="previewCanvas" class="w-full block bg-checker" />
-          <!-- Draggable center handle (only visible for effects with centerParam) -->
-          <div
-            v-if="hasCenter"
-            class="nopan nodrag absolute size-3 -ml-1.5 -mt-1.5 rounded-full border-2 border-white bg-black/30 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] cursor-move"
-            :style="centerStyle"
-            @pointerdown="onCenterDown"
-            @pointermove="onCenterMove"
-            @pointerup="onCenterUp"
-          />
+      <!-- Manifest-driven param sliders, as labeled fields -->
+      <div v-for="p in effectDef?.params ?? []" :key="p.uniform">
+        <div class="flex items-center justify-between mb-0.5">
+          <label class="text-[9px] text-muted-foreground tracking-normal">{{ p.label }}</label>
+          <span class="text-[9px] text-white/45 tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
         </div>
-        <div v-if="glError" class="text-[10px] text-red-300/90 px-2 py-1 truncate" :title="glError">{{ glError }}</div>
-
-        <!-- Effect picker trigger + param sliders -->
-        <div class="p-2 space-y-2">
-          <!-- Gallery picker trigger (field-style, opens CatalogModal) -->
-          <button
-            class="nopan nodrag w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.06] hover:border-white/20 text-[11px] text-white/80 transition-colors cursor-pointer"
-            @click="openPicker"
-          >
-            <span class="flex-1 min-w-0 truncate text-left">{{ effectDef?.name ?? 'Choose effect…' }}</span>
-            <ChevronDown class="size-3 text-white/40 shrink-0" />
-          </button>
-
-          <!-- Manifest-driven param sliders -->
-          <div v-if="effectDef" class="space-y-1.5">
-            <div v-for="p in effectDef.params" :key="p.uniform" class="flex items-center gap-2 text-xs text-white/80">
-              <span class="w-20 shrink-0 truncate text-white/55">{{ p.label }}</span>
-              <input
-                type="range" class="nopan nodrag flex-1 min-w-0 accent-white" :min="p.min" :max="p.max" :step="p.step"
-                :value="uniforms[p.uniform]"
-                @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
-              />
-              <span class="w-10 shrink-0 text-right tabular-nums text-white/45">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
-            </div>
-          </div>
-        </div>
+        <input
+          type="range" class="nopan nodrag w-full accent-white" :min="p.min" :max="p.max" :step="p.step"
+          :value="uniforms[p.uniform]"
+          @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+        />
       </div>
     </div>
 
@@ -401,8 +419,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.shader-shell { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2); }
-.shader-effect-node[data-running] .shader-shell { box-shadow: 0 0 0 2px var(--port-color, #fff), 0 4px 16px rgba(0, 0, 0, 0.4); }
+.shader-effect-node { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2); }
+.shader-effect-node[data-running] { box-shadow: 0 0 0 2px var(--port-color, #fff), 0 4px 16px rgba(0, 0, 0, 0.4); }
 .bg-checker {
   background-color: #141414;
   background-image:
