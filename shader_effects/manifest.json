@@ -1368,6 +1368,123 @@
           "step": 0.002
         }
       ]
+    },
+    {
+      "id": "bloom",
+      "name": "Bloom",
+      "category": "glow",
+      "animated": false,
+      "passes": 4,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_threshold",
+          "label": "Threshold",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.6,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.06,
+          "default": 0.02,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_intensity",
+          "label": "Intensity",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.2,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "glow",
+      "name": "Glow",
+      "category": "glow",
+      "animated": false,
+      "passes": 4,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_threshold",
+          "label": "Threshold",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.4,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.08,
+          "default": 0.03,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_intensity",
+          "label": "Intensity",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.9,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "tilt_shift",
+      "name": "Tilt Shift",
+      "category": "blur",
+      "animated": false,
+      "passes": 3,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_radius",
+          "label": "Radius",
+          "type": "float",
+          "min": 0.004,
+          "max": 0.06,
+          "default": 0.025,
+          "step": 0.002
+        },
+        {
+          "uniform": "u_focus",
+          "label": "Focus",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_width",
+          "label": "Band Width",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.15,
+          "step": 0.01
+        }
+      ]
     }
   ]
 }
