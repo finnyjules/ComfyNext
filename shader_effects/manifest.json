@@ -534,6 +534,138 @@
           "step": 1.0
         }
       ]
+    },
+    {
+      "id": "blocks",
+      "name": "Blocks",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        {
+          "uniform": "u_size",
+          "label": "Block Size",
+          "type": "float",
+          "min": 0.01,
+          "max": 0.3,
+          "default": 0.07,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_flow",
+          "label": "Flow",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.15,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.5,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "mondrian",
+      "name": "Mondrian",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        {
+          "uniform": "u_depth",
+          "label": "Depth",
+          "type": "float",
+          "min": 2.0,
+          "max": 8.0,
+          "default": 5.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_border",
+          "label": "Border",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.02,
+          "default": 0.004,
+          "step": 0.001
+        },
+        {
+          "uniform": "u_wobble",
+          "label": "Wobble",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.3,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "recursive_grid",
+      "name": "Recursive Grid",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        {
+          "uniform": "u_size",
+          "label": "Cell Size",
+          "type": "float",
+          "min": 0.05,
+          "max": 0.5,
+          "default": 0.18,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_subdiv",
+          "label": "Subdivide",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.55,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_border",
+          "label": "Border",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.02,
+          "default": 0.003,
+          "step": 0.001
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 0.4,
+          "step": 0.05
+        }
+      ]
     }
   ]
 }
