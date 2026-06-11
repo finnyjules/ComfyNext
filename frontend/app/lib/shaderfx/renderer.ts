@@ -30,13 +30,18 @@ void main() { fragColor0 = texture(u_image0, vec2(v_texCoord.x, 1.0 - v_texCoord
 class ShaderFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
-  private programs = new Map<string, WebGLProgram>()
+  private programs = new Map<string, { source: string; prog: WebGLProgram }>()
   private blit: WebGLProgram | null = null
   private fboTex: (WebGLTexture | null)[] = [null, null]
   private fbos: (WebGLFramebuffer | null)[] = [null, null]
   private fboSize = [0, 0]
   private baseTex: WebGLTexture | null = null
+  private baseSize = [0, 0]
+  // Contract: pass.textures values must be STABLE, immutable objects (e.g. the
+  // module-cached glyph-atlas Images) — entries are uploaded once and reused.
+  // Bounded so a misbehaving caller leaks at most MAX_EXTRA_TEXTURES GL textures.
   private extraTexCache = new Map<TexImageSource, WebGLTexture>()
+  private static readonly MAX_EXTRA_TEXTURES = 32
 
   private ensure(width: number, height: number): WebGL2RenderingContext {
     if (!this.gl) {
@@ -73,10 +78,16 @@ class ShaderFxRenderer {
   }
 
   private program(id: string, source: string): WebGLProgram {
-    const key = `${id}:${source.length}:${source.slice(0, 64)}`
-    let prog = this.programs.get(key)
-    if (prog) return prog
     const gl = this.gl!
+    // Key by id, validate by full source: the catalog re-reads .frag files from
+    // disk per request to support live shader editing, so a stale cached program
+    // must be detected and recompiled (and the old one freed).
+    const cached = this.programs.get(id)
+    if (cached) {
+      if (cached.source === source) return cached.prog
+      gl.deleteProgram(cached.prog)
+      this.programs.delete(id)
+    }
     const compile = (type: number, src: string) => {
       const s = gl.createShader(type)!
       gl.shaderSource(s, src)
@@ -88,20 +99,21 @@ class ShaderFxRenderer {
       }
       return s
     }
-    prog = gl.createProgram()!
+    const prog = gl.createProgram()!
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS))
     gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, source))
     gl.linkProgram(prog)
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`shaderfx link (${id}): ${gl.getProgramInfoLog(prog)}`)
-    this.programs.set(key, prog)
+    this.programs.set(id, { source, prog })
     return prog
   }
 
-  private uploadTexture(tex: WebGLTexture, src: TexImageSource, flipY: boolean, nearest: boolean): void {
+  private uploadTexture(tex: WebGLTexture, src: TexImageSource, flipY: boolean, nearest: boolean, subRect?: [number, number]): void {
     const gl = this.gl!
     gl.bindTexture(gl.TEXTURE_2D, tex)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
+    if (subRect) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, subRect[0], subRect[1], gl.RGBA, gl.UNSIGNED_BYTE, src as any)
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     const filter = nearest ? gl.NEAREST : gl.LINEAR
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
@@ -119,7 +131,12 @@ class ShaderFxRenderer {
     const gl = this.ensure(width, height)
 
     if (!this.baseTex) this.baseTex = gl.createTexture()
-    this.uploadTexture(this.baseTex!, base, true, false)
+    const bw = (base as any).width ?? 0
+    const bh = (base as any).height ?? 0
+    const sameSize = this.baseSize[0] === bw && this.baseSize[1] === bh && bw > 0
+    // Same-size animated re-renders update in place instead of reallocating storage.
+    this.uploadTexture(this.baseTex!, base, true, false, sameSize ? [bw, bh] : undefined)
+    this.baseSize = [bw, bh]
 
     let readTex = this.baseTex!
     for (let i = 0; i < passes.length; i++) {
@@ -140,6 +157,11 @@ class ShaderFxRenderer {
         let tex = this.extraTexCache.get(src)
         gl.activeTexture(gl.TEXTURE0 + unit)
         if (!tex) {
+          if (this.extraTexCache.size >= ShaderFxRenderer.MAX_EXTRA_TEXTURES) {
+            const [oldSrc, oldTex] = this.extraTexCache.entries().next().value!
+            gl.deleteTexture(oldTex)
+            this.extraTexCache.delete(oldSrc)
+          }
           tex = gl.createTexture()!
           this.uploadTexture(tex, src, true, true) // NEAREST — glyph atlases sampled exactly
           this.extraTexCache.set(src, tex)
