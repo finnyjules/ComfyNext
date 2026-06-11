@@ -1,8 +1,10 @@
 import { ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
-import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip } from '~~/shared/timeline/types'
+import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip, MotionClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
+import { renderMotionClip } from '~/lib/engine/motionClipRenderer'
+import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 
 const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
   normal: 'source-over',
@@ -161,6 +163,15 @@ export function usePlaybackEngine(
           ctx.restore()
           continue
         }
+        if (clip.kind === 'motion') {
+          const localFrame = (currentSec - startSec) * fps
+          ctx.save()
+          ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
+          ctx.globalAlpha = clip.opacity ?? 1
+          renderMotionClip(ctx, clip as MotionClip, localFrame, cw, ch, fps)
+          ctx.restore()
+          continue
+        }
 
         const entry = ensureMedia(clip)
         if (!entry) continue
@@ -281,7 +292,10 @@ export function usePlaybackEngine(
     media.clear()
   }
 
-  watch(() => state.value.tracks, cleanupStaleMedia, { deep: true })
+  watch(() => state.value.tracks, () => {
+    cleanupStaleMedia()
+    ensureMotionFonts(state.value)
+  }, { deep: true, immediate: true })
 
   return { start, stop, destroy, drawFrame }
 }

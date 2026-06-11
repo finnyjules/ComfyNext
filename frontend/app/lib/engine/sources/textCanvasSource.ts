@@ -1,5 +1,6 @@
-import type { Clip, TitleClip, LowerThirdClip } from '~~/shared/timeline/types'
+import type { Clip, TitleClip, LowerThirdClip, MotionClip } from '~~/shared/timeline/types'
 import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
+import { renderMotionClip } from '~/lib/engine/motionClipRenderer'
 import type { FrameSource } from './frameSource'
 
 /** Rasterizes animated text (title / lower_third) per frame onto an offscreen
@@ -15,7 +16,7 @@ export class TextCanvasSource implements FrameSource {
   private ctx: CanvasRenderingContext2D
 
   constructor(
-    private clip: TitleClip | LowerThirdClip,
+    private clip: TitleClip | LowerThirdClip | MotionClip,
     private canvasW: number,
     private canvasH: number,
     private fps: number,
@@ -26,8 +27,8 @@ export class TextCanvasSource implements FrameSource {
     this.ctx = this.canvas.getContext('2d')!
   }
 
-  static supports(clip: Clip): clip is TitleClip | LowerThirdClip {
-    return clip.kind === 'title' || clip.kind === 'lower_third'
+  static supports(clip: Clip): clip is TitleClip | LowerThirdClip | MotionClip {
+    return clip.kind === 'title' || clip.kind === 'lower_third' || clip.kind === 'motion'
   }
 
   get width(): number { return this.canvasW }
@@ -37,8 +38,10 @@ export class TextCanvasSource implements FrameSource {
     this.ctx.clearRect(0, 0, this.canvasW, this.canvasH)
     if (this.clip.kind === 'title') {
       renderTitleClip(this.ctx, this.clip, n, this.canvasW, this.canvasH, this.fps)
-    } else {
+    } else if (this.clip.kind === 'lower_third') {
       renderLowerThirdClip(this.ctx, this.clip, n, this.canvasW, this.canvasH, this.fps)
+    } else {
+      renderMotionClip(this.ctx, this.clip as MotionClip, n, this.canvasW, this.canvasH, this.fps)
     }
     return this.canvas
   }

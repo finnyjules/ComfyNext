@@ -8,6 +8,7 @@
  */
 import { googleFontCssUrl } from '~~/shared/google-fonts'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
+import type { EditState } from '~~/shared/timeline/types'
 
 const CURATED = new Set(TEMPLATE_FONTS.map((f) => f.name))
 const ensured = new Set<string>()  // module-scoped — survives component remounts
@@ -36,4 +37,26 @@ export function useGoogleFontPreview() {
     ensured.add(trimmed)
   }
   return { ensure }
+}
+
+/**
+ * Best-effort: ensure the variable face for every Motion clip in the timeline
+ * edit state is loaded so canvas text renders the real font (not a fallback).
+ * Injects the Google CSS link (full axis range via useGoogleFontPreview) AND
+ * asks the FontFaceSet to load a representative face so the first painted frame
+ * has the real glyphs. Idempotent and silent on failure.
+ */
+export function ensureMotionFonts(state: EditState | null | undefined) {
+  if (!state || typeof document === 'undefined') return
+  const { ensure } = useGoogleFontPreview()
+  for (const track of state.tracks) {
+    for (const clip of track.clips) {
+      if (clip.kind !== 'motion') continue
+      const family = clip.layer?.fontFamily
+      if (!family) continue
+      ensure(family)
+      // Force the variable face to actually download/parse so canvas draws it.
+      document.fonts?.load(`700 32px "${family}"`).catch(() => {})
+    }
+  }
 }

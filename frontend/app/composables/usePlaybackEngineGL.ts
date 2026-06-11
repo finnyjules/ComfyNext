@@ -3,6 +3,7 @@ import type { EditState, Clip } from '~~/shared/timeline/types'
 import { WebGLPreviewRenderer } from '~/lib/engine/webglPreviewRenderer'
 import { AudioEngine } from '~/lib/engine/audio/audioEngine'
 import type { ClipPreview } from '~/composables/usePlaybackEngine'
+import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 
 /** True when the browser can host the WebGL engine at all. */
 export function webglPreviewSupported(): boolean {
@@ -105,6 +106,7 @@ export function usePlaybackEngineGL(
   function start() {
     if (rafId !== null) return
     if (canvasRef.value) canvasRef.value.dataset.engine = 'webgl'
+    ensureMotionFonts(state.value)
     const sig = clipSignature()
     lastSignature = sig
     void reload()
@@ -129,6 +131,7 @@ export function usePlaybackEngineGL(
   // stale-media cleanup); signature check keeps transform-only edits cheap.
   // Canvas settings (bg color, size, fps) are included so paused edits repaint.
   watch(() => [state.value.tracks, state.value.canvas], () => {
+    ensureMotionFonts(state.value)
     const sig = clipSignature()
     if (sig !== lastSignature) {
       lastSignature = sig
