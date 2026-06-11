@@ -75,18 +75,71 @@ describe('evaluateAnimation — loop', () => {
 })
 
 describe('evaluateKeyframes', () => {
+  // ease lives on the LO keyframe (ease INTO the next), per types.ts
   const kfs = [
-    { t: 0, dx: 0, opacity: 1 },
-    { t: 1, dx: 0.5, opacity: 0.5, ease: 'linear' as const },
+    { t: 0, dx: 0, opacity: 1, ease: 'linear' as const },
+    { t: 1, dx: 0.5, opacity: 0.5 },
   ]
-  it('interpolates between keyframes', () => {
+  it('interpolates between keyframes honoring the lo ease', () => {
+    expect(evaluateKeyframes(kfs, 0.2).dx).toBeCloseTo(0.1, 6)  // linear 0.2·0.5 = 0.1; easeInOutQuad(0.2)=0.08 would give 0.04
     const st = evaluateKeyframes(kfs, 0.5)
     expect(st.dx).toBeCloseTo(0.25, 6)
     expect(st.opacity).toBeCloseTo(0.75, 6)
   })
+  it('defaults to easeInOut when the lo keyframe has no ease', () => {
+    const noEase = [{ t: 0, dx: 0 }, { t: 1, dx: 1 }]
+    expect(evaluateKeyframes(noEase, 0.2).dx).toBeCloseTo(0.08, 6) // easeInOutQuad(0.2)=2·0.2²=0.08, not linear 0.2
+  })
   it('clamps outside the range', () => {
     expect(evaluateKeyframes(kfs, 5).dx).toBeCloseTo(0.5, 6)
     expect(evaluateKeyframes(kfs, -1).dx).toBeCloseTo(0, 6)
+  })
+})
+
+describe('evaluateAnimation — stagger compression (C1)', () => {
+  it('long text with default stagger: every unit completes within the in phase', () => {
+    const anim: LayerAnimation = { offset: 0, in: { presetId: 'slide-up', duration: 1.0 } }
+    const st = evaluateAnimation(anim, 0.999, MOTION, 50)
+    expect(st.units![49].opacity).toBeGreaterThan(0.9)
+    expect(Math.abs(st.units![49].dy)).toBeLessThan(0.05)
+  })
+})
+
+describe('evaluateAnimation — in/out overlap (I1)', () => {
+  it('out never starts before in finishes; handoff is continuous', () => {
+    const anim: LayerAnimation = {
+      offset: 0, duration: 1,
+      in: { presetId: 'fade-in', duration: 0.8, stagger: 0 },
+      out: { presetId: 'fade-out', duration: 0.8, stagger: 0 },
+    }
+    expect(evaluateAnimation(anim, 0.81, MOTION, 1).units![0].opacity).toBeGreaterThan(0.95)
+    expect(evaluateAnimation(anim, 0.999, MOTION, 1).units![0].opacity).toBeLessThan(0.05)
+  })
+})
+
+describe('evaluateAnimation — in→loop handoff (I2)', () => {
+  it('loop starts at phase 0 when the in phase ends', () => {
+    const anim: LayerAnimation = {
+      offset: 0,
+      in: { presetId: 'fade-in', duration: 0.7, stagger: 0 },
+      loop: { presetId: 'wave', duration: 1, stagger: 0 },
+    }
+    expect(Math.abs(evaluateAnimation(anim, 0.7001, MOTION, 1).units![0].dy)).toBeLessThan(0.01)
+  })
+})
+
+describe('evaluateAnimation — out clip sides + fallback', () => {
+  it('mask-out-up clips from the bottom', () => {
+    const anim: LayerAnimation = { offset: 0, duration: 1, out: { presetId: 'mask-out-up', duration: 0.5, stagger: 0 } }
+    const st = evaluateAnimation(anim, 0.75, MOTION, 1)
+    expect(st.units![0].clip?.side).toBe('bottom')
+    expect(st.units![0].clip?.amount).toBeGreaterThan(0)
+  })
+  it('unknown preset ids fall back to fade behavior', () => {
+    const anim: LayerAnimation = { offset: 0, in: { presetId: 'does-not-exist', duration: 0.5, stagger: 0 } }
+    const st = evaluateAnimation(anim, 0.25, MOTION, 1)
+    expect(st.units![0].opacity).toBeGreaterThan(0)
+    expect(st.units![0].opacity).toBeLessThan(1)
   })
 })
 

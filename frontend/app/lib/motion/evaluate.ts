@@ -30,8 +30,8 @@ export interface LayerMotionState {
   units?: UnitState[]
 }
 
-export const IDENTITY_UNIT: UnitState = { dx: 0, dy: 0, scale: 1, rotation: 0, opacity: 1 }
-const HIDDEN: LayerMotionState = { visible: false, layer: IDENTITY_UNIT }
+export const IDENTITY_UNIT: UnitState = Object.freeze({ dx: 0, dy: 0, scale: 1, rotation: 0, opacity: 1 })
+const HIDDEN: LayerMotionState = Object.freeze({ visible: false, layer: IDENTITY_UNIT })
 
 // Deterministic per-unit pseudo-random in [0,1) (replaces Math.random()).
 function seeded(i: number, salt: number): number {
@@ -113,7 +113,7 @@ const LOOP_EVAL: Record<string, LoopEval> = {
   'rock':      (p) => u({ rotation: 12 * Math.sin(p * TWO_PI) }),
   'glitch-loop': (p, i) => {
     const tick = Math.floor(p * 12)
-    return u({ dx: (seeded(i + tick, 5) - 0.5) * 0.12, dy: (seeded(i + tick, 6) - 0.5) * 0.06 })
+    return u({ dx: (seeded(i * 131 + tick, 5) - 0.5) * 0.12, dy: (seeded(i * 131 + tick, 6) - 0.5) * 0.06 })
   },
   'marquee':   (p) => u({ dx: (1 - 2 * p) * 2 }), // +2 → −2 unit-box sweep, painter scales by layer width
 }
@@ -123,10 +123,20 @@ export const SUPPORTED_OUT_IDS = Object.keys(OUT_EVAL)
 export const SUPPORTED_LOOP_IDS = Object.keys(LOOP_EVAL)
 
 // ── Stagger window: unit i animates inside [i·stagger, i·stagger + unitDur] ──
+const MIN_UNIT_DUR = 0.05
+
+/** Stagger compressed so every unit completes within the phase duration:
+ *  the last unit's window must start no later than duration - MIN_UNIT_DUR. */
+function effectiveStagger(spec: LayerAnimSpec, n: number): number {
+  const raw = Math.max(0, spec.stagger ?? 0.04)          // negative stagger unsupported (M2)
+  if (n <= 1) return 0
+  return Math.min(raw, Math.max(0, spec.duration - MIN_UNIT_DUR) / (n - 1))
+}
+
 function unitProgress(tPhase: number, spec: LayerAnimSpec, i: number, n: number): number {
-  const stagger = spec.stagger ?? 0.04
-  const span = Math.max(0, (n - 1) * stagger)
-  const unitDur = Math.max(0.05, spec.duration - span)
+  const stagger = effectiveStagger(spec, n)
+  const span = (n - 1) * stagger
+  const unitDur = Math.max(MIN_UNIT_DUR, spec.duration - span)
   const start = i * stagger
   return Math.max(0, Math.min(1, (tPhase - start) / unitDur))
 }
@@ -183,22 +193,27 @@ export function evaluateAnimation(
   const tIn = t - start
   const layer = anim.keyframes?.length ? evaluateKeyframes(anim.keyframes, tIn) : IDENTITY_UNIT
 
+  const W = end - start
   const inDur = anim.in ? Math.max(0.01, anim.in.duration) : 0
   const outDur = anim.out ? Math.max(0.01, anim.out.duration) : 0
-  const outStart = (end - start) - outDur
+  // Out is anchored to the window end but never overlaps in: when the two
+  // would collide, out starts where in ends and compresses into what's left.
+  const outStart = Math.max(inDur, W - outDur)
 
   let units: UnitState[] | undefined
   if (anim.in && tIn < inDur) {
     units = evalSpecUnits(anim.in, tIn, n, IN_EVAL, IN_EVAL['fade-in'])
-  } else if (anim.out && tIn >= outStart) {
-    units = evalSpecUnits(anim.out, tIn - outStart, n, OUT_EVAL, OUT_EVAL['fade-out'])
+  } else if (anim.out && tIn >= outStart && W > inDur) {
+    const effOut = { ...anim.out, duration: Math.max(0.01, W - outStart) }
+    units = evalSpecUnits(effOut, tIn - outStart, n, OUT_EVAL, OUT_EVAL['fade-out'])
   } else if (anim.loop) {
     const cycle = Math.max(0.1, anim.loop.duration)
-    const stagger = anim.loop.stagger ?? 0.04
+    const stagger = Math.max(0, anim.loop.stagger ?? 0.04)
     const loopFn = LOOP_EVAL[anim.loop.presetId]
     if (loopFn) {
+      const loopT = tIn - inDur   // phase 0 at loop start ⇒ seamless in→loop handoff
       units = Array.from({ length: n }, (_, i) => {
-        const phase = (((tIn - i * stagger) / cycle) % 1 + 1) % 1
+        const phase = (((loopT - i * stagger) / cycle) % 1 + 1) % 1
         return loopFn(phase, i, n)
       })
     }
