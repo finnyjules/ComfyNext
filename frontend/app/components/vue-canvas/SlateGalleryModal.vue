@@ -15,7 +15,7 @@
  * The /upload/image FormData flow matches brand/KitPanel.vue's onLogoFile; we
  * additionally read the file's natural aspect so image layers aren't distorted.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { X, Check } from 'lucide-vue-next'
 import type { BrandKit } from '~~/shared/brand/types'
 import type { LocalLayer } from '~/composables/useCompositorLayers'
@@ -35,6 +35,10 @@ const selected = computed(() => selectedId.value ? SLATE_TEMPLATES_BY_ID[selecte
 const texts = ref<Record<string, string>>({})
 const media = ref<Record<string, SlateMediaFill>>({})
 
+// Each template has its own slots — clear filled values when switching so a
+// shared slot key can't carry a value across templates with different intent.
+watch(selectedId, () => { texts.value = {}; media.value = {} })
+
 function thumbColors(t: typeof SLATE_TEMPLATES[number]): string[] {
   return resolveThumb(t.thumb, props.activeKit ?? {})
 }
@@ -45,9 +49,10 @@ async function onMediaFile(slotKey: string, e: Event) {
   // Need the natural aspect (w/h) so the image layer isn't distorted.
   const aspect = await new Promise<number>((res) => {
     const img = new Image()
-    img.onload = () => res(img.naturalWidth / Math.max(1, img.naturalHeight))
-    img.onerror = () => res(1)
-    img.src = URL.createObjectURL(file)
+    const url = URL.createObjectURL(file)
+    img.onload = () => { URL.revokeObjectURL(url); res(img.naturalWidth / Math.max(1, img.naturalHeight)) }
+    img.onerror = () => { URL.revokeObjectURL(url); res(1) }
+    img.src = url
   })
   const fd = new FormData()
   fd.append('image', file)
