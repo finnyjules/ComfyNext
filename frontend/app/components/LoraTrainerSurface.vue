@@ -397,8 +397,9 @@ const costEstimate = computed(() => {
 // How many synthetic shots will be generated to top up the dataset.
 const expectedShots = computed(() => {
   if (trainingKind.value !== 'character' || referenceFiles.value.length === 0) return 0
-  const target = Math.min(datasetCount.value, CHARACTER_SHOT_SCENES.length + realIncludedCount.value)
-  return syntheticCount(target, realIncludedCount.value)
+  const pending = referenceFiles.value.filter((r) => r.includeInTraining && !r.addedToDataset).length
+  const target = Math.max(4, Math.min(CHARACTER_SHOT_SCENES.length + pending, datasetCount.value || 16))
+  return syntheticCount(target, pending)
 })
 
 // Cost of the images you still plan to GENERATE (the ones already on disk are
