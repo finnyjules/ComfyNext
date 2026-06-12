@@ -51,8 +51,10 @@ def _elevation_phrase(elevation_deg: float) -> str | None:
         if e < 75:   return "high above"
         return "directly overhead"
     else:
-        if e > -45:  return "slightly below"
-        return "below"
+        ae = abs(e)
+        if ae < 45:  return "slightly below"
+        if ae < 75:  return "below"
+        return "far below"
 
 
 def _intensity_phrase(intensity: float) -> str:

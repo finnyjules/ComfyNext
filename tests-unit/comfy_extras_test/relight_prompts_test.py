@@ -18,8 +18,14 @@ def test_direction_buckets():
 def test_elevation_buckets():
     # near eye level → no height clause
     assert "positioned" not in rl.light_to_phrase(0, 0, 0.6)
+    # positive side
+    assert "positioned above" in rl.light_to_phrase(0, 30, 0.6)
+    assert "high above" in rl.light_to_phrase(0, 60, 0.6)
     assert "overhead" in rl.light_to_phrase(0, 85, 0.6)
+    # negative side
+    assert "slightly below" in rl.light_to_phrase(0, -30, 0.6)
     assert "below" in rl.light_to_phrase(0, -60, 0.6)
+    assert "far below" in rl.light_to_phrase(0, -85, 0.6)
 
 
 def test_intensity_buckets():
