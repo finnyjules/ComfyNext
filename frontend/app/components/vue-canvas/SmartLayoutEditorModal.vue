@@ -360,16 +360,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 // The EditorShell saves via fetch — but we want it to save to the node, not
 // to a file. So we listen for a custom save event the shell dispatches.
 //
-// Write the layout to the node AND refresh its live preview. The node's
-// reactive widget-watch normally auto-re-renders on change, but its required-
-// input guard bails the auto-run when an optional socket (Brand, an unused
-// Text/Image layer) is left unconnected — so the carousel would keep showing
-// the pre-edit render. Trigger the live run explicitly here: saving is exactly
-// when the user expects the node preview to reflect their edits.
+// Write the layout to the node AND refresh its live preview. Re-run ONLY this
+// node (+ its cached upstream), not the whole canvas — a filtered live run.
+// `live` skips the cost confirm/watchdog; the reactive widget-watch's auto-run
+// is unreliable here (its guard bails when an optional socket like Brand is
+// left unconnected), so we trigger explicitly: saving is exactly when the user
+// expects the node preview to reflect their edits.
 function commitLayout(layout: AnyTemplate) {
   writeLayout(layout)
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('comfynext:liveRun'))
+    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+      detail: { targetIds: [props.nodeId], live: true },
+    }))
   }
   emit('close')
 }

@@ -571,9 +571,13 @@ async function handleRunFiltered(e: Event) {
   const targetIds = detail?.targetIds as string[] | undefined
   if (!targetIds?.length) return
   const rerollScope = detail?.rerollScope as 'self' | undefined
+  // `live` runs are auto-previews (e.g. saving a Smart Layout): scope the run to
+  // just these nodes (+ cached upstream), and skip the cost confirm / watchdog /
+  // text-autofill dance that an explicit Run does.
+  const live = detail?.live === true
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
-  if (await maybeRunWithTextAutofill(expanded, { rerollScope })) return
-  runVueWorkflow(expanded, { rerollScope })
+  if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope })) return
+  runVueWorkflow(expanded, { rerollScope, live })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
