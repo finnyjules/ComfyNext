@@ -447,6 +447,18 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
+    <!-- Light gimbal: drives the Relight node. Same pseudo-3D sphere as the
+         camera gimbal, but aims a key light and adds an intensity slider. The
+         widget owns its own label and produces a JSON string
+         {azimuth,elevation,intensity}. -->
+    <template v-else-if="widgetDef.comfynext_widget === 'light_gimbal'">
+      <VueCanvasWidgetsWidgetLightGimbal
+        :model-value="modelValue"
+        :node-id="nodeId"
+        :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
     <!-- Variable-font playground: drives RenderType. Owns its full UI and
          produces a JSON state blob (font, axes, colors, uploaded filename). -->
     <template v-else-if="widgetDef.comfynext_widget === 'font_playground'">
