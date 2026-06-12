@@ -849,6 +849,20 @@ function editAsFrame() {
 
 // Compute preview images: from execution output or LoadImage widget value
 const previewImages = computed(() => {
+  // A single run can produce several images: Smart Layout emits one per format,
+  // and any node downstream of a list output runs once per item. Show the whole
+  // set from the most recent run (takes sharing one prompt id) so every result
+  // is visible in the carousel — not just the active take. Display only: the
+  // node's own `data.images` (its output / wiring) is left untouched.
+  const takes = props.data.takes as Array<{ promptId?: string | null; images?: string[] }> | undefined
+  if (takes?.length) {
+    const latest = takes[takes.length - 1]!
+    const runId = latest.promptId
+    const set = (runId ? takes.filter(t => t.promptId === runId) : [latest])
+      .flatMap(t => t.images ?? [])
+    if (set.length > 1) return set
+  }
+
   // Execution output images (PreviewImage, SaveImage, etc.)
   if (props.data.images?.length) return props.data.images
 
