@@ -1722,9 +1722,10 @@ function handlePoseGenerate(e: Event) {
   const poseNode = (nodes.value as any[]).find(n => n.id === nodeId)
   if (!poseNode) return
   const sink = ensurePoseImageSink(poseNode)
+  const rerollScope = detail?.rerollScope as 'self' | undefined
   nextTick(() => {
     window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
-      detail: { targetIds: [nodeId, String(sink.id)], live: true },
+      detail: { targetIds: [nodeId, String(sink.id)], live: true, rerollScope },
     }))
   })
 }
