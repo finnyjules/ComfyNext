@@ -59,7 +59,7 @@ from comfy_api_nodes.util.download_helpers import (
     download_url_to_image_tensor,
     download_url_to_video_output,
 )
-from comfy_extras._live_preview import save_live_preview
+from comfy_extras._live_preview import save_live_preview, save_generation_output
 
 # Pure money-path logic (token resolution, LoRA sidecar → runnable ref, output
 # URL parsing) lives in replicate_refs so it can be unit-tested in isolation —
@@ -2146,7 +2146,7 @@ class BlendSceneNode(IO.ComfyNode):
 
         return IO.NodeOutput(
             edited,
-            ui=save_live_preview(edited, str(cls.hidden.unique_id)),
+            ui=save_generation_output(edited, "blend_scene"),
         )
 
 
@@ -2284,7 +2284,7 @@ class RestyleFromImageNode(IO.ComfyNode):
         result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(
             result,
-            ui=save_live_preview(result, str(cls.hidden.unique_id)),
+            ui=save_generation_output(result, "restyle"),
         )
 
 
@@ -2361,7 +2361,7 @@ class ProductShotNode(IO.ComfyNode):
         result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(
             result,
-            ui=save_live_preview(result, str(cls.hidden.unique_id)),
+            ui=save_generation_output(result, "product_shot"),
         )
 
 
@@ -3255,7 +3255,7 @@ class LayerizeGraphicNode(IO.ComfyNode):
         # Surface both results on the node itself (background preview image +
         # the layer JSON as a text payload) so "Edit as Frame" can convert the
         # structured text layers without any downstream wiring.
-        ui = save_live_preview(tensor, str(cls.hidden.unique_id))
+        ui = save_generation_output(tensor, "layerize")
         if layers_json:
             ui = {**ui, "text": [layers_json]}
         return IO.NodeOutput(tensor, layers_json, ui=ui)

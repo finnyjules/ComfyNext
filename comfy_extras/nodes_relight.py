@@ -16,7 +16,7 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, IO
-from comfy_extras._live_preview import save_live_preview
+from comfy_extras._live_preview import save_live_preview, save_generation_output
 from comfy_extras._relight_prompts import PRESETS, relight_instruction
 
 
@@ -107,7 +107,9 @@ class RelightNode(IO.ComfyNode):
         }
         pred = await _run_prediction("google/nano-banana-2", input_dict)
         result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(result, ui=save_live_preview(result, uid))
+        # Durable output so the relit result is recorded as an asset (the blank
+        # guard above stays a temp preview — no asset for a no-op run).
+        return IO.NodeOutput(result, ui=save_generation_output(result, "relight"))
 
 
 class RelightExtension(ComfyExtension):

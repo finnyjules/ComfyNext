@@ -42,6 +42,34 @@ def save_live_preview(image_tensor: torch.Tensor, node_id: str) -> dict:
     }
 
 
+def save_generation_output(image_tensor: torch.Tensor, filename_prefix: str = "generation") -> dict:
+    """Save a cloud-generation result as a DURABLE output file and return the UI dict.
+
+    Unlike `save_live_preview` (which writes a single overwriting temp file for a
+    transient in-node preview, type:"temp"), this writes a new uniquely-numbered
+    PNG into the output directory on every call — like SaveImage — and marks it
+    type:"output". The Assets pipeline keeps only type:"output" files, so this is
+    what makes a paid generation show up as an asset; numbering means each run is
+    its own asset and history accumulates instead of being overwritten.
+    """
+    out_dir = folder_paths.get_output_directory()
+    full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+        filename_prefix, out_dir
+    )
+    os.makedirs(full_output_folder, exist_ok=True)
+
+    images = image_tensor if image_tensor.ndim == 4 else image_tensor.unsqueeze(0)
+    out_files: list[dict[str, str]] = []
+    for img in images:
+        arr = np.clip(255.0 * img.cpu().numpy(), 0, 255).astype(np.uint8)
+        file = f"{filename}_{counter:05}_.png"
+        PILImage.fromarray(arr).save(os.path.join(full_output_folder, file), "PNG")
+        out_files.append({"filename": file, "subfolder": subfolder, "type": "output"})
+        counter += 1
+
+    return {"images": out_files, "animated": (False,)}
+
+
 def save_live_preview_multi(
     images: list[torch.Tensor], node_id: str, labels: list[str] | None = None
 ) -> dict:

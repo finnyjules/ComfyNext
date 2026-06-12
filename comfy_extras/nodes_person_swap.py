@@ -16,7 +16,7 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, IO
-from comfy_extras._live_preview import save_live_preview
+from comfy_extras._live_preview import save_live_preview, save_generation_output
 from comfy_extras._person_swap_prompts import swap_instruction
 
 
@@ -71,7 +71,9 @@ class PersonSwapNode(IO.ComfyNode):
         }
         pred = await _run_prediction("google/nano-banana-2", input_dict)
         result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(result, ui=save_live_preview(result, uid))
+        # Durable output so the swapped result is recorded as an asset (the
+        # passthrough/blank guards above stay temp previews — no asset on a no-op).
+        return IO.NodeOutput(result, ui=save_generation_output(result, "person_swap"))
 
 
 class PersonSwapExtension(ComfyExtension):
