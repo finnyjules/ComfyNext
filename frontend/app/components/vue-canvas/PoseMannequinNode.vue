@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Handle, Position } from '@vue-flow/core'
+import { Handle, Position, useHandleConnections } from '@vue-flow/core'
 import { Image, PersonStanding, Wand2 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
@@ -61,10 +61,15 @@ const posePrompt = computed<string>({
 })
 
 const poseImageInIdx = computed(() => { const i = inputIdx('pose_image'); return i >= 0 ? i : 1 })
-const poseImageLinked = computed(() => {
-  const i = inputIdx('pose_image')
-  return i >= 0 ? props.data.inputs?.[i]?.link != null : false
+// Source of truth for "is a pose image wired" is VueFlow's live edge store, NOT
+// data.inputs[i].link — that field is only populated when loading a saved
+// workflow, so a freshly drawn edge would read as unconnected. The node has two
+// target handles, so the handle id is required to disambiguate.
+const poseImageConnections = useHandleConnections({
+  type: 'target',
+  id: () => `input-${poseImageInIdx.value}`,
 })
+const poseImageLinked = computed(() => poseImageConnections.value.length > 0)
 
 const MODES: { id: PoseMode; label: string }[] = [
   { id: 'mannequin', label: 'Mannequin' },
