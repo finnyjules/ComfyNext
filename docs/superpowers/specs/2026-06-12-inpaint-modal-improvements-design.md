@@ -14,7 +14,7 @@ the capabilities that make precise edits and iteration practical:
 1. **Undo/redo** (stroke-level)
 2. **Zoom / pan** on the stage
 3. **Result history** (accumulate generations instead of replacing)
-4. **Better mask tools** — Fill all, Invert, Mask-only view
+4. **Better mask tools** — Invert, Mask-only view
 
 Explicitly **out of scope** this pass (deferred):
 - Per-brush *hardness* — the bake feathers globally (`useBrushMask.bakeMask`), so per-stroke
@@ -39,8 +39,7 @@ into composables where it belongs, and build in risk order so the heavy geometry
 - Fold the SAM "Click-select" (`Wand2`) button into the brush tool row as an icon button,
   removing its dedicated row + the "beta · falls back to brushing" caption (move that hint
   to the button `title`). Reduces vertical clutter.
-- Group the three new mask actions (Fill all, Invert, Mask only) with the existing Clear in
-  one wrap row.
+- Group the two new mask actions (Invert, Mask only) with the existing Clear in one wrap row.
 - Keep the dark aesthetic, emerald = run, cyan = paint, rose = erase. **No purple accents**
   (per standing preference).
 
@@ -54,13 +53,7 @@ into composables where it belongs, and build in risk order so the heavy geometry
 - History is **cleared** when the source image changes (`applySource`) and on modal close
   (component unmount) — **not** persisted to the node. No new graph-doc plumbing.
 
-**1c. Fill all** (mask tool)
-- Add `fillAll()` to `useBrushMask`: pushes one stroke (or sets a `fillAll` flag honored by
-  `render` + `bakeMask`) that marks the entire artboard. Simplest correct version: a flag
-  `fillAll: Ref<boolean>` that, when true, makes `hasMask` true and makes `bakeMask`/`render`
-  produce a full-white mask (modulo `inverted`). Cleared by `clear()`.
-
-**1d. Invert** (mask tool) — **flag on the mask** (chosen over baking into strokes)
+**1c. Invert** (mask tool) — **flag on the mask** (chosen over baking into strokes)
 - Add `inverted: Ref<boolean>` to `useBrushMask`.
 - `render()` and `bakeMask()` honor it: when `inverted`, the output mask is
   `whole-image MINUS painted region` (i.e. paint the area to *keep*, change everything else).
@@ -75,7 +68,7 @@ into composables where it belongs, and build in risk order so the heavy geometry
 ### Phase 2 — Undo / redo (touches `useBrushMask` state only)
 
 - Add an undo/redo stack to `useBrushMask`. Snapshot granularity = **per stroke** (push a
-  snapshot of `strokes` on `up()`, and on `fillAll`/`clear`/`invert` toggles so those are
+  snapshot of `strokes` on `up()`, and on `clear`/`invert` toggles so those are
   undoable too).
 - API: `undo()`, `redo()`, `canUndo: ComputedRef<boolean>`, `canRedo: ComputedRef<boolean>`.
 - Implementation: keep `past: BrushStroke[][]` and `future: BrushStroke[][]` arrays of
@@ -111,16 +104,16 @@ New composable `useStageView`:
 
 Source resolution, `imageToDataUrl`, `bakeMask(target, {feather, expand})`, `inpaint.*`,
 and `acceptInpaint` write-back are all **unchanged**. The new features either:
-- add reversible **flags** to the mask (`inverted`, `fillAll`) that `bakeMask` honors, or
+- add a reversible **flag** to the mask (`inverted`) that `bakeMask` honors, or
 - add a **view transform** (`useStageView`) that sits between the pointer and the unchanged
   normalized-coord space, or
 - accumulate results in a session array.
 
 ## Testing
 
-- **Unit (`useBrushMask`)**: undo/redo across paint/erase/clear/fillAll/invert; `canUndo`/
+- **Unit (`useBrushMask`)**: undo/redo across paint/erase/clear/invert; `canUndo`/
   `canRedo` edges; `bakeMask` output with `inverted` true vs false (assert pixel regions);
-  `fillAll` produces full-coverage mask; `clear()` resets flags.
+  `clear()` resets flags.
 - **Unit (`useStageView`)**: `toNorm` round-trips a point through zoom+pan back to the same
   normalized coord it would have at scale=1/no-pan; clamping; `fit()` math.
 - **Manual / preview**: paint → zoom in → paint precisely → undo twice → invert → generate →
@@ -132,4 +125,4 @@ and `acceptInpaint` write-back are all **unchanged**. The new features either:
 - **Zoom/pan coordinate drift** is the main risk — mitigated by keeping the overlay in logical
   space and transforming the wrapper (bake geometry untouched), plus the `toNorm` round-trip
   unit test. Built last so Phases 1–2 ship regardless.
-- Invert/fill correctness in `bakeMask` — covered by pixel-region unit assertions.
+- Invert correctness in `bakeMask` — covered by pixel-region unit assertions.
