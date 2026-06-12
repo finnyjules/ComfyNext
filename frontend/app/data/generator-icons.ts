@@ -39,6 +39,7 @@ import {
   MessageCircle,
   UsersRound,
   PersonStanding,
+  Lightbulb,
 } from 'lucide-vue-next'
 
 export const GENERATOR_NODE_ICONS: Record<string, Component> = {
@@ -51,6 +52,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   SketchToImageNode:    PenTool,
   PersonSwap:           UsersRound,
   PoseMannequin:        PersonStanding,
+  RelightNode:          Lightbulb,
 
   // ----- Image · manipulation -----
   EditImageNode:        Pencil,
@@ -116,6 +118,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
   SketchToImageNode:    'Gemini',             // Nano Banana = Google's lightweight model
 
   // ----- Image · manipulation -----
+  RelightNode:          'Gemini',              // Nano Banana 2
   EditImageNode:        'BFL',                // Flux Kontext Pro
   BlendSceneNode:       'BFL',                // Flux Kontext Pro (default; Nano Banana optional)
   UpscaleImageNode:     null,                 // Clarity — no brand
