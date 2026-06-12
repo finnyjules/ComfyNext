@@ -116,9 +116,9 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
   GenerateEmojiNode:    'BFL',                // Flux Kontext + Emoji LoRA
   ConsistentFaceNode:   'Ideogram',           // Ideogram Character
   SketchToImageNode:    'Gemini',             // Nano Banana = Google's lightweight model
+  RelightNode:          'Gemini',             // Nano Banana 2
 
   // ----- Image · manipulation -----
-  RelightNode:          'Gemini',              // Nano Banana 2
   EditImageNode:        'BFL',                // Flux Kontext Pro
   BlendSceneNode:       'BFL',                // Flux Kontext Pro (default; Nano Banana optional)
   UpscaleImageNode:     null,                 // Clarity — no brand
