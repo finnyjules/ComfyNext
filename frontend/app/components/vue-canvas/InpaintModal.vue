@@ -11,9 +11,10 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, Wand2, ImagePlus, Loader2 } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2, ZoomIn, ZoomOut, Maximize } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
+import { useStageView } from '~/composables/useStageView'
 
 const props = defineProps<{
   nodeId: string
@@ -72,7 +73,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); clearSamMask(); inpaintResults.value = []; previewResult.value = null
+  brush.clear(); brush.resetHistory(); clearSamMask(); history.value = []; previewResult.value = null; maskOnly.value = false
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -83,6 +84,7 @@ async function applySource(url: string | null) {
     const a = nw / nh
     if (a >= 1) { disp.w = MAX; disp.h = Math.round(MAX / a) }
     else { disp.h = MAX; disp.w = Math.round(MAX * a) }
+    view.reset()
   } catch {
     sourceImg.value = null
   } finally { loadingSrc.value = false }
@@ -93,6 +95,10 @@ watch(sourceUrl, applySource)
 const brush = useBrushMask()
 const inpaint = useInpaint()
 brush.setActive(true)
+const view = useStageView()
+const spaceDown = ref(false) // hold Space to pan
+// Cursor-ring screen position (mapped through the current zoom/pan).
+const cursorScreen = computed(() => brush.cursor.value ? view.toScreen(brush.cursor.value.x, brush.cursor.value.y, disp.w, disp.h) : null)
 
 const prompt = ref('')
 const tier = ref<'dev' | 'pro'>('dev')
@@ -100,7 +106,9 @@ const count = ref(1)
 const feather = ref(3)
 const expand = ref(0)
 const mode = ref<'mask' | 'describe'>('mask')
-const inpaintResults = ref<string[]>([])
+const maskOnly = ref(false) // hide the photo, show only the painted region (inspection)
+interface HistoryItem { id: string; url: string; prompt: string; mode: 'mask' | 'describe' }
+const history = ref<HistoryItem[]>([])
 const inpaintError = ref('')
 const comparing = ref(false)
 
@@ -114,15 +122,26 @@ watch(samMask, async (url) => {
 })
 function clearSamMask() { samMask.value = null }
 function clearMask() { brush.clear(); clearSamMask() }
-watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false } })
+watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false; maskOnly.value = false } })
+// Mask-only is a pre-generation inspection aid; drop it once a result lands so
+// the stage doesn't sit on a blank black backdrop (renderOverlay shows results,
+// not the mask, once history exists).
+watch(() => history.value.length, (len, prev) => { if (!prev && len) maskOnly.value = false })
 
 // ── Stage pointer handling (the image fills the stage; coords normalize 0..1) ─
 const stageRef = ref<HTMLDivElement | null>(null)
 function clientToNorm(e: PointerEvent) {
   const r = stageRef.value?.getBoundingClientRect(); if (!r) return null
-  return { nx: (e.clientX - r.left) / r.width, ny: (e.clientY - r.top) / r.height }
+  return view.toNorm(e.clientX - r.left, e.clientY - r.top, disp.w, disp.h)
 }
+const panning = ref(false)
+let panLast: { x: number; y: number } | null = null
 function onPointerDown(e: PointerEvent) {
+  if (spaceDown.value || e.button === 1) {
+    e.preventDefault(); panning.value = true; panLast = { x: e.clientX, y: e.clientY }
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    return
+  }
   const p = clientToNorm(e); if (!p) return
   e.preventDefault()
   if (samSelect.value) { doSamSelect(p.nx, p.ny); return }
@@ -130,8 +149,25 @@ function onPointerDown(e: PointerEvent) {
   ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
   brush.down(p.nx, p.ny, disp.w)
 }
-function onPointerMove(e: PointerEvent) { const p = clientToNorm(e); if (p) brush.move(p.nx, p.ny) }
-function onPointerUp() { brush.up() }
+function onPointerMove(e: PointerEvent) {
+  if (panning.value && panLast) {
+    view.pan(e.clientX - panLast.x, e.clientY - panLast.y)
+    panLast = { x: e.clientX, y: e.clientY }
+    return
+  }
+  const p = clientToNorm(e); if (p) brush.move(p.nx, p.ny)
+}
+function onPointerUp() { if (panning.value) { panning.value = false; panLast = null } else brush.up() }
+function onWheel(e: WheelEvent) {
+  const r = stageRef.value?.getBoundingClientRect(); if (!r) return
+  e.preventDefault()
+  if (e.metaKey || e.ctrlKey) {
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+    view.zoomBy(factor, e.clientX - r.left, e.clientY - r.top)
+  } else {
+    view.pan(-e.deltaX, -e.deltaY)
+  }
+}
 
 // ── Overlay render (mask wash + SAM wash + result preview) ───────────────────
 const overlay = ref<HTMLCanvasElement | null>(null)
@@ -145,7 +181,7 @@ function renderOverlay() {
   ctx.clearRect(0, 0, W, H)
   // Candidate result preview (hidden while holding compare).
   if (previewImgEl.value && !comparing.value) ctx.drawImage(previewImgEl.value, 0, 0, W, H)
-  if (inpaintResults.value.length) return // once results are in, show them not the masks
+  if (history.value.length && !maskOnly.value) return // once results exist show the preview, unless inspecting the mask
   // SAM selection wash.
   if (samMaskImgEl.value) {
     const mw = samMaskImgEl.value.naturalWidth || 1, mh = samMaskImgEl.value.naturalHeight || 1
@@ -158,7 +194,7 @@ function renderOverlay() {
   // Brush wash.
   brush.render(ctx, W, H)
 }
-watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), comparing.value, inpaintResults.value.length] as const,
+watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted.value, comparing.value, history.value.length, maskOnly.value] as const,
   () => renderOverlay())
 
 // ── Candidate-result preview ─────────────────────────────────────────────────
@@ -199,7 +235,10 @@ async function runInpaint(removeMode = false) {
       if (!maskUrl) { inpaintError.value = 'Paint or click-select a region first.'; return }
       images = await inpaint.fluxFill(source, maskUrl, p, { tier: tier.value, count: count.value })
     }
-    inpaintResults.value = images
+    const stamp = Date.now()
+    const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: mode.value }))
+    previewResult.value = null // drop any stale hover-preview from the prior batch
+    history.value = [...items, ...history.value]
   } catch (err: any) {
     inpaintError.value = err?.data?.message || err?.message || 'Inpaint failed'
   }
@@ -257,16 +296,30 @@ function onKeydown(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
   if (e.key === 'Escape') { e.stopPropagation(); emit('close'); return }
+  if (e.code === 'Space' && !typing) { e.preventDefault(); spaceDown.value = true; return }
   if (typing) return
+  const meta = e.metaKey || e.ctrlKey
+  if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) brush.redo(); else brush.undo(); return }
+  if (meta && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); brush.redo(); return }
   if (e.key === '[' || e.key === ']') { e.preventDefault(); brush.sizePx.value = Math.max(4, Math.min(400, brush.sizePx.value + (e.key === ']' ? 8 : -8))) }
   else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); brush.mode.value = brush.mode.value === 'add' ? 'erase' : 'add' }
 }
+function onKeyup(e: KeyboardEvent) { if (e.code === 'Space') spaceDown.value = false }
+// Releasing focus (alt-tab, Spotlight, system dialog) can swallow the Space keyup
+// and leave the stage stuck in pan mode — clear it on blur.
+function onBlur() { spaceDown.value = false; panning.value = false; panLast = null }
 onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('keyup', onKeyup, true)
+  window.addEventListener('blur', onBlur)
   applySource(sourceUrl.value) // initial load (watches above are non-immediate)
   renderOverlay()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('keyup', onKeyup, true)
+  window.removeEventListener('blur', onBlur)
+})
 </script>
 
 <template>
@@ -274,6 +327,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
     <div class="w-full h-full max-w-[1200px] max-h-[860px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl flex text-white/85 overflow-hidden">
       <!-- Stage -->
       <div class="flex-1 relative flex items-center justify-center overflow-hidden bg-[#0d0d0d]">
+        <div v-if="sourceUrl" class="absolute top-4 left-4 z-10 flex items-center gap-1 bg-black/40 border border-white/10 rounded-md p-0.5">
+          <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Undo (⌘Z)" aria-label="Undo" :disabled="!brush.canUndo.value" @click="brush.undo()"><Undo2 class="size-4" /></button>
+          <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Redo (⌘⇧Z)" aria-label="Redo" :disabled="!brush.canRedo.value" @click="brush.redo()"><Redo2 class="size-4" /></button>
+        </div>
         <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
           <X class="size-4" />
         </button>
@@ -289,22 +346,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
           v-else
           ref="stageRef"
           class="relative rounded-md overflow-hidden ring-1 ring-white/10"
-          :class="samSelect ? 'cursor-crosshair' : 'cursor-none'"
+          :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : samSelect ? 'cursor-crosshair' : 'cursor-none'"
           :style="{ width: disp.w + 'px', height: disp.h + 'px' }"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"
+          @wheel.prevent="onWheel"
         >
-          <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" draggable="false" />
-          <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
-          <!-- brush cursor ring -->
+          <div class="absolute inset-0" :style="{ transform: view.transform.value, transformOrigin: '0 0', width: disp.w + 'px', height: disp.h + 'px' }">
+            <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity" :class="maskOnly ? 'opacity-0' : 'opacity-100'" draggable="false" />
+            <div v-if="maskOnly" class="absolute inset-0 bg-black pointer-events-none" />
+            <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
+          </div>
+          <!-- brush cursor ring (screen space; scales with zoom) -->
           <div
-            v-if="!samSelect && brush.cursor.value"
+            v-if="!samSelect && !spaceDown && !panning && cursorScreen"
             class="absolute pointer-events-none rounded-full border-2"
             :class="brush.mode.value === 'erase' ? 'border-rose-400/90' : 'border-cyan-300/90'"
-            :style="{ left: brush.cursor.value.x * disp.w + 'px', top: brush.cursor.value.y * disp.h + 'px', width: brush.sizePx.value + 'px', height: brush.sizePx.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
+            :style="{ left: cursorScreen.sx + 'px', top: cursorScreen.sy + 'px', width: brush.sizePx.value * view.scale.value + 'px', height: brush.sizePx.value * view.scale.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
           />
           <div v-if="loadingSrc" class="absolute inset-0 flex items-center justify-center bg-black/30"><Loader2 class="size-6 animate-spin text-white/60" /></div>
+        </div>
+        <div v-if="sourceUrl" class="absolute bottom-4 left-4 z-10 flex items-center gap-1 bg-black/40 border border-white/10 rounded-md p-0.5 text-white/70">
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Zoom out" aria-label="Zoom out" @click="view.zoomBy(1 / 1.2, disp.w / 2, disp.h / 2)"><ZoomOut class="size-4" /></button>
+          <span class="min-w-[3rem] text-center text-[11px] tabular-nums select-none">{{ view.percent.value }}%</span>
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Zoom in" aria-label="Zoom in" @click="view.zoomBy(1.2, disp.w / 2, disp.h / 2)"><ZoomIn class="size-4" /></button>
+          <span class="w-px h-4 bg-white/15 mx-0.5" />
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Fit" aria-label="Fit to screen" @click="view.reset()"><Maximize class="size-3.5" /></button>
         </div>
         <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onLoadFile" />
       </div>
@@ -328,14 +396,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
             <div class="flex items-center gap-1.5">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-cyan-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'erase' ? 'bg-rose-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Erase (X)" @click="brush.mode.value = 'erase'"><Eraser class="size-3.5" /> Erase</button>
-              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
+              <button class="ml-auto size-7 rounded-md flex items-center justify-center cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" aria-label="Click-select an object" :title="samSelect ? 'Click an object to auto-select it' : 'Click-select an object (SAM · beta, falls back to brushing)'" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /></button>
             </div>
             <label class="flex items-center gap-2 text-[11px] text-white/50">Size
               <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-cyan-400 cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
             </label>
-            <div class="flex items-center gap-2">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Click an object to auto-select it (SAM)" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /> Click-select</button>
-              <span class="text-[10px] text-white/30">{{ samSelect ? 'Click an object' : 'beta · falls back to brushing' }}</span>
+            <div class="flex items-center gap-1.5">
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask only</button>
+              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
             </div>
           </template>
 
@@ -373,27 +442,29 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
           <!-- Actions -->
           <div class="flex items-center gap-1.5">
             <button class="flex-1 h-9 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg" @click="runInpaint(false)">
-              {{ inpaint.busy.value ? 'Generating…' : (inpaintResults.length ? 'Regenerate' : 'Generate') }}
+              {{ inpaint.busy.value ? 'Generating…' : (history.length ? 'Regenerate' : 'Generate') }}
             </button>
             <button v-if="mode === 'mask'" class="h-9 px-3 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40" :disabled="inpaint.busy.value || !sourceImg" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
           </div>
 
-          <!-- Results -->
-          <div v-if="inpaintResults.length" class="pt-2 border-t border-white/10">
+          <!-- History -->
+          <div v-if="history.length" class="pt-2 border-t border-white/10">
             <div class="flex items-center justify-between mb-2 text-[11px] uppercase tracking-wide text-white/40">
-              <span>Pick a result</span>
+              <span>History</span>
               <button class="flex items-center gap-1 normal-case tracking-normal text-white/50 hover:text-white cursor-pointer select-none" title="Hold to see the original"
                 @pointerdown.stop="comparing = true" @pointerup="comparing = false" @pointerleave="comparing = false"><Eye class="size-3.5" /> Compare</button>
             </div>
-            <div class="grid grid-cols-2 gap-2">
-              <button v-for="(img, i) in inpaintResults" :key="i"
-                class="relative group rounded-md overflow-hidden border border-white/10 hover:border-emerald-400/80 cursor-pointer"
-                @mouseenter="previewResult = img" @mouseleave="previewResult = null" @click="acceptInpaint(img)">
-                <img :src="img" class="w-full aspect-square object-cover" draggable="false" />
-                <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use this</span>
+            <div class="grid grid-cols-4 gap-2">
+              <button v-for="item in history" :key="item.id"
+                class="relative group rounded-md overflow-hidden border cursor-pointer"
+                :class="previewResult === item.url ? 'border-emerald-400/90 ring-1 ring-emerald-400/60' : 'border-white/10 hover:border-emerald-400/80'"
+                :title="item.prompt || (item.mode === 'describe' ? 'described edit' : 'inpaint')"
+                @mouseenter="previewResult = item.url" @mouseleave="previewResult = null" @click="acceptInpaint(item.url)">
+                <img :src="item.url" class="w-full aspect-square object-cover" draggable="false" />
+                <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use</span>
               </button>
             </div>
-            <p class="mt-1.5 text-[10px] text-white/30">Hover to preview · click to apply to the node.</p>
+            <p class="mt-1.5 text-[10px] text-white/30">Newest first · hover to preview · click to apply.</p>
           </div>
 
           <div v-if="inpaintError" class="text-[11px] text-rose-400">{{ inpaintError }}</div>
