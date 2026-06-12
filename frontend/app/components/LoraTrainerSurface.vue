@@ -224,7 +224,7 @@ const refInputRef = ref<HTMLInputElement | null>(null)
 // A small set of reference photos. Real ones flagged `includeInTraining` are
 // added to the dataset directly (this is what captures true body type);
 // Ideogram seeds synthetic variety from them, round-robin (one ref per call).
-interface ReferenceItem { file: File; previewUrl: string; includeInTraining: boolean }
+interface ReferenceItem { file: File; previewUrl: string; includeInTraining: boolean; addedToDataset?: boolean }
 const referenceFiles = ref<ReferenceItem[]>([])
 const MAX_REFERENCES = 5
 
@@ -865,8 +865,8 @@ async function buildCharacterDataset() {
 
   // 1) Real photos flagged for training go straight into the dataset — this is
   //    what captures true body type.
-  const realIncluded = referenceFiles.value.filter((r) => r.includeInTraining)
-  for (const r of realIncluded) await addReferenceToDataset(r.file)
+  const realIncluded = referenceFiles.value.filter((r) => r.includeInTraining && !r.addedToDataset)
+  for (const r of realIncluded) { await addReferenceToDataset(r.file); r.addedToDataset = true }
 
   // 2) Top up with synthetic variety to reach the target count.
   const target = Math.max(4, Math.min(CHARACTER_SHOT_SCENES.length + realIncluded.length, datasetCount.value || 16))
@@ -1386,6 +1386,7 @@ function humanizeError(msg: string): string {
 
 onBeforeUnmount(() => {
   for (const img of images.value) URL.revokeObjectURL(img.previewUrl)
+  for (const r of referenceFiles.value) URL.revokeObjectURL(r.previewUrl)
 })
 </script>
 
@@ -1643,7 +1644,7 @@ onBeforeUnmount(() => {
               <div class="flex flex-wrap gap-2">
                 <div
                   v-for="(r, i) in referenceFiles"
-                  :key="i"
+                  :key="r.previewUrl"
                   class="relative w-20 h-20 rounded-lg overflow-hidden ring-1 ring-white/10 group"
                 >
                   <img :src="r.previewUrl" class="absolute inset-0 w-full h-full object-cover" />
