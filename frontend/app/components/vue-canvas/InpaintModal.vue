@@ -11,7 +11,7 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2 } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2 } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
 
@@ -72,7 +72,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); clearSamMask(); history.value = []; previewResult.value = null; maskOnly.value = false
+  brush.clear(); brush.resetHistory(); clearSamMask(); history.value = []; previewResult.value = null; maskOnly.value = false
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -267,6 +267,9 @@ function onKeydown(e: KeyboardEvent) {
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
   if (e.key === 'Escape') { e.stopPropagation(); emit('close'); return }
   if (typing) return
+  const meta = e.metaKey || e.ctrlKey
+  if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) brush.redo(); else brush.undo(); return }
+  if (meta && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); brush.redo(); return }
   if (e.key === '[' || e.key === ']') { e.preventDefault(); brush.sizePx.value = Math.max(4, Math.min(400, brush.sizePx.value + (e.key === ']' ? 8 : -8))) }
   else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); brush.mode.value = brush.mode.value === 'add' ? 'erase' : 'add' }
 }
@@ -283,6 +286,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
     <div class="w-full h-full max-w-[1200px] max-h-[860px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl flex text-white/85 overflow-hidden">
       <!-- Stage -->
       <div class="flex-1 relative flex items-center justify-center overflow-hidden bg-[#0d0d0d]">
+        <div v-if="sourceUrl" class="absolute top-4 left-4 z-10 flex items-center gap-1 bg-black/40 border border-white/10 rounded-md p-0.5">
+          <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Undo (⌘Z)" aria-label="Undo" :disabled="!brush.canUndo.value" @click="brush.undo()"><Undo2 class="size-4" /></button>
+          <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Redo (⌘⇧Z)" aria-label="Redo" :disabled="!brush.canRedo.value" @click="brush.redo()"><Redo2 class="size-4" /></button>
+        </div>
         <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
           <X class="size-4" />
         </button>
@@ -344,7 +351,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
               <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-cyan-400 cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
             </label>
             <div class="flex items-center gap-1.5">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.inverted.value = !brush.inverted.value"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask only</button>
               <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
             </div>

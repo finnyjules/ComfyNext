@@ -9,6 +9,12 @@
  * Mask convention for FLUX Fill: WHITE = inpaint, BLACK = keep.
  */
 
+import {
+  createHistory, record as recordHistory, undo as undoHistory,
+  redo as redoHistory, canUndo as histCanUndo, canRedo as histCanRedo,
+  type History,
+} from '~/lib/brushHistory'
+
 export interface BrushStroke {
   points: { x: number; y: number }[] // normalized artboard coords (0..1)
   radius: number                     // normalized to artboard WIDTH (matches layer geometry)
@@ -39,6 +45,22 @@ export function useBrushMask() {
   const inverted = ref(false)             // paint what to KEEP; change everything else
   const strokes = ref<BrushStroke[]>([])
   const drawing = ref(false)
+  type BrushSnapshot = { strokes: BrushStroke[]; inverted: boolean }
+  // JSON round-trip (not structuredClone) to strip Vue reactivity off snapshots
+  // — matches the project convention (useTemplateEditor).
+  const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
+  const snap = (): BrushSnapshot => ({ strokes: clone(strokes.value), inverted: inverted.value })
+  const hist = ref<History<BrushSnapshot>>(createHistory(snap()))
+  const canUndo = computed(() => histCanUndo(hist.value))
+  const canRedo = computed(() => histCanRedo(hist.value))
+  function commit() { hist.value = recordHistory(hist.value, snap()) }
+  function apply(s: BrushSnapshot) { strokes.value = clone(s.strokes); inverted.value = s.inverted }
+  function undo() { if (!canUndo.value) return; drawing.value = false; hist.value = undoHistory(hist.value); apply(hist.value.present) }
+  function redo() { if (!canRedo.value) return; drawing.value = false; hist.value = redoHistory(hist.value); apply(hist.value.present) }
+  function toggleInvert() { inverted.value = !inverted.value; commit() }
+  // Re-anchor the stack to the current state, discarding past/future — used when
+  // the edited image changes so undo can't restore the prior image's strokes.
+  function resetHistory() { hist.value = createHistory(snap()) }
   const cursor = ref<{ x: number; y: number } | null>(null) // normalized, for the cursor ring
 
   // Display px → normalized width-fraction radius. `pxBase` is the artboard
@@ -50,7 +72,7 @@ export function useBrushMask() {
   const hasMask = computed(() => inverted.value || strokes.value.some(s => !s.erase && s.points.length > 0))
 
   function setActive(v: boolean) { active.value = v; if (!v) { drawing.value = false } }
-  function clear() { strokes.value = []; drawing.value = false; inverted.value = false }
+  function clear() { strokes.value = []; drawing.value = false; inverted.value = false; commit() }
 
   /** Begin a stroke at a normalized point. `pxBase` = artboard logical width. */
   function down(nx: number, ny: number, pxBase: number) {
@@ -66,7 +88,7 @@ export function useBrushMask() {
     last.points.push({ x: nx, y: ny })
     strokes.value = [...strokes.value]
   }
-  function up() { drawing.value = false }
+  function up() { if (drawing.value) { drawing.value = false; commit() } else { drawing.value = false } }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
   /** Stamp the strokes onto a binary alpha mask (white on transparent) at W×H,
@@ -183,6 +205,7 @@ export function useBrushMask() {
 
   return {
     active, sizePx, mode, inverted, strokes, drawing, cursor, hasMask,
+    canUndo, canRedo, undo, redo, toggleInvert, resetHistory,
     setActive, clear, down, move, up, radiusNorm, render, bakeMask, stampMask,
   }
 }
