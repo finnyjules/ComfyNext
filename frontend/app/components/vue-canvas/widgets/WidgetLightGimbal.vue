@@ -39,7 +39,7 @@ const injectedEdges = inject<any>('vueFlowEdges', null)
 const upstreamImageUrl = computed<string | null>(() => {
   if (!props.nodeId || !injectedEdges?.value || !injectedNodes?.value) return null
   // Find the edge feeding our "image" input. Vue Flow's handle ids are
-  // "input-{index}" — for RotateCameraNode, `image` is the first (index 0).
+  // "input-{index}" — for RelightNode, `image` is the first (index 0).
   const edge = injectedEdges.value.find((e: any) =>
     e.target === props.nodeId && (e.targetHandle === 'input-0' || e.targetHandle === 'input-image'))
   if (!edge) return null
