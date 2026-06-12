@@ -72,7 +72,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); clearSamMask(); inpaintResults.value = []; previewResult.value = null
+  brush.clear(); clearSamMask(); history.value = []; previewResult.value = null
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -100,7 +100,8 @@ const count = ref(1)
 const feather = ref(3)
 const expand = ref(0)
 const mode = ref<'mask' | 'describe'>('mask')
-const inpaintResults = ref<string[]>([])
+interface HistoryItem { id: string; url: string; prompt: string; mode: 'mask' | 'describe' }
+const history = ref<HistoryItem[]>([])
 const inpaintError = ref('')
 const comparing = ref(false)
 
@@ -145,7 +146,7 @@ function renderOverlay() {
   ctx.clearRect(0, 0, W, H)
   // Candidate result preview (hidden while holding compare).
   if (previewImgEl.value && !comparing.value) ctx.drawImage(previewImgEl.value, 0, 0, W, H)
-  if (inpaintResults.value.length) return // once results are in, show them not the masks
+  if (history.value.length) return // once results exist, show the previewed result, not the masks
   // SAM selection wash.
   if (samMaskImgEl.value) {
     const mw = samMaskImgEl.value.naturalWidth || 1, mh = samMaskImgEl.value.naturalHeight || 1
@@ -158,7 +159,7 @@ function renderOverlay() {
   // Brush wash.
   brush.render(ctx, W, H)
 }
-watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), comparing.value, inpaintResults.value.length] as const,
+watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), comparing.value, history.value.length] as const,
   () => renderOverlay())
 
 // ── Candidate-result preview ─────────────────────────────────────────────────
@@ -199,7 +200,10 @@ async function runInpaint(removeMode = false) {
       if (!maskUrl) { inpaintError.value = 'Paint or click-select a region first.'; return }
       images = await inpaint.fluxFill(source, maskUrl, p, { tier: tier.value, count: count.value })
     }
-    inpaintResults.value = images
+    const stamp = Date.now()
+    const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: mode.value }))
+    previewResult.value = null // drop any stale hover-preview from the prior batch
+    history.value = [...items, ...history.value]
   } catch (err: any) {
     inpaintError.value = err?.data?.message || err?.message || 'Inpaint failed'
   }
@@ -373,27 +377,29 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
           <!-- Actions -->
           <div class="flex items-center gap-1.5">
             <button class="flex-1 h-9 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg" @click="runInpaint(false)">
-              {{ inpaint.busy.value ? 'Generating…' : (inpaintResults.length ? 'Regenerate' : 'Generate') }}
+              {{ inpaint.busy.value ? 'Generating…' : (history.length ? 'Regenerate' : 'Generate') }}
             </button>
             <button v-if="mode === 'mask'" class="h-9 px-3 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40" :disabled="inpaint.busy.value || !sourceImg" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
           </div>
 
-          <!-- Results -->
-          <div v-if="inpaintResults.length" class="pt-2 border-t border-white/10">
+          <!-- History -->
+          <div v-if="history.length" class="pt-2 border-t border-white/10">
             <div class="flex items-center justify-between mb-2 text-[11px] uppercase tracking-wide text-white/40">
-              <span>Pick a result</span>
+              <span>History</span>
               <button class="flex items-center gap-1 normal-case tracking-normal text-white/50 hover:text-white cursor-pointer select-none" title="Hold to see the original"
                 @pointerdown.stop="comparing = true" @pointerup="comparing = false" @pointerleave="comparing = false"><Eye class="size-3.5" /> Compare</button>
             </div>
-            <div class="grid grid-cols-2 gap-2">
-              <button v-for="(img, i) in inpaintResults" :key="i"
-                class="relative group rounded-md overflow-hidden border border-white/10 hover:border-emerald-400/80 cursor-pointer"
-                @mouseenter="previewResult = img" @mouseleave="previewResult = null" @click="acceptInpaint(img)">
-                <img :src="img" class="w-full aspect-square object-cover" draggable="false" />
-                <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use this</span>
+            <div class="grid grid-cols-4 gap-2">
+              <button v-for="item in history" :key="item.id"
+                class="relative group rounded-md overflow-hidden border cursor-pointer"
+                :class="previewResult === item.url ? 'border-emerald-400/90 ring-1 ring-emerald-400/60' : 'border-white/10 hover:border-emerald-400/80'"
+                :title="item.prompt || (item.mode === 'describe' ? 'described edit' : 'inpaint')"
+                @mouseenter="previewResult = item.url" @mouseleave="previewResult = null" @click="acceptInpaint(item.url)">
+                <img :src="item.url" class="w-full aspect-square object-cover" draggable="false" />
+                <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use</span>
               </button>
             </div>
-            <p class="mt-1.5 text-[10px] text-white/30">Hover to preview · click to apply to the node.</p>
+            <p class="mt-1.5 text-[10px] text-white/30">Newest first · hover to preview · click to apply.</p>
           </div>
 
           <div v-if="inpaintError" class="text-[11px] text-rose-400">{{ inpaintError }}</div>
