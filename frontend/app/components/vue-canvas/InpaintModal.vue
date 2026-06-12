@@ -11,7 +11,7 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, Wand2, ImagePlus, Loader2, FlipHorizontal2 } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2 } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
 
@@ -72,7 +72,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); clearSamMask(); history.value = []; previewResult.value = null
+  brush.clear(); clearSamMask(); history.value = []; previewResult.value = null; maskOnly.value = false
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -100,6 +100,7 @@ const count = ref(1)
 const feather = ref(3)
 const expand = ref(0)
 const mode = ref<'mask' | 'describe'>('mask')
+const maskOnly = ref(false) // hide the photo, show only the painted region (inspection)
 interface HistoryItem { id: string; url: string; prompt: string; mode: 'mask' | 'describe' }
 const history = ref<HistoryItem[]>([])
 const inpaintError = ref('')
@@ -116,6 +117,10 @@ watch(samMask, async (url) => {
 function clearSamMask() { samMask.value = null }
 function clearMask() { brush.clear(); clearSamMask() }
 watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false } })
+// Mask-only is a pre-generation inspection aid; drop it once a result lands so
+// the stage doesn't sit on a blank black backdrop (renderOverlay shows results,
+// not the mask, once history exists).
+watch(() => history.value.length, (len, prev) => { if (!prev && len) maskOnly.value = false })
 
 // ── Stage pointer handling (the image fills the stage; coords normalize 0..1) ─
 const stageRef = ref<HTMLDivElement | null>(null)
@@ -299,7 +304,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"
         >
-          <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" draggable="false" />
+          <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity" :class="maskOnly ? 'opacity-0' : 'opacity-100'" draggable="false" />
+          <div v-if="maskOnly" class="absolute inset-0 bg-black pointer-events-none" />
           <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
           <!-- brush cursor ring -->
           <div
@@ -332,16 +338,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
             <div class="flex items-center gap-1.5">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-cyan-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'erase' ? 'bg-rose-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Erase (X)" @click="brush.mode.value = 'erase'"><Eraser class="size-3.5" /> Erase</button>
+              <button class="ml-auto size-7 rounded-md flex items-center justify-center cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" aria-label="Click-select an object" :title="samSelect ? 'Click an object to auto-select it' : 'Click-select an object (SAM · beta, falls back to brushing)'" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /></button>
             </div>
             <label class="flex items-center gap-2 text-[11px] text-white/50">Size
               <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-cyan-400 cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
             </label>
-            <div class="flex items-center gap-2">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Click an object to auto-select it (SAM)" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /> Click-select</button>
-              <span class="text-[10px] text-white/30">{{ samSelect ? 'Click an object' : 'beta · falls back to brushing' }}</span>
-            </div>
             <div class="flex items-center gap-1.5">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.inverted.value = !brush.inverted.value"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask only</button>
               <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
             </div>
           </template>
