@@ -190,6 +190,7 @@ interface DatasetImage {
   caption: string
   captionState: 'idle' | 'captioning' | 'done' | 'error'
   generated?: boolean    // came from "Build character dataset" (re-rollable)
+  isReference?: boolean  // came from a real reference photo (not generated)
   scene?: string         // the scene prompt used, so regenerate re-rolls the same shot type
 }
 
@@ -377,14 +378,21 @@ const costEstimate = computed(() => {
   }
 })
 
+// How many synthetic shots will be generated to top up the dataset.
+const expectedShots = computed(() => {
+  if (trainingKind.value !== 'character' || referenceFiles.value.length === 0) return 0
+  const target = Math.min(datasetCount.value, CHARACTER_SHOT_SCENES.length + realIncludedCount.value)
+  return syntheticCount(target, realIncludedCount.value)
+})
+
 // Cost of the images you still plan to GENERATE (the ones already on disk are
 // sunk). In character mode with a reference set but no shots yet, that's the
 // planned dataset; otherwise nothing left to generate.
 const plannedDatasetCount = computed(() => {
-  if (trainingKind.value !== 'character' || !referenceFile.value) return 0
+  if (trainingKind.value !== 'character' || referenceFiles.value.length === 0) return 0
   const generated = images.value.filter(i => i.generated).length
   if (generated > 0) return 0 // already built — cost is sunk
-  return Math.min(datasetCount.value, CHARACTER_SHOT_SCENES.length)
+  return expectedShots.value
 })
 
 const datasetCostUsd = computed(() => plannedDatasetCount.value * IDEOGRAM_PER_IMAGE)
@@ -406,7 +414,7 @@ const totalEstimate = computed(() => {
 // only choice). Runs whenever the option list changes.
 watch(checkpointOptions, (opts) => {
   if (!form.checkpoint && opts.length > 0) {
-    form.checkpoint = opts[0].value
+    form.checkpoint = opts[0]!.value
   }
 }, { immediate: true })
 
@@ -724,7 +732,7 @@ async function captionAll() {
   status.value = 'captioning'
   const targets = images.value
     .map((_, i) => i)
-    .filter((i) => !images.value[i].caption.trim())
+    .filter((i) => !images.value[i]!.caption.trim())
   for (const i of targets) {
     await captionOne(i)
   }
@@ -770,10 +778,14 @@ function dataUrlToFile(dataUrl: string, name: string): File {
 // Per-shot re-roll state, keyed by the image's server filename.
 const regenerating = ref<Set<string>>(new Set())
 
-/** Generate one shot from the reference for a given scene. Returns a File or null. */
-async function generateCharacterShot(refDataUrl: string, scene: string, aspectIdx: number): Promise<File | null> {
+/** Generate one shot from a reference data URL for a given scene. Returns a File or null. */
+async function generateCharacterShot(
+  refDataUrl: string,
+  scene: CharacterShotScene,
+  idx: number,
+): Promise<File | null> {
   const subject = subjectHint.value.trim()
-  const prompt = subject ? `${subject}, ${scene}` : scene
+  const prompt = subject ? `${subject}, ${scene.prompt}` : scene.prompt
   try {
     const res = await fetch('/api/cloud-train/character-shot', {
       method: 'POST',
@@ -781,12 +793,12 @@ async function generateCharacterShot(refDataUrl: string, scene: string, aspectId
       body: JSON.stringify({
         referenceImageDataUrl: refDataUrl,
         prompt,
-        aspectRatio: CHARACTER_SHOT_ASPECTS[aspectIdx % CHARACTER_SHOT_ASPECTS.length],
+        aspectRatio: aspectForFraming(scene.framing, idx),
       }),
     })
     if (!res.ok) return null
     const { imageDataUrl } = await res.json() as { imageDataUrl?: string }
-    return imageDataUrl ? dataUrlToFile(imageDataUrl, `char_${aspectIdx}_${images.value.length}.png`) : null
+    return imageDataUrl ? dataUrlToFile(imageDataUrl, `char_${idx}_${images.value.length}.png`) : null
   } catch {
     return null
   }
@@ -800,67 +812,95 @@ async function addGeneratedImage(file: File, scene: string) {
       file, filename,
       previewUrl: URL.createObjectURL(file),
       caption: '', captionState: 'idle',
-      generated: true, scene,
+      generated: true, isReference: false, scene,
     })
   } catch { /* skip */ }
 }
 
+/** Upload a real reference photo and add it to the dataset (not generated). */
+async function addReferenceToDataset(file: File) {
+  try {
+    const filename = await uploadImage(file)
+    images.value.push({
+      file, filename,
+      previewUrl: URL.createObjectURL(file),
+      caption: '', captionState: 'idle',
+      generated: false, isReference: true, scene: '',
+    })
+  } catch { /* skip a failed upload */ }
+}
+
 async function buildCharacterDataset() {
-  if (!referenceFile.value || buildingDataset.value) return
+  if (referenceFiles.value.length === 0 || buildingDataset.value) return
   buildError.value = null
-  const refDataUrl = await imageToDataUrl(referenceFile.value, 1024)
-  if (!refDataUrl) {
-    buildError.value = 'Could not read the reference image.'
+
+  // Convert every reference to a data URL (capped at 1024px) for Ideogram seeding.
+  const refDataUrls: string[] = []
+  for (const r of referenceFiles.value) {
+    const url = await imageToDataUrl(r.file, 1024)
+    if (url) refDataUrls.push(url)
+  }
+  if (refDataUrls.length === 0) {
+    buildError.value = 'Could not read the reference image(s).'
     return
   }
-  const refUrl: string = refDataUrl // narrowed const — survives into the worker closure
-
-  const n = Math.max(4, Math.min(CHARACTER_SHOT_SCENES.length, datasetCount.value || 16))
-  const scenes = CHARACTER_SHOT_SCENES.slice(0, n)
 
   buildingDataset.value = true
+
+  // 1) Real photos flagged for training go straight into the dataset — this is
+  //    what captures true body type.
+  const realIncluded = referenceFiles.value.filter((r) => r.includeInTraining)
+  for (const r of realIncluded) await addReferenceToDataset(r.file)
+
+  // 2) Top up with synthetic variety to reach the target count.
+  const target = Math.max(4, Math.min(CHARACTER_SHOT_SCENES.length + realIncluded.length, datasetCount.value || 16))
+  const scenes = pickScenes(syntheticCount(target, realIncluded.length))
+
   buildProgress.total = scenes.length
   buildProgress.done = 0
   let made = 0
 
-  // Small concurrency pool — each shot is an independent ideogram-character
-  // call. Images appear live as they land; a failed shot is skipped (the set
-  // just comes back a bit smaller), so one bad shot never kills the run.
+  // Small concurrency pool; each shot is independent. Seed round-robin across
+  // all references (the model takes one per call), so variety uses every angle.
   const CONCURRENCY = 3
   let next = 0
   async function worker() {
     while (next < scenes.length) {
       const i = next++
       const scene = scenes[i]!
+      const refUrl = refDataUrls[i % refDataUrls.length]!
       const file = await generateCharacterShot(refUrl, scene, i)
-      if (file) { await addGeneratedImage(file, scene); made++ }
+      if (file) { await addGeneratedImage(file, scene.prompt); made++ }
       buildProgress.done++
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, scenes.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, scenes.length || 1) }, worker))
 
   buildingDataset.value = false
-  if (made) {
-    toast.success(`Generated ${made} image${made === 1 ? '' : 's'}`, {
+  const total = realIncluded.length + made
+  if (total > 0) {
+    toast.success(`Added ${total} image${total === 1 ? '' : 's'}`, {
       description: 'Curate (remove any that drifted), then caption & train.',
     })
   } else {
-    buildError.value = 'No images were generated — check your Replicate token and try again.'
+    buildError.value = 'No images were added — check your Replicate token and try again.'
   }
 }
 
 /** Re-roll a single generated shot in place — same scene, fresh result. */
 async function regenerateShot(idx: number) {
   const img = images.value[idx]
-  if (!img || !img.generated || !referenceFile.value) return
+  if (!img || !img.generated || referenceFiles.value.length === 0) return
   const key = img.filename
   if (regenerating.value.has(key)) return
-  const refDataUrl = await imageToDataUrl(referenceFile.value, 1024)
+  const refDataUrl = await imageToDataUrl(referenceFiles.value[0]!.file, 1024)
   if (!refDataUrl) return
 
   regenerating.value.add(key)
   try {
-    const file = await generateCharacterShot(refDataUrl, img.scene || CHARACTER_SHOT_SCENES[0]!, idx)
+    const sceneObj: CharacterShotScene =
+      CHARACTER_SHOT_SCENES.find((s) => s.prompt === img.scene) ?? { prompt: img.scene ?? '', framing: 'medium' }
+    const file = await generateCharacterShot(refDataUrl, sceneObj, idx)
     if (!file) throw new Error('no image')
     const filename = await uploadImage(file)
     const target = images.value[idx]
@@ -1108,7 +1148,7 @@ async function buildDatasetZip(): Promise<Blob> {
   // Replicate's trainers expect image + .txt pairs (same convention as kohya).
   const zip = new JSZip()
   for (let i = 0; i < images.value.length; i++) {
-    const img = images.value[i]
+    const img = images.value[i]!
     const ext = (img.file.name.split('.').pop() || 'png').toLowerCase()
     const base = String(i + 1).padStart(4, '0')
     const imgName = `${base}.${ext}`
@@ -1487,36 +1527,36 @@ onBeforeUnmount(() => {
               </div>
 
               <!-- Progress bar (downloading / preparing) -->
-              <div v-if="downloadStates[c.key].phase === 'downloading' || downloadStates[c.key].phase === 'preparing' || downloadStates[c.key].phase === 'checking'" class="flex flex-col gap-1.5">
+              <div v-if="downloadStates[c.key]?.phase === 'downloading' || downloadStates[c.key]?.phase === 'preparing' || downloadStates[c.key]?.phase === 'checking'" class="flex flex-col gap-1.5">
                 <div class="h-1 rounded-full bg-white/[0.06] overflow-hidden">
                   <div class="h-full bg-white/70 transition-[width] duration-300" :style="{ width: `${downloadPct(c.key)}%` }" />
                 </div>
                 <div class="flex items-center justify-between text-[10.5px] text-white/45 tabular-nums">
-                  <span v-if="downloadStates[c.key].phase === 'checking'">Checking…</span>
-                  <span v-else-if="downloadStates[c.key].phase === 'preparing'">Finishing up…</span>
-                  <span v-else>{{ fmtGB(downloadStates[c.key].downloaded) }} / {{ fmtGB(downloadStates[c.key].total) }} GB</span>
+                  <span v-if="downloadStates[c.key]?.phase === 'checking'">Checking…</span>
+                  <span v-else-if="downloadStates[c.key]?.phase === 'preparing'">Finishing up…</span>
+                  <span v-else>{{ fmtGB(downloadStates[c.key]?.downloaded ?? 0) }} / {{ fmtGB(downloadStates[c.key]?.total ?? 0) }} GB</span>
                   <span>{{ downloadPct(c.key) }}%</span>
                 </div>
               </div>
 
               <!-- Error -->
-              <div v-else-if="downloadStates[c.key].phase === 'error'" class="text-[11px] text-rose-300 leading-snug">
-                {{ downloadStates[c.key].message }}
+              <div v-else-if="downloadStates[c.key]?.phase === 'error'" class="text-[11px] text-rose-300 leading-snug">
+                {{ downloadStates[c.key]?.message }}
               </div>
 
               <!-- Done -->
-              <div v-else-if="downloadStates[c.key].phase === 'done'" class="text-[11px] text-emerald-400">
+              <div v-else-if="downloadStates[c.key]?.phase === 'done'" class="text-[11px] text-emerald-400">
                 Downloaded — ready to use.
               </div>
 
               <!-- Download button -->
               <button
-                v-if="downloadStates[c.key].phase === 'idle' || downloadStates[c.key].phase === 'error'"
+                v-if="downloadStates[c.key]?.phase === 'idle' || downloadStates[c.key]?.phase === 'error'"
                 class="inline-flex items-center justify-center gap-1.5 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[12px] text-white/85 hover:text-white transition-colors cursor-pointer"
                 @click="downloadCheckpoint(c.key)"
               >
                 <Download class="size-3.5" />
-                {{ downloadStates[c.key].phase === 'error' ? 'Retry' : 'Download' }}
+                {{ downloadStates[c.key]?.phase === 'error' ? 'Retry' : 'Download' }}
               </button>
             </div>
           </div>
