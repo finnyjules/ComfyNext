@@ -6,14 +6,16 @@
  * center. Mirrors the LoRALibraryPanel / GeneratorsPanel shell.
  */
 import { ref, computed, onMounted } from 'vue'
-import { LayoutGrid, Search as SearchIcon, X, Upload, Image as ImageIcon, Video as VideoIcon, Music as AudioIcon, Loader2 } from 'lucide-vue-next'
+import { LayoutGrid, Search as SearchIcon, X, Upload, Image as ImageIcon, Video as VideoIcon, Music as AudioIcon, Loader2, MoreHorizontal, EyeOff, Trash2 } from 'lucide-vue-next'
 import { useProjectGenerations, type GenAsset } from '~/composables/useProjectGenerations'
+import { useHiddenAssets } from '~/composables/useHiddenAssets'
 
 defineEmits<{ close: [] }>()
 
-const { generationsByProject, loading, fetchGenerations, viewUrl } = useProjectGenerations()
+const { generationsByProject, loading, fetchGenerations, refresh: refreshGenerations, viewUrl } = useProjectGenerations()
 const { fetchInputFiles } = useAssetLibrary()
 const { activeTab } = useTabs()
+const { isHidden, hide } = useHiddenAssets()
 
 const currentProjectId = computed(() => activeTab.value.projectUuid || activeTab.value.workflowId || null)
 
@@ -106,10 +108,84 @@ const scopedAssets = computed<GenAsset[]>(() => {
 const visibleAssets = computed<GenAsset[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
   return scopedAssets.value.filter((a) =>
-    (mediaFilter.value === 'all' || a.kind === mediaFilter.value)
+    !isHidden(a)
+    && (mediaFilter.value === 'all' || a.kind === mediaFilter.value)
     && (!q || a.filename.toLowerCase().includes(q)),
   )
 })
+
+// ── Card menu (Hide / Delete file) ─────────────────────────────────────────
+const openMenuKey = ref<string | null>(null)
+const pendingDelete = ref<GenAsset | null>(null)
+const deleting = ref(false)
+const deleteError = ref<string | null>(null)
+
+function cardKey(a: GenAsset, i: number): string {
+  return `${a.promptId}-${a.subfolder}-${a.filename}-${i}`
+}
+
+function openMenu(e: MouseEvent, key: string) {
+  e.stopPropagation()
+  openMenuKey.value = openMenuKey.value === key ? null : key
+}
+
+function closeMenu() {
+  openMenuKey.value = null
+}
+
+function onHide(a: GenAsset) {
+  hide(a)
+  closeMenu()
+}
+
+function askDelete(a: GenAsset) {
+  pendingDelete.value = a
+  deleteError.value = null
+  closeMenu()
+}
+
+async function confirmDelete() {
+  const a = pendingDelete.value
+  if (!a) return
+  deleting.value = true
+  deleteError.value = null
+  try {
+    const params = new URLSearchParams({ filename: a.filename })
+    if (a.subfolder) params.set('subfolder', a.subfolder)
+    const url = a.type === 'input'
+      ? `/comfynext/input_file?${params}`
+      : `/comfynext/output_file?${params}`
+    const res = await fetch(url, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error || `delete failed: ${res.status}`)
+    }
+    // Hide too — a deleted file might still have a cached /history entry,
+    // and even if the cache is pruned later, hiding makes the card vanish
+    // immediately and stay gone.
+    hide(a)
+    // Prune dead refs from the history cache so the card doesn't reappear
+    // from cached generations. Fire-and-forget — UI already updated.
+    if (a.type !== 'input') {
+      fetch('/history/prune', { method: 'POST' }).catch(() => {})
+    }
+    pendingDelete.value = null
+    // For imports the list comes from a different source — let the panel
+    // pick it up on next open. For generations we don't need to refetch:
+    // the hide filter already removed the card.
+  }
+  catch (err: any) {
+    deleteError.value = err?.message || 'Delete failed'
+  }
+  finally {
+    deleting.value = false
+  }
+}
+
+function cancelDelete() {
+  pendingDelete.value = null
+  deleteError.value = null
+}
 
 const mediaTabs: { key: Media; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -225,7 +301,7 @@ function addToCanvas(a: GenAsset) {
       <div v-else class="grid grid-cols-2 gap-2">
         <div
           v-for="(a, i) in visibleAssets"
-          :key="`${a.promptId}-${a.subfolder}-${a.filename}-${i}`"
+          :key="cardKey(a, i)"
           class="group relative aspect-square rounded-lg overflow-hidden bg-white/[0.04] border border-white/[0.06] hover:border-white/20 cursor-grab active:cursor-grabbing transition-colors"
           draggable="true"
           :title="a.filename"
@@ -243,6 +319,77 @@ function addToCanvas(a: GenAsset) {
             <AudioIcon v-else-if="a.kind === 'audio'" class="size-3" />
             <ImageIcon v-else class="size-3" />
           </div>
+
+          <!-- Card menu trigger -->
+          <button
+            class="absolute top-1 right-1 size-5 rounded bg-black/55 backdrop-blur-sm flex items-center justify-center text-white/70 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+            :class="openMenuKey === cardKey(a, i) ? 'opacity-100' : ''"
+            :aria-label="`Asset options for ${a.filename}`"
+            @mousedown.stop
+            @click.stop="openMenu($event, cardKey(a, i))"
+          >
+            <MoreHorizontal class="size-3" />
+          </button>
+
+          <!-- Menu popover -->
+          <div
+            v-if="openMenuKey === cardKey(a, i)"
+            class="absolute top-7 right-1 z-10 min-w-[140px] rounded-md bg-[#1f1f1f] border border-white/15 shadow-xl py-1 text-[11px]"
+            @click.stop
+            @mousedown.stop
+          >
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-white/85 hover:bg-white/[0.08] cursor-pointer"
+              @click="onHide(a)"
+            >
+              <EyeOff class="size-3.5" /> Hide from panel
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-red-300/90 hover:bg-red-500/15 cursor-pointer"
+              @click="askDelete(a)"
+            >
+              <Trash2 class="size-3.5" /> Delete file…
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Outside-click closer for the menu -->
+      <div
+        v-if="openMenuKey"
+        class="fixed inset-0 z-[1]"
+        @click="closeMenu"
+      ></div>
+    </div>
+
+    <!-- Confirm delete dialog -->
+    <div
+      v-if="pendingDelete"
+      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
+      @click.self="cancelDelete"
+    >
+      <div class="w-[360px] rounded-lg bg-[#1f1f1f] border border-white/10 shadow-2xl p-4">
+        <div class="text-sm font-semibold text-white/90 mb-1">Delete this file?</div>
+        <div class="text-[11px] text-white/55 mb-3 leading-relaxed">
+          This will permanently delete
+          <span class="text-white/80 break-all">{{ pendingDelete.filename }}</span>
+          from disk. This cannot be undone.
+        </div>
+        <div v-if="deleteError" class="text-[11px] text-red-300 mb-2">{{ deleteError }}</div>
+        <div class="flex justify-end gap-2">
+          <button
+            class="px-3 py-1.5 rounded text-[11px] text-white/70 hover:bg-white/[0.06] cursor-pointer"
+            :disabled="deleting"
+            @click="cancelDelete"
+          >Cancel</button>
+          <button
+            class="px-3 py-1.5 rounded text-[11px] bg-red-500/80 hover:bg-red-500 text-white cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
+            :disabled="deleting"
+            @click="confirmDelete"
+          >
+            <Loader2 v-if="deleting" class="size-3.5 animate-spin" />
+            Delete
+          </button>
         </div>
       </div>
     </div>

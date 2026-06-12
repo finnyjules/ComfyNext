@@ -1540,6 +1540,52 @@ try:
             return web.json_response({"error": str(e), "items": []}, status=500)
         items.sort(key=lambda x: x["mtime"], reverse=True)
         return web.json_response({"items": items})
+
+    # File deletion for AssetsPanel cards. Two separate routes (not one
+    # generic "delete file" with a `type` param) so a malicious caller can't
+    # cross a boundary by smuggling a different type — each route only ever
+    # resolves under its own root.
+    def _safe_resolve(root: str, subfolder: str, filename: str) -> str | None:
+        # Reject anything that could escape `root` (absolute paths, '..').
+        # commonpath check covers symlink and case-insensitive-FS edge cases.
+        if not filename or os.path.isabs(filename) or os.path.isabs(subfolder or ""):
+            return None
+        candidate = os.path.normpath(os.path.join(root, subfolder or "", filename))
+        try:
+            if os.path.commonpath([os.path.realpath(candidate), os.path.realpath(root)]) != os.path.realpath(root):
+                return None
+        except ValueError:
+            return None
+        return candidate
+
+    @PromptServer.instance.routes.delete("/comfynext/input_file")
+    async def _input_file_delete_route(request):
+        filename = request.query.get("filename", "")
+        target = _safe_resolve(folder_paths.get_input_directory(), "", filename)
+        if target is None:
+            return web.json_response({"error": "invalid filename"}, status=400)
+        if not os.path.isfile(target):
+            return web.json_response({"ok": True, "missing": True})
+        try:
+            os.remove(target)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"ok": True})
+
+    @PromptServer.instance.routes.delete("/comfynext/output_file")
+    async def _output_file_delete_route(request):
+        filename = request.query.get("filename", "")
+        subfolder = request.query.get("subfolder", "")
+        target = _safe_resolve(folder_paths.get_output_directory(), subfolder, filename)
+        if target is None:
+            return web.json_response({"error": "invalid filename"}, status=400)
+        if not os.path.isfile(target):
+            return web.json_response({"ok": True, "missing": True})
+        try:
+            os.remove(target)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"ok": True})
 except Exception:
     # Module imported outside the server context (e.g., a syntax-check import) — skip.
     pass

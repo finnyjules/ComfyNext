@@ -129,6 +129,22 @@ function onConfirm(item: LoraItem) {
     if (idx >= 0) data.widgetsValues[idx] = value
   }
   const trig = item.trigger?.trim()
+
+  // The LoRA this slot held before the swap — its trigger may sit in the
+  // visible prompt (nodes created from the Characters panel write triggers
+  // there), so replace it with the new one instead of leaving it stale.
+  const prevTrig = items.value.find((i) => i.id === currentId.value)?.trigger?.trim()
+  if (prevTrig && prevTrig !== trig) {
+    const pIdx = widgetIndex('prompt')
+    const cur = pIdx >= 0 ? String(data.widgetsValues[pIdx] ?? '') : ''
+    if (pIdx >= 0 && cur.includes(prevTrig)) {
+      const escaped = prevTrig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      data.widgetsValues[pIdx] = trig && !cur.includes(trig)
+        ? cur.replace(prevTrig, trig)
+        // New trigger already present (or none) — just drop the old token.
+        : cur.replace(new RegExp(`${escaped}\\s*,?\\s*`), '')
+    }
+  }
   // The URL-override sibling for this slot, cleared so the picked name drives.
   const urlOverride = targetWidget.value === 'lora_a' ? 'lora_a_url'
     : targetWidget.value === 'lora_b' ? 'lora_b_url'

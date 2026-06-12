@@ -28,3 +28,6 @@ uv.lock
 # Playwright output (root-level)
 /test-results/
 .superpowers/
+
+# Stray root-level node_modules (real deps live in frontend/)
+/node_modules/
