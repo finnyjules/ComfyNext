@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHARACTER_SHOT_SCENES, type CharacterShotScene } from '~/data/character-shot-scenes'
+import { CHARACTER_SHOT_SCENES, type CharacterShotScene, pickScenes } from '~/data/character-shot-scenes'
 
 const byTier = (t: CharacterShotScene['framing']) =>
   CHARACTER_SHOT_SCENES.filter((s) => s.framing === t)
@@ -18,5 +18,45 @@ describe('CHARACTER_SHOT_SCENES', () => {
     expect(byTier('closeup').length).toBeGreaterThanOrEqual(10)
     expect(byTier('full').length).toBeGreaterThanOrEqual(8)
     expect(byTier('medium').length).toBeGreaterThanOrEqual(6)
+  })
+})
+
+const tierCounts = (scenes: { framing: string }[]) => ({
+  closeup: scenes.filter((s) => s.framing === 'closeup').length,
+  medium: scenes.filter((s) => s.framing === 'medium').length,
+  full: scenes.filter((s) => s.framing === 'full').length,
+})
+
+describe('pickScenes', () => {
+  it('returns exactly `count` scenes', () => {
+    for (const c of [4, 8, 12, 16, 24]) {
+      expect(pickScenes(c)).toHaveLength(c)
+    }
+  })
+
+  it('hits the per-tier quotas (close co-plural, full >= ~33%, medium >= ~20%)', () => {
+    for (const c of [8, 12, 16, 24]) {
+      const t = tierCounts(pickScenes(c))
+      expect(t.closeup).toBeGreaterThanOrEqual(t.full) // close-ups never fewer than full
+      expect(t.closeup).toBeGreaterThanOrEqual(t.medium)
+      expect(t.full).toBeGreaterThanOrEqual(Math.floor(c * 0.3))
+      expect(t.medium).toBeGreaterThanOrEqual(Math.floor(c * 0.2))
+    }
+  })
+
+  it('always includes at least one full-body scene for any positive count', () => {
+    for (const c of [1, 2, 3, 4, 16]) {
+      expect(pickScenes(c).some((s) => s.framing === 'full')).toBe(true)
+    }
+  })
+
+  it('spreads selection within a tier rather than taking the first N', () => {
+    const close = pickScenes(24).filter((s) => s.framing === 'closeup')
+    expect(new Set(close.map((s) => s.prompt)).size).toBe(close.length)
+  })
+
+  it('returns an empty array for count <= 0', () => {
+    expect(pickScenes(0)).toEqual([])
+    expect(pickScenes(-3)).toEqual([])
   })
 })

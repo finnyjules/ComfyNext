@@ -56,3 +56,41 @@ export const CHARACTER_SHOT_SCENES: CharacterShotScene[] = [
 
 /** Aspect ratios cycled across shots so the set isn't all one crop. */
 export const CHARACTER_SHOT_ASPECTS: string[] = ['1:1', '3:4', '4:3']
+
+/** Pick up to `k` items spread evenly across `pool` (wraps if k > pool.length). */
+function spread<T>(pool: T[], k: number): T[] {
+  if (k <= 0 || pool.length === 0) return []
+  const out: T[] = []
+  if (k >= pool.length) {
+    for (let i = 0; i < k; i++) out.push(pool[i % pool.length]!)
+    return out
+  }
+  const stride = pool.length / k
+  for (let i = 0; i < k; i++) out.push(pool[Math.floor(i * stride)]!)
+  return out
+}
+
+/**
+ * Choose `count` scenes with guaranteed body coverage. Close-ups stay
+ * co-plurality (face quality), full-body is always present (body type),
+ * medium fills the middle. Selection is spread within each tier so repeated
+ * runs vary instead of always taking the first scenes.
+ */
+export function pickScenes(count: number): CharacterShotScene[] {
+  if (count <= 0) return []
+  const closeups = CHARACTER_SHOT_SCENES.filter((s) => s.framing === 'closeup')
+  const mediums = CHARACTER_SHOT_SCENES.filter((s) => s.framing === 'medium')
+  const fulls = CHARACTER_SHOT_SCENES.filter((s) => s.framing === 'full')
+
+  let nClose = Math.round(count * 0.4)
+  let nFull = Math.round(count * 0.35)
+  let nMedium = count - nClose - nFull
+  if (nMedium < 0) { nClose += nMedium; nMedium = 0 } // pathological clamp
+  if (nFull < 1 && count >= 1) { nFull = 1; if (nClose > 0) nClose -= 1; else nMedium -= 1 }
+
+  return [
+    ...spread(fulls, nFull),
+    ...spread(closeups, nClose),
+    ...spread(mediums, nMedium),
+  ]
+}
