@@ -10,34 +10,48 @@
  * call time to help Ideogram lock the look; the scene strings themselves stay
  * subject-agnostic so they're reusable for any character.
  *
- * Ordered loosely close-up → full-body and light → varied, so taking the first
- * N still yields a balanced spread of angles and framings.
+ * Scenes are tagged with framing tiers — 'closeup', 'medium', 'full' — so the
+ * picker can guarantee body coverage. Close-ups teach face quality; full-body
+ * shots teach body type and proportions; medium shots fill the middle ground.
+ * Use `pickScenes(count)` to get a quota-balanced selection.
  */
-export const CHARACTER_SHOT_SCENES: string[] = [
-  'close-up portrait, front view, soft window light, plain neutral background',
-  'three-quarter view headshot, natural daylight, shallow depth of field',
-  'profile view, side lighting, dark studio background',
-  'headshot tilted slightly down, even softbox lighting, seamless backdrop',
-  'close-up, soft diffused light, slight smile, beige background',
-  'neutral expression, overhead soft light, white seamless backdrop',
-  'looking up, dramatic rim lighting, dark background',
-  'serious expression, high-contrast black and white, studio',
-  'waist-up shot, warm indoor lamp light, cozy interior',
-  'medium shot, soft golden indoor light, bookshelf background',
-  'smiling, casual snapshot, bright midday sun, park background',
-  'laughing candidly, backlit by afternoon sun, outdoors',
-  'looking over the shoulder, twilight ambient light, street',
-  'three-quarter back view turning toward camera, evening light',
-  'candid photo outdoors, overcast daylight, looking away from camera',
-  'sitting at a cafe table, window light, blurred interior behind',
-  'wearing a coat, cold blue daylight, outdoor winter setting',
-  'wearing a casual t-shirt, flat studio lighting, grey backdrop',
-  'full-body shot standing, golden hour sunlight, urban street background',
-  'full body walking, cloudy day, wide shot, city sidewalk',
-  'full-body seated on steps, bright daylight, architectural background',
-  'dynamic pose mid-stride, motion candid, sunny outdoor plaza',
-  'relaxed portrait, warm window backlight, indoor neutral wall',
-  'close portrait in shade, cool soft light, greenery background',
+export type Framing = 'closeup' | 'medium' | 'full'
+
+export interface CharacterShotScene {
+  prompt: string
+  framing: Framing
+}
+
+export const CHARACTER_SHOT_SCENES: CharacterShotScene[] = [
+  // --- close-ups (face large in frame → teaches the FACE) ---
+  { prompt: 'close-up portrait, front view, soft window light, plain neutral background', framing: 'closeup' },
+  { prompt: 'three-quarter view headshot, natural daylight, shallow depth of field', framing: 'closeup' },
+  { prompt: 'profile view, side lighting, dark studio background', framing: 'closeup' },
+  { prompt: 'headshot tilted slightly down, even softbox lighting, seamless backdrop', framing: 'closeup' },
+  { prompt: 'close-up, soft diffused light, slight smile, beige background', framing: 'closeup' },
+  { prompt: 'neutral expression, overhead soft light, white seamless backdrop', framing: 'closeup' },
+  { prompt: 'looking up, dramatic rim lighting, dark background', framing: 'closeup' },
+  { prompt: 'serious expression, high-contrast black and white, studio', framing: 'closeup' },
+  { prompt: 'relaxed portrait, warm window backlight, indoor neutral wall', framing: 'closeup' },
+  { prompt: 'close portrait in shade, cool soft light, greenery background', framing: 'closeup' },
+  // --- medium / waist-up (some body, still readable face) ---
+  { prompt: 'waist-up shot, warm indoor lamp light, cozy interior', framing: 'medium' },
+  { prompt: 'medium shot, soft golden indoor light, bookshelf background', framing: 'medium' },
+  { prompt: 'smiling, casual snapshot, bright midday sun, park background', framing: 'medium' },
+  { prompt: 'laughing candidly, backlit by afternoon sun, outdoors', framing: 'medium' },
+  { prompt: 'sitting at a cafe table, window light, blurred interior behind', framing: 'medium' },
+  { prompt: 'wearing a casual t-shirt, flat studio lighting, grey backdrop', framing: 'medium' },
+  { prompt: 'looking over the shoulder, twilight ambient light, street', framing: 'medium' },
+  // --- full / three-quarter body (teaches BODY TYPE / proportions) ---
+  { prompt: 'full-body shot standing, golden hour sunlight, urban street background', framing: 'full' },
+  { prompt: 'full body walking, cloudy day, wide shot, city sidewalk', framing: 'full' },
+  { prompt: 'full-body seated on steps, bright daylight, architectural background', framing: 'full' },
+  { prompt: 'dynamic pose mid-stride, motion candid, sunny outdoor plaza', framing: 'full' },
+  { prompt: 'three-quarter body turning toward camera, evening light, plain wall', framing: 'full' },
+  { prompt: 'full-body standing relaxed, flat studio lighting, grey seamless backdrop', framing: 'full' },
+  { prompt: 'full-body leaning against a wall, soft daylight, urban exterior', framing: 'full' },
+  { prompt: 'full body standing front-on, even daylight, neutral outdoor background', framing: 'full' },
+  { prompt: 'three-quarter body seated on a chair, warm indoor light, simple room', framing: 'full' },
 ]
 
 /** Aspect ratios cycled across shots so the set isn't all one crop. */
