@@ -32,7 +32,7 @@ class PersonSwapNode(IO.ComfyNode):
                 "original pose, framing, background and lighting; the outfit toggle "
                 "keeps or replaces the wardrobe."
             ),
-            category="image/generate",
+            category="api node/image/Replicate",
             inputs=[
                 IO.Image.Input("scene", tooltip="The image containing the person to replace."),
                 IO.Image.Input("person", tooltip="A reference photo of the new person."),
