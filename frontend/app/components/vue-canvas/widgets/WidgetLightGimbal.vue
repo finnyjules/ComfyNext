@@ -133,7 +133,7 @@ const viewMatrix: Mat3 = mul(Rx(deg(VIEW_TILT_DEG)), Ry(deg(VIEW_PAN_DEG)))
 // ---- Gimbal structure ------------------------------------------------------
 //
 // Camera-orbits-subject metaphor: the IMAGE sits fixed at world origin,
-// and the gimbal shows where the CAMERA is on a sphere around it.
+// and the gimbal shows where the LIGHT SOURCE is on a sphere around it.
 //
 // Three nested frames, like a real 3-axis gimbal:
 //   - Yaw ring (green):   fixed; the equator the camera orbits horizontally
@@ -523,8 +523,7 @@ function onPointerMove(e: PointerEvent) {
     commit()
   } else if (drag.kind === 'camera') {
     // Camera-indicator drag: brute-force search for the (yaw, pitch) that
-    // puts the camera under the cursor. Roll untouched — that's the dedicated
-    // roll handle's job.
+    // puts the camera under the cursor. // Roll stays 0 — a light has no roll axis.
     const m = clientToSvg(e)
     const { yaw, pitch } = findYawPitchForCamera(m.x, m.y)
     angles.value.yaw   = e.shiftKey ? Math.round(yaw / 15) * 15 : yaw
@@ -548,7 +547,6 @@ function onPointerUp(e: PointerEvent) {
 function snapToFifteen() {
   angles.value.yaw   = Math.round(angles.value.yaw   / 15) * 15
   angles.value.pitch = Math.round(angles.value.pitch / 15) * 15
-  angles.value.roll  = Math.round(angles.value.roll  / 15) * 15
 }
 
 function resetAll() {
@@ -684,12 +682,12 @@ const planeTransform = computed(() => {
       >
         <!-- Soft radial background — gives the gimbal a "lit sphere" feel. -->
         <defs>
-          <radialGradient id="gimbal-bg" cx="50%" cy="40%" r="55%">
+          <radialGradient id="lg-gimbal-bg" cx="50%" cy="40%" r="55%">
             <stop offset="0%" stop-color="rgba(255,255,255,0.08)" />
             <stop offset="100%" stop-color="rgba(0,0,0,0)" />
           </radialGradient>
         </defs>
-        <circle :cx="CENTER" :cy="CENTER" :r="RADIUS + 6" fill="url(#gimbal-bg)" />
+        <circle :cx="CENTER" :cy="CENTER" :r="RADIUS + 6" fill="url(#lg-gimbal-bg)" />
 
         <!-- Invisible drag-catcher disc covering the sphere body. Sits BEHIND
              the rings so handle clicks beat the body click. -->
