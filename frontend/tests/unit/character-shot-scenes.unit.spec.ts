@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHARACTER_SHOT_SCENES, type CharacterShotScene, pickScenes } from '~/data/character-shot-scenes'
+import { CHARACTER_SHOT_SCENES, type CharacterShotScene, pickScenes, aspectForFraming, syntheticCount } from '~/data/character-shot-scenes'
 
 const byTier = (t: CharacterShotScene['framing']) =>
   CHARACTER_SHOT_SCENES.filter((s) => s.framing === t)
@@ -58,5 +58,29 @@ describe('pickScenes', () => {
   it('returns an empty array for count <= 0', () => {
     expect(pickScenes(0)).toEqual([])
     expect(pickScenes(-3)).toEqual([])
+  })
+})
+
+describe('aspectForFraming', () => {
+  it('uses portrait 3:4 for full-body so a standing body is not squashed', () => {
+    expect(aspectForFraming('full', 0)).toBe('3:4')
+    expect(aspectForFraming('full', 5)).toBe('3:4')
+  })
+  it('cycles the configured aspects for non-full framings', () => {
+    expect(aspectForFraming('closeup', 0)).toBe('1:1')
+    expect(aspectForFraming('closeup', 1)).toBe('3:4')
+    expect(aspectForFraming('medium', 2)).toBe('4:3')
+    expect(aspectForFraming('closeup', 3)).toBe('1:1') // wraps
+  })
+})
+
+describe('syntheticCount', () => {
+  it('tops up to the target after counting real included photos', () => {
+    expect(syntheticCount(16, 0)).toBe(16)
+    expect(syntheticCount(16, 3)).toBe(13)
+  })
+  it('never goes negative when real photos meet or exceed the target', () => {
+    expect(syntheticCount(16, 16)).toBe(0)
+    expect(syntheticCount(16, 20)).toBe(0)
   })
 })

@@ -94,3 +94,15 @@ export function pickScenes(count: number): CharacterShotScene[] {
     ...spread(mediums, nMedium),
   ]
 }
+
+/** Aspect ratio for a generated shot: full-body → portrait 3:4; others cycle. */
+export function aspectForFraming(framing: Framing, idx: number): string {
+  if (framing === 'full') return '3:4'
+  return CHARACTER_SHOT_ASPECTS[idx % CHARACTER_SHOT_ASPECTS.length]!
+}
+
+/** How many synthetic shots to generate to reach `datasetCount` given the
+ *  number of real reference photos already going into the training set. */
+export function syntheticCount(datasetCount: number, realIncluded: number): number {
+  return Math.max(0, datasetCount - realIncluded)
+}
