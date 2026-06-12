@@ -1653,6 +1653,38 @@ function handleOpenPose(e: Event) {
   if (detail?.nodeId) poseOpenForId.value = String(detail.nodeId)
 }
 
+// Find (or create) the downstream artifact-image sink wired from a pose node's
+// IMAGE output. Returns the sink node. Shared by handlePoseResult (editor path)
+// and handlePoseGenerate (image/prompt graph-run path) — materializeAutoImageSinks
+// skips PoseMannequin, so we wire the sink ourselves.
+function ensurePoseImageSink(poseNode: any): any {
+  const nodeId = String(poseNode.id)
+  let outIdx = (poseNode.data?.outputs ?? []).findIndex((o: any) => String(o.type).toUpperCase() === 'IMAGE')
+  if (outIdx < 0) outIdx = 0
+  const handle = `output-${outIdx}`
+
+  for (const ed of edges.value as any[]) {
+    if (ed.source !== nodeId || ed.sourceHandle !== handle) continue
+    const t = (nodes.value as any[]).find(n => n.id === ed.target)
+    if (t && t.data?.nodeType === 'Image') return t
+  }
+
+  const srcPos = poseNode.position || { x: 0, y: 0 }
+  const srcW = (poseNode.data?.size?.[0] ?? 200) as number
+  const sink = createNodeData('Image', { x: srcPos.x + srcW + 80, y: srcPos.y })
+  const ei = sink.data.widgetDefs?.findIndex((w: any) => w.name === 'export') ?? -1
+  if (ei >= 0) sink.data.widgetsValues[ei] = true
+  sink.data.size = [240, 280]
+  nodes.value.push(sink)
+  edges.value.push({
+    id: `e-pose-${sink.id}`,
+    source: nodeId, sourceHandle: handle,
+    target: sink.id, targetHandle: 'input-0',
+    type: 'comfy', data: { dataType: 'IMAGE' },
+  } as any)
+  return sink
+}
+
 // A Pose Mannequin generation finished in the editor: route the result image to
 // a downstream artifact-image node (the pose node itself only shows the pose).
 // We can't reuse materializeAutoImageSinks here — PoseMannequin is in
@@ -1665,33 +1697,7 @@ function handlePoseResult(e: Event) {
   const poseNode = (nodes.value as any[]).find(n => n.id === nodeId)
   if (!poseNode) return
 
-  let outIdx = (poseNode.data?.outputs ?? []).findIndex((o: any) => String(o.type).toUpperCase() === 'IMAGE')
-  if (outIdx < 0) outIdx = 0
-  const handle = `output-${outIdx}`
-
-  // Reuse an existing artifact-image sink on this output; else create one.
-  let sink: any = null
-  for (const ed of edges.value as any[]) {
-    if (ed.source !== nodeId || ed.sourceHandle !== handle) continue
-    const t = (nodes.value as any[]).find(n => n.id === ed.target)
-    if (t && t.data?.nodeType === 'Image') { sink = t; break }
-  }
-  if (!sink) {
-    const srcPos = poseNode.position || { x: 0, y: 0 }
-    const srcW = (poseNode.data?.size?.[0] ?? 200) as number
-    sink = createNodeData('Image', { x: srcPos.x + srcW + 80, y: srcPos.y })
-    // Save the result to output/ (appears in Assets), matching auto-sinks.
-    const ei = sink.data.widgetDefs?.findIndex((w: any) => w.name === 'export') ?? -1
-    if (ei >= 0) sink.data.widgetsValues[ei] = true
-    sink.data.size = [240, 280]
-    nodes.value.push(sink)
-    edges.value.push({
-      id: `e-pose-${sink.id}`,
-      source: nodeId, sourceHandle: handle,
-      target: sink.id, targetHandle: 'input-0',
-      type: 'comfy', data: { dataType: 'IMAGE' },
-    } as any)
-  }
+  const sink: any = ensurePoseImageSink(poseNode)
 
   // Display the result + persist it as the sink's own image.
   sink.data.images = [`/view?${new URLSearchParams({ filename, type: 'input' })}`]
