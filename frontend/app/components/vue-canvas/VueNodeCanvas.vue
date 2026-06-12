@@ -1712,6 +1712,23 @@ function handlePoseResult(e: Event) {
   sink.data.properties.locked = true
 }
 
+// Image/Prompt pose modes generate via the normal graph-run path. Ensure a
+// downstream image sink exists, then scope-run the pose node + that sink so the
+// result lands on a visible artifact-image node (live = skip cost-confirm).
+function handlePoseGenerate(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const nodeId = detail?.nodeId ? String(detail.nodeId) : null
+  if (!nodeId) return
+  const poseNode = (nodes.value as any[]).find(n => n.id === nodeId)
+  if (!poseNode) return
+  const sink = ensurePoseImageSink(poseNode)
+  nextTick(() => {
+    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+      detail: { targetIds: [nodeId, String(sink.id)], live: true },
+    }))
+  })
+}
+
 // Multi-view "3D views" finished: drop each generated angle as a standalone
 // locked artifact-image node in a grid beside the pose node (a character sheet
 // to feed image-to-3D). Not wired — the pose node has one output; these are an
@@ -2034,6 +2051,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openPose', handleOpenPose)
   window.addEventListener('comfynext:poseResult', handlePoseResult)
   window.addEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
+  window.addEventListener('comfynext:poseGenerate', handlePoseGenerate)
   window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
   window.addEventListener('paste', handlePaste)
@@ -2060,6 +2078,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openPose', handleOpenPose)
   window.removeEventListener('comfynext:poseResult', handlePoseResult)
   window.removeEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
+  window.removeEventListener('comfynext:poseGenerate', handlePoseGenerate)
   window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
   window.removeEventListener('paste', handlePaste)
