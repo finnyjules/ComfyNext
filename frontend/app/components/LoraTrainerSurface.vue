@@ -277,6 +277,14 @@ const form = reactive({
 
 const advancedOpen = ref(false)
 
+// Character LoRAs must hold face + body + hair in one trigger token, so they
+// need more capacity than a style. Bump rank to 32 for character mode unless the
+// user has already changed it; restore the style default when switching back.
+watch(trainingKind, (kind, prev) => {
+  if (kind === 'character' && form.rank === 16) form.rank = 32
+  else if (kind === 'style' && prev === 'character' && form.rank === 32) form.rank = 16
+})
+
 // Open a fresh workflow with a Flux generator preloaded to use the trained LoRA.
 // FluxLoRARemoteNode resolves the local filename to its CDN url via the sidecar
 // JSON our cloud-train route wrote, so the LoRA "just works" in the new graph.
