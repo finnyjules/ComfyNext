@@ -51,7 +51,7 @@ import {
   Mic, FileAudio, Music, Volume2, VolumeX, Equal, SlidersVertical, Combine as CombineIcon, SunsetIcon,
   Sunrise as SunriseIcon, SplitSquareHorizontal, Merge as MergeIcon,
   // AI / face
-  UserRoundCog,
+  UserRoundCog, UsersRound,
   // SmartLayout (compose section)
   LayoutTemplate,
 } from 'lucide-vue-next'
@@ -274,6 +274,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'AI',
     items: [
       { nodeType: 'FaceSwap', label: 'Face Swap', description: 'Replace a face in the target with the face from a reference photo. Downloads ~530 MB on first use.', icon: UserRoundCog, requiresModels: 'faceswap' },
+      { nodeType: 'PersonSwap', label: 'Person Swap', description: 'Replace the person in a scene with a different person — wire the scene and a reference photo. Keeps the original pose, framing and background. ~$0.05 per run.', icon: UsersRound },
       { nodeType: 'FaceRestore', label: 'Face Restore', description: 'CodeFormer face restoration — sharpens facial detail and fixes muddy AI-generated or low-res faces. Pairs perfectly with Face Swap. Downloads ~360 MB on first use.', icon: Sparkles, requiresModels: 'facerestore' },
       { nodeType: 'BackgroundRemove', label: 'Remove BG', description: 'Knock out the background and emit a clean alpha mask. Downloads ~179 MB on first use.', icon: PhSelectionForeground, requiresModels: 'bgremove' },
       { nodeType: 'SubjectMask', label: 'Subject Mask', description: 'Click a point on the subject — MobileSAM segments it into a mask. Works on every frame of a video. Downloads ~55 MB on first use.', icon: MousePointerClick, requiresModels: 'subjecttrack' },
