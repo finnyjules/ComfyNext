@@ -11,7 +11,7 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, Wand2, ImagePlus, Loader2 } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, Wand2, ImagePlus, Loader2, FlipHorizontal2 } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
 
@@ -159,7 +159,7 @@ function renderOverlay() {
   // Brush wash.
   brush.render(ctx, W, H)
 }
-watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), comparing.value, history.value.length] as const,
+watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted.value, comparing.value, history.value.length] as const,
   () => renderOverlay())
 
 // ── Candidate-result preview ─────────────────────────────────────────────────
@@ -332,7 +332,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
             <div class="flex items-center gap-1.5">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-cyan-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'erase' ? 'bg-rose-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Erase (X)" @click="brush.mode.value = 'erase'"><Eraser class="size-3.5" /> Erase</button>
-              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
             </div>
             <label class="flex items-center gap-2 text-[11px] text-white/50">Size
               <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-cyan-400 cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
@@ -340,6 +339,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
             <div class="flex items-center gap-2">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Click an object to auto-select it (SAM)" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /> Click-select</button>
               <span class="text-[10px] text-white/30">{{ samSelect ? 'Click an object' : 'beta · falls back to brushing' }}</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.inverted.value = !brush.inverted.value"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
             </div>
           </template>
 

@@ -36,6 +36,7 @@ export function useBrushMask() {
   const active = ref(false)
   const sizePx = ref(48)               // brush DIAMETER in display px (UI-facing)
   const mode = ref<'add' | 'erase'>('add')
+  const inverted = ref(false)             // paint what to KEEP; change everything else
   const strokes = ref<BrushStroke[]>([])
   const drawing = ref(false)
   const cursor = ref<{ x: number; y: number } | null>(null) // normalized, for the cursor ring
@@ -46,10 +47,10 @@ export function useBrushMask() {
     return Math.max(0.001, sizePx.value / 2 / Math.max(1, pxBase))
   }
 
-  const hasMask = computed(() => strokes.value.some(s => !s.erase && s.points.length > 0))
+  const hasMask = computed(() => inverted.value || strokes.value.some(s => !s.erase && s.points.length > 0))
 
   function setActive(v: boolean) { active.value = v; if (!v) { drawing.value = false } }
-  function clear() { strokes.value = []; drawing.value = false }
+  function clear() { strokes.value = []; drawing.value = false; inverted.value = false }
 
   /** Begin a stroke at a normalized point. `pxBase` = artboard logical width. */
   function down(nx: number, ny: number, pxBase: number) {
@@ -105,15 +106,28 @@ export function useBrushMask() {
 
   /** Paint the translucent mask preview onto the editor overlay (W×H logical px). */
   function render(ctx: CanvasRenderingContext2D, W: number, H: number) {
-    if (!strokes.value.length) return
+    if (!inverted.value && !strokes.value.length) return
+    const w = Math.max(1, Math.round(W)), h = Math.max(1, Math.round(H))
     const tmp = document.createElement('canvas')
-    tmp.width = Math.max(1, Math.round(W)); tmp.height = Math.max(1, Math.round(H))
+    tmp.width = w; tmp.height = h
     const tctx = tmp.getContext('2d')!
-    stampMask(tctx, x => x * W, y => y * H, r => r * W)
-    // Tint the binary mask with a flat wash via source-in, then composite.
-    tctx.globalCompositeOperation = 'source-in'
-    tctx.fillStyle = PREVIEW_FILL
-    tctx.fillRect(0, 0, tmp.width, tmp.height)
+    if (inverted.value) {
+      // Wash everything, then punch out the painted (keep) region.
+      tctx.fillStyle = PREVIEW_FILL
+      tctx.fillRect(0, 0, w, h)
+      if (strokes.value.length) {
+        const hole = document.createElement('canvas')
+        hole.width = w; hole.height = h
+        stampMask(hole.getContext('2d')!, x => x * W, y => y * H, r => r * W)
+        tctx.globalCompositeOperation = 'destination-out'
+        tctx.drawImage(hole, 0, 0)
+      }
+    } else {
+      stampMask(tctx, x => x * W, y => y * H, r => r * W)
+      tctx.globalCompositeOperation = 'source-in'
+      tctx.fillStyle = PREVIEW_FILL
+      tctx.fillRect(0, 0, w, h)
+    }
     ctx.drawImage(tmp, 0, 0, W, H)
   }
 
@@ -142,6 +156,19 @@ export function useBrushMask() {
     stampMask(bctx, x => x * artW, y => y * artH, r => r * artW + expandArt)
     bctx.restore()
 
+    // 1b) Invert: white everywhere EXCEPT the painted region (paint = keep).
+    let region: HTMLCanvasElement = bin
+    if (inverted.value) {
+      const inv = document.createElement('canvas')
+      inv.width = bin.width; inv.height = bin.height
+      const ictx = inv.getContext('2d')!
+      ictx.fillStyle = '#fff'
+      ictx.fillRect(0, 0, inv.width, inv.height)
+      ictx.globalCompositeOperation = 'destination-out'
+      ictx.drawImage(bin, 0, 0)
+      region = inv
+    }
+
     // 2) Composite onto solid black, optionally feathering the edge for soft seams.
     const cv = document.createElement('canvas')
     cv.width = bin.width; cv.height = bin.height
@@ -149,13 +176,13 @@ export function useBrushMask() {
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, cv.width, cv.height)
     if (opts.featherPx && opts.featherPx > 0) ctx.filter = `blur(${opts.featherPx}px)`
-    ctx.drawImage(bin, 0, 0)
+    ctx.drawImage(region, 0, 0)
     ctx.filter = 'none'
     return cv
   }
 
   return {
-    active, sizePx, mode, strokes, drawing, cursor, hasMask,
+    active, sizePx, mode, inverted, strokes, drawing, cursor, hasMask,
     setActive, clear, down, move, up, radiusNorm, render, bakeMask, stampMask,
   }
 }
