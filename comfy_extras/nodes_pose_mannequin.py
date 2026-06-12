@@ -1,16 +1,23 @@
 from __future__ import annotations
 
-"""Pose Mannequin node — put a character into a posed-mannequin's body pose.
+"""Pose Mannequin node — put a character into a target body pose.
 
-Frontend-first feature (see frontend PoseEditorModal): the user poses a 3D
-artist mannequin, the editor bakes a gray render of it, and Nano Banana 2
-redraws the wired character in that pose. The in-editor path generates instantly
-via /api/inpaint/pose and writes the result back onto the node, so most runs
-never touch this execute(). This server-side path exists for graph "Run" parity:
+Frontend-first feature (see frontend PoseEditorModal). A `pose_source` input
+picks one of three ways to describe the target pose, and execute() branches on it:
 
-  • result_image set  → return that baked result (deterministic, no API cost).
-  • else character + mannequin_image → generate via Nano Banana 2.
-  • else                → pass the character through unchanged.
+  • mannequin (default) → the user poses a 3D artist mannequin in the editor; if
+    a baked editor render is present it wins (deterministic, no API cost),
+    otherwise Nano Banana 2 redraws the wired character from the normal-map
+    conditioning render (pose_cond_image, falling back to mannequin_image).
+  • image → a wired `pose_image` reference; Nano Banana 2 copies its body pose
+    onto the wired character.
+  • prompt → a `pose_prompt` text description; Nano Banana 2 re-poses the
+    character from words (single character image, no reference).
+
+The in-editor mannequin path generates instantly via /api/inpaint/pose and
+writes the result back onto the node, so most mannequin runs never touch this
+execute(); the server-side path exists for graph "Run" parity. When there's
+nothing to pose with, the character passes through unchanged.
 
 The mannequin can only be rendered client-side (Three.js), so the editor uploads
 it into ComfyUI's input dir and stores the filename here.
@@ -24,25 +31,7 @@ from typing_extensions import override
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
 from comfy_extras._live_preview import save_live_preview
-
-
-# Mirrors the BASE_PROMPT in frontend/server/api/inpaint/pose.post.ts so the
-# graph path and the in-editor path produce comparable results. The second image
-# is a surface-normal render of the posed mannequin (its colours encode which way
-# each body part faces — spike showed this nails orientation where a flat gray
-# render or depth map are front/back-ambiguous).
-_BASE_PROMPT = (
-    "The first image is a character. The second image is a SURFACE-NORMAL render of "
-    "a posed 3D mannequin: its colours encode the target body pose AND the exact 3D "
-    "orientation — which way the body and each limb face. Redraw the EXACT SAME "
-    "character from the first image — keep their face, hair, skin tone, body type, "
-    "clothing and art style identical — but pose them to match the second image: "
-    "limb positions, stance, head angle, AND the whole-body orientation/facing "
-    "direction (front, three-quarter, side, or back). If the body is turned or facing "
-    "away, turn the character the same way; do NOT default to a front-facing view. "
-    "Full body, head to toe, plain neutral studio background, natural and photographic. "
-    "Output only the character in that pose, never the normal-map render itself."
-)
+from comfy_extras._pose_prompts import pose_instruction
 
 
 def _load_input_image(filename: str) -> torch.Tensor | None:
@@ -83,6 +72,13 @@ class PoseMannequinNode(IO.ComfyNode):
                                 tooltip="Baked surface-normal render filename — the generation conditioning (managed by the editor)."),
                 IO.String.Input("result_image", default="", optional=True,
                                 tooltip="Last generated result filename (managed by the editor)."),
+                IO.Combo.Input("pose_source", options=["mannequin", "image", "prompt"],
+                               default="mannequin", optional=True,
+                               tooltip="Where the pose comes from: the 3D mannequin, a wired pose image, or a text prompt."),
+                IO.Image.Input("pose_image", optional=True,
+                               tooltip="A reference image whose body pose to copy (used when pose_source = image)."),
+                IO.String.Input("pose_prompt", multiline=True, default="", optional=True,
+                                tooltip="Describe the target pose in words (used when pose_source = prompt)."),
             ],
             outputs=[IO.Image.Output(display_name="image")],
             hidden=[IO.Hidden.unique_id],
@@ -92,31 +88,19 @@ class PoseMannequinNode(IO.ComfyNode):
 
     @classmethod
     async def execute(cls, character=None, prompt="", pose_state="",
-                      mannequin_image="", pose_cond_image="", result_image="") -> IO.NodeOutput:
+                      mannequin_image="", pose_cond_image="", result_image="",
+                      pose_source="mannequin", pose_image=None, pose_prompt="") -> IO.NodeOutput:
         uid = str(cls.hidden.unique_id)
 
-        # 1. A baked result from the editor wins — deterministic, no API cost.
-        baked = _load_input_image(result_image)
-        if baked is not None:
-            return IO.NodeOutput(baked, ui=save_live_preview(baked, uid))
-
-        # 2. Generate from character + conditioning via Nano Banana 2. Prefer the
-        #    surface-normal render (orientation-accurate); fall back to the gray.
-        mannequin = _load_input_image(pose_cond_image) or _load_input_image(mannequin_image)
-        if character is not None and mannequin is not None:
-            # Lazy import: avoids any comfy_extras/comfy_api_nodes load-order coupling.
+        async def _generate(instruction: str, images: list) -> "IO.NodeOutput":
+            # Lazy import: avoids comfy_extras/comfy_api_nodes load-order coupling.
             from comfy_api_nodes.nodes_replicate import (
                 _run_prediction, _image_tensor_to_data_url,
                 _first_output_url, download_url_to_image_tensor,
             )
-            extra = (prompt or "").strip()
-            instruction = f"{_BASE_PROMPT} Additional direction: {extra}." if extra else _BASE_PROMPT
             input_dict = {
                 "prompt": instruction,
-                "image_input": [
-                    _image_tensor_to_data_url(character),
-                    _image_tensor_to_data_url(mannequin),
-                ],
+                "image_input": [_image_tensor_to_data_url(t) for t in images],
                 "resolution": "1K",
                 "output_format": "png",
             }
@@ -124,7 +108,29 @@ class PoseMannequinNode(IO.ComfyNode):
             result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
             return IO.NodeOutput(result, ui=save_live_preview(result, uid))
 
-        # 3. Nothing to pose with — pass the character through (or a tiny blank).
+        # Image mode: re-pose from a wired reference image.
+        if pose_source == "image":
+            if character is not None and pose_image is not None:
+                return await _generate(pose_instruction("image", prompt, ""),
+                                       [character, pose_image])
+
+        # Prompt mode: re-pose from a text description (single character image).
+        elif pose_source == "prompt":
+            if character is not None and (pose_prompt or "").strip():
+                return await _generate(pose_instruction("prompt", prompt, pose_prompt),
+                                       [character])
+
+        # Mannequin mode (default): baked result wins, else normal-map conditioning.
+        else:
+            baked = _load_input_image(result_image)
+            if baked is not None:
+                return IO.NodeOutput(baked, ui=save_live_preview(baked, uid))
+            cond = _load_input_image(pose_cond_image) or _load_input_image(mannequin_image)
+            if character is not None and cond is not None:
+                return await _generate(pose_instruction("mannequin", prompt, ""),
+                                       [character, cond])
+
+        # Nothing to pose with — pass the character through (or a tiny blank).
         if character is not None:
             return IO.NodeOutput(character, ui=save_live_preview(character, uid))
         blank = torch.zeros(1, 16, 16, 3)
