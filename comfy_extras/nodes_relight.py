@@ -52,8 +52,6 @@ class RelightNode(IO.ComfyNode):
                                tooltip="Optional: a photo whose lighting direction, quality and colour temperature to match."),
                 IO.String.Input("instructions", multiline=True, default="", optional=True,
                                 tooltip="Optional extra direction to refine the relight."),
-                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
-                             control_after_generate=True, tooltip="0 = random."),
             ],
             outputs=[IO.Image.Output(display_name="image")],
             hidden=[IO.Hidden.unique_id],
@@ -63,7 +61,7 @@ class RelightNode(IO.ComfyNode):
 
     @classmethod
     async def execute(cls, image=None, preset="Custom", light="{}", keep_background=True,
-                      reference=None, instructions="", seed=0) -> IO.NodeOutput:
+                      reference=None, instructions="") -> IO.NodeOutput:
         uid = str(cls.hidden.unique_id)
 
         # Nothing to relight → tiny blank passthrough. No API call.
