@@ -14,7 +14,7 @@ import type { Region } from '~~/shared/template-grid/types'
 const ctx = inject<GridEditorContext>('gridEditor')!
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
-  sampleProps, effectiveBrand, setRegion,
+  sampleProps, effectiveBrand, setRegion, patchElement,
 } = ctx
 
 // -- Render-true preview ------------------------------------------------------
@@ -243,10 +243,42 @@ let dragState: {
   moved: boolean
 } | null = null
 
+// -- Reposition (pan) mode: double-click an image, then drag it to pan the
+// focal point (object-position). satori renders object-position faithfully, so
+// what you pan here matches the output. Esc / click-out / select-other exits.
+const repositionId = ref<string | null>(null)
+let panState: {
+  id: string; startFocal: { x: number; y: number }
+  startClientX: number; startClientY: number; w: number; h: number
+} | null = null
+
+function enterReposition(r: ResolvedElement) {
+  if (previewMode.value || r.el.type !== 'image' || r.el.locked) return
+  selectedId.value = r.el.id
+  repositionId.value = r.el.id
+}
+
+watch(selectedId, (id) => { if (id !== repositionId.value) repositionId.value = null })
+function onRepositionKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && repositionId.value) { e.stopPropagation(); repositionId.value = null }
+}
+onMounted(() => window.addEventListener('keydown', onRepositionKey, true))
+onUnmounted(() => window.removeEventListener('keydown', onRepositionKey, true))
+
 function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   e.stopPropagation()
   if (previewMode.value) return        // read-only while previewing the render
   selectedId.value = r.el.id
+  // In reposition mode, body-drag pans the image instead of moving the element.
+  if (repositionId.value === r.el.id && r.el.type === 'image') {
+    const focal = (r.el as any).focal ?? { x: 0.5, y: 0.5 }
+    panState = {
+      id: r.el.id, startFocal: { ...focal },
+      startClientX: e.clientX, startClientY: e.clientY, w: r.rect.w, h: r.rect.h,
+    }
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    return
+  }
   if (r.el.locked || !r.region) return
   dragState = {
     id: r.el.id,
@@ -259,6 +291,16 @@ function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
 }
 
 function onElementPointerMove(e: PointerEvent) {
+  if (panState) {
+    const s = scale.value || 1
+    // Drag the image right → reveal its left side → object-position decreases.
+    const dx = (e.clientX - panState.startClientX) / s
+    const dy = (e.clientY - panState.startClientY) / s
+    const nx = Math.min(1, Math.max(0, panState.startFocal.x - dx / panState.w))
+    const ny = Math.min(1, Math.max(0, panState.startFocal.y - dy / panState.h))
+    patchElement(panState.id, { focal: { x: nx, y: ny } })
+    return
+  }
   if (!dragState) return
   const s = scale.value || 1
   const next = dragRegion(
@@ -275,6 +317,11 @@ function onElementPointerMove(e: PointerEvent) {
 }
 
 function onElementPointerUp(e: PointerEvent) {
+  if (panState) {
+    ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+    panState = null
+    return
+  }
   if (!dragState) return
   ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
   dragState = null
@@ -396,12 +443,15 @@ function onCanvasClick(e: MouseEvent) {
       <div
         v-for="r in visible"
         :key="r.el.id"
-        :style="[rectStyle(r), { cursor: r.el.locked ? 'default' : 'move' }]"
+        :style="[rectStyle(r), { cursor: repositionId === r.el.id ? 'grab' : r.el.locked ? 'default' : 'move' }]"
         class="group"
-        :class="selectedId === r.el.id
-          ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
-          : 'hover:outline hover:outline-1 hover:outline-white/30'"
+        :class="repositionId === r.el.id
+          ? 'outline outline-2 outline-[#96b4ff] outline-dashed'
+          : selectedId === r.el.id
+            ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
+            : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
+        @dblclick="(e) => { if (r.el.type === 'image') { e.stopPropagation(); enterReposition(r) } }"
       >
         <template v-if="r.el.type === 'text'">
           <div :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
@@ -418,7 +468,8 @@ function onCanvasClick(e: MouseEvent) {
           <div :style="shapeStyle(r)" />
         </template>
 
-        <template v-if="selectedId === r.el.id && !r.el.locked">
+        <!-- Resize handles — hidden while repositioning so they don't fight the pan drag. -->
+        <template v-if="selectedId === r.el.id && !r.el.locked && repositionId !== r.el.id">
           <div
             v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
             :key="dir"
@@ -433,6 +484,16 @@ function onCanvasClick(e: MouseEvent) {
             @pointerdown="(e) => onHandlePointerDown(e, r, dir)"
           />
         </template>
+
+        <!-- Reposition hints (images only) -->
+        <div
+          v-if="repositionId === r.el.id"
+          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#96b4ff]/90 text-black text-[10px] font-medium pointer-events-none whitespace-nowrap"
+        >Drag to reposition · Esc to finish</div>
+        <div
+          v-else-if="selectedId === r.el.id && r.el.type === 'image' && !r.el.locked"
+          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white/80 text-[10px] pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
+        >Double-click to reposition</div>
       </div>
 
       <!-- Render-true preview overlay (actual server render) -->
