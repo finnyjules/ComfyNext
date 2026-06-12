@@ -38,6 +38,17 @@ export interface BakeOpts {
 
 const PREVIEW_FILL = 'rgba(56, 189, 248, 0.45)' // cyan wash over the painted area
 
+/**
+ * Per-stroke radius (output px) to bake, folding in the Expand control. Expand
+ * always grows the CHANGE region the model repaints. In normal mode the strokes
+ * ARE the change region, so Expand grows them; in inverted mode the strokes are
+ * the KEEP region, so Expand must erode them (eroding keep == dilating change).
+ * Clamped at 0 so a fully-eroded thin stroke never produces a negative radius.
+ */
+export function bakeRadius(rNorm: number, artW: number, expandArt: number, inverted: boolean): number {
+  return Math.max(0, rNorm * artW + (inverted ? -expandArt : expandArt))
+}
+
 export function useBrushMask() {
   const active = ref(false)
   const sizePx = ref(48)               // brush DIAMETER in display px (UI-facing)
@@ -172,10 +183,11 @@ export function useBrushMask() {
     bctx.scale(sx, sy)
     bctx.rotate((-rotationDeg * Math.PI) / 180)
     bctx.translate(-cxPx, -cyPx)
-    // Expand grows the region outward: convert output px → artboard px and add to
-    // every stroke's radius. radius is normalized-to-width → artboard px via artW.
+    // Expand grows the change region outward (see bakeRadius for the inverted
+    // case): convert output px → artboard px so it adds to each stroke's radius,
+    // which is normalized-to-width → artboard px via artW.
     const expandArt = (opts.expandPx ?? 0) / Math.max(sx, 0.0001)
-    stampMask(bctx, x => x * artW, y => y * artH, r => r * artW + expandArt)
+    stampMask(bctx, x => x * artW, y => y * artH, r => bakeRadius(r, artW, expandArt, inverted.value))
     bctx.restore()
 
     // 1b) Invert: white everywhere EXCEPT the painted region (paint = keep).
