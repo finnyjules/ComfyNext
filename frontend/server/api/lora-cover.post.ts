@@ -43,7 +43,17 @@ export default defineEventHandler(async (event) => {
 
   const profile = String(meta.aesthetic ?? meta.taste_profile ?? '').trim()
   const trigger = String(meta.trigger ?? '').trim()
-  const prompt = [profile, trigger ? `${trigger},` : '', 'a portrait'].filter(Boolean).join(' ')
+  // Character covers are headshots: a clean studio portrait reads as "this is
+  // the person", so the aesthetic (the training set's vibe) is left out — it
+  // would fight the studio look. Style covers keep aesthetic-driven portraits.
+  const prompt = meta.kind === 'character'
+    ? [
+        trigger ? `${trigger},` : '',
+        'professional studio portrait photograph, head and shoulders, facing the camera,',
+        'soft diffused key light, clean seamless light-gray studio background,',
+        'sharp focus, high-end studio photography',
+      ].filter(Boolean).join(' ')
+    : [profile, trigger ? `${trigger},` : '', 'a portrait'].filter(Boolean).join(' ')
 
   const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
 
