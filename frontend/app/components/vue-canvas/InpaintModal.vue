@@ -11,9 +11,10 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2 } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2, ZoomIn, ZoomOut, Maximize } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
+import { useStageView } from '~/composables/useStageView'
 
 const props = defineProps<{
   nodeId: string
@@ -83,6 +84,7 @@ async function applySource(url: string | null) {
     const a = nw / nh
     if (a >= 1) { disp.w = MAX; disp.h = Math.round(MAX / a) }
     else { disp.h = MAX; disp.w = Math.round(MAX * a) }
+    view.reset()
   } catch {
     sourceImg.value = null
   } finally { loadingSrc.value = false }
@@ -93,6 +95,10 @@ watch(sourceUrl, applySource)
 const brush = useBrushMask()
 const inpaint = useInpaint()
 brush.setActive(true)
+const view = useStageView()
+const spaceDown = ref(false) // hold Space to pan
+// Cursor-ring screen position (mapped through the current zoom/pan).
+const cursorScreen = computed(() => brush.cursor.value ? view.toScreen(brush.cursor.value.x, brush.cursor.value.y, disp.w, disp.h) : null)
 
 const prompt = ref('')
 const tier = ref<'dev' | 'pro'>('dev')
@@ -126,9 +132,16 @@ watch(() => history.value.length, (len, prev) => { if (!prev && len) maskOnly.va
 const stageRef = ref<HTMLDivElement | null>(null)
 function clientToNorm(e: PointerEvent) {
   const r = stageRef.value?.getBoundingClientRect(); if (!r) return null
-  return { nx: (e.clientX - r.left) / r.width, ny: (e.clientY - r.top) / r.height }
+  return view.toNorm(e.clientX - r.left, e.clientY - r.top, disp.w, disp.h)
 }
+const panning = ref(false)
+let panLast: { x: number; y: number } | null = null
 function onPointerDown(e: PointerEvent) {
+  if (spaceDown.value || e.button === 1) {
+    e.preventDefault(); panning.value = true; panLast = { x: e.clientX, y: e.clientY }
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    return
+  }
   const p = clientToNorm(e); if (!p) return
   e.preventDefault()
   if (samSelect.value) { doSamSelect(p.nx, p.ny); return }
@@ -136,8 +149,25 @@ function onPointerDown(e: PointerEvent) {
   ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
   brush.down(p.nx, p.ny, disp.w)
 }
-function onPointerMove(e: PointerEvent) { const p = clientToNorm(e); if (p) brush.move(p.nx, p.ny) }
-function onPointerUp() { brush.up() }
+function onPointerMove(e: PointerEvent) {
+  if (panning.value && panLast) {
+    view.pan(e.clientX - panLast.x, e.clientY - panLast.y)
+    panLast = { x: e.clientX, y: e.clientY }
+    return
+  }
+  const p = clientToNorm(e); if (p) brush.move(p.nx, p.ny)
+}
+function onPointerUp() { if (panning.value) { panning.value = false; panLast = null } else brush.up() }
+function onWheel(e: WheelEvent) {
+  const r = stageRef.value?.getBoundingClientRect(); if (!r) return
+  e.preventDefault()
+  if (e.metaKey || e.ctrlKey) {
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+    view.zoomBy(factor, e.clientX - r.left, e.clientY - r.top)
+  } else {
+    view.pan(-e.deltaX, -e.deltaY)
+  }
+}
 
 // ── Overlay render (mask wash + SAM wash + result preview) ───────────────────
 const overlay = ref<HTMLCanvasElement | null>(null)
@@ -266,6 +296,7 @@ function onKeydown(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
   if (e.key === 'Escape') { e.stopPropagation(); emit('close'); return }
+  if (e.code === 'Space' && !typing) { e.preventDefault(); spaceDown.value = true; return }
   if (typing) return
   const meta = e.metaKey || e.ctrlKey
   if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) brush.redo(); else brush.undo(); return }
@@ -273,12 +304,22 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === '[' || e.key === ']') { e.preventDefault(); brush.sizePx.value = Math.max(4, Math.min(400, brush.sizePx.value + (e.key === ']' ? 8 : -8))) }
   else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); brush.mode.value = brush.mode.value === 'add' ? 'erase' : 'add' }
 }
+function onKeyup(e: KeyboardEvent) { if (e.code === 'Space') spaceDown.value = false }
+// Releasing focus (alt-tab, Spotlight, system dialog) can swallow the Space keyup
+// and leave the stage stuck in pan mode — clear it on blur.
+function onBlur() { spaceDown.value = false; panning.value = false; panLast = null }
 onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('keyup', onKeyup, true)
+  window.addEventListener('blur', onBlur)
   applySource(sourceUrl.value) // initial load (watches above are non-immediate)
   renderOverlay()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('keyup', onKeyup, true)
+  window.removeEventListener('blur', onBlur)
+})
 </script>
 
 <template>
@@ -305,23 +346,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
           v-else
           ref="stageRef"
           class="relative rounded-md overflow-hidden ring-1 ring-white/10"
-          :class="samSelect ? 'cursor-crosshair' : 'cursor-none'"
+          :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : samSelect ? 'cursor-crosshair' : 'cursor-none'"
           :style="{ width: disp.w + 'px', height: disp.h + 'px' }"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"
+          @wheel.prevent="onWheel"
         >
-          <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity" :class="maskOnly ? 'opacity-0' : 'opacity-100'" draggable="false" />
-          <div v-if="maskOnly" class="absolute inset-0 bg-black pointer-events-none" />
-          <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
-          <!-- brush cursor ring -->
+          <div class="absolute inset-0" :style="{ transform: view.transform.value, transformOrigin: '0 0', width: disp.w + 'px', height: disp.h + 'px' }">
+            <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity" :class="maskOnly ? 'opacity-0' : 'opacity-100'" draggable="false" />
+            <div v-if="maskOnly" class="absolute inset-0 bg-black pointer-events-none" />
+            <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
+          </div>
+          <!-- brush cursor ring (screen space; scales with zoom) -->
           <div
-            v-if="!samSelect && brush.cursor.value"
+            v-if="!samSelect && !spaceDown && !panning && cursorScreen"
             class="absolute pointer-events-none rounded-full border-2"
             :class="brush.mode.value === 'erase' ? 'border-rose-400/90' : 'border-cyan-300/90'"
-            :style="{ left: brush.cursor.value.x * disp.w + 'px', top: brush.cursor.value.y * disp.h + 'px', width: brush.sizePx.value + 'px', height: brush.sizePx.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
+            :style="{ left: cursorScreen.sx + 'px', top: cursorScreen.sy + 'px', width: brush.sizePx.value * view.scale.value + 'px', height: brush.sizePx.value * view.scale.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
           />
           <div v-if="loadingSrc" class="absolute inset-0 flex items-center justify-center bg-black/30"><Loader2 class="size-6 animate-spin text-white/60" /></div>
+        </div>
+        <div v-if="sourceUrl" class="absolute bottom-4 left-4 z-10 flex items-center gap-1 bg-black/40 border border-white/10 rounded-md p-0.5 text-white/70">
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Zoom out" aria-label="Zoom out" @click="view.zoomBy(1 / 1.2, disp.w / 2, disp.h / 2)"><ZoomOut class="size-4" /></button>
+          <span class="min-w-[3rem] text-center text-[11px] tabular-nums select-none">{{ view.percent.value }}%</span>
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Zoom in" aria-label="Zoom in" @click="view.zoomBy(1.2, disp.w / 2, disp.h / 2)"><ZoomIn class="size-4" /></button>
+          <span class="w-px h-4 bg-white/15 mx-0.5" />
+          <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 cursor-pointer" title="Fit" aria-label="Fit to screen" @click="view.reset()"><Maximize class="size-3.5" /></button>
         </div>
         <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onLoadFile" />
       </div>
