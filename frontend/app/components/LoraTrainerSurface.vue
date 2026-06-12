@@ -736,12 +736,23 @@ async function captionAll() {
 // results into the training set so the user just curates → captions → trains.
 
 function onReferencePicked(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file || !file.type.startsWith('image/')) return
-  referenceFile.value = file
-  if (referencePreview.value) URL.revokeObjectURL(referencePreview.value)
-  referencePreview.value = URL.createObjectURL(file)
-  buildError.value = null
+  const files = Array.from((e.target as HTMLInputElement).files ?? [])
+    .filter((f) => f.type.startsWith('image/'))
+  for (const file of files) {
+    if (referenceFiles.value.length >= MAX_REFERENCES) break
+    referenceFiles.value.push({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      includeInTraining: true,
+    })
+  }
+  ;(e.target as HTMLInputElement).value = '' // allow re-picking the same file
+}
+
+function removeReference(idx: number) {
+  const r = referenceFiles.value[idx]
+  if (r) URL.revokeObjectURL(r.previewUrl)
+  referenceFiles.value.splice(idx, 1)
 }
 
 /** Decode a base64 data URL into a File (to feed the same addFiles() path). */
@@ -1571,19 +1582,38 @@ onBeforeUnmount(() => {
           </p>
 
           <div class="flex gap-3">
-            <button
-              type="button"
-              class="relative size-20 shrink-0 rounded-lg border border-white/12 hover:border-violet-400/40 bg-white/[0.03] overflow-hidden flex items-center justify-center cursor-pointer"
-              :title="referenceFile ? 'Change reference photo' : 'Choose a reference photo'"
-              @click="refInputRef?.click()"
-            >
-              <img v-if="referencePreview" :src="referencePreview" class="absolute inset-0 w-full h-full object-cover" />
-              <div v-else class="flex flex-col items-center gap-1 text-white/40">
-                <Upload class="size-4" />
-                <span class="text-[9px]">Reference</span>
+            <input ref="refInputRef" type="file" accept="image/*" multiple class="hidden" @change="onReferencePicked" />
+            <div class="flex flex-col gap-2">
+              <div class="flex flex-wrap gap-2">
+                <div
+                  v-for="(r, i) in referenceFiles"
+                  :key="i"
+                  class="relative w-20 h-20 rounded-lg overflow-hidden ring-1 ring-white/10 group"
+                >
+                  <img :src="r.previewUrl" class="absolute inset-0 w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white/90 text-xs leading-none opacity-0 group-hover:opacity-100"
+                    title="Remove"
+                    @click="removeReference(i)"
+                  >×</button>
+                  <label
+                    class="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1 py-0.5 bg-black/55 text-[10px] text-white/80"
+                    title="Include this real photo in the training set"
+                  >
+                    <input type="checkbox" v-model="r.includeInTraining" class="scale-75" />
+                    <span>train</span>
+                  </label>
+                </div>
+                <button
+                  v-if="referenceFiles.length < MAX_REFERENCES"
+                  type="button"
+                  class="w-20 h-20 rounded-lg ring-1 ring-dashed ring-white/20 text-white/50 hover:text-white/80 hover:ring-white/40 text-2xl"
+                  title="Add a reference photo"
+                  @click="refInputRef?.click()"
+                >+</button>
               </div>
-            </button>
-            <input ref="refInputRef" type="file" accept="image/*" class="hidden" @change="onReferencePicked" />
+            </div>
 
             <div class="flex-1 min-w-0 space-y-2">
               <input
