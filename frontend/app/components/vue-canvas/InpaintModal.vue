@@ -122,7 +122,7 @@ watch(samMask, async (url) => {
 })
 function clearSamMask() { samMask.value = null }
 function clearMask() { brush.clear(); clearSamMask() }
-watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false } })
+watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false; maskOnly.value = false } })
 // Mask-only is a pre-generation inspection aid; drop it once a result lands so
 // the stage doesn't sit on a blank black backdrop (renderOverlay shows results,
 // not the mask, once history exists).
@@ -181,7 +181,7 @@ function renderOverlay() {
   ctx.clearRect(0, 0, W, H)
   // Candidate result preview (hidden while holding compare).
   if (previewImgEl.value && !comparing.value) ctx.drawImage(previewImgEl.value, 0, 0, W, H)
-  if (history.value.length) return // once results exist, show the previewed result, not the masks
+  if (history.value.length && !maskOnly.value) return // once results exist show the preview, unless inspecting the mask
   // SAM selection wash.
   if (samMaskImgEl.value) {
     const mw = samMaskImgEl.value.naturalWidth || 1, mh = samMaskImgEl.value.naturalHeight || 1
@@ -194,7 +194,7 @@ function renderOverlay() {
   // Brush wash.
   brush.render(ctx, W, H)
 }
-watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted.value, comparing.value, history.value.length] as const,
+watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted.value, comparing.value, history.value.length, maskOnly.value] as const,
   () => renderOverlay())
 
 // ── Candidate-result preview ─────────────────────────────────────────────────
