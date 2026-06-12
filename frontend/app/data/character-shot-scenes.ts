@@ -82,10 +82,13 @@ export function pickScenes(count: number): CharacterShotScene[] {
   const mediums = CHARACTER_SHOT_SCENES.filter((s) => s.framing === 'medium')
   const fulls = CHARACTER_SHOT_SCENES.filter((s) => s.framing === 'full')
 
+  // Tier mix: ~40% close-ups (face quality dominates), ~35% full-body (body
+  // type guaranteed), remainder medium. Close-ups stay co-plurality so face
+  // fidelity never regresses; a full-body shot is always present.
   let nClose = Math.round(count * 0.4)
   let nFull = Math.round(count * 0.35)
   let nMedium = count - nClose - nFull
-  if (nMedium < 0) { nClose += nMedium; nMedium = 0 } // pathological clamp
+  if (nMedium < 0) { nClose += nMedium; nMedium = 0 } // defensive: keep medium non-negative (not hit for counts >= 0)
   if (nFull < 1 && count >= 1) { nFull = 1; if (nClose > 0) nClose -= 1; else nMedium -= 1 }
 
   return [

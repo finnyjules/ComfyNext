@@ -51,8 +51,18 @@ describe('pickScenes', () => {
   })
 
   it('spreads selection within a tier rather than taking the first N', () => {
-    const close = pickScenes(24).filter((s) => s.framing === 'closeup')
+    const scenes = pickScenes(24)
+    const close = scenes.filter((s) => s.framing === 'closeup')
     expect(new Set(close.map((s) => s.prompt)).size).toBe(close.length)
+    const full = scenes.filter((s) => s.framing === 'full')
+    expect(new Set(full.map((s) => s.prompt)).size).toBe(full.length)
+    const medium = scenes.filter((s) => s.framing === 'medium')
+    expect(new Set(medium.map((s) => s.prompt)).size).toBe(medium.length)
+  })
+
+  it('produces the documented 24-shot tier split (10 closeup / 8 full / 6 medium)', () => {
+    const t = tierCounts(pickScenes(24))
+    expect(t).toEqual({ closeup: 10, full: 8, medium: 6 })
   })
 
   it('returns an empty array for count <= 0', () => {
