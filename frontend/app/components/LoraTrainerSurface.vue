@@ -238,6 +238,14 @@ const realIncludedCount = computed(
   () => referenceFiles.value.filter((r) => r.includeInTraining).length,
 )
 
+// Nudge: with no real photo flagged for training, body type can only come from
+// Ideogram's invention. Non-blocking.
+const showBodyHint = computed(
+  () => trainingKind.value === 'character'
+    && referenceFiles.value.length > 0
+    && realIncludedCount.value === 0,
+)
+
 // ----- Hyperparameters ---------------------------------------------------
 
 const checkpoints = ref<string[]>([])
@@ -1616,9 +1624,9 @@ onBeforeUnmount(() => {
             <span class="text-[12.5px] font-medium text-white/85">Build a dataset from one photo</span>
           </div>
           <p class="text-[11px] text-white/55 leading-relaxed mb-3">
-            Drop one clear, front-on photo. We generate <span class="text-white/75">{{ Math.min(datasetCount, CHARACTER_SHOT_SCENES.length) }}</span>
-            consistent shots of the same person across angles, lighting and settings (Ideogram Character),
-            then add them below to curate &amp; train. ~${{ (Math.min(datasetCount, CHARACTER_SHOT_SCENES.length) * 0.08).toFixed(2) }}.
+            Drop a few photos — at least one clear face close-up and one full-length shot.
+            We generate <span class="text-white/75">{{ expectedShots }}</span> more to fill out the set,
+            then add them below to curate &amp; train. ~${{ (expectedShots * 0.08).toFixed(2) }}.
           </p>
 
           <div class="flex gap-3">
@@ -1653,6 +1661,10 @@ onBeforeUnmount(() => {
                   @click="refInputRef?.click()"
                 >+</button>
               </div>
+              <p v-if="showBodyHint" class="mt-2 text-[12px] text-amber-300/80">
+                Tip: keep at least one real full-length photo set to <span class="font-medium">train</span> so the
+                body type is learned from a real shot, not invented.
+              </p>
             </div>
 
             <div class="flex-1 min-w-0 space-y-2">
@@ -1672,10 +1684,10 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-medium transition-colors"
-                  :class="referenceFile && !buildingDataset
+                  :class="referenceFiles.length && !buildingDataset
                     ? 'bg-violet-500 hover:bg-violet-400 text-white cursor-pointer'
                     : 'bg-white/[0.06] text-white/35 cursor-not-allowed'"
-                  :disabled="!referenceFile || buildingDataset"
+                  :disabled="!referenceFiles.length || buildingDataset"
                   @click="buildCharacterDataset"
                 >
                   <Loader2 v-if="buildingDataset" class="size-3.5 animate-spin" />
@@ -1880,7 +1892,7 @@ onBeforeUnmount(() => {
               </button>
               <!-- Re-roll a generated shot (character dataset only) -->
               <button
-                v-if="img.generated && referenceFile"
+                v-if="img.generated && referenceFiles.length"
                 class="absolute top-1.5 right-9 size-6 rounded-full bg-black/70 hover:bg-violet-500/90 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white transition-opacity cursor-pointer disabled:cursor-wait"
                 :class="regenerating.has(img.filename) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
                 title="Regenerate this shot"
