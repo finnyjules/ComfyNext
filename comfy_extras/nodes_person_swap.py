@@ -36,8 +36,8 @@ class PersonSwapNode(IO.ComfyNode):
             inputs=[
                 IO.Image.Input("scene", tooltip="The image containing the person to replace."),
                 IO.Image.Input("person", tooltip="A reference photo of the new person."),
-                IO.Boolean.Input("keep_outfit", default=True, optional=True,
-                                 tooltip="On: keep the original outfit, swap identity only. Off: bring the new person's own clothing too."),
+                IO.Boolean.Input("keep_original_outfit", default=True, optional=True,
+                                 tooltip="On: the new person wears the outfit already in the scene (swap identity only). Off: the new person brings their own clothing."),
                 IO.String.Input("instructions", multiline=True, default="", optional=True,
                                 tooltip="Optional extra direction. Also targets a specific person in a crowd, e.g. \"replace the woman on the left\"."),
             ],
@@ -48,7 +48,7 @@ class PersonSwapNode(IO.ComfyNode):
         )
 
     @classmethod
-    async def execute(cls, scene=None, person=None, keep_outfit=True, instructions="") -> IO.NodeOutput:
+    async def execute(cls, scene=None, person=None, keep_original_outfit=True, instructions="") -> IO.NodeOutput:
         uid = str(cls.hidden.unique_id)
 
         # Nothing to swap with → pass the scene through (or a tiny blank). No API call.
@@ -64,7 +64,7 @@ class PersonSwapNode(IO.ComfyNode):
             _first_output_url, download_url_to_image_tensor,
         )
         input_dict = {
-            "prompt": swap_instruction(bool(keep_outfit), instructions),
+            "prompt": swap_instruction(bool(keep_original_outfit), instructions),
             "image_input": [_image_tensor_to_data_url(scene), _image_tensor_to_data_url(person)],
             "resolution": "1K",
             "output_format": "png",
