@@ -20,6 +20,7 @@ import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vu
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
+import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
@@ -517,6 +518,19 @@ async function runVueWorkflow(
   } catch (err) {
     console.error('[Run] smart layout brand_kit injection failed', err)
     toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
+  }
+
+  // Promote any standalone artifact image still pointing at an ephemeral temp
+  // preview into a durable input upload — ComfyUI wipes temp/ on restart, so a
+  // wired result would otherwise fail validation ("Invalid image file … [temp]").
+  // If the bytes are already gone, abort with a clear message instead of letting
+  // the backend reject the run cryptically.
+  try {
+    await promoteTempImageInputs(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] temp image promotion failed', err)
+    toast.error("Couldn't prepare source image", { description: String((err as any)?.message || err).slice(0, 200) })
+    return false
   }
 
   // Pick the worker for the tab being run (always 0 when the pool is off), so
