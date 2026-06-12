@@ -37,6 +37,8 @@ import {
   MicVocal,
   Box,
   MessageCircle,
+  UsersRound,
+  PersonStanding,
 } from 'lucide-vue-next'
 
 export const GENERATOR_NODE_ICONS: Record<string, Component> = {
@@ -47,6 +49,8 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   GenerateEmojiNode:    SmilePlus,
   ConsistentFaceNode:   UserCircle,
   SketchToImageNode:    PenTool,
+  PersonSwap:           UsersRound,
+  PoseMannequin:        PersonStanding,
 
   // ----- Image · manipulation -----
   EditImageNode:        Pencil,

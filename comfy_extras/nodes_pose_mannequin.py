@@ -57,7 +57,7 @@ class PoseMannequinNode(IO.ComfyNode):
                 "Pose a 3D mannequin, then redraw the connected character in that "
                 "pose (Nano Banana 2). Edit the pose in the on-canvas 3D editor."
             ),
-            category="image/generate",
+            category="api node/image/Replicate",
             inputs=[
                 IO.Image.Input("character", tooltip="The character to re-pose (identity is preserved)."),
                 IO.String.Input("prompt", multiline=True, default="", optional=True,
