@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { PersonStanding, Wand2 } from 'lucide-vue-next'
+import { Image, PersonStanding, Wand2 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Pose Mannequin artifact node. Shows ONLY the posed mannequin render (the gray
@@ -39,6 +39,43 @@ const mannequinUrl = computed<string | null>(() => {
 })
 const hasPose = computed(() => !!mannequinUrl.value)
 
+type PoseMode = 'mannequin' | 'image' | 'prompt'
+
+const poseSource = computed<PoseMode>(() => {
+  const v = widgetStr('pose_source')
+  return (v === 'image' || v === 'prompt') ? v : 'mannequin'
+})
+
+function setWidget(name: string, v: any) {
+  const i = widgetIdx(name)
+  if (i < 0) return
+  if (!Array.isArray(props.data.widgetsValues)) props.data.widgetsValues = []
+  props.data.widgetsValues[i] = v
+}
+
+function setMode(m: PoseMode) { setWidget('pose_source', m) }
+
+const posePrompt = computed<string>({
+  get: () => widgetStr('pose_prompt'),
+  set: (v: string) => setWidget('pose_prompt', v),
+})
+
+const poseImageInIdx = computed(() => { const i = inputIdx('pose_image'); return i >= 0 ? i : 1 })
+const poseImageLinked = computed(() => {
+  const i = inputIdx('pose_image')
+  return i >= 0 ? props.data.inputs?.[i]?.link != null : false
+})
+
+const MODES: { id: PoseMode; label: string }[] = [
+  { id: 'mannequin', label: 'Mannequin' },
+  { id: 'image', label: 'Image' },
+  { id: 'prompt', label: 'Prompt' },
+]
+
+function generate() {
+  window.dispatchEvent(new CustomEvent('comfynext:poseGenerate', { detail: { nodeId: props.id } }))
+}
+
 const characterInIdx = computed(() => Math.max(0, inputIdx('character')))
 const imageOutIdx = computed(() => outputIdx('image'))
 
@@ -60,6 +97,13 @@ function openEditor() {
       :style="{ borderColor: imageColor, top: '50%' }"
     />
     <Handle
+      :id="`input-${poseImageInIdx}`" type="target" :position="Position.Left"
+      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a] transition-opacity"
+      :class="poseSource === 'image' ? 'opacity-100' : 'opacity-25'"
+      :style="{ borderColor: imageColor, top: '72%' }"
+      title="Pose reference image"
+    />
+    <Handle
       :id="`output-${imageOutIdx}`" type="source" :position="Position.Right"
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
       :style="{ borderColor: imageColor, top: '50%' }"
@@ -75,8 +119,19 @@ function openEditor() {
         <span class="text-[11px] text-white/70 font-medium truncate">Pose Mannequin</span>
       </div>
 
-      <!-- Mannequin pose preview -->
-      <div class="relative bg-checker aspect-[3/4] flex items-center justify-center overflow-hidden cursor-pointer" @dblclick.stop="openEditor">
+      <!-- Mode toggle -->
+      <div class="flex gap-0.5 p-1 bg-black/20">
+        <button
+          v-for="m in MODES" :key="m.id"
+          class="nopan nodrag flex-1 h-6 rounded text-[10px] font-medium cursor-pointer transition-colors"
+          :class="poseSource === m.id ? 'bg-violet-500/90 text-white' : 'text-white/45 hover:text-white/70 hover:bg-white/5'"
+          @click.stop="setMode(m.id)">
+          {{ m.label }}
+        </button>
+      </div>
+
+      <!-- Mannequin: posed-figure preview -->
+      <div v-if="poseSource === 'mannequin'" class="relative bg-checker aspect-[3/4] flex items-center justify-center overflow-hidden cursor-pointer" @dblclick.stop="openEditor">
         <img v-if="mannequinUrl" :src="mannequinUrl" class="absolute inset-0 w-full h-full object-contain" draggable="false" />
         <div v-else class="flex flex-col items-center justify-center gap-1.5 text-white/35 pointer-events-none">
           <PersonStanding class="size-8" :stroke-width="1.5" />
@@ -84,12 +139,39 @@ function openEditor() {
         </div>
       </div>
 
+      <!-- Image: wired pose-reference status -->
+      <div v-else-if="poseSource === 'image'" class="relative bg-checker aspect-[3/4] flex flex-col items-center justify-center gap-1.5 overflow-hidden text-center px-3">
+        <Image class="size-8" :class="poseImageLinked ? 'text-violet-400' : 'text-white/35'" :stroke-width="1.5" />
+        <span class="text-[10px]" :class="poseImageLinked ? 'text-white/70' : 'text-white/35'">
+          {{ poseImageLinked ? 'Pose image connected' : 'Wire a pose image →' }}
+        </span>
+        <span class="text-[9px] text-white/30 leading-tight">Connect any image to the lower-left port; its body pose is copied onto your character.</span>
+      </div>
+
+      <!-- Prompt: describe the pose -->
+      <div v-else class="relative bg-checker aspect-[3/4] p-2 flex flex-col">
+        <textarea
+          v-model="posePrompt"
+          class="nopan nodrag flex-1 w-full resize-none rounded-md bg-black/40 border border-white/10 text-[11px] text-white/85 p-2 leading-snug placeholder:text-white/30 focus:outline-none focus:border-violet-400/60"
+          placeholder="Describe the pose — e.g. 'sitting cross-legged, leaning back on both hands, looking up'"
+          @pointerdown.stop @dblclick.stop
+        />
+      </div>
+
       <!-- Footer action -->
       <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
         <button
+          v-if="poseSource === 'mannequin'"
           class="nopan nodrag flex-1 h-7 rounded-md bg-violet-500/90 hover:bg-violet-500 text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer"
           title="Open the 3D pose editor" @click.stop="openEditor">
           <Wand2 class="size-3.5" /> {{ hasPose ? 'Edit pose' : 'Pose & Generate' }}
+        </button>
+        <button
+          v-else
+          class="nopan nodrag flex-1 h-7 rounded-md bg-violet-500/90 hover:bg-violet-500 text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          :disabled="poseSource === 'image' && !poseImageLinked"
+          title="Re-pose the character" @click.stop="generate">
+          <Wand2 class="size-3.5" /> Generate
         </button>
       </div>
     </div>
