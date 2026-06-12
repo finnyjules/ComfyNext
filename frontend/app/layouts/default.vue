@@ -105,8 +105,9 @@ const sidebarItems = [
 // 3D is here as a placeholder — the Mesh artifact node isn't shipped yet,
 // so its option stays disabled until that lands.
 const loadOptions = [
-  // Composition surfaces — spatial (Frame) + temporal (Timeline) — grouped up top.
-  { label: 'Frame',    icon: Frame,        nodeType: 'Compositor' },
+  // Composition surfaces — spatial (Frame, Smart Layout) + temporal (Timeline) — grouped up top.
+  { label: 'Frame',    icon: Frame,          nodeType: 'Compositor' },
+  { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
   // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
