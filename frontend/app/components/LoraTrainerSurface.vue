@@ -16,7 +16,13 @@
 import { ArrowRight, ChevronDown, ChevronRight, Cloud, Cpu, Download, Drama, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import JSZip from 'jszip'
-import { CHARACTER_SHOT_SCENES, CHARACTER_SHOT_ASPECTS } from '~/data/character-shot-scenes'
+import {
+  CHARACTER_SHOT_SCENES,
+  pickScenes,
+  aspectForFraming,
+  syntheticCount,
+  type CharacterShotScene,
+} from '~/data/character-shot-scenes'
 
 // ----- Compute mode (Local vs Cloud) ------------------------------------
 
@@ -211,15 +217,25 @@ const kindNoun = computed(() => (trainingKind.value === 'character' ? 'character
 const advancedSettingsOpen = ref(false)
 
 // "Build character dataset" — bootstrap a varied, consistent training set from
-// ONE reference photo via ideogram-character (see buildCharacterDataset).
+// a small set of reference photos via ideogram-character (see buildCharacterDataset).
 const refInputRef = ref<HTMLInputElement | null>(null)
-const referenceFile = ref<File | null>(null)
-const referencePreview = ref<string | null>(null)
+
+// A small set of reference photos. Real ones flagged `includeInTraining` are
+// added to the dataset directly (this is what captures true body type);
+// Ideogram seeds synthetic variety from them, round-robin (one ref per call).
+interface ReferenceItem { file: File; previewUrl: string; includeInTraining: boolean }
+const referenceFiles = ref<ReferenceItem[]>([])
+const MAX_REFERENCES = 5
+
 const subjectHint = ref('')
 const datasetCount = ref(16)
 const buildingDataset = ref(false)
 const buildProgress = reactive({ done: 0, total: 0 })
 const buildError = ref<string | null>(null)
+
+const realIncludedCount = computed(
+  () => referenceFiles.value.filter((r) => r.includeInTraining).length,
+)
 
 // ----- Hyperparameters ---------------------------------------------------
 
