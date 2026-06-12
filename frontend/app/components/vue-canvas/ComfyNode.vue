@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Play, Upload } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -1027,9 +1027,11 @@ watch(previewImages, (urls) => {
       <button
         v-if="showRunButton"
         class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
-        :class="(isMuted || isBypassed || data.running)
+        :class="(isMuted || isBypassed)
           ? 'text-white/25 cursor-not-allowed'
-          : 'text-white/55 hover:text-violet-300 hover:bg-violet-400/15'"
+          : data.running
+            ? 'text-emerald-300 bg-emerald-400/15'
+            : 'bg-white/[0.09] ring-1 ring-white/10 text-white/90 hover:bg-white/[0.15]'"
         :disabled="isMuted || isBypassed || data.running"
         :title="isMuted ? 'Node is muted'
           : isBypassed ? 'Node is bypassed'
@@ -1037,7 +1039,8 @@ watch(previewImages, (urls) => {
           : 'Re-run only this node — new seed, everything upstream stays as-is'"
         @click.stop="rerollThisNode"
       >
-        <Dices class="size-3" />
+        <Loader2 v-if="data.running" class="size-3 animate-spin" />
+        <Dices v-else class="size-3" />
       </button>
       <!-- Per-node Run: runs this node + its upstream deps via filtered queue.
            Shows on generators, output sinks (OUTPUT_NODE=True), and heavy
@@ -1045,11 +1048,9 @@ watch(previewImages, (urls) => {
       <button
         v-if="showRunButton"
         class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
-        :class="(isMuted || isBypassed)
+        :class="(isMuted || isBypassed || data.running)
           ? 'text-white/25 cursor-not-allowed'
-          : data.running
-            ? 'text-emerald-300 bg-emerald-400/15'
-            : 'text-white/55 hover:text-emerald-300 hover:bg-emerald-400/15'"
+          : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]'"
         :disabled="isMuted || isBypassed || data.running"
         :title="isMuted ? 'Node is muted'
           : isBypassed ? 'Node is bypassed'
@@ -1057,8 +1058,12 @@ watch(previewImages, (urls) => {
           : 'Run this node and everything before it'"
         @click.stop="runThisNode"
       >
-        <Loader2 v-if="data.running" class="size-3 animate-spin" />
-        <Play v-else class="size-3" :fill="(isMuted || isBypassed) ? 'none' : 'currentColor'" />
+        <!-- "play-from-start" (bar + triangle): run this node and everything
+             before it. Bar = from the start, triangle = run forward. -->
+        <svg viewBox="0 0 24 24" fill="currentColor" class="size-3" aria-hidden="true">
+          <rect x="3" y="4" width="3.5" height="16" rx="1.5" />
+          <path d="M10 4l11 8-11 8z" />
+        </svg>
       </button>
       <!-- Subgraph node count badge -->
       <span
