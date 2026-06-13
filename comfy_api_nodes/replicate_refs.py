@@ -248,3 +248,84 @@ def _all_output_urls(pred: dict) -> list[str]:
     if isinstance(output, str):
         return [output]
     return []
+
+
+# --------------------------------------------------------------------------- #
+# Enhance Detail — engine → Replicate-input mapping
+#
+# Pure: turns a chosen engine + one universal `detail_strength` knob + per-engine
+# advanced params into the (slug, input_dict) for a billable Replicate call.
+# Kept here (no torch) so it stays unit-testable in CI. The node wrapper in
+# nodes_replicate.py only adds tensor→data-url and the network round-trip.
+# --------------------------------------------------------------------------- #
+
+ENHANCE_ENGINES = ["Creative", "Faithful", "Diffusion Refine"]
+
+# Clarity default style prompt, reused so the node and tests agree.
+_ENHANCE_CLARITY_DEFAULT_PROMPT = "masterpiece, best quality, highres"
+
+
+def build_enhance_input(
+    model: str,
+    *,
+    image_url: str,
+    prompt: str,
+    detail_strength: float,
+    # Creative (Clarity) advanced
+    resemblance: float = 0.6,
+    negative_prompt: str = "(worst quality, low quality, normal quality:2)",
+    num_inference_steps: int = 18,
+    seed: int = 0,
+    # Faithful (Topaz) advanced
+    topaz_enhance_model: str = "Standard V2",
+    topaz_subject_detection: str = "None",
+    topaz_output_format: str = "png",
+    # Diffusion Refine (SUPIR) advanced
+    supir_edm_steps: int = 50,
+) -> tuple[str, dict]:
+    """Map an Enhance Detail engine + detail_strength to (replicate_slug, input_dict).
+
+    All three engines run *in place* (no resize):
+      Creative → clarity-upscaler at scale_factor 1.0
+      Faithful → topaz image-upscale in enhance-only mode (upscale_factor "None")
+      Diffusion Refine → SUPIR-v0Q at upscale 1, LLaVA captioning disabled
+    """
+    if model == "Creative":
+        body = {
+            "image": image_url,
+            "prompt": prompt,
+            "scale_factor": 1.0,
+            "creativity": 0.1 + float(detail_strength) * 0.5,
+            "resemblance": float(resemblance),
+            "negative_prompt": negative_prompt,
+            "num_inference_steps": int(num_inference_steps),
+            "output_format": "png",
+        }
+        if seed and seed > 0:
+            body["seed"] = int(seed)
+        return "philz1337x/clarity-upscaler", body
+
+    if model == "Faithful":
+        return "topazlabs/image-upscale", {
+            "image": image_url,
+            "enhance_model": topaz_enhance_model,
+            "upscale_factor": "None",          # enhance only, never resize
+            "subject_detection": topaz_subject_detection,
+            "output_format": topaz_output_format,
+        }
+
+    if model == "Diffusion Refine":
+        body = {
+            "image": image_url,
+            "model_name": "SUPIR-v0Q",
+            "use_llava": False,                # avoid the slow LLaVA captioning pass
+            "upscale": 1,                      # strictly in place
+            "a_prompt": prompt,
+            "s_cfg": 3.0 + float(detail_strength) * 5.0,
+            "edm_steps": int(supir_edm_steps),
+        }
+        if seed and seed > 0:
+            body["seed"] = int(seed)
+        return "cjwbw/supir", body
+
+    raise ValueError(f"Unknown enhance model: {model}")
