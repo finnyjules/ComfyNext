@@ -30,6 +30,8 @@ export function useBackendHealth(origin: string, opts: BackendHealthOpts = {}): 
   const downMs = opts.downMs ?? 1500
   const timeoutMs = opts.timeoutMs ?? 2000
   const maxFailures = opts.failures ?? 2
+  // NOTE: the wrapper is intentional — calling native `fetch` unbound (`?? fetch`)
+  // can throw "Illegal invocation" in browsers; wrapping preserves the correct `this`.
   const doFetch = opts.fetchFn ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
 
   const backendUp = ref(true)   // optimistic; the debounce flips it on real failures

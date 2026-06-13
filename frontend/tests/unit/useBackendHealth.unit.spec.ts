@@ -56,6 +56,20 @@ describe('useBackendHealth', () => {
     h.stop()
   })
 
+  it('resets the failure counter after recovery (one later fail does not flip down)', async () => {
+    // up → 2 fails (down) → up (recovered, counter reset) → 1 fail → still up
+    const fetchFn = makeFetch([true, false, false, true, false])
+    const h = useBackendHealth('http://x', { fetchFn, healthyMs: 100, downMs: 50, failures: 2 })
+    h.start()
+    await vi.advanceTimersByTimeAsync(0)     // up
+    await vi.advanceTimersByTimeAsync(100)   // fail #1
+    await vi.advanceTimersByTimeAsync(100)   // fail #2 → down
+    await vi.advanceTimersByTimeAsync(50)    // up (counter reset)
+    await vi.advanceTimersByTimeAsync(100)   // single fail → still up (counter was reset)
+    expect(h.backendUp.value).toBe(true)
+    h.stop()
+  })
+
   it('stop() halts polling', async () => {
     const fetchFn = makeFetch([true])
     const h = useBackendHealth('http://x', { fetchFn, healthyMs: 100 })
