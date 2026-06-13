@@ -818,7 +818,7 @@ onMounted(() => {
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
   ;(window as any).__reloadCanvas = forceReloadCanvas
-  if (import.meta.client) startHealthPoll()
+  startHealthPoll()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
@@ -1138,7 +1138,6 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:liveRun', handleLiveRun)
 })
 let sharedIframeReady = false
-const iframeReady = ref(false) // reactive for template
 // True while a workflow is being pushed into the canvas (incl. waiting for the
 // bridge to become ready on a cold start). Drives the loading overlay so the
 // wait reads as "initializing", not a dead/broken button.
@@ -1503,7 +1502,6 @@ async function onSharedIframeLoad(event: Event) {
     await waitForBridgeReady()
   }
   sharedIframeReady = true
-  iframeReady.value = true
 
   // Load the workflow for the currently active project tab
   const tab = activeTab.value
