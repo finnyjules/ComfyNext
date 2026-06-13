@@ -13,14 +13,25 @@
  * never leaves a dangling card — unknown ids degrade to a preview-less entry.
  */
 
-export type VoiceCategory = 'Female' | 'Male' | 'Character'
+export type VoiceCategory = 'Female' | 'Male' | 'Character' | 'Cloned'
 
 export interface VoiceMeta {
   id: string
   label: string
   category: VoiceCategory
+  /** 'default' = built-in MiniMax system voice; 'cloned' = user-trained voice. */
+  source: 'default' | 'cloned'
   /** Pre-baked preview clip, or null when no sample exists (unknown voice). */
   sampleUrl: string | null
+}
+
+/** A user-cloned voice, as returned by GET /api/voices-local. */
+export interface ClonedVoice {
+  id: string
+  name: string
+  model?: string
+  previewUrl: string | null
+  createdAt?: string
 }
 
 // Category buckets, keyed by voice id. Ordering of VOICE_CATALOG below follows
@@ -67,6 +78,7 @@ export const VOICE_CATALOG: VoiceMeta[] = VOICE_IDS.map(id => ({
   id,
   label: humanize(id),
   category: categoryOf(id) ?? 'Character',
+  source: 'default',
   sampleUrl: sampleUrlFor(id),
 }))
 
@@ -81,6 +93,7 @@ export function voiceMetaFor(id: string): VoiceMeta {
     id,
     label: humanize(id),
     category: 'Character',
+    source: 'default',
     sampleUrl: null,
   }
 }
@@ -95,4 +108,28 @@ export function voicesForOptions(options: string[]): VoiceMeta[] {
   const knownIds = new Set(known.map(v => v.id))
   const unknown = options.filter(id => !knownIds.has(id)).map(voiceMetaFor)
   return [...known, ...unknown]
+}
+
+/** Map user-cloned voices (from /api/voices-local) into gallery cards. */
+export function mergeClonedVoices(cloned: ClonedVoice[]): VoiceMeta[] {
+  return cloned.map(c => ({
+    id: c.id,
+    label: c.name || c.id,
+    category: 'Cloned',
+    source: 'cloned',
+    sampleUrl: c.previewUrl,
+  }))
+}
+
+/**
+ * The full list the voice gallery shows: known default voices that appear in the
+ * node's combo `options` (catalog order), followed by the user's cloned voices.
+ * Option ids that are neither a known default nor a cloned voice are dropped
+ * (the cloned voices are the source of truth for non-system ids).
+ */
+export function galleryVoices(options: string[], cloned: ClonedVoice[]): VoiceMeta[] {
+  const opt = new Set(options)
+  const clonedIds = new Set(cloned.map(c => c.id))
+  const defaults = VOICE_CATALOG.filter(v => opt.has(v.id) && !clonedIds.has(v.id))
+  return [...defaults, ...mergeClonedVoices(cloned)]
 }

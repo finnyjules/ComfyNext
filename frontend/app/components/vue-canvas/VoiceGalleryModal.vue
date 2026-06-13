@@ -10,9 +10,9 @@
  * Only one preview plays at a time — a single shared <audio> element; starting
  * a new voice replaces the previous. Audio is torn down when the modal closes.
  */
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
 import { Play, Pause, Mic, VolumeX } from 'lucide-vue-next'
-import { voicesForOptions, type VoiceMeta, type VoiceCategory } from '~/lib/voiceCatalog'
+import { galleryVoices, type VoiceMeta, type VoiceCategory, type ClonedVoice } from '~/lib/voiceCatalog'
 
 const props = defineProps<{
   nodeId: string
@@ -45,27 +45,50 @@ const optionIds = computed<string[]>(() => {
   return (def?.options ?? []) as string[]
 })
 
-const allVoices = computed<VoiceMeta[]>(() => voicesForOptions(optionIds.value))
+// -- Cloned ("Your") voices, fetched from the backend store ------------------
+
+const clonedVoices = ref<ClonedVoice[]>([])
+async function loadCloned() {
+  try {
+    const r = await $fetch<{ voices: ClonedVoice[] }>('/api/voices-local')
+    clonedVoices.value = r.voices ?? []
+  } catch { clonedVoices.value = [] }
+}
+onMounted(() => {
+  loadCloned()
+  // A clone just finished in the Train tab → refresh "Your voices".
+  window.addEventListener('comfynext:voicesUpdated', loadCloned)
+})
+onBeforeUnmount(() => window.removeEventListener('comfynext:voicesUpdated', loadCloned))
+
+const allVoices = computed<VoiceMeta[]>(() => galleryVoices(optionIds.value, clonedVoices.value))
 
 // -- Filter + search ---------------------------------------------------------
 
 const searchQuery = ref('')
 const activeFilterId = ref<string>('all')
 
+// Source-based pills: All · Default voices · Your voices. "Your voices" always
+// shows (even at 0) so the empty state can nudge toward the Train tab.
 const filters = computed(() => {
-  const counts = new Map<VoiceCategory, number>()
-  for (const v of allVoices.value) counts.set(v.category, (counts.get(v.category) ?? 0) + 1)
-  const cats: VoiceCategory[] = ['Female', 'Male', 'Character']
+  const defaults = allVoices.value.filter(v => v.source === 'default').length
+  const yours = allVoices.value.filter(v => v.source === 'cloned').length
   return [
     { id: 'all', label: 'All', count: allVoices.value.length },
-    ...cats.filter(c => counts.get(c)).map(c => ({ id: c, label: c, count: counts.get(c)! })),
+    { id: 'default', label: 'Default voices', count: defaults },
+    { id: 'cloned', label: 'Your voices', count: yours },
   ]
 })
+
+const emptyMessage = computed(() => activeFilterId.value === 'cloned'
+  ? 'No cloned voices yet — Train a voice in the Train tab.'
+  : 'No voices match those filters.')
 
 const visibleItems = computed<VoiceMeta[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
   return allVoices.value.filter((v) => {
-    if (activeFilterId.value !== 'all' && v.category !== activeFilterId.value) return false
+    if (activeFilterId.value === 'default' && v.source !== 'default') return false
+    if (activeFilterId.value === 'cloned' && v.source !== 'cloned') return false
     if (!q) return true
     return v.label.toLowerCase().includes(q) || v.id.toLowerCase().includes(q)
   })
@@ -122,7 +145,7 @@ function onConfirm(item: VoiceMeta) {
   emit('close')
 }
 
-const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Character: Mic }
+const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Character: Mic, Cloned: Mic }
 </script>
 
 <template>
@@ -137,7 +160,7 @@ const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Char
     :search-query="searchQuery"
     search-placeholder="Search voices…"
     :confirm-label="'Use voice'"
-    empty-message="No voices match those filters."
+    :empty-message="emptyMessage"
     @close="emit('close')"
     @confirm="(item: any) => onConfirm(item as VoiceMeta)"
     @update:selected-id="() => {}"

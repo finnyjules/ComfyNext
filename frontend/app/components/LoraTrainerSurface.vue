@@ -210,10 +210,16 @@ const lossGraphUrl = ref<string | null>(null)
 // must NOT describe the identity (it has to live in the trigger word), whereas
 // a style's captions describe the content normally. Also tags the LoRA's
 // `kind` on success so a character lands in the Characters panel.
-const trainingKind = ref<'style' | 'character'>('style')
-// Kind-aware labels so the page reads correctly for both styles and characters.
-const kindLabel = computed(() => (trainingKind.value === 'character' ? 'Character' : 'Style'))
-const kindNoun = computed(() => (trainingKind.value === 'character' ? 'character' : 'style'))
+const trainingKind = ref<'style' | 'character' | 'voice'>('style')
+// Kind-aware labels so the page reads correctly across styles, characters, voices.
+const kindLabel = computed(() => (
+  trainingKind.value === 'character' ? 'Character'
+  : trainingKind.value === 'voice' ? 'Voice'
+  : 'Style'))
+const kindNoun = computed(() => (
+  trainingKind.value === 'character' ? 'character'
+  : trainingKind.value === 'voice' ? 'voice'
+  : 'style'))
 // Training knobs (steps/LR/rank) collapse under an Advanced disclosure.
 const advancedSettingsOpen = ref(false)
 
@@ -1402,7 +1408,13 @@ onBeforeUnmount(() => {
         <h1 class="text-[44px] font-medium text-white tracking-tight leading-[1.05] mb-4">
           Train a {{ kindLabel }}
         </h1>
-        <p class="text-[15px] text-white/60 max-w-[640px] leading-relaxed">
+        <p v-if="trainingKind === 'voice'" class="text-[15px] text-white/60 max-w-[640px] leading-relaxed">
+          Clone a voice from a short sample. Drop in
+          <span class="text-white/85">10s–5min of clean audio</span>, give it a name, and the
+          cloned voice appears in the <span class="text-white/85">Generate speech</span> voice
+          gallery under <span class="text-white/85">Your voices</span>.
+        </p>
+        <p v-else class="text-[15px] text-white/60 max-w-[640px] leading-relaxed">
           Teach a Stable Diffusion or Flux model a look or a person.
           Drop in <span class="text-white/85">10–30 reference images</span>, give it a name, and
           the trainer produces a small <code class="text-[13px] text-white/75 bg-white/[0.04] px-1 py-0.5 rounded">.safetensors</code>
@@ -1413,7 +1425,7 @@ onBeforeUnmount(() => {
       <!-- 1 · What are you training? — the choice that shapes everything below -->
       <section class="mb-8">
         <label class="block text-[12px] font-medium text-white/85 tracking-[0.01em] mb-2">What are you training?</label>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <button
             type="button"
             class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
@@ -1436,8 +1448,24 @@ onBeforeUnmount(() => {
             <span class="text-[13px] font-medium text-white">Character</span>
             <span class="text-[11px] text-white/50 leading-snug">One person's identity — captions skip the face so the trigger owns it.</span>
           </button>
+          <button
+            type="button"
+            class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
+            :class="trainingKind === 'voice'
+              ? 'border-violet-400 bg-violet-500/15'
+              : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
+            @click="trainingKind = 'voice'"
+          >
+            <span class="text-[13px] font-medium text-white">Voice</span>
+            <span class="text-[11px] text-white/50 leading-snug">Clone a voice from a short audio sample — use it in Generate speech.</span>
+          </button>
         </div>
       </section>
+
+      <!-- Voice cloning has its own lean flow (one prediction, no dataset). It
+           replaces the entire LoRA body below. -->
+      <VoiceTrainerSurface v-if="trainingKind === 'voice'" />
+      <template v-else>
 
       <!-- Compute mode -->
       <section class="mb-8">
@@ -2295,6 +2323,7 @@ onBeforeUnmount(() => {
           <pre class="mt-2 text-[10.5px] text-white/55 bg-black/40 border border-white/[0.06] rounded p-3 max-h-[240px] overflow-auto font-mono whitespace-pre-wrap">{{ cloudJob.logs }}</pre>
         </details>
       </div>
+      </template>
     </div>
   </div>
 </template>

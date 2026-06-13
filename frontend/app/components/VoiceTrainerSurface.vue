@@ -1,0 +1,232 @@
+<script setup lang="ts">
+/**
+ * VoiceTrainerSurface — the "Train a voice" body, rendered inside the Train tab
+ * (LoraTrainerSurface) when the kind is 'voice'. Unlike LoRA training this is a
+ * single Replicate prediction: upload one sample → minimax/voice-cloning →
+ * persist the cloned voice into models/voices so it shows in the Generate-speech
+ * voice gallery under "Your voices".
+ *
+ * Renders sibling <section>s only (no outer container) — the Train tab provides
+ * the page chrome.
+ */
+import { ref, reactive, computed, onBeforeUnmount } from 'vue'
+import { Mic, Upload, Check, Loader2, AlertCircle, ChevronDown } from 'lucide-vue-next'
+import { validateVoiceSample } from '~/lib/voiceSample'
+
+const name = ref('')
+const file = ref<File | null>(null)
+const fileError = ref<string | null>(null)
+const previewUrl = ref<string | null>(null)
+const durationSec = ref<number | null>(null)
+const dragging = ref(false)
+
+const advanced = reactive({
+  open: false,
+  noiseReduction: false,
+  volumeNormalization: false,
+  accuracy: 0.7,
+})
+
+type JobStatus = 'idle' | 'uploading' | 'starting' | 'processing' | 'succeeded' | 'failed'
+const job = reactive<{ status: JobStatus; error: string | null }>({ status: 'idle', error: null })
+const busy = computed(() => job.status === 'uploading' || job.status === 'starting' || job.status === 'processing')
+
+const canSubmit = computed(() =>
+  !!name.value.trim() && !!file.value && !fileError.value && !busy.value)
+
+function revokePreview() {
+  if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = null }
+}
+
+function readDuration(url: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const a = new Audio()
+    a.preload = 'metadata'
+    a.onloadedmetadata = () => resolve(Number.isFinite(a.duration) ? a.duration : null)
+    a.onerror = () => resolve(null)
+    a.src = url
+  })
+}
+
+async function onPick(f: File | null | undefined) {
+  if (!f) return
+  revokePreview()
+  durationSec.value = null
+  const url = URL.createObjectURL(f)
+  const dur = await readDuration(url)
+  const v = validateVoiceSample({ name: f.name, size: f.size }, dur)
+  if (!v.ok) {
+    fileError.value = v.error ?? 'Invalid file.'
+    file.value = null
+    URL.revokeObjectURL(url)
+    return
+  }
+  fileError.value = null
+  durationSec.value = dur
+  file.value = f
+  previewUrl.value = url
+  if (job.status === 'succeeded' || job.status === 'failed') { job.status = 'idle'; job.error = null }
+}
+
+function onDrop(e: DragEvent) {
+  dragging.value = false
+  onPick(e.dataTransfer?.files?.[0])
+}
+function onInput(e: Event) {
+  onPick((e.target as HTMLInputElement).files?.[0])
+}
+
+const fmtDuration = computed(() => {
+  const d = durationSec.value
+  if (d == null) return ''
+  const m = Math.floor(d / 60), s = Math.round(d % 60)
+  return m ? `${m}m ${s}s` : `${s}s`
+})
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+async function startClone() {
+  if (!canSubmit.value) return
+  job.status = 'uploading'
+  job.error = null
+  try {
+    const fd = new FormData()
+    fd.append('file', file.value!, file.value!.name)
+    const up = await $fetch<{ url: string }>('/api/voice-clone/upload', { method: 'POST', body: fd })
+
+    job.status = 'starting'
+    const started = await $fetch<{ id: string }>('/api/voice-clone/start', {
+      method: 'POST',
+      body: {
+        voiceFileUrl: up.url,
+        accuracy: advanced.accuracy,
+        needNoiseReduction: advanced.noiseReduction,
+        needVolumeNormalization: advanced.volumeNormalization,
+      },
+    })
+
+    job.status = 'processing'
+    for (;;) {
+      await sleep(2500)
+      const r = await $fetch<{ status: JobStatus; voiceId: string | null; error: string | null }>(
+        `/api/voice-clone/status?id=${encodeURIComponent(started.id)}&name=${encodeURIComponent(name.value.trim())}`,
+      )
+      if (r.status === 'succeeded' && r.voiceId) {
+        job.status = 'succeeded'
+        // Let any open voice gallery know to refetch "Your voices".
+        window.dispatchEvent(new CustomEvent('comfynext:voicesUpdated'))
+        return
+      }
+      if (r.status === 'failed' || (r.status as string) === 'canceled') {
+        job.status = 'failed'
+        job.error = r.error || 'Cloning failed.'
+        return
+      }
+    }
+  } catch (e: any) {
+    job.status = 'failed'
+    job.error = e?.data?.message || e?.message || 'Cloning failed.'
+  }
+}
+
+onBeforeUnmount(revokePreview)
+</script>
+
+<template>
+  <div>
+    <!-- Name -->
+    <section class="mb-8">
+      <label class="block text-[12px] font-medium text-white/85 tracking-[0.01em] mb-2">Voice name</label>
+      <input
+        v-model="name"
+        type="text"
+        placeholder="e.g. My narrator voice"
+        class="w-full bg-white/[0.04] border border-white/10 rounded-lg px-3 py-2.5 text-[13px] text-white/90 placeholder-white/30 outline-none focus:bg-white/[0.06] focus:border-white/25 transition-colors"
+      />
+      <p class="text-[11px] text-white/40 mt-2">How it appears in your voice gallery.</p>
+    </section>
+
+    <!-- Audio sample -->
+    <section class="mb-8">
+      <label class="block text-[12px] font-medium text-white/85 tracking-[0.01em] mb-2">Voice sample</label>
+      <label
+        class="block rounded-xl border border-dashed px-6 py-8 text-center cursor-pointer transition-colors"
+        :class="dragging ? 'border-white/40 bg-white/[0.05]' : 'border-white/15 hover:border-white/25 hover:bg-white/[0.03]'"
+        @dragover.prevent="dragging = true"
+        @dragleave.prevent="dragging = false"
+        @drop.prevent="onDrop"
+      >
+        <input type="file" accept=".mp3,.m4a,.wav,audio/*" class="hidden" @change="onInput" />
+        <Upload class="size-6 mx-auto text-white/40 mb-2" />
+        <div class="text-[13px] text-white/75">
+          <span v-if="file">{{ file.name }}<span v-if="fmtDuration" class="text-white/45"> · {{ fmtDuration }}</span></span>
+          <span v-else>Drop an audio file or click to choose</span>
+        </div>
+        <div class="text-[11px] text-white/40 mt-1">MP3, M4A or WAV · 10s–5min · under 20 MB</div>
+      </label>
+
+      <p v-if="fileError" class="flex items-center gap-1.5 text-[11.5px] text-rose-300/90 mt-2">
+        <AlertCircle class="size-3.5 shrink-0" /> {{ fileError }}
+      </p>
+
+      <audio v-if="previewUrl && !fileError" :src="previewUrl" controls preload="metadata" class="w-full h-9 mt-3" />
+    </section>
+
+    <!-- Advanced -->
+    <section class="mb-8">
+      <button
+        type="button"
+        class="flex items-center gap-1.5 text-[12px] font-medium text-white/65 hover:text-white/85 transition-colors cursor-pointer"
+        @click="advanced.open = !advanced.open"
+      >
+        <ChevronDown class="size-3.5 transition-transform" :class="advanced.open ? '' : '-rotate-90'" />
+        Advanced
+      </button>
+      <div v-if="advanced.open" class="mt-3 space-y-3 pl-1">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" v-model="advanced.noiseReduction" class="size-3.5 rounded border-white/20 bg-white/[0.04] cursor-pointer accent-white" />
+          <span class="text-[12px] text-white/70">Noise reduction — use if the sample has background noise</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" v-model="advanced.volumeNormalization" class="size-3.5 rounded border-white/20 bg-white/[0.04] cursor-pointer accent-white" />
+          <span class="text-[12px] text-white/70">Volume normalization</span>
+        </label>
+        <div class="flex items-center gap-3 pt-1">
+          <span class="text-[12px] text-white/70 w-[120px]">Accuracy <span class="text-white/40 tabular-nums">{{ advanced.accuracy.toFixed(2) }}</span></span>
+          <input type="range" min="0" max="1" step="0.05" v-model.number="advanced.accuracy" class="flex-1 accent-white cursor-pointer" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Submit + job state -->
+    <section class="mb-10">
+      <button
+        type="button"
+        class="h-10 px-5 rounded-lg text-[13px] font-medium transition-colors flex items-center gap-2"
+        :class="canSubmit
+          ? 'bg-emerald-500/90 text-black hover:bg-emerald-400 cursor-pointer'
+          : 'bg-white/[0.06] text-white/35 cursor-not-allowed'"
+        :disabled="!canSubmit"
+        @click="startClone"
+      >
+        <Loader2 v-if="busy" class="size-4 animate-spin" />
+        <Mic v-else class="size-4" />
+        {{ busy ? 'Cloning…' : 'Clone voice' }}
+      </button>
+
+      <div v-if="busy" class="text-[11px] text-white/45 mt-3">
+        {{ job.status === 'uploading' ? 'Uploading sample…' : job.status === 'starting' ? 'Starting…' : 'Training the voice — this takes a moment.' }}
+      </div>
+
+      <div v-else-if="job.status === 'succeeded'" class="flex items-start gap-2 mt-3 text-[12px] text-emerald-300/90">
+        <Check class="size-4 shrink-0 mt-px" />
+        <span>Your voice is ready — pick it in the <span class="text-white/85">Generate speech</span> voice gallery under <span class="text-white/85">Your voices</span>.</span>
+      </div>
+
+      <div v-else-if="job.status === 'failed'" class="flex items-start gap-2 mt-3 text-[12px] text-rose-300/90">
+        <AlertCircle class="size-4 shrink-0 mt-px" />
+        <span>{{ job.error }}</span>
+      </div>
+    </section>
+  </div>
+</template>

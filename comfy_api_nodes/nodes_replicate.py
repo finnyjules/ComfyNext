@@ -1381,6 +1381,36 @@ _MINIMAX_VOICES = [
 _MINIMAX_EMOTIONS = ["auto", "happy", "sad", "angry", "fearful", "disgusted", "surprised", "neutral"]
 
 
+def _list_cloned_voice_ids() -> list[str]:
+    """Voice ids cloned via the Train-a-voice flow, persisted as
+    ``models/voices/<voice_id>.json`` sidecars by the Nitro voice-clone routes.
+
+    Read fresh on every call (i.e. per ``/object_info``) so a newly cloned voice
+    becomes a valid ``voice_id`` combo value as soon as the frontend refetches the
+    schema. Without this, ComfyUI's combo validation would reject a cloned id at
+    run time. Best-effort: any error yields no extra ids rather than breaking the
+    node schema.
+    """
+    import os
+    out: list[str] = []
+    try:
+        voices_dir = os.path.join(folder_paths.models_dir, "voices")
+        for fn in sorted(os.listdir(voices_dir)):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(voices_dir, fn), "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                vid = data.get("voice_id") or os.path.splitext(fn)[0]
+                if vid:
+                    out.append(str(vid))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
 class MiniMaxSpeechRemoteNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -1396,7 +1426,7 @@ class MiniMaxSpeechRemoteNode(IO.ComfyNode):
             inputs=[
                 IO.String.Input("text", multiline=True, default="",
                                 tooltip="What to say."),
-                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman"),
+                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES + _list_cloned_voice_ids(), default="Wise_Woman"),
                 IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
                 IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05,
                                tooltip="0.5 = half speed, 2.0 = double."),
@@ -3694,7 +3724,7 @@ class GenerateSpeechNode(IO.ComfyNode):
             inputs=[
                 IO.Combo.Input("model", options=["MiniMax Speech-02 HD"], default="MiniMax Speech-02 HD"),
                 IO.String.Input("text", multiline=True, default="", tooltip="What to say."),
-                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman",
+                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES + _list_cloned_voice_ids(), default="Wise_Woman",
                                extra_dict={"comfynext_widget": "voice_picker"}),
                 IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
                 IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05),

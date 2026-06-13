@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  VOICE_CATALOG, voiceMetaFor, voicesForOptions, type VoiceMeta,
+  VOICE_CATALOG, voiceMetaFor, voicesForOptions, mergeClonedVoices, galleryVoices,
+  type VoiceMeta, type ClonedVoice,
 } from '~/lib/voiceCatalog'
 
 describe('VOICE_CATALOG', () => {
@@ -17,12 +18,13 @@ describe('VOICE_CATALOG', () => {
 })
 
 describe('voiceMetaFor', () => {
-  it('returns label, category and sample url for a known voice', () => {
+  it('returns label, category, source and sample url for a known voice', () => {
     const m = voiceMetaFor('Wise_Woman')
     expect(m).toEqual<VoiceMeta>({
       id: 'Wise_Woman',
       label: 'Wise Woman',
       category: 'Female',
+      source: 'default',
       sampleUrl: '/voice-samples/Wise_Woman.mp3',
     })
   })
@@ -52,5 +54,44 @@ describe('voicesForOptions', () => {
     const out = voicesForOptions(['Mystery_X', 'Wise_Woman'])
     expect(out.map(v => v.id)).toEqual(['Wise_Woman', 'Mystery_X'])
     expect(out[1]!.sampleUrl).toBeNull()
+  })
+})
+
+describe('mergeClonedVoices', () => {
+  const cloned: ClonedVoice[] = [
+    { id: 'voice_abc', name: 'My narrator', model: 'speech-02-hd', previewUrl: '/api/voice-preview-file?id=voice_abc', createdAt: '2026-06-13T00:00:00Z' },
+    { id: 'voice_def', name: 'Grandpa', model: 'speech-02-hd', previewUrl: null },
+  ]
+  it('maps a cloned voice to a VoiceMeta with source=cloned and category=Cloned', () => {
+    const [a] = mergeClonedVoices(cloned)
+    expect(a).toEqual<VoiceMeta>({
+      id: 'voice_abc',
+      label: 'My narrator',
+      category: 'Cloned',
+      source: 'cloned',
+      sampleUrl: '/api/voice-preview-file?id=voice_abc',
+    })
+  })
+  it('carries through a null preview as a preview-less entry', () => {
+    expect(mergeClonedVoices(cloned)[1]!.sampleUrl).toBeNull()
+  })
+})
+
+describe('galleryVoices', () => {
+  const cloned: ClonedVoice[] = [
+    { id: 'voice_abc', name: 'My narrator', previewUrl: '/api/voice-preview-file?id=voice_abc' },
+  ]
+  it('lists known default voices (in options) followed by cloned voices', () => {
+    const out = galleryVoices(['Casual_Guy', 'Wise_Woman', 'voice_abc'], cloned)
+    expect(out.map(v => v.id)).toEqual(['Wise_Woman', 'Casual_Guy', 'voice_abc'])
+    expect(out.map(v => v.source)).toEqual(['default', 'default', 'cloned'])
+  })
+  it('does not duplicate a cloned id that also appears in options', () => {
+    const out = galleryVoices(['voice_abc'], cloned)
+    expect(out.filter(v => v.id === 'voice_abc')).toHaveLength(1)
+  })
+  it('omits option ids that are neither known defaults nor cloned', () => {
+    const out = galleryVoices(['Wise_Woman', 'ghost_id'], cloned)
+    expect(out.map(v => v.id)).toEqual(['Wise_Woman', 'voice_abc'])
   })
 })
