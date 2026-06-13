@@ -14,6 +14,7 @@ import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveCl
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import { useNodeClipboard } from '~/composables/useNodeClipboard'
 import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -183,6 +184,8 @@ function getSelectedNodeIds(): string[] {
 function getSelectedEdgeIds(): string[] {
   return (edges.value as any[]).filter(e => e.selected).map(e => e.id)
 }
+
+const nodeClipboard = useNodeClipboard()
 
 // Undo / redo — snapshots nodes+edges on a short debounce. The `isRestoring`
 // guard prevents the watcher from snapshotting our own programmatic restore.
@@ -506,6 +509,18 @@ function onGlobalKey(e: KeyboardEvent) {
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedArrowId.value && !isTypingTarget()) {
     deleteSelectedArrow()
     e.preventDefault()
+    return
+  }
+  // Cmd/Ctrl+C copies the selected node(s); Cmd/Ctrl+V pastes at the cursor.
+  // Guarded so real text copy/paste in fields (and copying a text selection)
+  // still works. Handled here, before the modifier-return below.
+  const mod = e.metaKey || e.ctrlKey
+  if (mod && (e.key === 'c' || e.key === 'C') && !isTypingTarget() && !hasTextSelection()) {
+    if (copySelection()) e.preventDefault()
+    return
+  }
+  if (mod && (e.key === 'v' || e.key === 'V') && !isTypingTarget()) {
+    if (pasteClipboard()) e.preventDefault()
     return
   }
   // The rest are creation shortcuts — skip when typing or when modifier keys
@@ -3027,6 +3042,88 @@ function duplicateNodes(nodeIds: string[]) {
       data: JSON.parse(JSON.stringify(orig.data || {})),
     })
   }
+}
+
+// ---- Copy / paste (Cmd+C / Cmd+V) ----------------------------------------
+// True when the user has a real text selection — so Cmd+C copies that text
+// instead of the selected node(s).
+function hasTextSelection(): boolean {
+  const sel = typeof window !== 'undefined' ? window.getSelection() : null
+  return !!sel && sel.type === 'Range' && sel.toString().length > 0
+}
+
+// Snapshot the selected node(s) + the edges running between them into the
+// in-app clipboard. Returns false (so the keydown handler doesn't preventDefault)
+// when there's nothing selected to copy.
+function copySelection(): boolean {
+  const ids = getSelectedNodeIds()
+  if (!ids.length) return false
+  const set = new Set(ids)
+  const clipNodes = (nodes.value as any[])
+    .filter(n => set.has(n.id))
+    .map(n => ({
+      id: n.id,
+      type: n.type,
+      position: { x: n.position.x, y: n.position.y },
+      data: JSON.parse(JSON.stringify(n.data || {})),
+    }))
+  const clipEdges = (edges.value as any[])
+    .filter(ed => set.has(ed.source) && set.has(ed.target))
+    .map(ed => ({
+      source: ed.source,
+      target: ed.target,
+      sourceHandle: ed.sourceHandle ?? null,
+      targetHandle: ed.targetHandle ?? null,
+      type: ed.type,
+      data: ed.data ? JSON.parse(JSON.stringify(ed.data)) : undefined,
+    }))
+  nodeClipboard.write({ nodes: clipNodes, edges: clipEdges })
+  return true
+}
+
+// Drop the clipboard's node(s) at the cursor, preserving relative layout and
+// the internal wiring, then select the fresh copies. Repeated Cmd+V keeps
+// pasting at the current cursor position. IDs stay numeric — the workflow
+// conversion parseInts them (see materializeAutoImageSinks).
+function pasteClipboard(): boolean {
+  const clip = nodeClipboard.read()
+  if (!clip || !clip.nodes.length) return false
+  const ox = Math.min(...clip.nodes.map(n => n.position.x))
+  const oy = Math.min(...clip.nodes.map(n => n.position.y))
+  const screen = lastMouseClient ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  const target = project(screen)
+
+  // Clear the existing selection so the pasted nodes become the selection.
+  for (const n of (nodes.value as any[])) if (n.selected) n.selected = false
+
+  let seed = Date.now()
+  const idMap = new Map<string, string>()
+  for (const cn of clip.nodes) {
+    const newId = String(seed++)
+    idMap.set(cn.id, newId)
+    nodes.value.push({
+      id: newId,
+      type: cn.type,
+      position: { x: target.x + (cn.position.x - ox), y: target.y + (cn.position.y - oy) },
+      selected: true,
+      data: JSON.parse(JSON.stringify(cn.data)),
+    } as any)
+  }
+  for (const ce of clip.edges) {
+    const s = idMap.get(ce.source)
+    const t = idMap.get(ce.target)
+    if (!s || !t) continue
+    edges.value.push({
+      id: `e-paste-${s}-${t}-${ce.sourceHandle || ''}-${ce.targetHandle || ''}`,
+      source: s,
+      sourceHandle: ce.sourceHandle ?? undefined,
+      target: t,
+      targetHandle: ce.targetHandle ?? undefined,
+      type: ce.type || 'comfy',
+      data: ce.data ? JSON.parse(JSON.stringify(ce.data)) : undefined,
+    } as any)
+  }
+  return true
 }
 
 function deleteNodes(nodeIds: string[]) {
