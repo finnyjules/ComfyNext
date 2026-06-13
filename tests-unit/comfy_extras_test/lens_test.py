@@ -55,3 +55,38 @@ def test_bokeh_kernel_hexagonal_normalized_and_shaped():
     k = _lens.bokeh_kernel("hexagonal", 5)
     assert abs(float(k.sum()) - 1.0) < 1e-5    # normalized
     assert k[5].sum() >= k[:, 5].sum()          # flat-top: middle row at least as wide as middle col
+
+
+def test_chromatic_aberration_identity_at_zero():
+    img = torch.rand(1, 12, 12, 3)
+    assert torch.allclose(_lens.chromatic_aberration(img, 0.0), img, atol=1e-6)
+
+
+def test_chromatic_aberration_shifts_channels():
+    img = torch.rand(1, 16, 16, 3)
+    out = _lens.chromatic_aberration(img, 0.5)
+    assert not torch.allclose(out, img, atol=1e-4)
+
+
+def test_vignette_darkens_corners():
+    img = torch.ones(1, 21, 21, 3)
+    out = _lens.vignette(img, 0.8)
+    center = float(out[0, 10, 10].mean())
+    corner = float(out[0, 0, 0].mean())
+    assert corner < center
+    assert torch.allclose(_lens.vignette(img, 0.0), img, atol=1e-6)
+
+
+def test_focal_compression_identity_at_zero():
+    img = torch.rand(1, 16, 16, 3)
+    depth = torch.rand(16, 16)
+    assert torch.allclose(_lens.focal_compression(img, depth, 0.0), img, atol=1e-5)
+
+
+def test_resolve_params_preset_then_overrides():
+    base = _lens.resolve_params("Custom", {})
+    assert base["bokeh_shape"] == _lens.DEFAULT_PARAMS["bokeh_shape"]
+    portrait = _lens.resolve_params("85mm Portrait", {})
+    assert portrait == {**_lens.DEFAULT_PARAMS, **_lens.LENS_PRESETS["85mm Portrait"]}
+    overridden = _lens.resolve_params("85mm Portrait", {"vignette": 0.9})
+    assert overridden["vignette"] == 0.9

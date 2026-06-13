@@ -92,3 +92,90 @@ def render_dof(image: torch.Tensor, coc: torch.Tensor, *,
         w_i = (1.0 - (cf - i).abs()).clamp(0, 1)             # tent weight at level i
         out = out + pyr[i] * w_i.view(1, 1, *w_i.shape)
     return _to_hwc(out).clamp(0, 1)
+
+
+def chromatic_aberration(image: torch.Tensor, amount: float) -> torch.Tensor:
+    """Radial per-channel scale: red samples slightly outward, blue inward."""
+    if amount <= 0:
+        return image
+    bchw = _to_bchw(image)
+    _, c, h, w = bchw.shape
+    ys = torch.linspace(-1, 1, h)
+    xs = torch.linspace(-1, 1, w)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    base = torch.stack((gx, gy), dim=-1).unsqueeze(0)       # [1,H,W,2]
+    a = float(amount) * 0.03
+    out = bchw.clone()
+    for ch, scale in ((0, 1.0 + a), (2, 1.0 - a)):           # R out, B in
+        grid = base * scale
+        sampled = F.grid_sample(bchw[:, ch:ch + 1], grid, mode="bilinear",
+                                padding_mode="border", align_corners=True)
+        out[:, ch:ch + 1] = sampled
+    return _to_hwc(out).clamp(0, 1)
+
+
+def vignette(image: torch.Tensor, amount: float) -> torch.Tensor:
+    """Radial edge darkening. amount in [0,1]; 0 = no-op."""
+    if amount <= 0:
+        return image
+    bchw = _to_bchw(image)
+    _, _, h, w = bchw.shape
+    ys = torch.linspace(-1, 1, h)
+    xs = torch.linspace(-1, 1, w)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    r = (gx * gx + gy * gy).sqrt().clamp(0, 1)
+    mask = 1.0 - float(amount) * (r ** 2)
+    out = bchw * mask.view(1, 1, h, w)
+    return _to_hwc(out).clamp(0, 1)
+
+
+def focal_compression(image: torch.Tensor, depth: torch.Tensor, focal_length: float,
+                      center=(0.5, 0.5)) -> torch.Tensor:
+    """Depth-scaled resample that reads as wide↔telephoto compression. Positive
+    focal_length pulls far (low-depth) pixels toward the center (telephoto);
+    negative pushes them out (wide). 0 = identity. No disocclusion holes —
+    this is a believable look, not a true reprojection."""
+    if abs(focal_length) < 1e-6:
+        return image
+    bchw = _to_bchw(image)
+    _, _, h, w = bchw.shape
+    ys = torch.linspace(-1, 1, h)
+    xs = torch.linspace(-1, 1, w)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    cx = (float(center[0]) * 2 - 1)
+    cy = (float(center[1]) * 2 - 1)
+    far = (1.0 - depth).clamp(0, 1)                         # 1 = farthest
+    k = 1.0 - float(focal_length) * 0.25 * far              # per-pixel zoom factor
+    sx = (gx - cx) * k + cx
+    sy = (gy - cy) * k + cy
+    grid = torch.stack((sx, sy), dim=-1).unsqueeze(0)
+    out = F.grid_sample(bchw, grid, mode="bilinear", padding_mode="border", align_corners=True)
+    return _to_hwc(out).clamp(0, 1)
+
+
+# Character-param defaults (NOT focus/aperture — those are always user-driven).
+DEFAULT_PARAMS: dict = {
+    "bokeh_shape": "circular",
+    "highlight_bokeh": 0.3,
+    "chromatic_aberration": 0.0,
+    "vignette": 0.0,
+    "focal_length": 0.0,
+}
+
+# Presets override a subset of the character params. "Custom" = no overrides.
+LENS_PRESETS: dict[str, dict] = {
+    "Custom": {},
+    "85mm Portrait": {"bokeh_shape": "circular", "highlight_bokeh": 0.6, "vignette": 0.25, "focal_length": 0.6},
+    "Vintage Swirly": {"bokeh_shape": "circular", "highlight_bokeh": 0.5, "chromatic_aberration": 0.4, "vignette": 0.5},
+    "Anamorphic": {"bokeh_shape": "anamorphic", "highlight_bokeh": 0.7, "chromatic_aberration": 0.2, "focal_length": 0.3},
+    "Clean": {"bokeh_shape": "hexagonal", "highlight_bokeh": 0.2, "chromatic_aberration": 0.0, "vignette": 0.0},
+}
+
+PRESETS = list(LENS_PRESETS.keys())
+
+
+def resolve_params(preset: str, overrides: dict) -> dict:
+    """DEFAULT_PARAMS < preset < explicit overrides (only keys present in overrides)."""
+    out = {**DEFAULT_PARAMS, **LENS_PRESETS.get(preset, {})}
+    out.update({k: v for k, v in overrides.items() if k in DEFAULT_PARAMS})
+    return out
