@@ -12,6 +12,8 @@ import torch.nn.functional as F
 
 _SQRT3_2 = math.sqrt(3) / 2.0          # sin(60°): hexagon flat-top half-plane slope
 _ANAMORPHIC_STRETCH = 1.8              # anamorphic bokeh horizontal:vertical stretch
+_CA_SCALE = 0.03                      # chromatic aberration: pixel shift per unit amount (fraction of half-frame)
+_FC_SCALE = 0.25                      # focal compression: max zoom delta per unit focal_length
 
 
 def _to_bchw(img: torch.Tensor) -> torch.Tensor:
@@ -99,12 +101,13 @@ def chromatic_aberration(image: torch.Tensor, amount: float) -> torch.Tensor:
     if amount <= 0:
         return image
     bchw = _to_bchw(image)
-    _, c, h, w = bchw.shape
-    ys = torch.linspace(-1, 1, h)
-    xs = torch.linspace(-1, 1, w)
+    _, _, h, w = bchw.shape
+    dev, dt = bchw.device, bchw.dtype
+    ys = torch.linspace(-1, 1, h, device=dev, dtype=dt)
+    xs = torch.linspace(-1, 1, w, device=dev, dtype=dt)
     gy, gx = torch.meshgrid(ys, xs, indexing="ij")
     base = torch.stack((gx, gy), dim=-1).unsqueeze(0)       # [1,H,W,2]
-    a = float(amount) * 0.03
+    a = float(amount) * _CA_SCALE
     out = bchw.clone()
     for ch, scale in ((0, 1.0 + a), (2, 1.0 - a)):           # R out, B in
         grid = base * scale
@@ -120,11 +123,12 @@ def vignette(image: torch.Tensor, amount: float) -> torch.Tensor:
         return image
     bchw = _to_bchw(image)
     _, _, h, w = bchw.shape
-    ys = torch.linspace(-1, 1, h)
-    xs = torch.linspace(-1, 1, w)
+    dev, dt = bchw.device, bchw.dtype
+    ys = torch.linspace(-1, 1, h, device=dev, dtype=dt)
+    xs = torch.linspace(-1, 1, w, device=dev, dtype=dt)
     gy, gx = torch.meshgrid(ys, xs, indexing="ij")
     r = (gx * gx + gy * gy).sqrt().clamp(0, 1)
-    mask = 1.0 - float(amount) * (r ** 2)
+    mask = 1.0 - min(float(amount), 1.0) * (r ** 2)
     out = bchw * mask.view(1, 1, h, w)
     return _to_hwc(out).clamp(0, 1)
 
@@ -139,13 +143,14 @@ def focal_compression(image: torch.Tensor, depth: torch.Tensor, focal_length: fl
         return image
     bchw = _to_bchw(image)
     _, _, h, w = bchw.shape
-    ys = torch.linspace(-1, 1, h)
-    xs = torch.linspace(-1, 1, w)
+    dev, dt = bchw.device, bchw.dtype
+    ys = torch.linspace(-1, 1, h, device=dev, dtype=dt)
+    xs = torch.linspace(-1, 1, w, device=dev, dtype=dt)
     gy, gx = torch.meshgrid(ys, xs, indexing="ij")
     cx = (float(center[0]) * 2 - 1)
     cy = (float(center[1]) * 2 - 1)
-    far = (1.0 - depth).clamp(0, 1)                         # 1 = farthest
-    k = 1.0 - float(focal_length) * 0.25 * far              # per-pixel zoom factor
+    far = (1.0 - depth).clamp(0, 1).to(dev, dt)             # 1 = farthest
+    k = 1.0 - float(focal_length) * _FC_SCALE * far         # per-pixel zoom factor
     sx = (gx - cx) * k + cx
     sy = (gy - cy) * k + cy
     grid = torch.stack((sx, sy), dim=-1).unsqueeze(0)
