@@ -30,9 +30,19 @@ export interface EstimateInputNode {
   type: string
   title?: string
   badgeExpr?: string | null
+  category?: string | null
 }
 export interface CostBreakdownItem { id: string; label: string; usd: number }
 export interface CostEstimate { usd: number; approximate: boolean; breakdown: CostBreakdownItem[] }
+
+/** A node bills the user in USD (Replicate BYOK) rather than Comfy credits.
+ *  Most are class-named `*RemoteNode` (comfy_api_nodes/nodes_replicate.py), but
+ *  the ComfyNext wrappers that call Replicate from comfy_extras (Person Swap,
+ *  Pose Mannequin) aren't — they're caught by their `…/Replicate` category.
+ *  Stock Comfy API nodes (OpenAI, Kling, …) are credit-billed and excluded. */
+export function isReplicateBilled(n: EstimateInputNode): boolean {
+  return !!n.type?.endsWith('RemoteNode') || /\/Replicate$/.test(n.category || '')
+}
 
 /** Sum USD across the BYOK Replicate nodes in the list. Null when none are priced. */
 export function estimateUsdForNodes(nodes: EstimateInputNode[]): CostEstimate | null {
@@ -40,7 +50,7 @@ export function estimateUsdForNodes(nodes: EstimateInputNode[]): CostEstimate | 
   let approximate = false
   const breakdown: CostBreakdownItem[] = []
   for (const n of nodes) {
-    if (!n.type?.endsWith('RemoteNode')) continue
+    if (!isReplicateBilled(n)) continue
     const cost = parseBadgeUsd(n.badgeExpr)
     if (!cost) continue
     usd += cost.usd
@@ -61,5 +71,6 @@ export function vueNodesToEstimateInput(nodes: any[]): EstimateInputNode[] {
       type: String(n?.data?.nodeType || ''),
       title: n?.data?.title,
       badgeExpr: n?.data?.priceBadge?.expr ?? null,
+      category: n?.data?.category ?? null,
     }))
 }
