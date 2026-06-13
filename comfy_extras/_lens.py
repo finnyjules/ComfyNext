@@ -5,11 +5,17 @@ unit-testable. Tensors are Comfy IMAGE layout [1,H,W,3] (or [H,W,3]); depth and
 CoC are [H,W].
 """
 
+import math
+
 import torch
 import torch.nn.functional as F
 
+_SQRT3_2 = math.sqrt(3) / 2.0          # sin(60°): hexagon flat-top half-plane slope
+_ANAMORPHIC_STRETCH = 1.8              # anamorphic bokeh horizontal:vertical stretch
+
 
 def _to_bchw(img: torch.Tensor) -> torch.Tensor:
+    # Processes only the first image of a batch (Comfy nodes loop over batch externally).
     if img.ndim == 4:
         img = img[0]
     return img.permute(2, 0, 1).unsqueeze(0).float()
@@ -33,11 +39,12 @@ def bokeh_kernel(shape: str, radius: float) -> torch.Tensor:
     ax = torch.arange(size).float() - r
     yy, xx = torch.meshgrid(ax, ax, indexing="ij")
     if shape == "anamorphic":
-        mask = ((xx / 1.8) ** 2 + (yy * 1.8) ** 2) <= (r * r)
+        mask = ((xx / _ANAMORPHIC_STRETCH) ** 2 + (yy * _ANAMORPHIC_STRETCH) ** 2) <= (r * r)
     elif shape == "hexagonal":
         ax_ = xx.abs()
         ay_ = yy.abs()
-        mask = (ay_ <= r) & (ax_ * 0.8660254 + ay_ * 0.5 <= r)
+        # Flat-top hex; corners clip to the square kernel bounds at large radii (perceptually fine).
+        mask = (ay_ <= r) & (ax_ * _SQRT3_2 + ay_ * 0.5 <= r)
     else:  # circular
         mask = (xx * xx + yy * yy) <= (r * r)
     k = mask.float()
@@ -71,8 +78,13 @@ def render_dof(image: torch.Tensor, coc: torch.Tensor, *,
     if max_r < 0.5:
         return _to_hwc(bchw).clamp(0, 1)
 
+    if levels < 2:
+        return _to_hwc(_blur(bchw_src, bokeh_shape, max_r)).clamp(0, 1)
+
     radii = [max_r * i / (levels - 1) for i in range(levels)]
-    pyr = [_blur(bchw_src, bokeh_shape, r) for r in radii]   # pyr[0] = sharp
+    # pyr[0] is the sharp, UN-boosted image; only the out-of-focus layers get the
+    # highlight bloom, so in-focus highlights are not brightened.
+    pyr = [_blur(bchw if i == 0 else bchw_src, bokeh_shape, r) for i, r in enumerate(radii)]
 
     cf = (coc / max_r) * (levels - 1)                        # [H,W] in [0, levels-1]
     out = torch.zeros_like(bchw)

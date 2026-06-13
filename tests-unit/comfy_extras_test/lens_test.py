@@ -40,3 +40,18 @@ def test_render_dof_blurs_when_out_of_focus():
     out = _lens.render_dof(img, coc, bokeh_shape="circular", highlight_bokeh=0.0)
     # local variance drops when blurred
     assert out.var().item() < img.var().item()
+
+
+def test_render_dof_point_light_spreads():
+    img = torch.zeros(1, 32, 32, 3)
+    img[0, 16, 16, :] = 1.0            # single bright pixel
+    coc = torch.full((32, 32), 6.0)
+    out = _lens.render_dof(img, coc, bokeh_shape="circular")
+    assert out[0, 16, 16, 0] < 0.5             # center dimmed — energy spread out
+    assert out[0, 12:21, 12:21, :].sum() > 0.8  # energy lands in the disc region
+
+
+def test_bokeh_kernel_hexagonal_normalized_and_shaped():
+    k = _lens.bokeh_kernel("hexagonal", 5)
+    assert abs(float(k.sum()) - 1.0) < 1e-5    # normalized
+    assert k[5].sum() >= k[:, 5].sum()          # flat-top: middle row at least as wide as middle col
