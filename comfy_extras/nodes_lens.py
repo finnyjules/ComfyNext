@@ -17,11 +17,13 @@ from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, IO
 from comfy_extras._live_preview import save_live_preview
-from comfy_extras._depth import estimate_depth
+from comfy_extras._depth import estimate_depth, _depth_ready
 from comfy_extras import _lens
 
 
 class LensBlurNode(IO.ComfyNode):
+    """Depth-based depth of field — tap-to-focus + aperture + lens character."""
+
     @classmethod
     def define_schema(cls):
         return IO.Schema(
@@ -67,24 +69,33 @@ class LensBlurNode(IO.ComfyNode):
             blank = torch.zeros(1, 16, 16, 3)
             return IO.NodeOutput(blank, ui=save_live_preview(blank, uid))
 
-        img = image[0] if image.ndim == 4 else image
+        img = image[0] if image.ndim == 4 else image  # batch[0] only — interactive node
         h, w, _ = img.shape
 
         # Depth: wired (resized to image) or auto-estimated (cached).
         if depth is not None:
             d = depth[0] if depth.ndim == 4 else depth
-            if d.ndim == 3:
-                d = d.mean(dim=-1)
+            # d is now [H,W,C] (IMAGE) or [H,W] or a non-standard [1,H,W].
+            if d.ndim == 3 and d.shape[-1] <= 4:
+                d = d.mean(dim=-1)          # channels-last → [H,W]
+            elif d.ndim == 3:
+                d = d[0]                    # batch-like [1,H,W] → [H,W]
             d = torch.nn.functional.interpolate(
                 d.view(1, 1, *d.shape), size=(h, w), mode="bilinear", align_corners=False
             ).view(h, w).clamp(0, 1)
         else:
+            if not _depth_ready():
+                raise RuntimeError(
+                    "Depth model not found. Click the Lens · DoF card in the toolbox "
+                    "to download it (~100 MB)."
+                )
             d = estimate_depth(image)
 
         # Focus plane from the tapped point + offset.
         try:
             fp = json.loads(focus_point or "{}")
-            fx = float(fp.get("x", 0.5)); fy = float(fp.get("y", 0.5))
+            fx = float(fp.get("x", 0.5))
+            fy = float(fp.get("y", 0.5))
         except (json.JSONDecodeError, TypeError, ValueError):
             fx, fy = 0.5, 0.5
         px = min(w - 1, max(0, int(fx * w)))
