@@ -294,6 +294,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Crisp takes nothing but the image. Gate them so the node only shows what
   // the selected model actually uses.
   UpscaleImageNode: (name, values, defs) => isVisibleForModel('UpscaleImageNode', name, values, defs),
+  // Enhance Detail: Creative = diffusion path (prompt+seed+resemblance+steps);
+  // Faithful = Topaz controls; Diffusion Refine = SUPIR knobs.
+  EnhanceDetailNode: (name, values, defs) => isVisibleForModel('EnhanceDetailNode', name, values, defs),
   // Outpaint: Flux Fill uses a direction picker; Bria Expand uses an aspect
   // ratio. Show only the control the selected engine actually consumes.
   OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
@@ -346,6 +349,19 @@ const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
     // Crystal-only controls (philz1337x/crystal-upscaler)
     crystal_creativity:     'Crystal',
     crystal_output_format:  'Crystal',
+  },
+  // Enhance Detail engines. `image`, `model`, and `detail_strength` are always
+  // visible. Creative = diffusion path; Faithful = Topaz; Diffusion Refine = SUPIR.
+  EnhanceDetailNode: {
+    prompt:                  ['Creative', 'Diffusion Refine'],
+    resemblance:             'Creative',
+    negative_prompt:         'Creative',
+    num_inference_steps:     'Creative',
+    seed:                    ['Creative', 'Diffusion Refine'],
+    topaz_enhance_model:     'Faithful',
+    topaz_subject_detection: 'Faithful',
+    topaz_output_format:     'Faithful',
+    supir_edm_steps:         'Diffusion Refine',
   },
   OutpaintImageNode: {
     direction:    'Flux Fill',     // directional / zoom-out picker
