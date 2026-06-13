@@ -3080,7 +3080,7 @@ class EnhanceDetailNode(IO.ComfyNode):
                 "Add realistic fine detail to an image — in place, no resize.\n"
                 "• Creative — invents plausible detail, prompt-guided (Clarity, ~$0.05–0.20)\n"
                 "• Faithful — cleans & sharpens, no hallucination (Topaz, ~$0.05)\n"
-                "• Diffusion Refine — SDXL prior re-render for max realism (SUPIR, ~$0.10–0.20)\n"
+                "• Diffusion Refine — ControlNet img2img re-render for max realism (Magic Refiner, ~$0.05–0.10)\n"
                 "Detail strength drives the active engine. Prompt is used by "
                 "Creative & Diffusion Refine. To also enlarge, use the Upscale node."
             ),
@@ -3119,8 +3119,8 @@ class EnhanceDetailNode(IO.ComfyNode):
                                tooltip="(Faithful) Detect & prioritize subjects."),
                 IO.Combo.Input("topaz_output_format", options=["png", "jpg"], default="png", advanced=True,
                                tooltip="(Faithful) Output image format."),
-                # --- Diffusion Refine (SUPIR) advanced ---
-                IO.Int.Input("supir_edm_steps", default=50, min=10, max=200, advanced=True,
+                # --- Diffusion Refine (magic-image-refiner) advanced ---
+                IO.Int.Input("refine_steps", default=20, min=10, max=50, advanced=True,
                              tooltip="(Diffusion Refine) Sampling steps. More = more detail, slower."),
             ],
             outputs=[IO.Image.Output()],
@@ -3133,7 +3133,7 @@ class EnhanceDetailNode(IO.ComfyNode):
                       negative_prompt="(worst quality, low quality, normal quality:2)",
                       num_inference_steps=18, seed=0,
                       topaz_enhance_model="Standard V2", topaz_subject_detection="None",
-                      topaz_output_format="png", supir_edm_steps=50):
+                      topaz_output_format="png", refine_steps=20):
         img_url = _image_tensor_to_data_url(image)
         slug, input_dict = build_enhance_input(
             model,
@@ -3143,7 +3143,7 @@ class EnhanceDetailNode(IO.ComfyNode):
             topaz_enhance_model=topaz_enhance_model,
             topaz_subject_detection=topaz_subject_detection,
             topaz_output_format=topaz_output_format,
-            supir_edm_steps=supir_edm_steps,
+            refine_steps=refine_steps,
         )
         pred = await _run_prediction(slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
@@ -4806,7 +4806,7 @@ class ReplicateExtension(ComfyExtension):
             RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
             TextEffectNode,             # Text effect · Ideogram v3
             UpscaleImageNode,           # Upscale an image · Clarity
-            EnhanceDetailNode,          # Enhance Detail · Clarity / Topaz / SUPIR
+            EnhanceDetailNode,          # Enhance Detail · Clarity / Topaz / Magic Refiner
             RemoveBackgroundNode,       # Remove background · 851-labs/bg-remover
             RestorePhotoNode,           # Restore an old photo · Flux Kontext Restore
             FixFacesNode,               # Fix faces in a photo · CodeFormer

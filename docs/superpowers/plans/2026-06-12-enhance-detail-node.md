@@ -8,6 +8,13 @@
 
 **Tech Stack:** Python (ComfyUI custom api-node, `comfy_api.latest.IO` schema), pytest (`tests-unit/`), Vue 3 / TypeScript (Nuxt frontend).
 
+> **Post-implementation note (2026-06-12):** Live verification caught the SUPIR backend
+> (`cjwbw/supir`) as broken on Replicate (server-side xFormers/CUDA crash). The Diffusion
+> Refine engine was swapped to `fermatresearch/magic-image-refiner` (`resolution:"original"`,
+> `creativity = 0.15 + detail_strength*0.45`, `resemblance:0.75`, `steps:refine_steps`).
+> The SUPIR-specific references below (slug, `model_name`, `use_llava`, `s_cfg`, `edm_steps`,
+> `supir_edm_steps`) are superseded — see the design spec for the final mapping.
+
 ---
 
 ## Reference facts (verified — do not re-derive)

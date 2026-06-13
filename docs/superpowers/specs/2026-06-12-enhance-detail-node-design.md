@@ -51,20 +51,23 @@ Reuses the existing shared plumbing — no new infrastructure:
 |--------------------|---------------------------------|---------------------------------------------------|------------|
 | **Creative** *(default)* | `philz1337x/clarity-upscaler`   | Invents plausible fine detail, prompt-guided      | $0.05–0.20 |
 | **Faithful**       | `topazlabs/image-upscale`       | Cleans / sharpens true-to-source, no hallucination| ~$0.05     |
-| **Diffusion Refine** | `cjwbw/supir` (`model_name="SUPIR-v0Q"`) | SDXL diffusion prior re-renders for max realism   | $0.10–0.20 |
+| **Diffusion Refine** | `fermatresearch/magic-image-refiner` | ControlNet-tile img2img re-render for max realism | $0.05–0.10 |
 
 In-place is enforced per engine:
 - **Creative (Clarity):** `scale_factor = 1.0`.
 - **Faithful (Topaz):** `upscale_factor = "None"` (enhance-only mode).
-- **Diffusion Refine (SUPIR):** `upscale = 1`.
+- **Diffusion Refine (Magic Refiner):** `resolution = "original"`.
 
-> SUPIR config (VERIFIED against the model's Cog `predict.py`,
-> github.com/chenxwh/SUPIR `master/predict.py`): slug `cjwbw/supir` with
-> `model_name="SUPIR-v0Q"` (high quality, high generalization). **Must pass
-> `use_llava=false`** — it defaults to `true`, which adds a slow LLaVA-13b captioning
-> pass we don't want. The prompt feeds `a_prompt` (additional positive prompt); negative
-> is `n_prompt` (kept at default). Detail knob is `s_cfg` (range 1–20, default 7.5);
-> `s_stage2` (control strength) left at its 1.0 default; steps are `edm_steps` (1–500).
+> **Diffusion Refine backend — swapped after live verification (2026-06-12).** The
+> original design wired SUPIR (`cjwbw/supir`). Live testing showed our request was
+> accepted (all fields valid) but the model deployment itself crashes server-side
+> (`xFormers wasn't built with CUDA support` — a rotted community deployment). Replaced
+> with `fermatresearch/magic-image-refiner`, a maintained ControlNet-tile img2img
+> refiner, schema VERIFIED against its Cog `predict.py`
+> (github.com/fermatresearch/magic-image-refiner). It keeps the subject (controlnet
+> conditioning) while synthesizing new detail. `resolution="original"` keeps it in place;
+> `creativity` is the denoise strength; `resemblance` (0.75) is the controlnet conditioning
+> scale; `steps` is the sampler step count. Verified: 1024×1024 in → 1024×1024 out, ~156s.
 
 ### The `detail_strength` knob (the core UX move)
 
@@ -74,14 +77,16 @@ user never juggles per-model params:
 
 - **Creative (Clarity):** → `creativity`, mapped `0.1 + detail_strength * 0.5` (range 0.1–0.6;
   0.4 default → 0.3, the documented sweet spot). `resemblance` held at a sane default (0.6).
-- **Diffusion Refine (SUPIR):** → `s_cfg`, mapped `3.0 + detail_strength * 5.0` (range
-  3.0–8.0; 0.4 default → 5.0) so high strength = more synthesized detail without
-  artifacting. `s_stage2` left at its 1.0 default.
+- **Diffusion Refine (Magic Refiner):** → `creativity` (the denoise strength; 1.0 = total
+  destruction of the original), mapped `0.15 + detail_strength * 0.45` (range 0.15–0.60;
+  0.4 default → 0.33) — a conservative band that adds new detail without losing the
+  subject. `resemblance` held at 0.75 (model default).
 - **Faithful (Topaz):** Topaz enhance has no single strength dial → slider is a **no-op**;
   its tooltip says "Ignored by Faithful (auto)."
 
-> **Resolved:** SUPIR field names confirmed against the model's Cog `predict.py` (see
-> table note above). No remaining schema uncertainty.
+> **Resolved & verified:** all three engines confirmed via a live money-path run
+> (2026-06-12) — input fields accepted, output dimensions preserved. No remaining
+> schema uncertainty.
 
 ### Inputs (positional widget order — append-only discipline)
 
@@ -102,8 +107,7 @@ Advanced inputs (`advanced=True`, frontend-gated to their engine):
 - **Faithful:** `topaz_enhance_model` (Standard V2 / Low Resolution V2 / CGI /
   High Fidelity V2 / Text Refine), `topaz_subject_detection` (None / All / Foreground /
   Background), `topaz_output_format` (png / jpg).
-- **Diffusion Refine:** `supir_edm_steps` (e.g. 20–100, default 50),
-  `supir_variant` *(optional — only if we choose to expose v0Q vs v0F later; omit for v1)*.
+- **Diffusion Refine:** `refine_steps` (10–50, default 20).
 
 `seed` carries the same `control_after_generate=True` requirement and end-of-list caveat
 documented on `UpscaleImageNode` (the Vue bridge only reserves the seed-control slot when
@@ -128,11 +132,11 @@ elif model == "Faithful":
                    output_format: topaz_output_format }
     slug = "topazlabs/image-upscale"
 elif model == "Diffusion Refine":
-    input_dict = { image, model_name: "SUPIR-v0Q", use_llava: False, upscale: 1,
-                   a_prompt: prompt, s_cfg: 3.0 + detail_strength*5.0,
-                   edm_steps: supir_edm_steps }
+    input_dict = { image, resolution: "original", prompt,
+                   creativity: 0.15 + detail_strength*0.45, resemblance: 0.75,
+                   steps: refine_steps }
     if seed > 0: input_dict["seed"] = seed
-    slug = "cjwbw/supir"
+    slug = "fermatresearch/magic-image-refiner"
 pred = await _run_prediction(slug, input_dict)
 return IO.NodeOutput(await download_url_to_image_tensor(_first_output_url(pred), cls=cls))
 ```
@@ -151,11 +155,11 @@ Mirror the existing per-model gating in
     resemblance:             'Creative',
     negative_prompt:         'Creative',
     num_inference_steps:     'Creative',
-    seed:                    'Creative',
+    seed:                    ['Creative', 'Diffusion Refine'],
     topaz_enhance_model:     'Faithful',
     topaz_subject_detection: 'Faithful',
     topaz_output_format:     'Faithful',
-    supir_edm_steps:         'Diffusion Refine',
+    refine_steps:            'Diffusion Refine',
   }
   ```
 - Add the dispatcher line beside `UpscaleImageNode` at `ComfyNode.vue:295`:
@@ -188,19 +192,21 @@ Each is independently understandable and changeable: the engine mapping lives en
 
 ## Testing
 
-- **Manual / in-browser (primary, per app norm):** drop the node, run each of the three
-  engines on a sample generation, confirm (a) output is same dimensions as input,
-  (b) `detail_strength` visibly changes Creative + Diffusion Refine output, (c) advanced
-  widgets show/hide correctly as `model` changes, (d) result saves as a durable asset.
-- **Schema sanity:** verify SUPIR field names against the live Replicate schema before
-  first run (see implementation flag above).
-- No automated unit test harness exists for these Replicate nodes; follow the existing
-  manual-verification pattern used for sibling api-nodes.
+- **Unit (CI):** `build_enhance_input()` is pure (no torch/network), unit-tested in
+  `tests-unit/comfy_api_test/enhance_detail_test.py` — 7 cases covering all three engines,
+  the strength curves, and the seed/unknown-engine edges.
+- **Live money-path (done 2026-06-12):** a script built each engine's input via the real
+  `build_enhance_input`, sent a 1024×1024 image to Replicate, and checked the result.
+  Creative, Faithful, and Diffusion Refine all returned 1024×1024 (in place) with visible
+  detail changes; the SUPIR original was caught here as broken and swapped (see Engines note).
+- **Manual / in-browser (remaining, per app norm):** drop the node, confirm advanced widgets
+  show/hide as `model` changes, and that results save as durable assets in the Assets panel.
 
 ## Open implementation tasks (carried to the plan)
 
-1. ~~Confirm SUPIR field names~~ — **done** (verified against Cog `predict.py`).
-2. ~~Decide `detail_strength → s_cfg` curve~~ — **done** (`3.0 + strength*5.0`).
-3. Extract the engine→input mapping into a pure, CI-testable `build_enhance_input()`
-   in the dependency-light `replicate_refs.py`; unit-test it; author the thin node
-   wrapper, register it, add frontend gating, manual-verify all three engines.
+1. ~~Confirm Diffusion Refine backend + field names~~ — **done** (SUPIR broken on Replicate;
+   swapped to `fermatresearch/magic-image-refiner`, schema verified against its Cog `predict.py`).
+2. ~~Decide the `detail_strength` curve~~ — **done** (`creativity = 0.15 + strength*0.45`).
+3. ~~Extract the pure CI-testable `build_enhance_input()`, author the node, register it,
+   add frontend gating, verify all three engines~~ — **done** (live-verified 2026-06-12).
+   Remaining: in-browser widget-gating + durable-asset spot check.

@@ -280,15 +280,15 @@ def build_enhance_input(
     topaz_enhance_model: str = "Standard V2",
     topaz_subject_detection: str = "None",
     topaz_output_format: str = "png",
-    # Diffusion Refine (SUPIR) advanced
-    supir_edm_steps: int = 50,
+    # Diffusion Refine (magic-image-refiner) advanced
+    refine_steps: int = 20,
 ) -> tuple[str, dict]:
     """Map an Enhance Detail engine + detail_strength to (replicate_slug, input_dict).
 
     All three engines run *in place* (no resize):
       Creative → clarity-upscaler at scale_factor 1.0
       Faithful → topaz image-upscale in enhance-only mode (upscale_factor "None")
-      Diffusion Refine → SUPIR-v0Q at upscale 1, LLaVA captioning disabled
+      Diffusion Refine → magic-image-refiner at resolution "original"
     """
     if model == "Creative":
         body = {
@@ -315,17 +315,20 @@ def build_enhance_input(
         }
 
     if model == "Diffusion Refine":
+        # ControlNet-tile img2img refiner. `creativity` is the denoising
+        # strength (1.0 = total destruction of the original), so detail_strength
+        # maps into a conservative 0.15–0.60 band — enough to synthesize new
+        # detail without losing the subject. resolution "original" keeps it in place.
         body = {
             "image": image_url,
-            "model_name": "SUPIR-v0Q",
-            "use_llava": False,                # avoid the slow LLaVA captioning pass
-            "upscale": 1,                      # strictly in place
-            "a_prompt": prompt,
-            "s_cfg": 3.0 + float(detail_strength) * 5.0,
-            "edm_steps": int(supir_edm_steps),
+            "resolution": "original",          # strictly in place
+            "prompt": prompt,
+            "creativity": 0.15 + float(detail_strength) * 0.45,
+            "resemblance": 0.75,               # controlnet conditioning (model default)
+            "steps": int(refine_steps),
         }
         if seed and seed > 0:
             body["seed"] = int(seed)
-        return "cjwbw/supir", body
+        return "fermatresearch/magic-image-refiner", body
 
     raise ValueError(f"Unknown enhance model: {model}")

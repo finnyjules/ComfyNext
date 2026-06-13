@@ -353,7 +353,7 @@ const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
     crystal_output_format:  'Crystal',
   },
   // Enhance Detail engines. `image`, `model`, and `detail_strength` are always
-  // visible. Creative = diffusion path; Faithful = Topaz; Diffusion Refine = SUPIR.
+  // visible. Creative = Clarity; Faithful = Topaz; Diffusion Refine = Magic Refiner.
   EnhanceDetailNode: {
     prompt:                  ['Creative', 'Diffusion Refine'],
     resemblance:             'Creative',
@@ -363,7 +363,7 @@ const MODEL_GATED_WIDGETS: Record<string, Record<string, string | string[]>> = {
     topaz_enhance_model:     'Faithful',
     topaz_subject_detection: 'Faithful',
     topaz_output_format:     'Faithful',
-    supir_edm_steps:         'Diffusion Refine',
+    refine_steps:            'Diffusion Refine',
   },
   OutpaintImageNode: {
     direction:    'Flux Fill',     // directional / zoom-out picker

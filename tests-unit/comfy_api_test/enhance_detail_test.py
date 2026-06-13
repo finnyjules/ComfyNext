@@ -53,26 +53,26 @@ def test_faithful_uses_topaz_enhance_only():
     assert "scale_factor" not in body
 
 
-def test_diffusion_refine_uses_supir_v0q_no_llava():
+def test_diffusion_refine_uses_magic_image_refiner_in_place():
     slug, body = rr.build_enhance_input(
         "Diffusion Refine", image_url=IMG, prompt="portrait", detail_strength=0.4,
-        supir_edm_steps=40,
+        refine_steps=30,
     )
-    assert slug == "cjwbw/supir"
-    assert body["model_name"] == "SUPIR-v0Q"
-    assert body["use_llava"] is False
-    assert body["upscale"] == 1                  # strictly in place
-    assert body["a_prompt"] == "portrait"
-    assert body["edm_steps"] == 40
-    assert body["s_cfg"] == pytest.approx(5.0)   # 3.0 + 0.4*5.0
+    assert slug == "fermatresearch/magic-image-refiner"
+    assert body["resolution"] == "original"      # strictly in place
+    assert body["prompt"] == "portrait"
+    assert body["steps"] == 30
+    assert body["resemblance"] == pytest.approx(0.75)
+    assert body["creativity"] == pytest.approx(0.33)   # 0.15 + 0.4*0.45
 
 
-def test_diffusion_refine_s_cfg_endpoints_stay_in_range():
+def test_diffusion_refine_creativity_endpoints_stay_in_safe_band():
     _, lo = rr.build_enhance_input("Diffusion Refine", image_url=IMG, prompt="", detail_strength=0.0)
     _, hi = rr.build_enhance_input("Diffusion Refine", image_url=IMG, prompt="", detail_strength=1.0)
-    assert lo["s_cfg"] == pytest.approx(3.0)
-    assert hi["s_cfg"] == pytest.approx(8.0)
-    assert 1.0 <= lo["s_cfg"] <= 20.0 and 1.0 <= hi["s_cfg"] <= 20.0
+    assert lo["creativity"] == pytest.approx(0.15)
+    assert hi["creativity"] == pytest.approx(0.60)
+    # stay below 1.0 so the subject is never fully destroyed
+    assert 0.0 <= lo["creativity"] <= 1.0 and 0.0 <= hi["creativity"] <= 1.0
 
 
 def test_unknown_engine_raises():
