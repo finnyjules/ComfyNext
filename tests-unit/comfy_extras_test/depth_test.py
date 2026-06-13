@@ -51,3 +51,10 @@ def test_estimate_depth_recomputes_for_different_image(monkeypatch):
     _depth.estimate_depth(torch.zeros(1, 8, 8, 3))
     _depth.estimate_depth(torch.ones(1, 8, 8, 3))
     assert fake.calls == 2
+
+
+def test_flat_image_returns_zeros(monkeypatch):
+    monkeypatch.setattr(_depth, "_run_model", lambda img: torch.full((img.shape[-3], img.shape[-2]), 42.0))
+    _depth._DEPTH_CACHE.clear()
+    d = _depth.estimate_depth(torch.zeros(1, 4, 4, 3))
+    assert float(d.max()) == 0.0 and not d.isnan().any()

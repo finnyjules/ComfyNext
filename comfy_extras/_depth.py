@@ -17,13 +17,23 @@ import torch.nn.functional as F
 from comfy_extras._model_downloads import ModelBundle, loader_cache, register_bundle
 
 _HF_REPO = "depth-anything/Depth-Anything-V2-Small-hf"
-_HF_HUB_CACHE = os.path.expanduser("~/.cache/huggingface/hub")
 _CACHE_DIRNAME = "models--depth-anything--Depth-Anything-V2-Small-hf"
+
+
+def _hf_hub_cache_dir() -> str:
+    """The HuggingFace hub cache dir, honoring HUGGINGFACE_HUB_CACHE / HF_HOME."""
+    direct = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if direct:
+        return direct
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return os.path.join(hf_home, "hub")
+    return os.path.expanduser("~/.cache/huggingface/hub")
 
 
 def _depth_ready() -> bool:
     """True iff the HF snapshot for the depth model is on disk."""
-    root = os.path.join(_HF_HUB_CACHE, _CACHE_DIRNAME, "snapshots")
+    root = os.path.join(_hf_hub_cache_dir(), _CACHE_DIRNAME, "snapshots")
     if not os.path.isdir(root):
         return False
     for rev in os.listdir(root):
