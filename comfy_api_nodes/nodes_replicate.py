@@ -79,6 +79,8 @@ from comfy_api_nodes.replicate_refs import (
     _resolve_lora_url,
     _resolve_lora_weights_url,
     _resolve_trained_model,
+    build_enhance_input,
+    ENHANCE_ENGINES,
 )
 
 
@@ -3067,6 +3069,87 @@ class UpscaleImageNode(IO.ComfyNode):
         return IO.NodeOutput(tensor)
 
 
+class EnhanceDetailNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="EnhanceDetailNode",
+            display_name="Enhance Detail",
+            category="api node/image/Replicate",
+            description=(
+                "Add realistic fine detail to an image — in place, no resize.\n"
+                "• Creative — invents plausible detail, prompt-guided (Clarity, ~$0.05–0.20)\n"
+                "• Faithful — cleans & sharpens, no hallucination (Topaz, ~$0.05)\n"
+                "• Diffusion Refine — SDXL prior re-render for max realism (SUPIR, ~$0.10–0.20)\n"
+                "Detail strength drives the active engine. Prompt is used by "
+                "Creative & Diffusion Refine. To also enlarge, use the Upscale node."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=ENHANCE_ENGINES, default="Creative",
+                               tooltip="Engine. Creative invents detail; Faithful stays true; "
+                                       "Diffusion Refine re-renders for max realism."),
+                IO.Image.Input("image"),
+                IO.String.Input("prompt", multiline=True,
+                                default="masterpiece, best quality, highres",
+                                tooltip="Style prompt (Creative & Diffusion Refine). Ignored by Faithful."),
+                IO.Float.Input("detail_strength", default=0.4, min=0.0, max=1.0, step=0.05,
+                               display_mode=IO.NumberDisplay.slider,
+                               tooltip="How much new detail to add. Drives the active engine. "
+                                       "Ignored by Faithful (auto)."),
+                # --- Creative (Clarity) advanced ---
+                IO.Float.Input("resemblance", default=0.6, min=0.0, max=3.0, step=0.05, advanced=True,
+                               tooltip="(Creative) Higher = stays closer to the input."),
+                IO.String.Input("negative_prompt", default="(worst quality, low quality, normal quality:2)",
+                                advanced=True, tooltip="(Creative) What to avoid."),
+                IO.Int.Input("num_inference_steps", default=18, min=10, max=50, advanced=True,
+                             tooltip="(Creative) More steps = more detail, slower."),
+                # control_after_generate=True REQUIRED so the Vue bridge reserves the
+                # seed-control slot in widgets_values (same caveat as UpscaleImageNode).
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True,
+                             tooltip="0 = random. Used by Creative & Diffusion Refine."),
+                # --- Faithful (Topaz) advanced ---
+                IO.Combo.Input("topaz_enhance_model",
+                               options=["Standard V2", "Low Resolution V2", "CGI",
+                                        "High Fidelity V2", "Text Refine"],
+                               default="Standard V2", advanced=True,
+                               tooltip="(Faithful) Enhancement model."),
+                IO.Combo.Input("topaz_subject_detection", options=["None", "All", "Foreground", "Background"],
+                               default="None", advanced=True,
+                               tooltip="(Faithful) Detect & prioritize subjects."),
+                IO.Combo.Input("topaz_output_format", options=["png", "jpg"], default="png", advanced=True,
+                               tooltip="(Faithful) Output image format."),
+                # --- Diffusion Refine (SUPIR) advanced ---
+                IO.Int.Input("supir_edm_steps", default=50, min=10, max=200, advanced=True,
+                             tooltip="(Diffusion Refine) Sampling steps. More = more detail, slower."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.10,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image, prompt, detail_strength,
+                      resemblance=0.6,
+                      negative_prompt="(worst quality, low quality, normal quality:2)",
+                      num_inference_steps=18, seed=0,
+                      topaz_enhance_model="Standard V2", topaz_subject_detection="None",
+                      topaz_output_format="png", supir_edm_steps=50):
+        img_url = _image_tensor_to_data_url(image)
+        slug, input_dict = build_enhance_input(
+            model,
+            image_url=img_url, prompt=prompt, detail_strength=detail_strength,
+            resemblance=resemblance, negative_prompt=negative_prompt,
+            num_inference_steps=num_inference_steps, seed=seed,
+            topaz_enhance_model=topaz_enhance_model,
+            topaz_subject_detection=topaz_subject_detection,
+            topaz_output_format=topaz_output_format,
+            supir_edm_steps=supir_edm_steps,
+        )
+        pred = await _run_prediction(slug, input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor)
+
+
 # =============================================================================
 # Use case: Remove background
 # =============================================================================
@@ -4723,6 +4806,7 @@ class ReplicateExtension(ComfyExtension):
             RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
             TextEffectNode,             # Text effect · Ideogram v3
             UpscaleImageNode,           # Upscale an image · Clarity
+            EnhanceDetailNode,          # Enhance Detail · Clarity / Topaz / SUPIR
             RemoveBackgroundNode,       # Remove background · 851-labs/bg-remover
             RestorePhotoNode,           # Restore an old photo · Flux Kontext Restore
             FixFacesNode,               # Fix faces in a photo · CodeFormer
