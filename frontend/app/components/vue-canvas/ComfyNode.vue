@@ -231,6 +231,8 @@ const LIVE_PREVIEW_NODES = new Set([
   // aspect on each change; shorten `aspects` to "1x1" while editing if you
   // want faster turnaround.
   'SmartLayout',
+  // Depth-based lens / DoF (auto-reruns; depth is cached so reruns are render-only)
+  'LensBlur',
 ])
 
 // Nodes that suppress the big inline result preview in the node body: the
@@ -693,8 +695,21 @@ function _maskExtractorPointsRaw(): { x: number; y: number; label: number }[] {
 
 const maskExtractorPoints = computed(() => _maskExtractorPointsRaw())
 
+function _lensFocusPoint(): { x: number; y: number } | null {
+  if (props.data.nodeType !== 'LensBlur') return null
+  const defs = props.data.widgetDefs as any[]
+  const idx = defs?.findIndex((d: any) => d.name === 'focus_point') ?? -1
+  if (idx < 0) return null
+  try {
+    const o = JSON.parse(props.data.widgetsValues?.[idx] ?? '{}')
+    if (Number.isFinite(+o.x) && Number.isFinite(+o.y)) return { x: +o.x, y: +o.y }
+  } catch {}
+  return { x: 0.5, y: 0.5 }
+}
+const lensFocusPoint = computed(() => _lensFocusPoint())
+
 function onPreviewClick(e: MouseEvent) {
-  if (props.data.nodeType !== 'MaskExtractor') return
+  if (props.data.nodeType !== 'MaskExtractor' && props.data.nodeType !== 'LensBlur') return
   const img = e.currentTarget as HTMLImageElement
   const rect = img.getBoundingClientRect()
   const natW = img.naturalWidth || rect.width
@@ -718,6 +733,15 @@ function onPreviewClick(e: MouseEvent) {
   if (px < 0 || py < 0 || px > drawW || py > drawH) return
   const nx = Math.max(0, Math.min(1, px / drawW))
   const ny = Math.max(0, Math.min(1, py / drawH))
+
+  if (props.data.nodeType === 'LensBlur') {
+    const ldefs = props.data.widgetDefs as any[]
+    const lidx = ldefs.findIndex((d: any) => d.name === 'focus_point')
+    if (lidx < 0) return
+    if (!Array.isArray(props.data.widgetsValues)) return
+    props.data.widgetsValues[lidx] = JSON.stringify({ x: nx, y: ny })
+    return
+  }
 
   const defs = props.data.widgetDefs as any[]
   const idx = defs.findIndex((d: any) => d.name === 'points')
@@ -1457,7 +1481,7 @@ watch(previewImages, (urls) => {
           <img
             :src="src"
             class="w-full rounded-lg object-contain max-h-[300px]"
-            :class="{ 'cursor-crosshair': data.nodeType === 'MaskExtractor' }"
+            :class="{ 'cursor-crosshair': data.nodeType === 'MaskExtractor' || data.nodeType === 'LensBlur' }"
             loading="lazy"
             @load="onPreviewImgLoad"
             @click="onPreviewClick"
@@ -1477,6 +1501,22 @@ watch(previewImages, (urls) => {
               :r="Math.max(previewNaturalDims.w, previewNaturalDims.h) * 0.012"
               :fill="p.label === 1 ? '#22c55e' : '#ef4444'"
               stroke="white"
+              stroke-width="3"
+              vector-effect="non-scaling-stroke"
+            />
+          </svg>
+          <svg
+            v-if="data.nodeType === 'LensBlur' && previewNaturalDims && lensFocusPoint"
+            class="absolute inset-0 w-full h-full max-h-[300px] pointer-events-none rounded-lg"
+            :viewBox="`0 0 ${previewNaturalDims.w} ${previewNaturalDims.h}`"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <circle
+              :cx="lensFocusPoint.x * previewNaturalDims.w"
+              :cy="lensFocusPoint.y * previewNaturalDims.h"
+              :r="Math.max(previewNaturalDims.w, previewNaturalDims.h) * 0.02"
+              fill="none"
+              stroke="#fbbf24"
               stroke-width="3"
               vector-effect="non-scaling-stroke"
             />
