@@ -5,7 +5,7 @@
  * add a loader node for it (handled by VueNodeCanvas), or click to add at
  * center. Mirrors the LoRALibraryPanel / GeneratorsPanel shell.
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { LayoutGrid, Search as SearchIcon, X, Upload, Image as ImageIcon, Video as VideoIcon, Music as AudioIcon, Loader2, MoreHorizontal, EyeOff, Trash2 } from 'lucide-vue-next'
 import { useProjectGenerations, type GenAsset } from '~/composables/useProjectGenerations'
 import { useHiddenAssets } from '~/composables/useHiddenAssets'
@@ -92,6 +92,13 @@ onMounted(async () => {
     && generationsByProject.value.some((p) => p.workflowId === currentProjectId.value)
   scope.value = hasCurrent ? 'current' : 'all'
 })
+
+// While the panel stays open, a completed run won't re-trigger onMounted — so
+// refetch when default.vue signals a generation was just recorded. Without
+// this, new generations never appear until the panel is reopened/reloaded.
+function onGenerationSaved() { refreshGenerations() }
+onMounted(() => window.addEventListener('comfynext:generationSaved', onGenerationSaved))
+onBeforeUnmount(() => window.removeEventListener('comfynext:generationSaved', onGenerationSaved))
 
 // ── Resolve scope → asset list ─────────────────────────────────────────────
 const allGenerations = computed<GenAsset[]>(() =>
