@@ -1198,6 +1198,34 @@ const backendLabel = computed(() => {
   return 'Loading workflow…'
 })
 
+// First open of the heavy Vue canvas (VueNodeCanvas: Vue Flow + many node
+// components, plus Vite's first-compile in dev) mounts synchronously and blocks
+// the main thread for tens of seconds — during which the browser can't paint, so
+// nothing (not even the status pill) appears and the homepage looks frozen.
+// Fix: paint an "Opening editor…" overlay FIRST, then defer the canvas mount by
+// two animation frames so the overlay is on screen before the stall. Its
+// transform-based spinner runs on the compositor thread, so it keeps animating
+// even while JS is blocked. `canvasMountAllowed` latches true so later tab
+// switches reuse the already-mounted canvas (no re-defer).
+const canvasMountAllowed = ref(false)
+const canvasOpening = ref(false)
+watch(
+  () => vueNodesEnabled.value && activeTab.value?.type === 'project',
+  (isProject) => {
+    // Client-only: the defer/paint is meaningless on the server, and rAF doesn't
+    // exist there. canvasMountAllowed stays false during SSR (canvas not rendered),
+    // so server and client-initial agree — no hydration mismatch.
+    if (!isProject || canvasMountAllowed.value || !import.meta.client) return
+    canvasOpening.value = true
+    requestAnimationFrame(() => requestAnimationFrame(async () => {
+      canvasMountAllowed.value = true // mounts VueNodeCanvas (blocks the main thread)
+      await nextTick()
+      requestAnimationFrame(() => { canvasOpening.value = false })
+    }))
+  },
+  { immediate: true },
+)
+
 // Assign at setup time too (HMR re-runs setup but not always onMounted) so the
 // console escape hatch is always present.
 if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
@@ -2543,6 +2571,20 @@ function dismissRunResult() {
 
       <!-- Main content -->
       <main class="flex-1 overflow-auto bg-[#121212] border-t border-l border-[rgba(255,255,255,0.06)] relative">
+        <!-- Opening-editor overlay: painted BEFORE the heavy Vue canvas mounts so
+             the user gets feedback during the main-thread stall. The spinner uses a
+             transform animation (compositor thread) so it keeps spinning while JS is
+             blocked. Covers the whole main area (above the canvas/homepage). -->
+        <div
+          v-if="canvasOpening"
+          class="absolute inset-0 z-40 bg-[#121212] flex flex-col items-center justify-center gap-3"
+        >
+          <div
+            class="size-6 rounded-full border-2 border-white/10 border-t-white/50 animate-spin"
+            style="will-change: transform"
+          />
+          <span class="text-xs text-white/40">Opening editor…</span>
+        </div>
         <div v-show="activeTab.type === 'home'" class="h-full">
           <slot />
         </div>
@@ -2594,9 +2636,11 @@ function dismissRunResult() {
         >
           <AllProjectsView />
         </div>
-        <!-- Vue Node Canvas (when Modern node design enabled) -->
+        <!-- Vue Node Canvas (when Modern node design enabled). canvasMountAllowed
+             gates the FIRST mount so the opening overlay paints before this heavy
+             component blocks the main thread. -->
         <div
-          v-if="vueNodesEnabled && tabs.some((t) => t.type === 'project')"
+          v-if="vueNodesEnabled && canvasMountAllowed && tabs.some((t) => t.type === 'project')"
           v-show="activeTab.type === 'project'"
           class="absolute inset-0 z-20"
         >
