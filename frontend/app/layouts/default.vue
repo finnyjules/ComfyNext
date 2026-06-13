@@ -455,6 +455,7 @@ async function runVueWorkflow(
           type: String(wn.type || vn?.data?.nodeType || ''),
           title: vn?.data?.title,
           badgeExpr: vn?.data?.priceBadge?.expr ?? null,
+          category: vn?.data?.category ?? null,
         }
       })
     const single = estimateUsdForNodes(estInput)
@@ -817,6 +818,7 @@ onMounted(() => {
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
   ;(window as any).__reloadCanvas = forceReloadCanvas
+  if (import.meta.client) startHealthPoll()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
@@ -824,6 +826,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
+  stopHealthPoll()
 })
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
@@ -1149,11 +1152,13 @@ let currentProjectTabId: string | null = null // tracks which project tab's work
 // a fixed delay, so "new workflow" works the instant the canvas is usable (cold
 // starts can take ~a minute) rather than silently dropping early messages.
 let bridgeIsReady = false
+const bridgeReady = ref(false) // reactive mirror of bridgeIsReady for the template
 let bridgeReadyResolve: (() => void) | null = null
 let bridgeReadyPromise: Promise<void> = new Promise((r) => { bridgeReadyResolve = r })
 
 function resetBridgeReady() {
   bridgeIsReady = false
+  bridgeReady.value = false
   bridgeReadyPromise = new Promise((r) => { bridgeReadyResolve = r })
 }
 
@@ -1174,6 +1179,26 @@ function forceReloadCanvas() {
   endWorkflowLoading()
   comfyIframeSrc.value = `${comfyOrigin}/?_cb=${Date.now()}`
 }
+
+// Backend boot/ready loader. Polls the backend; on a genuine restart recovery,
+// reload the (now-stale) iframe against the fresh backend.
+const { backendUp, start: startHealthPoll, stop: stopHealthPoll } =
+  useBackendHealth(comfyOrigin, { onRecovered: () => forceReloadCanvas() })
+
+// Truly ready = backend HTTP up AND ComfyUI ready inside the iframe.
+const canvasReady = computed(() => backendUp.value && bridgeReady.value)
+const hasBeenReady = ref(false)
+watch(canvasReady, (v) => { if (v) hasBeenReady.value = true })
+
+// The status pill is "busy" while the backend/canvas isn't ready OR a workflow
+// is loading; the label reflects which.
+const backendBusy = computed(() => !canvasReady.value || workflowLoading.value)
+const backendLabel = computed(() => {
+  if (!backendUp.value) return hasBeenReady.value ? 'Reconnecting to ComfyUI…' : 'Starting ComfyUI…'
+  if (!bridgeReady.value) return 'Loading ComfyUI…'
+  return 'Loading workflow…'
+})
+
 // Assign at setup time too (HMR re-runs setup but not always onMounted) so the
 // console escape hatch is always present.
 if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
@@ -1284,6 +1309,7 @@ function waitForWorkerReady(idx: number, timeoutMs = 120000): Promise<void> {
 function markBridgeReady() {
   if (bridgeIsReady) return
   bridgeIsReady = true
+  bridgeReady.value = true
   bridgeReadyResolve?.()
 }
 
@@ -1620,6 +1646,10 @@ function flushPendingGen(creditsDelta?: number | null) {
   if (typeof creditsDelta === 'number' && creditsDelta > 0) pendingGen.record.credits = creditsDelta
   useProjects().saveGeneration(pendingGen.projectUuid, pendingGen.record, pendingGen.projectName)
   pendingGen = null
+  // Tell any open Assets panel a new generation just landed so it re-reads the
+  // server list. Without this the panel only refreshes on open, so newly
+  // generated images never show up until it's closed/reopened or reloaded.
+  window.dispatchEvent(new CustomEvent('comfynext:generationSaved'))
 }
 
 // Tally USD cost from the price_badge of every Replicate node that ran.
@@ -2791,14 +2821,9 @@ function dismissRunResult() {
             leave-to-class="opacity-0"
           >
             <div
-              v-if="!iframeReady || workflowLoading"
-              class="absolute inset-0 z-30 bg-[#121212] flex flex-col items-center justify-center gap-3"
-            >
-              <div class="size-5 border-2 border-white/10 border-t-white/40 rounded-full animate-spin" />
-              <span class="text-xs text-white/30">
-                {{ !iframeReady ? 'Starting ComfyUI…' : 'Loading workflow…' }}
-              </span>
-            </div>
+              v-if="backendBusy"
+              class="absolute inset-0 z-30 bg-[#121212]"
+            />
           </Transition>
         </div>
 
@@ -2828,6 +2853,8 @@ function dismissRunResult() {
           :percent="currentRunProgressPct"
           :started-at="executionStartTime"
           :last-result="lastRunResult"
+          :backend-busy="backendBusy"
+          :backend-label="backendLabel"
           @stop="stopFromStatusBar"
           @dismiss-result="dismissRunResult"
         />
