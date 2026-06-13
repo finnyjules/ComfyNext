@@ -13,7 +13,7 @@ export const ALL_MODEL_BUNDLES: ModelBundleKey[] = [
   'faceswap', 'bgremove', 'upscale',
   'frameinterp', 'subjecttrack',
   'facerestore', 'lipsync', 'objectremove',
-  'whisper', 'demucs',
+  'whisper', 'demucs', 'depth',
 ]
 
 export interface DownloadState {
