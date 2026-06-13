@@ -76,19 +76,24 @@ def bundle_status(key: str) -> dict:
             return actual == f.size
         return actual > 0  # unknown size — accept any non-empty download
 
-    # Library-managed bundles (whisper, demucs) override the file check with
-    # a callback. If it returns True we trust it — nothing left to download.
+    # Library-managed bundles (whisper, demucs, depth) have no enumerable files,
+    # so the callback is AUTHORITATIVE: its result decides readiness. We must not
+    # fall through to the file check below — an empty `files` list would yield an
+    # empty `missing` and falsely report ready=True for an un-downloaded bundle.
     if bundle.ready_check_fn is not None:
         try:
-            if bundle.ready_check_fn():
-                return {
-                    "ready": True,
-                    "missing": [],
-                    "total_size": sum(max(f.size, 0) for f in bundle.files),
-                    "label": bundle.label,
-                }
+            ready = bool(bundle.ready_check_fn())
         except Exception:
-            pass  # treat probe failure as not-ready; the download path will handle it
+            ready = False  # treat probe failure as not-ready; the download path handles it
+        total = sum(max(f.size, 0) for f in bundle.files)
+        return {
+            "ready": ready,
+            # Surface a single bundle-level entry when not ready so the UI knows
+            # there is something to fetch (the download runs via prepare_fn).
+            "missing": [] if ready else [{"name": bundle.label, "size": total}],
+            "total_size": total,
+            "label": bundle.label,
+        }
 
     missing = [
         {"name": f.name, "size": f.size}
