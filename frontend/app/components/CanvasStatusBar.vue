@@ -34,6 +34,8 @@ const props = defineProps<{
   percent: number
   startedAt: number | null
   lastResult: RunResult | null
+  backendBusy?: boolean
+  backendLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -65,7 +67,8 @@ function fmtSec(s: number): string {
   return `${m}m ${rest}s`
 }
 
-const view = computed<'running' | 'success' | 'error' | null>(() => {
+const view = computed<'backend' | 'running' | 'success' | 'error' | null>(() => {
+  if (props.backendBusy) return 'backend'
   if (props.running) return 'running'
   if (props.lastResult?.kind === 'error') return 'error'
   if (props.lastResult?.kind === 'success') return 'success'
@@ -86,13 +89,21 @@ const view = computed<'running' | 'success' | 'error' | null>(() => {
       v-if="view"
       class="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-[640px] px-3 py-1.5 rounded-full bg-[#1a1a1a]/95 backdrop-blur-sm border shadow-lg"
       :class="{
-        'border-white/10': view === 'running',
+        'border-white/10': view === 'running' || view === 'backend',
         'border-emerald-500/30': view === 'success',
         'border-red-500/35': view === 'error',
       }"
     >
+      <!-- Backend booting / reconnecting / loading -->
+      <template v-if="view === 'backend'">
+        <Loader2 class="size-3.5 shrink-0 animate-spin text-white/55" />
+        <span class="text-[12px] text-white/85 truncate max-w-[320px]" :title="backendLabel">
+          {{ backendLabel || 'Loading…' }}
+        </span>
+      </template>
+
       <!-- Running -->
-      <template v-if="view === 'running'">
+      <template v-else-if="view === 'running'">
         <Loader2 class="size-3.5 shrink-0 animate-spin text-comfy-blue" />
         <span class="text-[12px] text-white/85 truncate max-w-[280px]" :title="currentNode">
           {{ currentNode || 'Starting…' }}
