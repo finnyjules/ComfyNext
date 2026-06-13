@@ -51,16 +51,20 @@ Reuses the existing shared plumbing — no new infrastructure:
 |--------------------|---------------------------------|---------------------------------------------------|------------|
 | **Creative** *(default)* | `philz1337x/clarity-upscaler`   | Invents plausible fine detail, prompt-guided      | $0.05–0.20 |
 | **Faithful**       | `topazlabs/image-upscale`       | Cleans / sharpens true-to-source, no hallucination| ~$0.05     |
-| **Diffusion Refine** | `cjwbw/supir-v0q`             | SDXL diffusion prior re-renders for max realism   | $0.10–0.20 |
+| **Diffusion Refine** | `cjwbw/supir` (`model_name="SUPIR-v0Q"`) | SDXL diffusion prior re-renders for max realism   | $0.10–0.20 |
 
 In-place is enforced per engine:
 - **Creative (Clarity):** `scale_factor = 1.0`.
 - **Faithful (Topaz):** `upscale_factor = "None"` (enhance-only mode).
 - **Diffusion Refine (SUPIR):** `upscale = 1`.
 
-> SUPIR variant choice: `cjwbw/supir-v0q` (high quality, high generalization, **no LLaVA
-> captioning** → faster, no extra prompt round-trip). The v0F variant is tuned for light
-> degradation; v0Q is the better general "make it more realistic" default.
+> SUPIR config (VERIFIED against the model's Cog `predict.py`,
+> github.com/chenxwh/SUPIR `master/predict.py`): slug `cjwbw/supir` with
+> `model_name="SUPIR-v0Q"` (high quality, high generalization). **Must pass
+> `use_llava=false`** — it defaults to `true`, which adds a slow LLaVA-13b captioning
+> pass we don't want. The prompt feeds `a_prompt` (additional positive prompt); negative
+> is `n_prompt` (kept at default). Detail knob is `s_cfg` (range 1–20, default 7.5);
+> `s_stage2` (control strength) left at its 1.0 default; steps are `edm_steps` (1–500).
 
 ### The `detail_strength` knob (the core UX move)
 
@@ -70,16 +74,14 @@ user never juggles per-model params:
 
 - **Creative (Clarity):** → `creativity`, mapped `0.1 + detail_strength * 0.5` (range 0.1–0.6;
   0.4 default → 0.3, the documented sweet spot). `resemblance` held at a sane default (0.6).
-- **Diffusion Refine (SUPIR):** → text-guidance scale (`s_cfg`), mapped into a modest range
-  (≈3.0–7.5) so high strength = more synthesized detail without artifacting. `s_stage2`
-  left at default.
+- **Diffusion Refine (SUPIR):** → `s_cfg`, mapped `3.0 + detail_strength * 5.0` (range
+  3.0–8.0; 0.4 default → 5.0) so high strength = more synthesized detail without
+  artifacting. `s_stage2` left at its 1.0 default.
 - **Faithful (Topaz):** Topaz enhance has no single strength dial → slider is a **no-op**;
   its tooltip says "Ignored by Faithful (auto)."
 
-> **Implementation flag:** the exact SUPIR input field names (`s_cfg`, `s_stage2`,
-> `edm_steps`, `upscale`, prompt fields `p_p`/`n_p`, etc.) must be verified against the
-> live `cjwbw/supir-v0q` schema on Replicate before wiring — names are taken from the
-> public model page and should be confirmed, not assumed.
+> **Resolved:** SUPIR field names confirmed against the model's Cog `predict.py` (see
+> table note above). No remaining schema uncertainty.
 
 ### Inputs (positional widget order — append-only discipline)
 
@@ -126,10 +128,11 @@ elif model == "Faithful":
                    output_format: topaz_output_format }
     slug = "topazlabs/image-upscale"
 elif model == "Diffusion Refine":
-    input_dict = { image, upscale: 1, <prompt fields>: prompt,
-                   <guidance>: map(detail_strength → 3.0..7.5),
-                   <steps>: supir_edm_steps }
-    slug = "cjwbw/supir-v0q"
+    input_dict = { image, model_name: "SUPIR-v0Q", use_llava: False, upscale: 1,
+                   a_prompt: prompt, s_cfg: 3.0 + detail_strength*5.0,
+                   edm_steps: supir_edm_steps }
+    if seed > 0: input_dict["seed"] = seed
+    slug = "cjwbw/supir"
 pred = await _run_prediction(slug, input_dict)
 return IO.NodeOutput(await download_url_to_image_tensor(_first_output_url(pred), cls=cls))
 ```
@@ -196,6 +199,8 @@ Each is independently understandable and changeable: the engine mapping lives en
 
 ## Open implementation tasks (carried to the plan)
 
-1. Confirm exact `cjwbw/supir-v0q` input field names + sensible `s_cfg`/steps ranges.
-2. Decide final `detail_strength → s_cfg` curve for SUPIR.
-3. Author the node class, register it, add frontend gating, manual-verify all three engines.
+1. ~~Confirm SUPIR field names~~ — **done** (verified against Cog `predict.py`).
+2. ~~Decide `detail_strength → s_cfg` curve~~ — **done** (`3.0 + strength*5.0`).
+3. Extract the engine→input mapping into a pure, CI-testable `build_enhance_input()`
+   in the dependency-light `replicate_refs.py`; unit-test it; author the thin node
+   wrapper, register it, add frontend gating, manual-verify all three engines.
