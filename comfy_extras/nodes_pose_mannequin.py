@@ -30,7 +30,7 @@ from typing_extensions import override
 
 import folder_paths
 from comfy_api.latest import ComfyExtension, IO
-from comfy_extras._live_preview import save_live_preview
+from comfy_extras._live_preview import save_live_preview, save_generation_output
 from comfy_extras._pose_prompts import pose_instruction
 
 
@@ -106,7 +106,10 @@ class PoseMannequinNode(IO.ComfyNode):
             }
             pred = await _run_prediction("google/nano-banana-2", input_dict)
             result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-            return IO.NodeOutput(result, ui=save_live_preview(result, uid))
+            # Durable output so a freshly generated pose is recorded as an asset.
+            # The cached-bake / passthrough / blank branches below stay temp
+            # previews — re-showing a prior result must not mint a new asset.
+            return IO.NodeOutput(result, ui=save_generation_output(result, "pose"))
 
         # Image mode: re-pose from a wired reference image.
         if pose_source == "image":

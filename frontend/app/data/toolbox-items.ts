@@ -285,6 +285,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Create',
     items: [
       { nodeType: 'RotateCameraNode', label: 'Rotate Camera',   description: 'Re-render an image from a new viewpoint with a 3-axis camera gimbal. Powered by Qwen-Image-Edit. Cloud, ~$0.04.', icon: Camera },
+      { nodeType: 'RelightNode', label: 'Relight', description: 'Re-light an image — aim the light with a gimbal, set intensity, pick a preset or match a reference photo. Powered by Nano Banana 2. Cloud, ~$0.05.', icon: Lightbulb },
     ],
   },
 

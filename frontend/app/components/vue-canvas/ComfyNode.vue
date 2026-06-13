@@ -233,6 +233,13 @@ const LIVE_PREVIEW_NODES = new Set([
   'SmartLayout',
 ])
 
+// Nodes that suppress the big inline result preview in the node body: the
+// result is consumed downstream and the node is tall enough already (e.g. the
+// Relight node, whose light gimbal makes it very tall). The image still flows
+// through the output to downstream nodes, and the run button + takes strip are
+// unaffected.
+const NODES_WITHOUT_INLINE_PREVIEW = new Set(['RelightNode'])
+
 // Video nodes: hide the seed widget (and its hidden control companion) when
 // the selected model's API takes no seed (registry flag supportsSeed — e.g.
 // Kling v2.5 Turbo Pro 422s on it). Visibility is render-only; the positional
@@ -1416,7 +1423,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Media previews (images or video) -->
-    <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] p-2">
+    <div v-else-if="displayedImages.length && !NODES_WITHOUT_INLINE_PREVIEW.has(data.nodeType)" class="border-t border-[#2a2a2a] p-2">
       <template v-if="isVideo">
         <video
           v-for="(src, i) in displayedImages"
