@@ -708,6 +708,39 @@ function _lensFocusPoint(): { x: number; y: number } | null {
 }
 const lensFocusPoint = computed(() => _lensFocusPoint())
 
+// LensBlur: selecting a preset populates the character sliders (a starting
+// point the user can then tweak). Values mirror comfy_extras/_lens.py
+// LENS_PRESETS (DEFAULT_PARAMS merged with each preset's overrides).
+const LENS_PRESET_VALUES: Record<string, Record<string, any>> = {
+  '85mm Portrait': { bokeh_shape: 'circular', highlight_bokeh: 0.6, chromatic_aberration: 0.0, vignette: 0.25, focal_length: 0.6 },
+  'Vintage Swirly': { bokeh_shape: 'circular', highlight_bokeh: 0.5, chromatic_aberration: 0.4, vignette: 0.5, focal_length: 0.0 },
+  'Anamorphic': { bokeh_shape: 'anamorphic', highlight_bokeh: 0.7, chromatic_aberration: 0.2, vignette: 0.0, focal_length: 0.3 },
+  'Clean': { bokeh_shape: 'hexagonal', highlight_bokeh: 0.2, chromatic_aberration: 0.0, vignette: 0.0, focal_length: 0.0 },
+}
+
+function _widgetIndexByName(name: string): number {
+  const defs = props.data.widgetDefs as any[]
+  return defs?.findIndex((d: any) => d.name === name) ?? -1
+}
+
+// When lens_preset changes to a named preset, copy its values into the sliders.
+watch(
+  () => {
+    if (props.data.nodeType !== 'LensBlur') return undefined
+    const i = _widgetIndexByName('lens_preset')
+    return i >= 0 ? props.data.widgetsValues?.[i] : undefined
+  },
+  (preset) => {
+    if (props.data.nodeType !== 'LensBlur') return
+    const values = preset ? LENS_PRESET_VALUES[preset as string] : undefined
+    if (!values || !Array.isArray(props.data.widgetsValues)) return
+    for (const [name, val] of Object.entries(values)) {
+      const i = _widgetIndexByName(name)
+      if (i >= 0) props.data.widgetsValues[i] = val
+    }
+  },
+)
+
 function onPreviewClick(e: MouseEvent) {
   if (props.data.nodeType !== 'MaskExtractor' && props.data.nodeType !== 'LensBlur') return
   const img = e.currentTarget as HTMLImageElement
