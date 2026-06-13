@@ -1903,6 +1903,9 @@ const shotPresetGalleryOpenForId = ref<string | null>(null)
 const loraGalleryOpenForId = ref<string | null>(null)
 const loraGalleryWidgetName = ref<string>('lora_name')
 const loraGalleryKind = ref<'character' | 'style'>('style')
+const voiceGalleryOpenForId = ref<string | null>(null)
+const voiceGalleryWidgetName = ref<string>('voice_id')
+const voiceGalleryOptions = ref<string[]>([])
 
 // Any full-screen editor/gallery modal that overlays the canvas and owns the
 // keyboard while open.
@@ -1911,7 +1914,8 @@ const anyEditorModalOpen = computed(() => !!(
   poseOpenForId.value ||
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
-  textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value
+  textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
+  voiceGalleryOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
@@ -1935,6 +1939,13 @@ function handleOpenLoraGallery(e: Event) {
   loraGalleryWidgetName.value = detail.widgetName || 'lora_name'
   loraGalleryKind.value = detail.kind === 'character' ? 'character' : 'style'
   loraGalleryOpenForId.value = String(detail.nodeId)
+}
+function handleOpenVoiceGallery(e: Event) {
+  const detail = (e as CustomEvent).detail || {}
+  if (!detail.nodeId) return
+  voiceGalleryWidgetName.value = detail.widgetName || 'voice_id'
+  voiceGalleryOptions.value = Array.isArray(detail.options) ? detail.options : []
+  voiceGalleryOpenForId.value = String(detail.nodeId)
 }
 
 // Paste an image directly onto the canvas → uploads it to ComfyUI's input/
@@ -2063,6 +2074,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
+  window.addEventListener('comfynext:openVoiceGallery', handleOpenVoiceGallery)
   window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.addEventListener('comfynext:openPose', handleOpenPose)
   window.addEventListener('comfynext:poseResult', handlePoseResult)
@@ -2090,6 +2102,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
+  window.removeEventListener('comfynext:openVoiceGallery', handleOpenVoiceGallery)
   window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
   window.removeEventListener('comfynext:openPose', handleOpenPose)
   window.removeEventListener('comfynext:poseResult', handlePoseResult)
@@ -4486,6 +4499,16 @@ defineExpose({
       :widget-name="loraGalleryWidgetName"
       :kind="loraGalleryKind"
       @close="loraGalleryOpenForId = null"
+    />
+
+    <!-- Voice gallery — opened from the Generate speech voice_id launcher. -->
+    <VueCanvasVoiceGalleryModal
+      v-if="voiceGalleryOpenForId"
+      :node-id="voiceGalleryOpenForId"
+      :nodes="nodes as any[]"
+      :widget-name="voiceGalleryWidgetName"
+      :options="voiceGalleryOptions"
+      @close="voiceGalleryOpenForId = null"
     />
 
     <!-- Video model gallery — opened from the GenerateVideoNode launcher. -->

@@ -435,6 +435,18 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
+    <!-- Voice gallery launcher: replaces the voice_id dropdown on the
+         "Generate speech" node with a button that opens the voice gallery,
+         where each voice can be auditioned before selecting. -->
+    <template v-else-if="widgetDef.comfynext_widget === 'voice_picker'">
+      <VueCanvasWidgetsWidgetVoicePicker
+        :model-value="modelValue"
+        :node-id="nodeId"
+        :widget-name="widgetDef.name"
+        :options="widgetDef.options || []"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
     <!-- 3-axis camera gimbal: drives RotateCameraNode. The widget owns its
          own label and produces a JSON string {yaw,pitch,roll}. `nodeId` is
          forwarded so the widget can look up the connected image and render

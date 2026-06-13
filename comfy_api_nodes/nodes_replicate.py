@@ -3694,7 +3694,8 @@ class GenerateSpeechNode(IO.ComfyNode):
             inputs=[
                 IO.Combo.Input("model", options=["MiniMax Speech-02 HD"], default="MiniMax Speech-02 HD"),
                 IO.String.Input("text", multiline=True, default="", tooltip="What to say."),
-                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman"),
+                IO.Combo.Input("voice_id", options=_MINIMAX_VOICES, default="Wise_Woman",
+                               extra_dict={"comfynext_widget": "voice_picker"}),
                 IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
                 IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05),
                 IO.Float.Input("volume", default=1.0, min=0.1, max=10.0, step=0.1, advanced=True),
