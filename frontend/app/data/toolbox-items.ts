@@ -208,7 +208,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
   {
     title: 'Lens',
     items: [
-      { nodeType: 'LensBlur', label: 'Lens / DoF', description: 'Depth-based depth of field — tap to focus, set aperture, bokeh, vignette, focal length. Estimates depth locally; downloads ~100 MB on first use.', icon: Aperture, requiresModels: 'depth' },
+      { nodeType: 'LensBlur', label: 'Lens / DoF', description: 'Lens blur with depth — tap to focus, set aperture, bokeh and vignette. Downloads ~100 MB on first use.', icon: Focus, requiresModels: 'depth' },
       { nodeType: 'ChromaticAberration', label: 'Aberration', description: 'Offset color channels radially, simulating lens fringing.', icon: CircleDashed },
       { nodeType: 'Halftone', label: 'Halftone', description: 'Newspaper-print dot pattern.', icon: Hash },
       { nodeType: 'CRT', label: 'CRT / VHS', description: 'Scanlines, RGB stripe, chromatic offset, slight barrel.', icon: MonitorPlay },
