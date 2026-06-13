@@ -36,6 +36,8 @@ const props = defineProps<{
   lastResult: RunResult | null
   backendBusy?: boolean
   backendLabel?: string
+  backendSuccess?: boolean
+  backendSuccessLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -67,8 +69,9 @@ function fmtSec(s: number): string {
   return `${m}m ${rest}s`
 }
 
-const view = computed<'backend' | 'running' | 'success' | 'error' | null>(() => {
+const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'error' | null>(() => {
   if (props.backendBusy) return 'backend'
+  if (props.backendSuccess) return 'backend-success'
   if (props.running) return 'running'
   if (props.lastResult?.kind === 'error') return 'error'
   if (props.lastResult?.kind === 'success') return 'success'
@@ -90,7 +93,7 @@ const view = computed<'backend' | 'running' | 'success' | 'error' | null>(() => 
       class="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-[640px] px-3 py-1.5 rounded-full bg-[#1a1a1a]/95 backdrop-blur-sm border shadow-lg"
       :class="{
         'border-white/10': view === 'running' || view === 'backend',
-        'border-emerald-500/30': view === 'success',
+        'border-emerald-500/30': view === 'success' || view === 'backend-success',
         'border-red-500/35': view === 'error',
       }"
     >
@@ -100,6 +103,12 @@ const view = computed<'backend' | 'running' | 'success' | 'error' | null>(() => 
         <span class="text-[12px] text-white/85 truncate max-w-[320px]" :title="backendLabel">
           {{ backendLabel || 'Loading…' }}
         </span>
+      </template>
+
+      <!-- Backend ready: brief success flash before the pill clears. -->
+      <template v-else-if="view === 'backend-success'">
+        <CheckCircle2 class="size-3.5 shrink-0 text-emerald-400" />
+        <span class="text-[12px] text-white/85">{{ backendSuccessLabel || 'Ready' }}</span>
       </template>
 
       <!-- Running -->
