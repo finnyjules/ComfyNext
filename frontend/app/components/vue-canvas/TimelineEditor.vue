@@ -865,6 +865,7 @@ async function renderViaFFmpeg() {
   renderError.value = null
   renderResult.value = null
   renderProgress.value = null
+  isRendering.value = true
 
   const es = store.state.value
   const assetLib = assetsList.value
@@ -901,7 +902,6 @@ async function renderViaFFmpeg() {
     }
   }
 
-  isRendering.value = true
   try {
     const res = await fetch('/comfynext/render_timeline_stream', {
       method: 'POST',

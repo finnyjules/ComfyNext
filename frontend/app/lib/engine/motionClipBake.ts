@@ -19,11 +19,16 @@ export function motionClipSourceKey(clip: MotionClip, W: number, H: number, fps:
 }
 
 /** Render every clip-local frame to an offscreen canvas (transparent bg) and
- *  collect alpha PNG blobs. Caller must ensure fonts are loaded first. */
+ *  collect alpha PNG blobs. Waits for pending font loads (document.fonts.ready)
+ *  so variable-font faces are ready before rendering. */
 export async function bakeMotionClipFrames(
   clip: MotionClip, W: number, H: number, fps: number,
   onProgress?: (done: number, total: number) => void,
 ): Promise<Blob[]> {
+  // Variable fonts are triggered async by ensureMotionFonts; wait for all pending
+  // font loads to settle before touching the canvas, or the first export after a
+  // font/weight change bakes a fallback font (preview re-renders later, the bake can't).
+  await document.fonts?.ready
   const total = Math.max(1, Math.round(clip.length))
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(W))
