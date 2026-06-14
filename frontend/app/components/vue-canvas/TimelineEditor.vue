@@ -18,6 +18,7 @@ import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 import MotionClipInspector from '~/components/vue-canvas/timeline/MotionClipInspector.vue'
+import KeyframeDock from '~/components/vue-canvas/timeline/KeyframeDock.vue'
 
 const props = defineProps<{
   nodeId: string
@@ -1611,7 +1612,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
 
       <!-- Bottom: multi-track timeline -->
       <div class="border-t border-white/10 flex flex-col shrink-0"
-           :style="{ height: Math.max(220, store.state.value.tracks.length * (TRACK_HEIGHT + TRACK_GAP) + RULER_HEIGHT + 70) + 'px' }">
+           :style="{ height: Math.max(220, store.state.value.tracks.length * (TRACK_HEIGHT + TRACK_GAP) + RULER_HEIGHT + 70 + (store.selectedClip.value?.kind === 'motion' ? 158 : 0)) + 'px' }">
 
         <!-- Transport bar -->
         <div class="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 shrink-0">
@@ -1848,6 +1849,8 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             </div>
           </div>
         </div>
+
+        <KeyframeDock :px-per-frame="pxPerFrame" :scroll-x="scrollX" />
 
         <!-- Keyboard hint strip -->
         <div class="flex items-center gap-3 px-4 h-6 border-t border-white/5 text-[9px] text-white/35 tabular-nums shrink-0">
