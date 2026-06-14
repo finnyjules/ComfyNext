@@ -189,3 +189,69 @@ describe('applyCommand', () => {
     expect(stateClip.keyframes).toBeUndefined()
   })
 })
+
+import type { Track, MotionClip } from '../../shared/timeline/types'
+
+function motionState(): { state: EditState; clip: MotionClip } {
+  const clip: MotionClip = {
+    id: 'm1', kind: 'motion', start_frame: 0, in_frame: 0, length: 90,
+    x: 0, y: 0, rotation: 0, scale: 1, opacity: 1,
+    layer: { id: 'l', kind: 'text', text: 'AB', fontFamily: 'Inter', fontSize: 0.1, color: '#fff', align: 'center' },
+  }
+  const track: Track = { id: 't1', kind: 'video', name: 'V1', muted: false, locked: false, clips: [clip] }
+  const state: EditState = {
+    version: 2, canvas: { width: 1280, height: 720, fps: 30, bg_color: '#000' },
+    tracks: [track], transitions: [], total_frames: 90,
+  }
+  return { state, clip: state.tracks[0]!.clips[0] as MotionClip }
+}
+
+describe('axis keyframe commands', () => {
+  it('add_axis_keyframe creates the array and inserts sorted', () => {
+    const { state } = motionState()
+    expect(applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 1, axes: { wght: 900 } })).toBe(true)
+    expect(applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 100 } })).toBe(true)
+    const kfs = (state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes!
+    expect(kfs.map(k => k.t)).toEqual([0, 1])
+    expect(kfs[0]!.axes).toEqual({ wght: 100 })
+  })
+  it('add_axis_keyframe at an existing t merges axes', () => {
+    const { state } = motionState()
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 100 } })
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wdth: 75 } })
+    const kfs = (state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes!
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0]!.axes).toEqual({ wght: 100, wdth: 75 })
+  })
+  it('set_axis_keyframe_axes patches an existing keyframe', () => {
+    const { state } = motionState()
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0.5, axes: { wght: 400 } })
+    expect(applyCommand(state, { type: 'set_axis_keyframe_axes', clip_id: 'm1', t: 0.5, axes: { wght: 700 } })).toBe(true)
+    expect((state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes![0]!.axes.wght).toBe(700)
+  })
+  it('set_axis_keyframe_ease sets ease', () => {
+    const { state } = motionState()
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 100 } })
+    expect(applyCommand(state, { type: 'set_axis_keyframe_ease', clip_id: 'm1', t: 0, ease: 'power2.out' })).toBe(true)
+    expect((state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes![0]!.ease).toBe('power2.out')
+  })
+  it('move_axis_keyframe re-times and re-sorts', () => {
+    const { state } = motionState()
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 100 } })
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 1, axes: { wght: 900 } })
+    expect(applyCommand(state, { type: 'move_axis_keyframe', clip_id: 'm1', from_t: 0, to_t: 0.5 })).toBe(true)
+    const kfs = (state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes!
+    expect(kfs.map(k => k.t)).toEqual([0.5, 1])
+  })
+  it('remove_axis_keyframe deletes; empties to undefined', () => {
+    const { state } = motionState()
+    applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 100 } })
+    expect(applyCommand(state, { type: 'remove_axis_keyframe', clip_id: 'm1', t: 0 })).toBe(true)
+    expect((state.tracks[0]!.clips[0] as MotionClip).layer.axisKeyframes).toBeUndefined()
+  })
+  it('no-ops (false) on a non-motion clip', () => {
+    const { state } = motionState()
+    state.tracks[0]!.clips[0]!.kind = 'video' as any
+    expect(applyCommand(state, { type: 'add_axis_keyframe', clip_id: 'm1', t: 0, axes: { wght: 1 } })).toBe(false)
+  })
+})

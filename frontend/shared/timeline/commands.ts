@@ -27,6 +27,11 @@ export type TimelineCommand =
   | { type: 'move_keyframe'; clip_id: string; from_frame: number; to_frame: number }
   | { type: 'set_keyframe_ease'; clip_id: string; frame: number; ease: Keyframe['ease'] }
   | { type: 'set_clip_transform'; clip_id: string; frame: number; patch: Partial<ClipTransform> }
+  | { type: 'add_axis_keyframe'; clip_id: string; t: number; axes: Record<string, number> }
+  | { type: 'remove_axis_keyframe'; clip_id: string; t: number }
+  | { type: 'move_axis_keyframe'; clip_id: string; from_t: number; to_t: number }
+  | { type: 'set_axis_keyframe_ease'; clip_id: string; t: number; ease: string }
+  | { type: 'set_axis_keyframe_axes'; clip_id: string; t: number; axes: Record<string, number> }
   | { type: 'add_transition'; transition: Transition }
   | { type: 'update_transition'; transition_id: string; patch: Partial<Pick<Transition, 'kind' | 'duration' | 'params'>> } // re-wiring a junction = remove + add
   | { type: 'remove_transition'; transition_id: string }
@@ -57,6 +62,22 @@ function clonePayload<T>(x: T): T {
 /** Snapshot keyframe at clip-local `lf`, capturing the current transform. */
 function keyframeAt(clip: Clip, lf: number): Keyframe {
   return { frame: lf, ...interpolateClipAt(clip, lf), ease: 'linear' }
+}
+
+const T_EPS = 1e-4
+
+/** Resolve a clip id to its MotionClip layer, or null if it isn't a motion clip. */
+function findMotionLayer(s: EditState, clipId: string): import('./types').MotionTextLayer | null {
+  const hit = findClip(s, clipId)
+  if (!hit || hit.clip.kind !== 'motion') return null
+  return (hit.clip as import('./types').MotionClip).layer
+}
+
+/** Index of the axis keyframe at normalized `t` (epsilon match), or -1. */
+function axisKfIndex(layer: import('./types').MotionTextLayer, t: number): number {
+  const ks = layer.axisKeyframes
+  if (!ks) return -1
+  return ks.findIndex(k => Math.abs(k.t - t) < T_EPS)
 }
 
 /** Apply `cmd` to `s` in place. Returns false (state untouched) when the
@@ -250,6 +271,52 @@ export function applyCommand(s: EditState, cmd: TimelineCommand): boolean {
       const before = s.transitions.length
       s.transitions = s.transitions.filter(x => x.id !== cmd.transition_id)
       return s.transitions.length !== before
+    }
+
+    case 'add_axis_keyframe': {
+      const layer = findMotionLayer(s, cmd.clip_id)
+      if (!layer) return false
+      const t = Math.max(0, Math.min(1, cmd.t))
+      if (!layer.axisKeyframes) layer.axisKeyframes = []
+      const i = axisKfIndex(layer, t)
+      if (i >= 0) layer.axisKeyframes[i] = { ...layer.axisKeyframes[i], axes: { ...layer.axisKeyframes[i]!.axes, ...clonePayload(cmd.axes) } }
+      else layer.axisKeyframes.push({ t, axes: clonePayload(cmd.axes), ease: 'linear' })
+      layer.axisKeyframes.sort((a, b) => a.t - b.t)
+      return true
+    }
+
+    case 'remove_axis_keyframe': {
+      const layer = findMotionLayer(s, cmd.clip_id)
+      const i = layer ? axisKfIndex(layer, cmd.t) : -1
+      if (!layer || i < 0) return false
+      layer.axisKeyframes!.splice(i, 1)
+      if (!layer.axisKeyframes!.length) delete layer.axisKeyframes
+      return true
+    }
+
+    case 'move_axis_keyframe': {
+      const layer = findMotionLayer(s, cmd.clip_id)
+      const i = layer ? axisKfIndex(layer, cmd.from_t) : -1
+      if (!layer || i < 0) return false
+      layer.axisKeyframes![i]!.t = Math.max(0, Math.min(1, cmd.to_t))
+      layer.axisKeyframes!.sort((a, b) => a.t - b.t)
+      return true
+    }
+
+    case 'set_axis_keyframe_ease': {
+      const layer = findMotionLayer(s, cmd.clip_id)
+      const i = layer ? axisKfIndex(layer, cmd.t) : -1
+      if (!layer || i < 0) return false
+      layer.axisKeyframes![i]!.ease = cmd.ease
+      return true
+    }
+
+    case 'set_axis_keyframe_axes': {
+      const layer = findMotionLayer(s, cmd.clip_id)
+      const i = layer ? axisKfIndex(layer, cmd.t) : -1
+      if (!layer || i < 0) return false
+      layer.axisKeyframes![i] = { ...layer.axisKeyframes![i], axes: { ...layer.axisKeyframes![i]!.axes, ...clonePayload(cmd.axes) } }
+      return true
     }
   }
 }
