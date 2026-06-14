@@ -20,6 +20,12 @@ describe('defaultsFromControls', () => {
   })
 })
 
+describe('font control kind', () => {
+  it('contributes its default like any control', () => {
+    expect(defaultsFromControls([{ key: 'font', label: 'Font', kind: 'font', default: 'inter' }])).toEqual({ font: 'inter' })
+  })
+})
+
 describe('ribbonEffect contract', () => {
   it('declares an id, label, and controls', () => {
     expect(ribbonEffect.id).toBe('ribbon')

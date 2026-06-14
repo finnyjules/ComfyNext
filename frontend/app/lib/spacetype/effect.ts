@@ -8,6 +8,7 @@ export type ControlSpec =
   | { key: string; label: string; kind: 'text'; default: string }
   | { key: string; label: string; kind: 'color'; default: string }
   | { key: string; label: string; kind: 'select'; options: string[]; default: string }
+  | { key: string; label: string; kind: 'font'; default: string }
 
 /** Build the param object from a control list's declared defaults. */
 export function defaultsFromControls(controls: ControlSpec[]): Params {
