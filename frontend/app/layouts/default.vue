@@ -10,6 +10,10 @@ import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
 import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
+import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
+import { useTimelineStore } from '~/composables/useTimelineStore'
+import { createMotionClip } from '~/composables/timelineMotionClip'
+import type { SpaceTypeBake } from '~/lib/spacetype/bake'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -111,6 +115,7 @@ const loadOptions = [
   { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
   // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
+  ...(SPACE_TYPE_ENABLED ? [{ label: 'Space Type', icon: Clapperboard, special: 'space-type' }] : []),
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
@@ -128,9 +133,11 @@ function addLoadNode(nodeType: string) {
 // Load submenu click: most items drop their artifact node, but "Slate" is a
 // special entry that opens the slate gallery instead of dispatching addNode.
 const slateGalleryOpen = ref(false)
+const spaceTypeOpen = ref(false)
 function onLoadOption(opt: { nodeType?: string; special?: string }) {
   loadMenuOpen.value = false
   if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
+  if (opt.special === 'space-type') { spaceTypeOpen.value = true; return }
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
 
@@ -148,6 +155,41 @@ function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
       },
     },
   }))
+}
+
+// Space Type surface → outputs. "Add to timeline" bakes a PNG sequence the
+// surface already produced; we drop it onto the video track as a MotionClip
+// carrying motion_bake (the visual lives in the baked frames, not the text
+// layer). "Save poster" downloads the still PNG locally for v1.
+const timelineStore = useTimelineStore()
+
+function onSpaceTypeAddClip(bake: SpaceTypeBake) {
+  spaceTypeOpen.value = false
+  const videoTrack = timelineStore.state.value.tracks.find(t => t.kind === 'video')
+  if (!videoTrack) {
+    console.warn('[spacetype] No timeline video track found — add a Timeline node first.')
+    return
+  }
+  const clip = createMotionClip({ startFrame: timelineStore.playheadFrame.value, length: bake.frames.length })
+  // The visual lives entirely in the baked PNG frames, not the placeholder text layer.
+  clip.layer.text = ''
+  clip.motion_bake = { source_key: bake.source_key, frames: bake.frames, fps: bake.fps }
+  timelineStore.addClip(videoTrack.id, clip)
+  timelineStore.selectedClipId.value = clip.id
+}
+
+function onSpaceTypeSavePoster(blob: Blob) {
+  spaceTypeOpen.value = false
+  // v1: download the poster PNG locally. Promoting it into the Assets library
+  // requires the generation-record pipeline and is a deliberate follow-up.
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `space-type-poster-${Date.now()}.png`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 // Annotate submenu — FigJam-style overlays on the canvas. Each option fires
@@ -2798,6 +2840,16 @@ function dismissRunResult() {
           :active-kit="brandLib.activeKit.value ?? null"
           @close="slateGalleryOpen = false"
           @create="onCreateSlate"
+        />
+
+        <!-- Space Type surface: 3D-typography author → bake a PNG sequence onto
+             the timeline (MotionClip + motion_bake) or save a still poster. -->
+        <VueCanvasSpaceTypeSurface
+          v-if="SPACE_TYPE_ENABLED && spaceTypeOpen"
+          :open="spaceTypeOpen"
+          @close="spaceTypeOpen = false"
+          @add-clip="onSpaceTypeAddClip"
+          @save-poster="onSpaceTypeSavePoster"
         />
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
