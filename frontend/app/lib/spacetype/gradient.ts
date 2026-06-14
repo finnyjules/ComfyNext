@@ -7,7 +7,7 @@ export interface ResolvedStop { color: string; pos: number }
 export function resolveStops(stops: GradientStop[]): ResolvedStop[] {
   const on = stops.filter(s => s.on)
   if (on.length === 0) return []
-  if (on.length === 1) return [{ color: on[0].color, pos: 0 }]
+  if (on.length === 1) return [{ color: on[0]!.color, pos: 0 }]
   return on.map((s, i) => ({ color: s.color, pos: i / (on.length - 1) }))
 }
 
