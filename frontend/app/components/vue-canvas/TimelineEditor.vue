@@ -11,6 +11,8 @@ import { usePlaybackEngine } from '~/composables/usePlaybackEngine'
 import { usePlaybackEngineGL, webglPreviewSupported } from '~/composables/usePlaybackEngineGL'
 import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
+import { ensureMotionBake } from '~/lib/engine/motionClipBake'
+import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 import type { Clip, Track, BlendMode, MotionClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
@@ -866,13 +868,35 @@ async function renderViaFFmpeg() {
 
   const es = store.state.value
   const assetLib = assetsList.value
-  const payload: any = JSON.parse(JSON.stringify(es))
+  const fps = es.canvas.fps
+  const W = es.canvas.width
+  const H = es.canvas.height
 
+  // Bake any Motion clips against the REAL store clips first so motion_bake
+  // caches across exports (a re-export with no kinetic edits skips re-baking).
+  ensureMotionFonts(es)
+  for (const track of es.tracks) {
+    for (const clip of track.clips) {
+      if (clip.kind === 'motion') {
+        try {
+          await ensureMotionBake(clip as MotionClip, W, H, fps)
+        } catch (err: any) {
+          isRendering.value = false
+          renderError.value = `kinetic bake failed: ${err?.message ?? err}`
+          return
+        }
+      }
+    }
+  }
+
+  const payload: any = JSON.parse(JSON.stringify(es))
   for (const track of payload.tracks) {
     for (const clip of track.clips) {
       if (clip.kind === 'video' || clip.kind === 'image' || clip.kind === 'audio') {
         const asset = assetLib.find((a: any) => a.id === clip.asset_id)
         if (asset) clip.path = asset.path
+      } else if (clip.kind === 'motion') {
+        clip.motion_frames = clip.motion_bake?.frames ?? []
       }
     }
   }
