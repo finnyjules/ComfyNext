@@ -98,7 +98,10 @@ export interface Track {
 export interface Keyframe {
   frame: number
   x: number; y: number; rotation: number; scale: number; opacity: number
-  ease?: 'linear' | 'easeInOut'
+  /** Per-keyframe easing for the segment FROM this keyframe to the next.
+   *  The 4 lane-editor presets: linear / power2.in / power2.out / easeInOut
+   *  (easeInOut = legacy smoothstep, kept for back-compat + golden parity). */
+  ease?: 'linear' | 'easeInOut' | 'power2.in' | 'power2.out'
 }
 
 export interface BaseClip {

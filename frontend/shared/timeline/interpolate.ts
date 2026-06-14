@@ -34,9 +34,20 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
 
-function applyEase(t: number, ease?: Keyframe['ease']): number {
-  // smoothstep for easeInOut; linear otherwise.
-  return ease === 'easeInOut' ? t * t * (3 - 2 * t) : t
+/** Canonical keyframe easing for the timeline — used by BOTH transform
+ *  (interpolateClipAt) and variable-font axes (app/lib/motion/axes.ts), so the
+ *  two animate identically. Additive set: 'linear' (default) and 'easeInOut'
+ *  (legacy smoothstep) are unchanged for back-compat + golden parity; 'power2.in'
+ *  and 'power2.out' are the new presets. MIRRORED in Python `_ease`
+ *  (comfy_extras/nodes_timeline.py) for transform export parity. ease is typed
+ *  loosely (string) so axis keyframes (MotionAxisKeyframe.ease: string) share it. */
+export function applyEase(t: number, ease?: string): number {
+  switch (ease) {
+    case 'power2.in':  return t * t
+    case 'power2.out': return 1 - (1 - t) * (1 - t)
+    case 'easeInOut':  return t * t * (3 - 2 * t)  // smoothstep (legacy)
+    default:           return t                     // linear / unknown
+  }
 }
 
 export function interpolateClipAt(clip: Partial<BaseClip>, localFrame: number): ClipTransform {

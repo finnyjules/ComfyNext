@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { interpolateClipAt } from '../../shared/timeline/interpolate'
+import { interpolateClipAt, applyEase } from '../../shared/timeline/interpolate'
 
 describe('interpolateClipAt', () => {
   it('returns static scalars when no keyframes', () => {
@@ -41,5 +41,28 @@ describe('interpolateClipAt', () => {
     }
     expect(interpolateClipAt(clip, 0).x).toBeCloseTo(0.3, 10)
     expect(interpolateClipAt(clip, 99).x).toBeCloseTo(0.9, 10)
+  })
+})
+
+describe('applyEase (4 lane presets)', () => {
+  it('linear is identity', () => {
+    expect(applyEase(0.25, 'linear')).toBeCloseTo(0.25, 6)
+    expect(applyEase(0.25, undefined)).toBeCloseTo(0.25, 6)
+  })
+  it('power2.in is quadratic-in (t*t)', () => {
+    expect(applyEase(0.5, 'power2.in')).toBeCloseTo(0.25, 6)
+  })
+  it('power2.out is quadratic-out (1-(1-t)^2)', () => {
+    expect(applyEase(0.5, 'power2.out')).toBeCloseTo(0.75, 6)
+  })
+  it('easeInOut is unchanged smoothstep (golden parity)', () => {
+    expect(applyEase(0.5, 'easeInOut')).toBeCloseTo(0.5, 6)
+    expect(applyEase(0.25, 'easeInOut')).toBeCloseTo(0.15625, 6)
+  })
+  it('endpoints are fixed for every preset', () => {
+    for (const e of ['linear', 'power2.in', 'power2.out', 'easeInOut'] as const) {
+      expect(applyEase(0, e)).toBeCloseTo(0, 6)
+      expect(applyEase(1, e)).toBeCloseTo(1, 6)
+    }
   })
 })
