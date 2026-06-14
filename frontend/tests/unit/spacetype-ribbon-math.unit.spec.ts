@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { wrap01, buildRibbonLabel, tileCount, ribbonRowState, type RibbonParams } from '../../app/lib/spacetype/ribbonMath'
+import { axesToVariation } from '../../app/lib/spacetype/textTexture'
 
 const P: RibbonParams = {
   rows: 5, rowSpacing: 1, zRotation: 0.3, waveAmplitude: 0.4, waveFrequency: 2,
@@ -67,5 +68,14 @@ describe('ribbonRowState', () => {
       expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
       expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
     }
+  })
+})
+
+describe('axesToVariation', () => {
+  it('formats axes as a font-variation-settings string', () => {
+    expect(axesToVariation({ wght: 700, wdth: 120 })).toBe('"wght" 700, "wdth" 120')
+  })
+  it('returns empty string for no axes', () => {
+    expect(axesToVariation({})).toBe('')
   })
 })
