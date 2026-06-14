@@ -64,8 +64,6 @@ function texOpts() {
   }
 }
 
-async function onFontChange() { await ensureFont(String(params.font)); rebuild() }
-
 function rebuild() {
   previewFrame = 0
   engine?.build(params, texOpts())
@@ -109,7 +107,7 @@ onBeforeUnmount(() => { stopPreview(); engine?.dispose(); engine = null })
 // scale, rotateX/Y/Z are live (read per-frame). Watch a structural signature.
 watch(
   () => JSON.stringify({ ...params, speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0 }) + JSON.stringify(gradientStops),
-  () => rebuild(),
+  async () => { await ensureFont(String(params.font)); rebuild() },
 )
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
@@ -177,15 +175,15 @@ async function savePoster() {
             <option v-for="o in c.options" :key="o" :value="o">{{ o }}</option>
           </select>
           <select v-else-if="c.kind === 'font'" v-model="params[c.key]"
-                  class="w-full rounded bg-white/10 px-2 py-1" @change="onFontChange">
+                  class="w-full rounded bg-white/10 px-2 py-1">
             <option v-for="f in VARIABLE_FONTS" :key="f.id" :value="f.id">{{ f.label }}</option>
           </select>
         </div>
         <div data-control class="text-xs">
           <label class="mb-1 block text-white/60">Gradient stops</label>
           <div v-for="(s, i) in gradientStops" :key="i" class="mb-1 flex items-center gap-2">
-            <input type="checkbox" v-model="s.on" @change="rebuild" />
-            <input type="color" v-model="s.color" @change="rebuild" />
+            <input type="checkbox" v-model="s.on" />
+            <input type="color" v-model="s.color" />
           </div>
         </div>
         <div data-control class="text-xs">

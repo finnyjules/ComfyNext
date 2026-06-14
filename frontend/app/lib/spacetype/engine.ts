@@ -19,6 +19,7 @@ export class SpaceTypeEngine {
   readonly camera: THREE.PerspectiveCamera
   private effect: SpaceTypeEffect
   private root: THREE.Object3D | null = null
+  private textTex: THREE.Texture | null = null
   private opts: EngineOptions
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
@@ -72,12 +73,17 @@ export class SpaceTypeEngine {
     })
     this.scene.remove(this.root)
     this.root = null
+    const grad = this.textTex?.userData?.gradient as THREE.Texture | undefined
+    grad?.dispose?.()
+    this.textTex?.dispose()
+    this.textTex = null
   }
 
   /** (Re)build the scene from params; call when structural params change. */
   build(params: Params, texOpts: TextTextureOptions): void {
     this.disposeRoot()
     const tex = makeTextTexture(texOpts)
+    this.textTex = tex
     this.root = this.effect.buildScene(THREE, params, tex)
     this.scene.add(this.root)
   }
