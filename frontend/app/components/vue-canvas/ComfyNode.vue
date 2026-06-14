@@ -233,6 +233,8 @@ const LIVE_PREVIEW_NODES = new Set([
   'SmartLayout',
   // Depth-based lens / DoF (auto-reruns; depth is cached so reruns are render-only)
   'LensBlur',
+  // NOTE: LensReframe is intentionally NOT here — it regenerates via a paid cloud
+  // image model (nano-banana-2), so it runs only on explicit Run, not on every tweak.
 ])
 
 // Nodes that suppress the big inline result preview in the node body: the
@@ -275,6 +277,12 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // The points widget is a JSON blob managed by clicking on the preview;
   // we hide it so users don't accidentally edit raw JSON.
   MaskExtractor: (name) => name !== 'points',
+
+  // Lens · 3D Reframe: the source/target lens pickers are the focal-length strips
+  // (rendered separately in the node body), so hide the raw dropdowns. custom_focal
+  // is orphaned without a Custom chip, so hide it too — only reframe_strength shows.
+  LensReframe: (name) =>
+    name !== 'source_lens' && name !== 'target_lens' && name !== 'custom_focal',
   // ASCII: hide everything from the node body — all controls live in the
   // "More options" right panel.
   Ascii: () => false,
@@ -909,6 +917,55 @@ const outpaintGeom = computed(() => {
   }
 })
 
+// --- Lens · 3D Reframe visualizer --------------------------------------------
+// A focal-length strip (per lens) + a live field-of-view / compression diagram,
+// shown alongside the source/target dropdowns. Clicking a chip writes the matching
+// lens dropdown widget; the strips highlight whatever the dropdowns hold (two-way).
+// Mirrors comfy_extras/_lenses.py.
+const LENS_VIZ = [
+  { mm: 16, name: 'Ultra-Wide 16mm', tag: 'ultra-wide', note: 'expands the field — the foreground looms and the background is pushed far back' },
+  { mm: 24, name: 'Wide 24mm Art', tag: 'wide', note: 'environmental wide angle with gentle foreground emphasis' },
+  { mm: 35, name: 'Classic 35mm Summilux', tag: 'natural wide', note: 'relaxed, true-to-life documentary perspective' },
+  { mm: 50, name: 'Normal 50mm Planar', tag: 'neutral', note: 'eye-like field of view, no compression or distortion' },
+  { mm: 85, name: 'Portrait 85mm GM', tag: 'telephoto', note: 'flattering compression, smooth background separation' },
+  { mm: 135, name: 'Tele 135mm f/2', tag: 'strong tele', note: 'flattens depth with a narrow field of view' },
+  { mm: 200, name: 'Long 200mm', tag: 'super-tele', note: 'the scene flattens and the background stacks in tight' },
+]
+
+function lensFov(mm: number): number { return 2 * Math.atan(18 / mm) * 180 / Math.PI }
+
+function _lensWidgetVal(name: string): string | undefined {
+  const i = widgetIndex(name)
+  return i >= 0 ? props.data.widgetsValues?.[i] : undefined
+}
+function setLens(widgetName: string, lensName: string) {
+  const i = widgetIndex(widgetName)
+  if (i < 0 || !Array.isArray(props.data.widgetsValues)) return
+  props.data.widgetsValues[i] = lensName
+}
+const lensSourceName = computed(() => _lensWidgetVal('source_lens'))
+const lensTargetName = computed(() => _lensWidgetVal('target_lens'))
+
+const lensDiagram = computed(() => {
+  if (props.data.nodeType !== 'LensReframe') return null
+  const lens = LENS_VIZ.find(l => l.name === lensTargetName.value)
+  const mm = lens ? lens.mm : (Number(_lensWidgetVal('custom_focal')) || 50)
+  const ang = lensFov(mm) / 2 * Math.PI / 180
+  const camX = 26, camY = 75, reach = 264
+  const ty = Math.max(8, camY - Math.tan(ang) * reach)
+  const by = Math.min(142, camY + Math.tan(ang) * reach)
+  const t = Math.max(0, Math.min(1, (mm - 16) / 184))   // 0 wide … 1 tele
+  const bgScale = 0.45 + t * 1.15
+  return {
+    mm, camX, camY,
+    fovDeg: Math.round(lensFov(mm)),
+    fan: `M${camX} ${camY} L290 ${ty.toFixed(1)} L290 ${by.toFixed(1)} Z`,
+    bgX: (250 - t * 55).toFixed(1), bgRx: (30 * bgScale).toFixed(1), bgRy: (23 * bgScale).toFixed(1),
+    tag: lens ? lens.tag : 'custom',
+    note: (s => s.charAt(0).toUpperCase() + s.slice(1))(lens ? lens.note : `${Math.round(mm)}mm custom lens`),
+  }
+})
+
 // --- Edit as Frame (layer-splitting nodes) -----------------------------------
 // Layerize / Split-photo deconstruct a flat image into layers; this hands the
 // result to a Frame artifact (wired image layers + — for Layerize — the text
@@ -1338,6 +1395,66 @@ watch(previewImages, (urls) => {
           </div>
         </div>
       </template>
+    </div>
+
+    <!-- Lens · 3D Reframe: focal-length strips + live FOV / compression diagram.
+         Companion to the source/target dropdowns — clicking a chip writes the
+         matching lens widget; chips highlight whatever the dropdowns hold. -->
+    <div v-if="data.nodeType === 'LensReframe'" class="border-t border-[#2a2a2a] px-2.5 py-2 flex flex-col gap-2 nopan nodrag">
+      <div>
+        <div class="text-[10px] text-white/40 mb-1">Shot on</div>
+        <div class="flex gap-1">
+          <button
+            v-for="l in LENS_VIZ" :key="'s' + l.mm" :title="l.name"
+            class="flex-1 py-1 rounded-[6px] text-[10px] cursor-pointer border transition-colors"
+            :class="lensSourceName === l.name
+              ? 'bg-emerald-400/15 text-emerald-300 border-emerald-400/60'
+              : 'bg-white/[0.04] text-white/55 border-white/10 hover:bg-white/[0.08]'"
+            @click.stop="setLens('source_lens', l.name)"
+          >{{ l.mm }}</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex justify-between items-baseline mb-1">
+          <span class="text-[10px] text-white/40">Re-shoot as</span>
+          <span v-if="lensDiagram" class="text-[10px] text-emerald-300">{{ lensDiagram.mm }}mm · {{ lensDiagram.tag }}</span>
+        </div>
+        <div class="flex gap-1">
+          <button
+            v-for="l in LENS_VIZ" :key="'t' + l.mm" :title="l.name"
+            class="flex-1 py-1 rounded-[6px] text-[10px] cursor-pointer border transition-colors"
+            :class="lensTargetName === l.name
+              ? 'bg-emerald-400/15 text-emerald-300 border-emerald-400/60'
+              : 'bg-white/[0.04] text-white/55 border-white/10 hover:bg-white/[0.08]'"
+            @click.stop="setLens('target_lens', l.name)"
+          >{{ l.mm }}</button>
+        </div>
+        <div class="flex justify-between text-[9px] text-white/30 mt-1 px-0.5">
+          <span>wider</span><span>longer</span>
+        </div>
+      </div>
+
+      <div v-if="lensDiagram" class="bg-[#161617] border border-[#262628] rounded-[8px] p-1">
+        <svg viewBox="0 0 300 150" class="w-full block">
+          <line :x1="lensDiagram.camX" :y1="lensDiagram.camY" x2="290" :y2="lensDiagram.camY"
+                stroke="#2f2f31" stroke-width="1" stroke-dasharray="3 3" />
+          <path :d="lensDiagram.fan" fill="rgba(52,211,153,0.09)" stroke="rgba(52,211,153,0.45)" stroke-width="1" />
+          <ellipse :cx="lensDiagram.bgX" :cy="lensDiagram.camY + 6" :rx="lensDiagram.bgRx" :ry="lensDiagram.bgRy"
+                   fill="#2b2b2e" stroke="#3a3a3d" stroke-width="1" />
+          <g transform="translate(150,52)">
+            <circle cx="0" cy="8" r="7" fill="#d8a878" />
+            <rect x="-7" y="16" width="14" height="34" rx="6" fill="#d8a878" />
+          </g>
+          <text x="150" y="118" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.35)">subject</text>
+          <g :transform="`translate(${lensDiagram.camX - 4},${lensDiagram.camY})`">
+            <rect x="-9" y="-8" width="18" height="16" rx="3" fill="#34d399" />
+            <circle cx="0" cy="0" r="4" fill="#161617" />
+          </g>
+          <text x="150" y="13" text-anchor="middle" font-size="9.5" fill="rgba(255,255,255,0.5)">{{ lensDiagram.fovDeg }}° field of view</text>
+        </svg>
+      </div>
+      <div v-if="lensDiagram" class="text-[10px] text-white/55 text-center leading-snug">{{ lensDiagram.note }}</div>
     </div>
 
     <!-- Compositor: open the editor modal -->

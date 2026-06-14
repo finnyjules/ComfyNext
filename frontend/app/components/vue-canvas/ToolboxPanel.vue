@@ -102,12 +102,18 @@ const { download, inflight, modelsReady, probeModelStatus, ensureModels, dismiss
 
 onMounted(() => { for (const k of ALL_MODEL_BUNDLES) probeModelStatus(k) })
 
+// A card may require one bundle or several — normalize to a list.
+function requiredKeys(item: ToolboxItem): ModelBundleKey[] {
+  if (!item.requiresModels) return []
+  return Array.isArray(item.requiresModels) ? item.requiresModels : [item.requiresModels]
+}
+
 // Card-level helpers used by the template.
 function isModelMissing(item: ToolboxItem): boolean {
-  return !!item.requiresModels && !modelsReady.has(item.requiresModels)
+  return requiredKeys(item).some((k) => !modelsReady.has(k))
 }
 function isCardDownloading(item: ToolboxItem): boolean {
-  return !!item.requiresModels && download.active && inflight.has(item.requiresModels)
+  return download.active && requiredKeys(item).some((k) => inflight.has(k))
 }
 function cardProgress(): number {
   if (!download.total) return 0
@@ -119,8 +125,9 @@ function fmtMB(bytes: number): string {
 }
 
 async function handleAdd(item: ToolboxItem) {
-  if (item.requiresModels) {
-    const ok = await ensureModels(item.requiresModels)
+  // Fetch every required bundle in sequence (the download UI is single-active).
+  for (const key of requiredKeys(item)) {
+    const ok = await ensureModels(key)
     if (!ok) return  // toast already shows the error; user can retry by clicking again
   }
   addNode(item.nodeType)
@@ -144,9 +151,9 @@ function onCardDragStart(event: DragEvent, item: ToolboxItem) {
   event.dataTransfer.setData('text/plain', item.nodeType)
   event.dataTransfer.effectAllowed = 'copy'
   // Model-backed nodes are still draggable — the node instantiates on drop and
-  // its weights download on first run. Kick the download off now (background) so
-  // it's likely ready by the time they run, without blocking the drag.
-  if (item.requiresModels) ensureModels(item.requiresModels)
+  // its weights download on first run. Kick the downloads off now (background,
+  // in sequence) so they're likely ready by the time they run.
+  void (async () => { for (const key of requiredKeys(item)) await ensureModels(key) })()
   // Hide the hover-preview tooltip while a drag is in flight.
   if (enterTimer) clearTimeout(enterTimer)
   hoveredItem.value = null

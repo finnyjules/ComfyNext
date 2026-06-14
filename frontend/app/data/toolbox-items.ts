@@ -79,8 +79,9 @@ export interface ToolboxItem {
   icon: Component
   // When set, clicking the card kicks off a background download with a
   // progress toast BEFORE the node is added to the canvas. Drag is blocked
-  // until the download is done.
-  requiresModels?: ModelBundleKey
+  // until the download is done. An array fetches several bundles in sequence
+  // (e.g. 3D Reframe needs depth + the LaMa inpainter).
+  requiresModels?: ModelBundleKey | ModelBundleKey[]
 }
 
 export interface ToolboxSection {
@@ -209,6 +210,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     title: 'Lens',
     items: [
       { nodeType: 'LensBlur', label: 'Lens / DoF', description: 'Lens blur with depth — tap to focus, set aperture, bokeh and vignette. Downloads ~100 MB on first use.', icon: Focus, requiresModels: 'depth' },
+      { nodeType: 'LensReframe', label: '3D Reframe', description: 'Re-shoot on a different lens — pick what it was shot on and the lens to re-shoot as, and AI regenerates the scene at that lens’s perspective, field of view and compression. Runs on demand (cloud).', icon: Aperture },
       { nodeType: 'ChromaticAberration', label: 'Aberration', description: 'Offset color channels radially, simulating lens fringing.', icon: CircleDashed },
       { nodeType: 'Halftone', label: 'Halftone', description: 'Newspaper-print dot pattern.', icon: Hash },
       { nodeType: 'CRT', label: 'CRT / VHS', description: 'Scanlines, RGB stripe, chromatic offset, slight barrel.', icon: MonitorPlay },

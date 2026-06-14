@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -108,34 +109,67 @@ def bundle_status(key: str) -> dict:
     }
 
 
+_DL_TIMEOUT = 60          # socket read timeout (s) — generous for big-file stalls
+_DL_ATTEMPTS = 4          # tries per mirror, with HTTP-Range resume + backoff
+
+
 def _download_file(file: ModelFile, progress_cb: Callable[[int, int], None]) -> None:
-    """Stream `file` to disk trying each mirror in order. Raises only if all fail."""
+    """Stream `file` to disk trying each mirror in order. Resumable: a stalled
+    read is retried with an HTTP Range request that continues from the bytes
+    already on disk (`.part`), so a flaky connection doesn't restart a 200 MB
+    download from zero. Raises only if every mirror exhausts its attempts."""
     os.makedirs(os.path.dirname(file.path), exist_ok=True)
     tmp_path = file.path + ".part"
     errors: list[str] = []
 
     for url in file.urls:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ComfyNext/1.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp, open(tmp_path, "wb") as f:
-                total = int(resp.headers.get("Content-Length") or file.size)
-                downloaded = 0
-                chunk = 1 << 20  # 1 MiB
-                while True:
-                    buf = resp.read(chunk)
-                    if not buf:
-                        break
-                    f.write(buf)
-                    downloaded += len(buf)
-                    progress_cb(downloaded, total)
-            os.replace(tmp_path, file.path)
-            return
-        except (urllib.error.URLError, OSError) as e:
-            errors.append(f"{url.split('/')[2]}: {e}")
+        host = url.split("/")[2]
+        for attempt in range(_DL_ATTEMPTS):
+            have = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+            headers = {"User-Agent": "ComfyNext/1.0"}
+            if have:
+                headers["Range"] = f"bytes={have}-"
             try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=_DL_TIMEOUT) as resp:
+                    code = resp.getcode()
+                    # 206 = server honored our resume; 200 = it ignored Range and
+                    # is sending the whole file, so start the .part over.
+                    resuming = have > 0 and code == 206
+                    mode = "ab" if resuming else "wb"
+                    downloaded = have if resuming else 0
+                    crange = resp.headers.get("Content-Range")
+                    if crange and "/" in crange:
+                        total = int(crange.rsplit("/", 1)[-1])
+                    else:
+                        clen = int(resp.headers.get("Content-Length") or file.size)
+                        total = (downloaded + clen) if resuming else (clen or file.size)
+                    chunk = 1 << 20  # 1 MiB
+                    with open(tmp_path, mode) as f:
+                        while True:
+                            buf = resp.read(chunk)
+                            if not buf:
+                                break
+                            f.write(buf)
+                            downloaded += len(buf)
+                            progress_cb(downloaded, total)
+                # Guard against a silently-truncated stream.
+                if file.size > 0 and os.path.getsize(tmp_path) < file.size:
+                    raise OSError(f"incomplete: {os.path.getsize(tmp_path)}/{file.size} bytes")
+                os.replace(tmp_path, file.path)
+                return
+            except (urllib.error.URLError, OSError) as e:
+                errors.append(f"{host} (try {attempt + 1}/{_DL_ATTEMPTS}): {e}")
+                # A stale/oversized .part makes the server reject the Range (416);
+                # drop it so the next attempt re-fetches from scratch.
+                if isinstance(e, urllib.error.HTTPError) and e.code == 416:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                # Otherwise keep .part so the next attempt resumes where we stalled.
+                if attempt < _DL_ATTEMPTS - 1:
+                    time.sleep(min(2 ** attempt, 8))   # 1s, 2s, 4s backoff
 
     raise RuntimeError(f"All mirrors failed for {file.name}:\n  - " + "\n  - ".join(errors))
 

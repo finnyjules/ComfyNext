@@ -2563,6 +2563,7 @@ async def init_builtin_extra_nodes():
         "nodes_composite.py",
         "nodes_glsl_lens.py",
         "nodes_lens.py",
+        "nodes_lens_reframe.py",
         "nodes_glsl_stylize.py",
         "nodes_glsl_generative.py",
         "nodes_glsl_distortion.py",
