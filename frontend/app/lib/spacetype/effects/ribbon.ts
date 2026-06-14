@@ -56,8 +56,8 @@ function frontMaterial(
   gradientTex: THREE.Texture | null,
   params: Params,
   uRepeat: number,
-): THREE.MeshBasicMaterial {
-  const mat = new three.MeshBasicMaterial({ map, side: three.FrontSide })
+): THREE.MeshLambertMaterial {
+  const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
   const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
   const uAside = { value: new three.Color(String(params.aSideColor)) }
   const uGradient = { value: gradientTex ?? null }
@@ -128,7 +128,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       tex.wrapS = three.RepeatWrapping
 
       const frontMat = frontMaterial(three, tex, gradientTex, params, uRepeat)
-      const backMat = new three.MeshBasicMaterial({
+      const backMat = new three.MeshLambertMaterial({
         color: new three.Color(String(params.bSideColor)),
         side: three.BackSide,
       })
@@ -137,9 +137,9 @@ export const ribbonEffect: SpaceTypeEffect = {
       const front = new three.Mesh(bufferGeo, frontMat)
       // Fix 1: register the cloned texture so disposeRoot() frees it on rebuild.
       front.userData.tex = tex
-      front.castShadow = true
+      front.castShadow = true; front.receiveShadow = true
       const back = new three.Mesh(bufferGeo, backMat)
-      back.castShadow = true
+      back.castShadow = true; back.receiveShadow = true
 
       const subGroup = new three.Group()
       subGroup.position.y = inst.y
@@ -150,25 +150,31 @@ export const ribbonEffect: SpaceTypeEffect = {
       ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
     }
 
-    if (String(params.shadows) === 'on') {
+    const shadowsOn = String(params.shadows) === 'on'
+    const strength = n(params, 'shadowStrength')
+    // Lambert ribbons need light or they render black — always add ambient.
+    // When shadows are on, dim the ambient so the directional light's shadows are visible.
+    const ambient = new three.AmbientLight(0xffffff, shadowsOn ? Math.max(0.2, 1 - strength) : 1)
+    root.add(ambient)
+    if (shadowsOn) {
       const lx = n(params, 'lightAngleX')
       const ly = n(params, 'lightAngleY')
       const light = new three.DirectionalLight(0xffffff, 1)
-      light.position.set(Math.sin(lx) * 14, 6 + Math.sin(ly) * 8, 12)
+      light.position.set(Math.sin(lx) * 30, 12 + Math.sin(ly) * 16, 26)
       light.castShadow = true
       light.shadow.mapSize.set(2048, 2048)
       const cam = light.shadow.camera as THREE.OrthographicCamera
-      cam.left = -28; cam.right = 28; cam.top = 28; cam.bottom = -28; cam.near = 0.1; cam.far = 90
+      cam.left = -40; cam.right = 40; cam.top = 40; cam.bottom = -40; cam.near = 0.1; cam.far = 120
       cam.updateProjectionMatrix()
       light.shadow.bias = -0.0005
       root.add(light)
-      root.add(light.target) // target defaults to (0,0,0)
+      root.add(light.target)
 
       const catcher = new three.Mesh(
-        new three.PlaneGeometry(140, 140),
-        new three.ShadowMaterial({ opacity: n(params, 'shadowStrength'), transparent: true }),
+        new three.PlaneGeometry(200, 200),
+        new three.ShadowMaterial({ opacity: strength, transparent: true }),
       )
-      catcher.position.z = -6
+      catcher.position.z = -8
       catcher.receiveShadow = true
       root.add(catcher)
     }
