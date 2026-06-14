@@ -173,7 +173,7 @@ function onSpaceTypeAddClip(bake: SpaceTypeBake) {
   const clip = createMotionClip({ startFrame: timelineStore.playheadFrame.value, length: bake.frames.length })
   // The visual lives entirely in the baked PNG frames, not the placeholder text layer.
   clip.layer.text = ''
-  clip.motion_bake = { source_key: bake.source_key, frames: bake.frames, fps: bake.fps }
+  clip.motion_bake = { source_key: bake.source_key, frames: bake.frames, fps: bake.fps, external: true }
   timelineStore.addClip(videoTrack.id, clip)
   timelineStore.selectedClipId.value = clip.id
 }

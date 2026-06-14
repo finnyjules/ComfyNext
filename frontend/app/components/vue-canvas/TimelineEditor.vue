@@ -892,6 +892,9 @@ async function renderViaFFmpeg() {
   for (const track of es.tracks) {
     for (const clip of track.clips) {
       if (clip.kind === 'motion') {
+        // Externally baked (e.g. Space Type) — frames are authoritative; re-baking
+        // from the placeholder text layer would blank them.
+        if ((clip as MotionClip).motion_bake?.external) continue
         try {
           await ensureMotionBake(clip as MotionClip, W, H, fps)
         } catch (err: any) {

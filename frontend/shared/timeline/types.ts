@@ -271,6 +271,10 @@ export interface MotionBake {
   source_key: string
   frames: string[]   // input/ filenames, frame order; length === clip.length
   fps: number
+  /** True when the frames were produced by an external baker (e.g. Space Type's
+   *  Three.js engine) and the text `layer` is just a placeholder. The export
+   *  must NOT re-bake these from the layer — the frames are authoritative. */
+  external?: boolean
 }
 
 export interface MotionClip extends BaseClip {
