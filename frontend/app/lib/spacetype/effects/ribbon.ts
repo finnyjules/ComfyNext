@@ -21,9 +21,12 @@ const controls: ControlSpec[] = [
   { key: 'snakeFrequency', label: 'Snake freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5 },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.6 },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2 },
-  { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.5 },
-  { key: 'rotateY', label: 'Rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
-  { key: 'rotateZ', label: 'Rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
+  { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.5 },
+  { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
+  { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
+  { key: 'ribbonRotateX', label: 'Ribbon rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0 },
+  { key: 'ribbonRotateY', label: 'Ribbon rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0 },
+  { key: 'ribbonRotateZ', label: 'Ribbon rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0 },
   { key: 'gradientMode', label: 'Gradient', kind: 'select', options: ['on', 'off'], default: 'on' },
   { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014' },
   { key: 'aSideColor', label: 'A-side', kind: 'color', default: '#f5f5f7' },
@@ -33,7 +36,7 @@ const controls: ControlSpec[] = [
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
 // promote to instance state (e.g. root.userData.ribbons) if multi-surface is ever needed.
-let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1 }[] = []
+let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group }[] = []
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -138,7 +141,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       subGroup.add(back)
       root.add(subGroup)
 
-      ribbons.push({ tex, uRepeat, dir: inst.dir })
+      ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
     }
 
     return root
@@ -149,6 +152,8 @@ export const ribbonEffect: SpaceTypeEffect = {
     for (const r of ribbons) {
       // Text scrolls along the ribbon; integer speed keeps it seamless.
       r.tex.offset.x = -scrollOffset(t01, speed, r.uRepeat) * r.dir
+      // Per-ribbon in-place rotation (each ribbon around its own sub-group origin).
+      r.group.rotation.set(n(params, 'ribbonRotateX'), n(params, 'ribbonRotateY'), n(params, 'ribbonRotateZ'))
     }
   },
 }

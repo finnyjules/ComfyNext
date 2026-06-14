@@ -106,7 +106,7 @@ onBeforeUnmount(() => { stopPreview(); engine?.dispose(); engine = null })
 // Most v2 params change geometry/material/texture and need a rebuild; only speed,
 // scale, rotateX/Y/Z are live (read per-frame). Watch a structural signature.
 watch(
-  () => JSON.stringify({ ...params, speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0 }) + JSON.stringify(gradientStops),
+  () => JSON.stringify({ ...params, speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0, ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0 }) + JSON.stringify(gradientStops),
   async () => { await ensureFont(String(params.font)); rebuild() },
 )
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
