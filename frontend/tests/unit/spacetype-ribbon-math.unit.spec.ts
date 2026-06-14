@@ -50,10 +50,12 @@ describe('ribbonRowState', () => {
     expect(r4.zRotation).toBeCloseTo(-r0.zRotation, 10)
     expect(r0.zRotation).not.toBe(0)
   })
-  it('loops seamlessly: scroll and wave phase match at t01=0 and t01->1', () => {
-    const a = ribbonRowState(0, 3, P)
-    const b = ribbonRowState(0.999999, 3, P)
-    expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 4)
-    expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 4)
+  it('loops seamlessly: scroll and wave phase at t01=1 wrap back to t01=0, for every row', () => {
+    for (let row = 0; row < P.rows; row++) {
+      const a = ribbonRowState(0, row, P)
+      const b = ribbonRowState(1, row, P)
+      expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
+      expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
+    }
   })
 })

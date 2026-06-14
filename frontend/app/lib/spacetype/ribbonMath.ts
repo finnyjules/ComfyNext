@@ -51,7 +51,7 @@ export function ribbonRowState(t01: number, row: number, p: RibbonParams): Ribbo
   const zRotation = u * p.zRotation
   const rowPhaseRad = u * p.rowPhase * TAU
   const wavePhase = t01 * p.waveCycles * TAU + rowPhaseRad
-  const scrollOffset = t01 * p.scrollSpeed * p.scrollCycles + u * p.rowPhase
+  const scrollOffset = wrap01(t01 * p.scrollSpeed * p.scrollCycles)
 
   return { y, zRotation, wavePhase, scrollOffset }
 }
