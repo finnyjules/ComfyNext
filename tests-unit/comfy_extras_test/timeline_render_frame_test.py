@@ -140,3 +140,14 @@ def test_render_timeline_to_file_still_works(tmp_path):
     assert os.path.exists(out)
     assert meta["frames"] == 10
     assert meta["size_bytes"] > 0
+
+
+def test_transform_preserve_alpha_keeps_transparency(tmp_path):
+    """preserve_alpha=True must carry the source's per-pixel alpha through;
+    the default (False) flattens to opaque (correct for opaque photo/video clips)."""
+    from PIL import Image as _Image
+    transparent_white = _Image.new("RGBA", (64, 36), (255, 255, 255, 0))
+    _rgb, alpha = NT._transform_and_alpha(transparent_white, 64, 36, 0, 0, 0, 1, preserve_alpha=True)
+    assert float(alpha.max()) == 0.0, "transparent source must stay transparent"
+    _rgb2, alpha2 = NT._transform_and_alpha(transparent_white, 64, 36, 0, 0, 0, 1)
+    assert float(alpha2.max()) > 0.0, "default path makes the fitted region opaque"

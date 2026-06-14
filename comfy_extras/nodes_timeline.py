@@ -639,7 +639,8 @@ def _hex_rgb_safe(s, fallback=(0.0, 0.0, 0.0)):
 
 
 def _transform_and_alpha(src_pil: "PILImage.Image", canvas_w: int, canvas_h: int,
-                        x: float, y: float, rotation: float, scale: float) -> tuple[np.ndarray, np.ndarray]:
+                        x: float, y: float, rotation: float, scale: float,
+                        preserve_alpha: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Aspect-fit + translate + rotate + scale a source PIL image to a
     canvas-sized RGBA buffer. Returns (rgb [H,W,3] float32, alpha [H,W,1] float32)."""
     sw, sh = src_pil.size
@@ -654,7 +655,10 @@ def _transform_and_alpha(src_pil: "PILImage.Image", canvas_w: int, canvas_h: int
     else:
         fit_h = canvas_h
         fit_w = max(1, int(round(canvas_h * sAspect)))
-    fitted = src_pil.convert("RGB").resize((fit_w, fit_h), PILImage.BILINEAR)
+    # preserve_alpha: keep the source's per-pixel alpha (baked overlays). Default:
+    # flatten to RGB then opaque RGBA (correct for photo/video clips that fill
+    # their fitted rect). The later `.convert("RGBA")` is a no-op if already RGBA.
+    fitted = src_pil.convert("RGBA" if preserve_alpha else "RGB").resize((fit_w, fit_h), PILImage.BILINEAR)
     # Scale
     s = max(0.01, float(scale))
     if s != 1.0:
