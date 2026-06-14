@@ -1,5 +1,5 @@
 import { ref, computed, watch } from 'vue'
-import type { EditState, Track, Clip, Asset, Keyframe } from '~~/shared/timeline/types'
+import type { EditState, Track, Clip, Asset, Keyframe, MotionClip } from '~~/shared/timeline/types'
 import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
 import type { ClipTransform } from '~~/shared/timeline/interpolate'
 import { applyCommand, type TimelineCommand } from '~~/shared/timeline/commands'
@@ -15,6 +15,7 @@ const playhead = ref(0)
 const isPlaying = ref(false)
 const selectedClipId = ref<string | null>(null)
 const selectedTrackId = ref<string | null>(null)
+const selectedAxisKeyframeT = ref<number | null>(null)
 
 let _nodeId: string | null = null
 let _getValue: ((name: string) => any) | null = null
@@ -48,6 +49,13 @@ export function useTimelineStore() {
   const selectedTrack = computed(() => {
     if (!selectedTrackId.value) return null
     return state.value.tracks.find(t => t.id === selectedTrackId.value) ?? null
+  })
+
+  const selectedAxisKeyframe = computed(() => {
+    const c = selectedClip.value
+    if (!c || c.kind !== 'motion' || selectedAxisKeyframeT.value === null) return null
+    const layer = (c as MotionClip).layer
+    return layer.axisKeyframes?.find(k => Math.abs(k.t - selectedAxisKeyframeT.value!) < 1e-4) ?? null
   })
 
   function bind(nodeId: string, getValue: (name: string) => any, setValue: (name: string, v: any) => void) {
@@ -192,6 +200,28 @@ export function useTimelineStore() {
     dispatch({ type: 'set_keyframe_ease', clip_id: clipId, frame, ease })
   }
 
+  // -- Axis keyframes (variable-font) --
+
+  function addAxisKeyframe(clipId: string, t: number, axes: Record<string, number>) {
+    dispatch({ type: 'add_axis_keyframe', clip_id: clipId, t: Math.max(0, Math.min(1, t)), axes })
+  }
+
+  function removeAxisKeyframeAt(clipId: string, t: number) {
+    dispatch({ type: 'remove_axis_keyframe', clip_id: clipId, t })
+  }
+
+  function moveAxisKeyframe(clipId: string, fromT: number, toT: number) {
+    dispatch({ type: 'move_axis_keyframe', clip_id: clipId, from_t: fromT, to_t: Math.max(0, Math.min(1, toT)) })
+  }
+
+  function setAxisKeyframeEase(clipId: string, t: number, ease: string) {
+    dispatch({ type: 'set_axis_keyframe_ease', clip_id: clipId, t, ease })
+  }
+
+  function setAxisKeyframeAxes(clipId: string, t: number, axes: Record<string, number>) {
+    dispatch({ type: 'set_axis_keyframe_axes', clip_id: clipId, t, axes })
+  }
+
   // Transform edit that respects keyframes: when the clip is keyframed, write to
   // (or create) the keyframe at the playhead; otherwise edit the static scalars.
   // Transform controls call this instead of updateClip.
@@ -286,6 +316,13 @@ export function useTimelineStore() {
     moveKeyframe,
     setKeyframeEase,
     updateClipTransform,
+    selectedAxisKeyframeT,
+    selectedAxisKeyframe,
+    addAxisKeyframe,
+    removeAxisKeyframeAt,
+    moveAxisKeyframe,
+    setAxisKeyframeEase,
+    setAxisKeyframeAxes,
 
     play,
     pause,
