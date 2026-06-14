@@ -88,7 +88,9 @@ export class SpaceTypeEngine {
   /** Render the scene at integer frame index. t01 = index / frameCount (no wall clock). */
   renderFrame(index: number, params: Params): void {
     const t01 = (index % this.frameCount) / this.frameCount
-    this.camera.rotation.x = Number(params.cameraTilt ?? 0)
+    this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
+    const scale = Number(params.scale ?? 1) || 1
+    this.camera.position.z = 14 / scale
     this.effect.update(t01, params)
     this.renderer.render(this.scene, this.camera)
   }
