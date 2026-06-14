@@ -37,11 +37,12 @@ Ship the ribbon effect with:
 
 ## Architecture
 
-### New dependency
+### Dependency
 
-`three` (Three.js). The natural tool for the perspective camera, geometry, and
-depth the suite needs. Effect modules stay small and readable because the 3D math
-is the library's job, not hand-rolled WebGL.
+`three` (Three.js) — **already a dependency** (`three@^0.171.0`, with
+`@types/three`); no new install needed. It's the natural tool for the perspective
+camera, geometry, and depth the suite needs, and effect modules stay small and
+readable because the 3D math is the library's job, not hand-rolled WebGL.
 
 ### Components
 
@@ -172,14 +173,25 @@ Moving/trimming the clip on the timeline does not invalidate the bake.
 
 ## Testing
 
-- **Golden-frame test:** render frame N of a fixed ribbon config; assert the
-  pixel hash matches a committed reference. Catches motion-math regressions.
-- **Seamless-loop assertion:** for a fixed config, the underlying motion state at
-  `t01 = 0` and at the loop boundary match within tolerance.
-- **Determinism assertion:** rendering the same `(config, frameIndex)` twice
-  yields identical output (no `Date.now()`/`Math.random()` leakage).
-- **Surface component tests (light):** control panel renders from a mock
-  effect's `controls`; export buttons call the bake/poster paths.
+WebGL isn't available under the Vitest (jsdom) unit runner, so the automated
+guard is on the **pure deterministic motion math**, not rendered pixels. Pixel
+fidelity is verified manually in the surface.
+
+- **Golden motion-math snapshot:** the per-row ribbon state (`y`, `zRotation`,
+  `wavePhase`, `scrollOffset`) at a fixed `(config, t01)` matches a committed
+  reference. Catches motion-math regressions without a GPU.
+- **Seamless-loop assertion:** for a fixed config, the wrapping channels
+  (scroll, wave phase) at `t01 = 0` equal their values at the loop boundary
+  (`t01 → 1`) within tolerance.
+- **Determinism assertion:** the same `(config, frameIndex)` yields identical
+  motion state twice (no `Date.now()`/`Math.random()` leakage).
+- **Bake-cache test:** `ensureSpaceTypeBake` re-runs the (injected) frame
+  renderer only when the `source_key` changes; an unchanged config returns the
+  cached bake without re-rendering.
+- **Surface component test (light):** the control panel renders one input per
+  entry in a mock effect's `controls`.
+- **Manual pixel verification:** the live surface and one baked clip are
+  eyeballed in-app (the suite's real "does it look like STG" check).
 
 ## Non-goals
 
