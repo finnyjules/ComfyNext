@@ -2,6 +2,7 @@
 import type { MotionClip, MotionTextLayer } from '~~/shared/timeline/types'
 import { SUPPORTED_IN_IDS, SUPPORTED_OUT_IDS, SUPPORTED_LOOP_IDS } from '~/lib/motion/evaluate'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
+import { normalizeAxisKeyframes } from '~/lib/timeline/convertPresetToKeyframes'
 
 const props = defineProps<{ clip: MotionClip }>()
 const emit = defineEmits<{ update: [patch: Partial<MotionClip>] }>()
@@ -21,24 +22,9 @@ function patchAxis(tag: string, v: number) {
   patchLayer({ axes: { ...(L().axes ?? {}), [tag]: v } })
 }
 
-function axisAnimated(tag: string): boolean {
-  return !!L().axisKeyframes?.some(k => tag in k.axes)
-}
-function axisFrom(tag: string): number | undefined { return L().axisKeyframes?.[0]?.axes?.[tag] }
-function axisTo(tag: string): number | undefined {
-  const kfs = L().axisKeyframes
-  return kfs?.[kfs.length - 1]?.axes?.[tag]
-}
-
-/** Write/clear a single axis's from→to animation. `from === null` clears it. */
-function setAxisAnim(tag: string, from: number | null, to: number | null) {
-  const cur = L().axisKeyframes
-  const start: Record<string, number> = { ...(cur?.[0]?.axes ?? {}) }
-  const end: Record<string, number> = { ...(cur?.[cur.length - 1]?.axes ?? {}) }
-  if (from === null) { delete start[tag]; delete end[tag] }
-  else { start[tag] = from; end[tag] = to ?? from }
-  const anyAnimated = Object.keys(start).length > 0
-  patchLayer({ axisKeyframes: anyAnimated ? [{ t: 0, axes: start }, { t: 1, axes: end }] : undefined })
+/** Normalize the layer's axisKeyframes so the keyframe dock can edit them. */
+function convertToKeyframes() {
+  patchLayer({ axisKeyframes: normalizeAxisKeyframes(L().axisKeyframes) })
 }
 
 const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
@@ -108,35 +94,14 @@ const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
           />
           <span class="w-10 text-right tabular-nums text-white/50">{{ clip.layer.axes?.[ax.tag] ?? ax.default }}</span>
         </label>
-        <div class="flex items-center gap-2 pl-[5.5rem] text-[10px]">
-          <label class="flex items-center gap-1 text-white/50">
-            <input
-              type="checkbox"
-              class="accent-emerald-400"
-              :checked="axisAnimated(ax.tag)"
-              @change="($event.target as HTMLInputElement).checked
-                ? setAxisAnim(ax.tag, clip.layer.axes?.[ax.tag] ?? ax.default, ax.max)
-                : setAxisAnim(ax.tag, null, null)"
-            >
-            animate
-          </label>
-          <template v-if="axisAnimated(ax.tag)">
-            <input
-              type="number"
-              class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none tabular-nums"
-              :value="axisFrom(ax.tag)"
-              @change="setAxisAnim(ax.tag, Number(($event.target as HTMLInputElement).value), axisTo(ax.tag) ?? null)"
-            >
-            <span class="text-white/40">→</span>
-            <input
-              type="number"
-              class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none tabular-nums"
-              :value="axisTo(ax.tag)"
-              @change="setAxisAnim(ax.tag, axisFrom(ax.tag) ?? null, Number(($event.target as HTMLInputElement).value))"
-            >
-          </template>
-        </div>
       </div>
+      <button
+        type="button"
+        class="mt-1 w-full text-left text-[10px] text-emerald-400/70 hover:text-emerald-400 transition-colors"
+        @click="convertToKeyframes"
+      >
+        Edit axis animation in keyframe dock ↓
+      </button>
     </div>
 
     <div class="space-y-1.5 pt-2 border-t border-white/5">
