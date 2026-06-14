@@ -24,6 +24,9 @@ interface Row {
 const RIBBON_LEN = 16   // world units along X (the ribbon's length)
 const RIBBON_W = 1.0    // world height of a single ribbon band
 
+// v1 assumes a single active engine/surface instance: buildScene populates this
+// module-level array and update() reads it. Two concurrent engines would clash —
+// promote to instance state (e.g. root.userData.rows) if multi-surface is ever needed.
 let rows: Row[] = []
 
 function n(params: Params, key: string): number { return Number(params[key]) }

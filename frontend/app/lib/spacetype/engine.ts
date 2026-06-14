@@ -32,9 +32,26 @@ export class SpaceTypeEngine {
     this.camera.position.set(0, 0, 14)
   }
 
+  private disposeRoot(): void {
+    if (!this.root) return
+    this.root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.isMesh) {
+        mesh.geometry?.dispose()
+        const mat = mesh.material
+        if (Array.isArray(mat)) mat.forEach(m => m.dispose())
+        else mat?.dispose()
+      }
+      const tex = obj.userData?.tex as THREE.Texture | undefined
+      if (tex && typeof tex.dispose === 'function') tex.dispose()
+    })
+    this.scene.remove(this.root)
+    this.root = null
+  }
+
   /** (Re)build the scene from params; call when structural params change. */
   build(params: Params, texOpts: TextTextureOptions): void {
-    if (this.root) { this.scene.remove(this.root); this.root = null }
+    this.disposeRoot()
     const tex = makeTextTexture(texOpts)
     this.root = this.effect.buildScene(THREE, params, tex)
     this.scene.add(this.root)
@@ -60,7 +77,7 @@ export class SpaceTypeEngine {
   }
 
   dispose(): void {
-    if (this.root) this.scene.remove(this.root)
+    this.disposeRoot()
     this.renderer.dispose()
   }
 }
