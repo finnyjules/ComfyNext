@@ -840,8 +840,10 @@ def _prepare_render_clips(state: dict) -> list[dict]:
                 if os.path.exists(p):
                     resolved.append(p)
             if not resolved:
-                logging.warning("timeline: motion clip has no baked frames (stale/un-baked) — skipping")
+                logging.warning("timeline: motion clip @frame %s has no baked frames (stale/un-baked) — skipping", c.get("start_frame", "?"))
                 continue
+            if len(resolved) < len(frames):
+                logging.warning("timeline: motion clip @frame %s baked %d/%d frames — missing frames will repeat the last available", c.get("start_frame", "?"), len(resolved), len(frames))
             entry["frame_paths"] = resolved
             entry["duration"] = None
             clips.append(entry)
@@ -905,7 +907,8 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         elif L["kind"] == "motion":
             fp = L["frame_paths"]
             idx = local_f if local_f < len(fp) else len(fp) - 1
-            src_pil = PILImage.open(fp[max(0, idx)])  # RGBA, alpha preserved below
+            with PILImage.open(fp[idx]) as _mf:
+                src_pil = _mf.convert("RGBA")  # forces decode + releases the fd; alpha preserved below
         else:  # video
             vs = L["stream"]
             container = L["container"]
