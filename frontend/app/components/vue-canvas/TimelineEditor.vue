@@ -189,6 +189,19 @@ function resolveAudioUrl(clip: Clip): string | null {
   return asset ? getAssetUrl(asset) : null
 }
 
+// Pull the raw input/ filename out of a source URL (resolveClipSource returns
+// /view?filename=…&type=input). The export payload needs filenames, not URLs —
+// the backend resolves a relative filename against its input directory.
+function inputFilenameFromUrl(url: string): string | null {
+  if (!url) return null
+  try {
+    const f = new URL(url, window.location.origin).searchParams.get('filename')
+    if (f) return f
+  } catch { /* not a parseable URL — fall through */ }
+  // Bare filename (no query, no scheme): usable as-is.
+  return (!/[?#]/.test(url) && !/^https?:/i.test(url)) ? url : null
+}
+
 // WebGL preview engine (Phase 1 M3): opt-in via
 //   localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
 // Falls back to the Canvas2D engine when WebGL2 is unavailable.
@@ -898,6 +911,19 @@ async function renderViaFFmpeg() {
         if (asset) clip.path = asset.path
       } else if (clip.kind === 'motion') {
         clip.motion_frames = clip.motion_bake?.frames ?? []
+      } else if (clip.kind === 'workflow') {
+        // A clip fed by a wired node. If that node resolves to a real input/
+        // file (LoadVideo / Video / LoadImage / Image), render it as a normal
+        // clip. Only genuinely-computed ports (no resolvable file) fall through
+        // to the backend's workflow-skip — those need an in-graph run for pixels.
+        const resolved = resolveClipPreview(clip)
+        const filename = resolved && (resolved.kind === 'video' || resolved.kind === 'image')
+          ? inputFilenameFromUrl(resolved.url)
+          : null
+        if (resolved && filename) {
+          clip.kind = resolved.kind
+          clip.path = filename
+        }
       }
     }
   }
