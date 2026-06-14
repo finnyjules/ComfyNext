@@ -264,9 +264,20 @@ export interface MotionTextLayer {
   animation?: MotionLayerAnimation
 }
 
+/** Cached headless bake of a Motion clip's pixels: one alpha PNG per clip frame,
+ *  uploaded under input/. A render cache, NOT a user asset — lives on the clip.
+ *  source_key mismatch (or a frame-count mismatch) ⇒ stale ⇒ re-bake on export. */
+export interface MotionBake {
+  source_key: string
+  frames: string[]   // input/ filenames, frame order; length === clip.length
+  fps: number
+}
+
 export interface MotionClip extends BaseClip {
   kind: 'motion'
   layer: MotionTextLayer           // v1: a single text layer
+  /** Cached export bake (populated on render). Absent ⇒ never baked. */
+  motion_bake?: MotionBake
 }
 
 export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip | MotionClip
