@@ -88,6 +88,18 @@ function navAxis(tag: string, dir: 1 | -1) {
   if (next !== undefined) seekToFrame(Math.round(next * clip.value!.length))
 }
 
+// ---- Ease chooser ----
+const EASE_PRESETS: { label: string; value: string }[] = [
+  { label: 'Linear', value: 'linear' },
+  { label: 'In', value: 'power2.in' },
+  { label: 'Out', value: 'power2.out' },
+  { label: 'In-Out', value: 'easeInOut' },
+]
+function setSelectedEase(value: string) {
+  const c = clip.value, sel = store.selectedAxisKeyframe.value
+  if (c && sel) store.setAxisKeyframeEase(c.id, sel.t, value)
+}
+
 // ---- Drag-to-retime ----
 type Drag =
   | { kind: 'transform'; fromFrame: number; startX: number; startFrame: number }
@@ -132,6 +144,15 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
   <div v-if="clip" class="border-t border-white/10 bg-[#141416] flex flex-col" style="height: 150px">
     <div class="flex items-center gap-2 px-3 h-7 border-b border-white/5 text-[10px] uppercase tracking-[0.12em] text-white/40 shrink-0">
       ◆ Keyframes — {{ clip.layer.text || 'Motion' }}
+      <div v-if="store.selectedAxisKeyframe.value" class="ml-auto flex items-center gap-1">
+        <span class="text-white/35 normal-case tracking-normal">ease</span>
+        <button
+          v-for="p in EASE_PRESETS" :key="p.value"
+          class="px-1.5 py-0.5 rounded text-[10px] normal-case tracking-normal"
+          :class="(store.selectedAxisKeyframe.value!.ease ?? 'linear') === p.value ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/60 hover:bg-white/10'"
+          @click="setSelectedEase(p.value)"
+        >{{ p.label }}</button>
+      </div>
     </div>
     <div class="flex-1 overflow-y-auto">
       <!-- Transform group (single lane: keyframes are 5-tuple snapshots) -->
