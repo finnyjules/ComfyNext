@@ -9,6 +9,9 @@ export interface TextTextureOptions {
   /** Texture pixel height; width is derived to fit ONE tile of the label. */
   heightPx?: number
   fontSizePx?: number
+  tracking?: number      // px letter-spacing (Tracking)
+  strokeColor?: string   // outline color
+  strokeWidth?: number   // px outline width (Type Stroke); 0 ⇒ no stroke
 }
 
 /** Format axes as a CSS font-variation-settings value. Pure + unit-tested. */
@@ -25,6 +28,7 @@ export function axesToVariation(axes: Record<string, number>): string {
 export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   const h = opts.heightPx ?? 256
   const fontPx = opts.fontSizePx ?? Math.round(h * 0.7)
+  const tracking = opts.tracking ?? 0
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const font = `${opts.fontWeight} ${fontPx}px "${opts.fontFamily}", sans-serif`
@@ -35,6 +39,7 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   if (variation && 'fontVariationSettings' in ctx) {
     ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
   }
+  if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${tracking}px`
   const w = Math.max(2, Math.ceil(ctx.measureText(opts.label).width))
 
   canvas.width = w
@@ -44,9 +49,16 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   if (variation && 'fontVariationSettings' in ctx) {
     ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
   }
+  if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${tracking}px`
   ctx.fillStyle = opts.typeColor
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
+  if ((opts.strokeWidth ?? 0) > 0) {
+    ctx.lineWidth = opts.strokeWidth as number
+    ctx.strokeStyle = opts.strokeColor ?? '#000000'
+    ctx.lineJoin = 'round'
+    ctx.strokeText(opts.label, 0, h / 2)
+  }
   ctx.fillText(opts.label, 0, h / 2)
 
   const tex = new THREE.CanvasTexture(canvas)
