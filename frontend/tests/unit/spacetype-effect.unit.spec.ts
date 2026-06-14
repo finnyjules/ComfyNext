@@ -39,7 +39,7 @@ describe('ribbonEffect contract', () => {
   })
   it('exposes the STG signature controls', () => {
     const keys = ribbonEffect.controls.map(c => c.key)
-    for (const k of ['text', 'rows', 'zRotation', 'waveAmplitude', 'scrollSpeed']) {
+    for (const k of ['text', 'font', 'ribbonCount', 'segmentCount', 'speed', 'rotateX', 'gradientMode']) {
       expect(keys).toContain(k)
     }
   })

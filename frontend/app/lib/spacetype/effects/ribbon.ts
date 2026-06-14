@@ -1,48 +1,73 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { ribbonRowState, buildRibbonLabel, type RibbonParams } from '../ribbonMath'
+import { buildRibbonGeometryData, ribbonInstance, scrollU } from '../ribbonGeometry'
+import { buildRibbonLabel } from '../ribbonMath'
 
 const controls: ControlSpec[] = [
-  { key: 'text', label: 'Text', kind: 'text', default: 'VESSEL' },
-  { key: 'case', label: 'Case', kind: 'select', options: ['upper', 'as-typed'], default: 'upper' },
-  { key: 'rows', label: 'Rows', kind: 'slider', min: 3, max: 24, step: 1, default: 11 },
-  { key: 'rowSpacing', label: 'Row spacing', kind: 'slider', min: 0.4, max: 2, step: 0.05, default: 0.9 },
-  { key: 'zRotation', label: 'Twist', kind: 'slider', min: 0, max: 1.2, step: 0.01, default: 0.35 },
-  { key: 'waveAmplitude', label: 'Wave', kind: 'slider', min: 0, max: 1.5, step: 0.01, default: 0.5 },
-  { key: 'waveFrequency', label: 'Wave freq', kind: 'slider', min: 0.5, max: 6, step: 0.1, default: 2 },
-  { key: 'rowPhase', label: 'Row phase', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.15 },
-  { key: 'scrollSpeed', label: 'Scroll', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1 },
-  { key: 'cameraTilt', label: 'Camera tilt', kind: 'slider', min: -0.6, max: 0.6, step: 0.01, default: 0.15 },
-  { key: 'typeColor', label: 'Type color', kind: 'color', default: '#f5f5f7' },
+  { key: 'text', label: 'Text', kind: 'text', default: 'SPACE TYPE' },
+  { key: 'font', label: 'Font', kind: 'font', default: 'inter' },
+  { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180 },
+  { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0 },
+  { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0 },
+  { key: 'textRepeat', label: 'Text repeat', kind: 'slider', min: 1, max: 16, step: 1, default: 4 },
+  { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 0.4, max: 3, step: 0.05, default: 1.1 },
+  { key: 'ribbonStretch', label: 'Ribbon stretch', kind: 'slider', min: 8, max: 36, step: 0.5, default: 18 },
+  { key: 'ribbonCount', label: 'Ribbon count', kind: 'slider', min: 1, max: 12, step: 1, default: 1 },
+  { key: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'slider', min: 0.6, max: 4, step: 0.05, default: 2 },
+  { key: 'ribbonOffset', label: 'Ribbon offset', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.2 },
+  { key: 'alternate', label: 'Alternate', kind: 'select', options: ['on', 'off'], default: 'on' },
+  { key: 'segmentCount', label: 'Segment count', kind: 'slider', min: 16, max: 240, step: 2, default: 120 },
+  { key: 'snakeAmplitude', label: 'Snake amount', kind: 'slider', min: 0, max: 6, step: 0.05, default: 2.4 },
+  { key: 'snakeFrequency', label: 'Snake freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5 },
+  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.6 },
+  { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2 },
+  { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.5 },
+  { key: 'rotateY', label: 'Rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
+  { key: 'rotateZ', label: 'Rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0 },
+  { key: 'gradientMode', label: 'Gradient', kind: 'select', options: ['on', 'off'], default: 'on' },
+  { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014' },
+  { key: 'aSideColor', label: 'A-side', kind: 'color', default: '#f5f5f7' },
+  { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014' },
 ]
 
-interface Row {
-  mesh: THREE.Mesh
-  uniforms: { uWavePhase: { value: number }; uWaveAmp: { value: number }; uWaveFreq: { value: number } }
-}
-
-const RIBBON_LEN = 16   // world units along X (the ribbon's length)
-const RIBBON_W = 1.0    // world height of a single ribbon band
-
-// v1 assumes a single active engine/surface instance: buildScene populates this
+// v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.rows) if multi-surface is ever needed.
-let rows: Row[] = []
+// promote to instance state (e.g. root.userData.ribbons) if multi-surface is ever needed.
+let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1 }[] = []
 
-function n(params: Params, key: string): number { return Number(params[key]) }
+function n(p: Params, k: string): number { return Number(p[k]) }
 
-/** Build a wave-capable material from a repeating text texture. */
-function ribbonMaterial(tex: THREE.Texture, uniforms: Row['uniforms']): THREE.Material {
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+/**
+ * Front material: text glyph map composited ON TOP of an opaque fill — the
+ * gradient ramp (Gradient on) or a flat A-side color. The text map sets
+ * diffuseColor (rgb=text color, a=glyph coverage); after <map_fragment> we
+ * mix the fill under the glyph and force alpha to 1 (opaque front face).
+ */
+function frontMaterial(
+  three: typeof THREE,
+  map: THREE.Texture,
+  gradientTex: THREE.Texture | null,
+  params: Params,
+  uRepeat: number,
+): THREE.MeshBasicMaterial {
+  const mat = new three.MeshBasicMaterial({ map, side: three.FrontSide })
+  const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
+  const uAside = { value: new three.Color(String(params.aSideColor)) }
+  const uGradient = { value: gradientTex ?? null }
+  const uURepeat = { value: uRepeat }
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uWavePhase = uniforms.uWavePhase
-    shader.uniforms.uWaveAmp = uniforms.uWaveAmp
-    shader.uniforms.uWaveFreq = uniforms.uWaveFreq
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uWavePhase;\nuniform float uWaveAmp;\nuniform float uWaveFreq;')
+    shader.uniforms.uUseGradient = uUseGradient
+    shader.uniforms.uAside = uAside
+    shader.uniforms.uGradient = uGradient
+    shader.uniforms.uURepeat = uURepeat
+    shader.fragmentShader = shader.fragmentShader
       .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\ntransformed.z += sin(position.x * uWaveFreq + uWavePhase) * uWaveAmp;',
+        '#include <common>',
+        '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;',
+      )
+      .replace(
+        '#include <map_fragment>',
+        '#include <map_fragment>\n{\n  vec3 fill = uAside;\n  if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vMapUv.x / uURepeat, 0.5)).rgb; }\n  diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0);\n}',
       )
   }
   return mat
@@ -55,39 +80,68 @@ export const ribbonEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    rows = []
-    const count = Math.max(1, Math.floor(n(params, 'rows')))
+    ribbons = []
+
+    const gradientTex = (textTexture.userData?.gradient as THREE.Texture | undefined) ?? null
+    const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
+    const count = Math.max(1, Math.floor(n(params, 'ribbonCount')))
+
     for (let i = 0; i < count; i++) {
-      const geo = new three.PlaneGeometry(RIBBON_LEN, RIBBON_W, 200, 1)
-      const uniforms = { uWavePhase: { value: 0 }, uWaveAmp: { value: n(params, 'waveAmplitude') }, uWaveFreq: { value: n(params, 'waveFrequency') } }
+      const inst = ribbonInstance(i, {
+        count,
+        spacing: n(params, 'ribbonSpacing'),
+        offset: n(params, 'ribbonOffset'),
+        alternate: String(params.alternate) === 'on',
+      })
+
+      const geo = buildRibbonGeometryData({
+        segments: n(params, 'segmentCount'),
+        length: n(params, 'ribbonStretch'),
+        amplitude: n(params, 'snakeAmplitude') * inst.dir,
+        frequency: n(params, 'snakeFrequency'),
+        height: n(params, 'ribbonHeight'),
+        uRepeat,
+        phase: inst.phase,
+      })
+
+      const bufferGeo = new three.BufferGeometry()
+      bufferGeo.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
+      bufferGeo.setAttribute('uv', new three.BufferAttribute(geo.uvs, 2))
+      bufferGeo.setIndex(new three.BufferAttribute(geo.indices, 1))
+      bufferGeo.computeVertexNormals()
+
+      // Independent scroll per ribbon ⇒ clone the shared text texture.
       const tex = textTexture.clone()
       tex.needsUpdate = true
-      tex.repeat.set(RIBBON_LEN / RIBBON_W, 1)
-      const mesh = new three.Mesh(geo, ribbonMaterial(tex, uniforms))
-      mesh.userData.tex = tex
-      root.add(mesh)
-      rows.push({ mesh, uniforms })
+      tex.wrapS = three.RepeatWrapping
+
+      const frontMat = frontMaterial(three, tex, gradientTex, params, uRepeat)
+      const backMat = new three.MeshBasicMaterial({
+        color: new three.Color(String(params.bSideColor)),
+        side: three.BackSide,
+      })
+
+      // Front + back share ONE BufferGeometry (front face vs back face).
+      const front = new three.Mesh(bufferGeo, frontMat)
+      const back = new three.Mesh(bufferGeo, backMat)
+
+      const subGroup = new three.Group()
+      subGroup.position.y = inst.y
+      subGroup.add(front)
+      subGroup.add(back)
+      root.add(subGroup)
+
+      ribbons.push({ tex, uRepeat, dir: inst.dir })
     }
+
     return root
   },
 
   update(t01, params) {
-    const rp: RibbonParams = {
-      rows: n(params, 'rows'), rowSpacing: n(params, 'rowSpacing'), zRotation: n(params, 'zRotation'),
-      waveAmplitude: n(params, 'waveAmplitude'), waveFrequency: n(params, 'waveFrequency'),
-      rowPhase: n(params, 'rowPhase'), scrollSpeed: n(params, 'scrollSpeed'), scrollCycles: 1, waveCycles: 1,
-    }
-    for (let i = 0; i < rows.length; i++) {
-      const s = ribbonRowState(t01, i, rp)
-      const r = rows[i]
-      if (!r) continue
-      r.mesh.position.y = s.y
-      r.mesh.rotation.z = s.zRotation
-      r.uniforms.uWavePhase.value = s.wavePhase
-      r.uniforms.uWaveAmp.value = rp.waveAmplitude
-      r.uniforms.uWaveFreq.value = rp.waveFrequency
-      const tex = r.mesh.userData.tex as THREE.Texture
-      tex.offset.x = -s.scrollOffset * (RIBBON_LEN / RIBBON_W)
+    const speed = n(params, 'speed')
+    for (const r of ribbons) {
+      // Text scrolls along the ribbon; integer speed keeps it seamless.
+      r.tex.offset.x = -scrollU(t01, speed) * r.uRepeat * r.dir
     }
   },
 }
