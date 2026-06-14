@@ -34,6 +34,16 @@ let previewFrame = 0
 let previewStart = 0
 const baking = ref(false)
 
+// Collapsible control sections. Effect controls declare their `group`; surface-only
+// controls (gradient stops, loop, dimensions, transparent) are injected per section.
+const SECTION_ORDER = ['Type', 'Ribbon', 'Snake', 'Color', 'Motion', 'Transform', 'Output'] as const
+const openSections = reactive<Record<string, boolean>>({
+  Type: true, Ribbon: true, Color: true, Snake: false, Motion: false, Transform: false, Output: false,
+})
+const sections = computed(() =>
+  SECTION_ORDER.map(name => ({ name, controls: effect.controls.filter(c => (c.group ?? 'Other') === name) })),
+)
+
 const gradientStops = reactive<GradientStop[]>([
   { color: '#3b5bff', on: true },
   { color: '#ff3b3b', on: true },
@@ -180,43 +190,60 @@ async function savePoster() {
           <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="emit('close')">Close</button>
         </div>
       </div>
-      <div class="w-72 shrink-0 space-y-3 overflow-y-auto pr-1">
-        <div v-for="c in effect.controls" :key="c.key" data-control class="text-xs">
-          <label class="mb-1 block text-white/60">{{ c.label }}</label>
-          <input v-if="c.kind === 'slider'" type="range" :min="c.min" :max="c.max" :step="c.step"
-                 v-model.number="params[c.key]" class="w-full" />
-          <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
-                 class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" />
-          <input v-else-if="c.kind === 'color'" type="color" v-model="params[c.key]" @input="rebuild" />
-          <select v-else-if="c.kind === 'select'" v-model="params[c.key]"
-                  class="w-full rounded bg-white/10 px-2 py-1" @change="rebuild">
-            <option v-for="o in c.options" :key="o" :value="o">{{ o }}</option>
-          </select>
-          <select v-else-if="c.kind === 'font'" v-model="params[c.key]"
-                  class="w-full rounded bg-white/10 px-2 py-1">
-            <option v-for="f in VARIABLE_FONTS" :key="f.id" :value="f.id">{{ f.label }}</option>
-          </select>
-        </div>
-        <div data-control class="text-xs">
-          <label class="mb-1 block text-white/60">Gradient stops</label>
-          <div v-for="(s, i) in gradientStops" :key="i" class="mb-1 flex items-center gap-2">
-            <input type="checkbox" v-model="s.on" />
-            <input type="color" v-model="s.color" />
+      <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1">
+        <details
+          v-for="section in sections" :key="section.name"
+          :open="openSections[section.name]"
+          @toggle="openSections[section.name] = ($event.target as HTMLDetailsElement).open"
+          class="rounded-lg bg-white/5"
+        >
+          <summary class="cursor-pointer select-none px-3 py-2 text-xs font-medium text-white/80">
+            {{ section.name }}
+          </summary>
+          <div class="space-y-3 px-3 pb-3">
+            <div v-for="c in section.controls" :key="c.key" data-control class="text-xs">
+              <label class="mb-1 block text-white/60">{{ c.label }}</label>
+              <input v-if="c.kind === 'slider'" type="range" :min="c.min" :max="c.max" :step="c.step"
+                     v-model.number="params[c.key]" class="w-full" />
+              <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
+                     class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" />
+              <input v-else-if="c.kind === 'color'" type="color" v-model="params[c.key]" @input="rebuild" />
+              <select v-else-if="c.kind === 'select'" v-model="params[c.key]"
+                      class="w-full rounded bg-white/10 px-2 py-1" @change="rebuild">
+                <option v-for="o in c.options" :key="o" :value="o">{{ o }}</option>
+              </select>
+              <select v-else-if="c.kind === 'font'" v-model="params[c.key]"
+                      class="w-full rounded bg-white/10 px-2 py-1">
+                <option v-for="f in VARIABLE_FONTS" :key="f.id" :value="f.id">{{ f.label }}</option>
+              </select>
+            </div>
+
+            <div v-if="section.name === 'Color'" data-control class="text-xs">
+              <label class="mb-1 block text-white/60">Gradient stops</label>
+              <div v-for="(s, i) in gradientStops" :key="i" class="mb-1 flex items-center gap-2">
+                <input type="checkbox" v-model="s.on" />
+                <input type="color" v-model="s.color" />
+              </div>
+            </div>
+
+            <div v-if="section.name === 'Motion'" data-control class="text-xs">
+              <label class="mb-1 block text-white/60">Loop seconds</label>
+              <input type="range" min="1" max="10" step="0.5" v-model.number="loopDuration" class="w-full" />
+            </div>
+
+            <template v-if="section.name === 'Output'">
+              <div data-control class="text-xs">
+                <label class="mb-1 block text-white/60">Dimensions</label>
+                <select v-model="dimsKey" class="w-full rounded bg-white/10 px-2 py-1">
+                  <option v-for="k in Object.keys(DIMS)" :key="k" :value="k">{{ k }}</option>
+                </select>
+              </div>
+              <label data-control class="flex items-center gap-2 text-xs text-white/60">
+                <input type="checkbox" v-model="transparent" /> Transparent background
+              </label>
+            </template>
           </div>
-        </div>
-        <div data-control class="text-xs">
-          <label class="mb-1 block text-white/60">Loop seconds</label>
-          <input type="range" min="1" max="10" step="0.5" v-model.number="loopDuration" class="w-full" />
-        </div>
-        <label data-control class="flex items-center gap-2 text-xs text-white/60">
-          <input type="checkbox" v-model="transparent" /> Transparent background
-        </label>
-        <div data-control class="text-xs">
-          <label class="mb-1 block text-white/60">Dimensions</label>
-          <select v-model="dimsKey" class="w-full rounded bg-white/10 px-2 py-1">
-            <option v-for="k in Object.keys(DIMS)" :key="k" :value="k">{{ k }}</option>
-          </select>
-        </div>
+        </details>
       </div>
     </div>
   </div>

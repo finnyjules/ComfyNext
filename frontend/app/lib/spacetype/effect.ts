@@ -4,11 +4,11 @@ export type ParamValue = number | string | boolean
 export type Params = Record<string, ParamValue>
 
 export type ControlSpec =
-  | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number }
-  | { key: string; label: string; kind: 'text'; default: string }
-  | { key: string; label: string; kind: 'color'; default: string }
-  | { key: string; label: string; kind: 'select'; options: string[]; default: string }
-  | { key: string; label: string; kind: 'font'; default: string }
+  | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; group?: string }
+  | { key: string; label: string; kind: 'text'; default: string; group?: string }
+  | { key: string; label: string; kind: 'color'; default: string; group?: string }
+  | { key: string; label: string; kind: 'select'; options: string[]; default: string; group?: string }
+  | { key: string; label: string; kind: 'font'; default: string; group?: string }
 
 /** Build the param object from a control list's declared defaults. */
 export function defaultsFromControls(controls: ControlSpec[]): Params {
