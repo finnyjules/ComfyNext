@@ -194,9 +194,15 @@ def _frames_to_video(frames, fps) -> "InputImpl.VideoFromComponents":
 
 
 def _ease(t: float, ease) -> float:
-    # Mirror of shared/timeline/interpolate.ts applyEase: smoothstep for
-    # easeInOut, linear otherwise.
-    return t * t * (3.0 - 2.0 * t) if ease == "easeInOut" else t
+    # Mirror of shared/timeline/interpolate.ts applyEase. Additive: linear and
+    # easeInOut (smoothstep) unchanged; power2.in/out added for the lane presets.
+    if ease == "power2.in":
+        return t * t
+    if ease == "power2.out":
+        return 1.0 - (1.0 - t) * (1.0 - t)
+    if ease == "easeInOut":
+        return t * t * (3.0 - 2.0 * t)  # smoothstep (legacy)
+    return t  # linear / unknown
 
 
 def _interp_transform(static: dict, keyframes, local_frame: float) -> dict:

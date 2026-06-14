@@ -104,3 +104,19 @@ def test_interp_transform_mirrors_ts():
     ]
     assert abs(NT._interp_transform(static, clamped, 0)["x"] - 0.3) < 1e-9
     assert abs(NT._interp_transform(static, clamped, 99)["x"] - 0.9) < 1e-9
+
+
+def test_ease_presets_match_ts():
+    import importlib.util, os, sys
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    spec = importlib.util.spec_from_file_location(
+        "nt_ease", os.path.join(repo, "comfy_extras", "nodes_timeline.py"))
+    nt = importlib.util.module_from_spec(spec); spec.loader.exec_module(nt)
+    assert abs(nt._ease(0.5, "linear") - 0.5) < 1e-6
+    assert abs(nt._ease(0.5, None) - 0.5) < 1e-6
+    assert abs(nt._ease(0.5, "power2.in") - 0.25) < 1e-6
+    assert abs(nt._ease(0.5, "power2.out") - 0.75) < 1e-6
+    assert abs(nt._ease(0.5, "easeInOut") - 0.5) < 1e-6
+    assert abs(nt._ease(0.25, "easeInOut") - 0.15625) < 1e-6
