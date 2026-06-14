@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useTimelineStore } from '~/composables/useTimelineStore'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import { interpolateAxes } from '~/lib/motion/axes'
@@ -87,6 +87,45 @@ function navAxis(tag: string, dir: 1 | -1) {
   const next = dir > 0 ? ts.find(t => t > cur + 1e-4) : [...ts].reverse().find(t => t < cur - 1e-4)
   if (next !== undefined) seekToFrame(Math.round(next * clip.value!.length))
 }
+
+// ---- Drag-to-retime ----
+type Drag =
+  | { kind: 'transform'; fromFrame: number; startX: number; startFrame: number }
+  | { kind: 'axis'; tag: string; fromT: number; startX: number; startFrame: number }
+const drag = ref<Drag | null>(null)
+
+function onTransformDown(frame: number, e: PointerEvent) {
+  e.stopPropagation()
+  drag.value = { kind: 'transform', fromFrame: frame, startX: e.clientX, startFrame: frame }
+}
+function onAxisDown(tag: string, t: number, e: PointerEvent) {
+  e.stopPropagation()
+  drag.value = { kind: 'axis', tag, fromT: t, startX: e.clientX, startFrame: Math.round(t * clip.value!.length) }
+}
+function onMove(e: PointerEvent) {
+  const d = drag.value, c = clip.value
+  if (!d || !c) return
+  const dframes = Math.round((e.clientX - d.startX) / props.pxPerFrame)
+  if (d.kind === 'transform') {
+    const target = Math.max(0, Math.min(d.startFrame + dframes, c.length - 1))
+    if (target !== d.fromFrame && !c.keyframes?.some(k => k.frame === target)) {
+      store.moveKeyframe(c.id, d.fromFrame, target)
+      d.fromFrame = target
+      store.seekFrame(c.start_frame + target)
+    }
+  } else {
+    const targetFrame = Math.max(0, Math.min(d.startFrame + dframes, c.length - 1))
+    const targetT = c.length > 0 ? targetFrame / c.length : 0
+    if (Math.abs(targetT - d.fromT) > 1e-4 && !(c.layer.axisKeyframes ?? []).some(k => Math.abs(k.t - targetT) < 1e-4)) {
+      store.moveAxisKeyframe(c.id, d.fromT, targetT)
+      d.fromT = targetT
+      store.seekFrame(c.start_frame + targetFrame)
+    }
+  }
+}
+function onUp() { drag.value = null }
+onMounted(() => { window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp) })
+onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) })
 </script>
 
 <template>
@@ -114,8 +153,9 @@ function navAxis(tag: string, dir: 1 | -1) {
         <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
         <div
           v-for="kf in transformKfs" :key="`tf-${kf.frame}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-violet-100 border border-black/50 -translate-x-1/2"
+          class="absolute top-1.5 size-2 rotate-45 bg-violet-100 border border-black/50 -translate-x-1/2 cursor-grab"
           :style="{ left: framesToPx(clip.start_frame + kf.frame) + 'px' }"
+          @pointerdown.stop="(e) => onTransformDown(kf.frame, e)"
         />
       </div>
       <!-- Axes group (one lane per font axis) -->
@@ -136,8 +176,9 @@ function navAxis(tag: string, dir: 1 | -1) {
         <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
         <div
           v-for="kf in axisKfsFor(ax.tag)" :key="`${ax.tag}-${kf.t}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-emerald-200 border border-black/50 -translate-x-1/2"
+          class="absolute top-1.5 size-2 rotate-45 bg-emerald-200 border border-black/50 -translate-x-1/2 cursor-grab"
           :style="{ left: framesToPx(tToFrame(kf.t)) + 'px' }"
+          @pointerdown.stop="(e) => { onAxisDown(ax.tag, kf.t, e); store.selectedClipId.value = clip!.id; store.selectedAxisKeyframeT.value = kf.t }"
         />
       </div>
     </div>
