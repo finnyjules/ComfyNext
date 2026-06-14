@@ -86,10 +86,14 @@ function frontMaterial(
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying float vRawU;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
-    // Lambert already includes packing/lights_pars_begin/shadowmap_pars_fragment —
-    // do NOT re-inject them. Only add our composite uniforms + varying.
+    // Lambert includes lights_pars_begin + shadowmap_pars_fragment (getShadow), but
+    // NOT shadowmask_pars_fragment — so getShadowMask() is undefined and the shader
+    // fails to compile (black ribbons). Inject shadowmask_pars_fragment AFTER
+    // shadowmap_pars_fragment, where all its deps (directionalLightShadows,
+    // directionalShadowMap, getShadow, receiveShadow) are already declared.
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;')
+      .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
       .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 fill = uAside; if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; } diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0); }')
       .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
   }
