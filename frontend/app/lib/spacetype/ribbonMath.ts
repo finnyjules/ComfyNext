@@ -4,10 +4,10 @@ export interface RibbonParams {
   rows: number
   rowSpacing: number
   zRotation: number      // max per-row twist (radians) at the outermost rows
-  waveAmplitude: number  // world units of vertical undulation
-  waveFrequency: number  // sine periods across one tile
+  waveAmplitude: number  // world units of undulation — consumed by the renderer's vertex shader, not ribbonRowState
+  waveFrequency: number  // sine periods across one tile — consumed by the renderer's vertex shader, not ribbonRowState
   rowPhase: number       // wave phase shift between adjacent rows (0..1 of TAU)
-  scrollSpeed: number    // relative scroll rate
+  scrollSpeed: number    // scroll-rate multiplier; scrollOffset advances by (scrollSpeed * scrollCycles) tiles per loop
   scrollCycles: number   // whole tiles scrolled per loop (integer ⇒ seamless)
   waveCycles: number     // whole wave cycles per loop (integer ⇒ seamless)
 }
@@ -40,7 +40,10 @@ export function tileCount(widthPx: number, tilePx: number): number {
 /**
  * Per-row state at normalized loop time t01. Pure: depends only on (t01, row,
  * params). Seamlessness comes from scroll/wave advancing by INTEGER cycles over
- * t01 ∈ [0,1], so t01=0 and t01=1 land on the same phase.
+ * t01 ∈ [0,1], so t01=0 and t01=1 land on the same phase. Note that
+ * waveAmplitude and waveFrequency are intentionally not read here — they are
+ * renderer inputs consumed by the vertex shader. rows is treated as an integer
+ * (floored defensively via Math.floor).
  */
 export function ribbonRowState(t01: number, row: number, p: RibbonParams): RibbonRowState {
   const n = Math.max(1, Math.floor(p.rows))

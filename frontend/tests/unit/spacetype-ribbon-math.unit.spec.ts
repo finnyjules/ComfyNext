@@ -31,6 +31,9 @@ describe('tileCount', () => {
   it('never returns less than 2', () => {
     expect(tileCount(10, 1000)).toBe(2)
   })
+  it('returns 2 at an exact single-tile fit', () => {
+    expect(tileCount(250, 250)).toBe(2)
+  })
 })
 
 describe('ribbonRowState', () => {
@@ -54,6 +57,13 @@ describe('ribbonRowState', () => {
     for (let row = 0; row < P.rows; row++) {
       const a = ribbonRowState(0, row, P)
       const b = ribbonRowState(1, row, P)
+      expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
+      expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
+    }
+    const P2 = { ...P, scrollSpeed: 2, scrollCycles: 3, waveCycles: 2 }
+    for (let row = 0; row < P2.rows; row++) {
+      const a = ribbonRowState(0, row, P2)
+      const b = ribbonRowState(1, row, P2)
       expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
       expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
     }
