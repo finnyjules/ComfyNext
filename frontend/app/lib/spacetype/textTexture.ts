@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { makeGradientTexture, type GradientStop } from './gradient'
 
 export interface TextTextureOptions {
   label: string                 // already includes the trailing gap (buildRibbonLabel)
@@ -12,6 +13,9 @@ export interface TextTextureOptions {
   tracking?: number      // px letter-spacing (Tracking)
   strokeColor?: string   // outline color
   strokeWidth?: number   // px outline width (Type Stroke); 0 ⇒ no stroke
+  gradientStops?: GradientStop[]
+  gradientOn?: boolean
+  uRepeat?: number
 }
 
 /** Format axes as a CSS font-variation-settings value. Pure + unit-tested. */
@@ -66,5 +70,9 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   tex.wrapT = THREE.ClampToEdgeWrapping
   tex.anisotropy = 4
   tex.needsUpdate = true
+  tex.userData.uRepeat = opts.uRepeat ?? 1
+  tex.userData.gradient = (opts.gradientOn && opts.gradientStops && opts.gradientStops.some(s => s.on))
+    ? makeGradientTexture(opts.gradientStops, opts.typeColor)
+    : undefined
   return tex
 }
