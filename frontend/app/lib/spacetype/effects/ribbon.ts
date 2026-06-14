@@ -49,6 +49,12 @@ function n(p: Params, k: string): number { return Number(p[k]) }
  * gradient ramp (Gradient on) or a flat A-side color. The text map sets
  * diffuseColor (rgb=text color, a=glyph coverage); after <map_fragment> we
  * mix the fill under the glyph and force alpha to 1 (opaque front face).
+ *
+ * Uses MeshLambertMaterial so the shadow pipeline (shadowmap_pars_fragment,
+ * getShadowMask(), USE_SHADOWMAP) is RELIABLY present without re-injection.
+ * We override <opaque_fragment> to ignore Lambert's diffuse dimming and output
+ * the flat gradient/text albedo multiplied by the shadow mask — full-bright
+ * flat ribbons that darken only where shadowed.
  */
 function frontMaterial(
   three: typeof THREE,
@@ -56,14 +62,12 @@ function frontMaterial(
   gradientTex: THREE.Texture | null,
   params: Params,
   uRepeat: number,
-): THREE.MeshBasicMaterial {
-  // Unlit base = full bright, no NdotL dimming. We inject shadow-map receiving
-  // and multiply the final color by getShadowMask() so only shadowed pixels
-  // darken — lit pixels keep the gradient at full vibrancy.
-  const mat = new three.MeshBasicMaterial({ map, side: three.FrontSide })
-  // Make the renderer upload light/shadow uniforms to this unlit material so
-  // getShadowMask() works — lets a flat MeshBasicMaterial RECEIVE shadows.
-  ;(mat as unknown as { lights: boolean }).lights = true
+): THREE.MeshLambertMaterial {
+  // Lambert is a lit material, so getShadowMask()/USE_SHADOWMAP are reliably available.
+  // We override the output to ignore Lambert's diffuse shading and show the flat
+  // gradient/text albedo multiplied by the shadow mask → full-bright flat ribbons
+  // that darken only where shadowed.
+  const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
   const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
   const uAside = { value: new three.Color(String(params.aSideColor)) }
   const uGradient = { value: gradientTex ?? null }
@@ -75,27 +79,19 @@ function frontMaterial(
     shader.uniforms.uGradient = uGradient
     shader.uniforms.uURepeat = uURepeat
     shader.uniforms.uShadowStrength = uShadowStrength
-    // Fix 2: pass the raw (un-scrolled) geometry UV through a new varying so the
-    // gradient is pinned to the ribbon and does not drift with the text scroll.
-    // worldpos_vertex already runs in the meshbasic base shader, so we only add
-    // shadowmap_pars_vertex (at common) and shadowmap_vertex (after worldpos).
+    // Lambert already includes shadowmap_pars_vertex/shadowmap_vertex/worldpos_vertex —
+    // do NOT re-inject them (would redefine symbols and break compilation).
+    // Only add the vRawU varying so the gradient is pinned to the ribbon and does
+    // not drift with the text scroll.
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vRawU;\n#include <shadowmap_pars_vertex>')
+      .replace('#include <common>', '#include <common>\nvarying float vRawU;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
-      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n#include <shadowmap_vertex>')
+    // Lambert already includes packing/lights_pars_begin/shadowmap_pars_fragment —
+    // do NOT re-inject them. Only add our composite uniforms + varying.
     shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;\n#include <packing>\n#include <lights_pars_begin>\n#include <shadowmap_pars_fragment>',
-      )
-      .replace(
-        '#include <map_fragment>',
-        '#include <map_fragment>\n{\n  vec3 fill = uAside;\n  if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; }\n  diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0);\n}',
-      )
-      .replace(
-        '#include <opaque_fragment>',
-        '#include <opaque_fragment>\ngl_FragColor.rgb *= mix(1.0 - uShadowStrength, 1.0, getShadowMask());',
-      )
+      .replace('#include <common>', '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;')
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 fill = uAside; if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; } diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0); }')
+      .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
   }
   return mat
 }
@@ -166,10 +162,11 @@ export const ribbonEffect: SpaceTypeEffect = {
     }
 
     const strength = n(params, 'shadowStrength')
-    // Ribbons are unlit MeshBasicMaterial = already full bright, so no AmbientLight
-    // is needed (MeshBasicMaterial ignores it anyway). When shadows are on we add a
-    // shadow-casting DirectionalLight + ShadowMaterial catcher; the front material
-    // multiplies in getShadowMask() so only shadowed pixels darken.
+    // Front ribbons use MeshLambertMaterial with overridden output — full-bright flat
+    // look, no AmbientLight needed (Lambert's diffuse is overridden entirely).
+    // When shadows are on we add a shadow-casting DirectionalLight + ShadowMaterial
+    // catcher; the front material multiplies in getShadowMask() so only shadowed
+    // pixels darken.
     if (String(params.shadows) === 'on') {
       const lx = n(params, 'lightAngleX')
       const ly = n(params, 'lightAngleY')
