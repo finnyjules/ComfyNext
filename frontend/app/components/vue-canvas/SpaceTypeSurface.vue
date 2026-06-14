@@ -36,9 +36,9 @@ const baking = ref(false)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
-const SECTION_ORDER = ['Type', 'Ribbon', 'Snake', 'Color', 'Motion', 'Transform', 'Output'] as const
+const SECTION_ORDER = ['Type', 'Ribbon', 'Snake', 'Color', 'Shadow', 'Motion', 'Transform', 'Output'] as const
 const openSections = reactive<Record<string, boolean>>({
-  Type: true, Ribbon: true, Color: true, Snake: false, Motion: false, Transform: false, Output: false,
+  Type: true, Ribbon: true, Color: true, Snake: false, Shadow: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.controls.filter(c => (c.group ?? 'Other') === name) })),

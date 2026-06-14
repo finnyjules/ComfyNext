@@ -31,6 +31,10 @@ const controls: ControlSpec[] = [
   { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014', group: 'Color' },
   { key: 'aSideColor', label: 'A-side', kind: 'color', default: '#f5f5f7', group: 'Color' },
   { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014', group: 'Color' },
+  { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
+  { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.4, group: 'Shadow' },
+  { key: 'lightAngleX', label: 'Light angle X', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.6, group: 'Shadow' },
+  { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
 // v2 assumes a single active engine/surface instance: buildScene populates this
@@ -133,7 +137,9 @@ export const ribbonEffect: SpaceTypeEffect = {
       const front = new three.Mesh(bufferGeo, frontMat)
       // Fix 1: register the cloned texture so disposeRoot() frees it on rebuild.
       front.userData.tex = tex
+      front.castShadow = true
       const back = new three.Mesh(bufferGeo, backMat)
+      back.castShadow = true
 
       const subGroup = new three.Group()
       subGroup.position.y = inst.y
@@ -142,6 +148,29 @@ export const ribbonEffect: SpaceTypeEffect = {
       root.add(subGroup)
 
       ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
+    }
+
+    if (String(params.shadows) === 'on') {
+      const lx = n(params, 'lightAngleX')
+      const ly = n(params, 'lightAngleY')
+      const light = new three.DirectionalLight(0xffffff, 1)
+      light.position.set(Math.sin(lx) * 14, 6 + Math.sin(ly) * 8, 12)
+      light.castShadow = true
+      light.shadow.mapSize.set(2048, 2048)
+      const cam = light.shadow.camera as THREE.OrthographicCamera
+      cam.left = -28; cam.right = 28; cam.top = 28; cam.bottom = -28; cam.near = 0.1; cam.far = 90
+      cam.updateProjectionMatrix()
+      light.shadow.bias = -0.0005
+      root.add(light)
+      root.add(light.target) // target defaults to (0,0,0)
+
+      const catcher = new three.Mesh(
+        new three.PlaneGeometry(140, 140),
+        new three.ShadowMaterial({ opacity: n(params, 'shadowStrength'), transparent: true }),
+      )
+      catcher.position.z = -6
+      catcher.receiveShadow = true
+      root.add(catcher)
     }
 
     return root
