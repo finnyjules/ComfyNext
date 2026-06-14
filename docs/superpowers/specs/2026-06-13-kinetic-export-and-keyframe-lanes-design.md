@@ -52,18 +52,17 @@ Alpha-preserving **PNG sequence**, one PNG per clip frame at canvas resolution a
 
 ### Bake → asset pipeline
 
-1. `bakeMotionFrames()` renders frames → alpha PNG blobs.
+1. A new `bakeMotionClipFrames()` (in `frontend/app/lib/engine/motionClipBake.ts`) renders frames → alpha PNG blobs by calling the timeline `renderMotionClip` per frame. (Note: the existing `lib/motion/bake.ts` is the *old Frame-compositor* bake over `LocalLayer`/`paintLayerStack` — not reusable for timeline Motion clips; we mirror its offscreen-canvas/`toBlob` pattern, not the function.)
 2. Upload under a per-bake prefix (reuse `useKineticRenderer.uploadFrameBatch()` → `/upload/image`).
-3. Register **one sequence asset** — a new asset `kind: 'sequence'` whose metadata holds `{ prefix, count, fps, width, height }`. Persisted in `user/timeline_assets.json` via the existing asset-import route.
-4. Write `clip.bake = { asset_id, source_key }`.
+3. **Store the baked frame filenames on the clip**, not in the asset library. Baked frames are a render cache, not user assets, and the asset-import route probes single media files (a PNG sequence doesn't fit). New field `clip.motion_bake = { source_key, frames: string[], fps }`.
 
 ### Export resolution + Python compositor
 
-- In `TimelineEditor.vue` export prep, alongside the existing `asset_id → path` resolution for video/image/audio, resolve each Motion clip's `clip.bake.asset_id` → sequence info and attach it to the payload clip.
+- In `TimelineEditor.vue` export prep, alongside the existing `asset_id → path` resolution for video/image/audio, attach each Motion clip's baked frame list to the payload as `clip.motion_frames`.
 - New handler in `comfy_extras/nodes_timeline.py`:
-  - `_adapt_edit_state`: stop letting `motion` fall through silently; carry the resolved bake/sequence info.
-  - `_prepare_render_clips`: for `kind:'motion'` with a fresh bake, map clip-local frame → sequence frame index, load that PNG as **RGBA**.
-  - `render_frame_np`: composite the RGBA frame via the existing `_blend_np` (already alpha-aware), honoring the clip's transform/opacity/blend like any other layer.
+  - `_adapt_edit_state`: carry `motion_frames` through to the flattened clip.
+  - `_prepare_render_clips`: for `kind:'motion'`, resolve frame filenames against `input/`, store `frame_paths`; skip + `logging.warning` if missing/stale (no silent drop).
+  - `render_frame_np`: load the clip-local PNG as RGBA and composite via `_transform_and_alpha(..., preserve_alpha=True)` — **a required change**, because `_transform_and_alpha` currently `convert("RGB")`s and would otherwise flatten the overlay's transparent background into an opaque black box. Transform/opacity/blend/keyframes then apply on top like any other layer.
 - If a Motion clip reaches the backend with no/stale bake (shouldn't happen given auto-bake, but defensively): skip it and **surface a warning** (not a silent drop) so the failure is legible.
 
 ### Parity / testing
@@ -111,8 +110,8 @@ Per-keyframe easing, chosen from **4 presets** on the selected keyframe: Linear,
 - **Unify keyframes into lanes.** Today: `BaseClip.keyframes` (transform snapshots, clip-local frame) + `MotionTextLayer.axisKeyframes` (normalized-t axis values). The editor must read/write both. Decide one canonical internal representation for the lane editor and adapt at the edges:
   - Option taken: keep both stores but drive them from a shared per-property lane abstraction in the editor. Transform lanes ↔ `BaseClip.keyframes`; axis lanes ↔ `axisKeyframes`. This avoids a migration and keeps the renderer interpolation paths (`interpolateClipAt`, `lib/motion/axes.ts::interpolateAxes`) intact.
   - Add per-keyframe `ease` where missing and ensure both interpolators honor it (axis interpolation currently linear-only — extend `interpolateAxes` to apply per-keyframe easing).
-- **`bake` / `BakeRef`** already exist on `BaseClip` (`{asset_id, source_key}`); no schema change needed beyond populating them.
-- **New asset kind `'sequence'`** with metadata `{prefix, count, fps, width, height}`.
+- **New `MotionBake` interface** (`{source_key, frames, fps}`) and a `motion_bake?` field on `MotionClip`. (We do *not* reuse `BaseClip.bake`/`BakeRef`, which is the asset-id-based cache for AI derivatives; baked motion frames are a clip-local file cache, not an asset.)
+- **No new asset kind** — baked frames stay out of the asset library.
 
 ## Key files / seams
 
