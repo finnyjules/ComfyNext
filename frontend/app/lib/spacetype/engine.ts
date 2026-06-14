@@ -79,6 +79,10 @@ export class SpaceTypeEngine {
         if (Array.isArray(mat)) mat.forEach(m => m.dispose())
         else mat?.dispose()
       }
+      // Lights (e.g. the shadow-casting DirectionalLight) own a shadow-map render
+      // target that leaks unless disposed; Light subclasses' dispose() frees it.
+      const light = obj as THREE.Light & { dispose?: () => void }
+      if (light.isLight && typeof light.dispose === 'function') light.dispose()
       const tex = obj.userData?.tex as THREE.Texture | undefined
       if (tex && typeof tex.dispose === 'function') tex.dispose()
     })
