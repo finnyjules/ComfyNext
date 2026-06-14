@@ -13,6 +13,8 @@ describe('spaceTypeSourceKey', () => {
   it('changes when dims or fps change', () => {
     expect(spaceTypeSourceKey(base)).not.toBe(spaceTypeSourceKey({ ...base, W: 1920 }))
     expect(spaceTypeSourceKey(base)).not.toBe(spaceTypeSourceKey({ ...base, fps: 24 }))
+    expect(spaceTypeSourceKey(base)).not.toBe(spaceTypeSourceKey({ ...base, H: 1080 }))
+    expect(spaceTypeSourceKey(base)).not.toBe(spaceTypeSourceKey({ ...base, loopDuration: 6 }))
   })
   it('is param-order independent', () => {
     const a = spaceTypeSourceKey({ ...base, params: { rows: 11, text: 'VESSEL' } })
