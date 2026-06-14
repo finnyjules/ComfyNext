@@ -10,7 +10,17 @@ import type { GradientStop } from '~/lib/spacetype/gradient'
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'add-clip', bake: SpaceTypeBake): void; (e: 'save-poster', blob: Blob): void }>()
 
-const W = 960, H = 540, FPS = 30
+const FPS = 30
+const DIMS: Record<string, [number, number]> = {
+  '1920 × 1080 (16:9)': [1920, 1080],
+  '1080 × 1920 (9:16)': [1080, 1920],
+  '1080 × 1080 (1:1)': [1080, 1080],
+  '1280 × 720 (16:9)': [1280, 720],
+  '960 × 540 (16:9)': [960, 540],
+}
+const dimsKey = ref('960 × 540 (16:9)')
+const W = ref(960)
+const H = ref(540)
 const effect = ribbonEffect
 const params = reactive<Params>(defaultsFromControls(effect.controls))
 const loopDuration = ref(6)
@@ -93,7 +103,7 @@ function stopPreview() {
 onMounted(async () => {
   if (!canvas.value) return
   engine = new SpaceTypeEngine(canvas.value, {
-    effect, width: W, height: H, fps: FPS, loopDuration: loopDuration.value,
+    effect, width: W.value, height: H.value, fps: FPS, loopDuration: loopDuration.value,
     alpha: transparent.value, bgColor: bgColor.value,
   })
   await ensureFont(String(params.font))
@@ -113,10 +123,17 @@ watch(
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
 // Loop length affects the engine's frameCount used during bake.
 watch(loopDuration, d => engine?.setLoopDuration(d))
+watch(dimsKey, (k) => {
+  const d = DIMS[k]
+  if (!d) return
+  W.value = d[0]
+  H.value = d[1]
+  engine?.setSize(W.value, H.value)
+})
 
 const cfg = computed(() => ({
   effectId: effect.id, params: { ...params }, fps: FPS, loopDuration: loopDuration.value,
-  W, H, alpha: transparent.value, bgColor: bgColor.value,
+  W: W.value, H: H.value, alpha: transparent.value, bgColor: bgColor.value,
 }))
 
 async function addToTimeline() {
@@ -125,6 +142,7 @@ async function addToTimeline() {
   stopPreview()
   try {
     await ensureFont(String(params.font))
+    engine.setSize(W.value, H.value)
     rebuild()
     const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
       renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob() },
@@ -153,7 +171,7 @@ async function savePoster() {
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
     <div class="flex max-h-[90vh] w-[1100px] max-w-[95vw] gap-4 rounded-xl bg-neutral-900 p-4 text-white">
       <div class="flex-1">
-        <canvas ref="canvas" :width="W" :height="H" class="w-full rounded-lg" style="background:#0e0e10" />
+        <canvas ref="canvas" class="w-full rounded-lg" style="background:#0e0e10" />
         <div class="mt-3 flex gap-2">
           <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="addToTimeline">
             {{ baking ? 'Baking…' : 'Add to timeline' }}
@@ -193,6 +211,12 @@ async function savePoster() {
         <label data-control class="flex items-center gap-2 text-xs text-white/60">
           <input type="checkbox" v-model="transparent" /> Transparent background
         </label>
+        <div data-control class="text-xs">
+          <label class="mb-1 block text-white/60">Dimensions</label>
+          <select v-model="dimsKey" class="w-full rounded bg-white/10 px-2 py-1">
+            <option v-for="k in Object.keys(DIMS)" :key="k" :value="k">{{ k }}</option>
+          </select>
+        </div>
       </div>
     </div>
   </div>

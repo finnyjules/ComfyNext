@@ -46,6 +46,15 @@ export class SpaceTypeEngine {
     }
   }
 
+  /** Resize the render target + camera aspect (e.g. when output dimensions change). */
+  setSize(width: number, height: number): void {
+    this.opts.width = width
+    this.opts.height = height
+    this.renderer.setSize(width, height, false)
+    this.camera.aspect = width / height
+    this.camera.updateProjectionMatrix()
+  }
+
   /** Toggle transparency / background color live without rebuilding the renderer. */
   setBackground(alpha: boolean, bgColor: string): void {
     this.opts.alpha = alpha
