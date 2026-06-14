@@ -56,30 +56,45 @@ function frontMaterial(
   gradientTex: THREE.Texture | null,
   params: Params,
   uRepeat: number,
-): THREE.MeshLambertMaterial {
-  const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
+): THREE.MeshBasicMaterial {
+  // Unlit base = full bright, no NdotL dimming. We inject shadow-map receiving
+  // and multiply the final color by getShadowMask() so only shadowed pixels
+  // darken — lit pixels keep the gradient at full vibrancy.
+  const mat = new three.MeshBasicMaterial({ map, side: three.FrontSide })
+  // Make the renderer upload light/shadow uniforms to this unlit material so
+  // getShadowMask() works — lets a flat MeshBasicMaterial RECEIVE shadows.
+  ;(mat as unknown as { lights: boolean }).lights = true
   const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
   const uAside = { value: new three.Color(String(params.aSideColor)) }
   const uGradient = { value: gradientTex ?? null }
   const uURepeat = { value: uRepeat }
+  const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uUseGradient = uUseGradient
     shader.uniforms.uAside = uAside
     shader.uniforms.uGradient = uGradient
     shader.uniforms.uURepeat = uURepeat
+    shader.uniforms.uShadowStrength = uShadowStrength
     // Fix 2: pass the raw (un-scrolled) geometry UV through a new varying so the
     // gradient is pinned to the ribbon and does not drift with the text scroll.
+    // worldpos_vertex already runs in the meshbasic base shader, so we only add
+    // shadowmap_pars_vertex (at common) and shadowmap_vertex (after worldpos).
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vRawU;')
+      .replace('#include <common>', '#include <common>\nvarying float vRawU;\n#include <shadowmap_pars_vertex>')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n#include <shadowmap_vertex>')
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nvarying float vRawU;\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;',
+        '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;\n#include <packing>\n#include <lights_pars_begin>\n#include <shadowmap_pars_fragment>',
       )
       .replace(
         '#include <map_fragment>',
         '#include <map_fragment>\n{\n  vec3 fill = uAside;\n  if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; }\n  diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0);\n}',
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        '#include <opaque_fragment>\ngl_FragColor.rgb *= mix(1.0 - uShadowStrength, 1.0, getShadowMask());',
       )
   }
   return mat
@@ -128,7 +143,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       tex.wrapS = three.RepeatWrapping
 
       const frontMat = frontMaterial(three, tex, gradientTex, params, uRepeat)
-      const backMat = new three.MeshLambertMaterial({
+      const backMat = new three.MeshBasicMaterial({
         color: new three.Color(String(params.bSideColor)),
         side: three.BackSide,
       })
@@ -150,13 +165,12 @@ export const ribbonEffect: SpaceTypeEffect = {
       ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
     }
 
-    const shadowsOn = String(params.shadows) === 'on'
     const strength = n(params, 'shadowStrength')
-    // Lambert ribbons need light or they render black — always add ambient.
-    // When shadows are on, dim the ambient so the directional light's shadows are visible.
-    const ambient = new three.AmbientLight(0xffffff, shadowsOn ? Math.max(0.2, 1 - strength) : 1)
-    root.add(ambient)
-    if (shadowsOn) {
+    // Ribbons are unlit MeshBasicMaterial = already full bright, so no AmbientLight
+    // is needed (MeshBasicMaterial ignores it anyway). When shadows are on we add a
+    // shadow-casting DirectionalLight + ShadowMaterial catcher; the front material
+    // multiplies in getShadowMask() so only shadowed pixels darken.
+    if (String(params.shadows) === 'on') {
       const lx = n(params, 'lightAngleX')
       const ly = n(params, 'lightAngleY')
       const light = new three.DirectionalLight(0xffffff, 1)
