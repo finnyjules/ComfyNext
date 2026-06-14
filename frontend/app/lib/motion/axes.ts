@@ -3,6 +3,8 @@
  *  axis values over normalized time and formats them as CSS
  *  font-variation-settings. One implementation, two consumers. */
 
+import { applyEase } from '../../../shared/timeline/interpolate'
+
 /** A keyframe for variable-font axis animation. Axes interpolate between
  *  keyframes over the animation's duration. */
 export interface AxisKeyframe {
@@ -18,8 +20,9 @@ export interface AxisKeyframe {
  * Interpolate variable-font axis values at a normalized time `t` (0..1).
  * Returns the interpolated axes merged with static defaults.
  *
- * Interpolation is linear between bracketing keyframes (the per-keyframe
- * `ease` field is reserved for future segment easing and is not yet applied).
+ * Interpolation is shaped by the per-keyframe `ease` field — the ease on the
+ * FROM-keyframe shapes the segment from that keyframe to the next (shared
+ * applyEase). When no ease is set the segment is linear (default).
  */
 export function interpolateAxes(
   keyframes: AxisKeyframe[],
@@ -51,7 +54,9 @@ export function interpolateAxes(
     const b = sorted[i + 1]
     if (ct >= a.t && ct <= b.t) {
       const span = b.t - a.t
-      const frac = span > 0 ? (ct - a.t) / span : 0
+      // Per-keyframe ease: the FROM-keyframe's ease shapes the segment to the next
+      // (same convention + math as transform keyframes via shared applyEase).
+      const frac = span > 0 ? applyEase((ct - a.t) / span, a.ease) : 0
 
       // Collect all axis tags that appear in either keyframe
       const allTags = new Set([...Object.keys(a.axes), ...Object.keys(b.axes)])

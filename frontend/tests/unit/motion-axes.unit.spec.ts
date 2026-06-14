@@ -29,3 +29,22 @@ describe('axesToVariationSettings', () => {
     expect(axesToVariationSettings({})).toBe('')
   })
 })
+
+describe('interpolateAxes per-keyframe ease', () => {
+  const kfs = [
+    { t: 0, axes: { wght: 0 }, ease: 'power2.in' },
+    { t: 1, axes: { wght: 100 } },
+  ]
+  it('applies the FROM-keyframe ease to the segment (power2.in at mid)', () => {
+    // linear would give 50 at t=0.5; power2.in (t^2) gives 25.
+    expect(interpolateAxes(kfs, 0.5, {}).wght).toBeCloseTo(25, 4)
+  })
+  it('still linear when no ease set', () => {
+    const lin = [{ t: 0, axes: { wght: 0 } }, { t: 1, axes: { wght: 100 } }]
+    expect(interpolateAxes(lin, 0.5, {}).wght).toBeCloseTo(50, 4)
+  })
+  it('endpoints unaffected by ease', () => {
+    expect(interpolateAxes(kfs, 0, {}).wght).toBeCloseTo(0, 4)
+    expect(interpolateAxes(kfs, 1, {}).wght).toBeCloseTo(100, 4)
+  })
+})
