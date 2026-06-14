@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { buildRibbonGeometryData, ribbonInstance, scrollU } from '../ribbonGeometry'
+import { buildRibbonGeometryData, ribbonInstance, scrollOffset } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
 
 const controls: ControlSpec[] = [
@@ -148,7 +148,7 @@ export const ribbonEffect: SpaceTypeEffect = {
     const speed = n(params, 'speed')
     for (const r of ribbons) {
       // Text scrolls along the ribbon; integer speed keeps it seamless.
-      r.tex.offset.x = -scrollU(t01, speed) * r.uRepeat * r.dir
+      r.tex.offset.x = -scrollOffset(t01, speed, r.uRepeat) * r.dir
     }
   },
 }

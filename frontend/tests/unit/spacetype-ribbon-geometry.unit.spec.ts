@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { snakePoint, buildRibbonGeometryData, ribbonInstance, scrollU, type RibbonGeoParams } from '../../app/lib/spacetype/ribbonGeometry'
+import { snakePoint, buildRibbonGeometryData, ribbonInstance, scrollOffset, loopTiles, type RibbonGeoParams } from '../../app/lib/spacetype/ribbonGeometry'
 
 const P: RibbonGeoParams = { segments: 8, length: 16, amplitude: 3, frequency: 1.5, height: 1, uRepeat: 6, phase: 0 }
 
@@ -40,9 +40,16 @@ describe('ribbonInstance', () => {
   })
 })
 
-describe('scrollU', () => {
-  it('is seamless: wraps equal at t01=0 and t01=1', () => {
-    const wrap = (x: number) => x - Math.floor(x)
-    expect(wrap(scrollU(1, 2))).toBeCloseTo(wrap(scrollU(0, 2)), 6)
+describe('scrollOffset / loopTiles (seamless loop)', () => {
+  it('scrolls a whole number of tiles per loop for ANY speed', () => {
+    for (const speed of [0.6, 1, 1.37, 2.4, 0.05]) {
+      const total = scrollOffset(1, speed, 4) - scrollOffset(0, speed, 4)
+      expect(Number.isInteger(total)).toBe(true)
+    }
+  })
+  it('loopTiles rounds speed*uRepeat and clamps to >= 0', () => {
+    expect(loopTiles(0.6, 4)).toBe(2)
+    expect(loopTiles(1, 4)).toBe(4)
+    expect(loopTiles(-3, 4)).toBe(0)
   })
 })

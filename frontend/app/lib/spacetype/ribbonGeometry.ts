@@ -59,7 +59,13 @@ export function ribbonInstance(i: number, p: RibbonInstanceParams): RibbonInstan
   return { y: (i - center) * p.spacing, phase: i * p.offset * TAU, dir }
 }
 
-/** Seamless text scroll along U: integer cycles per loop ⇒ frame 0 == loop end. */
-export function scrollU(t01: number, speed: number): number {
-  return t01 * speed
+/** Whole number of texture tiles scrolled per loop — quantized so the loop is seamless. */
+export function loopTiles(speed: number, uRepeat: number): number {
+  return Math.max(0, Math.round(speed * uRepeat))
+}
+
+/** Text scroll offset (texture-repeat units) at normalized loop time t01.
+ *  Seamless: offset(1) - offset(0) = loopTiles, an integer ⇒ identical wrap. */
+export function scrollOffset(t01: number, speed: number, uRepeat: number): number {
+  return t01 * loopTiles(speed, uRepeat)
 }
