@@ -1430,7 +1430,7 @@ onBeforeUnmount(() => {
             type="button"
             class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
             :class="trainingKind === 'style'
-              ? 'border-violet-400 bg-violet-500/15'
+              ? 'border-white/40 bg-white/[0.07]'
               : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
             @click="trainingKind = 'style'"
           >
@@ -1441,7 +1441,7 @@ onBeforeUnmount(() => {
             type="button"
             class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
             :class="trainingKind === 'character'
-              ? 'border-violet-400 bg-violet-500/15'
+              ? 'border-white/40 bg-white/[0.07]'
               : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
             @click="trainingKind = 'character'"
           >
@@ -1452,7 +1452,7 @@ onBeforeUnmount(() => {
             type="button"
             class="flex flex-col items-start gap-0.5 px-3.5 py-3 rounded-lg border text-left transition-colors cursor-pointer"
             :class="trainingKind === 'voice'
-              ? 'border-violet-400 bg-violet-500/15'
+              ? 'border-white/40 bg-white/[0.07]'
               : 'border-white/[0.08] hover:border-white/15 hover:bg-white/[0.03]'"
             @click="trainingKind = 'voice'"
           >
@@ -1617,7 +1617,7 @@ onBeforeUnmount(() => {
             <span class="text-white/35 font-normal ml-2">{{ images.length }} {{ images.length === 1 ? 'image' : 'images' }}</span>
             <span
               v-if="importedAesthetic"
-              class="ml-2 text-[9.5px] uppercase tracking-wide text-violet-100/85 bg-violet-500/25 px-1.5 py-0.5 rounded align-middle"
+              class="ml-2 text-[9.5px] uppercase tracking-wide text-emerald-100/90 bg-emerald-500/20 px-1.5 py-0.5 rounded align-middle"
               :title="`Aesthetic from Krea (added to prompts):\n\n${importedAesthetic}`"
             >aesthetic ✓</span>
           </label>
@@ -1655,10 +1655,10 @@ onBeforeUnmount(() => {
         <!-- Build a character dataset from one reference (character mode only) -->
         <div
           v-if="trainingKind === 'character'"
-          class="mb-4 rounded-xl border border-violet-400/20 bg-violet-500/[0.04] p-3"
+          class="mb-4 rounded-xl border border-white/[0.1] bg-white/[0.03] p-3"
         >
           <div class="flex items-center gap-2 mb-1">
-            <Drama class="size-4 text-violet-300" />
+            <Drama class="size-4 text-white/70" />
             <span class="text-[12.5px] font-medium text-white/85">Build a dataset from one photo</span>
           </div>
           <p class="text-[11px] text-white/55 leading-relaxed mb-3">
@@ -1723,7 +1723,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-medium transition-colors"
                   :class="referenceFiles.length && !buildingDataset
-                    ? 'bg-violet-500 hover:bg-violet-400 text-white cursor-pointer'
+                    ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black cursor-pointer'
                     : 'bg-white/[0.06] text-white/35 cursor-not-allowed'"
                   :disabled="!referenceFiles.length || buildingDataset"
                   @click="buildCharacterDataset"
@@ -1735,7 +1735,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="buildingDataset" class="h-1 rounded-full bg-white/[0.08] overflow-hidden">
                 <div
-                  class="h-full bg-violet-400 transition-all duration-300"
+                  class="h-full bg-emerald-400 transition-all duration-300"
                   :style="{ width: `${buildProgress.total ? (buildProgress.done / buildProgress.total * 100) : 0}%` }"
                 />
               </div>
@@ -1786,10 +1786,10 @@ onBeforeUnmount(() => {
             <div class="h-px flex-1 bg-white/[0.08]" />
           </div>
 
-          <div class="rounded-xl bg-violet-500/[0.04] border border-violet-400/15 p-4 space-y-3">
+          <div class="rounded-xl bg-white/[0.03] border border-white/[0.1] p-4 space-y-3">
             <div class="flex items-start gap-2.5">
-              <div class="size-8 rounded-lg bg-violet-500/15 flex items-center justify-center shrink-0">
-                <Cloud class="size-4 text-violet-300" />
+              <div class="size-8 rounded-lg bg-white/[0.08] flex items-center justify-center shrink-0">
+                <Cloud class="size-4 text-white/70" />
               </div>
               <div class="min-w-0">
                 <div class="text-[12.5px] font-medium text-white">Import a Krea moodboard</div>
@@ -1806,11 +1806,11 @@ onBeforeUnmount(() => {
                 v-model="kreaBoardUrl"
                 type="text"
                 placeholder="https://www.krea.ai/moodboard-feed/…"
-                class="flex-1 h-9 px-3 rounded-md bg-black/30 border border-white/10 text-[12px] text-white/85 placeholder:text-white/25 focus:outline-none focus:border-violet-400/40"
+                class="flex-1 h-9 px-3 rounded-md bg-black/30 border border-white/10 text-[12px] text-white/85 placeholder:text-white/25 focus:outline-none focus:border-white/30"
                 @keydown.enter="fetchKreaBoard"
               />
               <button
-                class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-violet-500/85 hover:bg-violet-500 text-[12px] font-medium text-white transition-colors cursor-pointer disabled:opacity-50"
+                class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-emerald-500/90 hover:bg-emerald-400 text-[12px] font-medium text-black transition-colors cursor-pointer disabled:opacity-50"
                 :disabled="!kreaBoardUrl.trim() || kreaFetching"
                 @click="fetchKreaBoard"
               >
@@ -1821,7 +1821,7 @@ onBeforeUnmount(() => {
 
             <!-- Make it original: AI rename + reword on import -->
             <label class="flex items-start gap-2 cursor-pointer select-none">
-              <input v-model="kreaRework" type="checkbox" class="mt-0.5 accent-violet-500 cursor-pointer" />
+              <input v-model="kreaRework" type="checkbox" class="mt-0.5 accent-white cursor-pointer" />
               <span class="text-[10.5px] text-white/55 leading-relaxed">
                 <span class="text-white/75">Make it original</span> — rename the board and reword the
                 aesthetic with AI so it's inspired by the reference, not a copy.
@@ -1846,7 +1846,7 @@ onBeforeUnmount(() => {
                   v-model="kreaJson"
                   rows="3"
                   placeholder='Paste the moodboard JSON here — e.g. [{"name":"…","images":[…],"tasteProfile":"…"}]'
-                  class="w-full px-2.5 py-2 rounded-md bg-black/30 border border-white/10 text-[11px] font-mono text-white/85 placeholder:text-white/25 focus:outline-none focus:border-violet-400/40 resize-y"
+                  class="w-full px-2.5 py-2 rounded-md bg-black/30 border border-white/10 text-[11px] font-mono text-white/85 placeholder:text-white/25 focus:outline-none focus:border-white/30 resize-y"
                 />
                 <div class="flex justify-end">
                   <button
@@ -1869,7 +1869,7 @@ onBeforeUnmount(() => {
                 <button
                   v-for="b in kreaBoards"
                   :key="b.id || b.name"
-                  class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/50 overflow-hidden text-left transition-colors cursor-pointer disabled:opacity-50"
+                  class="group relative rounded-lg border border-white/[0.08] hover:border-white/25 overflow-hidden text-left transition-colors cursor-pointer disabled:opacity-50"
                   :disabled="kreaImporting"
                   :title="b.aesthetic || ''"
                   @click="importKreaBoard(b)"
@@ -1888,7 +1888,7 @@ onBeforeUnmount(() => {
                     <div class="text-[9.5px] text-white/45 truncate">
                       <template v-if="b.loadedImages && b.loadedImages < b.imageCount">{{ b.loadedImages }} of {{ b.imageCount }} images</template>
                       <template v-else>{{ b.imageCount }} {{ b.imageCount === 1 ? 'image' : 'images' }}</template>
-                      <span v-if="b.aesthetic" class="text-violet-300/80"> · aesthetic ✓</span>
+                      <span v-if="b.aesthetic" class="text-emerald-300/80"> · aesthetic ✓</span>
                     </div>
                   </div>
                 </button>
@@ -1931,7 +1931,7 @@ onBeforeUnmount(() => {
               <!-- Re-roll a generated shot (character dataset only) -->
               <button
                 v-if="img.generated && referenceFiles.length"
-                class="absolute top-1.5 right-9 size-6 rounded-full bg-black/70 hover:bg-violet-500/90 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white transition-opacity cursor-pointer disabled:cursor-wait"
+                class="absolute top-1.5 right-9 size-6 rounded-full bg-black/70 hover:bg-white/20 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white transition-opacity cursor-pointer disabled:cursor-wait"
                 :class="regenerating.has(img.filename) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
                 title="Regenerate this shot"
                 :disabled="regenerating.has(img.filename)"
@@ -2036,7 +2036,7 @@ onBeforeUnmount(() => {
           <div v-if="importedAesthetic !== null">
             <label class="block text-[12px] font-medium text-white/80 mb-1">
               Aesthetic
-              <span class="text-violet-300/80 font-normal ml-1">added to your prompts</span>
+              <span class="text-white/55 font-normal ml-1">added to your prompts</span>
             </label>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
               A short style description prepended to prompts when you use this style, so generations match the look.
