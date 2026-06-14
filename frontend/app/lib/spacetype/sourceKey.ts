@@ -7,6 +7,8 @@ export interface SourceKeyInput {
   loopDuration: number
   W: number
   H: number
+  alpha?: boolean
+  bgColor?: string
 }
 
 /** Sort object keys so serialization is order-independent. */

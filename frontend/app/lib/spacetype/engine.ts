@@ -24,12 +24,37 @@ export class SpaceTypeEngine {
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
     this.effect = opts.effect
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: opts.alpha, antialias: true, preserveDrawingBuffer: true })
+    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true })
     this.renderer.setSize(opts.width, opts.height, false)
     this.scene = new THREE.Scene()
-    if (!opts.alpha) this.scene.background = new THREE.Color(opts.bgColor)
     this.camera = new THREE.PerspectiveCamera(45, opts.width / opts.height, 0.1, 100)
     this.camera.position.set(0, 0, 14)
+    this.applyBackground()
+  }
+
+  /** Apply opaque-bg vs transparent based on opts.alpha. Renderer is always
+   *  constructed with alpha:true; transparency is a render-time clear setting. */
+  private applyBackground(): void {
+    if (this.opts.alpha) {
+      this.scene.background = null
+      this.renderer.setClearColor(0x000000, 0)
+    } else {
+      const c = new THREE.Color(this.opts.bgColor)
+      this.scene.background = c
+      this.renderer.setClearColor(c, 1)
+    }
+  }
+
+  /** Toggle transparency / background color live without rebuilding the renderer. */
+  setBackground(alpha: boolean, bgColor: string): void {
+    this.opts.alpha = alpha
+    this.opts.bgColor = bgColor
+    this.applyBackground()
+  }
+
+  /** Update loop length so frameCount reflects edits made after construction. */
+  setLoopDuration(loopDuration: number): void {
+    this.opts.loopDuration = loopDuration
   }
 
   private disposeRoot(): void {

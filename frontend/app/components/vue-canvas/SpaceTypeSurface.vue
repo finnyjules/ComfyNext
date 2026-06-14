@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ribbonEffect, buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake, type SpaceTypeBake } from '~/lib/spacetype/bake'
 
-const props = defineProps<{ open: boolean }>()
+defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'add-clip', bake: SpaceTypeBake): void; (e: 'save-poster', blob: Blob): void }>()
 
 const W = 960, H = 540, FPS = 30
@@ -29,7 +29,22 @@ function texOpts() {
 }
 
 function rebuild() {
+  previewFrame = 0
   engine?.build(params, texOpts())
+}
+
+function startPreview() {
+  const tick = () => {
+    previewFrame = (previewFrame + 1) % Math.max(1, Math.round(FPS * loopDuration.value))
+    engine?.renderFrame(previewFrame, params)
+    raf = requestAnimationFrame(tick)
+  }
+  raf = requestAnimationFrame(tick)
+}
+
+function stopPreview() {
+  if (raf) cancelAnimationFrame(raf)
+  raf = 0
 }
 
 onMounted(() => {
@@ -39,36 +54,48 @@ onMounted(() => {
     alpha: transparent.value, bgColor: bgColor.value,
   })
   rebuild()
-  const tick = () => {
-    previewFrame = (previewFrame + 1) % Math.max(1, Math.round(FPS * loopDuration.value))
-    engine?.renderFrame(previewFrame, params)
-    raf = requestAnimationFrame(tick)
-  }
-  raf = requestAnimationFrame(tick)
+  startPreview()
 })
 
-onBeforeUnmount(() => { cancelAnimationFrame(raf); engine?.dispose() })
+onBeforeUnmount(() => { stopPreview(); engine?.dispose(); engine = null })
+
+// Row count is structural — it changes the number of meshes, so rebuild the scene.
+watch(() => params.rows, () => rebuild())
+// Transparency + background apply live via render-time clear settings (no renderer rebuild).
+watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
+// Loop length affects the engine's frameCount used during bake.
+watch(loopDuration, d => engine?.setLoopDuration(d))
 
 const cfg = computed(() => ({
-  effectId: effect.id, params: { ...params }, fps: FPS, loopDuration: loopDuration.value, W, H,
+  effectId: effect.id, params: { ...params }, fps: FPS, loopDuration: loopDuration.value,
+  W, H, alpha: transparent.value, bgColor: bgColor.value,
 }))
 
 async function addToTimeline() {
   if (!engine) return
   baking.value = true
+  stopPreview()
   try {
     rebuild()
     const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
       renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob() },
     })
     emit('add-clip', bake)
-  } finally { baking.value = false }
+  } finally {
+    baking.value = false
+    startPreview()
+  }
 }
 
 async function savePoster() {
   if (!engine) return
-  engine.renderFrame(0, params)
-  emit('save-poster', await engine.frameToBlob())
+  stopPreview()
+  try {
+    engine.renderFrame(0, params)
+    emit('save-poster', await engine.frameToBlob())
+  } finally {
+    startPreview()
+  }
 }
 </script>
 
