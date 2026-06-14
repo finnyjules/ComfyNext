@@ -60,14 +60,19 @@ function frontMaterial(
     shader.uniforms.uAside = uAside
     shader.uniforms.uGradient = uGradient
     shader.uniforms.uURepeat = uURepeat
+    // Fix 2: pass the raw (un-scrolled) geometry UV through a new varying so the
+    // gradient is pinned to the ribbon and does not drift with the text scroll.
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vRawU;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;',
+        '#include <common>\nvarying float vRawU;\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;',
       )
       .replace(
         '#include <map_fragment>',
-        '#include <map_fragment>\n{\n  vec3 fill = uAside;\n  if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vMapUv.x / uURepeat, 0.5)).rgb; }\n  diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0);\n}',
+        '#include <map_fragment>\n{\n  vec3 fill = uAside;\n  if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; }\n  diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0);\n}',
       )
   }
   return mat
@@ -123,6 +128,8 @@ export const ribbonEffect: SpaceTypeEffect = {
 
       // Front + back share ONE BufferGeometry (front face vs back face).
       const front = new three.Mesh(bufferGeo, frontMat)
+      // Fix 1: register the cloned texture so disposeRoot() frees it on rebuild.
+      front.userData.tex = tex
       const back = new three.Mesh(bufferGeo, backMat)
 
       const subGroup = new three.Group()
