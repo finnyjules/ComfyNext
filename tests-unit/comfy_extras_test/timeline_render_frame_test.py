@@ -151,3 +151,58 @@ def test_transform_preserve_alpha_keeps_transparency(tmp_path):
     assert float(alpha.max()) == 0.0, "transparent source must stay transparent"
     _rgb2, alpha2 = NT._transform_and_alpha(transparent_white, 64, 36, 0, 0, 0, 1)
     assert float(alpha2.max()) > 0.0, "default path makes the fitted region opaque"
+
+
+def _alpha_square_png(tmp_path, name, square_rgb, size=(64, 36)):
+    """Transparent canvas with an 8x8 opaque square of `square_rgb` at center."""
+    from PIL import Image as _Image
+    img = _Image.new("RGBA", size, (0, 0, 0, 0))
+    w, h = size
+    for yy in range(h // 2 - 4, h // 2 + 4):
+        for xx in range(w // 2 - 4, w // 2 + 4):
+            img.putpixel((xx, yy), (*square_rgb, 255))
+    p = os.path.join(str(tmp_path), name)
+    img.save(p)
+    return p
+
+
+def test_motion_clip_composites_with_alpha(tmp_path):
+    """A baked alpha PNG sequence: the opaque center shows the square color,
+    the transparent surround shows the background (no black box)."""
+    f0 = _alpha_square_png(tmp_path, "m0.png", (255, 255, 255))
+    f1 = _alpha_square_png(tmp_path, "m1.png", (255, 0, 0))
+    state = _flat_state([{
+        "kind": "motion", "motion_frames": [f0, f1],
+        "start_frame": 0, "length": 2, "in_frame": 0,
+        "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+        "blend": "normal", "fade_in": 0, "fade_out": 0,
+    }], total=2, bg="#336699")
+    clips = NT._prepare_render_clips(state)
+    try:
+        frame0 = NT.render_frame_np(state, clips, 0)
+        frame1 = NT.render_frame_np(state, clips, 1)
+    finally:
+        NT._close_render_clips(clips)
+    bg = [0x33 / 255, 0x66 / 255, 0x99 / 255]
+    # frame 0: white center over bg corner
+    assert np.allclose(frame0[18, 32], [1, 1, 1], atol=2 / 255), f"center {frame0[18, 32]}"
+    assert np.allclose(frame0[2, 2], bg, atol=2 / 255), f"corner {frame0[2, 2]} should be bg"
+    # frame 1 indexes the SECOND baked frame: red center
+    assert np.allclose(frame1[18, 32], [1, 0, 0], atol=2 / 255), f"center {frame1[18, 32]}"
+
+
+def test_motion_clip_without_frames_is_skipped(tmp_path):
+    """A motion clip with no baked frames must be skipped (warn), not crash,
+    leaving the background untouched."""
+    state = _flat_state([{
+        "kind": "motion", "motion_frames": [],
+        "start_frame": 0, "length": 2, "in_frame": 0,
+        "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+        "blend": "normal", "fade_in": 0, "fade_out": 0,
+    }], total=2, bg="#336699")
+    clips = NT._prepare_render_clips(state)
+    try:
+        arr = NT.render_frame_np(state, clips, 0)
+    finally:
+        NT._close_render_clips(clips)
+    assert np.allclose(arr[18, 32], [0x33 / 255, 0x66 / 255, 0x99 / 255], atol=1e-6)

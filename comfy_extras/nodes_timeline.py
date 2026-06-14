@@ -10,6 +10,7 @@ the canvas size (matching the Compositor convention).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -774,6 +775,7 @@ def _adapt_edit_state(state: dict) -> dict:
                 "fade_out":    int(clip.get("fade_out", 0)),
                 "text":        clip.get("text"),
                 "keyframes":   clip.get("keyframes"),
+                "motion_frames": clip.get("motion_frames"),
             })
 
     if audio_path:
@@ -823,6 +825,24 @@ def _prepare_render_clips(state: dict) -> list[dict]:
                 padding=float(t.get("padding", 0.06)),
                 line_spacing=float(t.get("line_spacing", 1.2)),
             )
+            entry["duration"] = None
+            clips.append(entry)
+            continue
+
+        if kind == "motion":
+            # Baked alpha PNG sequence (one file per clip-local frame). Resolve
+            # filenames against input/ like other clip paths; skip (warn) if the
+            # bake is missing/stale so a kinetic clip never silently crashes.
+            frames = c.get("motion_frames") or []
+            resolved = []
+            for fn in frames:
+                p = fn if os.path.isabs(fn) else os.path.join(folder_paths.get_input_directory(), fn)
+                if os.path.exists(p):
+                    resolved.append(p)
+            if not resolved:
+                logging.warning("timeline: motion clip has no baked frames (stale/un-baked) — skipping")
+                continue
+            entry["frame_paths"] = resolved
             entry["duration"] = None
             clips.append(entry)
             continue
@@ -882,6 +902,10 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         # Get source PIL for this frame.
         if L["kind"] in ("image", "text"):
             src_pil = L["pil"]
+        elif L["kind"] == "motion":
+            fp = L["frame_paths"]
+            idx = local_f if local_f < len(fp) else len(fp) - 1
+            src_pil = PILImage.open(fp[max(0, idx)])  # RGBA, alpha preserved below
         else:  # video
             vs = L["stream"]
             container = L["container"]
@@ -902,7 +926,10 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         # Keyframed transform at this clip-local frame (static if none).
         static = {"x": L["x"], "y": L["y"], "rotation": L["rot"], "scale": L["scl"], "opacity": L["op"]}
         tf = _interp_transform(static, L.get("keyframes"), local_f)
-        rgb, alpha = _transform_and_alpha(src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"])
+        rgb, alpha = _transform_and_alpha(
+            src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"],
+            preserve_alpha=(L["kind"] == "motion"),
+        )
         a = alpha * tf["opacity"] * fade
         blended = _blend_np(canvas, rgb, L["blend"])
         canvas = canvas * (1.0 - a) + blended * a
