@@ -1,9 +1,11 @@
 import type { SpaceTypeEffect } from '../effect'
 import { ribbonEffect } from './ribbon'
+import { stripesEffect } from './stripes'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   ribbonEffect,
+  stripesEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
