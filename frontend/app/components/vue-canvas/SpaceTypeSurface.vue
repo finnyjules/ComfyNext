@@ -3,14 +3,15 @@ import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ribbonEffect, buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
-import { ensureSpaceTypeBake, type SpaceTypeBake } from '~/lib/spacetype/bake'
+import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 
 defineProps<{ open: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'add-clip', bake: SpaceTypeBake): void; (e: 'save-poster', blob: Blob): void }>()
+const emit = defineEmits<{ (e: 'close'): void }>()
 
-const FPS = 30
+const fps = ref(30)
+const FPS_OPTIONS = ['24', '30', '60']
 const DIMS: Record<string, [number, number]> = {
   '1920 × 1080 (16:9)': [1920, 1080],
   '1080 × 1920 (9:16)': [1080, 1920],
@@ -97,8 +98,8 @@ function startPreview() {
   previewStart = 0
   const tick = (ts: number) => {
     if (!previewStart) previewStart = ts
-    const total = Math.max(1, Math.round(FPS * loopDuration.value))
-    previewFrame = Math.floor(((ts - previewStart) / 1000) * FPS) % total
+    const total = Math.max(1, Math.round(fps.value * loopDuration.value))
+    previewFrame = Math.floor(((ts - previewStart) / 1000) * fps.value) % total
     engine?.renderFrame(previewFrame, params)
     raf = requestAnimationFrame(tick)
   }
@@ -113,7 +114,7 @@ function stopPreview() {
 onMounted(async () => {
   if (!canvas.value) return
   engine = new SpaceTypeEngine(canvas.value, {
-    effect, width: W.value, height: H.value, fps: FPS, loopDuration: loopDuration.value,
+    effect, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
     alpha: transparent.value, bgColor: bgColor.value,
   })
   await ensureFont(String(params.font))
@@ -133,6 +134,8 @@ watch(
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
 // Loop length affects the engine's frameCount used during bake.
 watch(loopDuration, d => engine?.setLoopDuration(d))
+// fps affects the engine's frameCount used during bake/preview.
+watch(fps, f => engine?.setFps(f))
 watch(dimsKey, (k) => {
   const d = DIMS[k]
   if (!d) return
@@ -142,11 +145,15 @@ watch(dimsKey, (k) => {
 })
 
 const cfg = computed(() => ({
-  effectId: effect.id, params: { ...params }, fps: FPS, loopDuration: loopDuration.value,
+  effectId: effect.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
   W: W.value, H: H.value, alpha: transparent.value, bgColor: bgColor.value,
 }))
 
-async function addToTimeline() {
+function addCanvasNode(nodeType: string, widgetOverrides: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType, widgetOverrides } }))
+}
+
+async function generateImage() {
   if (!engine) return
   baking.value = true
   stopPreview()
@@ -154,24 +161,48 @@ async function addToTimeline() {
     await ensureFont(String(params.font))
     engine.setSize(W.value, H.value)
     rebuild()
-    const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
-      renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob() },
-    })
-    emit('add-clip', bake)
+    engine.renderFrame(0, params)
+    const blob = await engine.frameToBlob()
+    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const [filename] = await uploadFrameBatch([blob], 'spacetype_img')
+    if (filename) {
+      addCanvasNode('Image', { image: filename })
+      emit('close')
+    }
   } finally {
     baking.value = false
     startPreview()
   }
 }
 
-async function savePoster() {
+async function generateVideo() {
   if (!engine) return
+  baking.value = true
   stopPreview()
   try {
     await ensureFont(String(params.font))
-    engine.renderFrame(0, params)
-    emit('save-poster', await engine.frameToBlob())
+    engine.setSize(W.value, H.value)
+    engine.setFps(fps.value)
+    engine.setLoopDuration(loopDuration.value)
+    rebuild()
+    const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
+      renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob() },
+    })
+    const res = await fetch('/comfynext/spacetype_encode', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (data.filename) {
+      addCanvasNode('Video', { file: data.filename })
+      emit('close')
+    } else {
+      console.error('[spacetype] video encode failed', data)
+      alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
+    }
   } finally {
+    baking.value = false
     startPreview()
   }
 }
@@ -185,10 +216,12 @@ async function savePoster() {
           <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
         </div>
         <div class="mt-3 flex shrink-0 gap-2">
-          <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="addToTimeline">
-            {{ baking ? 'Baking…' : 'Add to timeline' }}
+          <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
+            {{ baking ? 'Generating…' : 'Generate as image' }}
           </button>
-          <button class="rounded bg-white/10 px-3 py-1.5 text-sm" @click="savePoster">Save poster</button>
+          <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
+            {{ baking ? 'Generating…' : 'Generate as video' }}
+          </button>
           <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="emit('close')">Close</button>
         </div>
       </div>
@@ -228,17 +261,22 @@ async function savePoster() {
               </div>
             </div>
 
-            <div v-if="section.name === 'Motion'" data-control class="text-xs">
-              <label class="mb-1 block text-white/60">Loop seconds</label>
-              <input type="range" min="1" max="10" step="0.5" v-model.number="loopDuration" class="w-full" />
-            </div>
-
             <template v-if="section.name === 'Output'">
               <div data-control class="text-xs">
                 <label class="mb-1 block text-white/60">Dimensions</label>
                 <select v-model="dimsKey" class="w-full rounded bg-white/10 px-2 py-1">
                   <option v-for="k in Object.keys(DIMS)" :key="k" :value="k">{{ k }}</option>
                 </select>
+              </div>
+              <div data-control class="text-xs">
+                <label class="mb-1 block text-white/60">FPS</label>
+                <select v-model.number="fps" class="w-full rounded bg-white/10 px-2 py-1">
+                  <option v-for="f in FPS_OPTIONS" :key="f" :value="Number(f)">{{ f }}</option>
+                </select>
+              </div>
+              <div data-control class="text-xs">
+                <label class="mb-1 block text-white/60">Duration (s)</label>
+                <input type="range" min="1" max="15" step="0.5" v-model.number="loopDuration" class="w-full" />
               </div>
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background

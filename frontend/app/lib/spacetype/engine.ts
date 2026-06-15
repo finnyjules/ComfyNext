@@ -69,6 +69,11 @@ export class SpaceTypeEngine {
     this.opts.loopDuration = loopDuration
   }
 
+  /** Update fps so frameCount (used by renderFrame/bake) reflects fps edits. */
+  setFps(fps: number): void {
+    this.opts.fps = fps
+  }
+
   private disposeRoot(): void {
     if (!this.root) return
     this.root.traverse((obj) => {

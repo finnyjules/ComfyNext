@@ -11,9 +11,6 @@ import { healDanglingLinks } from '~/composables/useFilteredPrompt'
 import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
-import { useTimelineStore } from '~/composables/useTimelineStore'
-import { createMotionClip } from '~/composables/timelineMotionClip'
-import type { SpaceTypeBake } from '~/lib/spacetype/bake'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -157,40 +154,9 @@ function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
   }))
 }
 
-// Space Type surface → outputs. "Add to timeline" bakes a PNG sequence the
-// surface already produced; we drop it onto the video track as a MotionClip
-// carrying motion_bake (the visual lives in the baked frames, not the text
-// layer). "Save poster" downloads the still PNG locally for v1.
-const timelineStore = useTimelineStore()
-
-function onSpaceTypeAddClip(bake: SpaceTypeBake) {
-  spaceTypeOpen.value = false
-  const videoTrack = timelineStore.state.value.tracks.find(t => t.kind === 'video')
-  if (!videoTrack) {
-    console.warn('[spacetype] No timeline video track found — add a Timeline node first.')
-    return
-  }
-  const clip = createMotionClip({ startFrame: timelineStore.playheadFrame.value, length: bake.frames.length })
-  // The visual lives entirely in the baked PNG frames, not the placeholder text layer.
-  clip.layer.text = ''
-  clip.motion_bake = { source_key: bake.source_key, frames: bake.frames, fps: bake.fps, external: true }
-  timelineStore.addClip(videoTrack.id, clip)
-  timelineStore.selectedClipId.value = clip.id
-}
-
-function onSpaceTypeSavePoster(blob: Blob) {
-  spaceTypeOpen.value = false
-  // v1: download the poster PNG locally. Promoting it into the Assets library
-  // requires the generation-record pipeline and is a deliberate follow-up.
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `space-type-poster-${Date.now()}.png`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
+// Space Type surface → outputs. The surface bakes its own frames and dispatches
+// `comfynext:addNode` directly (Image or Video node), so the layout only needs
+// to own the open/close state of the modal.
 
 // Annotate submenu — FigJam-style overlays on the canvas. Each option fires
 // `comfynext:addAnnotation`; VueNodeCanvas owns the spawn position and
@@ -2842,14 +2808,12 @@ function dismissRunResult() {
           @create="onCreateSlate"
         />
 
-        <!-- Space Type surface: 3D-typography author → bake a PNG sequence onto
-             the timeline (MotionClip + motion_bake) or save a still poster. -->
+        <!-- Space Type surface: 3D-typography author → Generate as image/video,
+             dropping an Image or Video node on the canvas (dispatches addNode). -->
         <VueCanvasSpaceTypeSurface
           v-if="SPACE_TYPE_ENABLED && spaceTypeOpen"
           :open="spaceTypeOpen"
           @close="spaceTypeOpen = false"
-          @add-clip="onSpaceTypeAddClip"
-          @save-poster="onSpaceTypeSavePoster"
         />
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->
