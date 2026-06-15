@@ -74,6 +74,11 @@ export class SpaceTypeEngine {
     this.opts.fps = fps
   }
 
+  /** Switch the active effect (call rebuild/build afterwards). */
+  setEffect(effect: SpaceTypeEffect): void {
+    this.effect = effect
+  }
+
   private disposeRoot(): void {
     if (!this.root) return
     this.root.traverse((obj) => {

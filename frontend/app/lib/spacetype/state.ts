@@ -6,6 +6,7 @@ import { VARIABLE_FONTS } from '~/data/variable-fonts'
 // own inline copy of this logic; this module exists so the node card preview
 // can rebuild the same scene from the saved config without duplicating it.
 export interface SpaceTypeState {
+  effectId: string
   params: Params
   gradientStops: { color: string; on: boolean }[]
   fps: number
@@ -25,6 +26,7 @@ export const DIMS: Record<string, [number, number]> = {
 
 export function defaultSpaceTypeState(): SpaceTypeState {
   return {
+    effectId: 'ribbon',
     params: defaultsFromControls(ribbonEffect.controls),
     gradientStops: [
       { color: '#3b5bff', on: true }, { color: '#ff3b3b', on: true },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { ribbonEffect, buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
+import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
+import { SPACE_TYPE_EFFECTS, getEffect } from '~/lib/spacetype/effects'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
@@ -27,8 +28,9 @@ const DIMS: Record<string, [number, number]> = {
 const dimsKey = ref('960 × 540 (16:9)')
 const W = ref(960)
 const H = ref(540)
-const effect = ribbonEffect
-const params = reactive<Params>(defaultsFromControls(effect.controls))
+const effectId = ref('ribbon')
+const effect = computed(() => getEffect(effectId.value))
+const params = reactive<Params>(defaultsFromControls(effect.value.controls))
 const loopDuration = ref(6)
 const transparent = ref(false)
 const bgColor = ref('#0e0e10')
@@ -47,7 +49,7 @@ const openSections = reactive<Record<string, boolean>>({
   Type: true, Ribbon: true, Color: true, Snake: false, Shadow: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
-  SECTION_ORDER.map(name => ({ name, controls: effect.controls.filter(c => (c.group ?? 'Other') === name) })),
+  SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
 )
 
 const gradientStops = reactive<GradientStop[]>([
@@ -122,6 +124,9 @@ function loadConfig() {
   const n = currentNode()
   const c = n?.data?.properties?.comfynext_spaceType
   if (!c) return // first edit of a fresh node — keep the defaults.
+  // Restore effectId BEFORE params so the engine builds with the right effect
+  // and the control panel (sections) reflects the saved effect's controls.
+  if (typeof c.effectId === 'string') effectId.value = c.effectId
   if (c.params && typeof c.params === 'object') Object.assign(params, c.params)
   if (Array.isArray(c.gradientStops)) {
     gradientStops.splice(0, gradientStops.length, ...c.gradientStops.map((s: any) => ({ ...s })))
@@ -146,6 +151,7 @@ function saveConfig() {
   const prev = n.data.properties.comfynext_spaceType || {}
   n.data.properties.comfynext_spaceType = {
     ...prev,
+    effectId: effectId.value,
     params: { ...params },
     gradientStops: gradientStops.map(s => ({ ...s })),
     fps: fps.value, loopDuration: loopDuration.value,
@@ -161,7 +167,7 @@ onMounted(async () => {
   // already the user's authored state (not the defaults).
   loadConfig()
   engine = new SpaceTypeEngine(canvas.value, {
-    effect, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
+    effect: effect.value, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
     alpha: transparent.value, bgColor: bgColor.value,
   })
   await ensureFont(String(params.font))
@@ -177,6 +183,18 @@ watch(
   () => JSON.stringify({ ...params, speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0, ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0 }) + JSON.stringify(gradientStops),
   async () => { await ensureFont(String(params.font)); rebuild() },
 )
+// Switching effect: reset params to the new effect's defaults, but carry over any
+// param values the two effects share (text/font/typeColor/etc.) so they persist
+// across the switch. Then point the engine at the new effect and rebuild.
+watch(effectId, async () => {
+  const next = defaultsFromControls(effect.value.controls)
+  for (const k of Object.keys(next)) if (k in params) next[k] = (params as any)[k]
+  for (const k of Object.keys(params)) delete (params as any)[k]
+  Object.assign(params, next)
+  await ensureFont(String(params.font))
+  engine?.setEffect(effect.value)
+  rebuild()
+})
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
 // Loop length affects the engine's frameCount used during bake.
@@ -192,7 +210,7 @@ watch(dimsKey, (k) => {
 })
 
 const cfg = computed(() => ({
-  effectId: effect.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
+  effectId: effect.value.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
   W: W.value, H: H.value, alpha: transparent.value, bgColor: bgColor.value,
 }))
 
@@ -281,6 +299,12 @@ async function generateVideo() {
         </div>
       </div>
       <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1 min-h-0">
+        <div class="rounded-lg bg-white/5 px-3 py-2">
+          <label class="mb-1 block text-xs text-white/60">Effect</label>
+          <select v-model="effectId" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
+            <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id">{{ e.label }}</option>
+          </select>
+        </div>
         <details
           v-for="section in sections" :key="section.name"
           :open="openSections[section.name]"

@@ -3,7 +3,7 @@ import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Pencil, Sparkles } from 'lucide-vue-next'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
-import { ribbonEffect } from '~/lib/spacetype/effects/ribbon'
+import { getEffect } from '~/lib/spacetype/effects'
 import {
   defaultSpaceTypeState, dimsFromKey, ensureSpaceTypeFont, texOptsFromState,
   type SpaceTypeState,
@@ -53,6 +53,8 @@ function rebuild() {
   engine.setFps(s.fps)
   engine.setLoopDuration(s.loopDuration)
   engine.setBackground(s.transparent, s.bgColor)
+  // Honor a config effectId change (the deep watch on `state` calls rebuild()).
+  engine.setEffect(getEffect(s.effectId))
   engine.build(s.params, texOptsFromState(s))
 }
 
@@ -80,7 +82,7 @@ onMounted(async () => {
   const s = state.value
   previewH.value = previewHeight(s)
   engine = new SpaceTypeEngine(canvasEl.value, {
-    effect: ribbonEffect, width: PREVIEW_W, height: previewH.value,
+    effect: getEffect(s.effectId), width: PREVIEW_W, height: previewH.value,
     fps: s.fps, loopDuration: s.loopDuration, alpha: s.transparent, bgColor: s.bgColor,
   })
   await ensureSpaceTypeFont(String(s.params.font))
