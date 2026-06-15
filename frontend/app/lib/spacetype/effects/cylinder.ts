@@ -18,11 +18,11 @@ const controls: ControlSpec[] = [
   { key: 'cylOffset', label: 'Cyl offset', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
   // WAVE — vertex deformation (Snake group)
   { key: 'waveCount', label: 'Wave count', kind: 'slider', min: 0, max: 8, step: 1, default: 2, group: 'Snake' },
-  { key: 'waveLatitude', label: 'Wave latitude', kind: 'slider', min: 0, max: 3, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveLongitude', label: 'Wave longitude', kind: 'slider', min: 0, max: 3, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveRipple', label: 'Wave ripple', kind: 'slider', min: 0, max: 3, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveXScale', label: 'Wave X-scale', kind: 'slider', min: 0, max: 2, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveYScale', label: 'Wave Y-scale', kind: 'slider', min: 0, max: 2, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveLatitude', label: 'Wave latitude', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveLongitude', label: 'Wave longitude', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveRipple', label: 'Wave ripple', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveXScale', label: 'Wave X-scale', kind: 'slider', min: 0, max: 1.5, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveYScale', label: 'Wave Y-scale', kind: 'slider', min: 0, max: 1.5, step: 0.02, default: 0, group: 'Snake' },
   // MOTION
   { key: 'waveSpeed', label: 'Wave speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0, group: 'Motion' },
   // CAMERA + TWEAK (Transform group)
@@ -47,8 +47,10 @@ const controls: ControlSpec[] = [
 ]
 
 // Fixed cylinder height. The text wraps AROUND the circumference (texture repeat),
-// so the height is purely the 3D band height; vertex segments make the wave smooth.
-const CYL_HEIGHT = 2.2
+// so the height is purely the 3D band height. Kept thin so it reads as a text RING
+// rather than a tall tube; the wave deformation is now angle-based (around the ring),
+// not height-based, so few height segments are needed.
+const CYL_HEIGHT = 1.0
 
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
@@ -81,17 +83,23 @@ uniform float uWaveTime;
 `
 const WAVE_DEFORM = `
 {
-  float ang = atan(position.z, position.x);          // around the cylinder
-  float hy = position.y;                             // height
+  float ang = atan(position.z, position.x);   // angle AROUND the ring
   float t = uWaveTime;
-  float dr = uWaveLat * sin(hy * uWaveCount + t)
-           + uWaveLong * sin(ang * uWaveCount + t)
-           + uWaveRipple * sin((ang * uWaveCount + hy * uWaveCount) + t);
-  vec2 rad = normalize(vec2(position.x, position.z) + 1e-6);
+  float c = max(1.0, uWaveCount);
+  vec2 rad = normalize(vec2(position.x, position.z));
+  // Latitude: vertical undulation around the ring (the ring rides up/down as you go around)
+  transformed.y += uWaveLat * sin(ang * c + t);
+  // Ripple: radial in/out around the ring (ring radius pulses -> flower/gear shape)
+  float dr = uWaveRipple * sin(ang * c + t);
+  // Longitude: a phase-shifted secondary undulation (offsets the form longitudinally)
+  transformed.y += uWaveLong * cos(ang * c * 0.5 + t);
+  dr += uWaveLong * 0.4 * sin(ang * c * 0.5 + t + 1.5707);
   transformed.x += rad.x * dr;
   transformed.z += rad.y * dr;
-  transformed.y += uWaveYS * sin(ang * uWaveCount + t);
-  transformed.x += uWaveXS * sin(hy * uWaveCount + t);
+  // X / Y Scale: stretch the whole ring horizontally / the band vertically (oval + height)
+  transformed.x *= 1.0 + uWaveXS;
+  transformed.z *= 1.0 + uWaveXS;
+  transformed.y *= 1.0 + uWaveYS;
 }
 `
 
@@ -220,12 +228,13 @@ export const cylinderEffect: SpaceTypeEffect = {
     const tilesAround = Math.max(1, Math.round(circumference / 6))
 
     // Centered Y stack; spacing derived from the band height.
-    const spacing = CYL_HEIGHT * 1.3
+    const spacing = CYL_HEIGHT * 1.6
     const center = (count - 1) / 2
 
     for (let i = 0; i < count; i++) {
-      // 160 radial + 24 height segments so the vertex wave deformation is smooth.
-      const geo = new three.CylinderGeometry(radius, radius, CYL_HEIGHT, 160, 24, true)
+      // 160 radial segments so the angle-based wave deformation is smooth around the
+      // ring; only 8 height segments are needed since the wave no longer keys off height.
+      const geo = new three.CylinderGeometry(radius, radius, CYL_HEIGHT, 160, 8, true)
 
       // Independent texture per cylinder ⇒ clone the shared text texture. The text
       // tiles `tilesAround` times around the circumference (wrapS = RepeatWrapping).
