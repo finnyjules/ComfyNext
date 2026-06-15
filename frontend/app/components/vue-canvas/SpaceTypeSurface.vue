@@ -363,6 +363,10 @@ async function generateVideo() {
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background
               </label>
+              <div v-if="!transparent" data-control class="text-xs">
+                <label class="mb-1 block text-white/60">Background color</label>
+                <input type="color" v-model="bgColor" />
+              </div>
             </template>
           </div>
         </details>
