@@ -33,7 +33,7 @@ const controls: ControlSpec[] = [
   { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014', group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
-  { key: 'shadowSoftness', label: 'Shadow softness', kind: 'slider', min: 0, max: 24, step: 0.5, default: 5, group: 'Shadow' },
+  { key: 'shadowSoftness', label: 'Shadow softness', kind: 'slider', min: 0, max: 40, step: 0.5, default: 10, group: 'Shadow' },
   { key: 'lightAngleX', label: 'Light angle X', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.6, group: 'Shadow' },
   { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
@@ -185,7 +185,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       light.shadow.bias = -0.0005
       // Shadow softness → VSM blur radius (+ samples) for diffuse shadows.
       light.shadow.radius = Math.max(0, n(params, 'shadowSoftness'))
-      light.shadow.blurSamples = 25
+      light.shadow.blurSamples = 40
       root.add(light)
       root.add(light.target)
 
