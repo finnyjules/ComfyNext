@@ -1319,9 +1319,9 @@ async function handleAddNode(e: Event) {
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   const newNode = createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides)
   nodes.value.push(newNode)
-  // Frontend-only Space Type node: auto-open its editor so the user lands
-  // straight in the authoring modal (the node card persists the config).
-  if (nodeType === 'SpaceType') spaceTypeOpenForId.value = newNode.id
+  // Frontend-only Space Type node: do NOT auto-open the editor on add. The node
+  // card shows a live preview from its saved config; the user clicks Edit to
+  // open the authoring modal.
 }
 
 // Edit as Frame: convert a layer-splitting node's results into a Frame
