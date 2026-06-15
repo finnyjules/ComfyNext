@@ -1,9 +1,24 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
+import { layoutChars } from '../charLayout'
+import { VARIABLE_FONTS } from '~/data/variable-fonts'
+
+/**
+ * CYLINDER — per-character ring.
+ *
+ * Unlike the old surface-based cylinder (text painted onto a continuous tube),
+ * each glyph is now its OWN quad placed around a vertical-axis ring, facing
+ * outward. The WAVE controls move EACH glyph individually, keyed off its base
+ * angle around the ring (so neighbouring letters move out of phase → snake /
+ * flower / undulation), live in update() with no rebuild.
+ *
+ * This is the per-character text foundation: layoutChars() renders the whole
+ * line to one CanvasTexture and hands back per-glyph UV regions; we remap each
+ * PlaneGeometry's uv to its glyph region and sample the shared texture.
+ */
 
 const controls: ControlSpec[] = [
-  // TYPE — shared text controls (typeXScale / typeYScale / typeWeight are honored
-  // by textTexture via texOpts; see state.ts / SpaceTypeSurface.vue).
+  // TYPE — shared text controls.
   { key: 'text', label: 'Text', kind: 'text', default: 'SPACE TYPE', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'inter', group: 'Type' },
   { key: 'typeXScale', label: 'Type X-Scale', kind: 'slider', min: 0.3, max: 3, step: 0.05, default: 1, group: 'Type' },
@@ -11,21 +26,21 @@ const controls: ControlSpec[] = [
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Type' },
-  // CYLINDER (Ribbon group)
+  // RIBBON group (CYLINDER ring placement).
   { key: 'radius', label: 'Radius', kind: 'slider', min: 2, max: 14, step: 0.1, default: 5, group: 'Ribbon' },
-  { key: 'count', label: 'Count', kind: 'slider', min: 1, max: 10, step: 1, default: 1, group: 'Ribbon' },
+  { key: 'count', label: 'Count', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'cylRotate', label: 'Cyl rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
-  { key: 'cylOffset', label: 'Cyl offset', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
-  // WAVE — vertex deformation (Snake group)
-  { key: 'waveCount', label: 'Wave count', kind: 'slider', min: 0, max: 8, step: 1, default: 2, group: 'Snake' },
-  { key: 'waveLatitude', label: 'Wave latitude', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveLongitude', label: 'Wave longitude', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
-  { key: 'waveRipple', label: 'Wave ripple', kind: 'slider', min: 0, max: 6, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'cylOffset', label: 'Cyl offset', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
+  // SNAKE group (per-glyph WAVE, angle-keyed — moves EACH letter).
+  { key: 'waveCount', label: 'Wave count', kind: 'slider', min: 1, max: 8, step: 1, default: 2, group: 'Snake' },
+  { key: 'waveLatitude', label: 'Wave latitude', kind: 'slider', min: 0, max: 6, step: 0.05, default: 0, group: 'Snake' },
+  { key: 'waveLongitude', label: 'Wave longitude', kind: 'slider', min: 0, max: 3, step: 0.02, default: 0, group: 'Snake' },
+  { key: 'waveRipple', label: 'Wave ripple', kind: 'slider', min: 0, max: 6, step: 0.05, default: 0, group: 'Snake' },
   { key: 'waveXScale', label: 'Wave X-scale', kind: 'slider', min: 0, max: 1.5, step: 0.02, default: 0, group: 'Snake' },
   { key: 'waveYScale', label: 'Wave Y-scale', kind: 'slider', min: 0, max: 1.5, step: 0.02, default: 0, group: 'Snake' },
-  // MOTION
+  // MOTION.
   { key: 'waveSpeed', label: 'Wave speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0, group: 'Motion' },
-  // CAMERA + TWEAK (Transform group)
+  // TRANSFORM — camera + per-glyph tweak.
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2, group: 'Transform' },
   { key: 'rotateX', label: 'Camera rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.3, group: 'Transform' },
   { key: 'rotateY', label: 'Camera rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
@@ -33,12 +48,9 @@ const controls: ControlSpec[] = [
   { key: 'tweakX', label: 'Tweak X', kind: 'slider', min: -1.5, max: 1.5, step: 0.01, default: 0, group: 'Transform' },
   { key: 'tweakY', label: 'Tweak Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.01, default: 0, group: 'Transform' },
   { key: 'tweakZ', label: 'Tweak Z', kind: 'slider', min: -1.5, max: 1.5, step: 0.01, default: 0, group: 'Transform' },
-  // COLOR — cylinder usually flat color, gradient off by default.
-  { key: 'gradientMode', label: 'Gradient', kind: 'select', options: ['on', 'off'], default: 'off', group: 'Color' },
+  // COLOR — per-character cylinder is flat single-color (texture already in typeColor).
   { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014', group: 'Color' },
-  { key: 'aSideColor', label: 'A-side', kind: 'color', default: '#f5f5f7', group: 'Color' },
-  { key: 'bSideColor', label: 'B-side / inside', kind: 'color', default: '#0a0a0c', group: 'Color' },
-  // SHADOW (copied from ribbon)
+  // SHADOW (copied from ribbon — directional light + ShadowMaterial catcher).
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
   { key: 'shadowSoftness', label: 'Shadow softness', kind: 'slider', min: 0, max: 40, step: 0.5, default: 10, group: 'Shadow' },
@@ -46,165 +58,21 @@ const controls: ControlSpec[] = [
   { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
-// Fixed cylinder height. The text wraps AROUND the circumference (texture repeat),
-// so the height is purely the 3D band height. Kept thin so it reads as a text RING
-// rather than a tall tube; the wave deformation is now angle-based (around the ring),
-// not height-based, so few height segments are needed.
-const CYL_HEIGHT = 1.0
+// Base world height of a glyph quad; width = CHAR_SIZE * glyph.aspect.
+const CHAR_SIZE = 0.9
+// Vertical spacing between stacked rings (multiples of glyph height).
+const RING_SPACING = CHAR_SIZE * 1.6
 
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.cylinders) if multi-surface is ever needed.
-interface WaveUniforms {
-  uWaveCount: { value: number }
-  uWaveLat: { value: number }
-  uWaveLong: { value: number }
-  uWaveRipple: { value: number }
-  uWaveXS: { value: number }
-  uWaveYS: { value: number }
-  uWaveTime: { value: number }
-}
-let cylinders: { tex: THREE.Texture; baseOffset: number; group: THREE.Group; wave: WaveUniforms }[] = []
+// promote to instance state (e.g. root.userData.glyphs) if multi-surface is ever needed.
+let glyphs: { mesh: THREE.Mesh; a0: number; ringY: number }[] = []
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
-// GLSL injected after <begin_vertex> to deform `transformed` by the wave system,
-// using the vertex's cylindrical coords. Shared by the front (Lambert) and back
-// (Basic) materials so they stay aligned. The `transformed` variable holds the
-// local-space position both materials' begin_vertex chunks declare.
-const WAVE_PARS = `
-uniform float uWaveCount;
-uniform float uWaveLat;
-uniform float uWaveLong;
-uniform float uWaveRipple;
-uniform float uWaveXS;
-uniform float uWaveYS;
-uniform float uWaveTime;
-`
-const WAVE_DEFORM = `
-{
-  float ang = atan(position.z, position.x);   // angle AROUND the ring
-  float t = uWaveTime;
-  float c = max(1.0, uWaveCount);
-  vec2 rad = normalize(vec2(position.x, position.z));
-  // Latitude: vertical undulation around the ring (the ring rides up/down as you go around)
-  transformed.y += uWaveLat * sin(ang * c + t);
-  // Ripple: radial in/out around the ring (ring radius pulses -> flower/gear shape)
-  float dr = uWaveRipple * sin(ang * c + t);
-  // Longitude: a phase-shifted secondary undulation (offsets the form longitudinally)
-  transformed.y += uWaveLong * cos(ang * c * 0.5 + t);
-  dr += uWaveLong * 0.4 * sin(ang * c * 0.5 + t + 1.5707);
-  transformed.x += rad.x * dr;
-  transformed.z += rad.y * dr;
-  // X / Y Scale: stretch the whole ring horizontally / the band vertically (oval + height)
-  transformed.x *= 1.0 + uWaveXS;
-  transformed.z *= 1.0 + uWaveXS;
-  transformed.y *= 1.0 + uWaveYS;
-}
-`
-
-function makeWaveUniforms(three: typeof THREE, params: Params): WaveUniforms {
-  void three
-  return {
-    uWaveCount: { value: Math.max(0, Math.round(n(params, 'waveCount'))) },
-    uWaveLat: { value: n(params, 'waveLatitude') },
-    uWaveLong: { value: n(params, 'waveLongitude') },
-    uWaveRipple: { value: n(params, 'waveRipple') },
-    uWaveXS: { value: n(params, 'waveXScale') },
-    uWaveYS: { value: n(params, 'waveYScale') },
-    uWaveTime: { value: 0 },
-  }
-}
-
-/**
- * Front material — copied from ribbon.ts's frontMaterial VERBATIM (uniforms,
- * vRawU vertex injection, shadowmap_pars_fragment → +shadowmask_pars_fragment,
- * map_fragment composite, opaque_fragment getShadowMask override). The ONLY
- * addition is the WAVE vertex deformation (WAVE_PARS + WAVE_DEFORM after
- * <begin_vertex>), whose uniform objects are SHARED with the back material so
- * front/back stay aligned.
- *
- * The shadow injection (shadowmask_pars_fragment + getShadowMask multiply) was hard
- * to get right (black ribbons) — it is copied verbatim and must not be re-derived.
- *
- * Uses MeshLambertMaterial so the shadow pipeline (shadowmap_pars_fragment,
- * getShadowMask(), USE_SHADOWMAP) is RELIABLY present without re-injection. We
- * override <opaque_fragment> to ignore Lambert's diffuse dimming and output the
- * flat gradient/text albedo multiplied by the shadow mask. For the cylinder,
- * vRawU = uv.x around the circumference, so the gradient pins to the circumference
- * and the text scroll does not drag it.
- */
-function frontMaterial(
-  three: typeof THREE,
-  map: THREE.Texture,
-  gradientTex: THREE.Texture | null,
-  params: Params,
-  uRepeat: number,
-  wave: WaveUniforms,
-): THREE.MeshLambertMaterial {
-  const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
-  const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
-  const uAside = { value: new three.Color(String(params.aSideColor)) }
-  const uGradient = { value: gradientTex ?? null }
-  const uURepeat = { value: uRepeat }
-  const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uUseGradient = uUseGradient
-    shader.uniforms.uAside = uAside
-    shader.uniforms.uGradient = uGradient
-    shader.uniforms.uURepeat = uURepeat
-    shader.uniforms.uShadowStrength = uShadowStrength
-    // Share the wave uniform OBJECTS so update() can drive them live.
-    shader.uniforms.uWaveCount = wave.uWaveCount
-    shader.uniforms.uWaveLat = wave.uWaveLat
-    shader.uniforms.uWaveLong = wave.uWaveLong
-    shader.uniforms.uWaveRipple = wave.uWaveRipple
-    shader.uniforms.uWaveXS = wave.uWaveXS
-    shader.uniforms.uWaveYS = wave.uWaveYS
-    shader.uniforms.uWaveTime = wave.uWaveTime
-    // Lambert already includes shadowmap_pars_vertex/shadowmap_vertex/worldpos_vertex —
-    // do NOT re-inject them. Add the vRawU varying (gradient pin) + WAVE uniforms,
-    // and deform `transformed` right after <begin_vertex>.
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vRawU;' + WAVE_PARS)
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WAVE_DEFORM)
-    // Lambert includes lights_pars_begin + shadowmap_pars_fragment (getShadow), but
-    // NOT shadowmask_pars_fragment — so getShadowMask() is undefined and the shader
-    // fails to compile (black surfaces). Inject shadowmask_pars_fragment AFTER
-    // shadowmap_pars_fragment, where all its deps are already declared.
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;')
-      .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 fill = uAside; if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; } diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0); }')
-      .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
-  }
-  return mat
-}
-
-/**
- * Back material (inside of the cylinder) — solid B-side color, BackSide. We give
- * it the SAME wave vertex deformation as the front (sharing the wave uniform
- * objects) so the inner face follows the outer face exactly.
- */
-function backMaterial(three: typeof THREE, params: Params, wave: WaveUniforms): THREE.MeshBasicMaterial {
-  const mat = new three.MeshBasicMaterial({
-    color: new three.Color(String(params.bSideColor)),
-    side: three.BackSide,
-  })
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uWaveCount = wave.uWaveCount
-    shader.uniforms.uWaveLat = wave.uWaveLat
-    shader.uniforms.uWaveLong = wave.uWaveLong
-    shader.uniforms.uWaveRipple = wave.uWaveRipple
-    shader.uniforms.uWaveXS = wave.uWaveXS
-    shader.uniforms.uWaveYS = wave.uWaveYS
-    shader.uniforms.uWaveTime = wave.uWaveTime
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>' + WAVE_PARS)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WAVE_DEFORM)
-  }
-  return mat
+function resolveFamily(fontId: string): string {
+  const f = VARIABLE_FONTS.find(v => v.id === fontId) ?? VARIABLE_FONTS[0]
+  return f?.family ?? 'Inter'
 }
 
 export const cylinderEffect: SpaceTypeEffect = {
@@ -212,71 +80,74 @@ export const cylinderEffect: SpaceTypeEffect = {
   label: 'Cylinder',
   controls,
 
-  buildScene(three, params, textTexture) {
+  // We build our own per-glyph texture via layoutChars; the passed surface
+  // textTexture (a tiled ribbon line) is ignored.
+  buildScene(three, params, _textTexture) {
+    void _textTexture
     const root = new three.Group()
-    cylinders = []
+    glyphs = []
 
-    const gradientTex = (textTexture.userData?.gradient as THREE.Texture | undefined) ?? null
+    const layout = layoutChars({
+      text: String(params.text),
+      fontFamily: resolveFamily(String(params.font)),
+      fontWeight: n(params, 'typeWeight'),
+      fontSizePx: n(params, 'typeYScale'),
+      tracking: n(params, 'tracking'),
+      scaleX: n(params, 'typeXScale'),
+      color: String(params.typeColor),
+      strokeColor: '#000000',
+      strokeWidth: n(params, 'typeStroke'),
+    })
+
     const count = Math.max(1, Math.floor(n(params, 'count')))
     const radius = n(params, 'radius')
     const cylRotate = n(params, 'cylRotate')
     const cylOffset = n(params, 'cylOffset')
-
-    // Tiles around the circumference: scale the repeat with circumference so the
-    // text reads at a roughly constant density regardless of radius.
-    const circumference = 2 * Math.PI * radius
-    const tilesAround = Math.max(1, Math.round(circumference / 6))
-
-    // Centered Y stack; spacing derived from the band height.
-    const spacing = CYL_HEIGHT * 1.6
     const center = (count - 1) / 2
 
     for (let i = 0; i < count; i++) {
-      // 160 radial segments so the angle-based wave deformation is smooth around the
-      // ring; only 8 height segments are needed since the wave no longer keys off height.
-      const geo = new three.CylinderGeometry(radius, radius, CYL_HEIGHT, 160, 8, true)
+      const ringY = (i - center) * RING_SPACING
+      for (const g of layout.glyphs) {
+        const charH = CHAR_SIZE
+        const charW = CHAR_SIZE * g.aspect
+        const geo = new three.PlaneGeometry(charW, charH)
 
-      // Independent texture per cylinder ⇒ clone the shared text texture. The text
-      // tiles `tilesAround` times around the circumference (wrapS = RepeatWrapping).
-      const tex = textTexture.clone()
-      tex.needsUpdate = true
-      tex.wrapS = three.RepeatWrapping
-      tex.repeat.x = tilesAround
-      // Phase the text start per stacked cylinder by cylOffset (in tile units).
-      const baseOffset = (cylOffset * (count > 1 ? i : 1))
-      tex.offset.x = baseOffset
+        // Remap the plane's uv attribute to the glyph's region of the shared
+        // texture. PlaneGeometry's 4 verts are ordered TL, TR, BL, BR with uvs
+        // (0,1),(1,1),(0,0),(1,0). Map x∈{0,1}→{u0,u1}, keep v as-is (full height).
+        const uv = geo.attributes.uv as THREE.BufferAttribute
+        for (let k = 0; k < uv.count; k++) {
+          const ux = uv.getX(k) // 0 (left) or 1 (right)
+          uv.setX(k, ux < 0.5 ? g.u0 : g.u1)
+        }
+        uv.needsUpdate = true
 
-      // One wave uniform set per cylinder, shared by its front + back materials.
-      const wave = makeWaveUniforms(three, params)
+        const mat = new three.MeshBasicMaterial({
+          map: layout.texture,
+          transparent: true,
+          alphaTest: 0.5, // glyph-shaped cast shadow + clean edges
+          side: three.DoubleSide,
+        })
+        const mesh = new three.Mesh(geo, mat)
+        mesh.castShadow = true
+        mesh.receiveShadow = true
 
-      const frontMat = frontMaterial(three, tex, gradientTex, params, tilesAround, wave)
-      const backMat = backMaterial(three, params, wave)
-
-      // Front (outside, readable text + shadows) + back (inside, solid B-side)
-      // share ONE CylinderGeometry (FrontSide vs BackSide), both wave-deformed.
-      const front = new three.Mesh(geo, frontMat)
-      // Register the cloned texture so disposeRoot() frees it on rebuild.
-      front.userData.tex = tex
-      front.castShadow = true; front.receiveShadow = true
-      const back = new three.Mesh(geo, backMat)
-      back.castShadow = true
-
-      const subGroup = new three.Group()
-      subGroup.position.y = (i - center) * spacing
-      subGroup.rotation.y = cylRotate
-      subGroup.add(front)
-      subGroup.add(back)
-      root.add(subGroup)
-
-      cylinders.push({ tex, baseOffset, group: subGroup, wave })
+        // Base angle: text wraps once around the ring; cylRotate/cylOffset orient it.
+        const a0 = g.centerT * Math.PI * 2 + cylRotate + cylOffset
+        root.add(mesh)
+        glyphs.push({ mesh, a0, ringY })
+      }
     }
 
-    const strength = n(params, 'shadowStrength')
-    // Front surfaces use MeshLambertMaterial with overridden output — full-bright flat
-    // look, no AmbientLight needed. When shadows are on we add a shadow-casting
-    // DirectionalLight + ShadowMaterial catcher; the front material multiplies in
-    // getShadowMask() so only shadowed pixels darken. (Copied verbatim from ribbon.)
+    // Register the shared per-glyph texture so disposeRoot() frees it on rebuild.
+    root.userData.tex = layout.texture
+
+    // SHADOW RIG — copied verbatim from ribbon.ts: a shadow-casting DirectionalLight
+    // (position from lightAngleX/Y), a ShadowMaterial catcher plane behind the ring,
+    // softness→mapSize, bias + radius. With alphaTest the cast shadows are glyph-shaped,
+    // giving per-letter drop shadows on the catcher.
     if (String(params.shadows) === 'on') {
+      const strength = n(params, 'shadowStrength')
       const lx = n(params, 'lightAngleX')
       const ly = n(params, 'lightAngleY')
       const light = new three.DirectionalLight(0xffffff, 1)
@@ -305,31 +176,38 @@ export const cylinderEffect: SpaceTypeEffect = {
     return root
   },
 
+  // PER-CHARACTER MOTION — live, no rebuild. Each glyph moves by its base angle a0,
+  // so neighbouring letters are out of phase (snake / undulation around the ring).
   update(t01, params) {
-    // Integer cycles ⇒ seamless loop; waveSpeed 0 = static.
-    const cycles = Math.max(0, Math.round(n(params, 'waveSpeed')))
-    const time = t01 * cycles * Math.PI * 2
-    const cylRotate = n(params, 'cylRotate')
+    const t = t01 * Math.max(0, Math.round(n(params, 'waveSpeed'))) * Math.PI * 2
+    const c = Math.max(1, n(params, 'waveCount'))
+    const radius = n(params, 'radius')
+    const waveLatitude = n(params, 'waveLatitude')
+    const waveLongitude = n(params, 'waveLongitude')
+    const waveRipple = n(params, 'waveRipple')
+    const waveXScale = n(params, 'waveXScale')
+    const waveYScale = n(params, 'waveYScale')
     const tweakX = n(params, 'tweakX')
     const tweakY = n(params, 'tweakY')
     const tweakZ = n(params, 'tweakZ')
-    // Read wave params live so dragging the WAVE sliders updates without a rebuild.
-    const wc = Math.max(0, Math.round(n(params, 'waveCount')))
-    const wlat = n(params, 'waveLatitude')
-    const wlong = n(params, 'waveLongitude')
-    const wrip = n(params, 'waveRipple')
-    const wxs = n(params, 'waveXScale')
-    const wys = n(params, 'waveYScale')
-    for (const c of cylinders) {
-      c.wave.uWaveTime.value = time
-      c.wave.uWaveCount.value = wc
-      c.wave.uWaveLat.value = wlat
-      c.wave.uWaveLong.value = wlong
-      c.wave.uWaveRipple.value = wrip
-      c.wave.uWaveXS.value = wxs
-      c.wave.uWaveYS.value = wys
-      // Extra per-cylinder rotation (tweak) layered on the static cylRotate.
-      c.group.rotation.set(tweakX, cylRotate + tweakY, tweakZ)
+
+    for (const g of glyphs) {
+      const a0 = g.a0
+      const phase = a0 * c + t
+      const yOff = waveLatitude * Math.sin(phase)              // each letter lifts by its angle
+      const rOff = waveRipple * Math.sin(phase)                // each letter pushes in/out
+      const aOff = waveLongitude * Math.sin(a0 * c * 0.5 + t)  // each letter shifts around the ring
+      const a = a0 + aOff
+      const r = radius + rOff
+      const x = Math.cos(a) * r * (1 + waveXScale)
+      const z = Math.sin(a) * r
+      const y = (g.ringY + yOff) * (1 + waveYScale)
+      g.mesh.position.set(x, y, z)
+      // Face outward: a quad's +Z normal must point along (cos a, 0, sin a). A Y
+      // rotation by θ sends +Z→(sin θ,0,cos θ), so θ = π/2 − a aligns it with the
+      // outward radial → the front of the ring (a≈π/2, +Z toward camera) reads
+      // upright. Tweak rotations layer on top.
+      g.mesh.rotation.set(tweakX, -a + Math.PI / 2 + tweakY, tweakZ)
     }
   },
 }
