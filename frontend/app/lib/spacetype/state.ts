@@ -57,9 +57,14 @@ export function texOptsFromState(s: SpaceTypeState) {
   const f = VARIABLE_FONTS.find(v => v.id === String(s.params.font)) ?? VARIABLE_FONTS[0]
   return {
     label: buildRibbonLabel(String(s.params.text), 'upper'),
-    fontFamily: f?.family ?? 'Inter', fontWeight: 700, axes: { wght: 700 },
+    fontFamily: f?.family ?? 'Inter',
+    // STG-style names (typeWeight/typeYScale/typeXScale) with fallbacks so effects
+    // that still use typeHeight keep working unchanged.
+    fontWeight: Number(s.params.typeWeight ?? 700),
+    axes: { wght: Number(s.params.typeWeight ?? 700) },
     typeColor: String(s.params.typeColor),
-    fontSizePx: Number(s.params.typeHeight),
+    fontSizePx: Number(s.params.typeYScale ?? s.params.typeHeight ?? 180),
+    scaleX: Number(s.params.typeXScale ?? 1),
     tracking: Number(s.params.tracking),
     strokeColor: '#000000',
     strokeWidth: Number(s.params.typeStroke),

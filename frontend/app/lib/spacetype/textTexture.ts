@@ -10,6 +10,7 @@ export interface TextTextureOptions {
   /** Texture pixel height; width is derived to fit ONE tile of the label. */
   heightPx?: number
   fontSizePx?: number
+  scaleX?: number        // horizontal glyph scale (TYPE X-Scale); 1 ⇒ no stretch
   tracking?: number      // px letter-spacing (Tracking)
   strokeColor?: string   // outline color
   strokeWidth?: number   // px outline width (Type Stroke); 0 ⇒ no stroke
@@ -33,6 +34,9 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   const h = opts.heightPx ?? 256
   const fontPx = opts.fontSizePx ?? Math.round(h * 0.7)
   const tracking = opts.tracking ?? 0
+  // TYPE X-Scale: stretch glyphs horizontally. We measure at scaleX=1, widen the
+  // canvas by scaleX, then ctx.scale(scaleX, 1) before drawing so the text fills it.
+  const scaleX = Math.max(0.01, opts.scaleX ?? 1)
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const font = `${opts.fontWeight} ${fontPx}px "${opts.fontFamily}", sans-serif`
@@ -44,11 +48,15 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
     ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
   }
   if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${tracking}px`
-  const w = Math.max(2, Math.ceil(ctx.measureText(opts.label).width))
+  const measured = Math.max(2, Math.ceil(ctx.measureText(opts.label).width))
+  const w = Math.max(2, Math.ceil(measured * scaleX))
 
   canvas.width = w
   canvas.height = h
   ctx.clearRect(0, 0, w, h)
+  // Apply horizontal scale around the origin; all subsequent draws use unscaled
+  // coords (measured width) and get stretched into the widened canvas.
+  ctx.setTransform(scaleX, 0, 0, 1, 0, 0)
   ctx.font = font
   if (variation && 'fontVariationSettings' in ctx) {
     ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
@@ -64,6 +72,7 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
     ctx.strokeText(opts.label, 0, h / 2)
   }
   ctx.fillText(opts.label, 0, h / 2)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
 
   const tex = new THREE.CanvasTexture(canvas)
   tex.wrapS = THREE.RepeatWrapping

@@ -79,10 +79,13 @@ function texOpts() {
   return {
     label: buildRibbonLabel(String(params.text), 'upper'),
     fontFamily: f?.family ?? 'Inter',
-    fontWeight: 700,
-    axes: { wght: 700 },
+    // STG-style names (typeWeight/typeYScale/typeXScale) with fallbacks so effects
+    // that still use typeHeight keep working unchanged.
+    fontWeight: Number(params.typeWeight ?? 700),
+    axes: { wght: Number(params.typeWeight ?? 700) },
     typeColor: String(params.typeColor),
-    fontSizePx: Number(params.typeHeight),
+    fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 180),
+    scaleX: Number(params.typeXScale ?? 1),
     tracking: Number(params.tracking),
     strokeColor: '#000000',
     strokeWidth: Number(params.typeStroke),
@@ -177,10 +180,19 @@ onMounted(async () => {
 
 onBeforeUnmount(() => { saveConfig(); stopPreview(); engine?.dispose(); engine = null })
 
-// Most v2 params change geometry/material/texture and need a rebuild; only speed,
-// scale, rotateX/Y/Z are live (read per-frame). Watch a structural signature.
+// Most v2 params change geometry/material/texture and need a rebuild; the params
+// below are live (read per-frame in update()) so we zero them out of the structural
+// signature to avoid a rebuild on every drag. ribbon* and cylinder wave/tweak params
+// are all live; the cylinder reads its wave uniforms each frame.
 watch(
-  () => JSON.stringify({ ...params, speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0, ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0 }) + JSON.stringify(gradientStops),
+  () => JSON.stringify({
+    ...params,
+    speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0,
+    ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0,
+    // cylinder live params (vertex-wave deformation + per-cylinder rotation + motion)
+    waveSpeed: 0, waveCount: 0, waveLatitude: 0, waveLongitude: 0, waveRipple: 0,
+    waveXScale: 0, waveYScale: 0, tweakX: 0, tweakY: 0, tweakZ: 0, cylRotate: 0,
+  }) + JSON.stringify(gradientStops),
   async () => { await ensureFont(String(params.font)); rebuild() },
 )
 // Switching effect: reset params to the new effect's defaults, but carry over any
