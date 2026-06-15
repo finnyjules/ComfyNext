@@ -606,7 +606,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
       if (idx >= 0) widgetsValues[idx] = value
     }
   }
-  return {
+  const data = {
     id: String(Date.now()),
     type: vueFlowType,
     position,
@@ -647,6 +647,13 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
       ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
     },
   } as any
+  // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
+  // empty. Give it ONE wildcard output so the generated Image/Video artifact can
+  // be wired from it (visual/provenance link only — SpaceType never executes).
+  if (nodeType === 'SpaceType' && (!data.data.outputs || data.data.outputs.length === 0)) {
+    data.data.outputs = [{ name: 'output', type: '*', links: null }]
+  }
+  return data
 }
 
 // ── Wire splicing ────────────────────────────────────────────────────────────
@@ -1666,6 +1673,39 @@ function handleOpenSpaceType(e: Event) {
   if (detail?.nodeId) spaceTypeOpenForId.value = String(detail.nodeId)
 }
 
+// Space Type "Generate as image/video": create the artifact node to the right of
+// the SpaceType node and draw a provenance edge from the SpaceType node's single
+// wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
+// The artifact still shows its file via the widget regardless of the edge — this
+// link is visual only (SpaceType has no backend and never executes).
+function handleSpaceTypeOutput(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string; nodeType: string; widgetOverrides?: Record<string, unknown> }>).detail
+  const src = (nodes.value as any[]).find((n) => n.id === detail.sourceNodeId)
+  const pos = src
+    ? { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 80, y: src.position?.y ?? 0 }
+    : project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const node = createNodeData(detail.nodeType, pos, detail.widgetOverrides)
+  nodes.value.push(node)
+  if (src) {
+    // Primary input: `images` for Image, `source` for Video — fall back to slot 0.
+    const wantInput = detail.nodeType === 'Video' ? 'source' : 'images'
+    const ins = (node.data?.inputs ?? []) as any[]
+    let inIdx = ins.findIndex((i) => i.name === wantInput)
+    if (inIdx < 0) inIdx = ins.length ? 0 : -1
+    if (inIdx >= 0) {
+      edges.value.push({
+        id: `e-spacetype-${node.id}`,
+        source: src.id,
+        sourceHandle: 'output-0',
+        target: node.id,
+        targetHandle: `input-${inIdx}`,
+        type: 'comfy',
+        data: { dataType: ins[inIdx]?.type ?? '*' },
+      } as any)
+    }
+  }
+}
+
 // Inpaint modal state (dedicated editor for an Image artifact).
 const inpaintOpenForId = ref<string | null>(null)
 function handleOpenInpaint(e: Event) {
@@ -2078,6 +2118,7 @@ onMounted(() => {
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
   window.addEventListener('comfynext:openSpaceType', handleOpenSpaceType)
+  window.addEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -2107,6 +2148,7 @@ onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
   window.removeEventListener('comfynext:openSpaceType', handleOpenSpaceType)
+  window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)

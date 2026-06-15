@@ -196,10 +196,6 @@ const cfg = computed(() => ({
   W: W.value, H: H.value, alpha: transparent.value, bgColor: bgColor.value,
 }))
 
-function addCanvasNode(nodeType: string, widgetOverrides: Record<string, unknown>) {
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType, widgetOverrides } }))
-}
-
 async function generateImage() {
   if (!engine) return
   baking.value = true
@@ -221,7 +217,9 @@ async function generateImage() {
         const prev = n.data.properties.comfynext_spaceType || {}
         n.data.properties.comfynext_spaceType = { ...prev, thumb: `/view?filename=${filename}&type=input` }
       }
-      addCanvasNode('Image', { image: filename })
+      window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
+        detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
+      }))
       closeEditor()
     }
   } finally {
@@ -250,7 +248,9 @@ async function generateVideo() {
     })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
-      addCanvasNode('Video', { file: data.filename })
+      window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
+        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
+      }))
       closeEditor()
     } else {
       console.error('[spacetype] video encode failed', data)

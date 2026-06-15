@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { Handle, Position } from '@vue-flow/core'
 import { Pencil, Sparkles } from 'lucide-vue-next'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ribbonEffect } from '~/lib/spacetype/effects/ribbon'
@@ -117,9 +118,16 @@ function openEditor() {
 
 <template>
   <div
-    class="w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
+    class="relative w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
     @dblclick.stop="openEditor"
   >
+    <!-- Output handle: anchors the provenance edge to a generated Image/Video node. -->
+    <Handle
+      id="output-0" type="source" :position="Position.Right"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-emerald-400 !bg-[#1a1a1a]"
+      :style="{ top: '50%' }"
+    />
+
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Sparkles class="h-3.5 w-3.5 text-emerald-400" />
