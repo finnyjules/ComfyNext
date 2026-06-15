@@ -330,7 +330,10 @@ async function generateVideo() {
                 </select>
               </div>
               <div data-control class="text-xs">
-                <label class="mb-1 block text-white/60">Duration (s)</label>
+                <label class="mb-1 flex justify-between text-white/60">
+                  <span>Duration</span>
+                  <span class="text-white/80">{{ loopDuration }}s · {{ Math.round(fps * loopDuration) }} frames</span>
+                </label>
                 <input type="range" min="1" max="15" step="0.5" v-model.number="loopDuration" class="w-full" />
               </div>
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
