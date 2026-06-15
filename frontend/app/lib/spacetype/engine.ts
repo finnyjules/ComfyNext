@@ -27,7 +27,8 @@ export class SpaceTypeEngine {
     this.effect = opts.effect
     this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true })
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // VSM so the shadow blur radius (Shadow softness) is actually controllable.
+    this.renderer.shadowMap.type = THREE.VSMShadowMap
     this.renderer.setSize(opts.width, opts.height, false)
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(45, opts.width / opts.height, 0.1, 100)
