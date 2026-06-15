@@ -179,10 +179,12 @@ async function savePoster() {
 
 <template>
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-    <div class="flex max-h-[90vh] w-[1100px] max-w-[95vw] gap-4 rounded-xl bg-neutral-900 p-4 text-white">
-      <div class="flex-1">
-        <canvas ref="canvas" class="w-full rounded-lg" style="background:#0e0e10" />
-        <div class="mt-3 flex gap-2">
+    <div class="flex h-[620px] max-h-[92vh] w-[1100px] max-w-[95vw] gap-4 rounded-xl bg-neutral-900 p-4 text-white">
+      <div class="flex min-h-0 flex-1 flex-col">
+        <div class="flex min-h-0 flex-1 items-center justify-center">
+          <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
+        </div>
+        <div class="mt-3 flex shrink-0 gap-2">
           <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="addToTimeline">
             {{ baking ? 'Baking…' : 'Add to timeline' }}
           </button>
@@ -190,7 +192,7 @@ async function savePoster() {
           <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="emit('close')">Close</button>
         </div>
       </div>
-      <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1">
+      <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1 min-h-0">
         <details
           v-for="section in sections" :key="section.name"
           :open="openSections[section.name]"
