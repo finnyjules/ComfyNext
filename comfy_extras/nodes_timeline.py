@@ -1162,6 +1162,87 @@ try:
             )
         return web.json_response(result)
 
+    @PromptServer.instance.routes.post("/comfynext/spacetype_encode")
+    async def _spacetype_encode_route(request):
+        """Encode a sequence of PNG frames (from input/) into an MP4 video.
+
+        Body JSON:
+          { "frames": ["spacetype_..._0000.png", ...], "fps": 30,
+            "width": 1920, "height": 1080 }
+        Response JSON:
+          { "filename": "spacetype_<ms>.mp4" }   // written into input/
+        """
+        import av
+        try:
+            data = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+
+        frames_list = data.get("frames", [])
+        if not frames_list:
+            return web.json_response({"error": "frames list is empty"}, status=400)
+
+        fps = int(data.get("fps", 30))
+        width = int(data.get("width", 1920))
+        height = int(data.get("height", 1080))
+
+        # yuv420p requires even dimensions
+        width = width - (width % 2)
+        height = height - (height % 2)
+
+        input_dir = folder_paths.get_input_directory()
+        out_name = f"spacetype_{int(time.time() * 1000)}.mp4"
+        out_path = os.path.join(input_dir, out_name)
+
+        def _encode():
+            out = av.open(out_path, mode="w")
+            try:
+                stream = out.add_stream("h264", rate=Fraction(fps, 1))
+                stream.width = width
+                stream.height = height
+                stream.pix_fmt = "yuv420p"
+                stream.options = {"preset": "veryfast", "crf": "20"}
+
+                for fn in frames_list:
+                    # Resolve filename: try annotated filepath first, then input_dir
+                    try:
+                        abs_path = folder_paths.get_annotated_filepath(fn)
+                    except Exception:
+                        abs_path = os.path.join(input_dir, fn)
+
+                    im = PILImage.open(abs_path)
+
+                    # Resize if dimensions don't match (normally they already match)
+                    if im.size != (width, height):
+                        im = im.resize((width, height), PILImage.LANCZOS)
+
+                    # Flatten RGBA onto black — h264/yuv420p has no alpha channel
+                    if im.mode == "RGBA":
+                        bg = PILImage.new("RGB", im.size, (0, 0, 0))
+                        bg.paste(im, mask=im.split()[-1])
+                        im = bg
+                    else:
+                        im = im.convert("RGB")
+
+                    arr = np.array(im, dtype=np.uint8)
+                    av_frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
+                    for packet in stream.encode(av_frame):
+                        out.mux(packet)
+
+                # Flush encoder
+                for packet in stream.encode():
+                    out.mux(packet)
+            finally:
+                out.close()
+
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _encode)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+        return web.json_response({"filename": out_name})
+
     @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
     async def _render_frame_route(request):
         """Render one composited frame of an edit state to PNG. Harness/debug
