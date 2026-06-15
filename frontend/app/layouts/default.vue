@@ -130,11 +130,12 @@ function addLoadNode(nodeType: string) {
 // Load submenu click: most items drop their artifact node, but "Slate" is a
 // special entry that opens the slate gallery instead of dispatching addNode.
 const slateGalleryOpen = ref(false)
-const spaceTypeOpen = ref(false)
 function onLoadOption(opt: { nodeType?: string; special?: string }) {
   loadMenuOpen.value = false
   if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
-  if (opt.special === 'space-type') { spaceTypeOpen.value = true; return }
+  // Space Type is a persistent, re-editable canvas node now — drop the node and
+  // let VueNodeCanvas auto-open its editor (config persists in node properties).
+  if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: 'SpaceType' } })); return }
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
 
@@ -2806,14 +2807,6 @@ function dismissRunResult() {
           :active-kit="brandLib.activeKit.value ?? null"
           @close="slateGalleryOpen = false"
           @create="onCreateSlate"
-        />
-
-        <!-- Space Type surface: 3D-typography author → Generate as image/video,
-             dropping an Image or Video node on the canvas (dispatches addNode). -->
-        <VueCanvasSpaceTypeSurface
-          v-if="SPACE_TYPE_ENABLED && spaceTypeOpen"
-          :open="spaceTypeOpen"
-          @close="spaceTypeOpen = false"
         />
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->

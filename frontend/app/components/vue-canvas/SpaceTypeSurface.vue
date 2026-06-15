@@ -7,8 +7,13 @@ import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+// Locate this node + its saved config blob on the canvas. The config lives at
+// node.data.properties.comfynext_spaceType so it survives serialization
+// (convertToLiteGraph stashes `properties`), letting the editor be reopened.
+function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
 
 const fps = ref(30)
 const FPS_OPTIONS = ['24', '30', '60']
@@ -111,8 +116,50 @@ function stopPreview() {
   raf = 0
 }
 
+// Hydrate local editor state from a previously-saved config blob, so reopening
+// the editor on an existing node restores exactly what the user last authored.
+function loadConfig() {
+  const n = currentNode()
+  const c = n?.data?.properties?.comfynext_spaceType
+  if (!c) return // first edit of a fresh node — keep the defaults.
+  if (c.params && typeof c.params === 'object') Object.assign(params, c.params)
+  if (Array.isArray(c.gradientStops)) {
+    gradientStops.splice(0, gradientStops.length, ...c.gradientStops.map((s: any) => ({ ...s })))
+  }
+  if (typeof c.fps === 'number') fps.value = c.fps
+  if (typeof c.loopDuration === 'number') loopDuration.value = c.loopDuration
+  if (typeof c.transparent === 'boolean') transparent.value = c.transparent
+  if (typeof c.bgColor === 'string') bgColor.value = c.bgColor
+  if (typeof c.dimsKey === 'string' && DIMS[c.dimsKey]) {
+    dimsKey.value = c.dimsKey
+    const d = DIMS[c.dimsKey]!
+    W.value = d[0]; H.value = d[1]
+  }
+}
+
+// Persist the full current editor state back onto the node's properties so the
+// config survives tab switches / reloads and the editor can be reopened to edit.
+function saveConfig() {
+  const n = currentNode(); if (!n) return
+  if (!n.data) n.data = {}
+  if (!n.data.properties) n.data.properties = {}
+  const prev = n.data.properties.comfynext_spaceType || {}
+  n.data.properties.comfynext_spaceType = {
+    ...prev,
+    params: { ...params },
+    gradientStops: gradientStops.map(s => ({ ...s })),
+    fps: fps.value, loopDuration: loopDuration.value,
+    dimsKey: dimsKey.value, transparent: transparent.value, bgColor: bgColor.value,
+  }
+}
+
+function closeEditor() { saveConfig(); emit('close') }
+
 onMounted(async () => {
   if (!canvas.value) return
+  // Restore saved config BEFORE building the engine so the first render is
+  // already the user's authored state (not the defaults).
+  loadConfig()
   engine = new SpaceTypeEngine(canvas.value, {
     effect, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
     alpha: transparent.value, bgColor: bgColor.value,
@@ -122,7 +169,7 @@ onMounted(async () => {
   startPreview()
 })
 
-onBeforeUnmount(() => { stopPreview(); engine?.dispose(); engine = null })
+onBeforeUnmount(() => { saveConfig(); stopPreview(); engine?.dispose(); engine = null })
 
 // Most v2 params change geometry/material/texture and need a rebuild; only speed,
 // scale, rotateX/Y/Z are live (read per-frame). Watch a structural signature.
@@ -166,8 +213,16 @@ async function generateImage() {
     const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
     const [filename] = await uploadFrameBatch([blob], 'spacetype_img')
     if (filename) {
+      // Stash a thumbnail on the node so its card shows a preview.
+      const n = currentNode()
+      if (n) {
+        if (!n.data) n.data = {}
+        if (!n.data.properties) n.data.properties = {}
+        const prev = n.data.properties.comfynext_spaceType || {}
+        n.data.properties.comfynext_spaceType = { ...prev, thumb: `/view?filename=${filename}&type=input` }
+      }
       addCanvasNode('Image', { image: filename })
-      emit('close')
+      closeEditor()
     }
   } finally {
     baking.value = false
@@ -196,7 +251,7 @@ async function generateVideo() {
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       addCanvasNode('Video', { file: data.filename })
-      emit('close')
+      closeEditor()
     } else {
       console.error('[spacetype] video encode failed', data)
       alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
@@ -209,7 +264,7 @@ async function generateVideo() {
 </script>
 
 <template>
-  <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
     <div class="flex h-[620px] max-h-[92vh] w-[1100px] max-w-[95vw] gap-4 rounded-xl bg-neutral-900 p-4 text-white">
       <div class="flex min-h-0 flex-1 flex-col">
         <div class="flex min-h-0 flex-1 items-center justify-center">
@@ -222,7 +277,7 @@ async function generateVideo() {
           <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
             {{ baking ? 'Generating…' : 'Generate as video' }}
           </button>
-          <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="emit('close')">Close</button>
+          <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="closeEditor">Close</button>
         </div>
       </div>
       <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1 min-h-0">

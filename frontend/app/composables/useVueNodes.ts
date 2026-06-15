@@ -164,6 +164,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   Model3D: 'artifact-3d',
   // Real-time GPU shader effects: live WebGL preview + manifest-driven sliders.
   ShaderEffect: 'shader-effect',
+  // Space Type: client-side Three.js 3D ribbon typography. Frontend-only config
+  // node (no backend class_type) — reopen the editor to re-edit, like the Frame.
+  SpaceType: 'space-type',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

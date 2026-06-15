@@ -29,6 +29,7 @@ import ArtifactTimelineNode from '~/components/vue-canvas/ArtifactTimelineNode.v
 import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
 import ShaderEffectNode from '~/components/vue-canvas/ShaderEffectNode.vue'
 import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
+import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -1316,7 +1317,11 @@ async function handleAddNode(e: Event) {
   }
 
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides))
+  const newNode = createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides)
+  nodes.value.push(newNode)
+  // Frontend-only Space Type node: auto-open its editor so the user lands
+  // straight in the authoring modal (the node card persists the config).
+  if (nodeType === 'SpaceType') spaceTypeOpenForId.value = newNode.id
 }
 
 // Edit as Frame: convert a layer-splitting node's results into a Frame
@@ -1652,6 +1657,13 @@ const compositorOpenForId = ref<string | null>(null)
 function handleOpenCompositor(e: Event) {
   const detail = (e as CustomEvent).detail
   if (detail?.nodeId) compositorOpenForId.value = String(detail.nodeId)
+}
+
+// Space Type editor modal state (frontend-only config node).
+const spaceTypeOpenForId = ref<string | null>(null)
+function handleOpenSpaceType(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) spaceTypeOpenForId.value = String(detail.nodeId)
 }
 
 // Inpaint modal state (dedicated editor for an Image artifact).
@@ -2065,6 +2077,7 @@ onMounted(() => {
   window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.addEventListener('comfynext:openSpaceType', handleOpenSpaceType)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -2093,6 +2106,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.removeEventListener('comfynext:openSpaceType', handleOpenSpaceType)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -4181,7 +4195,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
@@ -4405,6 +4419,16 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="compositorOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Space Type editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <VueCanvasSpaceTypeSurface
+        v-if="spaceTypeOpenForId"
+        :node-id="spaceTypeOpenForId"
+        :nodes="nodes as any[]"
+        @close="spaceTypeOpenForId = null"
       />
     </Teleport>
 
