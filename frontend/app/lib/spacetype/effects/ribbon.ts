@@ -178,14 +178,16 @@ export const ribbonEffect: SpaceTypeEffect = {
       const light = new three.DirectionalLight(0xffffff, 1)
       light.position.set(Math.sin(lx) * 30, 12 + Math.sin(ly) * 16, 26)
       light.castShadow = true
-      light.shadow.mapSize.set(2048, 2048)
+      // Shadow softness → lower shadow-map resolution = naturally blurrier edges
+      // (PCFSoft smooths them), with none of VSM's light-bleeding / wash-out.
+      const soft = Math.max(0, n(params, 'shadowSoftness'))
+      const ms = Math.max(256, Math.round(2048 - soft * 44))
+      light.shadow.mapSize.set(ms, ms)
       const cam = light.shadow.camera as THREE.OrthographicCamera
       cam.left = -40; cam.right = 40; cam.top = 40; cam.bottom = -40; cam.near = 0.1; cam.far = 120
       cam.updateProjectionMatrix()
-      light.shadow.bias = -0.0005
-      // Shadow softness → VSM blur radius (+ samples) for diffuse shadows.
-      light.shadow.radius = Math.max(0, n(params, 'shadowSoftness'))
-      light.shadow.blurSamples = 40
+      light.shadow.bias = -0.0008
+      light.shadow.radius = 4
       root.add(light)
       root.add(light.target)
 
