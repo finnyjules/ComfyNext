@@ -1685,6 +1685,11 @@ function handleSpaceTypeOutput(e: Event) {
     ? { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 80, y: src.position?.y ?? 0 }
     : project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   const node = createNodeData(detail.nodeType, pos, detail.widgetOverrides)
+  // The artifact is wired to the frontend-only Space Type node, so its upstream
+  // branch suppresses the widget-file fallback. Stamp data.images with the
+  // generated file so the card shows it directly (checked before hasUpstream).
+  const fname = (detail.widgetOverrides?.image ?? detail.widgetOverrides?.file) as string | undefined
+  if (fname) (node.data as any).images = [`/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`]
   nodes.value.push(node)
   if (src) {
     // Primary input: `images` for Image, `source` for Video — fall back to slot 0.

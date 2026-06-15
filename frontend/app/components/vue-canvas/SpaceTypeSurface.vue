@@ -271,7 +271,7 @@ async function generateVideo() {
           <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
         </div>
         <div class="mt-3 flex shrink-0 gap-2">
-          <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
+          <button class="rounded bg-blue-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
             {{ baking ? 'Generating…' : 'Generate as image' }}
           </button>
           <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
