@@ -131,9 +131,13 @@ vec4 computeLayer(int i, vec2 p) {
     if (mirrorH) q.x = 1.0 - abs(2.0 * q.x - 1.0);
     if (mirrorV) q.y = 1.0 - abs(2.0 * q.y - 1.0);
 
-    float grad = gradHoriz ? q.x : q.y;   // gradient runs along this axis
-    float band = gradHoriz ? q.y : q.x;   // bands arrayed along the other
+    // Band axis comes from Direction (↑↓ = vertical bands, →← = horizontal bands);
+    // gradient axis comes independently from Gradient direction, so the ramp can
+    // run ACROSS the bands (e.g. horizontal gradient over vertical bands).
     int dir = int(u_dir[i] + 0.5);
+    bool vertBands = (dir == 0 || dir == 2);
+    float band = vertBands ? q.x : q.y;
+    float grad = gradHoriz ? q.x : q.y;
     if (dir == 2 || dir == 3) grad = 1.0 - grad;  // down/left reverse the gradient
 
     float bi = floor(band * count);
