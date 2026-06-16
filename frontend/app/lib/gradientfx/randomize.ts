@@ -8,7 +8,7 @@ import {
   type ColorConfig, type ColorStop, type GradientConfig, type LayerConfig, type ShapeConfig,
 } from './types'
 
-export type RerollScope = 'all' | 'colours' | 'structure'
+export type RerollScope = 'all' | 'colors' | 'structure'
 
 function randShape(rng: Rng): ShapeConfig {
   // Bias toward 'bands' — the signature crisp-gradient-band wave look.
@@ -76,7 +76,7 @@ function randStops(rng: Rng): ColorStop[] {
   return stops
 }
 
-function randColour(rng: Rng): ColorConfig {
+function randColor(rng: Rng): ColorConfig {
   // Bias toward 'field' — the signature staggered-gradient look — over flat/across.
   const mapping = rng.pick(['field', 'field', 'field', 'across', 'perbar'] as const)
   return {
@@ -94,7 +94,7 @@ function randLayer(rng: Rng, primary: boolean): LayerConfig {
     blend: primary ? 'normal' : rng.pick(BLEND_MODES.filter(b => b !== 'normal')),
     opacity: primary ? 1 : rng.range(0.5, 1),
     shape: randShape(rng),
-    color: randColour(rng),
+    color: randColor(rng),
   }
 }
 
@@ -150,7 +150,7 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
   next.seed = seed
 
   const doStructure = scope === 'all' || scope === 'structure'
-  const doColours = scope === 'all' || scope === 'colours'
+  const doColors = scope === 'all' || scope === 'colors'
 
   if (scope === 'all' && !locks.layout) next.canvas.layout = rng.pick(LAYOUTS)
   if (scope === 'all' && !locks.aspect) next.canvas.aspect = rng.pick(['14:9', '16:9', '1:1', '4:5', '9:16'])
@@ -169,8 +169,8 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
 
   next.layers.forEach((layer, i) => {
     if (doStructure && !locks.structure) layer.shape = randShape(makeRng(seed, `struct${i}`))
-    if (doColours && !locks.colours) {
-      const c = randColour(makeRng(seed, `col${i}`))
+    if (doColors && !locks.colors) {
+      const c = randColor(makeRng(seed, `col${i}`))
       layer.color = c
       if (i > 0) { layer.blend = rng.pick(BLEND_MODES.filter(b => b !== 'normal')); layer.opacity = rng.range(0.5, 1) }
     }

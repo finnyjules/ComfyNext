@@ -162,7 +162,7 @@ vec4 computeLayer(int i, vec2 p) {
 
     float t;
     if (mapping < 0.5)      t = band;                     // across (along the band axis)
-    else if (mapping < 1.5) t = f;                        // per bar (flat colour per band)
+    else if (mapping < 1.5) t = f;                        // per bar (flat color per band)
     else                    t = grad - (f - 0.5) * 1.15;  // field (offset gradient)
     t += u_hueDrift[i] / 360.0 * (band - 0.5);
     t = quantize(t, u_steps[i]);
@@ -216,7 +216,7 @@ vec4 computeLayer(int i, vec2 p) {
 
   float t;
   if (mapping < 0.5)      t = band;                     // across (along bands)
-  else if (mapping < 1.5) t = f;                        // per bar (flat colour per band)
+  else if (mapping < 1.5) t = f;                        // per bar (flat color per band)
   else                    t = grad - (f - 0.5) * 1.15;  // field (offset gradient)
   t += u_hueDrift[i] / 360.0 * (band - 0.5);
   t = quantize(t, u_steps[i]);

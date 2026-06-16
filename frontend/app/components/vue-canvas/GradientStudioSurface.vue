@@ -110,7 +110,7 @@ function removeLayer(i: number) {
   activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
 }
 
-// ── colour stops ─────────────────────────────────────────────────────────────
+// ── color stops ─────────────────────────────────────────────────────────────
 function addStop() {
   const stops = layer.value.color.stops
   stops.push({ color: '#ffffff', pos: stops.length ? 1 : 0 })
@@ -220,7 +220,7 @@ function onKey(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
   if (e.code === 'Space') { e.preventDefault(); randomize('all') }
-  else if (e.key === 'c' || e.key === 'C') randomize('colours')
+  else if (e.key === 'c' || e.key === 'C') randomize('colors')
   else if (e.key === 's' || e.key === 'S') randomize('structure')
   else if (e.key === 'e' || e.key === 'E') downloadExport()
   else if (e.key === 'Escape') closeEditor()
@@ -267,7 +267,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </button>
         <div class="grid grid-cols-2 gap-2">
           <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-white/80 transition hover:bg-white/[0.1]"
-                  @click="randomize('colours')"><Palette class="h-3.5 w-3.5" /> Colours <span class="text-white/30">C</span></button>
+                  @click="randomize('colors')"><Palette class="h-3.5 w-3.5" /> Colors <span class="text-white/30">C</span></button>
           <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-white/80 transition hover:bg-white/[0.1]"
                   @click="randomize('structure')"><Shapes class="h-3.5 w-3.5" /> Structure <span class="text-white/30">S</span></button>
         </div>
@@ -385,8 +385,8 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </div>
       </StudioSection>
 
-      <!-- Colour -->
-      <StudioSection title="Colour" :badge="`Layer ${activeLayer + 1}`">
+      <!-- Color -->
+      <StudioSection title="Color" :badge="`Layer ${activeLayer + 1}`">
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
             <input v-model="stop.color" type="color" class="h-7 w-8 shrink-0 rounded" />

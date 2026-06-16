@@ -92,9 +92,9 @@ describe('gradientfx randomize', () => {
     expect(c.layers.length).toBe(1)
     expect(c.layers[0]!.color.stops.length).toBeGreaterThanOrEqual(2)
   })
-  it('reroll colours keeps structure; reroll structure keeps colours', () => {
+  it('reroll color keeps structure; reroll structure keeps color', () => {
     const c = buildConfig('#start')
-    const recol = reroll(c, 'colours', '#newcol')
+    const recol = reroll(c, 'colors', '#newcol')
     expect(recol.layers[0]!.shape).toEqual(c.layers[0]!.shape)
     expect(recol.layers[0]!.color).not.toEqual(c.layers[0]!.color)
 
@@ -103,7 +103,7 @@ describe('gradientfx randomize', () => {
     expect(restruct.layers[0]!.shape).not.toEqual(c.layers[0]!.shape)
   })
   it('locks pin fields across reroll', () => {
-    const c = { ...buildConfig('#l'), locks: { layout: true, colours: true } }
+    const c = { ...buildConfig('#l'), locks: { layout: true, colors: true } }
     const r = reroll(c, 'all', '#z')
     expect(r.canvas.layout).toBe(c.canvas.layout)
     expect(r.layers[0]!.color).toEqual(c.layers[0]!.color)

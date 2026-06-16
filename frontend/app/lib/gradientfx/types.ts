@@ -125,7 +125,7 @@ export interface GradientConfig {
   /** 1 or 2 layers. */
   layers: LayerConfig[]
   motion: MotionConfig
-  /** Field lock flags (lock keys: 'aspect','layout','colours','structure',…). */
+  /** Field lock flags (lock keys: 'aspect','layout','colors','structure',…). */
   locks: Record<string, boolean>
 }
 
