@@ -94,7 +94,7 @@ class GradientFxRenderer {
     const u = (name: string) => gl.getUniformLocation(prog, name)
 
     // Per-layer textures + uniform arrays.
-    const counts: number[] = [], dir: number[] = [], mirror: number[] = [], gap: number[] = []
+    const counts: number[] = [], dir: number[] = [], mirrorH: number[] = [], mirrorV: number[] = [], gradHoriz: number[] = [], gap: number[] = []
     const rounding: number[] = [], mapping: number[] = [], steps: number[] = [], hueDrift: number[] = []
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
     const crisp: number[] = []
@@ -106,7 +106,9 @@ class GradientFxRenderer {
       crisp.push(s.type === 'bands' ? 1 : 0)
       counts.push(Math.max(1, Math.round(s.count)))
       dir.push(DIR_IDX[s.direction] ?? 2)
-      mirror.push(s.mirror ? 1 : 0)
+      mirrorH.push(s.mirror === 'horizontal' || s.mirror === 'both' ? 1 : 0)
+      mirrorV.push(s.mirror === 'vertical' || s.mirror === 'both' ? 1 : 0)
+      gradHoriz.push(col.gradientDir === 'horizontal' ? 1 : 0)
       gap.push(s.gap)
       rounding.push(s.rounding)
       mapping.push(MAP_IDX[col.mapping] ?? 0)
@@ -139,7 +141,9 @@ class GradientFxRenderer {
 
     gl.uniform1fv(u('u_count'), arr(counts))
     gl.uniform1fv(u('u_dir'), arr(dir))
-    gl.uniform1fv(u('u_mirror'), arr(mirror))
+    gl.uniform1fv(u('u_mirrorH'), arr(mirrorH))
+    gl.uniform1fv(u('u_mirrorV'), arr(mirrorV))
+    gl.uniform1fv(u('u_gradHoriz'), arr(gradHoriz))
     gl.uniform1fv(u('u_gap'), arr(gap))
     gl.uniform1fv(u('u_rounding'), arr(rounding))
     gl.uniform1fv(u('u_mapping'), arr(mapping))

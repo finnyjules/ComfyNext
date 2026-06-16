@@ -7,6 +7,8 @@ export type LayoutKind = 'linear' | 'radial' | 'orbit'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type MappingKind = 'across' | 'perbar' | 'field'
 export type Direction = 'up' | 'right' | 'down' | 'left'
+export type MirrorKind = 'none' | 'horizontal' | 'vertical' | 'both'
+export type GradientDir = 'vertical' | 'horizontal'
 export type BlendKind = 'normal' | 'lighten' | 'screen' | 'add' | 'multiply' | 'darken' | 'overlay'
 
 export interface ColorStop {
@@ -42,14 +44,16 @@ export interface ShapeConfig {
   rounding: number
   /** Fill direction (linear). */
   direction: Direction
-  /** Mirror the fill about the centre. */
-  mirror: boolean
+  /** Mirror the image: none / horizontal / vertical / both. */
+  mirror: MirrorKind
   /** Pyramid: position of the valley/peak, 0..1. */
   valley: number
 }
 
 export interface ColorConfig {
   stops: ColorStop[]
+  /** Gradient ramp axis: vertical (up-down) or horizontal (left-right). */
+  gradientDir: GradientDir
   mapping: MappingKind
   /** Quantize the ramp into N bands; 0 = continuous. */
   steps: number
@@ -131,6 +135,8 @@ export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
 export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
+export const MIRROR_KINDS: MirrorKind[] = ['none', 'horizontal', 'vertical', 'both']
+export const GRADIENT_DIRS: GradientDir[] = ['vertical', 'horizontal']
 
 export function aspectRatio(a: string): number {
   const [w, h] = a.split(':').map(Number)

@@ -10,7 +10,7 @@ import type { MotionTrack, ShapeConfig } from '~/lib/gradientfx/types'
 
 const baseShape = (over: Partial<ShapeConfig> = {}): ShapeConfig => ({
   type: 'wave', count: 12, minDepth: 0.05, curveExp: 1, jitter: 0, peaks: 4, phase: 0,
-  detail: 3, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'down', mirror: false, valley: 0.5,
+  detail: 3, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'down', mirror: 'none', valley: 0.5,
   ...over,
 })
 

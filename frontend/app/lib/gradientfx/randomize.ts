@@ -29,7 +29,7 @@ function randShape(rng: Rng): ShapeConfig {
     rounding: rng.range(0, 0.8),
     // Bias to vertical fills — up/down read as the staggered-skyline look.
     direction: rng.pick(['up', 'down', 'up', 'down', 'left', 'right'] as const),
-    mirror: rng.chance(0.35),
+    mirror: rng.pick(['none', 'none', 'none', 'horizontal', 'vertical', 'both'] as const),
     valley: rng.range(0.15, 0.85),
   }
 }
@@ -81,6 +81,7 @@ function randColour(rng: Rng): ColorConfig {
   const mapping = rng.pick(['field', 'field', 'field', 'across', 'perbar'] as const)
   return {
     stops: randStops(rng),
+    gradientDir: rng.pick(['vertical', 'vertical', 'horizontal'] as const),
     mapping,
     steps: rng.chance(0.3) ? rng.int(3, 16) : 0,
     hueDrift: rng.chance(0.35) ? rng.range(-90, 90) : 0,
@@ -106,9 +107,9 @@ export function defaultConfig(seed = randomSeed()): GradientConfig {
     layers: [
       {
         blend: 'normal', opacity: 1,
-        shape: { type: 'bands', count: 20, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: false, valley: 0.5 },
+        shape: { type: 'bands', count: 20, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
         // Bottom→top vertical gradient: pink → magenta → near-black → orange (the reference look).
-        color: { stops: [{ color: '#f9d9f0', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#0e0a1e', pos: 0.64 }, { color: '#f0a35a', pos: 1 }], mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+        color: { stops: [{ color: '#f9d9f0', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#0e0a1e', pos: 0.64 }, { color: '#f0a35a', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },
     ],
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },

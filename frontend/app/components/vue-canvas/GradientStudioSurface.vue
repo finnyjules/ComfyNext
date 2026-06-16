@@ -7,7 +7,7 @@ import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
 import {
-  ASPECTS, BLEND_MODES, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
   aspectRatio, cloneConfig, type GradientConfig, type LayoutKind, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -428,7 +428,12 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                     @click="layer.shape.direction = d">{{ { up: '↑', right: '→', down: '↓', left: '←' }[d] }}</button>
           </div>
         </template>
-        <label class="flex items-center gap-2 text-xs text-white/60"><input v-model="layer.shape.mirror" type="checkbox" /> Mirror</label>
+        <label class="mb-1 block text-xs text-white/60">Mirror</label>
+        <div class="grid grid-cols-4 gap-1">
+          <button v-for="mk in MIRROR_KINDS" :key="mk" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                  :class="layer.shape.mirror === mk ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                  @click="layer.shape.mirror = mk">{{ mk === 'horizontal' ? 'Horiz' : mk === 'vertical' ? 'Vert' : mk }}</button>
+        </div>
       </section>
 
       <!-- Colour -->
@@ -444,6 +449,12 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
             <button v-if="layer.color.stops.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeStop(i)"><Trash2 class="h-3 w-3" /></button>
           </div>
           <button class="mt-1 flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addStop"><Plus class="h-3 w-3" /> Add stop</button>
+        </div>
+        <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
+        <div class="mb-2 grid grid-cols-2 gap-1">
+          <button v-for="gd in GRADIENT_DIRS" :key="gd" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                  :class="layer.color.gradientDir === gd ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                  @click="layer.color.gradientDir = gd">{{ gd }}</button>
         </div>
         <label class="mb-1 block text-xs text-white/60">Mapping</label>
         <div class="mb-2 grid grid-cols-3 gap-1">

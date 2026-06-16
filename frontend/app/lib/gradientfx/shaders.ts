@@ -33,7 +33,9 @@ uniform float u_layerCount;    // 1 or 2
 // Per-layer params (index 0,1).
 uniform float u_count[2];
 uniform float u_dir[2];        // 0 up,1 right,2 down,3 left
-uniform float u_mirror[2];
+uniform float u_mirrorH[2];    // fold the image in X
+uniform float u_mirrorV[2];    // fold the image in Y
+uniform float u_gradHoriz[2];  // 1 = gradient ramp runs horizontally, 0 = vertically
 uniform float u_gap[2];
 uniform float u_rounding[2];
 uniform float u_mapping[2];    // 0 across,1 perbar,2 field
@@ -114,27 +116,30 @@ vec4 computeLayer(int i, vec2 p) {
   float count = max(1.0, u_count[i]);
   float gap = u_gap[i];
   float mapping = u_mapping[i];
-  bool mirror = u_mirror[i] > 0.5;
+  bool mirrorH = u_mirrorH[i] > 0.5;
+  bool mirrorV = u_mirrorV[i] > 0.5;
+  bool gradHoriz = u_gradHoriz[i] > 0.5;
 
   if (u_layout < 0.5) {
-    // ---- Linear: full-height columns. The field offsets the vertical gradient
-    // per column, giving the signature staggered-skyline look (not bars on black).
+    // ---- Linear: full-height columns. The field offsets the gradient per band,
+    // giving the signature staggered-skyline look (not bars on black). The band
+    // axis is always perpendicular to the gradient, so both orientations read as bands.
     float m = u_margin;
     vec2 q = (p - m) / max(1.0 - 2.0 * m, 0.001);
     if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0);
+    // Mirror folds the image in screen space (H = X, V = Y).
+    if (mirrorH) q.x = 1.0 - abs(2.0 * q.x - 1.0);
+    if (mirrorV) q.y = 1.0 - abs(2.0 * q.y - 1.0);
+
+    float grad = gradHoriz ? q.x : q.y;   // gradient runs along this axis
+    float band = gradHoriz ? q.y : q.x;   // bands arrayed along the other
     int dir = int(u_dir[i] + 0.5);
-    float ba, da;
-    if (dir == 0)      { ba = q.x; da = q.y; }        // up
-    else if (dir == 2) { ba = q.x; da = 1.0 - q.y; }  // down
-    else if (dir == 1) { ba = q.y; da = q.x; }        // right
-    else               { ba = q.y; da = 1.0 - q.x; }  // left
+    if (dir == 2 || dir == 3) grad = 1.0 - grad;  // down/left reverse the gradient
 
-    // Mirror folds the column axis about the centre (symmetric composition).
-    float bax = mirror ? 1.0 - abs(2.0 * ba - 1.0) : ba;
-    float bi = floor(bax * count);
-    float bl = fract(bax * count);
+    float bi = floor(band * count);
+    float bl = fract(band * count);
 
-    // Soft gap between columns lets the background show through.
+    // Soft gap between bands lets the background show through.
     float colMask = 1.0;
     if (gap > 0.001) {
       float hg = gap * 0.5;
@@ -142,20 +147,19 @@ vec4 computeLayer(int i, vec2 p) {
       if (colMask <= 0.001) return vec4(0.0);
     }
 
-    // Blend the field toward the neighbouring column near the seam so the
-    // vertical bands transition softly instead of hard vertical edges.
+    // Blend the field toward the neighbouring band near the seam so non-Bands
+    // shapes transition softly; Bands keep crisp seams.
     float fc = sampleField(i, (bi + 0.5) / count);
     float side = bl < 0.5 ? -1.0 : 1.0;
     float fn = sampleField(i, (bi + 0.5 + side) / count);
-    // Bands keep crisp seams; other shapes blend toward the neighbour for soft columns.
     float blendAmt = mix(0.45, 0.06, u_crisp[i]);
     float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * blendAmt);
 
     float t;
-    if (mapping < 0.5)      t = ba;                        // across (horizontal ramp)
-    else if (mapping < 1.5) t = f;                         // per bar (flat colour per column)
-    else                    t = da - (f - 0.5) * 1.15;     // field (offset vertical gradient)
-    t += u_hueDrift[i] / 360.0 * (ba - 0.5);
+    if (mapping < 0.5)      t = band;                     // across (along the band axis)
+    else if (mapping < 1.5) t = f;                        // per bar (flat colour per band)
+    else                    t = grad - (f - 0.5) * 1.15;  // field (offset gradient)
+    t += u_hueDrift[i] / 360.0 * (band - 0.5);
     t = quantize(t, u_steps[i]);
 
     vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
@@ -170,11 +174,12 @@ vec4 computeLayer(int i, vec2 p) {
   float sweep = clamp(u_sweep[i], 0.02, 1.0);
   if (ang > sweep) return vec4(0.0);
   float ba = ang / sweep;
-  if (mirror) ba = 1.0 - abs(2.0 * ba - 1.0);
+  if (mirrorH) ba = 1.0 - abs(2.0 * ba - 1.0);  // fold angle
   float inner = u_innerRadius;
   float outer = 1.0 - u_margin;
   float da = (r - inner) / max(outer - inner, 0.001);
   if (da < 0.0 || da > 1.0) return vec4(0.0);
+  if (mirrorV) da = 1.0 - abs(2.0 * da - 1.0);   // fold radius
 
   float bi = floor(ba * count);
   float bl = fract(ba * count);
