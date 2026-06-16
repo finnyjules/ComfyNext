@@ -254,8 +254,6 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
             <Shapes class="h-3.5 w-3.5" /> Structure <span class="text-white/30">S</span>
           </button>
         </div>
-        <!-- Seed -->
-        <div class="absolute right-3 top-3 rounded bg-neutral-900/60 px-2 py-1 font-mono text-[10px] text-white/40 backdrop-blur">{{ config.seed }}</div>
       </div>
     </template>
 
