@@ -9,7 +9,7 @@ import type { ShaderFxCatalog, EffectDef } from '~/lib/shaderfx/types'
 import { composePasses } from '~/lib/shaderstudio/passes'
 import { applyMotion } from '~/lib/shaderstudio/motion'
 import { loadImage, resolveWiredInput } from '~/lib/shaderstudio/source'
-import { cloneConfig, defaultConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { defaultConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 
 const props = defineProps<{
   id: string
