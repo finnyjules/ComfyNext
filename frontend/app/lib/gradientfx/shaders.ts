@@ -162,7 +162,7 @@ vec4 computeLayer(int i, vec2 p) {
   float feather = 0.02 + 0.05 * u_rounding[i];
   float fill;
   if (u_layout > 1.5) {
-    // Orbit: gaussian band centered at `depth`.
+    // Orbit: gaussian band centered at the depth value.
     fill = exp(-pow((da - depth) / max(feather + 0.06, 0.02), 2.0));
   } else {
     fill = smoothstep(depth + feather, depth - feather, da);
