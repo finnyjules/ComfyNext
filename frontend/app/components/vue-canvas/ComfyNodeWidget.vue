@@ -37,6 +37,13 @@ const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
 const isToggle = computed(() => props.widgetDef.type === 'BOOLEAN')
 const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'))
 const isText = computed(() => props.widgetDef.type === 'STRING')
+// A multiline STRING widget — the prompt. Promoted to the most prominent control
+// in the node (larger, more readable, stronger label hierarchy).
+const isMultilineText = computed(() =>
+  isText.value
+  && (props.widgetDef.multiline
+    ?? (props.widgetDef.name.toLowerCase().includes('text') || props.widgetDef.name.toLowerCase().includes('prompt'))),
+)
 
 // Per-node gradient slider configs. Keys: nodeType → widget name → gradient CSS.
 const GRADIENT_WIDGETS: Record<string, Record<string, string>> = {
@@ -521,7 +528,10 @@ function formatLabel(name: string): string {
     </template>
     <template v-else>
       <label
-        class="text-[9px] text-muted-foreground tracking-normal mb-0.5 flex items-center gap-1"
+        class="flex items-center gap-1"
+        :class="isMultilineText
+          ? 'text-[11px] font-semibold uppercase tracking-wide text-white/75 mb-1'
+          : 'text-[9px] text-muted-foreground tracking-normal mb-0.5'"
         :title="widgetDef.tooltip || undefined"
       >
         <span>{{ formatLabel(widgetDef.name) }}</span>
@@ -542,7 +552,7 @@ function formatLabel(name: string): string {
       />
       <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" :name="widgetDef.name" @update:model-value="emit('update:modelValue', $event)" />
       <VueCanvasWidgetsWidgetToggle v-else-if="isToggle" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="widgetDef.multiline ?? (widgetDef.name.toLowerCase().includes('text') || widgetDef.name.toLowerCase().includes('prompt'))" @update:model-value="emit('update:modelValue', $event)" />
+      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="isMultilineText" @update:model-value="emit('update:modelValue', $event)" />
     </template>
   </div>
 </template>
