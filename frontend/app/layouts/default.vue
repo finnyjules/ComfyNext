@@ -112,7 +112,7 @@ const loadOptions = [
   { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
   // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
-  ...(SPACE_TYPE_ENABLED ? [{ label: 'Space Type', icon: Clapperboard, special: 'space-type' }] : []),
+  ...(SPACE_TYPE_ENABLED ? [{ label: 'Type Studio', icon: Clapperboard, special: 'space-type' }] : []),
   { label: 'Gradient', icon: Sparkles, nodeType: 'GradientStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
