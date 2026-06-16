@@ -37,8 +37,8 @@ const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
 const isToggle = computed(() => props.widgetDef.type === 'BOOLEAN')
 const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'))
 const isText = computed(() => props.widgetDef.type === 'STRING')
-// A multiline STRING widget — the prompt. Promoted to the most prominent control
-// in the node (larger, more readable, stronger label hierarchy).
+// A multiline STRING widget — the prompt. Rendered as the node's primary control:
+// a larger, lighter, elevated textarea (see WidgetText).
 const isMultilineText = computed(() =>
   isText.value
   && (props.widgetDef.multiline
@@ -528,10 +528,7 @@ function formatLabel(name: string): string {
     </template>
     <template v-else>
       <label
-        class="flex items-center gap-1"
-        :class="isMultilineText
-          ? 'text-[11px] font-semibold uppercase tracking-wide text-white/75 mb-1'
-          : 'text-[9px] text-muted-foreground tracking-normal mb-0.5'"
+        class="text-[9px] text-muted-foreground tracking-normal mb-0.5 flex items-center gap-1"
         :title="widgetDef.tooltip || undefined"
       >
         <span>{{ formatLabel(widgetDef.name) }}</span>
