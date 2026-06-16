@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { historyEntryToRecord } from '~/lib/generations'
+import { historyEntryToRecord, type GenKind } from '~/lib/generations'
 
 // Every saved generation in a project, grouped by project. Unlike
 // useRecentProjects (which caps at 3 images for the home cards), this keeps the
@@ -68,7 +68,10 @@ export function useProjectGenerations() {
         for (const g of gens) {
           if (g.promptId) recordedPromptIds.add(g.promptId)
           for (const o of g.outputs || []) {
-            if (o.type !== 'output') continue
+            // Hide only live-preview temp frames. Real outputs ('output') and
+            // frontend-tool assets saved to input/ (Space Type, Gradient Studio)
+            // both count as the project's assets.
+            if (o.type === 'temp') continue
             assets.push({ ...o, promptId: g.promptId, timestamp: g.ts, usd: g.usd ?? null })
           }
         }
@@ -129,5 +132,20 @@ export function useProjectGenerations() {
 
   function refresh() { fetchGenerations(true) }
 
-  return { generationsByProject, loading, fetchGenerations, refresh, viewUrl }
+  /** Record a frontend-tool output (Space Type / Gradient Studio) as one of the
+   *  project's generations so it shows in the Assets panel, then refresh. The file
+   *  lives in input/, so it's saved with type:'input'. */
+  async function recordAsset(projectUuid: string | null | undefined, kind: GenKind, filename: string) {
+    if (!projectUuid || !filename) return
+    const { saveGeneration } = useProjects()
+    await saveGeneration(projectUuid, {
+      promptId: `studio-${crypto.randomUUID()}`,
+      ts: Date.now(),
+      outputs: [{ kind, filename, subfolder: '', type: 'input' }],
+      nodes: [],
+    })
+    refresh()
+  }
+
+  return { generationsByProject, loading, fetchGenerations, refresh, recordAsset, viewUrl }
 }

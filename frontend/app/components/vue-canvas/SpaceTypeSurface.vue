@@ -15,6 +15,10 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
+// Record generated stills/videos as the current project's assets (Assets panel).
+const { recordAsset } = useProjectGenerations()
+const { activeTab } = useTabs()
+
 // Locate this node + its saved config blob on the canvas. The config lives at
 // node.data.properties.comfynext_spaceType so it survives serialization
 // (convertToLiteGraph stashes `properties`), letting the editor be reopened.
@@ -391,6 +395,7 @@ async function generateImage() {
         const prev = n.data.properties.comfynext_spaceType || {}
         n.data.properties.comfynext_spaceType = { ...prev, thumb: `/view?filename=${filename}&type=input` }
       }
+      await recordAsset(activeTab.value?.projectUuid, 'image', filename)
       window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
@@ -422,6 +427,7 @@ async function generateVideo() {
     })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
+      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
       window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
       }))

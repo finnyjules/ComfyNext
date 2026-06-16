@@ -16,6 +16,10 @@ import {
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
+// Record generated stills/videos as the current project's assets (Assets panel).
+const { recordAsset } = useProjectGenerations()
+const { activeTab } = useTabs()
+
 function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
 
 // ── config (single source of truth) ─────────────────────────────────────────
@@ -176,6 +180,7 @@ async function generateImage() {
     if (filename) {
       const n = currentNode()
       if (n) { n.data ||= {}; n.data.properties ||= {}; saveConfig() }
+      await recordAsset(activeTab.value?.projectUuid, 'image', filename)
       window.dispatchEvent(new CustomEvent('comfynext:gradientStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
@@ -206,6 +211,7 @@ async function generateVideo() {
     })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
+      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
       window.dispatchEvent(new CustomEvent('comfynext:gradientStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
       }))
