@@ -2,29 +2,41 @@
 import { Pin, PinOff, EyeOff, Eye, LayoutGrid } from 'lucide-vue-next'
 import type { RecentProject } from '~/composables/useRecentProjects'
 
-const { allProjects, loading, thumbnailUrl, timeAgo, fetchRecentProjects } = useRecentProjects()
+const { allProjects, loading, thumbnailUrl, timeAgo, refresh } = useRecentProjects()
 const { isPinned, isHidden, togglePin, hide, unhide } = useProjectPrefs()
 const { tabs, openTab, setActiveTab } = useTabs()
 
-onMounted(() => fetchRecentProjects())
+// Re-fetch on open so a just-saved/renamed project shows up (the list is otherwise
+// cached and would miss work done since it was first loaded).
+onMounted(() => refresh())
 
-// Open project tabs aren't durable until they're saved/run, so a freshly-opened
-// project won't be in the durable/history list yet. Surface those open tabs here
-// (deduped by projectUuid) so the project you're working on always appears.
-const openProjectCards = computed<RecentProject[]>(() => {
-  const known = new Set(allProjects.value.map((p) => p.workflowId))
-  const out: RecentProject[] = []
+// Open project tabs, keyed by their canonical project id.
+const openProjectTabs = computed(() => {
+  const m = new Map<string, { id: string; label: string }>()
   for (const t of tabs.value) {
     if (t.type !== 'project') continue
     const id = t.projectUuid || t.workflowId
-    if (!id || known.has(id)) continue
-    known.add(id)
-    out.push({ workflowId: id, name: t.label || 'Untitled project', promptIds: [], images: [], lastTimestamp: Date.now(), runCount: 0 })
+    if (id) m.set(id, { id: t.id, label: t.label || '' })
   }
-  return out
+  return m
 })
-// Open (un-persisted) projects float to the top; durable cards keep recency order.
-const mergedProjects = computed<RecentProject[]>(() => [...openProjectCards.value, ...allProjects.value])
+
+const mergedProjects = computed<RecentProject[]>(() => {
+  const known = new Set(allProjects.value.map((p) => p.workflowId))
+  // Durable/history cards — but an open tab's live label wins over a stale saved name.
+  const durable = allProjects.value.map((p) => {
+    const tab = openProjectTabs.value.get(p.workflowId)
+    return tab?.label ? { ...p, name: tab.label } : p
+  })
+  // Open tabs not yet represented by a durable/history card (un-saved/un-run).
+  const extra: RecentProject[] = []
+  for (const [id, tab] of openProjectTabs.value) {
+    if (known.has(id)) continue
+    extra.push({ workflowId: id, name: tab.label || 'Untitled project', promptIds: [], images: [], lastTimestamp: Date.now(), runCount: 0 })
+  }
+  // Open (un-persisted) projects float to the top; durable cards keep recency order.
+  return [...extra, ...durable]
+})
 
 type Filter = 'all' | 'pinned' | 'hidden'
 const filter = ref<Filter>('all')
