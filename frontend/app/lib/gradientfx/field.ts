@@ -40,15 +40,19 @@ export function buildField(shape: ShapeConfig, seed: string): Float32Array {
 
   for (let i = 0; i < count; i++) {
     const t = count > 1 ? i / (count - 1) : 0.5 // 0..1 across the field
+    const rv = jitterRng.next()                 // one random draw per bar
     let base: number
 
     switch (shape.type) {
       case 'bands': {
         // Smooth sine offset — rendered as crisp vertical gradient bands, the
         // staggered offsets read as a flowing wave (the GRADIENTOOL trick).
+        // `jitter` here is the "Randomness" control: it morphs the clean sine
+        // toward random per-band heights (0 = smooth wave, 1 = random skyline).
         const peaks = Math.max(0.5, shape.peaks || 2)
         const ph = (shape.phase || 0) * TAU
-        base = 0.5 + 0.5 * Math.sin(t * peaks * TAU + ph)
+        const sine = 0.5 + 0.5 * Math.sin(t * peaks * TAU + ph)
+        base = sine + (rv - sine) * clamp01(shape.jitter)
         break
       }
       case 'pyramid': {
@@ -77,7 +81,9 @@ export function buildField(shape: ShapeConfig, seed: string): Float32Array {
     }
 
     base = Math.pow(clamp01(base), exp)
-    if (shape.jitter) base += (jitterRng.next() - 0.5) * shape.jitter
+    // Bands already folded `rv` into its sine→random morph above; the others get
+    // additive jitter for organic variation.
+    if (shape.type !== 'bands' && shape.jitter) base += (rv - 0.5) * shape.jitter
     out[i] = clamp01(minD + (1 - minD) * clamp01(base))
   }
   return out

@@ -406,7 +406,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <input v-model.number="layer.shape.minDepth" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve exponent</span><span class="text-white/40">{{ layer.shape.curveExp.toFixed(2) }}</span></label>
         <input v-model.number="layer.shape.curveExp" type="range" min="0.2" max="3" step="0.05" class="mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Jitter</span><span class="text-white/40">{{ layer.shape.jitter.toFixed(2) }}</span></label>
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>{{ layer.shape.type === 'bands' ? 'Randomness' : 'Jitter' }}</span><span class="text-white/40">{{ layer.shape.jitter.toFixed(2) }}</span></label>
         <input v-model.number="layer.shape.jitter" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gap</span><span class="text-white/40">{{ layer.shape.gap.toFixed(2) }}</span></label>
         <input v-model.number="layer.shape.gap" type="range" min="0" max="0.8" step="0.01" class="mb-2 w-full" />
