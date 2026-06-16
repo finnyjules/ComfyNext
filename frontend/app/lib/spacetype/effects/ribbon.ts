@@ -2,10 +2,11 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
+import { parseFills, fillShaderTexture, fillTiling } from '../fills'
 
 const controls: ControlSpec[] = [
-  { key: 'text', label: 'Text', kind: 'text', default: 'SPACE TYPE', group: 'Type' },
-  { key: 'font', label: 'Font', kind: 'font', default: 'inter', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Type' },
@@ -16,9 +17,12 @@ const controls: ControlSpec[] = [
   { key: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'slider', min: 0.6, max: 4, step: 0.05, default: 2, group: 'Ribbon' },
   { key: 'ribbonOffset', label: 'Ribbon offset', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.2, group: 'Ribbon' },
   { key: 'alternate', label: 'Alternate', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Ribbon' },
-  { key: 'segmentCount', label: 'Segment count', kind: 'slider', min: 16, max: 240, step: 2, default: 120, group: 'Snake' },
-  { key: 'snakeAmplitude', label: 'Snake amount', kind: 'slider', min: 0, max: 6, step: 0.05, default: 2.4, group: 'Snake' },
-  { key: 'snakeFrequency', label: 'Snake freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5, group: 'Snake' },
+  { key: 'segmentCount', label: 'Segment count', kind: 'slider', min: 16, max: 240, step: 2, default: 120, group: 'Wave' },
+  { key: 'snakeAmplitude', label: 'Snake amount', kind: 'slider', min: 0, max: 6, step: 0.05, default: 2.4, group: 'Wave' },
+  { key: 'snakeFrequency', label: 'Snake freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5, group: 'Wave' },
+  // Second wave on the depth axis (toward/away from camera). 0 = flat (off); raise for a 3D snake.
+  { key: 'snakeAmplitudeZ', label: 'Depth wave amount', kind: 'slider', min: 0, max: 6, step: 0.05, default: 0, group: 'Wave' },
+  { key: 'snakeFrequencyZ', label: 'Depth wave freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5, group: 'Wave' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.6, group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2, group: 'Transform' },
   { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.5, group: 'Transform' },
@@ -27,9 +31,8 @@ const controls: ControlSpec[] = [
   { key: 'ribbonRotateX', label: 'Ribbon rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'ribbonRotateY', label: 'Ribbon rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'ribbonRotateZ', label: 'Ribbon rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
-  { key: 'gradientMode', label: 'Gradient', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Color' },
-  { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014', group: 'Color' },
-  { key: 'aSideColor', label: 'A-side', kind: 'color', default: '#f5f5f7', group: 'Color' },
+  // Per-ribbon fills (solid/gradient/grid/noise) cycled across ribbons + per-fill text colour.
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"gradient","a":"#3b5bff","b":"#ff3b3b","textColor":"#101014"}]', group: 'Color' },
   { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014', group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
@@ -41,61 +44,50 @@ const controls: ControlSpec[] = [
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
 // promote to instance state (e.g. root.userData.ribbons) if multi-surface is ever needed.
-let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group }[] = []
+let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }[] = []
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
 /**
- * Front material: text glyph map composited ON TOP of an opaque fill — the
- * gradient ramp (Gradient on) or a flat A-side color. The text map sets
- * diffuseColor (rgb=text color, a=glyph coverage); after <map_fragment> we
- * mix the fill under the glyph and force alpha to 1 (opaque front face).
+ * Front material: the ribbon is painted by its FILL (a 2D texture: solid 1×1, gradient ramp,
+ * grid or noise), with the text glyphs composited ON TOP in the fill's text colour. The fill is
+ * sampled at the ribbon's raw uv plus the SAME scroll offset as the text (uFillScroll) so
+ * grid/noise drift along with the glyphs.
  *
- * Uses MeshLambertMaterial so the shadow pipeline (shadowmap_pars_fragment,
- * getShadowMask(), USE_SHADOWMAP) is RELIABLY present without re-injection.
- * We override <opaque_fragment> to ignore Lambert's diffuse dimming and output
- * the flat gradient/text albedo multiplied by the shadow mask — full-bright
- * flat ribbons that darken only where shadowed.
+ * Uses MeshLambertMaterial so the shadow pipeline (shadowmap_pars_fragment, getShadowMask(),
+ * USE_SHADOWMAP) is RELIABLY present without re-injection. We override <opaque_fragment> to
+ * ignore Lambert's diffuse dimming and output the flat albedo × the shadow mask.
  */
 function frontMaterial(
   three: typeof THREE,
   map: THREE.Texture,
-  gradientTex: THREE.Texture | null,
+  fillTex: THREE.Texture,
+  tiling: number,
+  textColor: THREE.Color,
+  uFillScroll: { value: number },
   params: Params,
-  uRepeat: number,
 ): THREE.MeshLambertMaterial {
-  // Lambert is a lit material, so getShadowMask()/USE_SHADOWMAP are reliably available.
-  // We override the output to ignore Lambert's diffuse shading and show the flat
-  // gradient/text albedo multiplied by the shadow mask → full-bright flat ribbons
-  // that darken only where shadowed.
   const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
-  const uUseGradient = { value: String(params.gradientMode) === 'on' && gradientTex ? 1 : 0 }
-  const uAside = { value: new three.Color(String(params.aSideColor)) }
-  const uGradient = { value: gradientTex ?? null }
-  const uURepeat = { value: uRepeat }
+  const uFillTex = { value: fillTex }
+  const uFillTiling = { value: tiling }
+  const uTextColor = { value: textColor }
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uUseGradient = uUseGradient
-    shader.uniforms.uAside = uAside
-    shader.uniforms.uGradient = uGradient
-    shader.uniforms.uURepeat = uURepeat
+    shader.uniforms.uFillTex = uFillTex
+    shader.uniforms.uFillTiling = uFillTiling
+    shader.uniforms.uTextColor = uTextColor
+    shader.uniforms.uFillScroll = uFillScroll
     shader.uniforms.uShadowStrength = uShadowStrength
-    // Lambert already includes shadowmap_pars_vertex/shadowmap_vertex/worldpos_vertex —
-    // do NOT re-inject them (would redefine symbols and break compilation).
-    // Only add the vRawU varying so the gradient is pinned to the ribbon and does
-    // not drift with the text scroll.
+    // Raw uv → fill pinned across the ribbon; the x scroll is added in the fragment.
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vRawU;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
-    // Lambert includes lights_pars_begin + shadowmap_pars_fragment (getShadow), but
-    // NOT shadowmask_pars_fragment — so getShadowMask() is undefined and the shader
-    // fails to compile (black ribbons). Inject shadowmask_pars_fragment AFTER
-    // shadowmap_pars_fragment, where all its deps (directionalLightShadows,
-    // directionalShadowMap, getShadow, receiveShadow) are already declared.
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawUv = uv;')
+    // Inject shadowmask_pars_fragment after shadowmap_pars_fragment (getShadowMask deps ready).
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 fill = uAside; if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; } diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0); }')
+      // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fill = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(fill, uTextColor, diffuseColor.a), 1.0); }')
       .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
   }
   return mat
@@ -110,9 +102,11 @@ export const ribbonEffect: SpaceTypeEffect = {
     const root = new three.Group()
     ribbons = []
 
-    const gradientTex = (textTexture.userData?.gradient as THREE.Texture | undefined) ?? null
     const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'ribbonCount')))
+    const fills = parseFills(params.fills)
+    // Multiple texts → N-row atlas; ribbon i shows row i%N via the texture's V transform.
+    const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
 
     for (let i = 0; i < count; i++) {
       const inst = ribbonInstance(i, {
@@ -130,6 +124,8 @@ export const ribbonEffect: SpaceTypeEffect = {
         height: n(params, 'ribbonHeight'),
         uRepeat,
         phase: inst.phase,
+        zAmplitude: n(params, 'snakeAmplitudeZ') * inst.dir,
+        zFrequency: n(params, 'snakeFrequencyZ'),
       })
 
       const bufferGeo = new three.BufferGeometry()
@@ -142,8 +138,15 @@ export const ribbonEffect: SpaceTypeEffect = {
       const tex = textTexture.clone()
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
+      // Alternate texts: show row i%N of the atlas by compressing V to that row.
+      if (numTexts > 1) {
+        tex.repeat.y = 1 / numTexts
+        tex.offset.y = (i % numTexts) / numTexts
+      }
 
-      const frontMat = frontMaterial(three, tex, gradientTex, params, uRepeat)
+      const fill = fills[i % fills.length]!
+      const uFillScroll = { value: 0 }
+      const frontMat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), new three.Color(fill.textColor), uFillScroll, params)
       const backMat = new three.MeshBasicMaterial({
         color: new three.Color(String(params.bSideColor)),
         side: three.BackSide,
@@ -163,7 +166,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       subGroup.add(back)
       root.add(subGroup)
 
-      ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
+      ribbons.push({ tex, uRepeat, dir: inst.dir, group: subGroup, uFillScroll })
     }
 
     const strength = n(params, 'shadowStrength')
@@ -208,6 +211,8 @@ export const ribbonEffect: SpaceTypeEffect = {
     for (const r of ribbons) {
       // Text scrolls along the ribbon; integer speed keeps it seamless.
       r.tex.offset.x = -scrollOffset(t01, speed, r.uRepeat) * r.dir
+      // Grid/noise fill drifts with the text (same offset → same direction & pace).
+      r.uFillScroll.value = r.tex.offset.x
       // Per-ribbon in-place rotation (each ribbon around its own sub-group origin).
       r.group.rotation.set(n(params, 'ribbonRotateX'), n(params, 'ribbonRotateY'), n(params, 'ribbonRotateZ'))
     }

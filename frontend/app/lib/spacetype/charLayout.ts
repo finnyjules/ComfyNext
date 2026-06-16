@@ -93,19 +93,28 @@ export function layoutChars(opts: CharLayoutOpts): CharLayout {
 
   // ── Draw pass (scaled). Apply horizontal scale around the origin; all draws use
   //    unscaled coords (totalAdvance space) and get stretched into the widened canvas.
+  //    CRITICAL: draw each glyph at its OWN measured x (`m.x`), NOT the whole string in
+  //    one fillText. A bulk fillText applies kerning + letter-spacing distribution that
+  //    the per-char measure pass doesn't, so the painted pixels drift from the per-glyph
+  //    UV windows (u0/u1) — which, in the per-character cylinder, clips each glyph in
+  //    half as Tracking grows. Painting each glyph at m.x makes pixels == UV exactly.
+  //    letterSpacing is zeroed here: inter-glyph spacing already lives in m.x.
   ctx.setTransform(scaleX, 0, 0, 1, 0, 0)
-  applyFont(ctx, font, opts.fontWeight, tracking)
+  applyFont(ctx, font, opts.fontWeight, 0)
   ctx.fillStyle = opts.color
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  // Draw the whole line in one shot (matches makeTextTexture's kerning/spacing).
-  if ((opts.strokeWidth ?? 0) > 0) {
+  const stroke = (opts.strokeWidth ?? 0) > 0
+  if (stroke) {
     ctx.lineWidth = opts.strokeWidth as number
     ctx.strokeStyle = opts.strokeColor ?? '#000000'
     ctx.lineJoin = 'round'
-    ctx.strokeText(opts.text, 0, h / 2)
   }
-  ctx.fillText(opts.text, 0, h / 2)
+  for (const m of measured) {
+    if (m.isSpace) continue
+    if (stroke) ctx.strokeText(m.char, m.x, h / 2)
+    ctx.fillText(m.char, m.x, h / 2)
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0)
 
   // ── Build per-glyph UV regions. x-positions were measured unscaled, so they map

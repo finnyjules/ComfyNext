@@ -6,6 +6,13 @@ export type Params = Record<string, ParamValue>
 export type ControlSpec =
   | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; group?: string }
   | { key: string; label: string; kind: 'text'; default: string; group?: string }
+  // Multiple texts that the effect ALTERNATES per word-repeat/instance. Stored as one
+  // newline-separated string in params (so ParamValue stays scalar); the surface renders
+  // add/remove rows and the texture pipeline splits it into an N-row atlas.
+  | { key: string; label: string; kind: 'textList'; default: string; group?: string }
+  // A list of "fills" (per-slot colour recipes: solid / gradient / grid / noise). Stored as one
+  // JSON string in params; the surface renders a type dropdown + dependent colour pickers per row.
+  | { key: string; label: string; kind: 'fillList'; default: string; group?: string }
   | { key: string; label: string; kind: 'color'; default: string; group?: string }
   | { key: string; label: string; kind: 'select'; options: string[]; default: string; group?: string }
   | { key: string; label: string; kind: 'font'; default: string; group?: string }

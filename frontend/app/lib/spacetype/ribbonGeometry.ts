@@ -8,6 +8,11 @@ export interface RibbonGeoParams {
   height: number
   uRepeat: number
   phase: number
+  slope?: number
+  // Optional second wave on the DEPTH (Z) axis — undulates the ribbon toward/away from camera.
+  // Quarter-phase offset from the Y wave so enabling both gives a 3D corkscrew. 0 amp = off.
+  zAmplitude?: number
+  zFrequency?: number
 }
 
 export interface RibbonGeoData {
@@ -16,9 +21,22 @@ export interface RibbonGeoData {
   indices: Uint32Array
 }
 
-/** Centerline point at t in [0,1]. z=0; band 'across' is world Z. */
+// STG sinEngine wave shaping: slope=1 → pure sine, slope>1 → squarer wave.
+export function shapedSin(raw: number, slope: number): number {
+  if (slope === 1) return raw
+  const sign = raw >= 0 ? 1 : -1
+  return sign * (1 - Math.pow(1 - Math.abs(raw), slope))
+}
+
+/** Centerline point at t in [0,1]. Y wave is the in-plane snake; optional Z wave undulates the
+ *  centerline in depth (band 'across' is world Z, so a Z wave shifts the whole band fore/aft). */
 export function snakePoint(t: number, p: RibbonGeoParams): { x: number; y: number; z: number } {
-  return { x: (t - 0.5) * p.length, y: p.amplitude * Math.sin(TAU * p.frequency * t + p.phase), z: 0 }
+  const raw = Math.sin(TAU * p.frequency * t + p.phase)
+  const y = p.amplitude * shapedSin(raw, p.slope ?? 1)
+  const zAmp = p.zAmplitude ?? 0
+  const zRaw = Math.sin(TAU * (p.zFrequency ?? p.frequency) * t + p.phase + Math.PI / 2)
+  const z = zAmp === 0 ? 0 : zAmp * shapedSin(zRaw, p.slope ?? 1)
+  return { x: (t - 0.5) * p.length, y, z }
 }
 
 /** Swept band: 2 verts per sample, band width along world Z. */

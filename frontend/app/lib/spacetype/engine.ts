@@ -11,12 +11,25 @@ export interface EngineOptions {
   loopDuration: number
   alpha: boolean
   bgColor: string
+  projection?: 'perspective' | 'isometric'
+  /** Off-centre framing, in fractions of half the frame (−1…1). Screen-space, so it pans the
+   *  composition regardless of projection or scene rotation. */
+  panX?: number
+  panY?: number
 }
+
+// Half-height the perspective camera sees at z=14 (FOV 45°) — the ortho frustum matches it
+// so Scale reads the same across projections. Isometric = ORTHOGRAPHIC looking STRAIGHT down
+// the axis (parallel projection, no perspective convergence); the axonometric extrude look
+// comes from the effect's own tilt (scene rotate / boost tumble), not a tilted camera.
+const ORTHO_HALF_H = Math.tan((45 / 2) * Math.PI / 180) * 14
+const ISO_EYE = new THREE.Vector3(0, 0, 20)
 
 export class SpaceTypeEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
-  readonly camera: THREE.PerspectiveCamera
+  private perspCam: THREE.PerspectiveCamera
+  private orthoCam: THREE.OrthographicCamera
   private effect: SpaceTypeEffect
   private root: THREE.Object3D | null = null
   private textTex: THREE.Texture | null = null
@@ -30,9 +43,39 @@ export class SpaceTypeEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.setSize(opts.width, opts.height, false)
     this.scene = new THREE.Scene()
-    this.camera = new THREE.PerspectiveCamera(45, opts.width / opts.height, 0.1, 100)
-    this.camera.position.set(0, 0, 14)
+    this.perspCam = new THREE.PerspectiveCamera(45, opts.width / opts.height, 0.1, 100)
+    this.perspCam.position.set(0, 0, 14)
+    const a = opts.width / opts.height
+    this.orthoCam = new THREE.OrthographicCamera(-ORTHO_HALF_H * a, ORTHO_HALF_H * a, ORTHO_HALF_H, -ORTHO_HALF_H, 0.1, 200)
+    this.orthoCam.position.copy(ISO_EYE)
+    this.orthoCam.up.set(0, 1, 0)
+    this.orthoCam.lookAt(0, 0, 0)
     this.applyBackground()
+  }
+
+  private get activeCam(): THREE.Camera {
+    return this.opts.projection === 'isometric' ? this.orthoCam : this.perspCam
+  }
+
+  /** Switch projection live (perspective ↔ isometric/orthographic). */
+  setProjection(mode: 'perspective' | 'isometric'): void {
+    this.opts.projection = mode
+  }
+
+  /** Off-centre the framing live (−1…1 = half-frame each way). */
+  setPan(panX: number, panY: number): void {
+    this.opts.panX = panX
+    this.opts.panY = panY
+  }
+
+  /** Apply (or clear) the screen-space pan as a camera view-offset. Called per frame after the
+   *  projection is set up; positive X pans the composition right, positive Y pans it up. */
+  private applyPan(cam: THREE.PerspectiveCamera | THREE.OrthographicCamera): void {
+    const px = this.opts.panX ?? 0, py = this.opts.panY ?? 0
+    const w = this.opts.width, h = this.opts.height
+    if (px === 0 && py === 0) { cam.clearViewOffset(); return }
+    // view-offset X right shifts content left; Y down shifts content up — negate X to match.
+    cam.setViewOffset(w, h, -px * w * 0.5, py * h * 0.5, w, h)
   }
 
   /** Apply opaque-bg vs transparent based on opts.alpha. Renderer is always
@@ -53,8 +96,14 @@ export class SpaceTypeEngine {
     this.opts.width = width
     this.opts.height = height
     this.renderer.setSize(width, height, false)
-    this.camera.aspect = width / height
-    this.camera.updateProjectionMatrix()
+    const a = width / height
+    this.perspCam.aspect = a
+    this.perspCam.updateProjectionMatrix()
+    this.orthoCam.left = -ORTHO_HALF_H * a
+    this.orthoCam.right = ORTHO_HALF_H * a
+    this.orthoCam.top = ORTHO_HALF_H
+    this.orthoCam.bottom = -ORTHO_HALF_H
+    this.orthoCam.updateProjectionMatrix()
   }
 
   /** Toggle transparency / background color live without rebuilding the renderer. */
@@ -119,11 +168,20 @@ export class SpaceTypeEngine {
   /** Render the scene at integer frame index. t01 = index / frameCount (no wall clock). */
   renderFrame(index: number, params: Params): void {
     const t01 = (index % this.frameCount) / this.frameCount
-    this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
     const scale = Number(params.scale ?? 1) || 1
-    this.camera.position.z = 14 / scale
+    // Both projections use the SAME scene tilt (rotate X/Y/Z = the iso/view angle); only the
+    // lens differs — perspective (converging) vs isometric (orthographic, parallel lines).
+    this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
+    if (this.opts.projection === 'isometric') {
+      this.orthoCam.zoom = scale
+      this.orthoCam.updateProjectionMatrix()
+      this.applyPan(this.orthoCam)
+    } else {
+      this.perspCam.position.z = 14 / scale
+      this.applyPan(this.perspCam)
+    }
     this.effect.update(t01, params)
-    this.renderer.render(this.scene, this.camera)
+    this.renderer.render(this.scene, this.activeCam)
   }
 
   /** Read the current canvas back as a PNG blob (after renderFrame). */

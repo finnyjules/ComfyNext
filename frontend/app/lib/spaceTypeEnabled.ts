@@ -7,4 +7,4 @@
  * Typed `boolean` (not the literal `false`) so the always-off branches don't
  * read as unreachable dead code to the type checker.
  */
-export const SPACE_TYPE_ENABLED: boolean = false
+export const SPACE_TYPE_ENABLED: boolean = true

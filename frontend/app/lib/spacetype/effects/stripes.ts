@@ -1,21 +1,24 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset } from '../ribbonGeometry'
+import { parseFills, fillShaderTexture, fillTiling } from '../fills'
 
 const controls: ControlSpec[] = [
-  { key: 'text', label: 'Text', kind: 'text', default: 'SPACE TYPE', group: 'Type' },
-  { key: 'font', label: 'Font', kind: 'font', default: 'inter', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Type' },
   { key: 'textRepeat', label: 'Text repeat', kind: 'slider', min: 1, max: 16, step: 1, default: 4, group: 'Type' },
-  { key: 'stripeCount', label: 'Stripe count', kind: 'slider', min: 3, max: 24, step: 1, default: 9, group: 'Ribbon' },
+  { key: 'stripeCount', label: 'Stripe count', kind: 'slider', min: 3, max: 40, step: 1, default: 9, group: 'Ribbon' },
   { key: 'stripeHeight', label: 'Stripe height', kind: 'slider', min: 0.4, max: 3, step: 0.05, default: 1.0, group: 'Ribbon' },
-  { key: 'stripeSpacing', label: 'Stripe spacing', kind: 'slider', min: 0.2, max: 2.5, step: 0.05, default: 1.05, group: 'Ribbon' },
+  { key: 'stripeSpacing', label: 'Y spacing', kind: 'slider', min: 0.2, max: 2.5, step: 0.05, default: 1.05, group: 'Ribbon' },
+  { key: 'stripeSpaceX', label: 'X spacing', kind: 'slider', min: -2, max: 2, step: 0.02, default: 0, group: 'Ribbon' },
   { key: 'stripeStretch', label: 'Stripe stretch', kind: 'slider', min: 8, max: 36, step: 0.5, default: 18, group: 'Ribbon' },
-  { key: 'waveAmplitude', label: 'Wave amount', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.4, group: 'Snake' },
-  { key: 'waveFrequency', label: 'Wave freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.2, group: 'Snake' },
-  { key: 'rowPhase', label: 'Row phase', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Snake' },
+  { key: 'waveAmplitude', label: 'Wave amount', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.4, group: 'Wave' },
+  { key: 'waveFrequency', label: 'Wave freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.2, group: 'Wave' },
+  { key: 'waveSlope', label: 'Wave slope', kind: 'slider', min: 0.2, max: 4, step: 0.1, default: 1, group: 'Wave' },
+  { key: 'rowPhase', label: 'Row phase', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Wave' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.5, group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2, group: 'Transform' },
   { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.4, group: 'Transform' },
@@ -24,11 +27,8 @@ const controls: ControlSpec[] = [
   { key: 'ribbonRotateX', label: 'Stripe rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'ribbonRotateY', label: 'Stripe rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'ribbonRotateZ', label: 'Stripe rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
-  { key: 'stripeColor1', label: 'Stripe color 1', kind: 'color', default: '#3b5bff', group: 'Color' },
-  { key: 'stripeColor2', label: 'Stripe color 2', kind: 'color', default: '#ff3b3b', group: 'Color' },
-  { key: 'stripeColor3', label: 'Stripe color 3', kind: 'color', default: '#ffd23b', group: 'Color' },
-  { key: 'stripeColorCount', label: 'Palette colors', kind: 'slider', min: 1, max: 3, step: 1, default: 3, group: 'Color' },
-  { key: 'typeColor', label: 'Text', kind: 'color', default: '#101014', group: 'Color' },
+  // Per-band fills (solid/gradient/grid/noise) cycled across stripes + per-band text colour.
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#3b5bff","b":"#000000","textColor":"#101014"},{"type":"solid","a":"#ff3b3b","b":"#000000","textColor":"#101014"},{"type":"solid","a":"#ffd23b","b":"#000000","textColor":"#101014"}]', group: 'Color' },
   { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014', group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
@@ -40,7 +40,7 @@ const controls: ControlSpec[] = [
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
 // promote to instance state (e.g. root.userData.stripes) if multi-surface is ever needed.
-let stripes: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group }[] = []
+let stripes: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }[] = []
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -59,39 +59,37 @@ function n(p: Params, k: string): number { return Number(p[k]) }
 function stripeFrontMaterial(
   three: typeof THREE,
   map: THREE.Texture,
-  solidColor: THREE.Color,
+  fillTex: THREE.Texture,
+  tiling: number,
+  textColor: THREE.Color,
+  uFillScroll: { value: number },
   params: Params,
-  uRepeat: number,
 ): THREE.MeshLambertMaterial {
   const mat = new three.MeshLambertMaterial({ map, side: three.FrontSide })
-  // Stripes never use the gradient ramp: each band is a single solid color.
-  const uUseGradient = { value: 0 }
-  const uAside = { value: solidColor }
-  const uGradient = { value: null as THREE.Texture | null }
-  const uURepeat = { value: uRepeat }
+  // Each band is painted by its fill (a 2D texture: solid 1×1, gradient ramp, grid or noise),
+  // sampled at the band's raw uv but with the SAME scroll offset as the text (uFillScroll,
+  // updated per frame) so grid/noise drift along with the glyphs. The glyph coverage (map
+  // alpha) composites the per-band text colour on top.
+  const uFillTex = { value: fillTex }
+  const uFillTiling = { value: tiling }
+  const uTextColor = { value: textColor }
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uUseGradient = uUseGradient
-    shader.uniforms.uAside = uAside
-    shader.uniforms.uGradient = uGradient
-    shader.uniforms.uURepeat = uURepeat
+    shader.uniforms.uFillTex = uFillTex
+    shader.uniforms.uFillTiling = uFillTiling
+    shader.uniforms.uTextColor = uTextColor
+    shader.uniforms.uFillScroll = uFillScroll
     shader.uniforms.uShadowStrength = uShadowStrength
-    // Lambert already includes shadowmap_pars_vertex/shadowmap_vertex/worldpos_vertex —
-    // do NOT re-inject them (would redefine symbols and break compilation).
-    // Only add the vRawU varying so the fill is pinned to the band and does
-    // not drift with the text scroll.
+    // Raw uv → the fill is pinned across the band height; the x scroll is added in the fragment.
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vRawU;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawU = uv.x;')
-    // Lambert includes lights_pars_begin + shadowmap_pars_fragment (getShadow), but
-    // NOT shadowmask_pars_fragment — so getShadowMask() is undefined and the shader
-    // fails to compile (black bands). Inject shadowmask_pars_fragment AFTER
-    // shadowmap_pars_fragment, where all its deps (directionalLightShadows,
-    // directionalShadowMap, getShadow, receiveShadow) are already declared.
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawUv = uv;')
+    // Inject shadowmask_pars_fragment after shadowmap_pars_fragment (getShadowMask deps ready).
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uUseGradient;\nuniform vec3 uAside;\nuniform sampler2D uGradient;\nuniform float uURepeat;\nuniform float uShadowStrength;\nvarying float vRawU;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 fill = uAside; if (uUseGradient > 0.5) { fill = texture2D(uGradient, vec2(vRawU / uURepeat, 0.5)).rgb; } diffuseColor = vec4(mix(fill, diffuseColor.rgb, diffuseColor.a), 1.0); }')
+      // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fill = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(fill, uTextColor, diffuseColor.a), 1.0); }')
       .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
   }
   return mat
@@ -108,15 +106,12 @@ export const stripesEffect: SpaceTypeEffect = {
 
     const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'stripeCount')))
+    const xSpacing = n(params, 'stripeSpaceX')
+    // Multiple texts → N-row atlas; stripe i shows row i%N via the texture's V transform.
+    const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
 
-    // Cycling palette = the first `stripeColorCount` declared stripe colors.
-    const paletteSource = [
-      String(params.stripeColor1),
-      String(params.stripeColor2),
-      String(params.stripeColor3),
-    ]
-    const paletteCount = Math.max(1, Math.min(3, Math.floor(n(params, 'stripeColorCount'))))
-    const palette = paletteSource.slice(0, paletteCount).map(c => new three.Color(c))
+    // Cycling per-band fills (solid/gradient/grid/noise) + per-band text colour.
+    const fills = parseFills(params.fills)
 
     for (let i = 0; i < count; i++) {
       const inst = ribbonInstance(i, {
@@ -134,6 +129,7 @@ export const stripesEffect: SpaceTypeEffect = {
         height: n(params, 'stripeHeight'),
         uRepeat,
         phase: inst.phase,
+        slope: n(params, 'waveSlope'),
       })
 
       const bufferGeo = new three.BufferGeometry()
@@ -146,9 +142,16 @@ export const stripesEffect: SpaceTypeEffect = {
       const tex = textTexture.clone()
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
+      // Alternate texts: show row i%N of the atlas by compressing V to that row.
+      if (numTexts > 1) {
+        tex.repeat.y = 1 / numTexts
+        tex.offset.y = (i % numTexts) / numTexts
+      }
 
-      const solidColor = palette[i % palette.length]!.clone()
-      const frontMat = stripeFrontMaterial(three, tex, solidColor, params, uRepeat)
+      const fill = fills[i % fills.length]!
+      const fillTex = fillShaderTexture(three, fill)
+      const uFillScroll = { value: 0 }
+      const frontMat = stripeFrontMaterial(three, tex, fillTex, fillTiling(fill), new three.Color(fill.textColor), uFillScroll, params)
       const backMat = new three.MeshBasicMaterial({
         color: new three.Color(String(params.bSideColor)),
         side: three.BackSide,
@@ -164,11 +167,12 @@ export const stripesEffect: SpaceTypeEffect = {
 
       const subGroup = new three.Group()
       subGroup.position.y = inst.y
+      subGroup.position.x = i * xSpacing
       subGroup.add(front)
       subGroup.add(back)
       root.add(subGroup)
 
-      stripes.push({ tex, uRepeat, dir: inst.dir, group: subGroup })
+      stripes.push({ tex, uRepeat, dir: inst.dir, group: subGroup, uFillScroll })
     }
 
     const strength = n(params, 'shadowStrength')
@@ -213,6 +217,8 @@ export const stripesEffect: SpaceTypeEffect = {
     for (const s of stripes) {
       // Text scrolls along the band; integer speed keeps it seamless.
       s.tex.offset.x = -scrollOffset(t01, speed, s.uRepeat) * s.dir
+      // Grid/noise fill drifts with the text (same offset → same direction & pace).
+      s.uFillScroll.value = s.tex.offset.x
       // Per-stripe in-place rotation (each band around its own sub-group origin).
       s.group.rotation.set(n(params, 'ribbonRotateX'), n(params, 'ribbonRotateY'), n(params, 'ribbonRotateZ'))
     }
