@@ -167,6 +167,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Space Type: client-side Three.js 3D ribbon typography. Frontend-only config
   // node (no backend class_type) — reopen the editor to re-edit, like the Frame.
   SpaceType: 'space-type',
+  // Gradient Studio: client-side WebGL procedural gradient generator. Frontend-only
+  // config node (no backend class_type) — like Space Type, reopen to re-edit.
+  GradientStudio: 'gradient-studio',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

@@ -1,0 +1,117 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Handle, Position } from '@vue-flow/core'
+import { Pencil, Sparkles } from 'lucide-vue-next'
+import { gradientFx } from '~/lib/gradientfx/renderer'
+import { defaultConfig } from '~/lib/gradientfx/randomize'
+import { aspectRatio, type GradientConfig } from '~/lib/gradientfx/types'
+
+// Gradient Studio — a frontend-only config node (no backend class_type, never
+// executes). The card shows a live preview from the saved config; "Edit" opens
+// the full GradientStudioSurface bound to this node, which writes its config
+// back to node.data.properties.comfynext_gradientStudio.
+const props = defineProps<{
+  id: string
+  data: {
+    nodeType: string
+    title?: string
+    mode?: number
+    properties?: Record<string, any>
+  }
+}>()
+
+const PREVIEW_W = 220
+
+const config = computed<GradientConfig>(
+  () => (props.data?.properties?.comfynext_gradientStudio as GradientConfig) ?? defaultConfig('#default0'),
+)
+
+const previewH = computed(() => Math.round(PREVIEW_W / aspectRatio(config.value.canvas.aspect)))
+const canvasEl = ref<HTMLCanvasElement | null>(null)
+const glError = ref<string | null>(null)
+const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
+
+let raf = 0
+let start = 0
+
+function renderFrame(t: number) {
+  const canvas = canvasEl.value
+  if (!canvas) return
+  const w = PREVIEW_W, h = previewH.value
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
+  try {
+    const out = gradientFx.render(config.value, w, h, t)
+    canvas.getContext('2d')!.drawImage(out, 0, 0)
+    glError.value = null
+  } catch (e: any) {
+    glError.value = String(e?.message ?? e)
+  }
+}
+
+function loop(ts: number) {
+  if (!start) start = ts
+  const dur = Math.max(0.1, config.value.motion?.duration ?? 4)
+  const t = ((ts - start) / 1000) % dur
+  renderFrame(t)
+  raf = requestAnimationFrame(loop)
+}
+
+function startLoop() {
+  cancelAnimationFrame(raf)
+  start = 0
+  if (animated.value) raf = requestAnimationFrame(loop)
+  else renderFrame(0)
+}
+
+onMounted(startLoop)
+onBeforeUnmount(() => cancelAnimationFrame(raf))
+
+// Re-render when the saved config changes (editor writes back live). Debounced.
+let timer: ReturnType<typeof setTimeout> | null = null
+watch(config, () => {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(startLoop, 60)
+}, { deep: true })
+watch(animated, startLoop)
+
+function openEditor() {
+  window.dispatchEvent(new CustomEvent('comfynext:openGradientStudio', { detail: { nodeId: props.id } }))
+}
+</script>
+
+<template>
+  <div
+    class="relative w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
+    @dblclick.stop="openEditor"
+  >
+    <!-- Output handle: anchors the provenance edge to a generated Image/Video node. -->
+    <Handle
+      id="output-0" type="source" :position="Position.Right"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-emerald-400 !bg-[#1a1a1a]"
+      :style="{ top: '50%' }"
+    />
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+      <Sparkles class="h-3.5 w-3.5 text-emerald-400" />
+      <span class="text-xs font-medium text-white/80">Gradient Studio</span>
+      <span class="ml-auto truncate text-[10px] uppercase tracking-wide text-white/40">{{ config.canvas.layout }}</span>
+    </div>
+
+    <!-- Live preview -->
+    <div class="flex items-center justify-center bg-neutral-950">
+      <canvas ref="canvasEl" class="block w-full" :style="{ height: previewH + 'px' }" />
+    </div>
+    <div v-if="glError" class="px-3 py-1 text-[10px] text-red-300/90 truncate" :title="glError">{{ glError }}</div>
+
+    <!-- Edit -->
+    <div class="border-t border-white/10 p-2">
+      <button
+        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        @click.stop="openEditor"
+      >
+        <Pencil class="h-3 w-3" /> Edit
+      </button>
+    </div>
+  </div>
+</template>
