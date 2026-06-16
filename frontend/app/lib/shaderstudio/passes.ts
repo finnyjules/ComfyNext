@@ -1,0 +1,79 @@
+// frontend/app/lib/shaderstudio/passes.ts
+// Compose a ShaderStudioConfig + the selected effect's EffectDef into the flat
+// ShaderPass[] consumed by the shaderFx singleton renderer. Order mirrors the
+// Morflax panel: effect → duotone → adjust → lens blur → chromatic.
+
+import { resolveUniforms } from '~/lib/shaderfx/params'
+import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/renderer'
+import type { EffectDef } from '~/lib/shaderfx/types'
+import { ADJUST_FS, CHROMATIC_FS, DUOTONE_FS, LENS_BLUR_FS } from './glsl'
+import type { ShaderStudioConfig } from './types'
+
+/** Hex (#rrggbb) → {r,g,b} in 0..1. */
+function hexRgb(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace('#', '')
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16)
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 }
+}
+
+export interface EffectTextureBundle {
+  sources: Record<string, TexImageSource>
+  uniforms: Record<string, number>
+}
+
+/**
+ * @param cfg     studio config (already motion-applied for the frame, if animating)
+ * @param effect  EffectDef for cfg.effect.id, or null if none / not loaded
+ * @param t       time in seconds (drives u_time for animated effects)
+ * @param tex     resolved effect textures + extra uniforms (browser-side; {} in tests)
+ */
+export function composePasses(
+  cfg: ShaderStudioConfig,
+  effect: EffectDef | null,
+  t: number,
+  tex: EffectTextureBundle = { sources: {}, uniforms: {} },
+): ShaderPass[] {
+  const out: ShaderPass[] = []
+
+  // 1. Stylized effect (reuse shaderfx; expand multi-pass)
+  if (cfg.effect.enabled && cfg.effect.id && effect) {
+    const uniforms: Uniforms = {
+      ...resolveUniforms(effect, cfg.effect.params),
+      u_time: t, u_seed: 42, u_hasInput: 1, ...tex.uniforms,
+    }
+    out.push(...expandPasses(effect.id, effect.source, uniforms, tex.sources, effect.passes ?? 1))
+  }
+
+  // 2. Duotone
+  if (cfg.duotone.enabled) {
+    const ink = hexRgb(cfg.duotone.ink), paper = hexRgb(cfg.duotone.paper)
+    out.push({ id: 'studio:duotone', source: DUOTONE_FS, uniforms: {
+      u_ink_r: ink.r, u_ink_g: ink.g, u_ink_b: ink.b,
+      u_paper_r: paper.r, u_paper_g: paper.g, u_paper_b: paper.b,
+    } })
+  }
+
+  // 3. Adjustments
+  if (cfg.adjust.enabled) {
+    const a = cfg.adjust
+    out.push({ id: 'studio:adjust', source: ADJUST_FS, uniforms: {
+      u_exposure: a.exposure, u_brightness: a.brightness, u_contrast: a.contrast,
+      u_saturation: a.saturation, u_hue: a.hue, u_temperature: a.temperature, u_tint: a.tint,
+    } })
+  }
+
+  // 4. Lens blur
+  if (cfg.post.blur.enabled) {
+    const b = cfg.post.blur
+    out.push({ id: 'studio:blur', source: LENS_BLUR_FS, uniforms: {
+      u_focusX: b.focusX, u_focusY: b.focusY, u_range: b.range, u_aperture: b.aperture, u_maxBlur: b.maxBlur,
+    } })
+  }
+
+  // 5. Chromatic aberration
+  if (cfg.post.chromatic.enabled) {
+    out.push({ id: 'studio:chromatic', source: CHROMATIC_FS, uniforms: { u_amount: cfg.post.chromatic.amount } })
+  }
+
+  return out
+}
