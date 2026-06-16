@@ -10,6 +10,7 @@ import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
 import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
+import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -111,6 +112,7 @@ const loadOptions = [
   { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
   // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
+  ...(SPACE_TYPE_ENABLED ? [{ label: 'Space Type', icon: Clapperboard, special: 'space-type' }] : []),
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
@@ -131,6 +133,9 @@ const slateGalleryOpen = ref(false)
 function onLoadOption(opt: { nodeType?: string; special?: string }) {
   loadMenuOpen.value = false
   if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
+  // Space Type is a persistent, re-editable canvas node now — drop the node and
+  // let VueNodeCanvas auto-open its editor (config persists in node properties).
+  if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: 'SpaceType' } })); return }
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
 
@@ -149,6 +154,10 @@ function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
     },
   }))
 }
+
+// Space Type surface → outputs. The surface bakes its own frames and dispatches
+// `comfynext:addNode` directly (Image or Video node), so the layout only needs
+// to own the open/close state of the modal.
 
 // Annotate submenu — FigJam-style overlays on the canvas. Each option fires
 // `comfynext:addAnnotation`; VueNodeCanvas owns the spawn position and

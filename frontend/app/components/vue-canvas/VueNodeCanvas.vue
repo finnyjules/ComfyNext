@@ -29,6 +29,7 @@ import ArtifactTimelineNode from '~/components/vue-canvas/ArtifactTimelineNode.v
 import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
 import ShaderEffectNode from '~/components/vue-canvas/ShaderEffectNode.vue'
 import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
+import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -605,7 +606,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
       if (idx >= 0) widgetsValues[idx] = value
     }
   }
-  return {
+  const data = {
     id: String(Date.now()),
     type: vueFlowType,
     position,
@@ -646,6 +647,13 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
       ...(nodeType === 'ComfyGateNode' ? { paused: false, promptId: null } : {}),
     },
   } as any
+  // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
+  // empty. Give it ONE wildcard output so the generated Image/Video artifact can
+  // be wired from it (visual/provenance link only — SpaceType never executes).
+  if (nodeType === 'SpaceType' && (!data.data.outputs || data.data.outputs.length === 0)) {
+    data.data.outputs = [{ name: 'output', type: '*', links: null }]
+  }
+  return data
 }
 
 // ── Wire splicing ────────────────────────────────────────────────────────────
@@ -1316,7 +1324,11 @@ async function handleAddNode(e: Event) {
   }
 
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  nodes.value.push(createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides))
+  const newNode = createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides)
+  nodes.value.push(newNode)
+  // Frontend-only Space Type node: do NOT auto-open the editor on add. The node
+  // card shows a live preview from its saved config; the user clicks Edit to
+  // open the authoring modal.
 }
 
 // Edit as Frame: convert a layer-splitting node's results into a Frame
@@ -1654,6 +1666,51 @@ function handleOpenCompositor(e: Event) {
   if (detail?.nodeId) compositorOpenForId.value = String(detail.nodeId)
 }
 
+// Space Type editor modal state (frontend-only config node).
+const spaceTypeOpenForId = ref<string | null>(null)
+function handleOpenSpaceType(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) spaceTypeOpenForId.value = String(detail.nodeId)
+}
+
+// Space Type "Generate as image/video": create the artifact node to the right of
+// the SpaceType node and draw a provenance edge from the SpaceType node's single
+// wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
+// The artifact still shows its file via the widget regardless of the edge — this
+// link is visual only (SpaceType has no backend and never executes).
+function handleSpaceTypeOutput(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string; nodeType: string; widgetOverrides?: Record<string, unknown> }>).detail
+  const src = (nodes.value as any[]).find((n) => n.id === detail.sourceNodeId)
+  const pos = src
+    ? { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 80, y: src.position?.y ?? 0 }
+    : project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const node = createNodeData(detail.nodeType, pos, detail.widgetOverrides)
+  // The artifact is wired to the frontend-only Space Type node, so its upstream
+  // branch suppresses the widget-file fallback. Stamp data.images with the
+  // generated file so the card shows it directly (checked before hasUpstream).
+  const fname = (detail.widgetOverrides?.image ?? detail.widgetOverrides?.file) as string | undefined
+  if (fname) (node.data as any).images = [`/view?${new URLSearchParams({ filename: String(fname), type: 'input' })}`]
+  nodes.value.push(node)
+  if (src) {
+    // Primary input: `images` for Image, `source` for Video — fall back to slot 0.
+    const wantInput = detail.nodeType === 'Video' ? 'source' : 'images'
+    const ins = (node.data?.inputs ?? []) as any[]
+    let inIdx = ins.findIndex((i) => i.name === wantInput)
+    if (inIdx < 0) inIdx = ins.length ? 0 : -1
+    if (inIdx >= 0) {
+      edges.value.push({
+        id: `e-spacetype-${node.id}`,
+        source: src.id,
+        sourceHandle: 'output-0',
+        target: node.id,
+        targetHandle: `input-${inIdx}`,
+        type: 'comfy',
+        data: { dataType: ins[inIdx]?.type ?? '*' },
+      } as any)
+    }
+  }
+}
+
 // Inpaint modal state (dedicated editor for an Image artifact).
 const inpaintOpenForId = ref<string | null>(null)
 function handleOpenInpaint(e: Event) {
@@ -1915,7 +1972,7 @@ const anyEditorModalOpen = computed(() => !!(
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
-  voiceGalleryOpenForId.value
+  voiceGalleryOpenForId.value || spaceTypeOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
@@ -2065,6 +2122,8 @@ onMounted(() => {
   window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.addEventListener('comfynext:openSpaceType', handleOpenSpaceType)
+  window.addEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -2093,6 +2152,8 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
+  window.removeEventListener('comfynext:openSpaceType', handleOpenSpaceType)
+  window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -4181,7 +4242,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
@@ -4405,6 +4466,16 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="compositorOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Space Type editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <VueCanvasSpaceTypeSurface
+        v-if="spaceTypeOpenForId"
+        :node-id="spaceTypeOpenForId"
+        :nodes="nodes as any[]"
+        @close="spaceTypeOpenForId = null"
       />
     </Teleport>
 

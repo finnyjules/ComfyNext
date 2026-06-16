@@ -82,3 +82,34 @@ export function nearestWeight(f: GoogleFont, target = 400): number {
   if (!f.weights.length) return 400
   return f.weights.reduce((best, w) => (Math.abs(w - target) < Math.abs(best - target) ? w : best), f.weights[0]!)
 }
+
+// ── Space Type helpers ───────────────────────────────────────────────────────
+// Synchronous accessors over the cached catalog (above). Space Type stores the
+// font as a family NAME; effects resolve it during a synchronous buildScene, so
+// these read whatever the catalog has loaded (the surface kicks off loadGoogleCatalog
+// on mount). Before the catalog resolves they degrade gracefully.
+import { VARIABLE_FONTS } from './variable-fonts'
+
+/** Resolve a stored font value to a CSS family name. Accepts a family name directly,
+ *  or a legacy VARIABLE_FONTS id (e.g. 'inter') saved by older Space Type nodes. */
+export function resolveFontFamily(value: string): string {
+  if (!value) return 'Inter'
+  if (catalog?.some(f => f.family === value)) return value
+  const legacy = VARIABLE_FONTS.find(v => v.id === value)
+  if (legacy) return legacy.family
+  return value // assume it's already a family name (catalog may not be loaded yet)
+}
+
+/** Whether a family has a continuous Weight axis (variable). Unknown ⇒ true so we
+ *  don't wrongly hide the weight slider / clamp the weight before the catalog loads. */
+export function fontHasWeightAxis(family: string): boolean {
+  const f = catalog?.find(g => g.family === family)
+  if (!f) return true
+  return f.axes.some(a => a.tag === 'wght') || f.weights.length > 1
+}
+
+/** CSS2 <link> href for a family, using the catalog entry when available. */
+export function googleFontCssUrl(family: string): string {
+  const f = catalog?.find(g => g.family === family)
+  return f ? buildGoogleCssUrl(f) : quickGoogleCssUrl(family, 400)
+}

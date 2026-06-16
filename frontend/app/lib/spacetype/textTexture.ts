@@ -1,0 +1,104 @@
+import * as THREE from 'three'
+import { makeGradientTexture, type GradientStop } from './gradient'
+
+export interface TextTextureOptions {
+  label: string                 // already includes the trailing gap (buildRibbonLabel)
+  labels?: string[]             // multiple texts → N-row atlas the effect alternates between
+  fontFamily: string
+  fontWeight: number
+  axes: Record<string, number>  // variable-font axes, e.g. { wght: 700 }
+  typeColor: string
+  /** Texture pixel height; width is derived to fit ONE tile of the label. */
+  heightPx?: number
+  fontSizePx?: number
+  scaleX?: number        // horizontal glyph scale (TYPE X-Scale); 1 ⇒ no stretch
+  tracking?: number      // px letter-spacing (Tracking)
+  strokeColor?: string   // outline color
+  strokeWidth?: number   // px outline width (Type Stroke); 0 ⇒ no stroke
+  gradientStops?: GradientStop[]
+  gradientOn?: boolean
+  uRepeat?: number
+}
+
+/** Format axes as a CSS font-variation-settings value. Pure + unit-tested. */
+export function axesToVariation(axes: Record<string, number>): string {
+  const parts = Object.entries(axes).map(([tag, v]) => `"${tag}" ${v}`)
+  return parts.join(', ')
+}
+
+/**
+ * Render ONE tile of the label to a transparent canvas and return a repeating
+ * THREE.CanvasTexture. The ribbon geometry repeats this texture along its
+ * length; scrolling is done by offsetting texture.offset.x in the effect.
+ */
+export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
+  const rowH = opts.heightPx ?? 256
+  const fontPx = opts.fontSizePx ?? Math.round(rowH * 0.7)
+  const tracking = opts.tracking ?? 0
+  // TYPE X-Scale: stretch glyphs horizontally. We measure at scaleX=1, widen the
+  // canvas by scaleX, then ctx.scale(scaleX, 1) before drawing so the text fills it.
+  const scaleX = Math.max(0.01, opts.scaleX ?? 1)
+  // One row per text; effects ALTERNATE rows per word-repeat. A single text ⇒ 1 row
+  // (identical to the original behaviour). All rows share the canvas width (the widest).
+  const labels = (opts.labels && opts.labels.length ? opts.labels : [opts.label])
+    .map(l => (l && l.length ? l : ' '))
+  const n = labels.length
+
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')!
+  const font = `${opts.fontWeight} ${fontPx}px "${opts.fontFamily}", sans-serif`
+  const variation = axesToVariation(opts.axes)
+  const applyFont = () => {
+    ctx.font = font
+    if (variation && 'fontVariationSettings' in ctx) {
+      ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
+    }
+    if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${tracking}px`
+  }
+
+  applyFont()
+  const widths = labels.map(l => Math.max(1, ctx.measureText(l).width))
+  const maxLabelW = Math.max(...widths, 1)
+  const measured = Math.max(2, Math.ceil(maxLabelW))
+  const w = Math.max(2, Math.ceil(measured * scaleX))
+  // Per-row width fraction (each text's width ÷ the widest), so effects can size their
+  // per-text region/segment proportionally to the text length.
+  const wordFracs = widths.map(x => x / maxLabelW)
+
+  canvas.width = w
+  canvas.height = rowH * n
+  ctx.clearRect(0, 0, w, canvas.height)
+  ctx.fillStyle = opts.typeColor
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+
+  // Draw text k at the BOTTOM-up row so that, under the default flipY, texture
+  // V ∈ [k/n, (k+1)/n] samples text k (row 0 lowest). Effects select a row by
+  // mapping their across-band v into that range.
+  labels.forEach((label, k) => {
+    const cy = (n - 1 - k) * rowH + rowH / 2
+    ctx.setTransform(scaleX, 0, 0, 1, 0, 0)
+    applyFont()
+    if ((opts.strokeWidth ?? 0) > 0) {
+      ctx.lineWidth = opts.strokeWidth as number
+      ctx.strokeStyle = opts.strokeColor ?? '#000000'
+      ctx.lineJoin = 'round'
+      ctx.strokeText(label, 0, cy)
+    }
+    ctx.fillText(label, 0, cy)
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+  })
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = THREE.RepeatWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.anisotropy = 4
+  tex.needsUpdate = true
+  tex.userData.uRepeat = opts.uRepeat ?? 1
+  tex.userData.numTexts = n
+  tex.userData.wordFracs = wordFracs
+  tex.userData.gradient = (opts.gradientOn && opts.gradientStops && opts.gradientStops.some(s => s.on))
+    ? makeGradientTexture(opts.gradientStops, opts.typeColor)
+    : undefined
+  return tex
+}

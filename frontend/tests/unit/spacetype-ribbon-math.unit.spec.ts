@@ -1,0 +1,81 @@
+import { describe, it, expect } from 'vitest'
+import { wrap01, buildRibbonLabel, tileCount, ribbonRowState, type RibbonParams } from '../../app/lib/spacetype/ribbonMath'
+import { axesToVariation } from '../../app/lib/spacetype/textTexture'
+
+const P: RibbonParams = {
+  rows: 5, rowSpacing: 1, zRotation: 0.3, waveAmplitude: 0.4, waveFrequency: 2,
+  rowPhase: 0.5, scrollSpeed: 1, scrollCycles: 1, waveCycles: 1,
+}
+
+describe('wrap01', () => {
+  it('wraps into [0,1)', () => {
+    expect(wrap01(0)).toBeCloseTo(0, 10)
+    expect(wrap01(1)).toBeCloseTo(0, 10)
+    expect(wrap01(1.25)).toBeCloseTo(0.25, 10)
+    expect(wrap01(-0.25)).toBeCloseTo(0.75, 10)
+  })
+})
+
+describe('buildRibbonLabel', () => {
+  it('uppercases and pads with a trailing gap when case=upper', () => {
+    expect(buildRibbonLabel('Vessel', 'upper')).toBe('VESSEL   ')
+  })
+  it('leaves case alone when as-typed', () => {
+    expect(buildRibbonLabel('Vessel', 'as-typed')).toBe('Vessel   ')
+  })
+})
+
+describe('tileCount', () => {
+  it('covers the width with at least 2 extra tiles', () => {
+    expect(tileCount(1000, 250)).toBe(6)
+  })
+  it('never returns less than 2', () => {
+    expect(tileCount(10, 1000)).toBe(2)
+  })
+  it('returns 2 at an exact single-tile fit', () => {
+    expect(tileCount(250, 250)).toBe(2)
+  })
+})
+
+describe('ribbonRowState', () => {
+  it('is deterministic for the same inputs', () => {
+    expect(ribbonRowState(0.3, 2, P)).toEqual(ribbonRowState(0.3, 2, P))
+  })
+  it('centers rows around y=0', () => {
+    const mid = ribbonRowState(0, 2, P) // middle of 5 rows (index 2)
+    expect(mid.y).toBeCloseTo(0, 10)
+    const top = ribbonRowState(0, 0, P)
+    const bot = ribbonRowState(0, 4, P)
+    expect(top.y).toBeCloseTo(-bot.y, 10)
+  })
+  it('applies progressive per-row z-rotation', () => {
+    const r0 = ribbonRowState(0, 0, P)
+    const r4 = ribbonRowState(0, 4, P)
+    expect(r4.zRotation).toBeCloseTo(-r0.zRotation, 10)
+    expect(r0.zRotation).not.toBe(0)
+  })
+  it('loops seamlessly: scroll and wave phase at t01=1 wrap back to t01=0, for every row', () => {
+    for (let row = 0; row < P.rows; row++) {
+      const a = ribbonRowState(0, row, P)
+      const b = ribbonRowState(1, row, P)
+      expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
+      expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
+    }
+    const P2 = { ...P, scrollSpeed: 2, scrollCycles: 3, waveCycles: 2 }
+    for (let row = 0; row < P2.rows; row++) {
+      const a = ribbonRowState(0, row, P2)
+      const b = ribbonRowState(1, row, P2)
+      expect(wrap01(b.scrollOffset)).toBeCloseTo(wrap01(a.scrollOffset), 10)
+      expect(wrap01(b.wavePhase / (Math.PI * 2))).toBeCloseTo(wrap01(a.wavePhase / (Math.PI * 2)), 10)
+    }
+  })
+})
+
+describe('axesToVariation', () => {
+  it('formats axes as a font-variation-settings string', () => {
+    expect(axesToVariation({ wght: 700, wdth: 120 })).toBe('"wght" 700, "wdth" 120')
+  })
+  it('returns empty string for no axes', () => {
+    expect(axesToVariation({})).toBe('')
+  })
+})
