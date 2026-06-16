@@ -244,7 +244,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #actions>
-      <button class="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/20" :disabled="baking" @click="generateImage">
+      <button class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm hover:bg-blue-500" :disabled="baking" @click="generateImage">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}
       </button>
       <button class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500" :disabled="baking" @click="generateVideo">
