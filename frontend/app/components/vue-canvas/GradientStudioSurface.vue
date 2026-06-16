@@ -94,9 +94,11 @@ const locked = (key: string) => !!config.value.locks?.[key]
 // ── layers ──────────────────────────────────────────────────────────────────
 function addLayer() {
   if (config.value.layers.length >= 2) return
-  const seed = randomSeed()
-  const extra = buildConfig(seed).layers[0]!
-  extra.blend = 'lighten'; extra.opacity = 1
+  const extra = buildConfig(randomSeed()).layers[0]!
+  // Normal blend at partial opacity so the new layer is immediately visible over
+  // layer 1 (a random dark palette under 'lighten' looked invisible — its controls
+  // then appeared to do nothing). The user can switch to lighten/screen/etc.
+  extra.blend = 'normal'; extra.opacity = 0.65
   config.value.layers.push(extra)
   activeLayer.value = config.value.layers.length - 1
 }
