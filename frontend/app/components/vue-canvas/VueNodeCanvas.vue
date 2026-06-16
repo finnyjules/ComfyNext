@@ -1997,7 +1997,8 @@ const anyEditorModalOpen = computed(() => !!(
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
-  voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value
+  voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
+  shaderStudioOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
