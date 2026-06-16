@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { reactive, ref } from 'vue'
+import { cloneConfig } from '~/lib/gradientfx/types'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
@@ -105,6 +107,22 @@ describe('gradientfx randomize', () => {
     const r = reroll(c, 'all', '#z')
     expect(r.canvas.layout).toBe(c.canvas.layout)
     expect(r.layers[0]!.color).toEqual(c.layers[0]!.color)
+  })
+})
+
+describe('gradientfx reactive-safety (close-modal bug regression)', () => {
+  // structuredClone throws DataCloneError on a Vue reactive proxy; cloneConfig
+  // (JSON round-trip) must not. This is what broke the editor's close button.
+  it('cloneConfig works on a Vue reactive proxy', () => {
+    const r = reactive(buildConfig('#reactive'))
+    expect(() => cloneConfig(r)).not.toThrow()
+    expect(cloneConfig(r)).toEqual(buildConfig('#reactive'))
+  })
+  it('reroll + applyMotion accept reactive input without throwing', () => {
+    const cfg = ref(buildConfig('#rx'))
+    cfg.value.motion = { tracks: [{ layer: 0, param: 'phase', from: 0, to: 1, easing: 'pingpong', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }], duration: 4, fps: 30, size: 1080 }
+    expect(() => reroll(cfg.value, 'all', '#z')).not.toThrow()
+    expect(() => applyMotion(cfg.value, 1)).not.toThrow()
   })
 })
 

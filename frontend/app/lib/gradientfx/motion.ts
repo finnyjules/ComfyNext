@@ -2,7 +2,7 @@
 // animated params are overridden for that frame. The renderer then draws the
 // frame normally — preview and bake share this path, so they always match.
 
-import type { EasingKind, GradientConfig, MotionTrack } from './types'
+import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } from './types'
 
 /** Animatable per-layer shape params (label → ShapeConfig key). */
 export const ANIMATABLE: { key: string; label: string; min: number; max: number }[] = [
@@ -60,7 +60,7 @@ export function trackValue(track: MotionTrack, t: number, duration: number): num
 /** Build a frame-specific config: clone `cfg` and apply each track's value. */
 export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg
-  const out = structuredClone(cfg)
+  const out = cloneConfig(cfg)
   for (const track of cfg.motion.tracks) {
     const layer = out.layers[track.layer]
     if (!layer) continue

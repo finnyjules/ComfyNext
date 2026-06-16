@@ -8,7 +8,7 @@ import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS,
-  aspectRatio, type GradientConfig, type LayoutKind, type ShapeKind,
+  aspectRatio, cloneConfig, type GradientConfig, type LayoutKind, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -74,14 +74,14 @@ function makeThumb(cfg: GradientConfig): string {
   catch { return '' }
 }
 function pushRoll(cfg: GradientConfig) {
-  rolls.unshift({ seed: cfg.seed, thumb: makeThumb(cfg), cfg: structuredClone(cfg) })
+  rolls.unshift({ seed: cfg.seed, thumb: makeThumb(cfg), cfg: cloneConfig(cfg) })
   if (rolls.length > ROLL_CAP) rolls.length = ROLL_CAP
 }
 function randomize(scope: RerollScope) {
   config.value = reroll(config.value, scope, randomSeed())
   pushRoll(config.value)
 }
-function restoreRoll(r: Roll) { config.value = structuredClone(r.cfg) }
+function restoreRoll(r: Roll) { config.value = cloneConfig(r.cfg) }
 function clearRolls() { rolls.splice(0, rolls.length) }
 
 // ── locks ─────────────────────────────────────────────────────────────────
@@ -145,15 +145,20 @@ function downloadExport() {
 // ── config persistence ────────────────────────────────────────────────────────
 function loadConfig() {
   const c = currentNode()?.data?.properties?.comfynext_gradientStudio
-  if (c && typeof c === 'object') config.value = structuredClone(c)
+  if (c && typeof c === 'object') config.value = cloneConfig(c)
 }
 function saveConfig() {
   const n = currentNode(); if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  n.data.properties.comfynext_gradientStudio = structuredClone(config.value)
+  n.data.properties.comfynext_gradientStudio = cloneConfig(config.value)
 }
-function closeEditor() { saveConfig(); emit('close') }
+// Save must never block closing — swallow any persistence error so the user can
+// always exit the modal.
+function closeEditor() {
+  try { saveConfig() } catch (e) { console.error('[gradient] saveConfig failed', e) }
+  emit('close')
+}
 
 // ── outputs (mirror Space Type) ───────────────────────────────────────────────
 async function generateImage() {

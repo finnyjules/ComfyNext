@@ -4,7 +4,7 @@
 import { hslToRgb, rgbToHex } from './ramp'
 import { makeRng, randomSeed, type Rng } from './rng'
 import {
-  BLEND_MODES, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS,
+  BLEND_MODES, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
   type ColorConfig, type ColorStop, type GradientConfig, type LayerConfig, type ShapeConfig,
 } from './types'
 
@@ -139,7 +139,7 @@ export function buildConfig(seed: string): GradientConfig {
 export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSeed()): GradientConfig {
   const locks = prev.locks ?? {}
   const rng = makeRng(seed, scope)
-  const next: GradientConfig = structuredClone(prev)
+  const next: GradientConfig = cloneConfig(prev)
   next.seed = seed
 
   const doStructure = scope === 'all' || scope === 'structure'

@@ -136,3 +136,12 @@ export function aspectRatio(a: string): number {
   const [w, h] = a.split(':').map(Number)
   return w && h ? w / h : 1
 }
+
+/**
+ * Deep-clone a GradientConfig (or any sub-tree). GradientConfig is pure JSON
+ * data, so JSON round-trip is safe — and unlike structuredClone it works on Vue
+ * reactive proxies (structuredClone throws DataCloneError on a Proxy).
+ */
+export function cloneConfig<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value))
+}
