@@ -9,6 +9,8 @@ import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loadGoogleCatalog, googleFontCssUrl, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
+import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
+import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -73,7 +75,7 @@ function removeTextRow(i: number) { textLines.splice(i, 1); if (!textLines.lengt
 // Fill rows for a `fillList` control (per-slot solid/gradient/grid/noise). Mirrors textLines:
 // edit a local reactive array, sync back into the (scalar) param as a JSON string. `fillKey`
 // is the control's key (effects have at most one fillList).
-const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise']
+const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
 const fills = reactive<Fill[]>([])
 let syncingFills = false
 function fillKey(): string | null {
@@ -92,7 +94,7 @@ watch(fills, () => {
   const k = fillKey(); if (!k) return
   ;(params as Record<string, unknown>)[k] = serializeFills(fills)
 }, { deep: true })
-function addFill() { fills.push({ type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff' }) }
+function addFill() { fills.push({ type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }) }
 function removeFill(i: number) { fills.splice(i, 1); if (!fills.length) addFill() }
 // Second colour only matters for textured fills; the dropdown reveals it.
 function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }
@@ -436,24 +438,21 @@ async function generateVideo() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-    <div class="flex h-[620px] max-h-[92vh] w-[1100px] max-w-[95vw] gap-4 rounded-xl bg-neutral-900 p-4 text-white">
-      <div class="flex min-h-0 flex-1 flex-col">
-        <div class="flex min-h-0 flex-1 items-center justify-center">
-          <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
-        </div>
-        <div class="mt-3 flex shrink-0 gap-2">
-          <button class="rounded bg-blue-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
-            {{ baking ? 'Generating…' : 'Generate as image' }}
-          </button>
-          <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
-            {{ baking ? 'Generating…' : 'Generate as video' }}
-          </button>
-          <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="closeEditor">Close</button>
-        </div>
-      </div>
-      <div class="w-72 shrink-0 space-y-2 overflow-y-auto pr-1 min-h-0">
-        <div class="rounded-lg bg-white/5 px-3 py-2">
+  <StudioModalShell>
+    <template #preview>
+      <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
+    </template>
+    <template #actions>
+      <button class="rounded bg-blue-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
+        {{ baking ? 'Generating…' : 'Generate as image' }}
+      </button>
+      <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
+        {{ baking ? 'Generating…' : 'Generate as video' }}
+      </button>
+      <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="closeEditor">Close</button>
+    </template>
+    <template #controls>
+      <div class="rounded-lg bg-white/5 px-3 py-2">
           <label class="mb-1 block text-xs text-white/60">Effect</label>
           <select v-model="effectId" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
             <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id">{{ e.label }}</option>
@@ -472,17 +471,13 @@ async function generateVideo() {
           </label>
           <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="w-full" />
         </div>
-        <details
+        <StudioSection
           v-for="section in sections" :key="section.name"
           v-show="section.controls.length || section.name === 'Color' || section.name === 'Output'"
+          :title="section.name"
           :open="openSections[section.name]"
-          @toggle="openSections[section.name] = ($event.target as HTMLDetailsElement).open"
-          class="rounded-lg bg-white/5"
         >
-          <summary class="cursor-pointer select-none px-3 py-2 text-xs font-medium text-white/80">
-            {{ section.name }}
-          </summary>
-          <div class="space-y-3 px-3 pb-3">
+          <div class="space-y-3">
             <div v-for="c in section.controls" :key="c.key" v-show="!(c.key === 'typeWeight' && !fontIsVariable)"
                  data-control class="text-xs">
               <label class="mb-1 block text-white/60">{{ c.label }}</label>
@@ -508,6 +503,10 @@ async function generateVideo() {
                   <input type="color" v-model="f.a" class="h-7 w-6 shrink-0 rounded" title="Stripe color" />
                   <input v-if="fillNeedsB(f)" type="color" v-model="f.b" class="h-7 w-6 shrink-0 rounded"
                          title="Stripe color 2" />
+                  <input v-if="f.type === 'stripes'" type="range" v-model.number="f.angle"
+                         min="0" max="180" step="5" class="h-5 w-14 shrink-0" title="Stripe angle" />
+                  <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
+                         v-model.number="f.density" min="1" max="32" step="1" class="h-5 w-14 shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>
                   <input type="color" v-model="f.textColor" class="h-7 w-6 shrink-0 rounded" title="Text color" />
                   <button v-if="fills.length > 1" type="button" @click="removeFill(i)"
@@ -583,8 +582,7 @@ async function generateVideo() {
               </div>
             </template>
           </div>
-        </details>
-      </div>
-    </div>
-  </div>
+        </StudioSection>
+    </template>
+  </StudioModalShell>
 </template>

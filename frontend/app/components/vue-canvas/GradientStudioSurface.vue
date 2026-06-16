@@ -6,6 +6,8 @@ import { buildConfig, defaultConfig, reroll, type RerollScope } from '~/lib/grad
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
+import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
+import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
   aspectRatio, cloneConfig, type GradientConfig, type LayoutKind, type ShapeKind,
@@ -236,91 +238,43 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex bg-neutral-950 text-white">
-    <!-- ── Left rail: randomize, rolls, export ── -->
-    <div class="flex w-64 shrink-0 flex-col border-r border-white/10 bg-neutral-900">
-      <div class="space-y-2 p-3">
-        <button class="flex w-full items-center justify-center gap-2 rounded-lg bg-white/90 px-3 py-2.5 text-sm font-semibold text-black transition hover:bg-white"
+  <StudioModalShell>
+    <template #preview>
+      <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
+    </template>
+
+    <template #actions>
+      <button class="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/20" :disabled="baking" @click="generateImage">
+        {{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}
+      </button>
+      <button class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500" :disabled="baking" @click="generateVideo">
+        {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
+      </button>
+      <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
+      <button class="ml-auto rounded-lg bg-white/5 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10" @click="closeEditor">Close</button>
+    </template>
+
+    <template #controls>
+      <!-- Randomize (top, non-collapsible) -->
+      <div class="space-y-2 rounded-lg bg-white/5 p-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-semibold uppercase tracking-wide text-white/70">Gradient Studio</span>
+          <span class="font-mono text-[10px] text-white/35">{{ config.seed }}</span>
+        </div>
+        <button class="flex w-full items-center justify-center gap-2 rounded-lg bg-white/90 px-3 py-2 text-sm font-semibold text-black transition hover:bg-white"
                 @click="randomize('all')">
           <Dices class="h-4 w-4" /> Randomize <span class="ml-1 text-xs text-black/40">Space</span>
         </button>
         <div class="grid grid-cols-2 gap-2">
-          <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 transition hover:bg-white/[0.1]"
+          <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-white/80 transition hover:bg-white/[0.1]"
                   @click="randomize('colours')"><Palette class="h-3.5 w-3.5" /> Colours <span class="text-white/30">C</span></button>
-          <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 transition hover:bg-white/[0.1]"
+          <button class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-white/80 transition hover:bg-white/[0.1]"
                   @click="randomize('structure')"><Shapes class="h-3.5 w-3.5" /> Structure <span class="text-white/30">S</span></button>
         </div>
       </div>
 
-      <!-- Rolls -->
-      <div class="flex items-center justify-between px-3 pb-1 pt-2 text-[11px] text-white/50">
-        <span>Rolls <span class="text-white/30">{{ rolls.length }}</span></span>
-        <button v-if="rolls.length" class="text-white/40 hover:text-white/80" @click="clearRolls">CLEAR</button>
-      </div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        <p v-if="!rolls.length" class="px-1 py-4 text-[11px] text-white/30">Hit Space — every roll lands here.</p>
-        <div v-else class="grid grid-cols-3 gap-1.5">
-          <button v-for="(r, i) in rolls" :key="i" class="overflow-hidden rounded border border-white/10 transition hover:border-emerald-400/70"
-                  :class="{ 'ring-1 ring-emerald-400': r.seed === config.seed }" :title="r.seed" @click="restoreRoll(r)">
-            <img v-if="r.thumb" :src="r.thumb" class="block aspect-video w-full object-cover" />
-            <div v-else class="aspect-video w-full bg-white/5" />
-          </button>
-        </div>
-      </div>
-
-      <!-- Export -->
-      <div class="space-y-2 border-t border-white/10 p-3">
-        <div class="text-[11px] uppercase tracking-wide text-white/40">Export</div>
-        <div class="grid grid-cols-2 gap-1.5">
-          <button v-for="f in (['png', 'jpg'] as const)" :key="f"
-                  class="rounded border px-2 py-1.5 text-xs transition"
-                  :class="exportFormat === f ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
-                  @click="exportFormat = f">{{ f.toUpperCase() }}</button>
-        </div>
-        <div class="grid grid-cols-3 gap-1.5">
-          <button v-for="r in EXPORT_RES" :key="r.w"
-                  class="rounded border px-1 py-1.5 text-xs transition"
-                  :class="exportResW === r.w ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
-                  @click="exportResW = r.w">{{ r.label }}</button>
-        </div>
-        <div class="text-[10px] text-white/30">{{ exportDims.w }} × {{ exportDims.h }} · {{ exportFormat.toUpperCase() }}</div>
-        <button class="w-full rounded-lg bg-white/10 px-3 py-2 text-xs text-white/80 transition hover:bg-white/20" @click="downloadExport">
-          Export {{ exportFormat.toUpperCase() }} <span class="text-white/30">E</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- ── Center: preview ── -->
-    <div class="flex min-w-0 flex-1 flex-col">
-      <div class="flex items-center gap-2 border-b border-white/10 px-4 py-2.5">
-        <span class="h-2.5 w-2.5 rounded-sm bg-emerald-400" />
-        <span class="text-sm font-semibold tracking-wide">GRADIENT STUDIO</span>
-        <span class="ml-auto font-mono text-xs text-white/40">{{ exportDims.w }} × {{ exportDims.h }}</span>
-        <span class="font-mono text-xs text-white/40">{{ config.seed }}</span>
-        <button class="ml-2 rounded p-1 text-white/50 hover:bg-white/10 hover:text-white" @click="closeEditor"><X class="h-4 w-4" /></button>
-      </div>
-      <div class="flex min-h-0 flex-1 items-center justify-center p-6">
-        <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
-      </div>
-      <div class="flex shrink-0 items-center gap-2 border-t border-white/10 px-4 py-3">
-        <button class="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/20" :disabled="baking" @click="generateImage">
-          {{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}
-        </button>
-        <button class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500" :disabled="baking" @click="generateVideo">
-          {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
-        </button>
-        <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
-        <button class="ml-auto rounded-lg bg-white/5 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10" @click="closeEditor">Close</button>
-      </div>
-    </div>
-
-    <!-- ── Right: controls ── -->
-    <div class="w-72 shrink-0 space-y-2 overflow-y-auto border-l border-white/10 bg-neutral-900 p-3">
       <!-- Canvas -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/50">
-          <span>Canvas</span><span class="text-white/30">both layers</span>
-        </div>
+      <StudioSection title="Canvas" badge="both layers">
         <label class="mb-1 flex items-center justify-between text-xs text-white/60">
           <span>Aspect ratio</span>
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('aspect')"><component :is="locked('aspect') ? Lock : Unlock" class="h-3 w-3" /></button>
@@ -345,20 +299,18 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
         <input v-model="config.canvas.background" type="color" class="h-7 w-full rounded" />
-      </section>
+      </StudioSection>
 
       <!-- Relief & grain -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 text-[11px] uppercase tracking-wide text-white/50">Relief &amp; grain</div>
+      <StudioSection title="Relief & grain" badge="both layers" :open="false">
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
         <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
         <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" class="w-full" />
-      </section>
+      </StudioSection>
 
       <!-- Layers -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 text-[11px] uppercase tracking-wide text-white/50">Layers</div>
+      <StudioSection title="Layers" :open="false">
         <div class="mb-2 flex gap-1">
           <button v-for="(_, i) in config.layers" :key="i" class="flex-1 rounded px-2 py-1 text-xs transition"
                   :class="activeLayer === i ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
@@ -374,13 +326,10 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Opacity</span><span class="text-white/40">{{ layer.opacity.toFixed(2) }}</span></label>
           <input v-model.number="layer.opacity" type="range" min="0" max="1" step="0.01" class="w-full" />
         </template>
-      </section>
+      </StudioSection>
 
       <!-- Shape -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/50">
-          <span>Shape</span><span class="text-white/30">Layer {{ activeLayer + 1 }}</span>
-        </div>
+      <StudioSection title="Shape" :badge="`Layer ${activeLayer + 1}`">
         <div class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
@@ -434,13 +383,10 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   :class="layer.shape.mirror === mk ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="layer.shape.mirror = mk">{{ mk === 'horizontal' ? 'Horiz' : mk === 'vertical' ? 'Vert' : mk }}</button>
         </div>
-      </section>
+      </StudioSection>
 
       <!-- Colour -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/50">
-          <span>Colour</span><span class="text-white/30">Layer {{ activeLayer + 1 }}</span>
-        </div>
+      <StudioSection title="Colour" :badge="`Layer ${activeLayer + 1}`">
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
             <input v-model="stop.color" type="color" class="h-7 w-8 shrink-0 rounded" />
@@ -468,15 +414,14 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" class="mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
         <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" class="w-full" />
-      </section>
+      </StudioSection>
 
       <!-- Motion -->
-      <section class="rounded-lg bg-white/5 p-3">
-        <div class="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/50">
-          <span>Motion</span>
-          <button class="flex items-center gap-1 text-white/40 hover:text-white" @click="addTrack"><Plus class="h-3 w-3" /> Track</button>
-        </div>
-        <p v-if="!config.motion.tracks.length" class="mb-2 text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
+      <StudioSection title="Motion" :open="false">
+        <template #badge>
+          <button class="flex items-center gap-1 normal-case text-white/40 hover:text-white" @click.stop="addTrack"><Plus class="h-3 w-3" /> Track</button>
+        </template>
+        <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
             <select v-model.number="tk.layer" class="rounded bg-white/10 px-1 py-0.5 text-[11px]">
@@ -514,7 +459,40 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           </div>
         </div>
         <div class="mt-1 text-[10px] text-white/30">{{ Math.round(config.motion.fps * config.motion.duration) }} frames</div>
-      </section>
-    </div>
-  </div>
+      </StudioSection>
+
+      <!-- Rolls -->
+      <StudioSection title="Rolls" :open="false">
+        <template #badge>
+          <button v-if="rolls.length" class="normal-case text-white/40 hover:text-white/80" @click.stop="clearRolls">Clear · {{ rolls.length }}</button>
+        </template>
+        <p v-if="!rolls.length" class="text-[11px] text-white/30">Hit Space — every roll lands here.</p>
+        <div v-else class="grid grid-cols-3 gap-1.5">
+          <button v-for="(r, i) in rolls" :key="i" class="overflow-hidden rounded border border-white/10 transition hover:border-emerald-400/70"
+                  :class="{ 'ring-1 ring-emerald-400': r.seed === config.seed }" :title="r.seed" @click="restoreRoll(r)">
+            <img v-if="r.thumb" :src="r.thumb" class="block aspect-video w-full object-cover" />
+            <div v-else class="aspect-video w-full bg-white/5" />
+          </button>
+        </div>
+      </StudioSection>
+
+      <!-- Export -->
+      <StudioSection title="Export" :open="false">
+        <div class="grid grid-cols-2 gap-1.5">
+          <button v-for="f in (['png', 'jpg'] as const)" :key="f" class="rounded border px-2 py-1.5 text-xs transition"
+                  :class="exportFormat === f ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
+                  @click="exportFormat = f">{{ f.toUpperCase() }}</button>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5">
+          <button v-for="r in EXPORT_RES" :key="r.w" class="rounded border px-1 py-1.5 text-xs transition"
+                  :class="exportResW === r.w ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
+                  @click="exportResW = r.w">{{ r.label }}</button>
+        </div>
+        <div class="text-[10px] text-white/30">{{ exportDims.w }} × {{ exportDims.h }} · {{ exportFormat.toUpperCase() }}</div>
+        <button class="w-full rounded-lg bg-white/10 px-3 py-2 text-xs text-white/80 transition hover:bg-white/20" @click="downloadExport">
+          Export {{ exportFormat.toUpperCase() }} <span class="text-white/30">E</span>
+        </button>
+      </StudioSection>
+    </template>
+  </StudioModalShell>
 </template>
