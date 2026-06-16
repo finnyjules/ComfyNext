@@ -103,6 +103,11 @@ vec3 sampleRamp(int i, float t) {
                 : texture(u_ramp1, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
 }
 
+float quantize(float t, float steps) {
+  if (steps < 1.0) return t;
+  return floor(clamp(t, 0.0, 1.0) * steps) / max(steps - 1.0, 1.0);
+}
+
 // Returns layer color in .rgb and coverage alpha in .a.
 vec4 computeLayer(int i, vec2 p) {
   float count = max(1.0, u_count[i]);
@@ -110,76 +115,87 @@ vec4 computeLayer(int i, vec2 p) {
   float mapping = u_mapping[i];
   bool mirror = u_mirror[i] > 0.5;
 
-  float ba;   // bar axis 0..1
-  float da;   // depth axis 0..1 (0 = base of fill)
-  float depthScale = 1.0;
-
   if (u_layout < 0.5) {
-    // ---- Linear ----
+    // ---- Linear: full-height columns. The field offsets the vertical gradient
+    // per column, giving the signature staggered-skyline look (not bars on black).
     float m = u_margin;
     vec2 q = (p - m) / max(1.0 - 2.0 * m, 0.001);
     if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0);
     int dir = int(u_dir[i] + 0.5);
-    if (dir == 0)      { ba = q.x; da = q.y; }
-    else if (dir == 2) { ba = q.x; da = 1.0 - q.y; }
-    else if (dir == 1) { ba = q.y; da = q.x; }
-    else               { ba = q.y; da = 1.0 - q.x; }
-  } else {
-    // ---- Radial / Orbit ----
-    vec2 d = p - 0.5;
-    d.x *= u_aspect;
-    float r = length(d) * 2.0;            // 0 at center, ~1 at edge
-    float ang = atan(d.y, d.x) / TAU + 0.5; // 0..1
-    ang = fract(ang + u_scrub[i]);
-    float sweep = clamp(u_sweep[i], 0.02, 1.0);
-    if (ang > sweep) return vec4(0.0);
-    ba = ang / sweep;
-    float inner = u_innerRadius;
-    float outer = 1.0 - u_margin;
-    da = (r - inner) / max(outer - inner, 0.001);
-    if (da < 0.0 || da > 1.0) return vec4(0.0);
-    if (u_layout > 1.5) {
-      // Orbit: a soft ring band rather than a grounded fill.
-      depthScale = 1.0;
+    float ba, da;
+    if (dir == 0)      { ba = q.x; da = q.y; }        // up
+    else if (dir == 2) { ba = q.x; da = 1.0 - q.y; }  // down
+    else if (dir == 1) { ba = q.y; da = q.x; }        // right
+    else               { ba = q.y; da = 1.0 - q.x; }  // left
+
+    // Mirror folds the column axis about the centre (symmetric composition).
+    float bax = mirror ? 1.0 - abs(2.0 * ba - 1.0) : ba;
+    float bi = floor(bax * count);
+    float bl = fract(bax * count);
+
+    // Soft gap between columns lets the background show through.
+    float colMask = 1.0;
+    if (gap > 0.001) {
+      float hg = gap * 0.5;
+      colMask = smoothstep(hg, hg + 0.05, bl) * smoothstep(hg, hg + 0.05, 1.0 - bl);
+      if (colMask <= 0.001) return vec4(0.0);
     }
+
+    // Blend the field toward the neighbouring column near the seam so the
+    // vertical bands transition softly instead of hard vertical edges.
+    float fc = sampleField(i, (bi + 0.5) / count);
+    float side = bl < 0.5 ? -1.0 : 1.0;
+    float fn = sampleField(i, (bi + 0.5 + side) / count);
+    float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * 0.45);
+
+    float t;
+    if (mapping < 0.5)      t = ba;                        // across (horizontal ramp)
+    else if (mapping < 1.5) t = f;                         // per bar (flat colour per column)
+    else                    t = da - (f - 0.5) * 1.15;     // field (offset vertical gradient)
+    t += u_hueDrift[i] / 360.0 * (ba - 0.5);
+    t = quantize(t, u_steps[i]);
+
+    vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
+    return vec4(col, colMask);
   }
 
-  if (mirror) da = 1.0 - abs(2.0 * da - 1.0);
+  // ---- Radial / Orbit: clipped wedges / rings over the background. ----
+  vec2 d = p - 0.5;
+  d.x *= u_aspect;
+  float r = length(d) * 2.0;
+  float ang = fract(atan(d.y, d.x) / TAU + 0.5 + u_scrub[i]);
+  float sweep = clamp(u_sweep[i], 0.02, 1.0);
+  if (ang > sweep) return vec4(0.0);
+  float ba = ang / sweep;
+  if (mirror) ba = 1.0 - abs(2.0 * ba - 1.0);
+  float inner = u_innerRadius;
+  float outer = 1.0 - u_margin;
+  float da = (r - inner) / max(outer - inner, 0.001);
+  if (da < 0.0 || da > 1.0) return vec4(0.0);
 
-  // Bar index + local position, with gap carved out.
   float bi = floor(ba * count);
   float bl = fract(ba * count);
   float halfGap = gap * 0.5;
   if (bl < halfGap || bl > 1.0 - halfGap) return vec4(0.0);
 
-  float depth = sampleField(i, (bi + 0.5) / count) * depthScale;
-
-  // Rounded caps: shave the bar near its sides.
+  float depth = sampleField(i, (bi + 0.5) / count);
   float edge = abs(bl - 0.5) * 2.0;
   depth *= 1.0 - u_rounding[i] * 0.5 * smoothstep(0.4, 1.0, edge);
 
-  // Soft feather at the fill boundary → the blurred-top look.
   float feather = 0.02 + 0.05 * u_rounding[i];
-  float fill;
-  if (u_layout > 1.5) {
-    // Orbit: gaussian band centered at the depth value.
-    fill = exp(-pow((da - depth) / max(feather + 0.06, 0.02), 2.0));
-  } else {
-    fill = smoothstep(depth + feather, depth - feather, da);
-  }
+  float fill = u_layout > 1.5
+    ? exp(-pow((da - depth) / max(feather + 0.06, 0.02), 2.0))  // orbit band
+    : smoothstep(depth + feather, depth - feather, da);         // radial wedge
   if (fill <= 0.001) return vec4(0.0);
 
-  // Colour coordinate.
   float t;
-  if (mapping < 0.5)      t = ba;                                  // across
-  else if (mapping < 1.5) t = clamp(da / max(depth, 0.001), 0.0, 1.0); // perbar
-  else                    t = depth;                               // field
-  t += u_hueDrift[i] / 360.0 * (ba - 0.5);                          // drift across field
-  float steps = u_steps[i];
-  if (steps >= 1.0) t = floor(t * steps) / max(steps - 1.0, 1.0);
+  if (mapping < 0.5)      t = ba;
+  else if (mapping < 1.5) t = clamp(da / max(depth, 0.001), 0.0, 1.0);
+  else                    t = depth;
+  t += u_hueDrift[i] / 360.0 * (ba - 0.5);
+  t = quantize(t, u_steps[i]);
 
-  vec3 col = sampleRamp(i, t);
-  col = rotateHue(col, u_hueRotate[i]);
+  vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
   return vec4(col, fill);
 }
 

@@ -23,10 +23,12 @@ function randShape(rng: Rng): ShapeConfig {
     detail: rng.int(2, 6),
     sweep: rng.range(120, 360),
     scrub: rng.next(),
-    gap: rng.chance(0.5) ? rng.range(0, 0.4) : 0,
-    rounding: rng.range(0, 1),
-    direction: rng.pick(DIRECTIONS),
-    mirror: rng.chance(0.5),
+    // Gaps mostly off (the signature linear look is gapless full-height columns).
+    gap: rng.chance(0.22) ? rng.range(0.05, 0.3) : 0,
+    rounding: rng.range(0, 0.8),
+    // Bias to vertical fills — up/down read as the staggered-skyline look.
+    direction: rng.pick(['up', 'down', 'up', 'down', 'left', 'right'] as const),
+    mirror: rng.chance(0.35),
     valley: rng.range(0.15, 0.85),
   }
 }
@@ -74,11 +76,13 @@ function randStops(rng: Rng): ColorStop[] {
 }
 
 function randColour(rng: Rng): ColorConfig {
+  // Bias toward 'field' — the signature staggered-gradient look — over flat/across.
+  const mapping = rng.pick(['field', 'field', 'field', 'across', 'perbar'] as const)
   return {
     stops: randStops(rng),
-    mapping: rng.pick(MAPPINGS),
-    steps: rng.chance(0.45) ? rng.int(3, 16) : 0,
-    hueDrift: rng.chance(0.4) ? rng.range(-120, 120) : 0,
+    mapping,
+    steps: rng.chance(0.3) ? rng.int(3, 16) : 0,
+    hueDrift: rng.chance(0.35) ? rng.range(-90, 90) : 0,
     hueRotate: rng.chance(0.3) ? rng.range(0, 360) : 0,
   }
 }
@@ -96,13 +100,14 @@ function randLayer(rng: Rng, primary: boolean): LayerConfig {
 export function defaultConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
-    canvas: { aspect: '14:9', layout: 'linear', margin: 0.08, innerRadius: 0.4, background: '#000000' },
-    relief: { grain: 0.35, relief: 0.25 },
+    canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000' },
+    relief: { grain: 0.22, relief: 0 },
     layers: [
       {
         blend: 'normal', opacity: 1,
-        shape: { type: 'wave', count: 11, minDepth: 0.05, curveExp: 1.2, jitter: 0, peaks: 4, phase: 0, detail: 3, sweep: 360, scrub: 0, gap: 0, rounding: 0.3, direction: 'down', mirror: true, valley: 0.5 },
-        color: { stops: [{ color: '#ff8a3d', pos: 0 }, { color: '#7a2bd6', pos: 0.55 }, { color: '#ffd6f2', pos: 1 }], mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+        shape: { type: 'noise', count: 16, minDepth: 0, curveExp: 1, jitter: 0, peaks: 4, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: false, valley: 0.5 },
+        // Bottom→top vertical gradient: pink → magenta → near-black → orange (the reference look).
+        color: { stops: [{ color: '#f9d9f0', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#0e0a1e', pos: 0.64 }, { color: '#f0a35a', pos: 1 }], mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },
     ],
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
