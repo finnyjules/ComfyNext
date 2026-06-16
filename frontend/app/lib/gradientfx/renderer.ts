@@ -97,11 +97,13 @@ class GradientFxRenderer {
     const counts: number[] = [], dir: number[] = [], mirror: number[] = [], gap: number[] = []
     const rounding: number[] = [], mapping: number[] = [], steps: number[] = [], hueDrift: number[] = []
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
+    const crisp: number[] = []
     for (let i = 0; i < 2; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
       this.uploadField(gl, i, buildField(s, c.seed + ':' + i))
       this.uploadRamp(gl, i, buildRampLut(col.stops))
+      crisp.push(s.type === 'bands' ? 1 : 0)
       counts.push(Math.max(1, Math.round(s.count)))
       dir.push(DIR_IDX[s.direction] ?? 2)
       mirror.push(s.mirror ? 1 : 0)
@@ -148,6 +150,7 @@ class GradientFxRenderer {
     gl.uniform1fv(u('u_scrub'), arr(scrub))
     gl.uniform1fv(u('u_blend'), arr(blend))
     gl.uniform1fv(u('u_opacity'), arr(opacity))
+    gl.uniform1fv(u('u_crisp'), arr(crisp))
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)

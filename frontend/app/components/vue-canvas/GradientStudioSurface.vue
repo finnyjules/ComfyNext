@@ -379,14 +379,14 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <div class="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-white/50">
           <span>Shape</span><span class="text-white/30">Layer {{ activeLayer + 1 }}</span>
         </div>
-        <div class="mb-2 grid grid-cols-3 gap-1">
+        <div class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setShape(s)">{{ s }}</button>
         </div>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Count</span><span class="text-white/40">{{ Math.round(layer.shape.count) }}</span></label>
         <input v-model.number="layer.shape.count" type="range" min="2" max="64" step="1" class="mb-2 w-full" />
-        <template v-if="layer.shape.type === 'wave'">
+        <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Peaks</span><span class="text-white/40">{{ Math.round(layer.shape.peaks) }}</span></label>
           <input v-model.number="layer.shape.peaks" type="range" min="1" max="12" step="1" class="mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Wave phase</span><span class="text-white/40">{{ layer.shape.phase.toFixed(2) }}</span></label>

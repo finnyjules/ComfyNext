@@ -11,10 +11,11 @@ import {
 export type RerollScope = 'all' | 'colours' | 'structure'
 
 function randShape(rng: Rng): ShapeConfig {
-  const type = rng.pick(SHAPE_KINDS)
+  // Bias toward 'bands' — the signature crisp-gradient-band wave look.
+  const type = rng.pick(['bands', 'bands', 'wave', 'noise', 'pyramid'] as const)
   return {
     type,
-    count: rng.int(5, type === 'noise' ? 24 : 14),
+    count: type === 'bands' ? rng.int(10, 28) : rng.int(5, type === 'noise' ? 24 : 14),
     minDepth: rng.range(0, 0.4),
     curveExp: rng.range(0.6, 2.4),
     jitter: rng.chance(0.4) ? rng.range(0, 0.35) : 0,
@@ -105,7 +106,7 @@ export function defaultConfig(seed = randomSeed()): GradientConfig {
     layers: [
       {
         blend: 'normal', opacity: 1,
-        shape: { type: 'noise', count: 16, minDepth: 0, curveExp: 1, jitter: 0, peaks: 4, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: false, valley: 0.5 },
+        shape: { type: 'bands', count: 20, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: false, valley: 0.5 },
         // Bottom→top vertical gradient: pink → magenta → near-black → orange (the reference look).
         color: { stops: [{ color: '#f9d9f0', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#0e0a1e', pos: 0.64 }, { color: '#f0a35a', pos: 1 }], mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },

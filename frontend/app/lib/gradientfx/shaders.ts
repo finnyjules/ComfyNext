@@ -44,6 +44,7 @@ uniform float u_sweep[2];      // radial sweep, fraction 0..1
 uniform float u_scrub[2];
 uniform float u_blend[2];      // 0 normal,1 lighten,2 screen,3 add,4 multiply,5 darken,6 overlay
 uniform float u_opacity[2];
+uniform float u_crisp[2];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
 
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
@@ -146,7 +147,9 @@ vec4 computeLayer(int i, vec2 p) {
     float fc = sampleField(i, (bi + 0.5) / count);
     float side = bl < 0.5 ? -1.0 : 1.0;
     float fn = sampleField(i, (bi + 0.5 + side) / count);
-    float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * 0.45);
+    // Bands keep crisp seams; other shapes blend toward the neighbour for soft columns.
+    float blendAmt = mix(0.45, 0.06, u_crisp[i]);
+    float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * blendAmt);
 
     float t;
     if (mapping < 0.5)      t = ba;                        // across (horizontal ramp)

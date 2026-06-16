@@ -37,7 +37,7 @@ describe('gradientfx rng', () => {
 
 describe('gradientfx field', () => {
   it('returns count values in [0,1]', () => {
-    for (const type of ['pyramid', 'wave', 'noise'] as const) {
+    for (const type of ['bands', 'pyramid', 'wave', 'noise'] as const) {
       const f = buildField(baseShape({ type, count: 20 }), '#s')
       expect(f.length).toBe(20)
       for (const v of f) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(1) }

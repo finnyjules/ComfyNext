@@ -43,6 +43,14 @@ export function buildField(shape: ShapeConfig, seed: string): Float32Array {
     let base: number
 
     switch (shape.type) {
+      case 'bands': {
+        // Smooth sine offset — rendered as crisp vertical gradient bands, the
+        // staggered offsets read as a flowing wave (the GRADIENTOOL trick).
+        const peaks = Math.max(0.5, shape.peaks || 2)
+        const ph = (shape.phase || 0) * TAU
+        base = 0.5 + 0.5 * Math.sin(t * peaks * TAU + ph)
+        break
+      }
       case 'pyramid': {
         // Triangular envelope peaking at `valley` (really the peak position).
         const peak = clamp01(shape.valley)
