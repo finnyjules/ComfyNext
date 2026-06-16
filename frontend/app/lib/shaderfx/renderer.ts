@@ -151,6 +151,8 @@ class ShaderFxRenderer {
    * directly — browser canvas readout (toDataURL/drawImage) is already
    * top-row-last in GL terms, so no flip is needed (see BLIT_FS note).
    */
+  get outputCanvas(): HTMLCanvasElement | null { return this.canvas }
+
   render(passes: ShaderPass[], base: TexImageSource, width: number, height: number): HTMLCanvasElement {
     const gl = this.ensure(width, height)
 
