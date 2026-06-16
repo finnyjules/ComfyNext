@@ -147,7 +147,8 @@ vec4 computeLayer(int i, vec2 p) {
     float colMask = 1.0;
     if (gap > 0.001) {
       float hg = gap * 0.5;
-      colMask = smoothstep(hg, hg + 0.05, bl) * smoothstep(hg, hg + 0.05, 1.0 - bl);
+      float fw = 0.04 + 0.18 * u_rounding[i];  // Rounding softens the gap edges
+      colMask = smoothstep(hg, hg + fw, bl) * smoothstep(hg, hg + fw, 1.0 - bl);
       if (colMask <= 0.001) return vec4(0.0);
     }
 
@@ -170,45 +171,58 @@ vec4 computeLayer(int i, vec2 p) {
     return vec4(col, colMask);
   }
 
-  // ---- Radial / Orbit: clipped wedges / rings over the background. ----
+  // ---- Radial / Orbit: the linear band model wrapped into polar coords. The
+  // field offsets the gradient per band → a circular wave. Radial = angular bands
+  // with a radial gradient; Orbit = concentric ring bands with an angular gradient.
+  bool orbit = u_layout > 1.5;
   vec2 d = p - 0.5;
   d.x *= u_aspect;
-  float r = length(d) * 2.0;
-  float ang = fract(atan(d.y, d.x) / TAU + 0.5 + u_scrub[i]);
+  float r = length(d) * 2.0;                       // 0 centre .. ~1 edge
+  float angN = fract(atan(d.y, d.x) / TAU + 0.5 + u_scrub[i]);
   float sweep = clamp(u_sweep[i], 0.02, 1.0);
-  if (ang > sweep) return vec4(0.0);
-  float ba = ang / sweep;
-  if (mirrorH) ba = 1.0 - abs(2.0 * ba - 1.0);  // fold angle
+  if (angN > sweep) return vec4(0.0);
+  angN /= sweep;                                   // 0..1 within the swept arc
   float inner = u_innerRadius;
   float outer = 1.0 - u_margin;
-  float da = (r - inner) / max(outer - inner, 0.001);
-  if (da < 0.0 || da > 1.0) return vec4(0.0);
-  if (mirrorV) da = 1.0 - abs(2.0 * da - 1.0);   // fold radius
+  float rN = (r - inner) / max(outer - inner, 0.001);
+  if (rN < 0.0 || rN > 1.0) return vec4(0.0);      // outside the annulus → background
 
-  float bi = floor(ba * count);
-  float bl = fract(ba * count);
-  float halfGap = gap * 0.5;
-  if (bl < halfGap || bl > 1.0 - halfGap) return vec4(0.0);
+  if (mirrorH) angN = 1.0 - abs(2.0 * angN - 1.0); // fold angle
+  if (mirrorV) rN = 1.0 - abs(2.0 * rN - 1.0);     // fold radius
 
-  float depth = sampleField(i, (bi + 0.5) / count);
-  float edge = abs(bl - 0.5) * 2.0;
-  depth *= 1.0 - u_rounding[i] * 0.5 * smoothstep(0.4, 1.0, edge);
+  // Band axis vs gradient axis (perpendicular by default; gradient-direction flips).
+  float band = orbit ? rN : angN;
+  float gradPerp = orbit ? angN : rN;
+  float gradAlong = orbit ? rN : angN;
+  float grad = gradHoriz ? gradAlong : gradPerp;
 
-  float feather = 0.02 + 0.05 * u_rounding[i];
-  float fill = u_layout > 1.5
-    ? exp(-pow((da - depth) / max(feather + 0.06, 0.02), 2.0))  // orbit band
-    : smoothstep(depth + feather, depth - feather, da);         // radial wedge
-  if (fill <= 0.001) return vec4(0.0);
+  float bi = floor(band * count);
+  float bl = fract(band * count);
+
+  // Soft gap between bands; Rounding widens the gap feather (rounded band ends).
+  float colMask = 1.0;
+  if (gap > 0.001) {
+    float hg = gap * 0.5;
+    float fw = 0.04 + 0.18 * u_rounding[i];
+    colMask = smoothstep(hg, hg + fw, bl) * smoothstep(hg, hg + fw, 1.0 - bl);
+    if (colMask <= 0.001) return vec4(0.0);
+  }
+
+  float fc = sampleField(i, (bi + 0.5) / count);
+  float side = bl < 0.5 ? -1.0 : 1.0;
+  float fn = sampleField(i, (bi + 0.5 + side) / count);
+  float blendAmt = mix(0.45, 0.06, u_crisp[i]);
+  float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * blendAmt);
 
   float t;
-  if (mapping < 0.5)      t = ba;
-  else if (mapping < 1.5) t = clamp(da / max(depth, 0.001), 0.0, 1.0);
-  else                    t = depth;
-  t += u_hueDrift[i] / 360.0 * (ba - 0.5);
+  if (mapping < 0.5)      t = band;                     // across (along bands)
+  else if (mapping < 1.5) t = f;                        // per bar (flat colour per band)
+  else                    t = grad - (f - 0.5) * 1.15;  // field (offset gradient)
+  t += u_hueDrift[i] / 360.0 * (band - 0.5);
   t = quantize(t, u_steps[i]);
 
   vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
-  return vec4(col, fill);
+  return vec4(col, colMask);
 }
 
 vec3 blendLayers(vec3 base, vec3 src, float mode) {
