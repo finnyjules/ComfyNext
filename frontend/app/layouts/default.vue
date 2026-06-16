@@ -114,6 +114,7 @@ const loadOptions = [
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
   ...(SPACE_TYPE_ENABLED ? [{ label: 'Type Studio', icon: Clapperboard, special: 'space-type' }] : []),
   { label: 'Gradient', icon: Sparkles, nodeType: 'GradientStudio' },
+  { label: 'Shader', icon: Sparkles, nodeType: 'ShaderStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
