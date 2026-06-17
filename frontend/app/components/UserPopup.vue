@@ -77,10 +77,9 @@ const providerLabel = computed(() => {
                 {{ initials }}
               </div>
             </div>
-            <!-- Name + email -->
+            <!-- Name -->
             <div class="min-w-0 flex-1">
               <div class="text-sm font-medium text-white truncate">{{ displayName }}</div>
-              <div v-if="user?.email" class="text-xs text-white/40 truncate">{{ user.email }}</div>
             </div>
           </div>
         </div>
