@@ -134,7 +134,14 @@ export function takeHasContent(t: Take): boolean {
  */
 export function appendTake<T extends TakeBearingData>(data: T, take: Take): T {
   const prev = data.takes ?? []
-  const dupeIdx = take.sig ? prev.findIndex((t) => t.sig && t.sig === take.sig) : -1
+  // Dedup by RUN identity, not filename. Each re-roll is a new queued run (new
+  // promptId); a single run's streamed/live-preview re-emissions share it. Many
+  // generators reuse a FIXED preview filename, so the old signature-based dedup
+  // wrongly collapsed distinct re-rolls into one take (the row never grew). Fall
+  // back to the output signature only when no promptId is available.
+  const dupeIdx = take.promptId != null
+    ? prev.findIndex((t) => t.promptId != null && t.promptId === take.promptId)
+    : (take.sig ? prev.findIndex((t) => t.sig && t.sig === take.sig) : -1)
   let takes: Take[]
   if (dupeIdx >= 0) {
     // Same output re-emitted — refresh it in place, preserving pin/label.
