@@ -399,3 +399,35 @@ def build_enhance_input(
         return "fermatresearch/magic-image-refiner", body
 
     raise ValueError(f"Unknown enhance model: {model}")
+
+
+# --------------------------------------------------------------------------- #
+# Flux style prompt — LoRA sidecar aesthetic → keyword extraction + prompt join
+# --------------------------------------------------------------------------- #
+
+def aesthetic_to_keywords(aesthetic: str) -> str:
+    """A LoRA sidecar's ``aesthetic`` field is prose followed by a
+    comma-separated keyword tail, split by a blank line. Prefer the keyword
+    tail (it steers Flux better than prose); fall back to the whole string when
+    there is no comma-separated tail.
+    """
+    text = (aesthetic or "").strip()
+    if not text:
+        return ""
+    segments = [s.strip() for s in text.split("\n\n") if s.strip()]
+    tail = segments[-1] if segments else text
+    return tail if "," in tail else text
+
+
+def build_flux_style_prompt(trigger: str, aesthetic: str, caption: str) -> str:
+    """Compose the Flux img2img prompt: LoRA trigger word + the LoRA's aesthetic
+    keywords + the Moondream caption of the content image. Blank parts are
+    skipped so an external LoRA (no sidecar) still gets a clean caption-only
+    prompt.
+    """
+    parts = [
+        (trigger or "").strip(),
+        aesthetic_to_keywords(aesthetic),
+        (caption or "").strip(),
+    ]
+    return ", ".join(p for p in parts if p)

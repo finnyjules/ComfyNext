@@ -481,3 +481,37 @@ def test_style_strength_override_is_clamped():
     structure, prompt_strength = rr.restyle_style_strength_to_knobs(0.5, 1.5)
     assert structure == pytest.approx(0.5)
     assert prompt_strength == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Flux style prompt construction (pure)
+# --------------------------------------------------------------------------- #
+
+def test_aesthetic_prefers_keyword_tail():
+    aesthetic = "A long prose description of the look.\n\nwarm florals, fauvist brushwork, cobalt blue"
+    assert rr.aesthetic_to_keywords(aesthetic) == "warm florals, fauvist brushwork, cobalt blue"
+
+def test_aesthetic_prose_only_returns_whole():
+    aesthetic = "A single prose sentence with no keyword tail"
+    assert rr.aesthetic_to_keywords(aesthetic) == aesthetic
+
+def test_aesthetic_empty_returns_empty():
+    assert rr.aesthetic_to_keywords("") == ""
+    assert rr.aesthetic_to_keywords(None) == ""
+
+def test_build_flux_style_prompt_joins_all_parts():
+    out = rr.build_flux_style_prompt(
+        "azure_bloom",
+        "prose.\n\nwarm florals, cobalt blue",
+        "A photo of a woman in a garden.",
+    )
+    assert out == "azure_bloom, warm florals, cobalt blue, A photo of a woman in a garden."
+
+def test_build_flux_style_prompt_skips_blank_parts():
+    out = rr.build_flux_style_prompt("", "", "A cat on a sofa.")
+    assert out == "A cat on a sofa."
+
+def test_build_flux_style_prompt_trigger_with_empty_aesthetic():
+    # External LoRA path: a trigger but no sidecar aesthetic.
+    out = rr.build_flux_style_prompt("my_lora", "", "A cat on a sofa.")
+    assert out == "my_lora, A cat on a sofa."
