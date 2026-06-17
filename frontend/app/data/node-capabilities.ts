@@ -36,9 +36,10 @@ export const CAPABILITIES: Capability[] = [
   { nodeType: 'GenerateEmojiNode',  useCase: 'Generate an emoji',           model: 'Flux Kontext + Emoji LoRA',   from: 'prompt', to: 'image' },
 
   // ---------- Image · from an image ----------
-  { nodeType: 'EditImageNode',         useCase: 'Edit an image',           model: 'Flux Kontext Pro',             from: 'image', to: 'image' },
+  { nodeType: 'EditImageNode',         useCase: 'Edit an image',           model: 'Nano Banana 2 / Flux Kontext', from: 'image', to: 'image' },
   { nodeType: 'BlendSceneNode',        useCase: 'Blend a composite scene',  model: 'Flux Kontext / Nano Banana',   from: 'image', to: 'image' },
   { nodeType: 'RestyleFromImageNode',  useCase: 'Restyle from an image',    model: 'Nano Banana / IP-Adapter',     from: 'image', to: 'image' },
+  { nodeType: 'RestyleWithLoRANode',   useCase: 'Restyle an image with your style', model: 'Moondream + Flux LoRA + Nano Banana 2', from: 'image', to: 'image' },
   { nodeType: 'ProductShotNode',       useCase: 'Make a product shot',      model: 'SDXL Ad-Inpaint',              from: 'image', to: 'image' },
   { nodeType: 'UpscaleImageNode',      useCase: 'Upscale an image',        model: 'Clarity',                      from: 'image', to: 'image' },
   { nodeType: 'RemoveBackgroundNode',  useCase: 'Remove background',       model: '851-labs/bg-remover',          from: 'image', to: 'image' },

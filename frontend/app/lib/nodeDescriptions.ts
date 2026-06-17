@@ -454,6 +454,7 @@ export const NODE_DESCRIPTIONS: Record<string, string> = {
   'ResizeImagesByShorterEdge': 'Resizes a batch of images so the shorter edge matches a target size.',
   'ResolutionBucket': 'Sorts training data into matching resolution groups for efficient batch processing.',
   'ResolutionSelector': 'Picks width and height values from a chosen aspect ratio and megapixel count.',
+  'RestyleWithLoRANode': 'Restyles your image in a trained style LoRA while keeping its structure — captions it, restyles with Flux, then transfers the look with Nano Banana 2.',
   'ReveImageCreateNode': 'Generates an image from a text prompt using the Reve cloud API.',
   'ReveImageEditNode': 'Edits an existing image based on text instructions using the Reve cloud API.',
   'ReveImageRemixNode': 'Creates a new image inspired by reference images and a text prompt via Reve API.',

@@ -45,6 +45,10 @@ export const NODE_KEYWORDS: Record<string, string[]> = {
     'restyle', 'change style', 'style transfer', 'apply style', 'new style',
     'make it look like', 'art style',
   ],
+  RestyleWithLoRANode: [
+    'restyle with style', 'restyle with lora', 'apply my style', 'apply lora style',
+    'style my image', 'lora restyle', 'restyle lora', 'my style', 'trained style',
+  ],
   FixFacesNode: [
     'fix face', 'fix faces', 'restore face', 'face restoration', 'repair face',
     'deblur face', 'enhance face', 'clean up face',
