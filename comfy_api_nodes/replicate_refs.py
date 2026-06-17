@@ -278,6 +278,24 @@ RESTYLE_DEFAULT_PROMPT = (
 )
 
 
+def restyle_style_strength_to_knobs(
+    style_strength: float, flux_prompt_strength_override: float = 0.0
+) -> tuple[float, float]:
+    """Map the single user-facing ``style_strength`` (0-1) onto the two stage
+    knobs that matter: Nano Banana ``structure_strength`` (inverse) and Flux
+    img2img ``prompt_strength`` (0.5-0.9). A positive
+    ``flux_prompt_strength_override`` replaces the derived prompt_strength.
+    Returns ``(structure_strength, prompt_strength)``.
+    """
+    s = max(0.0, min(1.0, float(style_strength)))
+    structure_strength = max(0.0, min(1.0, 1.0 - s))
+    if flux_prompt_strength_override and flux_prompt_strength_override > 0:
+        prompt_strength = max(0.0, min(1.0, float(flux_prompt_strength_override)))
+    else:
+        prompt_strength = 0.5 + 0.4 * s
+    return structure_strength, prompt_strength
+
+
 def build_restyle_instruction(structure_strength: float, extra_direction: str = "") -> str:
     """Build the Nano Banana edit instruction from a structure-preservation
     dial. Nano Banana has no numeric structure knob, so the slider is folded

@@ -446,3 +446,38 @@ def test_restyle_instruction_combines_structure_clause_and_extra():
     out = rr.build_restyle_instruction(0.8, "watercolor")
     assert "exactly as in the first image" in out
     assert out.endswith("Additional style direction: watercolor.")
+
+
+# --------------------------------------------------------------------------- #
+# restyle_style_strength_to_knobs — single slider -> two stage knobs (pure)
+# --------------------------------------------------------------------------- #
+
+def test_style_strength_default_midpoint():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(0.5)
+    assert structure == pytest.approx(0.5)
+    assert prompt_strength == pytest.approx(0.7)
+
+def test_style_strength_high_means_bold_restyle():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(1.0)
+    assert structure == pytest.approx(0.0)
+    assert prompt_strength == pytest.approx(0.9)
+
+def test_style_strength_low_means_faithful():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(0.0)
+    assert structure == pytest.approx(1.0)
+    assert prompt_strength == pytest.approx(0.5)
+
+def test_style_strength_clamps_out_of_range():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(5.0)
+    assert structure == pytest.approx(0.0)
+    assert prompt_strength == pytest.approx(0.9)
+
+def test_style_strength_override_wins():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(0.5, 0.85)
+    assert structure == pytest.approx(0.5)   # structure still from style_strength
+    assert prompt_strength == pytest.approx(0.85)
+
+def test_style_strength_override_is_clamped():
+    structure, prompt_strength = rr.restyle_style_strength_to_knobs(0.5, 1.5)
+    assert structure == pytest.approx(0.5)
+    assert prompt_strength == pytest.approx(1.0)
