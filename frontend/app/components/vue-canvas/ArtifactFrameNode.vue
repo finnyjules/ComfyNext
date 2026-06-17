@@ -499,6 +499,21 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   return cv
 }
 
+// Record the baked composite as a project asset so saved frames show up in the
+// Assets panel — same treatment as generator outputs. Best-effort: never blocks
+// or breaks the local download.
+const { recordAsset } = useProjectGenerations()
+const { activeTab } = useTabs()
+async function recordFrameToAssets(blob: Blob) {
+  try {
+    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const [filename] = await uploadFrameBatch([blob], 'frame')
+    if (filename) await recordAsset(activeTab.value?.projectUuid, 'image', filename)
+  } catch (err) {
+    console.warn('[Frame] record to Assets failed:', err)
+  }
+}
+
 async function downloadImage() {
   const triggerDownload = (obj: string) => {
     const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.png`
@@ -512,6 +527,7 @@ async function downloadImage() {
       if (blob) {
         const obj = URL.createObjectURL(blob)
         triggerDownload(obj); URL.revokeObjectURL(obj)
+        void recordFrameToAssets(blob)
         return
       }
     }
@@ -527,6 +543,7 @@ async function downloadImage() {
     const res = await fetch(url); const blob = await res.blob()
     const obj = URL.createObjectURL(blob)
     triggerDownload(obj); URL.revokeObjectURL(obj)
+    void recordFrameToAssets(blob)
   } catch (err) { console.error('[Frame] download failed:', err) }
 }
 
