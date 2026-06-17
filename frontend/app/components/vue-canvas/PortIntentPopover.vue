@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { PortAnchor, NodeTypeLite } from '~/lib/portIntent'
 import { anchorCandidates } from '~/lib/portIntent'
+import { NODE_KEYWORDS } from '~/lib/nodeKeywords'
+import { searchNodes } from '~/lib/nodeMatch'
 
 const props = defineProps<{
   anchor: PortAnchor
@@ -24,16 +26,10 @@ const rootEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLInputElement | null>(null)
 
 const candidates = computed<NodeTypeLite[]>(() => {
-  let list = anchorCandidates(nodeTypes.value, props.anchor)
-  const q = query.value.toLowerCase().trim()
-  if (q) {
-    list = list.filter(n =>
-      n.displayName.toLowerCase().includes(q)
-      || n.name.toLowerCase().includes(q)
-      || n.description.toLowerCase().includes(q),
-    )
-  }
-  return list.slice(0, 8)
+  const list = anchorCandidates(nodeTypes.value, props.anchor)
+  // Tokenized, ranked, keyword-aware match (see lib/nodeMatch). Empty query
+  // returns the (capped) candidate list unchanged.
+  return searchNodes(list, query.value, { keywords: NODE_KEYWORDS, limit: 8 })
 })
 
 // Rows are candidates + one trailing "Ask AI" row.
@@ -115,12 +111,12 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocPointerDown, 
 
       <button
         class="w-full flex items-center gap-2 px-3 py-2 text-left border-t border-white/10 disabled:opacity-50"
-        :class="selectedIndex === aiRowIndex ? 'bg-violet-500/20 text-violet-200' : 'text-violet-300/80 hover:bg-violet-500/10'"
+        :class="selectedIndex === aiRowIndex ? 'bg-emerald-500/15 text-emerald-200' : 'text-emerald-300/80 hover:bg-white/5'"
         :disabled="aiState === 'loading' || !query.trim()"
         @mouseenter="selectedIndex = aiRowIndex"
         @click="submitAi"
       >
-        <span v-if="aiState === 'loading'" class="inline-block h-3 w-3 animate-spin rounded-full border border-violet-300 border-t-transparent" />
+        <span v-if="aiState === 'loading'" class="inline-block h-3 w-3 animate-spin rounded-full border border-emerald-300 border-t-transparent" />
         <span v-else>✦</span>
         <span class="truncate">
           {{ aiState === 'loading' ? 'Asking AI…' : (query.trim() ? `Ask AI: "${query.trim()}"` : 'Ask AI (type your intent)') }}

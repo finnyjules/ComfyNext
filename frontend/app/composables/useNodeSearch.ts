@@ -1,4 +1,6 @@
 import { NODE_DESCRIPTIONS } from '~/lib/nodeDescriptions'
+import { NODE_KEYWORDS } from '~/lib/nodeKeywords'
+import { searchNodes } from '~/lib/nodeMatch'
 
 type NodeSource = 'core' | 'essentials' | 'partner' | 'extensions'
 
@@ -58,19 +60,9 @@ export function useNodeSearch() {
     }
     // 'most-relevant', 'recents', 'favorites' → show all
 
-    // Text search
-    const q = searchQuery.value.toLowerCase().trim()
-    if (q) {
-      nodes = nodes.filter(
-        (n) =>
-          n.displayName.toLowerCase().includes(q)
-          || n.name.toLowerCase().includes(q)
-          || n.description.toLowerCase().includes(q)
-          || n.category.toLowerCase().includes(q),
-      )
-    }
-
-    return nodes.slice(0, 100)
+    // Text search — tokenized, ranked, keyword-aware (see lib/nodeMatch).
+    // Empty query returns the list unchanged (capped), preserving prior behavior.
+    return searchNodes(nodes, searchQuery.value, { keywords: NODE_KEYWORDS, limit: 100 })
   })
 
   async function fetchNodeTypes() {

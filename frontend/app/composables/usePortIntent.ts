@@ -1,6 +1,7 @@
 import type { PortAnchor } from '~/lib/portIntent'
 import { buildCatalog } from '~/lib/portIntentCatalog'
 import { validateSuggestion, type ValidationResult } from '~/lib/portIntentValidate'
+import { NODE_KEYWORDS } from '~/lib/nodeKeywords'
 
 interface SuggestContext {
   objectInfo: Record<string, any>
@@ -47,7 +48,7 @@ export function usePortIntent() {
     if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
 
     await fetchNodeTypes()
-    const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor)
+    const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor, { intent, keywords: NODE_KEYWORDS })
     if (!catalog.length) throw new Error('No installed nodes are compatible with this port.')
     const graphContext = buildGraphContext(anchor, ctx.nodes, ctx.edges)
     const base = { apiKey, intent, anchor, catalog, graphContext }

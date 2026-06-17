@@ -1,5 +1,6 @@
 import type { NodeTypeLite, PortAnchor } from './portIntent'
 import { matchingPort, linkInputPorts, outputPorts } from './portIntent'
+import { searchNodes } from './nodeMatch'
 
 export interface CatalogWidget {
   name: string
@@ -52,17 +53,29 @@ export function widgetDefsFromInfo(info: any, maxEnum = 20): CatalogWidget[] {
   return out
 }
 
-export interface BuildCatalogOpts { maxEnum?: number; maxNodes?: number }
+export interface BuildCatalogOpts {
+  maxEnum?: number
+  maxNodes?: number
+  /** User's free-text intent. When set, intent-matched nodes are added as a
+   *  third bucket so an intent-relevant node reaches the model even if it isn't
+   *  type-compatible with the anchor (the incompatible-port backstop). */
+  intent?: string
+  /** Node class name → intent keywords, forwarded to the matcher. */
+  keywords?: Record<string, string[]>
+  /** Cap on the intent bucket. */
+  maxIntent?: number
+}
 
 /** Trimmed catalog for the AI request: nodes directly compatible with the anchor
- *  first, then nodes one type-hop away (so chains can bridge, e.g. IMAGE→LATENT→…). */
+ *  first, then nodes one type-hop away (so chains can bridge, e.g. IMAGE→LATENT→…),
+ *  then — if an intent is given — the top intent-matched nodes regardless of type. */
 export function buildCatalog(
   nodeTypes: NodeTypeLite[],
   objectInfo: Record<string, any>,
   anchor: Pick<PortAnchor, 'portType' | 'direction'>,
   opts: BuildCatalogOpts = {},
 ): CatalogEntry[] {
-  const { maxEnum = 20, maxNodes = 150 } = opts
+  const { maxEnum = 20, maxNodes = 150, intent, keywords, maxIntent = 10 } = opts
   const hop1 = nodeTypes.filter(n => matchingPort(n, anchor))
   const hop1Names = new Set(hop1.map(n => n.name))
 
@@ -80,7 +93,15 @@ export function buildCatalog(
       : n.outputs.some(p => farTypes.has(p.type))),
   )
 
-  return [...hop1, ...hop2].slice(0, maxNodes).map((n) => {
+  // Intent bucket: top text/keyword matches not already covered by hop1/hop2.
+  let intentBucket: NodeTypeLite[] = []
+  if (intent && intent.trim()) {
+    const covered = new Set([...hop1Names, ...hop2.map(n => n.name)])
+    const matches = searchNodes(nodeTypes, intent, { keywords, limit: maxIntent + covered.size })
+    intentBucket = matches.filter(n => !covered.has(n.name)).slice(0, maxIntent)
+  }
+
+  return [...hop1, ...hop2, ...intentBucket].slice(0, maxNodes).map((n) => {
     const info = objectInfo[n.name]
     return {
       type: n.name,
