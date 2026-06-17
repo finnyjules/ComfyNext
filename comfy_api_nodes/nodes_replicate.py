@@ -85,7 +85,6 @@ from comfy_api_nodes.replicate_refs import (
     ENHANCE_ENGINES,
     resolve_flux_lora_plan,
     restyle_style_strength_to_knobs,
-    RESTYLE_DEFAULT_PROMPT,
 )
 
 

@@ -447,8 +447,9 @@ const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
   PoseMannequin:           { useCase: 'Re-pose a character',       model: 'Nano Banana 2' },
   RelightNode:             { useCase: 'Relight a photo',           model: 'Nano Banana 2' },
   // Image — manipulation
-  EditImageNode:           { useCase: 'Edit an image',             model: 'Flux Kontext Pro' },
+  EditImageNode:           { useCase: 'Edit an image',             model: 'Nano Banana 2 / Flux Kontext' },
   RestyleFromImageNode:    { useCase: 'Restyle from an image',     model: 'Nano Banana / IP-Adapter' },
+  RestyleWithLoRANode:     { useCase: 'Restyle with your style',   model: 'Moondream + Flux LoRA + Nano Banana 2' },
   ProductShotNode:         { useCase: 'Make a product shot',       model: 'SDXL Ad-Inpaint' },
   UpscaleImageNode:        { useCase: 'Upscale an image',          model: 'Clarity' },
   RemoveBackgroundNode:    { useCase: 'Remove background',         model: '851-labs/bg-remover' },
