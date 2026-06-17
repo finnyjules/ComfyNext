@@ -6,12 +6,13 @@ import * as THREE from 'three'
  * slot; effects turn a fill into either a solid THREE.Color (`solid`) or a tiling THREE.Texture
  * (`gradient`/`grid`/`noise`). Stored in params as a single JSON string so ParamValue stays scalar.
  */
-export type FillType = 'solid' | 'gradient' | 'grid' | 'noise'
-/** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row. */
-export interface Fill { type: FillType; a: string; b: string; textColor: string }
+export type FillType = 'solid' | 'gradient' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr'
+/** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
+ *  `angle` (degrees) only applies to `stripes`; `density` controls cell/stripe count for patterned fills. */
+export interface Fill { type: FillType; a: string; b: string; textColor: string; angle: number; density: number }
 
-const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise']
-const DEFAULT_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff' }
+const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
+const DEFAULT_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
 
 /** True when the fill needs a texture (anything but a flat colour). */
 export function fillIsTextured(fill: Fill): boolean { return fill.type !== 'solid' }
@@ -30,6 +31,8 @@ export function parseFills(raw: unknown): Fill[] {
         a: typeof o.a === 'string' ? o.a : '#ffffff',
         b: typeof o.b === 'string' ? o.b : '#000000',
         textColor: typeof o.textColor === 'string' ? o.textColor : '#ffffff',
+        angle: typeof o.angle === 'number' ? o.angle : 45,
+        density: typeof o.density === 'number' ? o.density : 8,
       }
     })
   } catch { return [{ ...DEFAULT_FILL }] }
@@ -49,12 +52,15 @@ const _cache = new Map<string, THREE.Texture>()
 /** Build (or fetch cached) the tiling texture for a fill. Returns null for `solid`. */
 export function fillTexture(three: typeof THREE, fill: Fill): THREE.Texture | null {
   if (fill.type === 'solid') return null
-  const key = `${fill.type}|${fill.a}|${fill.b}`
+  const key = `${fill.type}|${fill.a}|${fill.b}|${fill.angle}|${fill.density}`
   const hit = _cache.get(key)
   if (hit) return hit
   const t = fill.type === 'gradient' ? gradientRamp(three, fill.a, fill.b)
-    : fill.type === 'grid' ? gridTex(three, fill.a, fill.b)
-    : noiseTex(three, fill.a, fill.b)
+    : fill.type === 'grid' ? gridTex(three, fill.a, fill.b, fill.density)
+    : fill.type === 'noise' ? noiseTex(three, fill.a, fill.b)
+    : fill.type === 'checkerboard' ? checkerboardTex(three, fill.a, fill.b, fill.density)
+    : fill.type === 'stripes' ? stripesTex(three, fill.a, fill.b, fill.angle, fill.density)
+    : qrTex(three, fill.a, fill.b, fill.density)
   _cache.set(key, t)
   return t
 }
@@ -86,9 +92,10 @@ export function fillShaderTexture(three: typeof THREE, fill: Fill): THREE.Textur
   return t
 }
 
-/** How many times the fill texture tiles per unit UV (grid/noise repeat; solid/gradient = 1). */
+/** How many times the fill texture tiles per unit UV (patterned fills repeat; solid/gradient = 1). */
 export function fillTiling(fill: Fill): number {
-  return fill.type === 'grid' || fill.type === 'noise' ? 3 : 1
+  if (fill.type === 'noise') return 3
+  return 1
 }
 
 /**
@@ -99,7 +106,7 @@ export function fillTiling(fill: Fill): number {
 const _atlasCache = new Map<string, THREE.Texture>()
 
 export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Texture {
-  const key = fills.map(f => `${f.type}:${f.a}:${f.b}`).join('|')
+  const key = fills.map(f => `${f.type}:${f.a}:${f.b}:${f.angle}:${f.density}`).join('|')
   const hit = _atlasCache.get(key)
   if (hit) return hit
   const BAND = 64, W = 64, nb = Math.max(1, fills.length)
@@ -112,11 +119,11 @@ export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Text
       g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
       ctx.fillStyle = g; ctx.fillRect(0, y0, W, BAND)
     } else if (fill.type === 'grid') {
+      const d = Math.max(1, Math.round(fill.density)), step = W / d
       ctx.fillStyle = fill.a; ctx.fillRect(0, y0, W, BAND)
-      ctx.strokeStyle = fill.b; ctx.lineWidth = 4
-      const cells = 3, step = W / cells
-      for (let gx = 0; gx <= cells; gx++) { ctx.beginPath(); ctx.moveTo(gx * step, y0); ctx.lineTo(gx * step, y0 + BAND); ctx.stroke() }
-      for (let gy = 0; gy <= cells; gy++) { ctx.beginPath(); ctx.moveTo(0, y0 + gy * step); ctx.lineTo(W, y0 + gy * step); ctx.stroke() }
+      ctx.strokeStyle = fill.b; ctx.lineWidth = Math.max(1, Math.round(4 * (3 / d)))
+      for (let gx = 0; gx <= d; gx++) { ctx.beginPath(); ctx.moveTo(gx * step, y0); ctx.lineTo(gx * step, y0 + BAND); ctx.stroke() }
+      for (let gy = 0; gy <= d; gy++) { ctx.beginPath(); ctx.moveTo(0, y0 + gy * step); ctx.lineTo(W, y0 + gy * step); ctx.stroke() }
     } else if (fill.type === 'noise') {
       const dark = hexBytes(fill.a), light = hexBytes(fill.b)
       const img = ctx.createImageData(W, BAND)
@@ -130,6 +137,12 @@ export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Text
         img.data[p + 3] = 255
       }
       ctx.putImageData(img, 0, y0)
+    } else if (fill.type === 'checkerboard') {
+      drawPatternBand(ctx, fill, y0, W, BAND)
+    } else if (fill.type === 'stripes') {
+      drawPatternBand(ctx, fill, y0, W, BAND)
+    } else if (fill.type === 'qr') {
+      drawPatternBand(ctx, fill, y0, W, BAND)
     } else {
       ctx.fillStyle = fill.a; ctx.fillRect(0, y0, W, BAND)
     }
@@ -165,11 +178,16 @@ export function hexBytes(hex: string): [number, number, number] {
 }
 
 /** Grid: `a` cell fill + `b` border lines. */
-function gridTex(three: typeof THREE, a: string, b: string): THREE.Texture {
-  const c = document.createElement('canvas'); c.width = 64; c.height = 64
+function gridTex(three: typeof THREE, a: string, b: string, density: number): THREE.Texture {
+  const N = 128, d = Math.max(1, Math.round(density)), step = N / d
+  const c = document.createElement('canvas'); c.width = N; c.height = N
   const ctx = c.getContext('2d')!
-  ctx.fillStyle = a; ctx.fillRect(0, 0, 64, 64)
-  ctx.strokeStyle = b; ctx.lineWidth = 6; ctx.strokeRect(0, 0, 64, 64)
+  ctx.fillStyle = a; ctx.fillRect(0, 0, N, N)
+  ctx.strokeStyle = b; ctx.lineWidth = Math.max(1, Math.round(6 * (3 / d)))
+  for (let i = 0; i <= d; i++) {
+    ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, N); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(N, i * step); ctx.stroke()
+  }
   const t = new three.CanvasTexture(c); t.wrapS = t.wrapT = three.RepeatWrapping; t.anisotropy = 4
   t.colorSpace = three.SRGBColorSpace
   return t
@@ -198,5 +216,96 @@ function noiseTex(three: typeof THREE, a: string, b: string): THREE.Texture {
   t.generateMipmaps = false
   t.minFilter = three.NearestFilter
   t.magFilter = three.NearestFilter
+  return t
+}
+
+// ── Pixel-level pattern builders (seamlessly tileable) ────────────────────────
+
+function patternImageData(w: number, h: number, colA: [number, number, number], colB: [number, number, number], picker: (px: number, py: number) => boolean): ImageData {
+  const img = new ImageData(w, h)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const px = (i / 4) % w, py = Math.floor((i / 4) / w)
+    const useB = picker(px, py)
+    img.data[i] = useB ? colB[0] : colA[0]
+    img.data[i + 1] = useB ? colB[1] : colA[1]
+    img.data[i + 2] = useB ? colB[2] : colA[2]
+    img.data[i + 3] = 255
+  }
+  return img
+}
+
+function drawPatternBand(ctx: CanvasRenderingContext2D, fill: Fill, y0: number, w: number, h: number) {
+  const colA = hexBytes(fill.a), colB = hexBytes(fill.b)
+  const d = Math.max(2, Math.round(fill.density))
+  const img = fill.type === 'checkerboard'
+    ? patternImageData(w, h, colA, colB, (px, py) => (Math.floor(px * d / w) + Math.floor(py * d / h)) % 2 === 1)
+    : fill.type === 'stripes'
+      ? (() => {
+          const rad = (fill.angle * Math.PI) / 180
+          const dx = Math.cos(rad), dy = Math.sin(rad)
+          return patternImageData(w, h, colA, colB, (px, py) => {
+            const proj = px * dx + py * dy
+            return Math.floor(proj / (w / d)) % 2 !== 0
+          })
+        })()
+      : patternImageData(w, h, colA, colB, (px, py) => {
+          const cx = Math.floor(px * d / w), cy = Math.floor(py * d / h)
+          const v = Math.sin((cx * 12.9898 + cy * 78.233 + cx * cy * 3.71)) * 43758.5453
+          return (v - Math.floor(v)) > 0.45
+        })
+  ctx.putImageData(img, 0, y0)
+}
+
+// ── Standalone fill textures for new pattern types ───────────────────────────
+
+function checkerboardTex(three: typeof THREE, a: string, b: string, density: number): THREE.Texture {
+  const N = 128, d = Math.max(2, Math.round(density))
+  const colA = hexBytes(a), colB = hexBytes(b)
+  const c = document.createElement('canvas'); c.width = N; c.height = N
+  const ctx = c.getContext('2d')!
+  ctx.putImageData(patternImageData(N, N, colA, colB, (px, py) =>
+    (Math.floor(px * d / N) + Math.floor(py * d / N)) % 2 === 1), 0, 0)
+  const t = new three.CanvasTexture(c)
+  t.colorSpace = three.SRGBColorSpace
+  t.wrapS = t.wrapT = three.RepeatWrapping
+  t.magFilter = three.NearestFilter
+  t.minFilter = three.NearestFilter
+  t.generateMipmaps = false
+  return t
+}
+
+function stripesTex(three: typeof THREE, a: string, b: string, angle: number, density: number): THREE.Texture {
+  const N = 128, d = Math.max(2, Math.round(density))
+  const colA = hexBytes(a), colB = hexBytes(b)
+  const rad = (angle * Math.PI) / 180
+  const dx = Math.cos(rad), dy = Math.sin(rad)
+  const c = document.createElement('canvas'); c.width = N; c.height = N
+  const ctx = c.getContext('2d')!
+  ctx.putImageData(patternImageData(N, N, colA, colB, (px, py) => {
+    const proj = px * dx + py * dy
+    return Math.floor(proj / (N / d)) % 2 !== 0
+  }), 0, 0)
+  const t = new three.CanvasTexture(c)
+  t.colorSpace = three.SRGBColorSpace
+  t.wrapS = t.wrapT = three.RepeatWrapping
+  return t
+}
+
+function qrTex(three: typeof THREE, a: string, b: string, density: number): THREE.Texture {
+  const N = 128, d = Math.max(2, Math.round(density))
+  const colA = hexBytes(a), colB = hexBytes(b)
+  const c = document.createElement('canvas'); c.width = N; c.height = N
+  const ctx = c.getContext('2d')!
+  ctx.putImageData(patternImageData(N, N, colA, colB, (px, py) => {
+    const cx = Math.floor(px * d / N), cy = Math.floor(py * d / N)
+    const v = Math.sin((cx * 12.9898 + cy * 78.233 + cx * cy * 3.71)) * 43758.5453
+    return (v - Math.floor(v)) > 0.45
+  }), 0, 0)
+  const t = new three.CanvasTexture(c)
+  t.colorSpace = three.SRGBColorSpace
+  t.wrapS = t.wrapT = three.RepeatWrapping
+  t.magFilter = three.NearestFilter
+  t.minFilter = three.NearestFilter
+  t.generateMipmaps = false
   return t
 }

@@ -12,6 +12,7 @@ import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImage
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers } from '~/composables/useCompositorLayers'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
+import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -30,6 +31,8 @@ import PoseMannequinNode from '~/components/vue-canvas/PoseMannequinNode.vue'
 import ShaderEffectNode from '~/components/vue-canvas/ShaderEffectNode.vue'
 import Artifact3DNode from '~/components/vue-canvas/Artifact3DNode.vue'
 import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
+import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
+import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -650,8 +653,12 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
   // empty. Give it ONE wildcard output so the generated Image/Video artifact can
   // be wired from it (visual/provenance link only — SpaceType never executes).
-  if (nodeType === 'SpaceType' && (!data.data.outputs || data.data.outputs.length === 0)) {
+  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'output', type: '*', links: null }]
+  }
+  // Shader Studio consumes an image — give it one input handle (input-0).
+  if (nodeType === 'ShaderStudio' && (!data.data.inputs || data.data.inputs.length === 0)) {
+    data.data.inputs = [{ name: 'image', type: 'IMAGE', link: null }]
   }
   return data
 }
@@ -1673,6 +1680,24 @@ function handleOpenSpaceType(e: Event) {
   if (detail?.nodeId) spaceTypeOpenForId.value = String(detail.nodeId)
 }
 
+// Gradient Studio editor open-state (same pattern as Space Type).
+const gradientStudioOpenForId = ref<string | null>(null)
+function handleOpenGradientStudio(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) gradientStudioOpenForId.value = String(detail.nodeId)
+}
+
+// Shader Studio editor open-state (same pattern as Gradient Studio).
+const shaderStudioOpenForId = ref<string | null>(null)
+const shaderStudioWiredUrl = ref<string | null>(null)
+function handleOpenShaderStudio(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail?.nodeId) return
+  shaderStudioOpenForId.value = String(detail.nodeId)
+  // Resolve the wired image (input-0) now, from the canvas source of truth.
+  shaderStudioWiredUrl.value = resolveWiredInput(String(detail.nodeId), nodes.value as any[], edges.value as any[])
+}
+
 // Space Type "Generate as image/video": create the artifact node to the right of
 // the SpaceType node and draw a provenance edge from the SpaceType node's single
 // wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
@@ -1972,7 +1997,8 @@ const anyEditorModalOpen = computed(() => !!(
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
-  voiceGalleryOpenForId.value || spaceTypeOpenForId.value
+  voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
+  shaderStudioOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
@@ -2124,6 +2150,12 @@ onMounted(() => {
   window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
   window.addEventListener('comfynext:openSpaceType', handleOpenSpaceType)
   window.addEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
+  window.addEventListener('comfynext:openGradientStudio', handleOpenGradientStudio)
+  // Gradient Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('comfynext:gradientStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
+  // Shader Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -2153,6 +2185,10 @@ onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
   window.removeEventListener('comfynext:openSpaceType', handleOpenSpaceType)
+  window.removeEventListener('comfynext:openGradientStudio', handleOpenGradientStudio)
+  window.removeEventListener('comfynext:gradientStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
+  window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
@@ -4242,7 +4278,7 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode), 'subgraph-io': markRaw(SubgraphIONode) }"
+      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode), 'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode), 'subgraph-io': markRaw(SubgraphIONode) }"
       :edge-types="{ comfy: markRaw(ComfyEdge) }"
       :default-edge-options="{ type: 'comfy' }"
       :pan-on-drag="panOnDrag"
@@ -4476,6 +4512,27 @@ defineExpose({
         :node-id="spaceTypeOpenForId"
         :nodes="nodes as any[]"
         @close="spaceTypeOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Gradient Studio editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <VueCanvasGradientStudioSurface
+        v-if="gradientStudioOpenForId"
+        :node-id="gradientStudioOpenForId"
+        :nodes="nodes as any[]"
+        @close="gradientStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Shader Studio editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <VueCanvasShaderStudioSurface
+        v-if="shaderStudioOpenForId"
+        :node-id="shaderStudioOpenForId"
+        :nodes="nodes as any[]"
+        :wired-url="shaderStudioWiredUrl"
+        @close="shaderStudioOpenForId = null"
       />
     </Teleport>
 

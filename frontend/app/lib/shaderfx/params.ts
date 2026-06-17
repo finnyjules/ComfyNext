@@ -14,8 +14,13 @@ export function resolveUniforms(eff: EffectDef, overrides: Record<string, number
   const out: Record<string, number> = {}
   for (const p of eff.params) {
     const raw = overrides[p.uniform]
-    const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : p.default
-    out[p.uniform] = Math.min(Math.max(v, p.min), p.max)
+    if (p.type === 'enum') {
+      const values = (p.options ?? []).map(o => o.value)
+      out[p.uniform] = typeof raw === 'number' && values.includes(raw) ? raw : p.default
+    } else {
+      const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : p.default
+      out[p.uniform] = Math.min(Math.max(v, p.min ?? -Infinity), p.max ?? Infinity)
+    }
   }
   return out
 }

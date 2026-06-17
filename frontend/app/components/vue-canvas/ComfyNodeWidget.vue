@@ -37,6 +37,13 @@ const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
 const isToggle = computed(() => props.widgetDef.type === 'BOOLEAN')
 const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'))
 const isText = computed(() => props.widgetDef.type === 'STRING')
+// A multiline STRING widget — the prompt. Rendered as the node's primary control:
+// a larger, lighter, elevated textarea (see WidgetText).
+const isMultilineText = computed(() =>
+  isText.value
+  && (props.widgetDef.multiline
+    ?? (props.widgetDef.name.toLowerCase().includes('text') || props.widgetDef.name.toLowerCase().includes('prompt'))),
+)
 
 // Per-node gradient slider configs. Keys: nodeType → widget name → gradient CSS.
 const GRADIENT_WIDGETS: Record<string, Record<string, string>> = {
@@ -542,7 +549,7 @@ function formatLabel(name: string): string {
       />
       <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" :name="widgetDef.name" @update:model-value="emit('update:modelValue', $event)" />
       <VueCanvasWidgetsWidgetToggle v-else-if="isToggle" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="widgetDef.multiline ?? (widgetDef.name.toLowerCase().includes('text') || widgetDef.name.toLowerCase().includes('prompt'))" @update:model-value="emit('update:modelValue', $event)" />
+      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="isMultilineText" @update:model-value="emit('update:modelValue', $event)" />
     </template>
   </div>
 </template>

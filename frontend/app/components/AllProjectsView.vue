@@ -2,11 +2,41 @@
 import { Pin, PinOff, EyeOff, Eye, LayoutGrid } from 'lucide-vue-next'
 import type { RecentProject } from '~/composables/useRecentProjects'
 
-const { allProjects, loading, thumbnailUrl, timeAgo, fetchRecentProjects } = useRecentProjects()
+const { allProjects, loading, thumbnailUrl, timeAgo, refresh } = useRecentProjects()
 const { isPinned, isHidden, togglePin, hide, unhide } = useProjectPrefs()
-const { openTab } = useTabs()
+const { tabs, openTab, setActiveTab } = useTabs()
 
-onMounted(() => fetchRecentProjects())
+// Re-fetch on open so a just-saved/renamed project shows up (the list is otherwise
+// cached and would miss work done since it was first loaded).
+onMounted(() => refresh())
+
+// Open project tabs, keyed by their canonical project id.
+const openProjectTabs = computed(() => {
+  const m = new Map<string, { id: string; label: string }>()
+  for (const t of tabs.value) {
+    if (t.type !== 'project') continue
+    const id = t.projectUuid || t.workflowId
+    if (id) m.set(id, { id: t.id, label: t.label || '' })
+  }
+  return m
+})
+
+const mergedProjects = computed<RecentProject[]>(() => {
+  const known = new Set(allProjects.value.map((p) => p.workflowId))
+  // Durable/history cards — but an open tab's live label wins over a stale saved name.
+  const durable = allProjects.value.map((p) => {
+    const tab = openProjectTabs.value.get(p.workflowId)
+    return tab?.label ? { ...p, name: tab.label } : p
+  })
+  // Open tabs not yet represented by a durable/history card (un-saved/un-run).
+  const extra: RecentProject[] = []
+  for (const [id, tab] of openProjectTabs.value) {
+    if (known.has(id)) continue
+    extra.push({ workflowId: id, name: tab.label || 'Untitled project', promptIds: [], images: [], lastTimestamp: Date.now(), runCount: 0 })
+  }
+  // Open (un-persisted) projects float to the top; durable cards keep recency order.
+  return [...extra, ...durable]
+})
 
 type Filter = 'all' | 'pinned' | 'hidden'
 const filter = ref<Filter>('all')
@@ -17,15 +47,15 @@ function isVideo(filename: string): boolean {
 
 // "All" and "Pinned" exclude hidden; pinned float to the top. "Hidden" is the
 // recovery bin. allProjects is already sorted most-recent-first.
-const visible = computed(() => allProjects.value.filter((p) => !isHidden(p.workflowId)))
+const visible = computed(() => mergedProjects.value.filter((p) => !isHidden(p.workflowId)))
 const counts = computed(() => ({
   all: visible.value.length,
   pinned: visible.value.filter((p) => isPinned(p.workflowId)).length,
-  hidden: allProjects.value.filter((p) => isHidden(p.workflowId)).length,
+  hidden: mergedProjects.value.filter((p) => isHidden(p.workflowId)).length,
 }))
 
 const filtered = computed<RecentProject[]>(() => {
-  if (filter.value === 'hidden') return allProjects.value.filter((p) => isHidden(p.workflowId))
+  if (filter.value === 'hidden') return mergedProjects.value.filter((p) => isHidden(p.workflowId))
   const list = filter.value === 'pinned'
     ? visible.value.filter((p) => isPinned(p.workflowId))
     : visible.value
@@ -40,6 +70,11 @@ const FILTERS: { key: Filter; label: string }[] = [
 ]
 
 function openProject(project: RecentProject) {
+  // Focus the existing tab if this project is already open, instead of duplicating it.
+  const open = tabs.value.find(
+    (t) => t.type === 'project' && (t.projectUuid === project.workflowId || t.workflowId === project.workflowId),
+  )
+  if (open) { setActiveTab(open.id); return }
   openTab({
     type: 'project',
     label: project.name,

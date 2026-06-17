@@ -2,5 +2,15 @@
   "count": 10,
   "cellWidth": 32,
   "cellHeight": 48,
-  "ramp": " .:-=+*#%@"
+  "rows": 7,
+  "rowLabels": [
+    "hash",
+    "matrix",
+    "binary",
+    "braille",
+    "morse",
+    "dots",
+    "slashes"
+  ],
+  "row0Ramp": " .:-=+*#%@"
 }

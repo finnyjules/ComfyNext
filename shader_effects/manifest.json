@@ -426,57 +426,45 @@
     },
     {
       "id": "ascii_dither",
-      "name": "ASCII Dither",
+      "name": "ASCII",
       "category": "stylize",
       "animated": true,
       "passes": 1,
       "centerParam": null,
       "textures": [
-        {
-          "uniform": "u_glyphs",
-          "file": "glyph_atlas.png",
-          "extraUniforms": {
-            "u_glyphCount": 10
-          }
-        }
+        { "uniform": "u_glyphs", "file": "glyph_atlas.png", "extraUniforms": { "u_glyphCount": 10, "u_glyphRows": 7 } }
       ],
+      "generative": false,
       "params": [
         {
-          "uniform": "u_cell",
-          "label": "Cell Size",
-          "type": "float",
-          "min": 0.01,
-          "max": 0.1,
-          "default": 0.03,
-          "step": 0.002
+          "uniform": "u_shape",
+          "label": "Shape",
+          "type": "enum",
+          "default": 7,
+          "options": [
+            { "label": "Mixed", "value": 0 },
+            { "label": "Blocks", "value": 1 },
+            { "label": "Circles", "value": 2 },
+            { "label": "Lines", "value": 3 },
+            { "label": "Diagonal", "value": 4 },
+            { "label": "Cross", "value": 5 },
+            { "label": "Diamond", "value": 6 },
+            { "label": "Hash", "value": 7 },
+            { "label": "Matrix", "value": 8 },
+            { "label": "Binary", "value": 9 },
+            { "label": "Braille", "value": 10 },
+            { "label": "Morse", "value": 11 },
+            { "label": "Dots", "value": 12 },
+            { "label": "Slashes", "value": 13 }
+          ]
         },
-        {
-          "uniform": "u_jitter",
-          "label": "Jitter",
-          "type": "float",
-          "min": 0.0,
-          "max": 0.5,
-          "default": 0.08,
-          "step": 0.01
-        },
-        {
-          "uniform": "u_speed",
-          "label": "Speed",
-          "type": "float",
-          "min": 0.0,
-          "max": 3.0,
-          "default": 1.0,
-          "step": 0.05
-        },
-        {
-          "uniform": "u_colored",
-          "label": "Colored",
-          "type": "float",
-          "min": 0.0,
-          "max": 1.0,
-          "default": 1.0,
-          "step": 1.0
-        }
+        { "uniform": "u_cell", "label": "Size", "type": "float", "min": 0.01, "max": 0.1, "default": 0.03, "step": 0.002 },
+        { "uniform": "u_brightness", "label": "Brightness", "type": "float", "min": -1.0, "max": 1.0, "default": 0.0, "step": 0.02 },
+        { "uniform": "u_spacing", "label": "Spacing", "type": "float", "min": 0.0, "max": 0.6, "default": 0.0, "step": 0.02 },
+        { "uniform": "u_invert", "label": "Invert", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 1.0 },
+        { "uniform": "u_jitter", "label": "Jitter", "type": "float", "min": 0.0, "max": 0.5, "default": 0.08, "step": 0.01 },
+        { "uniform": "u_speed", "label": "Speed", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_colored", "label": "Colored", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 1.0 }
       ]
     },
     {
@@ -1173,17 +1161,78 @@
     },
     {
       "id": "bayer_dither",
-      "name": "Bayer Dither",
+      "name": "Dither",
       "category": "stylize",
       "animated": false,
       "passes": 1,
       "centerParam": null,
-      "textures": [],
+      "textures": [
+        {
+          "uniform": "u_blueNoise",
+          "file": "blue_noise.png"
+        }
+      ],
       "generative": false,
       "params": [
         {
+          "uniform": "u_pattern",
+          "label": "Pattern",
+          "type": "enum",
+          "default": 1,
+          "options": [
+            {
+              "label": "Coarse 2×2",
+              "value": 0
+            },
+            {
+              "label": "Bayer 4×4",
+              "value": 1
+            },
+            {
+              "label": "Fine 8×8",
+              "value": 2
+            },
+            {
+              "label": "Clustered",
+              "value": 3
+            },
+            {
+              "label": "Scanline",
+              "value": 4
+            },
+            {
+              "label": "Diagonal",
+              "value": 5
+            },
+            {
+              "label": "White Noise",
+              "value": 6
+            },
+            {
+              "label": "Noise 2×",
+              "value": 7
+            },
+            {
+              "label": "Blue Noise",
+              "value": 8
+            },
+            {
+              "label": "Blue Noise 2×",
+              "value": 9
+            },
+            {
+              "label": "Blue Noise 0.5×",
+              "value": 10
+            },
+            {
+              "label": "R2 Noise",
+              "value": 11
+            }
+          ]
+        },
+        {
           "uniform": "u_scale",
-          "label": "Cell Size",
+          "label": "Size",
           "type": "float",
           "min": 0.003,
           "max": 0.05,

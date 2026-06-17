@@ -414,17 +414,27 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Manifest-driven param sliders, as labeled fields -->
+      <!-- Manifest-driven param sliders/selects, as labeled fields -->
       <div v-for="p in effectDef?.params ?? []" :key="p.uniform">
-        <div class="flex items-center justify-between mb-0.5">
-          <label class="text-[9px] text-muted-foreground tracking-normal">{{ p.label }}</label>
-          <span class="text-[9px] text-white/45 tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
-        </div>
-        <input
-          type="range" class="nopan nodrag w-full accent-white" :min="p.min" :max="p.max" :step="p.step"
+        <label class="text-[9px] text-muted-foreground tracking-normal mb-0.5 block">{{ p.label }}</label>
+        <select
+          v-if="p.type === 'enum'"
+          class="nopan nodrag w-full px-2 py-1 rounded border border-white/10 bg-white/[0.04] hover:border-white/20 text-[11px] text-white/85 outline-none cursor-pointer"
           :value="uniforms[p.uniform]"
-          @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
-        />
+          @change="setParam(p.uniform, Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+        <template v-else>
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="text-[9px] text-white/45 tabular-nums">{{ (uniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+          </div>
+          <input
+            type="range" class="nopan nodrag w-full accent-white" :min="p.min" :max="p.max" :step="p.step"
+            :value="uniforms[p.uniform]"
+            @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+          />
+        </template>
       </div>
     </div>
 
