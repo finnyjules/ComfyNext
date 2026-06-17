@@ -81,8 +81,10 @@ from comfy_api_nodes.replicate_refs import (
     _resolve_trained_model,
     build_enhance_input,
     build_restyle_instruction,
+    build_flux_style_prompt,
     ENHANCE_ENGINES,
     resolve_flux_lora_plan,
+    restyle_style_strength_to_knobs,
     RESTYLE_DEFAULT_PROMPT,
 )
 
@@ -2319,6 +2321,167 @@ class RestyleFromImageNode(IO.ComfyNode):
             result,
             ui=save_generation_output(result, "restyle"),
         )
+
+
+# =============================================================================
+# Use case: Restyle an Image · Style LoRA — fuse describe → flux-lora → nano-banana
+# =============================================================================
+
+
+class RestyleWithLoRANode(IO.ComfyNode):
+    """Restyle a content image with a trained style LoRA, structure-preserving.
+
+    Runs the proven three-step pipeline internally:
+      1. Moondream 2 captions the content image.
+      2. Flux-Dev-LoRA img2img restyles the content, prompted with the LoRA's
+         trigger + aesthetic + the caption — producing a style-reference image.
+      3. Nano Banana 2 paints that style back onto the original content image,
+         preserving structure.
+    The intermediate (step-2) image is used internally and discarded; only the
+    final image is output and saved to Assets.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="RestyleWithLoRANode",
+            display_name="Restyle an Image · Style LoRA",
+            category="api node/image/Replicate",
+            description=(
+                "Restyle an image with a trained style LoRA, keeping its "
+                "structure. Captions the image (Moondream), restyles it with "
+                "your LoRA (Flux Dev), then transfers that look back with Nano "
+                "Banana 2. ~$0.09/run at 1K; higher resolutions cost more."
+            ),
+            inputs=[
+                IO.Image.Input("content_image",
+                               tooltip="The image to restyle — its subject/composition is kept."),
+                IO.Combo.Input(
+                    "lora_name",
+                    options=folder_paths.get_filename_list("loras") + ["[None]"],
+                    default="[None]",
+                    tooltip="Your style LoRA (needs a sidecar .json from the cloud trainer).",
+                    extra_dict={"comfynext_widget": "lora_picker"},
+                ),
+                IO.Float.Input("style_strength", default=0.5, min=0.0, max=1.0, step=0.05,
+                               tooltip="Higher = bolder restyle (looser structure); "
+                                       "lower = stays closer to the original."),
+                IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K",
+                               tooltip="Nano Banana 2 output resolution — higher costs more."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             tooltip="0 = random. Applied to the Flux and Nano Banana stages."),
+                IO.String.Input("lora_url", default="", multiline=False, advanced=True,
+                                tooltip="Override LoRA source (HF / CivitAI / Replicate ref / "
+                                        ".safetensors URL). Wins over lora_name."),
+                IO.Float.Input("lora_scale", default=1.0, min=0.0, max=1.5, step=0.05,
+                               advanced=True, tooltip="LoRA strength on the Flux stage."),
+                IO.Float.Input("flux_prompt_strength", default=0.0, min=0.0, max=1.0, step=0.05,
+                               advanced=True,
+                               tooltip="Override the Flux img2img strength. 0 = derive from "
+                                       "style_strength."),
+                IO.Int.Input("flux_steps", default=28, min=4, max=50, advanced=True,
+                             tooltip="Flux inference steps."),
+                IO.Float.Input("flux_guidance", default=3.5, min=0.0, max=20.0, step=0.1,
+                               advanced=True, tooltip="Flux prompt adherence."),
+                IO.String.Input("describe_prompt", multiline=True,
+                                default="Describe this image in detail.",
+                                advanced=True, tooltip="What to ask Moondream about the content image."),
+                IO.String.Input("extra_style_direction", multiline=True, default="",
+                                advanced=True,
+                                tooltip="Extra guidance appended to the Nano Banana instruction "
+                                        "(e.g. 'watercolor', 'cyberpunk neon')."),
+                IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+            ],
+            outputs=[IO.Image.Output()],
+            hidden=[IO.Hidden.unique_id],
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.09,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, content_image, lora_name, style_strength=0.5,
+                      resolution="1K", seed=0, lora_url="", lora_scale=1.0,
+                      flux_prompt_strength=0.0, flux_steps=28, flux_guidance=3.5,
+                      describe_prompt="Describe this image in detail.",
+                      extra_style_direction="", output_format="png"):
+        content_url = _image_tensor_to_data_url(content_image)
+        structure_strength, prompt_strength = restyle_style_strength_to_knobs(
+            style_strength, flux_prompt_strength
+        )
+
+        # --- Stage 1: describe the content image (Moondream 2) ---------------
+        try:
+            pred = await _run_prediction(
+                "lucataco/moondream2",
+                {"image": content_url, "prompt": describe_prompt},
+            )
+            out = pred.get("output")
+            if isinstance(out, list):
+                caption = "".join(str(x) for x in out).strip()
+            else:
+                caption = str(out or "").strip()
+        except Exception as err:
+            raise RuntimeError(f"Restyle stage failed (describe): {err}") from err
+        if not caption:
+            caption = "a high quality image"
+
+        # --- Stage 2: restyle with the LoRA (Flux-Dev-LoRA img2img) ----------
+        sidecar = _read_lora_sidecar(lora_name) or {}
+        flux_prompt = build_flux_style_prompt(
+            sidecar.get("trigger", ""), sidecar.get("aesthetic", ""), caption
+        )
+        try:
+            plan = resolve_flux_lora_plan(lora_name, lora_url)
+            flux_input = {
+                "prompt": flux_prompt,
+                "image": content_url,
+                "prompt_strength": prompt_strength,
+                "num_inference_steps": flux_steps,
+                "num_outputs": 1,
+                "output_format": "png",
+                "disable_safety_checker": False,
+            }
+            if seed and seed > 0:
+                flux_input["seed"] = seed
+            if plan["trained_model"]:
+                flux_model = plan["trained_model"]
+                flux_input["guidance_scale"] = flux_guidance
+                flux_input["lora_scale"] = lora_scale
+            else:
+                flux_model = "black-forest-labs/flux-dev-lora"
+                flux_input["guidance"] = flux_guidance
+                lora_ref = plan["lora_ref"]
+                if lora_ref:
+                    lora_ref = await _autodetect_huggingface(lora_ref)
+                    flux_input["lora_weights"] = lora_ref
+                    flux_input["lora_scale"] = lora_scale
+            flux_pred = await _run_prediction(flux_model, flux_input)
+            # The intermediate is only a style reference for Nano Banana and is
+            # never displayed, so hand its public Replicate URL straight to the
+            # next stage — no need to download, strip alpha, and re-encode it.
+            style_url = _first_output_url(flux_pred)
+        except Exception as err:
+            raise RuntimeError(f"Restyle stage failed (stylize): {err}") from err
+
+        # --- Stage 3: transfer the style back onto the content (Nano Banana 2)
+        try:
+            instruction = build_restyle_instruction(structure_strength, extra_style_direction)
+            nb_input = {
+                "prompt": instruction,
+                "image_input": [content_url, style_url],
+                "output_format": output_format,
+                "resolution": resolution,
+            }
+            if seed and seed > 0:
+                nb_input["seed"] = seed
+            nb_pred = await _run_prediction("google/nano-banana-2", nb_input)
+            final = await download_url_to_image_tensor(_first_output_url(nb_pred), cls=cls)
+            if final.dim() == 4 and final.shape[-1] == 4:
+                final = final[..., :3].contiguous()
+        except Exception as err:
+            raise RuntimeError(f"Restyle stage failed (restyle): {err}") from err
+
+        return IO.NodeOutput(final, ui=save_generation_output(final, "restyle_lora"))
 
 
 # =============================================================================
@@ -4842,6 +5005,7 @@ class ReplicateExtension(ComfyExtension):
             EditImageNode,              # Edit an image · Flux Kontext
             BlendSceneNode,             # Blend Scene · Flux Kontext / Nano Banana
             RestyleFromImageNode,       # Restyle from Image · Nano Banana / IP-Adapter
+            RestyleWithLoRANode,        # Restyle an Image · Style LoRA — describe→flux-lora→nano-banana
             ProductShotNode,            # Product Shot · catacolabs/sdxl-ad-inpaint
             RotateCameraNode,           # Rotate camera · Qwen-Image-Edit-Plus
             TextEffectNode,             # Text effect · Ideogram v3
