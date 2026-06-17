@@ -548,7 +548,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
             f"seed: {actual_seed}",
             "logs: " + " | ".join(logs_tail) if logs_tail else "",
         ]
-        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line))
+        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line), ui=save_generation_output(tensor, "flux_lora"))
 
 
 # =============================================================================
@@ -793,7 +793,7 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
             f"seed: {actual_seed}",
             "logs: " + " | ".join(logs_tail) if logs_tail else "",
         ]
-        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line))
+        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line), ui=save_generation_output(tensor, "flux_multilora"))
 
 
 # =============================================================================
@@ -863,7 +863,7 @@ class FluxProRemoteNode(IO.ComfyNode):
             input_dict["seed"] = seed
         pred = await _run_prediction("black-forest-labs/flux-1.1-pro", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "flux_pro"))
 
 
 # =============================================================================
@@ -924,7 +924,7 @@ class FluxKontextRemoteNode(IO.ComfyNode):
             input_dict["seed"] = seed
         pred = await _run_prediction("black-forest-labs/flux-kontext-pro", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "flux_kontext"))
 
 
 # =============================================================================
@@ -1076,7 +1076,7 @@ class ClarityUpscaleRemoteNode(IO.ComfyNode):
             input_dict["seed"] = seed
         pred = await _run_prediction("philz1337x/clarity-upscaler", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "clarity_upscale"))
 
 
 # =============================================================================
@@ -1129,7 +1129,7 @@ class IdeogramV3TurboNode(IO.ComfyNode):
             input_dict["seed"] = seed
         pred = await _run_prediction("ideogram-ai/ideogram-v3-turbo", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "ideogram"))
 
 
 # =============================================================================
@@ -1683,7 +1683,7 @@ class RemoveBackgroundRemoteNode(IO.ComfyNode):
         input_dict = {"image": _image_tensor_to_data_url(image)}
         pred = await _run_prediction("851-labs/background-remover", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "remove_bg"))
 
 
 # =============================================================================
@@ -1722,7 +1722,7 @@ class RestorePhotoRemoteNode(IO.ComfyNode):
         }
         pred = await _run_prediction("flux-kontext-apps/restore-image", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "restore_photo"))
 
 
 # =============================================================================
@@ -1774,7 +1774,7 @@ class CodeformerRemoteNode(IO.ComfyNode):
         }
         pred = await _run_prediction("sczhou/codeformer", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "codeformer"))
 
 
 # =============================================================================
@@ -2014,14 +2014,17 @@ class GenerateImageNode(IO.ComfyNode):
         )
         pred = await _run_prediction(spec.replicate_slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "generate_image"))
 
 
 # =============================================================================
 # Use case: Edit an image
 # =============================================================================
 
-_IMAGE_EDIT_MODELS = ["Flux Kontext Pro"]
+# Nano Banana 2 (google/nano-banana-2, Gemini 3.1 Flash Image) is the default —
+# it follows natural-language edit instructions noticeably better than Flux
+# Kontext. Flux Kontext Pro stays available for its aspect-ratio / safety dials.
+_IMAGE_EDIT_MODELS = ["Nano Banana 2", "Flux Kontext Pro"]
 
 
 class EditImageNode(IO.ComfyNode):
@@ -2033,40 +2036,62 @@ class EditImageNode(IO.ComfyNode):
             category="api node/image/Replicate",
             description=(
                 "Image editing via natural language — 'remove the background', "
-                "'make her hair blue', 'add a cat'. ~$0.04 per edit."
+                "'make her hair blue', 'add a cat'. Nano Banana 2 (best instruction "
+                "following) or Flux Kontext Pro. ~$0.04–0.05 per edit."
             ),
             inputs=[
-                IO.Combo.Input("model", options=_IMAGE_EDIT_MODELS, default="Flux Kontext Pro"),
+                IO.Combo.Input("model", options=_IMAGE_EDIT_MODELS, default="Nano Banana 2"),
                 IO.Image.Input("input_image", tooltip="Source image to edit."),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="Edit instruction in natural language."),
                 IO.Combo.Input("aspect_ratio", options=_FLUX_KONTEXT_ASPECT_RATIOS,
-                               default="match_input_image"),
+                               default="match_input_image",
+                               tooltip="Output aspect ratio. Flux Kontext only — Nano Banana 2 "
+                                       "keeps the input's aspect ratio."),
+                IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K", advanced=True,
+                               tooltip="Output resolution for Nano Banana 2 — higher costs more. "
+                                       "Ignored by Flux Kontext."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, tooltip="0 = random."),
-                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True),
-                IO.Boolean.Input("prompt_upsampling", default=False, advanced=True),
+                IO.Int.Input("safety_tolerance", default=2, min=1, max=6, advanced=True,
+                             tooltip="Flux Kontext only."),
+                IO.Boolean.Input("prompt_upsampling", default=False, advanced=True,
+                                 tooltip="Flux Kontext only."),
                 IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
             ],
             outputs=[IO.Image.Output()],
-            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04}'),
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true}}'),
         )
 
     @classmethod
-    async def execute(cls, model, input_image, prompt, aspect_ratio, seed,
+    async def execute(cls, model, input_image, prompt, aspect_ratio, resolution, seed,
                       safety_tolerance, prompt_upsampling, output_format):
-        input_dict = {
-            "prompt": prompt,
-            "input_image": _image_tensor_to_data_url(input_image),
-            "aspect_ratio": aspect_ratio,
-            "safety_tolerance": safety_tolerance,
-            "prompt_upsampling": prompt_upsampling,
-            "output_format": output_format,
-        }
+        data_url = _image_tensor_to_data_url(input_image)
+
+        # Each model speaks a different input dialect on Replicate.
+        if model == "Nano Banana 2":
+            input_dict = {
+                "prompt": prompt,
+                "image_input": [data_url],
+                "resolution": resolution,
+                "output_format": output_format,
+            }
+            slug = "google/nano-banana-2"
+        else:  # Flux Kontext Pro
+            input_dict = {
+                "prompt": prompt,
+                "input_image": data_url,
+                "aspect_ratio": aspect_ratio,
+                "safety_tolerance": safety_tolerance,
+                "prompt_upsampling": prompt_upsampling,
+                "output_format": output_format,
+            }
+            slug = "black-forest-labs/flux-kontext-pro"
+
         if seed and seed > 0:
             input_dict["seed"] = seed
-        pred = await _run_prediction("black-forest-labs/flux-kontext-pro", input_dict)
+        pred = await _run_prediction(slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "edit_image"))
 
 
 # =============================================================================
@@ -2547,7 +2572,7 @@ class RotateCameraNode(IO.ComfyNode):
         )
         pred = await _run_prediction(spec.replicate_slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "rotate_camera"))
 
 
 # =============================================================================
@@ -2641,7 +2666,7 @@ class TextEffectNode(IO.ComfyNode):
         )
         pred = await _run_prediction(slug, input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "text_effect"))
 
 
 # =============================================================================
@@ -3206,7 +3231,7 @@ class RemoveBackgroundNode(IO.ComfyNode):
         pred = await _run_prediction("851-labs/background-remover",
                                      {"image": _image_tensor_to_data_url(image)})
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "remove_bg"))
 
 
 # =============================================================================
@@ -3241,7 +3266,7 @@ class RestorePhotoNode(IO.ComfyNode):
         }
         pred = await _run_prediction("flux-kontext-apps/restore-image", input_dict)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
-        return IO.NodeOutput(tensor)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "restore_photo"))
 
 
 # =============================================================================
