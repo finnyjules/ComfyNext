@@ -61,8 +61,21 @@ void main() {
         glyph = geoShape(shp, (inCell - 0.5) * 2.0, g, cell);
     } else {
         float gi = min(floor(g * u_glyphCount), u_glyphCount - 1.0);
-        float row = float(shp - 7);
-        glyph = texture(u_glyphs, vec2((gi + inCell.x) / u_glyphCount, (row + inCell.y) / u_glyphRows)).r;
+        int row = shp - 7;
+        const int CW = 32, CH = 48, TOTAL_ROWS = 7;
+        // texelFetch uses integer GL texel coords. The atlas is uploaded via arr[::-1]
+        // (Y-flipped for GL convention), so numpy row R maps to GL texel Y =
+        // (TOTAL_ROWS - 1 - R) * CH + in_row_pixel. inCell.y=0 is GL-bottom, which
+        // equals the highest numpy pixel in the row group (also flipped), so:
+        //   ty = (TOTAL_ROWS - 1 - row) * CH + int(inCell.y * CH)
+        // This is independent of atlas height and exact-NEAREST for any row.
+        if (inCell.x < 0.0 || inCell.x >= 1.0 || inCell.y < 0.0 || inCell.y >= 1.0) {
+            glyph = 0.0;
+        } else {
+            int tx = int(gi) * CW + int(inCell.x * float(CW));
+            int ty = (TOTAL_ROWS - 1 - row) * CH + int(inCell.y * float(CH));
+            glyph = texelFetch(u_glyphs, ivec2(tx, ty), 0).r;
+        }
     }
 
     vec3 ink = mix(vec3(1.0), col / max(lum, 1e-3), step(0.5, u_colored));
