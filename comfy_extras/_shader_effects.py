@@ -21,10 +21,11 @@ class EffectParam:
     uniform: str
     label: str
     type: str
-    min: float
-    max: float
     default: float
-    step: float
+    min: float = 0.0
+    max: float = 0.0
+    step: float = 0.0
+    options: list[dict] | None = None
 
 
 @dataclass
@@ -71,7 +72,13 @@ def load_catalog(refresh: bool = False) -> Catalog:
             source = f.read()
         params = [EffectParam(**p) for p in entry["params"]]
         for p in params:
-            if not (p.min <= p.default <= p.max):
+            if p.type == "enum":
+                values = [o["value"] for o in (p.options or [])]
+                if not values:
+                    raise ValueError(f"shader_effects {eid!r}: enum {p.uniform} has no options")
+                if p.default not in values:
+                    raise ValueError(f"shader_effects {eid!r}: enum default for {p.uniform} not an option")
+            elif not (p.min <= p.default <= p.max):
                 raise ValueError(f"shader_effects {eid!r}: default for {p.uniform} outside [min, max]")
         effects[eid] = Effect(
             id=eid,
@@ -106,7 +113,11 @@ def resolve_params(effect: Effect, params_json: str) -> dict[str, float]:
             v = float(v)
         except (TypeError, ValueError):
             v = p.default
-        out[p.uniform] = min(max(v, p.min), p.max)
+        if p.type == "enum":
+            values = [float(o["value"]) for o in (p.options or [])]
+            out[p.uniform] = v if v in values else float(p.default)
+        else:
+            out[p.uniform] = min(max(v, p.min), p.max)
     return out
 
 
