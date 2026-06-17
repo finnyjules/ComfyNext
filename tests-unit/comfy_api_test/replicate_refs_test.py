@@ -400,3 +400,49 @@ def test_flux_plan_no_lora_resolves_nothing():
     plan = rr.resolve_flux_lora_plan("[None]", "")
     assert plan == {"trained_model": None, "lora_ref": None}
     _assert_plan_invariant(plan)
+
+
+# --------------------------------------------------------------------------- #
+# build_restyle_instruction — Nano Banana instruction builder (pure)
+# --------------------------------------------------------------------------- #
+
+def test_restyle_instruction_high_structure_locks_subject():
+    out = rr.build_restyle_instruction(0.8)
+    assert out.startswith(rr.RESTYLE_DEFAULT_PROMPT)
+    assert "exactly as in the first image" in out
+
+def test_restyle_instruction_low_structure_allows_reinterpret():
+    out = rr.build_restyle_instruction(0.2)
+    assert "loosely reinterpret" in out
+
+def test_restyle_instruction_mid_structure_is_plain():
+    out = rr.build_restyle_instruction(0.5)
+    assert out == rr.RESTYLE_DEFAULT_PROMPT
+
+def test_restyle_instruction_appends_extra_direction():
+    out = rr.build_restyle_instruction(0.5, "watercolor")
+    assert out.endswith("Additional style direction: watercolor.")
+
+def test_restyle_instruction_blank_extra_is_ignored():
+    out = rr.build_restyle_instruction(0.5, "   ")
+    assert out == rr.RESTYLE_DEFAULT_PROMPT
+
+def test_restyle_instruction_high_boundary_locks_subject():
+    # 0.66 is the inclusive high threshold — guards against off-by-one drift in
+    # the constant (the node defaults structure_strength to 0.65, one step below).
+    assert "exactly as in the first image" in rr.build_restyle_instruction(0.66)
+
+def test_restyle_instruction_just_below_high_boundary_is_plain():
+    assert rr.build_restyle_instruction(0.65) == rr.RESTYLE_DEFAULT_PROMPT
+
+def test_restyle_instruction_low_boundary_allows_reinterpret():
+    # 0.33 is the inclusive low threshold.
+    assert "loosely reinterpret" in rr.build_restyle_instruction(0.33)
+
+def test_restyle_instruction_just_above_low_boundary_is_plain():
+    assert rr.build_restyle_instruction(0.34) == rr.RESTYLE_DEFAULT_PROMPT
+
+def test_restyle_instruction_combines_structure_clause_and_extra():
+    out = rr.build_restyle_instruction(0.8, "watercolor")
+    assert "exactly as in the first image" in out
+    assert out.endswith("Additional style direction: watercolor.")

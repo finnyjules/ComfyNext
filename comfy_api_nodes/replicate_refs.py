@@ -268,6 +268,38 @@ def _all_output_urls(pred: dict) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Restyle from Image — Nano Banana instruction builder
+# --------------------------------------------------------------------------- #
+
+RESTYLE_DEFAULT_PROMPT = (
+    "Redraw the first image in the visual art style of the second image. "
+    "Preserve the first image's composition, subject, pose and layout — "
+    "change only the rendering style, colors, texture, lighting and finish."
+)
+
+
+def build_restyle_instruction(structure_strength: float, extra_direction: str = "") -> str:
+    """Build the Nano Banana edit instruction from a structure-preservation
+    dial. Nano Banana has no numeric structure knob, so the slider is folded
+    into explicit language: high = lock the subject, low = free reinterpretation.
+    """
+    instruction = RESTYLE_DEFAULT_PROMPT
+    if structure_strength >= 0.66:
+        instruction += (
+            " Keep the subject's identity, clothing, pose, framing and"
+            " background composition exactly as in the first image —"
+            " restyle only colour, texture, lighting and finish; add"
+            " nothing and remove nothing."
+        )
+    elif structure_strength <= 0.33:
+        instruction += " You may loosely reinterpret the content while matching the style."
+    extra = (extra_direction or "").strip()
+    if extra:
+        instruction += f" Additional style direction: {extra}."
+    return instruction
+
+
+# --------------------------------------------------------------------------- #
 # Enhance Detail — engine → Replicate-input mapping
 #
 # Pure: turns a chosen engine + one universal `detail_strength` knob + per-engine

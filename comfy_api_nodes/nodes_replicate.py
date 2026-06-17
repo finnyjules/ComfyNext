@@ -80,8 +80,10 @@ from comfy_api_nodes.replicate_refs import (
     _resolve_lora_weights_url,
     _resolve_trained_model,
     build_enhance_input,
+    build_restyle_instruction,
     ENHANCE_ENGINES,
     resolve_flux_lora_plan,
+    RESTYLE_DEFAULT_PROMPT,
 )
 
 
@@ -2226,13 +2228,6 @@ _NANO_BANANA_SLUGS = {
     "Nano Banana Pro": "google/nano-banana-pro",
 }
 
-_RESTYLE_DEFAULT_PROMPT = (
-    "Redraw the first image in the visual art style of the second image. "
-    "Preserve the first image's composition, subject, pose and layout — "
-    "change only the rendering style, colors, texture, lighting and finish."
-)
-
-
 class RestyleFromImageNode(IO.ComfyNode):
     """Apply the *style* of one image (the reference) onto another (the content).
 
@@ -2292,23 +2287,7 @@ class RestyleFromImageNode(IO.ComfyNode):
         if model in _NANO_BANANA_SLUGS:
             # First image = content, second = style reference. The baked
             # instruction keeps the content's layout and only swaps the look.
-            instruction = _RESTYLE_DEFAULT_PROMPT
-            # Nano Banana has no numeric structure dial, so translate the
-            # slider into explicit guidance. Without this it tends to
-            # *reinterpret* the subject (swap clothing, drop the background)
-            # instead of only restyling it — which reads as "style transfer
-            # not working". High strength clamps the subject; low frees it.
-            if structure_strength >= 0.66:
-                instruction += (
-                    " Keep the subject's identity, clothing, pose, framing and"
-                    " background composition exactly as in the first image —"
-                    " restyle only colour, texture, lighting and finish; add"
-                    " nothing and remove nothing."
-                )
-            elif structure_strength <= 0.33:
-                instruction += " You may loosely reinterpret the content while matching the style."
-            if guidance:
-                instruction += f" Additional style direction: {guidance}."
+            instruction = build_restyle_instruction(structure_strength, guidance)
             input_dict = {
                 "prompt": instruction,
                 "image_input": [content_url, style_url],
