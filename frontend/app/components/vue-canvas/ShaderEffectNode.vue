@@ -149,7 +149,7 @@ function textureSources(def: EffectDef): Record<string, TexImageSource> {
     else if (!img) {
       const el = new Image()
       el.onload = () => { if (!animating.value) renderOnce() }
-      el.src = assetUrl(t.file)
+      el.src = assetUrl(t.file, t.v)
       textureImages.set(t.file, el)
     }
   }

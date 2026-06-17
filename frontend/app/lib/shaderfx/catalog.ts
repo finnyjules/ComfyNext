@@ -18,6 +18,9 @@ export async function getEffect(id: string): Promise<EffectDef | null> {
   return cat.effects.find(e => e.id === id) ?? null
 }
 
-export function assetUrl(file: string): string {
-  return `/comfynext/shader_effects/assets/${encodeURIComponent(file)}`
+export function assetUrl(file: string, v?: string | number): string {
+  const base = `/comfynext/shader_effects/assets/${encodeURIComponent(file)}`
+  // Append a content version (the file's mtime, from the catalog) so a rebaked
+  // texture is a NEW url the browser must fetch fresh — defeats any stale cache.
+  return v != null ? `${base}?v=${encodeURIComponent(String(v))}` : base
 }

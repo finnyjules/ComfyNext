@@ -158,6 +158,14 @@ async def comfy_entrypoint() -> ShaderEffectsExtension:
     return ShaderEffectsExtension()
 
 
+def _texture_version(fname: str) -> str:
+    """mtime of an asset file, for cache-busting its URL when it's rebaked."""
+    try:
+        return str(int(os.path.getmtime(os.path.join(ASSETS_DIR, fname))))
+    except OSError:
+        return "0"
+
+
 def catalog_payload() -> dict:
     """Manifest with .frag sources inlined — what the frontend preview consumes.
 
@@ -175,7 +183,7 @@ def catalog_payload() -> dict:
             "passes": eff.passes,
             "generative": eff.generative,
             "centerParam": eff.center_param,
-            "textures": eff.textures,
+            "textures": [{**t, "v": _texture_version(t["file"])} for t in eff.textures],
             "params": [vars(p) for p in eff.params],
             "source": eff.source,
         })

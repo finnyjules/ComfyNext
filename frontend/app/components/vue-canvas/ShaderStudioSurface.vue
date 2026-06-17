@@ -46,7 +46,7 @@ function texBundle(def: EffectDef | null): EffectTextureBundle {
   for (const t of def.textures) {
     const img = textureImages.get(t.file)
     if (img?.complete) sources[t.uniform] = img
-    else if (!img) { const el = new Image(); el.onload = () => renderFrame(0); el.src = assetUrl(t.file); textureImages.set(t.file, el) }
+    else if (!img) { const el = new Image(); el.onload = () => renderFrame(0); el.src = assetUrl(t.file, t.v); textureImages.set(t.file, el) }
     for (const [k, v] of Object.entries(t.extraUniforms ?? {})) uniforms[k] = v
   }
   return { sources, uniforms }

@@ -13,6 +13,8 @@ export interface EffectTextureDef {
   uniform: string
   file: string
   extraUniforms?: Record<string, number>
+  /** content version (asset mtime) for cache-busting the asset URL */
+  v?: string
 }
 
 export interface EffectDef {
