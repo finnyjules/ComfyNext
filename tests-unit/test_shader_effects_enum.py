@@ -1,10 +1,14 @@
+import json
 import os
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.modules.setdefault("nodes", MagicMock())
 
+import comfy_extras._shader_effects as sfx
 from comfy_extras._shader_effects import EffectParam, Effect, resolve_params, load_catalog
 
 
@@ -53,13 +57,42 @@ def test_load_catalog_accepts_bayer_dither_enum():
     assert pattern_param.default == 1
 
 
-def test_load_catalog_enum_default_must_be_in_options():
-    """Validation guard: an enum param whose default isn't in options is rejected."""
-    bad_param = EffectParam(
-        uniform="u_pattern", label="Pattern", type="enum", default=99,
-        options=[{"label": "A", "value": 0}],
-    )
-    values = [o["value"] for o in (bad_param.options or [])]
-    assert bad_param.default not in values, (
-        "Expected default 99 to not be in options [0]; validation would reject this"
-    )
+def _write_catalog(dirpath, param):
+    """Write a minimal one-effect manifest + its .frag into dirpath."""
+    with open(os.path.join(dirpath, "foo.frag"), "w", encoding="utf-8") as f:
+        f.write("#version 300 es\nvoid main(){}\n")
+    manifest = {
+        "version": 1,
+        "effects": [{
+            "id": "foo", "name": "Foo", "category": "stylize", "animated": False,
+            "passes": 1, "centerParam": None, "textures": [], "params": [param],
+        }],
+    }
+    with open(os.path.join(dirpath, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+
+
+def test_load_catalog_rejects_enum_default_not_in_options(tmp_path, monkeypatch):
+    """load_catalog raises when an enum param's default isn't one of its options."""
+    _write_catalog(tmp_path, {
+        "uniform": "u_pattern", "label": "Pattern", "type": "enum", "default": 99,
+        "options": [{"label": "A", "value": 0}, {"label": "B", "value": 1}],
+    })
+    # monkeypatch restores CATALOG_DIR + the _catalog cache after the test, so the
+    # real catalog is intact for other tests in the session.
+    monkeypatch.setattr(sfx, "CATALOG_DIR", str(tmp_path))
+    monkeypatch.setattr(sfx, "_catalog", None)
+    with pytest.raises(ValueError, match="enum default"):
+        load_catalog(refresh=True)
+
+
+def test_load_catalog_accepts_valid_enum_default(tmp_path, monkeypatch):
+    """A well-formed enum param (default in options) loads cleanly."""
+    _write_catalog(tmp_path, {
+        "uniform": "u_pattern", "label": "Pattern", "type": "enum", "default": 1,
+        "options": [{"label": "A", "value": 0}, {"label": "B", "value": 1}],
+    })
+    monkeypatch.setattr(sfx, "CATALOG_DIR", str(tmp_path))
+    monkeypatch.setattr(sfx, "_catalog", None)
+    catalog = load_catalog(refresh=True)
+    assert catalog.effects["foo"].params[0].type == "enum"
