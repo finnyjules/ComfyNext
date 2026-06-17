@@ -1347,6 +1347,11 @@ app.registerExtension({
           event: "executed",
           node: detail.node,
           output: detail.output,
+          // Forward the run id so the takes loop can tell distinct runs (re-rolls)
+          // apart from a single run's repeated/live-preview emissions. Without it
+          // every take had promptId=null and dedup fell back to the output
+          // filename — collapsing fixed-filename (live-preview) sinks to one take.
+          prompt_id: detail.prompt_id,
         });
       }
     });
