@@ -200,7 +200,11 @@ try:
         path = os.path.join(ASSETS_DIR, name)
         if not os.path.isfile(path):
             return web.json_response({"error": "not found"}, status=404)
-        return web.FileResponse(path)
+        # no-cache: the browser must revalidate via ETag/Last-Modified (304 when
+        # unchanged, fresh bytes when an asset is rebaked). FileResponse's default
+        # max-age=86400 served stale atlases for 24h after a texture rebuild — and a
+        # stale atlas of the wrong size makes texelFetch read out of bounds → black.
+        return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
 except Exception as e:  # imported headless (tests) — pure functions still work
     print(f"[ComfyNext] shader_effects routes not registered: {e}")
