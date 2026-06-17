@@ -29,3 +29,27 @@ describe('shaderfx params', () => {
     expect(serializeParams(eff, { u_amount: 0.06, u_scale: 4 })).toBe('{}')
   })
 })
+
+const enumEff: EffectDef = {
+  id: 'd', name: 'Dither', category: 'stylize', animated: false, passes: 1,
+  centerParam: null, textures: [], source: '',
+  params: [
+    { uniform: 'u_pattern', label: 'Pattern', type: 'enum', default: 1,
+      options: [{ label: 'A', value: 0 }, { label: 'B', value: 1 }, { label: 'C', value: 2 }] },
+    { uniform: 'u_scale', label: 'Scale', type: 'float', min: 1, max: 10, default: 4, step: 1 },
+  ],
+}
+
+describe('shaderfx params — enum', () => {
+  it('defaults the enum when missing', () => {
+    expect(resolveUniforms(enumEff, {})).toEqual({ u_pattern: 1, u_scale: 4 })
+  })
+  it('keeps a valid enum value and clamps floats', () => {
+    const u = resolveUniforms(enumEff, { u_pattern: 2, u_scale: 999 })
+    expect(u.u_pattern).toBe(2)
+    expect(u.u_scale).toBe(10)
+  })
+  it('falls back to default on invalid enum value', () => {
+    expect(resolveUniforms(enumEff, { u_pattern: 99 }).u_pattern).toBe(1)
+  })
+})

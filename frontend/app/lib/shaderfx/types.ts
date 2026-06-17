@@ -1,11 +1,12 @@
 export interface EffectParamDef {
   uniform: string
   label: string
-  type: 'float'
-  min: number
-  max: number
+  type: 'float' | 'enum'
+  min?: number
+  max?: number
   default: number
-  step: number
+  step?: number
+  options?: { label: string; value: number }[]
 }
 
 export interface EffectTextureDef {
