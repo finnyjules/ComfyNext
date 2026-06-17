@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { PortAnchor, NodeTypeLite } from '~/lib/portIntent'
 import { anchorCandidates } from '~/lib/portIntent'
-import { NODE_KEYWORDS } from '~/lib/nodeKeywords'
+import { NODE_KEYWORDS, NODE_BOOST } from '~/lib/nodeKeywords'
 import { searchNodes } from '~/lib/nodeMatch'
 
 const props = defineProps<{
@@ -29,7 +29,7 @@ const candidates = computed<NodeTypeLite[]>(() => {
   const list = anchorCandidates(nodeTypes.value, props.anchor)
   // Tokenized, ranked, keyword-aware match (see lib/nodeMatch). Empty query
   // returns the (capped) candidate list unchanged.
-  return searchNodes(list, query.value, { keywords: NODE_KEYWORDS, limit: 8 })
+  return searchNodes(list, query.value, { keywords: NODE_KEYWORDS, boosts: NODE_BOOST, limit: 8 })
 })
 
 // Rows are candidates + one trailing "Ask AI" row.

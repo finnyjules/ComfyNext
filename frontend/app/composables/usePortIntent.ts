@@ -1,7 +1,9 @@
 import type { PortAnchor } from '~/lib/portIntent'
+import { anchorCandidates, matchingPort } from '~/lib/portIntent'
 import { buildCatalog } from '~/lib/portIntentCatalog'
 import { validateSuggestion, type ValidationResult } from '~/lib/portIntentValidate'
-import { NODE_KEYWORDS } from '~/lib/nodeKeywords'
+import { canonicalNodeForIntent } from '~/lib/nodeMatch'
+import { NODE_KEYWORDS, NODE_BOOST } from '~/lib/nodeKeywords'
 
 interface SuggestContext {
   objectInfo: Record<string, any>
@@ -34,6 +36,26 @@ export function usePortIntent() {
     return lines.join('\n') || 'The anchor node has no connections yet.'
   }
 
+  /** A validated single-node suggestion for a curated canonical intent, or null
+   *  to fall through to the LLM. Built from real schema + run through the same
+   *  validator as the AI path, so wiring is guaranteed correct. */
+  function canonicalSuggestion(intent: string, anchor: PortAnchor, objectInfo: Record<string, any>): ValidationResult | null {
+    const compatible = anchorCandidates(nodeTypes.value, anchor)
+    const canonical = canonicalNodeForIntent(compatible, intent, { keywords: NODE_KEYWORDS, boosts: NODE_BOOST })
+    if (!canonical) return null
+    const port = matchingPort(canonical, anchor)
+    if (!port) return null
+    const raw = {
+      nodes: [{ id: 'n1', type: canonical.name, widgets: [] }],
+      edges: [anchor.direction === 'output'
+        ? { from: 'anchor', to: `n1.${port.name}` }
+        : { from: `n1.${port.name}`, to: 'anchor' }],
+      note: `Added ${canonical.displayName}`,
+    }
+    const validated = validateSuggestion(raw, objectInfo, anchor)
+    return validated.ok ? validated : null
+  }
+
   async function callEndpoint(payload: Record<string, unknown>) {
     return await $fetch<{ suggestion: unknown }>('/api/pipeline-suggest', {
       method: 'POST',
@@ -44,11 +66,19 @@ export function usePortIntent() {
   /** Resolve an intent into a validated suggestion. One repair retry on
    *  validation failure; throws with a user-readable message otherwise. */
   async function suggest(intent: string, anchor: PortAnchor, ctx: SuggestContext): Promise<ValidationResult> {
+    await fetchNodeTypes()
+
+    // Deterministic short-circuit: a curated canonical intent (e.g. "remove a
+    // background" → the cheap API remover) places its node directly instead of
+    // asking the LLM — faster, free, and no API key required. Only fires when
+    // the node is directly wireable to the anchor; otherwise fall through.
+    const direct = canonicalSuggestion(intent, anchor, ctx.objectInfo)
+    if (direct) return direct
+
     const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
     if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
 
-    await fetchNodeTypes()
-    const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor, { intent, keywords: NODE_KEYWORDS })
+    const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST })
     if (!catalog.length) throw new Error('No installed nodes are compatible with this port.')
     const graphContext = buildGraphContext(anchor, ctx.nodes, ctx.edges)
     const base = { apiKey, intent, anchor, catalog, graphContext }

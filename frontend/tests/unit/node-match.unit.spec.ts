@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tokenize, scoreNode, searchNodes } from '../../app/lib/nodeMatch'
+import { tokenize, scoreNode, searchNodes, canonicalNodeForIntent } from '../../app/lib/nodeMatch'
 
 // Minimal node shape the matcher needs. Mirrors the common fields of
 // NodeType (useNodeSearch) and NodeTypeLite (portIntent).
@@ -89,6 +89,29 @@ describe('searchNodes', () => {
     expect(searchNodes(NODES, 'xyzzy nonexistent', {})).toEqual([])
   })
 
+  it('a boost breaks ties among equally-named matches', () => {
+    const bgNodes = [
+      { name: 'BackgroundRemove', displayName: 'Background Remove', description: '', category: 'image' },
+      { name: 'RemoveBackgroundNode', displayName: 'Remove background', description: '', category: 'api node' },
+    ]
+    // Without a boost, alphabetical tiebreak puts "Background Remove" first.
+    expect(searchNodes(bgNodes, 'remove a background', {})[0]?.name).toBe('BackgroundRemove')
+    // With a boost on the API node, it wins.
+    const ranked = searchNodes(bgNodes, 'remove a background', { boosts: { RemoveBackgroundNode: 2 } })
+    expect(ranked[0]?.name).toBe('RemoveBackgroundNode')
+  })
+
+  it('a boost does not override a genuinely stronger match', () => {
+    const nodes = [
+      { name: 'RemoveBackgroundNode', displayName: 'Remove background', description: '', category: '' },
+      { name: 'RemoveNoise', displayName: 'Remove Noise', description: '', category: '' },
+    ]
+    // "remove noise" matches RemoveNoise on both tokens; the boost on the bg node
+    // (single-token match) must not leapfrog it.
+    const ranked = searchNodes(nodes, 'remove noise', { boosts: { RemoveBackgroundNode: 2 } })
+    expect(ranked[0]?.name).toBe('RemoveNoise')
+  })
+
   it('respects the limit option', () => {
     const results = searchNodes(NODES, 'image', { limit: 1 })
     expect(results.length).toBe(1)
@@ -98,5 +121,32 @@ describe('searchNodes', () => {
     // "pose" matches PoseMannequin strongly (name + keyword); no other node.
     const results = searchNodes(NODES, 'pose image', { keywords: KEYWORDS })
     expect(results[0]?.name).toBe('PoseMannequin')
+  })
+})
+
+describe('canonicalNodeForIntent', () => {
+  const bgNodes = [
+    { name: 'BackgroundRemove', displayName: 'Background Remove', description: '', category: 'image' },
+    { name: 'RemoveBackgroundNode', displayName: 'Remove background', description: '', category: 'api node' },
+  ]
+  const kw = { RemoveBackgroundNode: ['remove background', 'remove a background', 'background removal'] }
+  const boosts = { RemoveBackgroundNode: 2 }
+
+  it('returns the boosted canonical node when the intent expresses a full phrase', () => {
+    expect(canonicalNodeForIntent(bgNodes, 'remove a background', { keywords: kw, boosts })?.name)
+      .toBe('RemoveBackgroundNode')
+  })
+
+  it('returns null without boosts (only curated-canonical nodes short-circuit)', () => {
+    expect(canonicalNodeForIntent(bgNodes, 'remove a background', { keywords: kw })).toBeNull()
+  })
+
+  it('returns null when no full keyword phrase is present', () => {
+    // "background" alone, or an unrelated bg action, must not short-circuit.
+    expect(canonicalNodeForIntent(bgNodes, 'change the background color', { keywords: kw, boosts })).toBeNull()
+  })
+
+  it('defers multi-step intents to the LLM (returns null)', () => {
+    expect(canonicalNodeForIntent(bgNodes, 'remove the background and upscale it', { keywords: kw, boosts })).toBeNull()
   })
 })

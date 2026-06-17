@@ -37,8 +37,9 @@ export const NODE_KEYWORDS: Record<string, string[]> = {
     'fill outside', 'make wider',
   ],
   RemoveBackgroundNode: [
-    'remove background', 'cut out', 'cutout', 'transparent', 'remove bg',
-    'isolate subject', 'delete background', 'no background',
+    'remove background', 'remove a background', 'remove the background',
+    'cut out', 'cutout', 'transparent', 'remove bg', 'isolate subject',
+    'delete background', 'no background', 'background removal',
   ],
   RestyleFromImageNode: [
     'restyle', 'change style', 'style transfer', 'apply style', 'new style',
@@ -60,4 +61,14 @@ export const NODE_KEYWORDS: Record<string, string[]> = {
   BackgroundRemove: [
     'remove background', 'cut out', 'cutout', 'transparent', 'isolate subject',
   ],
+}
+
+// Small score bonuses applied only when a node already matches (score > 0), to
+// pick a canonical winner among near-identical nodes. Keep values ~1-3 so a
+// boost breaks ties without leapfrogging a genuinely stronger match. See
+// SearchOpts.boosts in nodeMatch.ts.
+export const NODE_BOOST: Record<string, number> = {
+  // Several nodes match "remove background" equally on their display name; prefer
+  // the cheap (~$0.001) Replicate API one over the local matte and paid variants.
+  RemoveBackgroundNode: 2,
 }

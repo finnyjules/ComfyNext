@@ -86,6 +86,12 @@ export function scoreNode(node: MatchableNode, tokens: string[], keywords: strin
 export interface SearchOpts {
   /** Map of node class name → intent keywords/aliases. */
   keywords?: Record<string, string[]>
+  /** Map of node class name → score bonus, added only when the node already
+   *  matches (score > 0). Breaks ties among equally-named nodes to prefer a
+   *  canonical one (e.g. the cheap API background remover over the local one).
+   *  Keep values small (~1-3) so a boost can't leapfrog a genuinely stronger
+   *  match. */
+  boosts?: Record<string, number>
   /** Max results returned. */
   limit?: number
 }
@@ -102,13 +108,41 @@ export function searchNodes<T extends MatchableNode>(
     return opts.limit != null ? nodes.slice(0, opts.limit) : nodes
   }
   const keywords = opts.keywords ?? {}
+  const boosts = opts.boosts ?? {}
   const scored: { node: T; score: number; index: number }[] = []
   nodes.forEach((node, index) => {
-    const score = scoreNode(node, tokens, keywords[node.name] ?? [])
-    if (score > 0) scored.push({ node, score, index })
+    const base = scoreNode(node, tokens, keywords[node.name] ?? [])
+    if (base <= 0) return
+    scored.push({ node, score: base + (boosts[node.name] ?? 0), index })
   })
   // Descending score; original order as a stable tiebreak.
   scored.sort((a, b) => b.score - a.score || a.index - b.index)
   const ranked = scored.map(s => s.node)
   return opts.limit != null ? ranked.slice(0, opts.limit) : ranked
+}
+
+// Conjunctions that signal a multi-step intent — short-circuiting on these would
+// drop the rest of the request, so defer to the LLM path instead.
+const MULTI_STEP_RE = /\b(and|then|plus|also|after)\b/i
+
+/** A curated "canonical" node for the intent, or null. Fires only when the
+ *  top-ranked match is a boosted node AND the intent fully expresses one of its
+ *  multi-word keyword phrases AND the intent is a single action — i.e. an
+ *  unambiguous "when I ask X, give me Y". Used to short-circuit the AI path
+ *  deterministically (the LLM only reorders; it can't be bound). */
+export function canonicalNodeForIntent<T extends MatchableNode>(
+  nodes: T[],
+  intent: string,
+  opts: { keywords?: Record<string, string[]>, boosts?: Record<string, number> } = {},
+): T | null {
+  if (MULTI_STEP_RE.test(intent)) return null
+  const top = searchNodes(nodes, intent, { keywords: opts.keywords, boosts: opts.boosts, limit: 1 })[0]
+  if (!top || !opts.boosts?.[top.name]) return null
+  const intentTokens = new Set(tokenize(intent))
+  const phrases = opts.keywords?.[top.name] ?? []
+  const hasFullPhrase = phrases.some((p) => {
+    const pt = tokenize(p)
+    return pt.length >= 2 && pt.every(t => intentTokens.has(t))
+  })
+  return hasFullPhrase ? top : null
 }

@@ -62,6 +62,8 @@ export interface BuildCatalogOpts {
   intent?: string
   /** Node class name → intent keywords, forwarded to the matcher. */
   keywords?: Record<string, string[]>
+  /** Node class name → score boost, forwarded to the matcher. */
+  boosts?: Record<string, number>
   /** Cap on the intent bucket. */
   maxIntent?: number
 }
@@ -75,7 +77,7 @@ export function buildCatalog(
   anchor: Pick<PortAnchor, 'portType' | 'direction'>,
   opts: BuildCatalogOpts = {},
 ): CatalogEntry[] {
-  const { maxEnum = 20, maxNodes = 150, intent, keywords, maxIntent = 10 } = opts
+  const { maxEnum = 20, maxNodes = 150, intent, keywords, boosts, maxIntent = 10 } = opts
   const hop1 = nodeTypes.filter(n => matchingPort(n, anchor))
   const hop1Names = new Set(hop1.map(n => n.name))
 
@@ -97,7 +99,7 @@ export function buildCatalog(
   let intentBucket: NodeTypeLite[] = []
   if (intent && intent.trim()) {
     const covered = new Set([...hop1Names, ...hop2.map(n => n.name)])
-    const matches = searchNodes(nodeTypes, intent, { keywords, limit: maxIntent + covered.size })
+    const matches = searchNodes(nodeTypes, intent, { keywords, boosts, limit: maxIntent + covered.size })
     intentBucket = matches.filter(n => !covered.has(n.name)).slice(0, maxIntent)
   }
 
