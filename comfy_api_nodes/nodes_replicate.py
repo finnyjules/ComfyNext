@@ -3461,7 +3461,15 @@ class SplitPhotoLayersNode(IO.ComfyNode):
         # 3) Erase the subject region → clean background plate. Both engines
         #    take image + mask (white = remove) and reconstruct, not regenerate.
         slug = _PHOTO_FILL_SLUGS[background_fill]
-        bg_pred = await _run_prediction(slug, {"image": img_url, "mask": mask_url})
+        # The fill engines (LaMa / Flux Fill) take image + mask and expect RGB +
+        # mask = 4 channels. If the source carries an alpha channel, an RGBA image
+        # + mask reaches the model as 5 channels and it errors
+        # ("expected input to have 4 channels, but got 5 instead"). Send an
+        # alpha-dropped RGB copy for the fill step (the background remover above
+        # tolerates RGBA, so only this call needs it).
+        fill_image = image[..., :3].contiguous() if (image.dim() == 4 and image.shape[-1] == 4) else image
+        fill_url = _image_tensor_to_data_url(fill_image)
+        bg_pred = await _run_prediction(slug, {"image": fill_url, "mask": mask_url})
         background = await download_url_to_image_tensor(_first_output_url(bg_pred), cls=cls)
         # Background is an opaque plate — drop any alpha so the downstream Image
         # artifact renders normally (a spurious alpha routes it to the
