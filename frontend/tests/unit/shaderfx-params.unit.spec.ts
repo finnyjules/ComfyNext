@@ -53,3 +53,12 @@ describe('shaderfx params — enum', () => {
     expect(resolveUniforms(enumEff, { u_pattern: 99 }).u_pattern).toBe(1)
   })
 })
+
+describe('shaderfx params — serializeParams enum round-trip', () => {
+  it('stores only non-default enum value', () => {
+    expect(serializeParams(enumEff, { u_pattern: 2, u_scale: 4 })).toBe('{"u_pattern":2}')
+  })
+  it('omits enum when at default', () => {
+    expect(serializeParams(enumEff, { u_pattern: 1, u_scale: 4 })).toBe('{}')
+  })
+})
