@@ -354,3 +354,49 @@ def test_all_output_urls_variants():
 
 def test_all_output_urls_filters_non_strings():
     assert rr._all_output_urls({"output": ["a", None, 5, "b"]}) == ["a", "b"]
+
+
+# --------------------------------------------------------------------------- #
+# resolve_flux_lora_plan — trained-model vs external-weights decision (pure)
+# --------------------------------------------------------------------------- #
+
+def _assert_plan_invariant(plan):
+    """The docstring contract: at most one of the two keys is ever set."""
+    assert (plan["trained_model"] is None) or (plan["lora_ref"] is None)
+
+def test_flux_plan_replicate_ref_url_is_trained_model():
+    # "[None]" is the ComfyUI no-LoRA sentinel; it's irrelevant here because a
+    # Replicate-ref URL short-circuits before any sidecar lookup happens.
+    plan = rr.resolve_flux_lora_plan("[None]", "owner/model:abc123")
+    assert plan == {"trained_model": "owner/model", "lora_ref": None}
+    _assert_plan_invariant(plan)
+
+def test_flux_plan_sidecar_trained_model(loras_dir):
+    _write_sidecar(loras_dir, "Style.safetensors",
+                   {"replicate_model": "finny/jules-style:deadbeef"})
+    plan = rr.resolve_flux_lora_plan("Style.safetensors", "")
+    assert plan["trained_model"] == "finny/jules-style"
+    assert plan["lora_ref"] is None
+    _assert_plan_invariant(plan)
+
+def test_flux_plan_sidecar_external_weights(loras_dir):
+    _write_sidecar(loras_dir, "Ext.safetensors",
+                   {"replicate_url": "https://example.com/lora.safetensors"})
+    plan = rr.resolve_flux_lora_plan("Ext.safetensors", "")
+    assert plan["trained_model"] is None
+    assert plan["lora_ref"] == "https://example.com/lora.safetensors"
+    _assert_plan_invariant(plan)
+
+def test_flux_plan_external_url_overrides_name(loras_dir):
+    _write_sidecar(loras_dir, "Ext.safetensors",
+                   {"replicate_url": "https://example.com/from-name.safetensors"})
+    plan = rr.resolve_flux_lora_plan("Ext.safetensors", "huggingface.co/owner/repo")
+    assert plan["trained_model"] is None
+    # lora_url wins over the sidecar-derived ref
+    assert "owner/repo" in plan["lora_ref"]
+    _assert_plan_invariant(plan)
+
+def test_flux_plan_no_lora_resolves_nothing():
+    plan = rr.resolve_flux_lora_plan("[None]", "")
+    assert plan == {"trained_model": None, "lora_ref": None}
+    _assert_plan_invariant(plan)

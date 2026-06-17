@@ -230,6 +230,23 @@ def _normalize_lora_ref(ref: str) -> str:
     return ref
 
 
+def resolve_flux_lora_plan(lora_name: str, lora_url: str) -> dict[str, str | None]:
+    """Decide how to run a Flux LoRA: a baked-in trained model run directly, or
+    flux-dev-lora with external ``lora_weights``. Pure (no network) so it stays
+    unit-testable; the caller still applies ``_autodetect_huggingface`` to
+    ``lora_ref`` before use. Returns ``{"trained_model": str|None,
+    "lora_ref": str|None}`` with at most one set.
+    """
+    lora_url = (lora_url or "").strip()
+    if lora_url and _is_replicate_model_ref(lora_url):
+        return {"trained_model": _bare_owner_model(lora_url), "lora_ref": None}
+    trained_model = _resolve_trained_model(lora_name) if not lora_url else None
+    if trained_model:
+        return {"trained_model": trained_model, "lora_ref": None}
+    lora_ref = _normalize_lora_ref(lora_url) or _resolve_lora_url(lora_name)
+    return {"trained_model": None, "lora_ref": lora_ref}
+
+
 # ---------- Prediction output parsing --------------------------------------
 
 def _first_output_url(pred: dict) -> str:

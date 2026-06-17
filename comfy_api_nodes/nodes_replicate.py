@@ -81,6 +81,7 @@ from comfy_api_nodes.replicate_refs import (
     _resolve_trained_model,
     build_enhance_input,
     ENHANCE_ENGINES,
+    resolve_flux_lora_plan,
 )
 
 
@@ -480,12 +481,8 @@ class FluxLoRARemoteNode(IO.ComfyNode):
         #      when the selected lora_name has a trained-model sidecar.
         #  (B) External LoRA (a real URL / HF / CivitAI / .safetensors in
         #      lora_url, or a legacy sidecar) → run flux-dev-lora with `lora_weights`.
-        if lora_url and _is_replicate_model_ref(lora_url):
-            trained_model = _bare_owner_model(lora_url)
-        elif not lora_url:
-            trained_model = _resolve_trained_model(lora_name)
-        else:
-            trained_model = None
+        plan = resolve_flux_lora_plan(lora_name, lora_url)
+        trained_model = plan["trained_model"]
 
         input_dict: dict = {
             "prompt": full_prompt,
@@ -516,7 +513,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
         else:
             # flux-dev-lora names it `guidance`.
             input_dict["guidance"] = guidance
-            resolved_lora = _normalize_lora_ref(lora_url) or _resolve_lora_url(lora_name)
+            resolved_lora = plan["lora_ref"]
             # A bare 'owner/model' is ambiguous — prefer HuggingFace if it exists.
             if resolved_lora:
                 resolved_lora = await _autodetect_huggingface(resolved_lora)
