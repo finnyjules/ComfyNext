@@ -1173,17 +1173,78 @@
     },
     {
       "id": "bayer_dither",
-      "name": "Bayer Dither",
+      "name": "Dither",
       "category": "stylize",
       "animated": false,
       "passes": 1,
       "centerParam": null,
-      "textures": [],
+      "textures": [
+        {
+          "uniform": "u_blueNoise",
+          "file": "blue_noise.png"
+        }
+      ],
       "generative": false,
       "params": [
         {
+          "uniform": "u_pattern",
+          "label": "Pattern",
+          "type": "enum",
+          "default": 1,
+          "options": [
+            {
+              "label": "Coarse 2×2",
+              "value": 0
+            },
+            {
+              "label": "Bayer 4×4",
+              "value": 1
+            },
+            {
+              "label": "Fine 8×8",
+              "value": 2
+            },
+            {
+              "label": "Clustered",
+              "value": 3
+            },
+            {
+              "label": "Scanline",
+              "value": 4
+            },
+            {
+              "label": "Diagonal",
+              "value": 5
+            },
+            {
+              "label": "White Noise",
+              "value": 6
+            },
+            {
+              "label": "Noise 2×",
+              "value": 7
+            },
+            {
+              "label": "Blue Noise",
+              "value": 8
+            },
+            {
+              "label": "Blue Noise 2×",
+              "value": 9
+            },
+            {
+              "label": "Blue Noise 0.5×",
+              "value": 10
+            },
+            {
+              "label": "R2 Noise",
+              "value": 11
+            }
+          ]
+        },
+        {
           "uniform": "u_scale",
-          "label": "Cell Size",
+          "label": "Size",
           "type": "float",
           "min": 0.003,
           "max": 0.05,

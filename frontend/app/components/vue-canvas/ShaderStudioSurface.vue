@@ -148,7 +148,9 @@ function onFocusUp() { draggingFocus = false }
 // ── motion tracks ────────────────────────────────────────────────────────────
 const animatablePaths = computed(() => [
   ...ANIMATABLE,
-  ...(effectDef.value?.params ?? []).map(p => ({ path: `effect.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min, max: p.max })),
+  ...(effectDef.value?.params ?? [])
+    .filter(p => p.type !== 'enum')
+    .map(p => ({ path: `effect.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
 ])
 function addTrack() {
   const a = animatablePaths.value[0]!
@@ -259,8 +261,22 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           <ChevronRight class="size-3.5 shrink-0 text-white/30" />
         </button>
         <div v-for="p in effectDef?.params ?? []" :key="p.uniform">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ p.label }}</span><span class="text-white/40">{{ (effectUniforms[p.uniform] ?? 0).toFixed(2) }}</span></label>
-          <input type="range" class="mb-2 w-full accent-white" :min="p.min" :max="p.max" :step="p.step" :value="effectUniforms[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))" />
+          <label class="mb-0.5 flex justify-between text-[11px] text-white/60">
+            <span>{{ p.label }}</span>
+            <span v-if="p.type !== 'enum'" class="text-white/40">{{ (effectUniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+          </label>
+          <select
+            v-if="p.type === 'enum'"
+            class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs"
+            :value="effectUniforms[p.uniform]"
+            @change="setParam(p.uniform, Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+          <input
+            v-else type="range" class="mb-2 w-full accent-white" :min="p.min" :max="p.max" :step="p.step"
+            :value="effectUniforms[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+          />
         </div>
       </StudioSection>
 
