@@ -42,6 +42,7 @@ interface PlaneUniforms {
   uWaveLen: { value: number }
   uLineT: { value: number }
   uLineSkew: { value: number }
+  uTextSkew: { value: number }
 }
 
 let planeUniforms: PlaneUniforms[] = []
@@ -62,17 +63,15 @@ function frontMaterial(
   textRow: number,
   textCount: number,
   wordFrac: number,
-  textSkewSlope: number,
   u: PlaneUniforms,
 ): THREE.MeshLambertMaterial {
-  const mat = new three.MeshLambertMaterial({ map, side: three.DoubleSide, transparent: true })
+  const mat = new three.MeshLambertMaterial({ map, side: three.DoubleSide })
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
   const uTextColor = { value: textColor }
   const uTextRow = { value: textRow }
   const uTextCount = { value: Math.max(1, textCount) }
   const uWordFrac = { value: Math.max(0.0001, wordFrac) }
-  const uTextSkew = { value: textSkewSlope }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uMode = u.uMode
     shader.uniforms.uTime = u.uTime
@@ -82,13 +81,13 @@ function frontMaterial(
     shader.uniforms.uWaveLen = u.uWaveLen
     shader.uniforms.uLineT = u.uLineT
     shader.uniforms.uLineSkew = u.uLineSkew
+    shader.uniforms.uTextSkew = u.uTextSkew
     shader.uniforms.uFillTex = uFillTex
     shader.uniforms.uFillTiling = uFillTiling
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uTextRow = uTextRow
     shader.uniforms.uTextCount = uTextCount
     shader.uniforms.uWordFrac = uWordFrac
-    shader.uniforms.uTextSkew = uTextSkew
 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', [
@@ -196,11 +195,12 @@ export const elasticEffect: SpaceTypeEffect = {
         uWaveLen: { value: n(params, 'waveLength') },
         uLineT: { value: textCount > 1 ? i / (textCount - 1) : 0 },
         uLineSkew: { value: lineSkewSlope },
+        uTextSkew: { value: textSkewSlope },
       }
 
       const mat = frontMaterial(
         three, tex, fillShaderTexture(three, fill), fillTiling(fill), textColor,
-        i, textCount, wordFracs[i] ?? 1, textSkewSlope, u,
+        i, textCount, wordFracs[i] ?? 1, u,
       )
       const mesh = new three.Mesh(geo, mat)
       mesh.position.set(xs[i] ?? 0, ys[i] ?? 0, 0)
@@ -225,6 +225,7 @@ export const elasticEffect: SpaceTypeEffect = {
       u.uShear.value = n(params, 'shear')
       u.uWaveLen.value = n(params, 'waveLength')
       u.uLineSkew.value = Math.tan((n(params, 'lineSkew') * Math.PI) / 180)
+      u.uTextSkew.value = Math.tan((n(params, 'textSkew') * Math.PI) / 180)
     }
   },
 }
