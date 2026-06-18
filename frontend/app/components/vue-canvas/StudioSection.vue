@@ -28,23 +28,28 @@ const isOpen = ref(props.open)
 </template>
 
 <style scoped>
-.studio-glass {
-  backdrop-filter: blur(6px) saturate(1.2);
-  -webkit-backdrop-filter: blur(6px) saturate(1.2);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
-}
+/* Frosted look without backdrop-filter (invisible over the solid bg, and a per-scroll-frame
+   cost): a translucent fill + a bright top edge. The fill comes from the bg-white utility. */
+.studio-glass { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 .studio-sheen { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+/* Two parallax specular sheens drifting with scroll. Driven by `transform` (compositor-only —
+   no layout/paint), so scrolling stays smooth. */
 .studio-sheen::before,
-.studio-sheen::after { content: ''; position: absolute; left: -30%; right: -30%; height: 200%; will-change: top; }
-/* Drifts faster + refracts (SVG displacement) — the "live glass" layer. */
-.studio-sheen::before {
-  top: calc(-50% + var(--studio-scroll, 0) * 0.4px);
-  background: linear-gradient(115deg, transparent 43%, rgba(255, 255, 255, 0.14) 50%, transparent 57%);
-  filter: url(#studioRefract);
-}
-/* A slower, un-refracted second sheen for parallax depth. */
 .studio-sheen::after {
-  top: calc(-50% + var(--studio-scroll, 0) * 0.22px);
-  background: linear-gradient(115deg, transparent 47%, rgba(255, 255, 255, 0.06) 50%, transparent 53%);
+  content: '';
+  position: absolute;
+  left: -30%;
+  right: -30%;
+  top: -50%;
+  height: 200%;
+  will-change: transform;
+}
+.studio-sheen::before {
+  transform: translateY(calc(var(--studio-scroll, 0) * 0.4px));
+  background: linear-gradient(115deg, transparent 43%, rgba(255, 255, 255, 0.13) 50%, transparent 57%);
+}
+.studio-sheen::after {
+  transform: translateY(calc(var(--studio-scroll, 0) * 0.22px));
+  background: linear-gradient(115deg, transparent 47%, rgba(255, 255, 255, 0.05) 50%, transparent 53%);
 }
 </style>

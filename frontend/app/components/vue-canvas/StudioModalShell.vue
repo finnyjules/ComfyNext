@@ -45,11 +45,5 @@ function onControlsScroll() {
         <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0"><slot name="controls" /></div>
       </div>
     </div>
-    <svg width="0" height="0" class="pointer-events-none absolute" aria-hidden="true">
-      <filter id="studioRefract" x="-30%" y="-30%" width="160%" height="160%">
-        <feTurbulence type="fractalNoise" baseFrequency="0.015 0.025" numOctaves="2" seed="7" result="n" />
-        <feDisplacementMap in="SourceGraphic" in2="n" scale="12" xChannelSelector="R" yChannelSelector="G" />
-      </filter>
-    </svg>
   </div>
 </template>
