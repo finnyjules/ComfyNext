@@ -7,6 +7,7 @@ import {
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
+import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -420,11 +421,12 @@ function renderStack() {
     if (!r) return null
     if (r.type === 'wired') {
       if (hiddenWiredSet.value.has(r.layer.slot + 1)) return null
-      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
+      return { type: 'wired', key, draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
     }
-    return { type: 'local', layer: r.layer }
+    return { type: 'local', key, layer: r.layer }
   }).filter((x): x is StackItem => x != null)
-  paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value)
+  paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value,
+    undefined, undefined, wiredTreatments.value)
 }
 watch(
   () => [
@@ -433,6 +435,7 @@ watch(
     JSON.stringify(wiredLayers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImages.value).length,
     JSON.stringify([...hiddenWiredSet.value]),
+    JSON.stringify(wiredTreatments.value),
   ] as const,
   async () => {
     for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -442,6 +445,7 @@ watch(
   },
   { immediate: true },
 )
+const wiredTreatments = computed(() => readWiredTreatments({ data: props.data }))
 const hasAnyLayer = computed(() => wiredLayers.value.length > 0 || editor.localLayers.value.length > 0)
 
 // ── Inline add-toolbar (image upload) ───────────────────────────────────────

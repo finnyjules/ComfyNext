@@ -8,8 +8,9 @@ import {
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
 } from '~/composables/useCompositorLayers'
+import { readWiredTreatments, setWiredMask, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
@@ -973,6 +974,63 @@ async function bakeMotion() {
   }
 }
 
+// Static Render freshness: hash the inputs that affect the client-side composite.
+function staticSourceKey(): string {
+  const { W, H } = bakeSize()
+  const s = JSON.stringify({
+    local: localLayers.value, order: stackKeys.value,
+    treatments: wiredTreatments.value, wired: layers.value, W, H,
+  })
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return (h >>> 0).toString(36)
+}
+const lastRenderKey = computed<string | null>(() =>
+  (compositor.value?.data?.properties as any)?.comfynext_renderKey ?? null)
+const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
+const rendering = ref(false)
+const renderError = ref('')
+
+// Render the static unified stack to a PNG blob at W×H (no motion, no preview skip).
+async function renderStaticComposite(W: number, H: number): Promise<Blob | null> {
+  const off = document.createElement('canvas')
+  off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
+  const ctx = off.getContext('2d'); if (!ctx) return null
+  await ensureLayerImages(localLayers.value as LocalLayer[])
+  await ensureLayerFonts(localLayers.value as LocalLayer[], W)
+  paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
+    undefined, undefined, undefined, wiredTreatments.value)
+  return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
+}
+
+async function renderFrame() {
+  const node = compositor.value
+  if (!node || rendering.value) return
+  if (previewT.value != null) { await bakeMotion(); return } // motion frame → existing bake path
+  rendering.value = true
+  renderError.value = ''
+  try {
+    const { W, H } = bakeSize()
+    const blob = await renderStaticComposite(W, H)
+    if (!blob) return
+    const file = new File([blob], `comfynext_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
+    const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
+    const name = (await res.json())?.name || file.name
+    const p = (node.data.properties ||= {})
+    p.comfynext_renderKey = staticSourceKey()
+    node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
+  } catch (err: any) {
+    console.error('[compositor render]', err)
+    renderError.value = err?.message || 'Render failed'
+  } finally {
+    rendering.value = false
+  }
+}
+
+const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
+
 // One StackItem builder shared by the live preview AND the motion bake, so the
 // baked frames render exactly what the editor shows (wired layers included).
 function buildStackItems(): StackItem[] {
@@ -981,9 +1039,9 @@ function buildStackItems(): StackItem[] {
     if (!r) return null
     if (r.type === 'wired') {
       if (hiddenWired.value.has((r.layer as Layer).slot)) return null
-      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+      return { type: 'wired', key, draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
     }
-    return { type: 'local', layer: r.layer as LocalLayer }
+    return { type: 'local', key, layer: r.layer as LocalLayer }
   }).filter((x): x is StackItem => x != null)
 }
 
@@ -1001,7 +1059,8 @@ function renderStack() {
   const items = buildStackItems()
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
-    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined)
+    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
+    wiredTreatments.value)
 }
 watch(
   () => [
@@ -1011,6 +1070,7 @@ watch(
     Object.keys(wiredImageEls.value).length,
     nodeEdit.active.value, nodeEdit.layerId.value,
     JSON.stringify(readSlotArr('comfynext_hiddenWired')),
+    JSON.stringify(wiredTreatments.value),
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -1149,9 +1209,30 @@ const FONT_WEIGHTS = [
 ]
 
 // ── Layer mask (this layer is clipped by another layer's silhouette) ─────────
-function maskCandidates(l: any): any[] { return (localLayers.value as any[]).filter((o: any) => o.id !== l?.id) }
-function layerLabel(l: any): string { return `${l.kind} ${String(l.id).slice(-4)}` }
-function setLayerMaskedBy(l: any, id: string) { if (l) setLocal(l.id, { maskedById: id || undefined }) }
+function layerLabelByKey(key: StackKey): string {
+  const r = resolveStackKey(key)
+  if (!r) return key
+  if (r.type === 'wired') return `Layer ${(r.layer as Layer).slot}`
+  return `${r.layer.kind} ${String(r.layer.id).slice(-4)}`
+}
+// Candidate mask sources for the selected layer: every other present layer (cross-source).
+function maskCandidates(selfKey: StackKey): { key: StackKey; label: string }[] {
+  return maskCandidateKeys(presentKeys.value, selfKey).map(k => ({ key: k, label: layerLabelByKey(k) }))
+}
+// Current mask ref for any selected key (local → layerMaskRef; wired → treatments).
+function currentMaskRef(key: StackKey): string {
+  const r = resolveStackKey(key)
+  if (!r) return ''
+  if (r.type === 'local') return layerMaskRef(r.layer) ?? ''
+  return wiredTreatments.value[key]?.maskedByKey ?? ''
+}
+// Set the mask ref for any selected key.
+function setMaskRef(key: StackKey, ref: string) {
+  const r = resolveStackKey(key)
+  if (!r) return
+  if (r.type === 'local') setLocal(r.layer.id, { maskedByKey: ref || undefined, maskedById: undefined } as any)
+  else setWiredMask(compositor.value, (r.layer as Layer).slot, ref)
+}
 
 // ── Generative Fill: regenerate a region of an image in place ────────────────
 // A "Generate" mode where you mark a region directly on the canvas — drag a Box,
@@ -1563,13 +1644,25 @@ onUnmounted(() => {
 
     <!-- Center canvas -->
     <div class="flex-1 relative flex items-center justify-center overflow-hidden">
-      <button
-        class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
-        title="Close (Esc)"
-        @click="emit('close')"
-      >
-        <X class="size-4" />
-      </button>
+      <div class="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
+        <button
+          class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+          :disabled="rendering || baking"
+          :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
+          @click="renderFrame">
+          <Play class="size-3" />
+          {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+          title="Close (Esc)"
+          @click="emit('close')"
+        >
+          <X class="size-4" />
+        </button>
+      </div>
 
       <div
         ref="canvasRef"
@@ -2340,14 +2433,14 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Layer mask: clip this layer to another layer's silhouette -->
+          <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
           <div class="mt-3">
             <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
-            <select :value="(selectedLocal as any).maskedById || ''"
+            <select :value="currentMaskRef(localKey(selectedLocal!.id))"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-              @change="setLayerMaskedBy(selectedLocal!, ($event.target as HTMLSelectElement).value)">
+              @change="setMaskRef(localKey(selectedLocal!.id), ($event.target as HTMLSelectElement).value)">
               <option value="">No mask</option>
-              <option v-for="o in maskCandidates(selectedLocal)" :key="o.id" :value="o.id">Mask with {{ layerLabel(o) }}</option>
+              <option v-for="o in maskCandidates(localKey(selectedLocal!.id))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
             </select>
           </div>
 
@@ -2465,6 +2558,17 @@ onUnmounted(() => {
                 <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
               </select>
             </div>
+          </div>
+
+          <!-- Mask: clip this layer to another layer's silhouette (cross-source) -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
+            <select :value="currentMaskRef(wiredKey(selected.slot))"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              @change="setMaskRef(wiredKey(selected.slot), ($event.target as HTMLSelectElement).value)">
+              <option value="">No mask</option>
+              <option v-for="o in maskCandidates(wiredKey(selected.slot))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
+            </select>
           </div>
         </div>
         <div v-else class="p-4 text-xs text-white/40 italic">

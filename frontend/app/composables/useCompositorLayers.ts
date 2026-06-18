@@ -112,7 +112,8 @@ interface LayerCommon {
   groupName?: string // display name for the group (mirrored on every member)
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
-  maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
+  maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()
+  maskedByKey?: string     // clipped by another layer's silhouette; a StackKey ('w:<slot>'|'l:<id>')
   /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
    *  Absent ⇒ the layer is static and always visible. */
   animation?: import('~/lib/motion/types').LayerAnimation
@@ -121,6 +122,19 @@ interface LayerCommon {
 /** True when a layer is hidden (visible === false; undefined means visible). */
 export function layerHidden(l: { visible?: boolean } | null | undefined): boolean {
   return l?.visible === false
+}
+
+/**
+ * The StackKey of the layer this one is masked by, or undefined. Prefers the
+ * new cross-source `maskedByKey`; falls back to the legacy local-only
+ * `maskedById` (interpreted as `l:<id>`) so old frames keep rendering.
+ */
+export function layerMaskRef(
+  l: { maskedByKey?: string; maskedById?: string } | null | undefined,
+): string | undefined {
+  if (l?.maskedByKey) return l.maskedByKey
+  if (l?.maskedById) return `l:${l.maskedById}`
+  return undefined
 }
 
 export interface TextLayer extends LayerCommon {
@@ -565,6 +579,25 @@ export function drawLocalLayer(
   drawLocalLayerSelf(ctx, layer, W, H)
 }
 
+/**
+ * Render an item's alpha silhouette (full opacity, no effects/blend) onto `ctx`,
+ * sized W×H. Used as the clip source for another item's mask. Wired items render
+ * via their draw closure; local items via their own paint (no nested mask).
+ *
+ * RESERVED FOR PHASE 2 (submit-time mask compile → layer{i}_mask PNG): the live
+ * renderer's mask path uses drawItemContent (real paint), not this silhouette.
+ */
+export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
+  if (item.type === 'wired') {
+    ctx.save()
+    item.draw(ctx, W, H)
+    ctx.restore()
+    return
+  }
+  const ghost = { ...item.layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
+  drawLocalLayerSelf(ctx, ghost, W, H)
+}
+
 // A layer's own paint, including its crop (rect/ellipse) region — but NOT any
 // layer-mask, which drawLocalLayer applies around this.
 function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
@@ -801,8 +834,8 @@ function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
 // (Frame node, Compositor modal) and the bake go through paintLayerStack, so
 // masking/effects can't drift between them (the bug-class this prevents).
 export type StackItem =
-  | { type: 'wired'; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
-  | { type: 'local'; layer: LocalLayer }
+  | { type: 'wired'; key: string; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
+  | { type: 'local'; key: string; layer: LocalLayer }
 
 // Figma background blur: blur the ALREADY-PAINTED backdrop within the layer's
 // silhouette, then the layer paints on top. Operates in device space so it's
@@ -829,7 +862,10 @@ function applyBackdropBlur(
   if (!silctx) return
   silctx.setTransform(t)
   const ghost = { ...layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
-  const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+  const maskRef = layerMaskRef(layer)
+  const maskLayer = maskRef?.startsWith('l:')
+    ? localLayers.find(l => l.id === maskRef.slice(2)) ?? null
+    : null
   drawLocalLayer(silctx, ghost, W, H, maskLayer)
   // Blur the current backdrop, clip to the silhouette, stamp it back.
   const out = mk()
@@ -853,39 +889,54 @@ export function paintLayerStack(
   items: StackItem[],
   localLayers: LocalLayer[],
   skip?: (layer: LocalLayer) => boolean,
-  /** Motion time in seconds. Undefined ⇒ static render, exactly as before. */
   t?: number,
   motion?: { fps: number; duration: number },
+  /** Per-key treatments for wired layers (mask ref). Locals carry their own. */
+  wiredTreatments?: Record<string, { maskedByKey?: string }>,
 ) {
-  // Layers used as a mask (referenced by another's maskedById) only clip — they
-  // don't paint on their own.
-  const maskIds = new Set<string>()
-  for (const l of localLayers) if (l.maskedById) maskIds.add(l.maskedById)
+  const byKey = new Map(items.map(it => [it.key, it]))
+  // Resolve every item's mask reference (local → layerMaskRef; wired → treatments).
+  const maskRefOf = (it: StackItem): string | undefined =>
+    it.type === 'local' ? layerMaskRef(it.layer) : wiredTreatments?.[it.key]?.maskedByKey
+  // Keys used as a mask source by someone → those items only clip, never self-paint.
+  const maskSourceKeys = new Set<string>()
+  for (const it of items) { const r = maskRefOf(it); if (r) maskSourceKeys.add(r) }
+
   for (const item of items) {
-    if (item.type === 'wired') { item.draw(ctx, W, H); continue }
+    if (maskSourceKeys.has(item.key)) continue
+
+    if (item.type === 'wired') {
+      const ref = maskRefOf(item)
+      const maskItem = ref ? byKey.get(ref) ?? null : null
+      if (maskItem) { drawItemMasked(ctx, item, maskItem, W, H, 'source-over'); continue }
+      item.draw(ctx, W, H)
+      continue
+    }
+
     const layer = item.layer
     if (layerHidden(layer)) continue
     if (skip?.(layer)) continue
-    if (maskIds.has(layer.id)) continue
-    const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
-    // Enter the motion path when the layer OR its mask animates (a static
-    // photo masked by an animated numeral must still track the mask). Backdrop
-    // blur runs only for layers that actually draw, so an off-screen layer
-    // never smears the backdrop.
+
+    const ref = layerMaskRef(layer)
+    const maskItem = ref ? byKey.get(ref) ?? null : null
     const motionActive = t !== undefined && motion && _motionPainterImpl
-      && (layer.animation || maskLayer?.animation)
+      && (layer.animation || (maskItem?.type === 'local' && maskItem.layer.animation))
     if (motionActive) {
       const { motionStateFor, drawLayerWithMotion, identityState } = _motionPainterImpl!
       const st = layer.animation ? motionStateFor(layer, t!, motion!) : identityState()
       if (st) {
         if (!st.visible) continue
-        const maskState = maskLayer?.animation ? motionStateFor(maskLayer, t!, motion!) : null
-        if (maskState && !maskState.visible) continue // content hidden until its mask is on screen
+        // Phase-1 limitation: the motion path only carries a LOCAL mask. An
+        // animated local layer masked by a WIRED silhouette renders unmasked for
+        // that frame (the static path below handles wired-masks-local correctly).
+        const maskLocal = maskItem?.type === 'local' ? maskItem.layer : null
+        const maskState = maskLocal?.animation ? motionStateFor(maskLocal, t!, motion!) : null
+        if (maskState && !maskState.visible) continue
         const bgBlur = layer.effects?.find(
           (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
         )
         if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
-        drawLayerWithMotion(ctx, layer, W, H, maskLayer, st, maskState)
+        drawLayerWithMotion(ctx, layer, W, H, maskLocal, st, maskState)
         continue
       }
     }
@@ -893,8 +944,60 @@ export function paintLayerStack(
       (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
     )
     if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
-    drawLocalLayer(ctx, layer, W, H, maskLayer)
+
+    if (maskItem && maskItem.type !== 'local') {
+      // Wired silhouette masking a local layer → generic cross-source path.
+      drawItemMasked(ctx, item, maskItem, W, H, localBlendOp(layer))
+    } else {
+      // Local content + local mask (or no mask) → unchanged fast path.
+      drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null)
+    }
   }
+}
+
+/**
+ * Render an item's REAL content onto `ctx` (wired image via its draw closure,
+ * which folds the wired layer's own opacity/blend; local via `drawLocalLayerSelf`,
+ * which includes the layer's crop). NOT a silhouette — full pixels/opacity/effects
+ * preserved. Wired closures are wrapped in save/restore (no state-hygiene contract).
+ */
+function drawItemContent(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
+  if (item.type === 'wired') { ctx.save(); item.draw(ctx, W, H); ctx.restore(); return }
+  drawLocalLayerSelf(ctx, item.layer, W, H)
+}
+
+/**
+ * Draw `content` clipped to `mask`'s alpha, then stamp onto `ctx` with `blendOp`.
+ * Both render their REAL paint on separate offscreens (mirrors the original
+ * drawLocalLayer path), then destination-in keeps only where the mask is opaque.
+ * Phase-1 limitation: a WIRED content layer's non-normal blend is folded inside
+ * its draw closure against the transparent offscreen, so it's effectively lost
+ * while masked — callers pass 'source-over' for wired content. Local content
+ * stamps with its own blend, re-applied here against the real backdrop as before.
+ */
+function drawItemMasked(
+  ctx: CanvasRenderingContext2D,
+  content: StackItem,
+  mask: StackItem,
+  W: number,
+  H: number,
+  blendOp: string,
+) {
+  const off = document.createElement('canvas')
+  off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
+  const octx = off.getContext('2d'); if (!octx) return
+  drawItemContent(octx, content, W, H)
+  const maskOff = document.createElement('canvas')
+  maskOff.width = off.width; maskOff.height = off.height
+  const mctx = maskOff.getContext('2d'); if (!mctx) return
+  drawItemContent(mctx, mask, W, H)
+  octx.globalCompositeOperation = 'destination-in'
+  octx.drawImage(maskOff, 0, 0)
+  octx.globalCompositeOperation = 'source-over'
+  ctx.save()
+  ctx.globalCompositeOperation = blendOp as GlobalCompositeOperation
+  ctx.drawImage(off, 0, 0)
+  ctx.restore()
 }
 
 export function drawLocalLayers(
@@ -903,7 +1006,7 @@ export function drawLocalLayers(
   W: number,
   H: number,
 ) {
-  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local', layer: l })), layers)
+  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l })), layers)
 }
 
 /** Blend-mode name → canvas composite op (shared by node + modal wired draws). */
