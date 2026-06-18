@@ -430,7 +430,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
             <input v-model="stop.color" type="color" class="h-7 w-8 shrink-0 rounded" />
-            <input v-model.number="stop.pos" type="range" min="0" max="1" step="0.01" class="min-w-0 flex-1" />
+            <input v-studio-reset v-model.number="stop.pos" type="range" min="0" max="1" step="0.01" class="studio-range min-w-0 flex-1" />
             <span class="w-9 shrink-0 text-right text-[10px] text-white/40">{{ Math.round(stop.pos * 100) }}%</span>
             <button v-if="layer.color.stops.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeStop(i)"><Trash2 class="h-3 w-3" /></button>
           </div>

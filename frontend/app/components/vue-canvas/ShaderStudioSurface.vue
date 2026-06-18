@@ -358,7 +358,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           </div>
         </div>
         <div class="mt-2 grid grid-cols-2 gap-2">
-          <div><label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label><input v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="w-full" /></div>
+          <div><label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label><input v-studio-reset v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="studio-range w-full" /></div>
           <div><label class="mb-1 block text-[11px] text-white/60">FPS</label><select v-model.number="config.motion.fps" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"><option :value="24">24</option><option :value="30">30</option><option :value="60">60</option></select></div>
         </div>
       </StudioSection>
