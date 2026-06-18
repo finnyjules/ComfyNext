@@ -61,16 +61,30 @@ let raf = 0
 let start = 0
 const PREVIEW_MAX_W = 880
 
+// Size the preview to its on-screen box, then render the backing store at the display's
+// physical pixel density (dpr). Rendering at a fixed 880px and letting the browser scale
+// it (esp. 2× on Retina) resampled the fine film grain into a faint moiré; backing =
+// CSS-size × dpr means 1 render pixel maps to 1 physical pixel — crisp grain, no moiré.
 function previewDims() {
+  const el = canvas.value
   const ar = aspectRatio(config.value.canvas.aspect)
-  const w = PREVIEW_MAX_W
-  return { w, h: Math.round(w / ar) }
+  const dpr = Math.min((typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1, 2)
+  const wrap = el?.parentElement
+  const availW = wrap?.clientWidth || PREVIEW_MAX_W
+  const availH = wrap?.clientHeight || Math.round(PREVIEW_MAX_W / ar)
+  let cssW = Math.min(availW, PREVIEW_MAX_W)
+  let cssH = cssW / ar
+  if (cssH > availH) { cssH = availH; cssW = availH * ar }
+  cssW = Math.round(cssW); cssH = Math.round(cssH)
+  return { cssW, cssH, w: Math.max(1, Math.round(cssW * dpr)), h: Math.max(1, Math.round(cssH * dpr)) }
 }
 
 function renderFrame(t: number) {
   const el = canvas.value
   if (!el) return
-  const { w, h } = previewDims()
+  const { cssW, cssH, w, h } = previewDims()
+  el.style.width = `${cssW}px`
+  el.style.height = `${cssH}px`
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try { el.getContext('2d')!.drawImage(gradientFx.render(config.value, w, h, t), 0, 0); glError.value = null }
   catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -258,12 +272,27 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'Escape') closeEditor()
 }
 
+// Re-render the static preview when its container resizes, so the dpr-matched backing
+// stays 1:1 with the display (otherwise a resize would scale the old backing → moiré).
+let resizeObs: ResizeObserver | null = null
+function watchPreviewResize() {
+  const wrap = canvas.value?.parentElement
+  if (!wrap || typeof ResizeObserver === 'undefined') return
+  resizeObs = new ResizeObserver(() => { if (!animated.value) renderFrame(0) })
+  resizeObs.observe(wrap)
+}
+
 onMounted(() => {
   loadConfig()
   startPreview()
+  watchPreviewResize()
   window.addEventListener('keydown', onKey)
 })
-onBeforeUnmount(() => { saveConfig(); stopPreview(); window.removeEventListener('keydown', onKey) })
+onBeforeUnmount(() => {
+  saveConfig(); stopPreview()
+  resizeObs?.disconnect(); resizeObs = null
+  window.removeEventListener('keydown', onKey)
+})
 
 function setLayout(l: LayoutKind) { config.value.canvas.layout = l }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
