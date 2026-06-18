@@ -989,6 +989,7 @@ const lastRenderKey = computed<string | null>(() =>
   (compositor.value?.data?.properties as any)?.comfynext_renderKey ?? null)
 const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
 const rendering = ref(false)
+const renderError = ref('')
 
 // Render the static unified stack to a PNG blob at W×H (no motion, no preview skip).
 async function renderStaticComposite(W: number, H: number): Promise<Blob | null> {
@@ -1007,6 +1008,7 @@ async function renderFrame() {
   if (!node || rendering.value) return
   if (previewT.value != null) { await bakeMotion(); return } // motion frame → existing bake path
   rendering.value = true
+  renderError.value = ''
   try {
     const { W, H } = bakeSize()
     const blob = await renderStaticComposite(W, H)
@@ -1019,8 +1021,9 @@ async function renderFrame() {
     const p = (node.data.properties ||= {})
     p.comfynext_renderKey = staticSourceKey()
     node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
-  } catch (err) {
+  } catch (err: any) {
     console.error('[compositor render]', err)
+    renderError.value = err?.message || 'Render failed'
   } finally {
     rendering.value = false
   }
@@ -1642,6 +1645,7 @@ onUnmounted(() => {
     <!-- Center canvas -->
     <div class="flex-1 relative flex items-center justify-center overflow-hidden">
       <div class="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
         <button
           class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
