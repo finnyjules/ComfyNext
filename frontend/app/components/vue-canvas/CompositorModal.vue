@@ -1882,7 +1882,7 @@ onUnmounted(() => {
       <!-- Multi-select bar: align/distribute (any ≥2) + booleans (≥2 paths) -->
       <div
         v-if="selectedCount >= 2 && !nodeEdit.active.value"
-        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
         @pointerdown.stop
       >
         <button v-for="a in ALIGN_BTNS" :key="a.mode"
@@ -1905,7 +1905,7 @@ onUnmounted(() => {
       </div>
       <div
         v-else-if="nodeEdit.active.value"
-        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 backdrop-blur-sm rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
+        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
         @pointerdown.stop
       >
         Editing path nodes — drag points & handles · Del removes a point ·
@@ -1915,7 +1915,7 @@ onUnmounted(() => {
       <!-- AI vector panel (floats above the toolbar) -->
       <div
         v-if="aiOpen"
-        class="absolute bottom-[68px] w-[340px] bg-[#1a1a1a]/97 backdrop-blur-sm rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
+        class="absolute bottom-[68px] w-[340px] bg-[#1a1a1a]/97 rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
         @pointerdown.stop
       >
         <div class="flex items-center gap-1.5 mb-2 text-[11px] uppercase tracking-wide text-white/40">
@@ -1965,7 +1965,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Bottom toolbar -->
-      <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+      <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
           :class="isSelectTool ? 'bg-yellow-400/90 text-black' : 'hover:bg-white/10 text-white/80'"

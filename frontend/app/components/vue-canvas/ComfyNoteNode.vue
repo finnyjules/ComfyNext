@@ -44,7 +44,7 @@ const isMarkdown = computed(() => props.data.nodeType === 'MarkdownNote')
 
 <template>
   <div
-    class="comfy-note rounded-xl border border-white/10 select-none backdrop-blur-sm"
+    class="comfy-note rounded-xl border border-white/10 select-none"
     :style="{
       width: data.size?.[0] ? `${data.size[0]}px` : '260px',
       background: data.bgcolor

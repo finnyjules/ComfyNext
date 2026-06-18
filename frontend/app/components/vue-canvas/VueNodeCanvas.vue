@@ -4427,7 +4427,7 @@ defineExpose({
          at any zoom level. The pop floats above the arrow with a small caret. -->
     <div
       v-if="selectedArrowToolbarPos"
-      class="arrow-style-toolbar absolute z-50 flex items-center gap-1 px-1.5 py-1 rounded-[10px] bg-[#1a1a1a]/95 border border-[#2a2a2a] shadow-xl backdrop-blur-sm"
+      class="arrow-style-toolbar absolute z-50 flex items-center gap-1 px-1.5 py-1 rounded-[10px] bg-[#1a1a1a]/95 border border-[#2a2a2a] shadow-xl"
       :style="{
         left: `${selectedArrowToolbarPos.left}px`,
         top: `${selectedArrowToolbarPos.top}px`,
