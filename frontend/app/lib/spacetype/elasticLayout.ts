@@ -3,14 +3,6 @@
  * The effect's buildScene consumes these to position one plane per text line.
  */
 
-/** Split a textList param (newline-separated) into trimmed, non-empty lines. */
-export function splitLines(raw: unknown): string[] {
-  return String(raw ?? '')
-    .split('\n')
-    .map(s => s.trim())
-    .filter(s => s.length > 0)
-}
-
 /**
  * Y center of each line, ordered top→bottom, centered on the origin.
  * lineHeight = per-line world height; leading = extra gap added between lines.

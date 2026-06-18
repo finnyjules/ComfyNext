@@ -174,6 +174,7 @@ export const elasticEffect: SpaceTypeEffect = {
     const lineH = (n(params, 'typeHeight') / 180) * 2.0 * scale
     const leading = n(params, 'leading') * scale
     const segX = 120
+    const segY = 16   // enough vertical resolution for non-linear Y modes (Pinch/Jelly)
 
     const ys = stackPositions(textCount, lineH, leading)
     const xs = lineStaggerOffsets(textCount, n(params, 'lineStagger') * scale)
@@ -182,7 +183,7 @@ export const elasticEffect: SpaceTypeEffect = {
     const mode = modeIndex(params)
 
     for (let i = 0; i < textCount; i++) {
-      const geo = new three.PlaneGeometry(baseW, lineH, segX, 2)
+      const geo = new three.PlaneGeometry(baseW, lineH, segX, segY)
       const tex = textTexture.clone()
       tex.needsUpdate = true
 
@@ -218,6 +219,7 @@ export const elasticEffect: SpaceTypeEffect = {
     const time = t01 * cycles * TAU
     const mode = modeIndex(params)
     for (const u of planeUniforms) {
+      // uLineT is a per-line structural constant (set in buildScene), not animated.
       u.uTime.value = time
       u.uMode.value = mode
       u.uIntensity.value = n(params, 'intensity')

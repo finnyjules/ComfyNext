@@ -1,19 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitLines, stackPositions, lineStaggerOffsets } from '../../app/lib/spacetype/elasticLayout'
-
-describe('splitLines', () => {
-  it('splits on newlines, trims, drops empties', () => {
-    expect(splitLines('OLD\nWORLD\n NEW \nSCHOOL')).toEqual(['OLD', 'WORLD', 'NEW', 'SCHOOL'])
-  })
-  it('handles trailing newline and blank rows', () => {
-    expect(splitLines('A\n\nB\n')).toEqual(['A', 'B'])
-  })
-  it('empty / nullish → empty array', () => {
-    expect(splitLines('')).toEqual([])
-    expect(splitLines(null)).toEqual([])
-    expect(splitLines(undefined)).toEqual([])
-  })
-})
+import { stackPositions, lineStaggerOffsets } from '../../app/lib/spacetype/elasticLayout'
 
 describe('stackPositions', () => {
   it('returns one y per line, top→bottom, centered on origin', () => {
