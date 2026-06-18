@@ -16,6 +16,7 @@ import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -142,9 +143,14 @@ loadGoogleCatalog().then((c) => { fontCatalog.value = c })
 // and a datalist has no visible affordance). Open/close + live filter, capped for perf.
 const fontPickerOpen = ref(false)
 const fontSearch = ref('')
+const variableOnly = ref(false)
+// A font is variable when it has a registered axis with an actual range (max > min).
+const isVar = (f: GoogleFont) => f.axes.some(a => a.max > a.min)
+const varAxes = (f: GoogleFont) => f.axes.filter(a => a.max > a.min).map(a => a.tag).join(' ')
 const filteredFonts = computed(() => {
   const q = fontSearch.value.trim().toLowerCase()
-  const list = fontCatalog.value
+  let list = fontCatalog.value
+  if (variableOnly.value) list = list.filter(isVar)
   const matched = q ? list.filter(f => f.family.toLowerCase().includes(q)) : list
   return matched.slice(0, 120)
 })
@@ -570,13 +576,19 @@ async function generateVideo() {
                 </button>
                 <div v-if="fontPickerOpen" class="mt-1 rounded bg-black/40 p-1">
                   <input v-model="fontSearch" placeholder="Search fonts…" autofocus
-                         class="mb-1 w-full rounded bg-white/10 px-2 py-1" />
+                         class="mb-1 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
+                  <label class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
+                    <span>Variable fonts only</span>
+                    <StudioSwitch v-model="variableOnly" />
+                  </label>
                   <div class="max-h-48 overflow-y-auto">
                     <button v-for="f in filteredFonts" :key="f.family" type="button"
                             @click="selectFont(c.key, f.family)"
-                            class="block w-full truncate rounded px-2 py-1 text-left hover:bg-white/10"
+                            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
                             :class="{ 'bg-white/15': params[c.key] === f.family }">
-                      {{ f.family }}
+                      <span class="truncate">{{ f.family }}</span>
+                      <span v-if="isVar(f)" :title="`Variable axes: ${varAxes(f)}`"
+                            class="ml-auto shrink-0 rounded bg-white/15 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-white/70">var</span>
                     </button>
                     <p v-if="!fontCatalog.length" class="px-2 py-1 text-white/40">Loading fonts…</p>
                     <p v-else-if="!filteredFonts.length" class="px-2 py-1 text-white/40">No matches</p>
