@@ -74,6 +74,32 @@ function textLines(p: Params): string[] {
   return ls.length ? ls : [' ']
 }
 
+interface Block { chars: string[]; w: number[]; d: ReturnType<typeof charDeform>[]; lineH: number; natW: number }
+
+/** Measure per-line glyph widths + deformation at a given font size. */
+function measure(
+  ctx: CanvasRenderingContext2D, fs: number, family: string, weight: number,
+  ls: string[], dp: DeformParams, time: number, tracking: number, tight: number,
+): { blocks: Block[]; totalH: number; maxLineW: number } {
+  ctx.font = `${weight} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
+  const cap = fs * 0.72
+  const gap = fs * 0.05 + fs * 0.5 * (1 - tight)
+  let gi = 0
+  let maxLineW = 1
+  const blocks = ls.map(line => {
+    const chars = [...line]
+    const w = chars.map(c => ctx.measureText(c).width)
+    const d = chars.map((c, i) => charDeform(gi + i, time, dp))
+    gi += chars.length
+    const natW = w.reduce((a, wi, i) => a + wi * d[i]!.sx + tracking, 0)
+    if (natW > maxLineW) maxLineW = natW
+    const maxSy = Math.max(0.01, ...d.map(x => x.sy))
+    return { chars, w, d, lineH: cap * maxSy + gap, natW }
+  })
+  const totalH = blocks.reduce((a, b) => a + b.lineH, 0)
+  return { blocks, totalH, maxLineW }
+}
+
 /** Rasterise the per-character deformed text as a white-on-transparent alpha matte. */
 function drawMatte(ctx: CanvasRenderingContext2D, W: number, H: number, params: Params, time: number): void {
   ctx.clearRect(0, 0, W, H)
@@ -84,44 +110,36 @@ function drawMatte(ctx: CanvasRenderingContext2D, W: number, H: number, params: 
   const ls = textLines(params)
   const family = resolveFontFamily(String(params.font))
   const weight = fontHasWeightAxis(family) ? n(params, 'typeWeight') : 400
-  const fs = (H / ls.length) * 0.4
-  ctx.font = `${weight} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
-  const cap = fs * 0.72
   const dp = deformParams(params)
-  const fit = String(params.fitWidth) === 'on'
+  const fitW = String(params.fitWidth) === 'on'
   const tight = n(params, 'lineTight')
   const tracking = n(params, 'tracking')
-  const gap = fs * 0.05 + fs * 0.5 * (1 - tight)
 
-  let gi = 0
-  const blocks = ls.map(line => {
-    const chars = [...line]
-    const w = chars.map(c => ctx.measureText(c).width)
-    const d = chars.map((c, i) => charDeform(gi + i, time, dp))
-    gi += chars.length
-    const maxSy = Math.max(0.01, ...d.map(x => x.sy))
-    return { chars, w, d, lineH: cap * maxSy + gap }
-  })
+  // Size to fit the matte: shrink so the block fits vertically (always) and
+  // horizontally (unless fit-to-width is expanding lines to fill anyway).
+  let fs = (H / ls.length) * 0.42
+  let m = measure(ctx, fs, family, weight, ls, dp, time, tracking, tight)
+  const fit = Math.min(1, (H * 0.94) / m.totalH, fitW ? 1 : (W * 0.92) / m.maxLineW)
+  if (fit < 0.999) { fs *= fit; m = measure(ctx, fs, family, weight, ls, dp, time, tracking, tight) }
 
-  const totalH = blocks.reduce((a, b) => a + b.lineH, 0)
-  let y = (H - totalH) / 2
-  for (const blk of blocks) {
+  let y = (H - m.totalH) / 2
+  for (const blk of m.blocks) {
     const cyc = y + blk.lineH / 2
-    const advNat = blk.w.map((wi, i) => wi * blk.d[i].sx + tracking)
+    const advNat = blk.w.map((wi, i) => wi * blk.d[i]!.sx + tracking)
     const natTotal = advNat.reduce((a, b) => a + b, 0) || 1
-    const fitScale = fit ? (W * 0.92) / natTotal : 1
+    const fitScale = fitW ? (W * 0.92) / natTotal : 1
     const adv = advNat.map(a => a * fitScale)
     let x = (W - adv.reduce((a, b) => a + b, 0)) / 2
     for (let i = 0; i < blk.chars.length; i++) {
-      const dd = blk.d[i]
+      const dd = blk.d[i]!
       ctx.save()
-      ctx.translate(x + adv[i] / 2, cyc)
+      ctx.translate(x + adv[i]! / 2, cyc)
       ctx.rotate(dd.slantRad)
       ctx.transform(1, 0, dd.skewTan, 1, 0, 0)
       ctx.scale(dd.sx * fitScale, dd.sy)
-      ctx.fillText(blk.chars[i], -blk.w[i] / 2, 0)
+      ctx.fillText(blk.chars[i]!, -blk.w[i]! / 2, 0)
       ctx.restore()
-      x += adv[i]
+      x += adv[i]!
     }
     y += blk.lineH
   }
