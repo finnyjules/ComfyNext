@@ -149,6 +149,10 @@ function frontMaterial(
         'vec3 fill = texture2D(uFillTex, vRawUv * uFillTiling).rgb;',
         'diffuseColor = vec4(mix(fill, uTextColor, tTex.a), 1.0);',
       ].join('\n'))
+      // Output diffuseColor directly — full-bright flat look, no lights needed
+      // (the scene has none). Mirrors ribbon/stripes/field; without this the
+      // Lambert lighting path renders the unlit surface black.
+      .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb, 1.0 );')
   }
   return mat
 }
