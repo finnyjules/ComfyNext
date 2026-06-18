@@ -579,6 +579,17 @@ export function drawLocalLayer(
   drawLocalLayerSelf(ctx, layer, W, H)
 }
 
+/**
+ * Render an item's alpha silhouette (full opacity, no effects/blend) onto `ctx`,
+ * sized W×H. Used as the clip source for another item's mask. Wired items render
+ * via their draw closure; local items via their own paint (no nested mask).
+ */
+export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
+  if (item.type === 'wired') { item.draw(ctx, W, H); return }
+  const ghost = { ...item.layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
+  drawLocalLayerSelf(ctx, ghost, W, H)
+}
+
 // A layer's own paint, including its crop (rect/ellipse) region — but NOT any
 // layer-mask, which drawLocalLayer applies around this.
 function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
@@ -815,8 +826,8 @@ function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
 // (Frame node, Compositor modal) and the bake go through paintLayerStack, so
 // masking/effects can't drift between them (the bug-class this prevents).
 export type StackItem =
-  | { type: 'wired'; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
-  | { type: 'local'; layer: LocalLayer }
+  | { type: 'wired'; key: string; draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => void }
+  | { type: 'local'; key: string; layer: LocalLayer }
 
 // Figma background blur: blur the ALREADY-PAINTED backdrop within the layer's
 // silhouette, then the layer paints on top. Operates in device space so it's
@@ -917,7 +928,7 @@ export function drawLocalLayers(
   W: number,
   H: number,
 ) {
-  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local', layer: l })), layers)
+  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l })), layers)
 }
 
 /** Blend-mode name → canvas composite op (shared by node + modal wired draws). */
