@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { elasticEffect } from '../../app/lib/spacetype/effects/elastic'
 import { defaultsFromControls } from '../../app/lib/spacetype/effect'
-import { ELASTIC_MODES } from '../../app/lib/spacetype/elasticMath'
 import { SPACE_TYPE_EFFECTS, getEffect } from '../../app/lib/spacetype/effects/index'
 
 describe('elasticEffect contract', () => {
@@ -12,23 +11,22 @@ describe('elasticEffect contract', () => {
     expect(elasticEffect.controls.some(c => c.kind === 'fillList')).toBe(true)
   })
 
-  it('exposes a mode select listing all five modes', () => {
-    const mode = elasticEffect.controls.find(c => c.key === 'mode')
-    expect(mode?.kind).toBe('select')
-    expect(mode && 'options' in mode ? mode.options : []).toEqual([...ELASTIC_MODES])
-  })
-
-  it('declares the skew + motion controls', () => {
+  it('declares the stretch / skew / warp controls', () => {
     const keys = elasticEffect.controls.map(c => c.key)
-    for (const k of ['textSkew', 'lineSkew', 'lineStagger', 'intensity', 'stretch', 'shear', 'waveLength', 'speed']) {
+    for (const k of [
+      'base', 'ampV', 'ampH', 'randomness', 'speed',
+      'baseSkew', 'ampSkew', 'baseSlant', 'ampSlant',
+      'warp', 'warpScale', 'polygonal', 'fitWidth', 'lineTight', 'scale',
+    ]) {
       expect(keys).toContain(k)
     }
   })
 
-  it('defaultsFromControls round-trips (mode defaults to Wave)', () => {
+  it('defaultsFromControls round-trips (static base stretch = 1, fit off)', () => {
     const d = defaultsFromControls(elasticEffect.controls)
-    expect(d.mode).toBe('Wave')
-    expect(typeof d.intensity).toBe('number')
+    expect(d.base).toBe(1)
+    expect(d.fitWidth).toBe('off')
+    expect(typeof d.warp).toBe('number')
   })
 })
 
