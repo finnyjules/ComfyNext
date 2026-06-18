@@ -1192,8 +1192,14 @@ function forceReloadCanvas() {
 
 // Backend boot/ready loader. Polls the backend; on a genuine restart recovery,
 // reload the (now-stale) iframe against the fresh backend.
+// Guard: while a generation is running, a heavy node can block ComfyUI's event
+// loop long enough that the probe times out — a *false* down→up that must NOT
+// reload the canvas (that mid-run reload was the cause of the flickering).
 const { backendUp, start: startHealthPoll, stop: stopHealthPoll } =
-  useBackendHealth(comfyOrigin, { onRecovered: () => forceReloadCanvas() })
+  useBackendHealth(comfyOrigin, {
+    onRecovered: () => forceReloadCanvas(),
+    suppressRecovery: () => runningCount.value > 0,
+  })
 
 // Truly ready = backend HTTP up AND ComfyUI ready inside the iframe.
 const canvasReady = computed(() => backendUp.value && bridgeReady.value)

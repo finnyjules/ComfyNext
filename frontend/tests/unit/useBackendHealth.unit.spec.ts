@@ -56,6 +56,43 @@ describe('useBackendHealth', () => {
     h.stop()
   })
 
+  it('suppresses onRecovered when suppressRecovery() is true (e.g. a run is active)', async () => {
+    // A heavy run can block the backend's event loop so the probe times out and
+    // we read a false down→up "restart". Reloading the canvas mid-run is what
+    // caused the flicker, so the recovery callback must be suppressed while a
+    // run is active. backendUp must still track reality (it does flip).
+    const onRecovered = vi.fn()
+    const fetchFn = makeFetch([true, false, false, true])
+    const h = useBackendHealth('http://x', {
+      fetchFn, onRecovered, suppressRecovery: () => true,
+      healthyMs: 100, downMs: 50, failures: 2,
+    })
+    h.start()
+    await vi.advanceTimersByTimeAsync(0)     // up → everUp
+    await vi.advanceTimersByTimeAsync(100)   // fail #1 → still up
+    await vi.advanceTimersByTimeAsync(100)   // fail #2 → down
+    await vi.advanceTimersByTimeAsync(50)    // up → would recover, but suppressed
+    expect(onRecovered).not.toHaveBeenCalled()
+    expect(h.backendUp.value).toBe(true)     // state still accurate
+    h.stop()
+  })
+
+  it('still fires onRecovered when suppressRecovery() is false', async () => {
+    const onRecovered = vi.fn()
+    const fetchFn = makeFetch([true, false, false, true])
+    const h = useBackendHealth('http://x', {
+      fetchFn, onRecovered, suppressRecovery: () => false,
+      healthyMs: 100, downMs: 50, failures: 2,
+    })
+    h.start()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(50)
+    expect(onRecovered).toHaveBeenCalledTimes(1)
+    h.stop()
+  })
+
   it('resets the failure counter after recovery (one later fail does not flip down)', async () => {
     // up → 2 fails (down) → up (recovered, counter reset) → 1 fail → still up
     const fetchFn = makeFetch([true, false, false, true, false])

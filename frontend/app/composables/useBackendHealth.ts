@@ -11,6 +11,14 @@ export interface BackendHealth {
 
 export interface BackendHealthOpts {
   onRecovered?: () => void
+  /**
+   * Checked at a would-be recovery; if it returns true, `onRecovered` is
+   * suppressed (backendUp still updates). Use this to ignore a *false* down→up
+   * that a busy backend produces mid-run: a heavy generation can block the
+   * event loop long enough that the probe times out, and reloading the canvas
+   * on that bogus "recovery" tears down the running graph (the flicker).
+   */
+  suppressRecovery?: () => boolean
   healthyMs?: number      // poll interval while up (default 5000)
   downMs?: number         // poll interval while down (default 1500)
   timeoutMs?: number      // per-probe timeout (default 2000)
@@ -60,7 +68,7 @@ export function useBackendHealth(origin: string, opts: BackendHealthOpts = {}): 
       consecutiveFailures = 0
       const wasDown = !backendUp.value
       backendUp.value = true
-      if (wasDown && everUp.value) opts.onRecovered?.()
+      if (wasDown && everUp.value && !opts.suppressRecovery?.()) opts.onRecovered?.()
       everUp.value = true
     } else {
       consecutiveFailures++
