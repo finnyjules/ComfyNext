@@ -478,7 +478,6 @@ async function generateVideo() {
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? 'Generating…' : 'Generate as video' }}
       </StudioButton>
-      <StudioButton variant="subtle" class="ml-auto" @click="closeEditor">Close</StudioButton>
     </template>
     <template #controls>
       <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
@@ -495,11 +494,11 @@ async function generateVideo() {
             <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
               <span>Pan X</span><span class="font-mono text-white/80">{{ panX.toFixed(2) }}</span>
             </label>
-            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" class="studio-range w-full" />
+            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
             <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
               <span>Pan Y</span><span class="font-mono text-white/80">{{ panY.toFixed(2) }}</span>
             </label>
-            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="studio-range w-full" />
+            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
           </template>
         </div>
         <StudioSection
@@ -514,6 +513,7 @@ async function generateVideo() {
               <label v-if="c.kind !== 'slider'" class="mb-1 block text-white/60">{{ c.label }}</label>
               <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
                             :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
+                            :default="Number(c.default ?? 0)"
                             :model-value="Number(params[c.key])"
                             @update:model-value="(v: number) => { params[c.key] = v }" />
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"

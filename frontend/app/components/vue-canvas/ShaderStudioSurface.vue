@@ -251,7 +251,6 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <StudioButton variant="primary" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</StudioButton>
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</StudioButton>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
-      <StudioButton variant="subtle" class="ml-auto" @click="closeEditor">Close</StudioButton>
     </template>
 
     <template #controls>
@@ -285,7 +284,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
             <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
           <input
-            v-else type="range" class="studio-range mb-2 w-full" :min="p.min" :max="p.max" :step="p.step"
+            v-else type="range" v-studio-reset class="studio-range mb-2 w-full" :min="p.min" :max="p.max" :step="p.step"
             :value="effectUniforms[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
           />
         </div>
@@ -313,7 +312,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
         </select>
         <template v-for="f in ([['exposure','Exposure',-2,2],['brightness','Brightness',-1,1],['contrast','Contrast',-1,1],['saturation','Saturation',-1,1],['hue','Hue',-180,180],['temperature','Temperature',-1,1],['tint','Tint',-1,1]] as const)" :key="f[0]">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
-          <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" class="studio-range mb-2 w-full" />
+          <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
         </template>
       </StudioSection>
 
@@ -322,16 +321,16 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
         <div class="mb-1 flex items-center justify-between"><span class="text-xs text-white/70">Lens Blur</span><StudioSwitch v-model="config.post.blur.enabled" /></div>
         <template v-if="config.post.blur.enabled">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Focus range</span><span class="text-white/40">{{ config.post.blur.range.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
+          <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Aperture</span><span class="text-white/40">{{ config.post.blur.aperture.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
+          <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Max blur</span><span class="text-white/40">{{ config.post.blur.maxBlur.toFixed(0) }}</span></label>
-          <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" class="studio-range mb-2 w-full" />
+          <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" v-studio-reset class="studio-range mb-2 w-full" />
         </template>
         <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Chromatic</span><StudioSwitch v-model="config.post.chromatic.enabled" /></div>
         <template v-if="config.post.chromatic.enabled">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Amount</span><span class="text-white/40">{{ config.post.chromatic.amount.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" class="studio-range w-full" />
+          <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
         </template>
       </StudioSection>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Shared slim slider with an optional label + mono value readout. White rail/thumb.
 const model = defineModel<number>({ required: true })
-defineProps<{ label?: string; min: number; max: number; step?: number }>()
+defineProps<{ label?: string; min: number; max: number; step?: number; default?: number }>()
 </script>
 
 <template>
@@ -10,6 +10,6 @@ defineProps<{ label?: string; min: number; max: number; step?: number }>()
       <span class="text-[11px] text-white/55">{{ label }}</span>
       <span class="font-mono text-[11px] text-white/80">{{ Number(model) }}</span>
     </div>
-    <input type="range" v-model.number="model" :min="min" :max="max" :step="step ?? 1" class="studio-range w-full" />
+    <input v-studio-reset :data-default="default" type="range" v-model.number="model" :min="min" :max="max" :step="step ?? 1" class="studio-range w-full" />
   </div>
 </template>
