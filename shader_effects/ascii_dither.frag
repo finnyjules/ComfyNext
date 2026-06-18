@@ -58,7 +58,12 @@ void main() {
     int shp = int(u_shape + 0.5);
     float glyph;
     if (shp < 7) {
-        glyph = geoShape(shp, (inCell - 0.5) * 2.0, g, cell);
+        // The cell is 2:3 (to fit the glyph atlas). Aspect-correct so the GEOMETRIC shapes
+        // (circles/blocks/diamonds/…) stay round/square in screen space instead of stretching
+        // into ovals/rectangles. Glyph shapes (shp >= 7) keep the raw 2:3 cell unchanged.
+        vec2 q = (inCell - 0.5) * 2.0;
+        q.x *= cellPx.x / cellPx.y;
+        glyph = geoShape(shp, q, g, cell);
     } else {
         float gi = min(floor(g * u_glyphCount), u_glyphCount - 1.0);
         int row = shp - 7;
