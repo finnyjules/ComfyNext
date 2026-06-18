@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Dices, Lock, Palette, Plus, Shapes, Trash2, Unlock, X } from 'lucide-vue-next'
+import { Dices, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
-import { buildConfig, defaultConfig, reroll, type RerollScope } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, reroll, rippleConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
@@ -10,7 +10,7 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
-  aspectRatio, cloneConfig, type GradientConfig, type LayoutKind, type ShapeKind,
+  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -27,6 +27,25 @@ const config = ref<GradientConfig>(defaultConfig('#default0'))
 const activeLayer = ref(0)
 const layer = computed(() => config.value.layers[activeLayer.value] ?? config.value.layers[0]!)
 const isRadial = computed(() => config.value.canvas.layout !== 'linear')
+
+// Proxies for the optional center/light fields so v-model stays simple and type-safe
+// (the fields are backfilled by ensureConfigDefaults, but typed optional).
+const centerX = computed({
+  get: () => config.value.canvas.center?.x ?? 0,
+  set: (v: number) => { (config.value.canvas.center ??= { x: 0, y: 0 }).x = v },
+})
+const centerY = computed({
+  get: () => config.value.canvas.center?.y ?? 0,
+  set: (v: number) => { (config.value.canvas.center ??= { x: 0, y: 0 }).y = v },
+})
+const lightAz = computed({
+  get: () => config.value.relief.light?.azimuth ?? 135,
+  set: (v: number) => { (config.value.relief.light ??= { azimuth: 135, elevation: 45 }).azimuth = v },
+})
+const lightEl = computed({
+  get: () => config.value.relief.light?.elevation ?? 45,
+  set: (v: number) => { (config.value.relief.light ??= { azimuth: 135, elevation: 45 }).elevation = v },
+})
 
 // ── rolls history (session-scoped) ──────────────────────────────────────────
 interface Roll { seed: string; thumb: string; cfg: GradientConfig }
@@ -89,6 +108,13 @@ function randomize(scope: RerollScope) {
 }
 function restoreRoll(r: Roll) { config.value = cloneConfig(r.cfg) }
 function clearRolls() { rolls.splice(0, rolls.length) }
+
+// Preset: the 3D-embossed rainbow orbit (the reference look).
+function applyRipple() {
+  config.value = rippleConfig(randomSeed())
+  activeLayer.value = 0
+  pushRoll(config.value)
+}
 
 // ── locks ─────────────────────────────────────────────────────────────────
 function toggleLock(key: string) {
@@ -153,7 +179,7 @@ function downloadExport() {
 // ── config persistence ────────────────────────────────────────────────────────
 function loadConfig() {
   const c = currentNode()?.data?.properties?.comfynext_gradientStudio
-  if (c && typeof c === 'object') config.value = cloneConfig(c)
+  if (c && typeof c === 'object') config.value = ensureConfigDefaults(cloneConfig(c))
 }
 function saveConfig() {
   const n = currentNode(); if (!n) return
@@ -259,6 +285,10 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" @click="randomize('structure')">
             <Shapes class="h-3.5 w-3.5" /> Structure <span class="text-white/30">S</span>
           </button>
+          <div class="mx-0.5 h-5 w-px bg-white/10" />
+          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the 3D rainbow-ripple preset" @click="applyRipple">
+            <Sparkles class="h-3.5 w-3.5" /> Ripple
+          </button>
         </div>
       </div>
     </template>
@@ -298,6 +328,10 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <template v-if="isRadial">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
           <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" class="mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center X</span><span class="text-white/40">{{ centerX.toFixed(2) }}</span></label>
+          <input v-model.number="centerX" type="range" min="-0.5" max="0.5" step="0.01" class="mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center Y</span><span class="text-white/40">{{ centerY.toFixed(2) }}</span></label>
+          <input v-model.number="centerY" type="range" min="-0.5" max="0.5" step="0.01" class="mb-2 w-full" />
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
         <input v-model="config.canvas.background" type="color" class="h-7 w-full rounded" />
@@ -308,7 +342,11 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
         <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
-        <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" class="w-full" />
+        <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
+        <input v-model.number="lightAz" type="range" min="0" max="360" step="1" class="mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
+        <input v-model.number="lightEl" type="range" min="0" max="90" step="1" class="w-full" />
       </StudioSection>
 
       <!-- Layers -->

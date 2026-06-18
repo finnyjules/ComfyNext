@@ -8,7 +8,8 @@ import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { GRADIENT_FS, GRADIENT_VS } from './shaders'
 import {
-  aspectRatio, type BlendKind, type Direction, type GradientConfig,
+  aspectRatio, canvasCenter, lightVector, reliefLight,
+  type BlendKind, type Direction, type GradientConfig,
   type LayoutKind, type MappingKind,
 } from './types'
 
@@ -137,6 +138,11 @@ class GradientFxRenderer {
     gl.uniform3f(u('u_bg'), bg.r / 255, bg.g / 255, bg.b / 255)
     gl.uniform1f(u('u_grain'), c.relief.grain)
     gl.uniform1f(u('u_relief'), c.relief.relief)
+    const light = reliefLight(c.relief)
+    const lv = lightVector(light.azimuth, light.elevation)
+    gl.uniform3f(u('u_light'), lv[0], lv[1], lv[2])
+    const ctr = canvasCenter(c.canvas)
+    gl.uniform2f(u('u_center'), ctr.x, ctr.y)
     gl.uniform1f(u('u_layerCount'), layers.length)
 
     gl.uniform1fv(u('u_count'), arr(counts))
