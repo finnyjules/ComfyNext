@@ -18,6 +18,20 @@ export interface ColorStop {
   pos: number
 }
 
+export interface LightConfig {
+  /** Light azimuth, degrees (0..360) — direction the light comes from in the screen plane. */
+  azimuth: number
+  /** Light elevation, degrees (0..90) — 90 = head-on, low = raking light. */
+  elevation: number
+}
+
+export interface CenterOffset {
+  /** Radial/orbit origin X offset, -0.5..0.5 (0 = centered). */
+  x: number
+  /** Radial/orbit origin Y offset, -0.5..0.5 (0 = centered). */
+  y: number
+}
+
 export interface ShapeConfig {
   type: ShapeKind
   /** Number of bars / angular slices. */
@@ -80,6 +94,8 @@ export interface CanvasConfig {
   innerRadius: number
   /** Background hex. */
   background: string
+  /** Radial/orbit origin offset (optional for back-compat; defaults to {0,0}). */
+  center?: CenterOffset
 }
 
 export interface ReliefConfig {
@@ -87,6 +103,8 @@ export interface ReliefConfig {
   grain: number
   /** Relief shading amount, 0..1. */
   relief: number
+  /** Directional light for the 3D emboss (optional for back-compat; defaults to DEFAULT_LIGHT). */
+  light?: LightConfig
 }
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
@@ -141,6 +159,43 @@ export const GRADIENT_DIRS: GradientDir[] = ['vertical', 'horizontal']
 export function aspectRatio(a: string): number {
   const [w, h] = a.split(':').map(Number)
   return w && h ? w / h : 1
+}
+
+/** Default light: upper-left, mid elevation — flattering emboss. */
+export const DEFAULT_LIGHT: LightConfig = { azimuth: 135, elevation: 45 }
+/** Default origin: centered. */
+export const DEFAULT_CENTER: CenterOffset = { x: 0, y: 0 }
+
+/**
+ * Convert azimuth/elevation (degrees) to a normalized 3D light direction.
+ * x/y lie in the screen plane (y up), z points out toward the viewer.
+ * azimuth 0 → +X, azimuth 90 → +Y, elevation 90 → +Z.
+ */
+export function lightVector(azimuth: number, elevation: number): [number, number, number] {
+  const az = (azimuth * Math.PI) / 180
+  const el = (elevation * Math.PI) / 180
+  const cz = Math.cos(el)
+  return [cz * Math.cos(az), cz * Math.sin(az), Math.sin(el)]
+}
+
+/** Light direction with the default applied when a config omits it. */
+export function reliefLight(relief: ReliefConfig): LightConfig {
+  return relief.light ?? DEFAULT_LIGHT
+}
+
+/** Center offset with the default applied when a config omits it. */
+export function canvasCenter(canvas: CanvasConfig): CenterOffset {
+  return canvas.center ?? DEFAULT_CENTER
+}
+
+/**
+ * Backfill optional fields added after the original schema so persisted node
+ * blobs keep working. Mutates `cfg` in place and returns it.
+ */
+export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
+  if (!cfg.canvas.center) cfg.canvas.center = { ...DEFAULT_CENTER }
+  if (!cfg.relief.light) cfg.relief.light = { ...DEFAULT_LIGHT }
+  return cfg
 }
 
 /**

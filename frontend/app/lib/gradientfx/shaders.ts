@@ -28,6 +28,8 @@ uniform float u_innerRadius;
 uniform vec3  u_bg;
 uniform float u_grain;
 uniform float u_relief;
+uniform vec3  u_light;         // normalized light dir (x,y in screen plane, z toward viewer)
+uniform vec2  u_center;        // radial/orbit origin offset
 uniform float u_layerCount;    // 1 or 2
 
 // Per-layer params (index 0,1).
@@ -97,13 +99,16 @@ vec3 rotateHue(vec3 col, float deg) {
   return hsl2rgb(hsl);
 }
 
+// textureLod (explicit LOD 0) — the field/ramp textures are mip-less so the result
+// is identical to texture(), but it stays well-defined when sampled from the relief
+// height function, which runs in non-uniform control flow.
 float sampleField(int i, float x) {
-  return i == 0 ? texture(u_field0, vec2(clamp(x, 0.0, 1.0), 0.5)).r
-                : texture(u_field1, vec2(clamp(x, 0.0, 1.0), 0.5)).r;
+  return i == 0 ? textureLod(u_field0, vec2(clamp(x, 0.0, 1.0), 0.5), 0.0).r
+                : textureLod(u_field1, vec2(clamp(x, 0.0, 1.0), 0.5), 0.0).r;
 }
 vec3 sampleRamp(int i, float t) {
-  return i == 0 ? texture(u_ramp0, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb
-                : texture(u_ramp1, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
+  return i == 0 ? textureLod(u_ramp0, vec2(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb
+                : textureLod(u_ramp1, vec2(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb;
 }
 
 float quantize(float t, float steps) {
@@ -175,7 +180,7 @@ vec4 computeLayer(int i, vec2 p) {
   // field offsets the gradient per band → a circular wave. Radial = angular bands
   // with a radial gradient; Orbit = concentric ring bands with an angular gradient.
   bool orbit = u_layout > 1.5;
-  vec2 d = p - 0.5;
+  vec2 d = p - 0.5 - u_center;
   d.x *= u_aspect;
   float r = length(d) * 2.0;                       // 0 centre .. ~1 edge
   float angN = fract(atan(d.y, d.x) / TAU + 0.5 + u_scrub[i]);
@@ -215,14 +220,71 @@ vec4 computeLayer(int i, vec2 p) {
   float f = mix(fc, fn, smoothstep(0.55, 1.0, abs(bl - 0.5) * 2.0) * blendAmt);
 
   float t;
-  if (mapping < 0.5)      t = band;                     // across (along bands)
-  else if (mapping < 1.5) t = f;                        // per bar (flat color per band)
-  else                    t = grad - (f - 0.5) * 1.15;  // field (offset gradient)
+  bool tWraps;                                          // does t derive from the angular coord?
+  if (mapping < 0.5)      { t = band;                    tWraps = !orbit; }      // across: orbit band=radius, radial band=angle
+  else if (mapping < 1.5) { t = f;                       tWraps = false; }       // per bar (flat color per band)
+  else                    { t = grad - (f - 0.5) * 1.15; tWraps = orbit ? !gradHoriz : gradHoriz; } // field (offset gradient)
   t += u_hueDrift[i] / 360.0 * (band - 0.5);
   t = quantize(t, u_steps[i]);
+  // Angular gradients wrap 360°: fract makes a ramp whose ends match seamless (no seam).
+  if (tWraps) t = fract(t);
 
   vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
   return vec4(col, colMask);
+}
+
+// Height of the embossed band/ring surface at screen point q for layer i, used by
+// the relief lighting. Mirrors computeLayer's band mapping but returns a scalar height:
+// a rounded ridge per band (peaking mid-band) scaled by the band's field depth. Returns
+// 0 outside the mask so the background reads as flat. No derivative ops here, so the
+// early-returns are safe.
+float bandHeight(int i, vec2 q) {
+  float count = max(1.0, u_count[i]);
+  bool mirrorH = u_mirrorH[i] > 0.5;
+  bool mirrorV = u_mirrorV[i] > 0.5;
+  float band;
+
+  if (u_layout < 0.5) {
+    float m = u_margin;
+    vec2 uv = (q - m) / max(1.0 - 2.0 * m, 0.001);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    if (mirrorH) uv.x = 1.0 - abs(2.0 * uv.x - 1.0);
+    if (mirrorV) uv.y = 1.0 - abs(2.0 * uv.y - 1.0);
+    int dir = int(u_dir[i] + 0.5);
+    bool vertBands = (dir == 0 || dir == 2);
+    band = vertBands ? uv.x : uv.y;
+  } else {
+    bool orbit = u_layout > 1.5;
+    vec2 d = q - 0.5 - u_center;
+    d.x *= u_aspect;
+    float r = length(d) * 2.0;
+    float angN = fract(atan(d.y, d.x) / TAU + 0.5 + u_scrub[i]);
+    float sweep = clamp(u_sweep[i], 0.02, 1.0);
+    if (angN > sweep) return 0.0;
+    angN /= sweep;
+    float inner = u_innerRadius;
+    float outer = 1.0 - u_margin;
+    float rN = (r - inner) / max(outer - inner, 0.001);
+    if (rN < 0.0 || rN > 1.0) return 0.0;
+    if (mirrorH) angN = 1.0 - abs(2.0 * angN - 1.0);
+    if (mirrorV) rN = 1.0 - abs(2.0 * rN - 1.0);
+    band = orbit ? rN : angN;
+  }
+
+  // Honour the gap: zero height in the background slot between bands.
+  float bl = fract(band * count);
+  float gap = u_gap[i];
+  if (gap > 0.001) {
+    float hg = gap * 0.5;
+    if (bl < hg || bl > 1.0 - hg) return 0.0;
+  }
+  float bi = floor(band * count);
+  float f = sampleField(i, (bi + 0.5) / count);
+
+  // Rounded ridge within the band: sin peaks mid-band; Rounding fattens the tube.
+  float ridge = sin(clamp(bl, 0.0, 1.0) * PI);
+  ridge = pow(ridge, mix(2.2, 0.6, u_rounding[i]));
+  return f * ridge;
 }
 
 vec3 blendLayers(vec3 base, vec3 src, float mode) {
@@ -249,10 +311,19 @@ void main() {
     col = mix(col, blended, l1.a * u_opacity[1]);
   }
 
-  // Relief: gentle vertical shading from the luminance gradient feel.
+  // 3D relief: light the band/ring height-field of layer 0 (the primary structure).
+  // Finite-difference normal from bandHeight, Lambert-shaded against u_light. Sidesteps
+  // dFdx, which is undefined here because bandHeight early-returns at the mask edges.
   if (u_relief > 0.001) {
-    float sh = 0.5 + 0.5 * sin((p.y + p.x * 0.2) * PI);
-    col *= mix(1.0, 0.82 + 0.36 * sh, u_relief);
+    float e = 1.5 / u_resolution.y;            // ~1.5px step in normalized units
+    float h  = bandHeight(0, p);
+    float hx = bandHeight(0, p + vec2(e, 0.0));
+    float hy = bandHeight(0, p + vec2(0.0, e));
+    const float bump = 0.045;                  // slope-to-normal scale (emboss height)
+    vec3 n = normalize(vec3(-(hx - h) / e * bump, -(hy - h) / e * bump, 1.0));
+    float diff = clamp(dot(n, normalize(u_light)), 0.0, 1.0);
+    float shade = mix(0.48, 1.12, diff);       // ambient floor .. slight key overbright
+    col *= mix(1.0, shade, u_relief);
   }
 
   // Film grain.

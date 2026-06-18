@@ -4,8 +4,9 @@
 import { hslToRgb, rgbToHex } from './ramp'
 import { makeRng, randomSeed, type Rng } from './rng'
 import {
-  BLEND_MODES, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
-  type ColorConfig, type ColorStop, type GradientConfig, type LayerConfig, type ShapeConfig,
+  BLEND_MODES, DEFAULT_CENTER, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
+  type CenterOffset, type ColorConfig, type ColorStop, type GradientConfig, type LayerConfig,
+  type LightConfig, type ShapeConfig,
 } from './types'
 
 export type RerollScope = 'all' | 'colors' | 'structure'
@@ -98,12 +99,60 @@ function randLayer(rng: Rng, primary: boolean): LayerConfig {
   }
 }
 
+/** Random light direction; gentle off-axis bias so the emboss reads. */
+function randLight(rng: Rng): LightConfig {
+  return { azimuth: rng.range(0, 360), elevation: rng.range(25, 65) }
+}
+
+/** Random origin offset for radial/orbit — small so the disc stays roughly framed. */
+function randCenter(rng: Rng): CenterOffset {
+  return { x: rng.range(-0.18, 0.18), y: rng.range(-0.18, 0.18) }
+}
+
+/**
+ * Full-spectrum angular ramp (blue → cyan → yellow → orange → pink), wrapping back
+ * to blue so an orbit's angular gradient has no visible seam.
+ */
+export function spectrumStops(): ColorStop[] {
+  return [
+    { color: '#3b4cff', pos: 0 },
+    { color: '#37d0e6', pos: 0.22 },
+    { color: '#e6f23a', pos: 0.46 },
+    { color: '#f0a35a', pos: 0.7 },
+    { color: '#f7b8d8', pos: 0.86 },
+    { color: '#3b4cff', pos: 1 },
+  ]
+}
+
+/**
+ * The "Rainbow ripple" preset — concentric 3D-embossed orbit rings under a spectrum
+ * angular ramp, rippling from a slightly low-set core. Reproduces the reference look.
+ */
+export function rippleConfig(seed = randomSeed()): GradientConfig {
+  return {
+    seed,
+    canvas: { aspect: '1:1', layout: 'orbit', margin: 0.06, innerRadius: 0, background: '#000000', center: { x: 0, y: 0.08 } },
+    relief: { grain: 0.12, relief: 0.85, light: { azimuth: 135, elevation: 42 } },
+    layers: [
+      {
+        blend: 'normal', opacity: 1,
+        // High minDepth → rings are near-uniform tubes; rounding fattens the ridge.
+        shape: { type: 'bands', count: 10, minDepth: 0.78, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.88, direction: 'up', mirror: 'none', valley: 0.5 },
+        // Angular spectrum: vertical gradientDir + field mapping runs the ramp around the ring.
+        color: { stops: spectrumStops(), gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+      },
+    ],
+    motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
+    locks: {},
+  }
+}
+
 /** A sensible default config (used for a brand-new node before any randomize). */
 export function defaultConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
-    canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000' },
-    relief: { grain: 0.22, relief: 0 },
+    canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
+    relief: { grain: 0.22, relief: 0, light: { ...DEFAULT_LIGHT } },
     layers: [
       {
         blend: 'normal', opacity: 1,
@@ -131,8 +180,9 @@ export function buildConfig(seed: string): GradientConfig {
       margin: rng.range(0, 0.18),
       innerRadius: rng.range(0.2, 0.6),
       background: rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25)),
+      center: rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER },
     },
-    relief: { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5) },
+    relief: { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) },
     layers,
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
     locks: {},
@@ -158,7 +208,13 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
     next.canvas.background = rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25))
     next.canvas.margin = rng.range(0, 0.18)
   }
-  if (scope === 'all') next.relief = { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5) }
+  if (scope === 'all') {
+    next.relief = { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) }
+    next.canvas.center = rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER }
+  }
+  // Always guarantee the optional fields exist after any re-roll (back-compat).
+  if (!next.relief.light) next.relief.light = { ...DEFAULT_LIGHT }
+  if (!next.canvas.center) next.canvas.center = { ...DEFAULT_CENTER }
 
   // Optionally flip the layer count on a full roll.
   if (scope === 'all' && !locks.structure) {
