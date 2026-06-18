@@ -10,7 +10,7 @@ const isOpen = ref(props.open)
 
 <template>
   <details :open="isOpen" @toggle="isOpen = ($event.target as HTMLDetailsElement).open"
-           class="studio-glass relative shrink-0 overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
+           class="relative shrink-0 overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
     <div class="studio-sheen" aria-hidden="true"></div>
     <summary class="relative z-10 flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2.5 text-[11px] font-medium text-white/50 [&::-webkit-details-marker]:hidden">
       <span class="flex items-center gap-1.5">
@@ -29,8 +29,8 @@ const isOpen = ref(props.open)
 
 <style scoped>
 /* Frosted look without backdrop-filter (invisible over the solid bg, and a per-scroll-frame
-   cost): a translucent fill + a bright top edge. The fill comes from the bg-white utility. */
-.studio-glass { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+   cost): a translucent fill (the bg-white utility) + the uniform hairline border + a faint
+   drifting sheen. No top edge-highlight — it read as a heavier top border. */
 .studio-sheen { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 /* Two parallax specular sheens drifting with scroll. Driven by `transform` (compositor-only —
    no layout/paint), so scrolling stays smooth. */
