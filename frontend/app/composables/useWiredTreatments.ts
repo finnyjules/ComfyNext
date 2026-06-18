@@ -21,8 +21,16 @@ function writeWiredTreatments(node: any, next: WiredTreatments) {
 export function setWiredMask(node: any, slot: number, maskedByKey: string) {
   const key = `w:${slot}`
   const cur = { ...readWiredTreatments(node) }
-  if (maskedByKey) cur[key] = { ...cur[key], maskedByKey }
-  else { const t = { ...cur[key] }; delete t.maskedByKey; if (Object.keys(t).length) cur[key] = t; else delete cur[key] }
+  if (maskedByKey) {
+    cur[key] = { ...cur[key], maskedByKey }
+  } else {
+    // Drop the mask ref; preserve any other fields on this entry, and remove the
+    // entry entirely if it's now empty (avoids stale w:<slot> keys lingering).
+    const t = { ...cur[key] }
+    delete t.maskedByKey
+    if (Object.keys(t).length) cur[key] = t
+    else delete cur[key]
+  }
   writeWiredTreatments(node, cur)
 }
 
