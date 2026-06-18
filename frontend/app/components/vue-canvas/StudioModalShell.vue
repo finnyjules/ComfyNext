@@ -3,8 +3,24 @@
 // (title · breadcrumb · esc/close, separated from the body by spacing — no divider rule)
 // + big preview/actions on the left and a scrollable controls column on the right. No
 // vertical rail seam. Change the chrome here and all three editors update.
+//
+// The controls column publishes its scroll offset as the `--studio-scroll` CSS var so the
+// frosted-glass StudioSection cards can drift their specular/refraction as you scroll.
+import { ref } from 'vue'
+
 defineProps<{ title?: string; breadcrumb?: string }>()
 const emit = defineEmits<{ close: [] }>()
+
+const controlsEl = ref<HTMLElement | null>(null)
+let raf = 0
+function onControlsScroll() {
+  if (raf) return
+  raf = requestAnimationFrame(() => {
+    raf = 0
+    const el = controlsEl.value
+    if (el) el.style.setProperty('--studio-scroll', String(el.scrollTop))
+  })
+}
 </script>
 
 <template>
@@ -26,8 +42,14 @@ const emit = defineEmits<{ close: [] }>()
           <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
-        <div class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0"><slot name="controls" /></div>
+        <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0"><slot name="controls" /></div>
       </div>
     </div>
+    <svg width="0" height="0" class="pointer-events-none absolute" aria-hidden="true">
+      <filter id="studioRefract" x="-30%" y="-30%" width="160%" height="160%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.015 0.025" numOctaves="2" seed="7" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="12" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </svg>
   </div>
 </template>
