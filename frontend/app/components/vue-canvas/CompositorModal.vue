@@ -974,6 +974,58 @@ async function bakeMotion() {
   }
 }
 
+// Static Render freshness: hash the inputs that affect the client-side composite.
+function staticSourceKey(): string {
+  const { W, H } = bakeSize()
+  const s = JSON.stringify({
+    local: localLayers.value, order: stackKeys.value,
+    treatments: wiredTreatments.value, wired: layers.value, W, H,
+  })
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return (h >>> 0).toString(36)
+}
+const lastRenderKey = computed<string | null>(() =>
+  (compositor.value?.data?.properties as any)?.comfynext_renderKey ?? null)
+const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
+const rendering = ref(false)
+
+// Render the static unified stack to a PNG blob at W×H (no motion, no preview skip).
+async function renderStaticComposite(W: number, H: number): Promise<Blob | null> {
+  const off = document.createElement('canvas')
+  off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
+  const ctx = off.getContext('2d'); if (!ctx) return null
+  await ensureLayerImages(localLayers.value as LocalLayer[])
+  await ensureLayerFonts(localLayers.value as LocalLayer[], W)
+  paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
+    undefined, undefined, undefined, wiredTreatments.value)
+  return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
+}
+
+async function renderFrame() {
+  const node = compositor.value
+  if (!node || rendering.value) return
+  if (previewT.value != null) { await bakeMotion(); return } // motion frame → existing bake path
+  rendering.value = true
+  try {
+    const { W, H } = bakeSize()
+    const blob = await renderStaticComposite(W, H)
+    if (!blob) return
+    const file = new File([blob], `comfynext_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
+    const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
+    const name = (await res.json())?.name || file.name
+    const p = (node.data.properties ||= {})
+    p.comfynext_renderKey = staticSourceKey()
+    node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
+  } catch (err) {
+    console.error('[compositor render]', err)
+  } finally {
+    rendering.value = false
+  }
+}
+
 const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
 
 // One StackItem builder shared by the live preview AND the motion bake, so the
@@ -1589,13 +1641,24 @@ onUnmounted(() => {
 
     <!-- Center canvas -->
     <div class="flex-1 relative flex items-center justify-center overflow-hidden">
-      <button
-        class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
-        title="Close (Esc)"
-        @click="emit('close')"
-      >
-        <X class="size-4" />
-      </button>
+      <div class="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <button
+          class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+          :disabled="rendering || baking"
+          :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
+          @click="renderFrame">
+          <Play class="size-3" />
+          {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
+        </button>
+        <button
+          class="flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+          title="Close (Esc)"
+          @click="emit('close')"
+        >
+          <X class="size-4" />
+        </button>
+      </div>
 
       <div
         ref="canvasRef"
@@ -2491,6 +2554,17 @@ onUnmounted(() => {
                 <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
               </select>
             </div>
+          </div>
+
+          <!-- Mask: clip this layer to another layer's silhouette (cross-source) -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
+            <select :value="currentMaskRef(wiredKey(selected.slot))"
+              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              @change="setMaskRef(wiredKey(selected.slot), ($event.target as HTMLSelectElement).value)">
+              <option value="">No mask</option>
+              <option v-for="o in maskCandidates(wiredKey(selected.slot))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
+            </select>
           </div>
         </div>
         <div v-else class="p-4 text-xs text-white/40 italic">
