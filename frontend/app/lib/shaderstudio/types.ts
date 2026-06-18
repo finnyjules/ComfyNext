@@ -111,9 +111,16 @@ export function cloneConfig(c: ShaderStudioConfig): ShaderStudioConfig {
 }
 
 /** Fit (w,h) inside a long-edge cap, preserving aspect, returning even integers. */
-export function outputDims(srcW: number, srcH: number, cap: number): { w: number; h: number } {
+export function outputDims(
+  srcW: number,
+  srcH: number,
+  cap: number,
+  opts: { upscale?: boolean } = {},
+): { w: number; h: number } {
   const long = Math.max(srcW, srcH)
-  const scale = long > cap ? cap / long : 1
+  // Default: `cap` is a downscale ceiling (used by the preview). With upscale,
+  // it's a true target long edge — scale smaller sources up to match it.
+  const scale = opts.upscale || long > cap ? cap / long : 1
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
   return { w: even(srcW * scale), h: even(srcH * scale) }
 }

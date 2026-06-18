@@ -166,7 +166,7 @@ function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
 async function renderBlob(t: number): Promise<Blob> {
   const base = baseImage.value!
-  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution)
+  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
   const cfg = animated.value ? applyMotion(config.value, t) : config.value
   shaderFx.render(composePasses(cfg, effectDef.value, t, texBundle(effectDef.value)), base, w, h)
   const c = shaderFx.outputCanvas!
@@ -196,7 +196,7 @@ async function generateVideo() {
   try {
     const base = baseImage.value
     const m = config.value.motion
-    const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution)
+    const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
     const total = Math.max(1, Math.round(m.fps * m.duration))
     const bakeCfg = { fps: m.fps, loopDuration: m.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
     const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
@@ -215,6 +215,15 @@ async function generateVideo() {
 }
 
 const RESOLUTIONS = [1024, 1536, 2048, 4096]
+
+// Live readout of the baked output size (the preview is a fixed-size proxy, so
+// this is the only place the resolution choice is visible before exporting).
+const outputSizeLabel = computed(() => {
+  const base = baseImage.value
+  if (!base) return null
+  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
+  return `${w} × ${h}`
+})
 
 onMounted(async () => { loadConfig(); catalog.value = await fetchShaderFxCatalog().catch(() => null); startPreview() })
 onBeforeUnmount(() => { saveConfig(); stopPreview() })
@@ -327,9 +336,10 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <!-- Output -->
       <StudioSection title="Output" :open="false">
         <label class="mb-1 block text-xs text-white/60">Resolution (long edge)</label>
-        <select v-model.number="config.resolution" class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs">
+        <select v-model.number="config.resolution" class="mb-1 w-full rounded bg-white/10 px-2 py-1 text-xs">
           <option v-for="r in RESOLUTIONS" :key="r" :value="r">{{ r }}px</option>
         </select>
+        <p v-if="outputSizeLabel" class="text-[11px] text-white/40">Output: {{ outputSizeLabel }}px</p>
       </StudioSection>
 
       <StudioSection title="Motion" :open="false">

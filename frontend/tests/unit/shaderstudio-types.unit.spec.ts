@@ -31,4 +31,11 @@ describe('shaderstudio types', () => {
     // smaller than cap → unchanged (even dims)
     expect(outputDims(300, 200, 4096)).toEqual({ w: 300, h: 200 })
   })
+
+  it('outputDims treats the target as a true long edge when upscale is enabled', () => {
+    // source smaller than target → upscales to the target long edge
+    expect(outputDims(800, 600, 2048, { upscale: true })).toEqual({ w: 2048, h: 1536 })
+    // source larger than target → still scales down to the target
+    expect(outputDims(4000, 3000, 1024, { upscale: true })).toEqual({ w: 1024, h: 768 })
+  })
 })

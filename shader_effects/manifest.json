@@ -2143,6 +2143,108 @@
           "step": 0.02
         }
       ]
+    },
+    {
+      "id": "blinds",
+      "name": "Fluted Glass",
+      "category": "distortion",
+      "animated": false,
+      "passes": 1,
+      "centerParam": ["u_centerX", "u_centerY"],
+      "textures": [],
+      "params": [
+        {
+          "uniform": "u_mode",
+          "label": "Pattern",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Linear", "value": 0 },
+            { "label": "Concentric", "value": 1 }
+          ]
+        },
+        {
+          "uniform": "u_refraction",
+          "label": "Refraction",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.2,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_count",
+          "label": "Flutes",
+          "type": "float",
+          "min": 1.0,
+          "max": 120.0,
+          "default": 28.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_depth",
+          "label": "Rib Shading",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_shadeWidth",
+          "label": "Shade Width",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.02
+        },
+        {
+          "uniform": "u_chromatic",
+          "label": "Dispersion",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.05,
+          "default": 0.01,
+          "step": 0.001
+        },
+        {
+          "uniform": "u_blur",
+          "label": "Blur",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.04,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_angle",
+          "label": "Angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 180.0,
+          "default": 90.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ]
     }
   ]
 }
