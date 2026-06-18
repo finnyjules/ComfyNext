@@ -15,6 +15,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -533,15 +534,14 @@ async function generateVideo() {
                   <select v-model="f.type" class="min-w-0 flex-1 rounded bg-white/10 px-1 py-1">
                     <option v-for="ft in FILL_TYPES" :key="ft" :value="ft">{{ ft }}</option>
                   </select>
-                  <input type="color" v-model="f.a" class="h-7 w-6 shrink-0 rounded" title="Stripe color" />
-                  <input v-if="fillNeedsB(f)" type="color" v-model="f.b" class="h-7 w-6 shrink-0 rounded"
-                         title="Stripe color 2" />
+                  <StudioColor v-model="f.a" />
+                  <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
                   <input v-if="f.type === 'stripes'" type="range" v-model.number="f.angle"
                          min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" title="Stripe angle" />
                   <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
                          v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range w-14 shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>
-                  <input type="color" v-model="f.textColor" class="h-7 w-6 shrink-0 rounded" title="Text color" />
+                  <StudioColor v-model="f.textColor" />
                   <button v-if="fills.length > 1" type="button" @click="removeFill(i)"
                           class="shrink-0 rounded px-1 py-1 text-white/40 hover:bg-white/10 hover:text-white">−</button>
                 </div>
@@ -554,7 +554,8 @@ async function generateVideo() {
                 drag points/handles to adjust. <b>Enter</b> = new string, <b>Del</b> = remove,
                 <b>Reset</b> clears.
               </p>
-              <input v-else-if="c.kind === 'color'" type="color" v-model="params[c.key]" @input="rebuild" />
+              <StudioColor v-else-if="c.kind === 'color'" :model-value="String(params[c.key])"
+                           @update:model-value="(val: string) => { params[c.key] = val; rebuild() }" />
               <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"
                                :options="c.options ?? []" :model-value="String(params[c.key])"
                                @update:model-value="(v: string) => { params[c.key] = v; rebuild() }" />
@@ -618,7 +619,7 @@ async function generateVideo() {
               </label>
               <div v-if="!transparent" data-control class="text-xs">
                 <label class="mb-1 block text-white/60">Background color</label>
-                <input type="color" v-model="bgColor" />
+                <StudioColor v-model="bgColor" />
               </div>
             </template>
           </div>

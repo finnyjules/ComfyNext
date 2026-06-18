@@ -9,6 +9,7 @@ import { ANIMATABLE } from '~/lib/gradientfx/motion'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type ShapeKind,
@@ -334,7 +335,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <input v-model.number="centerY" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
-        <input v-model="config.canvas.background" type="color" class="h-7 w-full rounded" />
+        <StudioColor v-model="config.canvas.background" />
       </StudioSection>
 
       <!-- Relief & grain -->
@@ -429,7 +430,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <StudioSection title="Color" :badge="`Layer ${activeLayer + 1}`">
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
-            <input v-model="stop.color" type="color" class="h-7 w-8 shrink-0 rounded" />
+            <StudioColor v-model="stop.color" />
             <input v-studio-reset v-model.number="stop.pos" type="range" min="0" max="1" step="0.01" class="studio-range min-w-0 flex-1" />
             <span class="w-9 shrink-0 text-right text-[10px] text-white/40">{{ Math.round(stop.pos * 100) }}%</span>
             <button v-if="layer.color.stops.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeStop(i)"><Trash2 class="h-3 w-3" /></button>

@@ -7,6 +7,7 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
+import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
@@ -294,8 +295,8 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <StudioSection title="Duotone" :open="false">
         <template #badge><StudioSwitch v-model="config.duotone.enabled" /></template>
         <div class="mb-2 flex items-center gap-2">
-          <label class="text-[11px] text-white/60">Ink</label><input v-model="config.duotone.ink" type="color" class="h-7 w-10 rounded" />
-          <label class="text-[11px] text-white/60">Paper</label><input v-model="config.duotone.paper" type="color" class="h-7 w-10 rounded" />
+          <label class="text-[11px] text-white/60">Ink</label><StudioColor v-model="config.duotone.ink" />
+          <label class="text-[11px] text-white/60">Paper</label><StudioColor v-model="config.duotone.paper" />
         </div>
         <div class="grid grid-cols-4 gap-1">
           <button v-for="p in DUOTONE_PRESETS" :key="p.name" class="h-7 overflow-hidden rounded border border-white/10" :title="p.name" @click="pickDuotone(p)">
