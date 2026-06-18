@@ -585,7 +585,12 @@ export function drawLocalLayer(
  * via their draw closure; local items via their own paint (no nested mask).
  */
 export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
-  if (item.type === 'wired') { item.draw(ctx, W, H); return }
+  if (item.type === 'wired') {
+    ctx.save()
+    item.draw(ctx, W, H)
+    ctx.restore()
+    return
+  }
   const ghost = { ...item.layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
   drawLocalLayerSelf(ctx, ghost, W, H)
 }
