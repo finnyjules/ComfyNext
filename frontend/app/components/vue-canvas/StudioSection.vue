@@ -10,7 +10,7 @@ const isOpen = ref(props.open)
 
 <template>
   <details :open="isOpen" @toggle="isOpen = ($event.target as HTMLDetailsElement).open"
-           class="studio-glass relative overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
+           class="studio-glass relative shrink-0 overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
     <div class="studio-sheen" aria-hidden="true"></div>
     <summary class="relative z-10 flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2.5 text-[11px] font-medium text-white/50 [&::-webkit-details-marker]:hidden">
       <span class="flex items-center gap-1.5">
@@ -46,10 +46,10 @@ const isOpen = ref(props.open)
 }
 .studio-sheen::before {
   transform: translateY(calc(var(--studio-scroll, 0) * 0.4px));
-  background: linear-gradient(115deg, transparent 43%, rgba(255, 255, 255, 0.13) 50%, transparent 57%);
+  background: linear-gradient(115deg, transparent 18%, rgba(255, 255, 255, 0.055) 50%, transparent 82%);
 }
 .studio-sheen::after {
   transform: translateY(calc(var(--studio-scroll, 0) * 0.22px));
-  background: linear-gradient(115deg, transparent 47%, rgba(255, 255, 255, 0.05) 50%, transparent 53%);
+  background: linear-gradient(115deg, transparent 28%, rgba(255, 255, 255, 0.03) 50%, transparent 72%);
 }
 </style>
