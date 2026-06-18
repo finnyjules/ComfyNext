@@ -102,7 +102,7 @@ export const cascadeEffect: SpaceTypeEffect = {
   controls,
 
   // Cascade builds its own per-glyph texture via layoutChars; the shared one is ignored.
-  buildScene(three, params, _textTexture) {
+  buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
     state = null
@@ -110,7 +110,7 @@ export const cascadeEffect: SpaceTypeEffect = {
     const family = resolveFontFamily(String(params.font))
     const firstLine = String(params.text ?? '').split('\n')[0] ?? ''
     const text = firstLine.length ? firstLine : ' '
-    const layout = layoutChars({
+    const layout = layoutChars({ axes: env?.axes,
       text,
       fontFamily: family,
       fontWeight: fontHasWeightAxis(family) ? n(params, 'typeWeight') : 400,

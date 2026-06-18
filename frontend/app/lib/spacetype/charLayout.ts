@@ -36,6 +36,9 @@ export interface CharLayoutOpts {
   color: string
   strokeColor?: string
   strokeWidth?: number
+  // Full variable-font axes (e.g. { wght: 700, wdth: 80, slnt: -10 }). When given, drives
+  // fontVariationSettings; otherwise just weight. Non-weight axes need Chromium.
+  axes?: Record<string, number>
 }
 
 /** Apply font + variation + letterSpacing to a 2D context (mirrors makeTextTexture). */
@@ -44,9 +47,12 @@ function applyFont(
   font: string,
   fontWeight: number,
   tracking: number,
+  axes?: Record<string, number>,
 ): void {
   ctx.font = font
-  const variation = `"wght" ${fontWeight}`
+  const variation = axes && Object.keys(axes).length
+    ? Object.entries(axes).map(([t, v]) => `"${t}" ${v}`).join(', ')
+    : `"wght" ${fontWeight}`
   if ('fontVariationSettings' in ctx) {
     ;(ctx as CanvasRenderingContext2D & { fontVariationSettings: string }).fontVariationSettings = variation
   }
@@ -71,7 +77,7 @@ export function layoutChars(opts: CharLayoutOpts): CharLayout {
   //    non-space glyph's x-start + width via cumulative measureText. measureText
   //    of a single char does NOT include the trailing letter-spacing, so we add
   //    `tracking` between successive chars ourselves to match the drawn advance.
-  applyFont(ctx, font, opts.fontWeight, tracking)
+  applyFont(ctx, font, opts.fontWeight, tracking, opts.axes)
   const chars = Array.from(opts.text)
   let cursor = 0 // unscaled px advance so far
   const measured: { char: string; x: number; w: number; isSpace: boolean }[] = []
@@ -100,7 +106,7 @@ export function layoutChars(opts: CharLayoutOpts): CharLayout {
   //    half as Tracking grows. Painting each glyph at m.x makes pixels == UV exactly.
   //    letterSpacing is zeroed here: inter-glyph spacing already lives in m.x.
   ctx.setTransform(scaleX, 0, 0, 1, 0, 0)
-  applyFont(ctx, font, opts.fontWeight, 0)
+  applyFont(ctx, font, opts.fontWeight, 0, opts.axes)
   ctx.fillStyle = opts.color
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'

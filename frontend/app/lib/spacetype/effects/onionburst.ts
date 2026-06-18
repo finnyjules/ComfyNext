@@ -86,7 +86,7 @@ export const onionburstEffect: SpaceTypeEffect = {
   controls,
 
   // Builds its own per-glyph atlas via layoutChars; the shared texture is ignored.
-  buildScene(three, params, _textTexture) {
+  buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
     cylinders = []
@@ -108,7 +108,7 @@ export const onionburstEffect: SpaceTypeEffect = {
     let globalIdx = 0
 
     usable.forEach((line, p) => {
-      const layout = layoutChars({
+      const layout = layoutChars({ axes: env?.axes,
         text: line, fontFamily: family,
         fontWeight: fontHasWeightAxis(family) ? n(params, 'typeWeight') : 400,
         fontSizePx: 200, tracking: 0, scaleX: 1,

@@ -104,7 +104,7 @@ export const blendEffect: SpaceTypeEffect = {
   label: 'Blend',
   controls,
 
-  buildScene(three, params, _textTexture) {
+  buildScene(three, params, _textTexture, env) {
     void _textTexture
     state = null
     const root = new three.Group()
@@ -112,7 +112,7 @@ export const blendEffect: SpaceTypeEffect = {
     const family = resolveFontFamily(String(params.font))
     const text = (String(params.text ?? '').split('\n')[0] || ' ')
     const outline = String(params.style) !== 'solid'
-    const layout = layoutChars({
+    const layout = layoutChars({ axes: env?.axes,
       text,
       fontFamily: family,
       fontWeight: fontHasWeightAxis(family) ? n(params, 'typeWeight') : 400,

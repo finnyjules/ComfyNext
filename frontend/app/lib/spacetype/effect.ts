@@ -36,7 +36,7 @@ export function defaultsFromControls(controls: ControlSpec[]): Params {
  */
 /** Render-target info passed to buildScene (e.g. the String effect maps a normalized
  *  drawn path into world space and needs the frame aspect). Optional — most effects ignore it. */
-export interface BuildEnv { width: number; height: number }
+export interface BuildEnv { width: number; height: number; axes?: Record<string, number> }
 
 export interface SpaceTypeEffect {
   id: string

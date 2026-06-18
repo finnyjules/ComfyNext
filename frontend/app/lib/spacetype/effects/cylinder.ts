@@ -105,7 +105,7 @@ export const cylinderEffect: SpaceTypeEffect = {
 
   // We build our own per-glyph texture via layoutChars; the passed surface
   // textTexture (a tiled ribbon line) is ignored.
-  buildScene(three, params, _textTexture) {
+  buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
     glyphs = []
@@ -146,7 +146,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     const getLayout = (variant: number) => {
       let l = layoutCache.get(variant)
       if (!l) {
-        l = layoutChars({ text: texts[variant] || ' ', ...layoutOpts })
+        l = layoutChars({ axes: env?.axes, text: texts[variant] || ' ', ...layoutOpts })
         // Glyph atlas lives on uv CHANNEL 1 (glyph region); channel 0 (0…1) carries the fill.
         l.texture.channel = 1
         layoutCache.set(variant, l)

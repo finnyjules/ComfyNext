@@ -7,7 +7,7 @@ import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { parseFills, serializeFills, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { loadGoogleCatalog, googleFontCssUrl, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
+import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
@@ -166,6 +166,24 @@ const fontIsVariable = computed(() => {
   return fontHasWeightAxis(resolveFontFamily(String(params.font)))
 })
 
+// Variable-font axes BEYOND weight (width / slant / optical-size / custom). Weight stays on
+// the Type-weight slider; these are surfaced dynamically for the selected font and fed into
+// the render via font-variation-settings (texOpts.axes → makeTextTexture / charLayout).
+const fontAxes = reactive<Record<string, number>>({})
+const varAxisList = computed(() => {
+  void fontCatalog.value
+  const f = fontCatalog.value.find(g => g.family === resolveFontFamily(String(params.font)))
+  return f ? googleAxisList(f).filter(a => a.tag !== 'wght') : []
+})
+function syncFontAxes() {
+  const keep = new Set(varAxisList.value.map(a => a.tag))
+  for (const k of Object.keys(fontAxes)) if (!keep.has(k)) delete fontAxes[k]
+  for (const a of varAxisList.value) if (!(a.tag in fontAxes)) fontAxes[a.tag] = a.default
+}
+watch(() => String(params.font), syncFontAxes)
+watch(fontCatalog, syncFontAxes)
+watch(fontAxes, () => rebuild(), { deep: true })
+
 const loadedFontFamilies = new Set<string>()
 async function ensureFont(value: string) {
   const family = resolveFontFamily(value)
@@ -212,7 +230,7 @@ function texOpts() {
     // STG-style names (typeWeight/typeYScale/typeXScale) with fallbacks so effects
     // that still use typeHeight keep working unchanged.
     fontWeight: weight,
-    axes: { wght: weight },
+    axes: { wght: weight, ...fontAxes },
     typeColor: String(params.typeColor),
     fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 180),
     scaleX: Number(params.typeXScale ?? 1),
@@ -593,6 +611,11 @@ async function generateVideo() {
                     <p v-if="!fontCatalog.length" class="px-2 py-1 text-white/40">Loading fonts…</p>
                     <p v-else-if="!filteredFonts.length" class="px-2 py-1 text-white/40">No matches</p>
                   </div>
+                </div>
+                <div v-if="varAxisList.length" class="mt-2 space-y-2.5">
+                  <StudioSlider v-for="a in varAxisList" :key="a.tag"
+                                :model-value="fontAxes[a.tag] ?? a.default" @update:model-value="(v: number) => { fontAxes[a.tag] = v }"
+                                :label="a.label" :min="a.min" :max="a.max" :step="a.step" :default="a.default" />
                 </div>
                 <p v-if="!fontIsVariable" class="mt-1 text-[10px] text-white/40">Static font — weight axis unavailable.</p>
               </template>
