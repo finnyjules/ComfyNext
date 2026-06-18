@@ -28,7 +28,7 @@ const controls: ControlSpec[] = [
   { key: 'ampV', label: 'Stretch motion', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1.4, group: 'Stretch' },
   { key: 'ampH', label: 'Horizontal stretch', kind: 'slider', min: 0, max: 1.5, step: 0.02, default: 0.25, group: 'Stretch' },
   { key: 'randomness', label: 'Randomness', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.8, group: 'Stretch' },
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1, group: 'Stretch' },
+  { key: 'speed', label: 'Speed (0 = frozen)', kind: 'slider', min: 0, max: 6, step: 1, default: 1, group: 'Stretch' },
   { key: 'baseSkew', label: 'Skew°', kind: 'slider', min: -45, max: 45, step: 1, default: 0, group: 'Skew' },
   { key: 'ampSkew', label: 'Skew motion', kind: 'slider', min: 0, max: 30, step: 1, default: 12, group: 'Skew' },
   { key: 'baseSlant', label: 'Slant°', kind: 'slider', min: -30, max: 30, step: 1, default: 0, group: 'Skew' },
@@ -217,8 +217,9 @@ export const elasticEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    const cycles = Math.max(1, Math.round(n(params, 'speed')))
-    const time = t01 * cycles * TAU
+    // Whole cycles keep the loop seamless; 0 cycles freezes the motion entirely.
+    const cycles = Math.max(0, Math.round(n(params, 'speed')))
+    const time = cycles === 0 ? 0 : t01 * cycles * TAU
     drawMatte(state.ctx, state.W, state.H, params, time)
     state.tex.needsUpdate = true
     state.uniforms.uTime.value = time
