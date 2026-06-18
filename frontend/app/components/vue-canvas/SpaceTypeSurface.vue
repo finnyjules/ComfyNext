@@ -112,9 +112,9 @@ const baking = ref(false)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
-const SECTION_ORDER = ['Type', 'Ribbon', 'Spiral', 'Color', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
+const SECTION_ORDER = ['Type', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
 const openSections = reactive<Record<string, boolean>>({
-  Type: true, Ribbon: true, Spiral: true, Color: true, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
+  Type: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
@@ -189,7 +189,7 @@ function texOpts() {
   // Coil sizes each segment to its text and adds spacing via margin controls, so it takes
   // the RAW uppercased word (no trailing-gap pad). Tiling effects (ribbon/stripes/field)
   // keep buildRibbonLabel's trailing gap so repeated text has space between copies.
-  const rawWords = effectId.value === 'coil'
+  const rawWords = effectId.value === 'coil' || effectId.value === 'elastic'
   const labels = multiAware
     ? texts.map(t => (rawWords ? t.toUpperCase() : buildRibbonLabel(t, 'upper')))
     : [buildRibbonLabel(texts[0] ?? '', 'upper')]
