@@ -58,10 +58,13 @@ uniform sampler2D u_ramp1;
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
 
-float hash21(vec2 p) {
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
+// Higher-quality hash (Dave Hoskins, "Hash without Sine") for film grain — the older
+// fract-multiply hash showed a visible repeating tile at coarse cell sizes; this stays
+// patternless even per device pixel.
+float hashGrain(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
 vec3 rgb2hsl(vec3 c) {
@@ -329,12 +332,12 @@ void main() {
     col *= mix(1.0, shade, u_relief);
   }
 
-  // Film grain. Gated to the shape (cover) so the black background stays clean, shaped
-  // by luminance (a filmic midtone bias — vanishes toward pure black/white), and sampled
-  // at a resolution-independent, aspect-corrected cell size so preview matches exports.
+  // Film grain. Sampled PER DEVICE PIXEL (gl_FragCoord) — a coarser texCoord grid fell
+  // below 1px at preview resolution and beat against the pixel grid into a visible
+  // repeating tile. Per-pixel + a patternless hash keeps it clean at every resolution.
+  // Gated to shape coverage (clean background) and luminance-shaped (filmic midtone bias).
   if (u_grain > 0.001 && cover > 0.001) {
-    vec2 gp = floor(vec2(p.x * u_aspect, p.y) * 1300.0);
-    float g = hash21(gp + u_seed) - 0.5;
+    float g = hashGrain(gl_FragCoord.xy + u_seed) - 0.5;
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
     float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);   // 0.35 floor .. 1 at lum 0.5
     col += g * u_grain * 0.16 * cover * midtone;
