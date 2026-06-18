@@ -11,6 +11,10 @@ import { loadGoogleCatalog, googleFontCssUrl, resolveFontFamily, fontHasWeightAx
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
+import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -468,34 +472,34 @@ async function generateVideo() {
       </div>
     </template>
     <template #actions>
-      <button class="rounded bg-blue-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
+      <StudioButton variant="primary" :disabled="baking" @click="generateImage">
         {{ baking ? 'Generating…' : 'Generate as image' }}
-      </button>
-      <button class="rounded bg-emerald-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateVideo">
+      </StudioButton>
+      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? 'Generating…' : 'Generate as video' }}
-      </button>
-      <button class="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm" @click="closeEditor">Close</button>
+      </StudioButton>
+      <StudioButton variant="subtle" class="ml-auto" @click="closeEditor">Close</StudioButton>
     </template>
     <template #controls>
-      <div class="rounded-lg bg-white/5 px-3 py-2">
-          <label class="mb-1 block text-xs text-white/60">Effect</label>
-          <select v-model="effectId" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
-            <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id">{{ e.label }}</option>
+      <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+          <label class="mb-1 block text-[11px] text-white/50">Effect</label>
+          <select v-model="effectId" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
+            <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id" class="bg-neutral-900">{{ e.label }}</option>
           </select>
           <template v-if="!frontLocked">
-            <label class="mb-1 mt-2 block text-xs text-white/60">Projection</label>
-            <select v-model="projection" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
-              <option value="perspective">Perspective</option>
-              <option value="isometric">Isometric</option>
+            <label class="mb-1 mt-2.5 block text-[11px] text-white/50">Projection</label>
+            <select v-model="projection" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
+              <option value="perspective" class="bg-neutral-900">Perspective</option>
+              <option value="isometric" class="bg-neutral-900">Isometric</option>
             </select>
-            <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
-              <span>Pan X</span><span class="text-white/40">{{ panX.toFixed(2) }}</span>
+            <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
+              <span>Pan X</span><span class="font-mono text-white/80">{{ panX.toFixed(2) }}</span>
             </label>
-            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" class="w-full" />
-            <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
-              <span>Pan Y</span><span class="text-white/40">{{ panY.toFixed(2) }}</span>
+            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" class="studio-range w-full" />
+            <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
+              <span>Pan Y</span><span class="font-mono text-white/80">{{ panY.toFixed(2) }}</span>
             </label>
-            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="w-full" />
+            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="studio-range w-full" />
           </template>
         </div>
         <StudioSection
@@ -507,9 +511,11 @@ async function generateVideo() {
           <div class="space-y-3">
             <div v-for="c in section.controls" :key="c.key" v-show="!(c.key === 'typeWeight' && !fontIsVariable)"
                  data-control class="text-xs">
-              <label class="mb-1 block text-white/60">{{ c.label }}</label>
-              <input v-if="c.kind === 'slider'" type="range" :min="c.min" :max="c.max" :step="c.step"
-                     v-model.number="params[c.key]" class="w-full" />
+              <label v-if="c.kind !== 'slider'" class="mb-1 block text-white/60">{{ c.label }}</label>
+              <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
+                            :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
+                            :model-value="Number(params[c.key])"
+                            @update:model-value="(v: number) => { params[c.key] = v }" />
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
                      class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" />
               <template v-else-if="c.kind === 'textList'">
@@ -549,10 +555,12 @@ async function generateVideo() {
                 <b>Reset</b> clears.
               </p>
               <input v-else-if="c.kind === 'color'" type="color" v-model="params[c.key]" @input="rebuild" />
-              <select v-else-if="c.kind === 'select'" v-model="params[c.key]"
-                      class="w-full rounded bg-white/10 px-2 py-1" @change="rebuild">
-                <option v-for="o in c.options" :key="o" :value="o">{{ o }}</option>
-              </select>
+              <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"
+                               :options="c.options ?? []" :model-value="String(params[c.key])"
+                               @update:model-value="(v: string) => { params[c.key] = v; rebuild() }" />
+              <StudioSelect v-else-if="c.kind === 'select'"
+                            :options="c.options ?? []" :model-value="String(params[c.key])"
+                            @update:model-value="(v: string) => { params[c.key] = v; rebuild() }" />
               <template v-else-if="c.kind === 'font'">
                 <button type="button" @click="fontPickerOpen = !fontPickerOpen"
                         class="flex w-full items-center justify-between rounded bg-white/10 px-2 py-1 text-left">
