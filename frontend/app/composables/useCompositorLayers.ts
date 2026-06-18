@@ -112,7 +112,8 @@ interface LayerCommon {
   groupName?: string // display name for the group (mirrored on every member)
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
-  maskedById?: string     // clipped by another layer's alpha silhouette (Figma mask)
+  maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()
+  maskedByKey?: string     // clipped by another layer's silhouette; a StackKey ('w:<slot>'|'l:<id>')
   /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
    *  Absent ⇒ the layer is static and always visible. */
   animation?: import('~/lib/motion/types').LayerAnimation
@@ -121,6 +122,19 @@ interface LayerCommon {
 /** True when a layer is hidden (visible === false; undefined means visible). */
 export function layerHidden(l: { visible?: boolean } | null | undefined): boolean {
   return l?.visible === false
+}
+
+/**
+ * The StackKey of the layer this one is masked by, or undefined. Prefers the
+ * new cross-source `maskedByKey`; falls back to the legacy local-only
+ * `maskedById` (interpreted as `l:<id>`) so old frames keep rendering.
+ */
+export function layerMaskRef(
+  l: { maskedByKey?: string; maskedById?: string } | null | undefined,
+): string | undefined {
+  if (l?.maskedByKey) return l.maskedByKey
+  if (l?.maskedById) return `l:${l.maskedById}`
+  return undefined
 }
 
 export interface TextLayer extends LayerCommon {
