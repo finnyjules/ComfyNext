@@ -663,7 +663,7 @@ onUnmounted(() => {
     />
 
     <div
-      class="frame-shell rounded-lg overflow-hidden bg-[#0e0e0e] border backdrop-blur-sm"
+      class="frame-shell rounded-lg overflow-hidden bg-[#0e0e0e] border"
       :class="data.error ? 'border-red-500 ring-2 ring-red-500' : editMode ? 'border-cyan-400/70 ring-2 ring-cyan-400/40' : 'border-white/10'"
     >
       <!-- Header: title + dimensions -->
