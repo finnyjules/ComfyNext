@@ -859,7 +859,10 @@ function applyBackdropBlur(
   if (!silctx) return
   silctx.setTransform(t)
   const ghost = { ...layer, opacity: 1, effects: undefined, blend: undefined } as LocalLayer
-  const maskLayer = layer.maskedById ? localLayers.find(l => l.id === layer.maskedById) ?? null : null
+  const maskRef = layerMaskRef(layer)
+  const maskLayer = maskRef?.startsWith('l:')
+    ? localLayers.find(l => l.id === maskRef.slice(2)) ?? null
+    : null
   drawLocalLayer(silctx, ghost, W, H, maskLayer)
   // Blur the current backdrop, clip to the silhouette, stamp it back.
   const out = mk()

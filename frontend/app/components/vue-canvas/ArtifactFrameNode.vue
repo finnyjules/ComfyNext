@@ -426,7 +426,7 @@ function renderStack() {
     return { type: 'local', key, layer: r.layer }
   }).filter((x): x is StackItem => x != null)
   paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value,
-    undefined, undefined, readWiredTreatments({ data: props.data }))
+    undefined, undefined, wiredTreatments.value)
 }
 watch(
   () => [
@@ -435,7 +435,7 @@ watch(
     JSON.stringify(wiredLayers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImages.value).length,
     JSON.stringify([...hiddenWiredSet.value]),
-    JSON.stringify(readWiredTreatments({ data: props.data })),
+    JSON.stringify(wiredTreatments.value),
   ] as const,
   async () => {
     for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -445,6 +445,7 @@ watch(
   },
   { immediate: true },
 )
+const wiredTreatments = computed(() => readWiredTreatments({ data: props.data }))
 const hasAnyLayer = computed(() => wiredLayers.value.length > 0 || editor.localLayers.value.length > 0)
 
 // ── Inline add-toolbar (image upload) ───────────────────────────────────────
