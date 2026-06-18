@@ -583,6 +583,9 @@ export function drawLocalLayer(
  * Render an item's alpha silhouette (full opacity, no effects/blend) onto `ctx`,
  * sized W×H. Used as the clip source for another item's mask. Wired items render
  * via their draw closure; local items via their own paint (no nested mask).
+ *
+ * RESERVED FOR PHASE 2 (submit-time mask compile → layer{i}_mask PNG): the live
+ * renderer's mask path uses drawItemContent (real paint), not this silhouette.
  */
 export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
   if (item.type === 'wired') {
@@ -923,6 +926,9 @@ export function paintLayerStack(
       const st = layer.animation ? motionStateFor(layer, t!, motion!) : identityState()
       if (st) {
         if (!st.visible) continue
+        // Phase-1 limitation: the motion path only carries a LOCAL mask. An
+        // animated local layer masked by a WIRED silhouette renders unmasked for
+        // that frame (the static path below handles wired-masks-local correctly).
         const maskLocal = maskItem?.type === 'local' ? maskItem.layer : null
         const maskState = maskLocal?.animation ? motionStateFor(maskLocal, t!, motion!) : null
         if (maskState && !maskState.visible) continue
