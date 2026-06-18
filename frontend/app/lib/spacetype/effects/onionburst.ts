@@ -26,6 +26,8 @@ const controls: ControlSpec[] = [
   { key: 'rowSpacing', label: 'Row spacing', kind: 'slider', min: 1, max: 4, step: 0.05, default: 2, group: 'Ribbon' },
   { key: 'arc', label: 'Wrap arc', kind: 'slider', min: 1, max: 3.14, step: 0.02, default: 2.2, group: 'Ribbon' },
   { key: 'radius', label: 'Radius', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Ribbon' },
+  // Tile the glyph N times evenly around the tube's circumference (1 = once, today's look).
+  { key: 'repeat', label: 'Repeat around ring', kind: 'slider', min: 1, max: 12, step: 1, default: 1, group: 'Ribbon' },
   // Hollow = see-through tube (only the glyph renders; the fill wall is transparent).
   { key: 'hollow', label: 'Hollow', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Ribbon' },
   // Roll = manual base rotation about each tube's axis (turn the letter to face front when static).
@@ -98,6 +100,7 @@ export const onionburstEffect: SpaceTypeEffect = {
     const rowSpacing = n(params, 'rowSpacing')
     const arc = Math.max(0.5, n(params, 'arc'))
     const radius = n(params, 'radius')
+    const repeat = Math.max(1, Math.floor(Number(params.repeat) || 1))
     const scatter = Math.max(0, Math.floor(n(params, 'scatter')))
     const hollow = String(params.hollow) === 'on'
     const posOffset = n(params, 'posOffset')
@@ -135,7 +138,7 @@ export const onionburstEffect: SpaceTypeEffect = {
             uAtlas: { value: layout.texture },
             uFillTex: { value: fillTex }, uFillTiling: { value: fillTiling(fill) },
             uU0: { value: g.u0 }, uU1: { value: g.u1 },
-            uArc: { value: arc }, uLen: { value: len },
+            uArc: { value: arc }, uLen: { value: len }, uRepeat: { value: repeat },
             uText: { value: new three.Color(fill.textColor) },
           },
           vertexShader: 'varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -143,15 +146,20 @@ export const onionburstEffect: SpaceTypeEffect = {
             'precision highp float;',
             'varying vec3 vPos;',
             'uniform sampler2D uAtlas; uniform sampler2D uFillTex; uniform float uFillTiling;',
-            'uniform float uU0; uniform float uU1; uniform float uArc; uniform float uLen; uniform vec3 uText;',
+            'uniform float uU0; uniform float uU1; uniform float uArc; uniform float uLen; uniform float uRepeat; uniform vec3 uText;',
             'const float PI = 3.14159265;',
             'void main(){',
             '  float theta = atan(vPos.z, vPos.y);',
             '  float fv = clamp(vPos.x / uLen + 0.5, 0.0, 1.0);',
             '  vec3 fillc = texture2D(uFillTex, vec2((theta + PI) / (2.0 * PI), fv) * uFillTiling).rgb;', // GPU sRGB->linear
             '  float a = 0.0;',
-            '  if (abs(theta) <= uArc * 0.5) {',
-            '    float gv = clamp(0.5 - theta / uArc, 0.0, 1.0);',  // flip V: arc angle runs glyph top-to-bottom
+            // Tile the glyph uRepeat times around the circumference: fold theta into equal
+            // segments, clamp the glyph arc to a segment so copies do not overlap.
+            '  float seg = (2.0 * PI) / uRepeat;',
+            '  float local = mod(theta + PI, seg) - seg * 0.5;',
+            '  float arcEff = min(uArc, seg);',
+            '  if (abs(local) <= arcEff * 0.5) {',
+            '    float gv = clamp(0.5 - local / arcEff, 0.0, 1.0);',  // flip V: arc angle runs glyph top-to-bottom
             '    a = texture2D(uAtlas, vec2(mix(uU0, uU1, fv), gv)).a;',
             '  }',
             '  vec3 col = mix(fillc, uText, a);',
