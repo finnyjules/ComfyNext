@@ -428,6 +428,10 @@ function renderStack() {
   paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value,
     undefined, undefined, wiredTreatments.value)
 }
+// Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
+// wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
+// (which cascaded into VueFlow and broke adding any node).
+const wiredTreatments = computed(() => readWiredTreatments({ data: props.data }))
 watch(
   () => [
     JSON.stringify(editor.localLayers.value), editor.editingId.value,
@@ -445,7 +449,6 @@ watch(
   },
   { immediate: true },
 )
-const wiredTreatments = computed(() => readWiredTreatments({ data: props.data }))
 const hasAnyLayer = computed(() => wiredLayers.value.length > 0 || editor.localLayers.value.length > 0)
 
 // ── Inline add-toolbar (image upload) ───────────────────────────────────────
