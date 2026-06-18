@@ -160,57 +160,60 @@ git commit -m "feat(compositor): StackItem carries key + drawLayerSilhouette for
 
 ```ts
 // frontend/tests/unit/cross-source-mask.unit.spec.ts
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { paintLayerStack, type StackItem } from '~/composables/useCompositorLayers'
 
-// Minimal 2D context stub recording the order of operations we assert on.
-function stubCtx() {
-  const calls: string[] = []
+// A tagged 2D-context stub. Offscreen canvases created inside the renderer get
+// their own ('offscreen'); the main ctx we pass in is tagged 'main' so we can
+// assert WHICH ctx a draw closure was handed.
+function stubCtx(tag = 'ctx') {
   const ctx: any = {
-    calls,
+    _tag: tag,
     canvas: { width: 10, height: 10 },
-    save: () => calls.push('save'),
-    restore: () => calls.push('restore'),
-    drawImage: () => calls.push('drawImage'),
-    clearRect: () => {}, setTransform: () => {}, getTransform: () => ({ a: 1 }),
-    beginPath: () => {}, rect: () => {}, ellipse: () => {}, clip: () => {},
-    fillRect: () => {}, set globalCompositeOperation(_v: string) {}, get globalCompositeOperation() { return 'source-over' },
-    set filter(_v: string) {}, get filter() { return 'none' },
+    save: vi.fn(), restore: vi.fn(), drawImage: vi.fn(),
+    clearRect: vi.fn(), setTransform: vi.fn(), getTransform: () => ({ a: 1 }),
+    beginPath: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), clip: vi.fn(), fillRect: vi.fn(),
+    globalCompositeOperation: 'source-over', filter: 'none', globalAlpha: 1,
   }
   return ctx
 }
 
-// jsdom canvas: make createElement('canvas').getContext('2d') return a stub too.
 beforeEach(() => {
   vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
-    if (tag === 'canvas') return { width: 0, height: 0, getContext: () => stubCtx() } as any
+    if (tag === 'canvas') return { width: 0, height: 0, getContext: () => stubCtx('offscreen') } as any
     return {} as any
   }) as any)
 })
 
 describe('paintLayerStack cross-source masking', () => {
-  it('does not paint a layer that is used as a mask source by another (by key)', () => {
+  it('skips the mask-source layer from top-level paint and stamps the masked result', () => {
+    const mainCtx = stubCtx('main')
     const drawA = vi.fn() // wired mask source w:2
     const drawB = vi.fn() // wired content w:1, masked by w:2
     const items: StackItem[] = [
       { type: 'wired', key: 'w:2', draw: drawA },
       { type: 'wired', key: 'w:1', draw: drawB },
     ]
-    const ctx = stubCtx()
-    paintLayerStack(ctx, 10, 10, items, [], undefined, undefined, undefined, {
+    paintLayerStack(mainCtx, 10, 10, items, [], undefined, undefined, undefined, {
       'w:1': { maskedByKey: 'w:2' },
     })
-    // w:2 is a mask source → it must NOT draw directly onto the main ctx.
-    expect(drawA).not.toHaveBeenCalled()
-    // w:1 is masked → its content + the mask silhouette render onto offscreens.
+    // Neither content nor mask source is drawn DIRECTLY on the main ctx — both
+    // render onto offscreens; only the composited result is stamped on main.
+    expect(drawA).toHaveBeenCalled()
+    expect(drawA.mock.calls.every((c: any[]) => c[0] !== mainCtx)).toBe(true)
     expect(drawB).toHaveBeenCalled()
+    expect(drawB.mock.calls.every((c: any[]) => c[0] !== mainCtx)).toBe(true)
+    // The masked result is stamped onto the main ctx exactly once.
+    expect(mainCtx.drawImage).toHaveBeenCalledTimes(1)
   })
 
-  it('renders an unmasked wired item directly', () => {
+  it('renders an unmasked wired item directly onto the main ctx', () => {
+    const mainCtx = stubCtx('main')
     const draw = vi.fn()
     const items: StackItem[] = [{ type: 'wired', key: 'w:1', draw }]
-    paintLayerStack(stubCtx(), 10, 10, items, [], undefined, undefined, undefined, {})
-    expect(draw).toHaveBeenCalled()
+    paintLayerStack(mainCtx, 10, 10, items, [], undefined, undefined, undefined, {})
+    expect(draw).toHaveBeenCalledTimes(1)
+    expect(draw.mock.calls[0][0]).toBe(mainCtx) // drawn directly, no offscreen
   })
 })
 ```
@@ -218,7 +221,7 @@ describe('paintLayerStack cross-source masking', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run tests/unit/cross-source-mask.unit.spec.ts`
-Expected: FAIL — `paintLayerStack` ignores the 9th arg and draws the mask source directly (`drawA` called), or arity mismatch.
+Expected: FAIL — `paintLayerStack` ignores the 9th `wiredTreatments` arg, so it paints `w:2` directly on the main ctx and never routes `w:1` through an offscreen (the `mainCtx.drawImage` / "not on main ctx" assertions fail).
 
 - [ ] **Step 3: Generalize paintLayerStack**
 
@@ -297,9 +300,27 @@ export function paintLayerStack(
 }
 
 /**
- * Draw `content` clipped to `mask`'s alpha silhouette, then stamp onto `ctx`
- * with `blendOp`. The mask renders on its OWN offscreen (drawLayerSilhouette may
- * set composite ops internally), then destination-in keeps only its alpha.
+ * Render an item's REAL content onto `ctx` (wired image via its draw closure,
+ * which folds the wired layer's own opacity/blend; local via `drawLocalLayerSelf`,
+ * which includes the layer's crop). This is NOT a silhouette — full pixels,
+ * opacity and effects are preserved. Wrapped in save/restore for wired closures
+ * (they have no state-hygiene contract). Generalizes the original drawLocalLayer
+ * mask path (which used drawLocalLayerSelf for both content and mask) to wired.
+ */
+function drawItemContent(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
+  if (item.type === 'wired') { ctx.save(); item.draw(ctx, W, H); ctx.restore(); return }
+  drawLocalLayerSelf(ctx, item.layer, W, H)
+}
+
+/**
+ * Draw `content` clipped to `mask`'s alpha, then stamp onto `ctx` with `blendOp`.
+ * Both render their REAL paint on separate offscreens (mirrors the original
+ * drawLocalLayer path), then destination-in keeps only where the mask is opaque.
+ * NOTE (Phase 1 limitation): when `content` is a WIRED layer with a non-normal
+ * blend mode, that blend is folded inside its draw closure against the
+ * transparent offscreen (no backdrop), so it is effectively lost while masked —
+ * pass blendOp 'source-over' for wired content. Local content stamps with its
+ * own blend (re-applied here against the real backdrop, exactly as before).
  */
 function drawItemMasked(
   ctx: CanvasRenderingContext2D,
@@ -312,11 +333,11 @@ function drawItemMasked(
   const off = document.createElement('canvas')
   off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
   const octx = off.getContext('2d'); if (!octx) return
-  drawLayerSilhouette(octx, content, W, H)
+  drawItemContent(octx, content, W, H)
   const maskOff = document.createElement('canvas')
   maskOff.width = off.width; maskOff.height = off.height
   const mctx = maskOff.getContext('2d'); if (!mctx) return
-  drawLayerSilhouette(mctx, mask, W, H)
+  drawItemContent(mctx, mask, W, H)
   octx.globalCompositeOperation = 'destination-in'
   octx.drawImage(maskOff, 0, 0)
   octx.globalCompositeOperation = 'source-over'
@@ -327,7 +348,7 @@ function drawItemMasked(
 }
 ```
 
-Ensure `layerMaskRef` and `drawLayerSilhouette` are visible (same module — they are). Keep the existing `drawLocalLayer`/`drawLocalLayerSelf` for the local-only fast path.
+Ensure `layerMaskRef` is visible (same module — it is). Keep the existing `drawLocalLayer`/`drawLocalLayerSelf` for the local-content + local-mask fast path (zero behavior change there). `drawLayerSilhouette` (Task 2) is NOT used here — it is reserved for Phase 2's submit-time mask compile, which needs a pure alpha silhouette PNG.
 
 - [ ] **Step 4: Run test to verify it passes**
 
