@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clampHex, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb } from '../../app/components/vue-canvas/studio/color'
+import { clampHex, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, rgbToOklch, oklchToRgb } from '../../app/components/vue-canvas/studio/color'
 
 describe('clampHex', () => {
   it('normalizes, expands shorthand, and falls back to black', () => {
@@ -29,6 +29,25 @@ describe('rgb ↔ hsv', () => {
       const [r, g, b] = hexToRgb(hex)
       const [h, s, v] = rgbToHsv(r, g, b)
       const [r2, g2, b2] = hsvToRgb(h, s, v)
+      expect(rgbToHex(r2, g2, b2)).toBe(hex)
+    }
+  })
+})
+
+describe('rgb ↔ oklch', () => {
+  it('puts white, black, and red where OKLab expects', () => {
+    const [Lw] = rgbToOklch(255, 255, 255)
+    expect(Lw).toBeCloseTo(1, 2)
+    const [Lk, Ck] = rgbToOklch(0, 0, 0)
+    expect(Lk).toBeCloseTo(0, 4); expect(Ck).toBeCloseTo(0, 4)
+    const [, , Hr] = rgbToOklch(255, 0, 0)
+    expect(Hr).toBeGreaterThan(20); expect(Hr).toBeLessThan(35) // red ≈ 29°
+  })
+  it('round-trips hex → oklch → hex', () => {
+    for (const hex of ['#2b5cff', '#28e0ff', '#ff8a1f', '#ffd23b', '#7d5cff', '#101014']) {
+      const [r, g, b] = hexToRgb(hex)
+      const [L, C, H] = rgbToOklch(r, g, b)
+      const [r2, g2, b2] = oklchToRgb(L, C, H)
       expect(rgbToHex(r2, g2, b2)).toBe(hex)
     }
   })

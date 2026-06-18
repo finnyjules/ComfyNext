@@ -37,3 +37,34 @@ export function hsvToRgb(h: number, s: number, v: number): [number, number, numb
   else if (h < 300) { r = x; b = c } else { r = c; b = x }
   return [(r + m) * 255, (g + m) * 255, (b + m) * 255]
 }
+
+// ── OKLCH (Björn Ottosson's OKLab in cylindrical form) ──────────────────────────
+function linearize(c: number): number { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+function delinearize(c: number): number { const v = c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055; return v * 255 }
+
+/** sRGB (0–255) → OKLCH [L 0–1, C ~0–0.4, H 0–360]. */
+export function rgbToOklch(r: number, g: number, b: number): [number, number, number] {
+  const lr = linearize(r), lg = linearize(g), lb = linearize(b)
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb)
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb)
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb)
+  const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s
+  const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+  let h = Math.atan2(B, A) * 180 / Math.PI
+  if (h < 0) h += 360
+  return [L, Math.hypot(A, B), h]
+}
+
+/** OKLCH [L 0–1, C, H 0–360] → sRGB (0–255, may be out of gamut → clamp via rgbToHex). */
+export function oklchToRgb(L: number, C: number, H: number): [number, number, number] {
+  const hr = H * Math.PI / 180
+  const A = C * Math.cos(hr), B = C * Math.sin(hr)
+  const l_ = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3
+  const m_ = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3
+  const s_ = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3
+  const lr = 4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_
+  const lg = -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_
+  const lb = -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_
+  return [delinearize(lr), delinearize(lg), delinearize(lb)]
+}
