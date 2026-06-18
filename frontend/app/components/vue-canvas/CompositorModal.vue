@@ -8,8 +8,9 @@ import {
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
 } from '~/composables/useCompositorLayers'
+import { readWiredTreatments, setWiredMask, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
@@ -973,6 +974,8 @@ async function bakeMotion() {
   }
 }
 
+const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
+
 // One StackItem builder shared by the live preview AND the motion bake, so the
 // baked frames render exactly what the editor shows (wired layers included).
 function buildStackItems(): StackItem[] {
@@ -981,9 +984,9 @@ function buildStackItems(): StackItem[] {
     if (!r) return null
     if (r.type === 'wired') {
       if (hiddenWired.value.has((r.layer as Layer).slot)) return null
-      return { type: 'wired', draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
+      return { type: 'wired', key, draw: (c, w, h) => drawWiredLayer(c, r.layer as Layer, w, h) }
     }
-    return { type: 'local', layer: r.layer as LocalLayer }
+    return { type: 'local', key, layer: r.layer as LocalLayer }
   }).filter((x): x is StackItem => x != null)
 }
 
@@ -1001,7 +1004,8 @@ function renderStack() {
   const items = buildStackItems()
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
-    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined)
+    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
+    wiredTreatments.value)
 }
 watch(
   () => [
@@ -1011,6 +1015,7 @@ watch(
     Object.keys(wiredImageEls.value).length,
     nodeEdit.active.value, nodeEdit.layerId.value,
     JSON.stringify(readSlotArr('comfynext_hiddenWired')),
+    JSON.stringify(wiredTreatments.value),
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -1149,9 +1154,30 @@ const FONT_WEIGHTS = [
 ]
 
 // ── Layer mask (this layer is clipped by another layer's silhouette) ─────────
-function maskCandidates(l: any): any[] { return (localLayers.value as any[]).filter((o: any) => o.id !== l?.id) }
-function layerLabel(l: any): string { return `${l.kind} ${String(l.id).slice(-4)}` }
-function setLayerMaskedBy(l: any, id: string) { if (l) setLocal(l.id, { maskedById: id || undefined }) }
+function layerLabelByKey(key: StackKey): string {
+  const r = resolveStackKey(key)
+  if (!r) return key
+  if (r.type === 'wired') return `Layer ${(r.layer as Layer).slot}`
+  return `${r.layer.kind} ${String(r.layer.id).slice(-4)}`
+}
+// Candidate mask sources for the selected layer: every other present layer (cross-source).
+function maskCandidates(selfKey: StackKey): { key: StackKey; label: string }[] {
+  return maskCandidateKeys(presentKeys.value, selfKey).map(k => ({ key: k, label: layerLabelByKey(k) }))
+}
+// Current mask ref for any selected key (local → layerMaskRef; wired → treatments).
+function currentMaskRef(key: StackKey): string {
+  const r = resolveStackKey(key)
+  if (!r) return ''
+  if (r.type === 'local') return layerMaskRef(r.layer) ?? ''
+  return wiredTreatments.value[key]?.maskedByKey ?? ''
+}
+// Set the mask ref for any selected key.
+function setMaskRef(key: StackKey, ref: string) {
+  const r = resolveStackKey(key)
+  if (!r) return
+  if (r.type === 'local') setLocal(r.layer.id, { maskedByKey: ref || undefined, maskedById: undefined } as any)
+  else setWiredMask(compositor.value, (r.layer as Layer).slot, ref)
+}
 
 // ── Generative Fill: regenerate a region of an image in place ────────────────
 // A "Generate" mode where you mark a region directly on the canvas — drag a Box,
@@ -2340,14 +2366,14 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Layer mask: clip this layer to another layer's silhouette -->
+          <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
           <div class="mt-3">
             <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
-            <select :value="(selectedLocal as any).maskedById || ''"
+            <select :value="currentMaskRef(localKey(selectedLocal!.id))"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-              @change="setLayerMaskedBy(selectedLocal!, ($event.target as HTMLSelectElement).value)">
+              @change="setMaskRef(localKey(selectedLocal!.id), ($event.target as HTMLSelectElement).value)">
               <option value="">No mask</option>
-              <option v-for="o in maskCandidates(selectedLocal)" :key="o.id" :value="o.id">Mask with {{ layerLabel(o) }}</option>
+              <option v-for="o in maskCandidates(localKey(selectedLocal!.id))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
             </select>
           </div>
 
