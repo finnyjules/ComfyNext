@@ -158,7 +158,7 @@ export class SpaceTypeEngine {
     this.disposeRoot()
     const tex = makeTextTexture(texOpts)
     this.textTex = tex
-    this.root = this.effect.buildScene(THREE, params, tex)
+    this.root = this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height })
     this.scene.add(this.root)
   }
 

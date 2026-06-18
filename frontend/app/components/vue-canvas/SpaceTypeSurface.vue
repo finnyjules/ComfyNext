@@ -11,6 +11,7 @@ import { loadGoogleCatalog, googleFontCssUrl, resolveFontFamily, fontHasWeightAx
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -112,9 +113,9 @@ const baking = ref(false)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
-const SECTION_ORDER = ['Type', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
+const SECTION_ORDER = ['Path', 'Type', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
 const openSections = reactive<Record<string, boolean>>({
-  Type: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
+  Path: true, Type: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
@@ -316,6 +317,8 @@ watch(
   () => JSON.stringify({
     ...params,
     speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0,
+    // string: scroll variation read live in update()
+    speedVary: 0,
     ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0,
     // cylinder live params (vertex-wave deformation + per-cylinder rotation + motion)
     waveSpeed: 0, waveCount: 0, waveLatitude: 0, waveLongitude: 0, waveRipple: 0,
@@ -367,6 +370,14 @@ watch(dimsKey, (k) => {
   H.value = d[1]
   engine?.setSize(W.value, H.value)
 })
+
+// The String effect is flat + front-locked: force the orthographic (front-on) camera
+// and zero pan so the drawn path maps 1:1 to what's rendered. The Projection/Pan UI is
+// hidden for it. Immediate so the very first build (and reopened nodes) lock correctly.
+const frontLocked = computed(() => effectId.value === 'string')
+watch(frontLocked, (fl) => {
+  if (fl) { projection.value = 'isometric'; panX.value = 0; panY.value = 0 }
+}, { immediate: true })
 
 const cfg = computed(() => ({
   effectId: effect.value.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
@@ -446,7 +457,15 @@ async function generateVideo() {
 <template>
   <StudioModalShell>
     <template #preview>
-      <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
+      <div class="relative flex h-full w-full items-center justify-center">
+        <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
+        <StringPathEditor
+          v-if="frontLocked"
+          :model-value="String(params.path ?? '')"
+          :canvas="canvas"
+          @update:model-value="(v: string) => (params.path = v)"
+        />
+      </div>
     </template>
     <template #actions>
       <button class="rounded bg-blue-600 px-3 py-1.5 text-sm" :disabled="baking" @click="generateImage">
@@ -463,19 +482,21 @@ async function generateVideo() {
           <select v-model="effectId" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
             <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id">{{ e.label }}</option>
           </select>
-          <label class="mb-1 mt-2 block text-xs text-white/60">Projection</label>
-          <select v-model="projection" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
-            <option value="perspective">Perspective</option>
-            <option value="isometric">Isometric</option>
-          </select>
-          <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
-            <span>Pan X</span><span class="text-white/40">{{ panX.toFixed(2) }}</span>
-          </label>
-          <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" class="w-full" />
-          <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
-            <span>Pan Y</span><span class="text-white/40">{{ panY.toFixed(2) }}</span>
-          </label>
-          <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="w-full" />
+          <template v-if="!frontLocked">
+            <label class="mb-1 mt-2 block text-xs text-white/60">Projection</label>
+            <select v-model="projection" class="w-full rounded bg-white/10 px-2 py-1 text-xs">
+              <option value="perspective">Perspective</option>
+              <option value="isometric">Isometric</option>
+            </select>
+            <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
+              <span>Pan X</span><span class="text-white/40">{{ panX.toFixed(2) }}</span>
+            </label>
+            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" class="w-full" />
+            <label class="mb-1 mt-2 flex justify-between text-xs text-white/60">
+              <span>Pan Y</span><span class="text-white/40">{{ panY.toFixed(2) }}</span>
+            </label>
+            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" class="w-full" />
+          </template>
         </div>
         <StudioSection
           v-for="section in sections" :key="section.name"
@@ -522,6 +543,11 @@ async function generateVideo() {
                         class="mt-0.5 rounded bg-white/10 px-2 py-1 text-white/60 hover:text-white">+ Add fill</button>
                 <p class="mt-1 text-[10px] text-white/40">Fills cycle per row: stripe color(s) + “T” text color. 2nd swatch sets the gradient/grid/noise pair.</p>
               </template>
+              <p v-else-if="c.kind === 'path'" class="text-[10px] leading-relaxed text-white/40">
+                Draw on the preview: click-drag to add a point (drag sets its curve handle),
+                drag points/handles to adjust. <b>Enter</b> = new string, <b>Del</b> = remove,
+                <b>Reset</b> clears.
+              </p>
               <input v-else-if="c.kind === 'color'" type="color" v-model="params[c.key]" @input="rebuild" />
               <select v-else-if="c.kind === 'select'" v-model="params[c.key]"
                       class="w-full rounded bg-white/10 px-2 py-1" @change="rebuild">

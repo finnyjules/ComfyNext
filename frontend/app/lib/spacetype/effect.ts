@@ -16,6 +16,9 @@ export type ControlSpec =
   | { key: string; label: string; kind: 'color'; default: string; group?: string }
   | { key: string; label: string; kind: 'select'; options: string[]; default: string; group?: string }
   | { key: string; label: string; kind: 'font'; default: string; group?: string }
+  // An interactive bézier path drawn on the preview (String effect). Stored as one JSON
+  // string in params (StringPathDoc); the surface renders the StringPathEditor overlay.
+  | { key: string; label: string; kind: 'path'; default: string; group?: string }
 
 /** Build the param object from a control list's declared defaults. */
 export function defaultsFromControls(controls: ControlSpec[]): Params {
@@ -31,12 +34,16 @@ export function defaultsFromControls(controls: ControlSpec[]): Params {
  * time `t01 ∈ [0,1)`. Adding cylinder/field later = a new module implementing
  * this — no engine or surface changes.
  */
+/** Render-target info passed to buildScene (e.g. the String effect maps a normalized
+ *  drawn path into world space and needs the frame aspect). Optional — most effects ignore it. */
+export interface BuildEnv { width: number; height: number }
+
 export interface SpaceTypeEffect {
   id: string
   label: string
   controls: ControlSpec[]
   /** Build the scene root. Called when the effect or any structural param changes. */
-  buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture): THREE.Object3D
+  buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture, env?: BuildEnv): THREE.Object3D
   /** Advance the existing scene to normalized loop time t01. Pure in t01. */
   update(t01: number, params: Params): void
 }
