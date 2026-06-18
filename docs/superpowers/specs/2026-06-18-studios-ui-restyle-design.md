@@ -15,7 +15,8 @@ inconsistent.
 
 Linear-grade refined dark:
 - **Near-black layered surfaces**: modal `#0e0e10`-class base, panels via `white/[0.02–0.05]`.
-- **Bordered section cards, NO standalone dividers.** Each control section is a subtle card
+- **Bordered section cards, NO standalone dividers — including under the header.** The header
+  separates from the body by spacing only (no bottom rule). Each control section is a subtle card
   (`bg-white/[0.03]`, `border border-white/[0.06]`, rounded) separated from the next by GAP
   only. Remove the horizontal rules between sections and the vertical preview↔controls rail
   seam — the card borders provide all needed structure. (User: "I like the borders around the
@@ -63,12 +64,16 @@ Migration:
   labels, spacing.
 - **App-wide accent sweep (~44 files):** replace decorative/brand/primary accent classes with
   white/white-opacity equivalents across the frontend.
-  - **Convert → white:** `blue`, `sky`, `cyan`, `indigo`, and **emerald used as an accent**
-    (primary buttons, active states, `accent-emerald-*`, decorative borders/rings, the run/▶
-    control's emerald).
+  - **Convert → white:** `blue`, `sky`, `cyan`, `indigo`, and **emerald used as a decorative
+    accent** (Shader Studio's primary button, decorative active states / borders / rings,
+    `accent-emerald-*` on studio controls).
+  - **Keep emerald:** the **run/▶ control on nodes** — that's the established convention, not
+    part of the inconsistency. Do not touch the node run button's emerald.
   - **Keep (functional status, not accents):** `red` (errors/destructive), `amber` (warnings),
-    and `green/emerald` where it genuinely signals success/confirmation (e.g. toast checkmarks).
-  - Done as a reviewed pass (audit each hit accent-vs-semantic), not a blind find-replace.
+    and `green/emerald` where it genuinely signals success/ready/connected (e.g. toast
+    checkmarks, the backend-ready pill).
+  - Done as a reviewed pass (audit each hit: decorative-accent vs node-run vs semantic), not a
+    blind find-replace.
 
 ## Components changed / added
 

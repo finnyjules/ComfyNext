@@ -232,7 +232,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
 </script>
 
 <template>
-  <StudioModalShell>
+  <StudioModalShell title="Shader studio" :breadcrumb="effectDef?.name" @close="closeEditor">
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />

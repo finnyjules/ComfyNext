@@ -270,7 +270,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
 </script>
 
 <template>
-  <StudioModalShell>
+  <StudioModalShell title="Gradient studio" @close="closeEditor">
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
