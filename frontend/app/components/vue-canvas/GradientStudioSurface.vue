@@ -8,6 +8,7 @@ import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type ShapeKind,
@@ -294,14 +295,14 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #actions>
-      <button class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm hover:bg-blue-500" :disabled="baking" @click="generateImage">
+      <StudioButton variant="primary" :disabled="baking" @click="generateImage">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}
-      </button>
-      <button class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500" :disabled="baking" @click="generateVideo">
+      </StudioButton>
+      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
-      </button>
+      </StudioButton>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
-      <button class="ml-auto rounded-lg bg-white/5 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10" @click="closeEditor">Close</button>
+      <StudioButton variant="subtle" class="ml-auto" @click="closeEditor">Close</StudioButton>
     </template>
 
     <template #controls>
@@ -311,7 +312,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <span>Aspect ratio</span>
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('aspect')"><component :is="locked('aspect') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
-        <select v-model="config.canvas.aspect" class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs">
+        <select v-model="config.canvas.aspect" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs">
           <option v-for="a in ASPECTS" :key="a" :value="a">{{ a }}</option>
         </select>
         <label class="mb-1 flex items-center justify-between text-xs text-white/60">
@@ -324,14 +325,14 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   @click="setLayout(l)">{{ l }}</button>
         </div>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
-        <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" class="studio-range mb-2 w-full" />
         <template v-if="isRadial">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
-          <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center X</span><span class="text-white/40">{{ centerX.toFixed(2) }}</span></label>
-          <input v-model.number="centerX" type="range" min="-0.5" max="0.5" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="centerX" type="range" min="-0.5" max="0.5" step="0.01" class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center Y</span><span class="text-white/40">{{ centerY.toFixed(2) }}</span></label>
-          <input v-model.number="centerY" type="range" min="-0.5" max="0.5" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="centerY" type="range" min="-0.5" max="0.5" step="0.01" class="studio-range mb-2 w-full" />
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
         <input v-model="config.canvas.background" type="color" class="h-7 w-full rounded" />
@@ -340,13 +341,13 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <!-- Relief & grain -->
       <StudioSection title="Relief & grain" badge="both layers" :open="false">
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
-        <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
-        <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
-        <input v-model.number="lightAz" type="range" min="0" max="360" step="1" class="mb-2 w-full" />
+        <input v-model.number="lightAz" type="range" min="0" max="360" step="1" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
-        <input v-model.number="lightEl" type="range" min="0" max="90" step="1" class="w-full" />
+        <input v-model.number="lightEl" type="range" min="0" max="90" step="1" class="studio-range w-full" />
       </StudioSection>
 
       <!-- Layers -->
@@ -360,11 +361,11 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </div>
         <template v-if="activeLayer > 0">
           <label class="mb-1 block text-xs text-white/60">Blend</label>
-          <select v-model="layer.blend" class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs capitalize">
+          <select v-model="layer.blend" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize">
             <option v-for="b in BLEND_MODES" :key="b" :value="b">{{ b }}</option>
           </select>
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Opacity</span><span class="text-white/40">{{ layer.opacity.toFixed(2) }}</span></label>
-          <input v-model.number="layer.opacity" type="range" min="0" max="1" step="0.01" class="w-full" />
+          <input v-model.number="layer.opacity" type="range" min="0" max="1" step="0.01" class="studio-range w-full" />
         </template>
       </StudioSection>
 
@@ -376,38 +377,38 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   @click="setShape(s)">{{ s }}</button>
         </div>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Count</span><span class="text-white/40">{{ Math.round(layer.shape.count) }}</span></label>
-        <input v-model.number="layer.shape.count" type="range" min="2" max="64" step="1" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.count" type="range" min="2" max="64" step="1" class="studio-range mb-2 w-full" />
         <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Peaks</span><span class="text-white/40">{{ Math.round(layer.shape.peaks) }}</span></label>
-          <input v-model.number="layer.shape.peaks" type="range" min="1" max="12" step="1" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.peaks" type="range" min="1" max="12" step="1" class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Wave phase</span><span class="text-white/40">{{ layer.shape.phase.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.phase" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.phase" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         </template>
         <template v-else-if="layer.shape.type === 'noise'">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Detail</span><span class="text-white/40">{{ Math.round(layer.shape.detail) }}</span></label>
-          <input v-model.number="layer.shape.detail" type="range" min="1" max="8" step="1" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.detail" type="range" min="1" max="8" step="1" class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Scrub</span><span class="text-white/40">{{ layer.shape.scrub.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         </template>
         <template v-else>
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Valley position</span><span class="text-white/40">{{ layer.shape.valley.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.valley" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.valley" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         </template>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Min depth</span><span class="text-white/40">{{ layer.shape.minDepth.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.minDepth" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.minDepth" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve exponent</span><span class="text-white/40">{{ layer.shape.curveExp.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.curveExp" type="range" min="0.2" max="3" step="0.05" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.curveExp" type="range" min="0.2" max="3" step="0.05" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>{{ layer.shape.type === 'bands' ? 'Randomness' : 'Jitter' }}</span><span class="text-white/40">{{ layer.shape.jitter.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.jitter" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.jitter" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gap</span><span class="text-white/40">{{ layer.shape.gap.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.gap" type="range" min="0" max="0.8" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.gap" type="range" min="0" max="0.8" step="0.01" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Rounding</span><span class="text-white/40">{{ layer.shape.rounding.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.rounding" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+        <input v-model.number="layer.shape.rounding" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         <template v-if="isRadial">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Sweep</span><span class="text-white/40">{{ Math.round(layer.shape.sweep) }}°</span></label>
-          <input v-model.number="layer.shape.sweep" type="range" min="20" max="360" step="1" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.sweep" type="range" min="20" max="360" step="1" class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Scrub / rotate</span><span class="text-white/40">{{ layer.shape.scrub.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
         </template>
         <template v-else>
           <label class="mb-1 block text-xs text-white/60">Direction</label>
@@ -449,11 +450,11 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   @click="layer.color.mapping = mp">{{ mp }}</button>
         </div>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
-        <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" class="mb-2 w-full" />
+        <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue drift</span><span class="text-white/40">{{ Math.round(layer.color.hueDrift) }}°</span></label>
-        <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" class="mb-2 w-full" />
+        <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
-        <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" class="w-full" />
+        <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" class="studio-range w-full" />
       </StudioSection>
 
       <!-- Motion -->
@@ -464,23 +465,23 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
-            <select v-model.number="tk.layer" class="rounded bg-white/10 px-1 py-0.5 text-[11px]">
+            <select v-model.number="tk.layer" class="rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
               <option v-for="(_, li) in config.layers" :key="li" :value="li">L{{ li + 1 }}</option>
             </select>
-            <select v-model="tk.param" class="min-w-0 flex-1 rounded bg-white/10 px-1 py-0.5 text-[11px]">
+            <select v-model="tk.param" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
               <option v-for="p in ANIMATABLE" :key="p.key" :value="p.key">{{ p.label }}</option>
             </select>
             <button class="text-white/30 hover:text-white/70" @click="removeTrack(i)"><Trash2 class="h-3 w-3" /></button>
           </div>
           <div class="mb-1 flex items-center gap-1 text-[11px] text-white/50">
-            <span>from</span><input v-model.number="tk.from" type="number" step="0.05" class="w-14 rounded bg-white/10 px-1 py-0.5" />
-            <span>to</span><input v-model.number="tk.to" type="number" step="0.05" class="w-14 rounded bg-white/10 px-1 py-0.5" />
+            <span>from</span><input v-model.number="tk.from" type="number" step="0.05" class="w-14 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
+            <span>to</span><input v-model.number="tk.to" type="number" step="0.05" class="w-14 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
           </div>
           <div class="flex items-center gap-1">
-            <select v-model="tk.easing" class="rounded bg-white/10 px-1 py-0.5 text-[11px]">
+            <select v-model="tk.easing" class="rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
               <option value="linear">Linear</option><option value="pingpong">Ping-pong</option><option value="easeinout">Ease</option>
             </select>
-            <select v-model.number="tk.loops" class="rounded bg-white/10 px-1 py-0.5 text-[11px]">
+            <select v-model.number="tk.loops" class="rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
               <option :value="1">1</option><option :value="2">2</option><option :value="3">3</option><option :value="4">4</option>
             </select>
             <span class="text-[11px] text-white/40">loops</span>
@@ -489,11 +490,11 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <div class="mt-2 grid grid-cols-2 gap-2">
           <div>
             <label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label>
-            <input v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="w-full" />
+            <input v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="studio-range w-full" />
           </div>
           <div>
             <label class="mb-1 block text-[11px] text-white/60">FPS</label>
-            <select v-model.number="config.motion.fps" class="w-full rounded bg-white/10 px-1 py-0.5 text-[11px]">
+            <select v-model.number="config.motion.fps" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
               <option :value="24">24</option><option :value="30">30</option><option :value="60">60</option>
             </select>
           </div>
@@ -508,8 +509,8 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </template>
         <p v-if="!rolls.length" class="text-[11px] text-white/30">Hit Space — every roll lands here.</p>
         <div v-else class="grid grid-cols-3 gap-1.5">
-          <button v-for="(r, i) in rolls" :key="i" class="overflow-hidden rounded border border-white/10 transition hover:border-emerald-400/70"
-                  :class="{ 'ring-1 ring-emerald-400': r.seed === config.seed }" :title="r.seed" @click="restoreRoll(r)">
+          <button v-for="(r, i) in rolls" :key="i" class="overflow-hidden rounded border border-white/10 transition hover:border-white/40"
+                  :class="{ 'ring-1 ring-white/60': r.seed === config.seed }" :title="r.seed" @click="restoreRoll(r)">
             <img v-if="r.thumb" :src="r.thumb" class="block aspect-video w-full object-cover" />
             <div v-else class="aspect-video w-full bg-white/5" />
           </button>
@@ -520,12 +521,12 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <StudioSection title="Export" :open="false">
         <div class="grid grid-cols-2 gap-1.5">
           <button v-for="f in (['png', 'jpg'] as const)" :key="f" class="rounded border px-2 py-1.5 text-xs transition"
-                  :class="exportFormat === f ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
+                  :class="exportFormat === f ? 'border-white/30 bg-white/15 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
                   @click="exportFormat = f">{{ f.toUpperCase() }}</button>
         </div>
         <div class="grid grid-cols-3 gap-1.5">
           <button v-for="r in EXPORT_RES" :key="r.w" class="rounded border px-1 py-1.5 text-xs transition"
-                  :class="exportResW === r.w ? 'border-emerald-400/60 bg-emerald-400/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
+                  :class="exportResW === r.w ? 'border-white/30 bg-white/15 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
                   @click="exportResW = r.w">{{ r.label }}</button>
         </div>
         <div class="text-[10px] text-white/30">{{ exportDims.w }} × {{ exportDims.h }} · {{ exportFormat.toUpperCase() }}</div>

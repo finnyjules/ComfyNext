@@ -5,6 +5,8 @@ import { ChevronRight, Plus, Trash2 } from 'lucide-vue-next'
 import CatalogModal from '~/components/CatalogModal.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
@@ -246,24 +248,24 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
     </template>
 
     <template #actions>
-      <button class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm hover:bg-blue-500" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</button>
-      <button class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</button>
+      <StudioButton variant="primary" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</StudioButton>
+      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</StudioButton>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
-      <button class="ml-auto rounded-lg bg-white/5 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10" @click="closeEditor">Close</button>
+      <StudioButton variant="subtle" class="ml-auto" @click="closeEditor">Close</StudioButton>
     </template>
 
     <template #controls>
       <!-- Source -->
       <StudioSection title="Source">
-        <p v-if="wiredUrl" class="mb-2 text-[11px] text-emerald-300/80">Using wired input</p>
-        <label class="mb-1 block cursor-pointer rounded bg-white/10 px-2 py-1.5 text-center text-[11px] text-white/80 hover:bg-white/20">
+        <p v-if="wiredUrl" class="mb-2 text-[11px] text-white/50">Using wired input</p>
+        <label class="mb-1 block cursor-pointer rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-center text-[11px] text-white/80 hover:bg-white/20">
           Upload image<input type="file" accept="image/*" class="hidden" @change="onUpload" />
         </label>
       </StudioSection>
 
       <!-- Stylized Effects -->
       <StudioSection title="Stylized Effects">
-        <template #badge><input v-model="config.effect.enabled" type="checkbox" class="accent-emerald-500" @click.stop /></template>
+        <template #badge><StudioSwitch v-model="config.effect.enabled" /></template>
         <button class="mb-2 flex w-full items-center gap-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-left hover:bg-white/[0.08]" @click="openPicker">
           <span class="size-5 overflow-hidden rounded bg-white/[0.06]"><img v-if="currentThumb" :src="currentThumb" class="h-full w-full object-cover" /></span>
           <span class="min-w-0 flex-1 truncate text-[11px] text-white/90">{{ effectDef?.name ?? 'Pick an effect' }}</span>
@@ -276,14 +278,14 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           </label>
           <select
             v-if="p.type === 'enum'"
-            class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs"
+            class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs"
             :value="effectUniforms[p.uniform]"
             @change="setParam(p.uniform, Number(($event.target as HTMLSelectElement).value))"
           >
             <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
           <input
-            v-else type="range" class="mb-2 w-full accent-white" :min="p.min" :max="p.max" :step="p.step"
+            v-else type="range" class="studio-range mb-2 w-full" :min="p.min" :max="p.max" :step="p.step"
             :value="effectUniforms[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
           />
         </div>
@@ -291,7 +293,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
 
       <!-- Duotone -->
       <StudioSection title="Duotone" :open="false">
-        <template #badge><input v-model="config.duotone.enabled" type="checkbox" class="accent-emerald-500" @click.stop /></template>
+        <template #badge><StudioSwitch v-model="config.duotone.enabled" /></template>
         <div class="mb-2 flex items-center gap-2">
           <label class="text-[11px] text-white/60">Ink</label><input v-model="config.duotone.ink" type="color" class="h-7 w-10 rounded" />
           <label class="text-[11px] text-white/60">Paper</label><input v-model="config.duotone.paper" type="color" class="h-7 w-10 rounded" />
@@ -305,38 +307,38 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
 
       <!-- Adjustments -->
       <StudioSection title="Adjustments" :open="false">
-        <template #badge><input v-model="config.adjust.enabled" type="checkbox" class="accent-emerald-500" @click.stop /></template>
-        <select class="mb-2 w-full rounded bg-white/10 px-2 py-1 text-xs" @change="pickAdjustPreset(($event.target as HTMLSelectElement).value)">
+        <template #badge><StudioSwitch v-model="config.adjust.enabled" /></template>
+        <select class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="pickAdjustPreset(($event.target as HTMLSelectElement).value)">
           <option v-for="p in ADJUST_PRESETS" :key="p.name" :value="p.name">{{ p.name }}</option>
         </select>
         <template v-for="f in ([['exposure','Exposure',-2,2],['brightness','Brightness',-1,1],['contrast','Contrast',-1,1],['saturation','Saturation',-1,1],['hue','Hue',-180,180],['temperature','Temperature',-1,1],['tint','Tint',-1,1]] as const)" :key="f[0]">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
-          <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" class="studio-range mb-2 w-full" />
         </template>
       </StudioSection>
 
       <!-- Post-processing -->
       <StudioSection title="Post-processing" :open="false">
-        <div class="mb-1 flex items-center justify-between"><span class="text-xs text-white/70">Lens Blur</span><input v-model="config.post.blur.enabled" type="checkbox" class="accent-emerald-500" /></div>
+        <div class="mb-1 flex items-center justify-between"><span class="text-xs text-white/70">Lens Blur</span><StudioSwitch v-model="config.post.blur.enabled" /></div>
         <template v-if="config.post.blur.enabled">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Focus range</span><span class="text-white/40">{{ config.post.blur.range.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Aperture</span><span class="text-white/40">{{ config.post.blur.aperture.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" class="mb-2 w-full" />
+          <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" class="studio-range mb-2 w-full" />
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Max blur</span><span class="text-white/40">{{ config.post.blur.maxBlur.toFixed(0) }}</span></label>
-          <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" class="mb-2 w-full" />
+          <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" class="studio-range mb-2 w-full" />
         </template>
-        <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Chromatic</span><input v-model="config.post.chromatic.enabled" type="checkbox" class="accent-emerald-500" /></div>
+        <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Chromatic</span><StudioSwitch v-model="config.post.chromatic.enabled" /></div>
         <template v-if="config.post.chromatic.enabled">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Amount</span><span class="text-white/40">{{ config.post.chromatic.amount.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" class="w-full" />
+          <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" class="studio-range w-full" />
         </template>
       </StudioSection>
 
       <!-- Output -->
       <StudioSection title="Output" :open="false">
         <label class="mb-1 block text-xs text-white/60">Resolution (long edge)</label>
-        <select v-model.number="config.resolution" class="mb-1 w-full rounded bg-white/10 px-2 py-1 text-xs">
+        <select v-model.number="config.resolution" class="mb-1 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs">
           <option v-for="r in RESOLUTIONS" :key="r" :value="r">{{ r }}px</option>
         </select>
         <p v-if="outputSizeLabel" class="text-[11px] text-white/40">Output: {{ outputSizeLabel }}px</p>
@@ -347,18 +349,18 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
         <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
-            <select v-model="tk.path" class="min-w-0 flex-1 rounded bg-white/10 px-1 py-0.5 text-[11px]"><option v-for="a in animatablePaths" :key="a.path" :value="a.path">{{ a.label }}</option></select>
+            <select v-model="tk.path" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"><option v-for="a in animatablePaths" :key="a.path" :value="a.path">{{ a.label }}</option></select>
             <button class="text-white/30 hover:text-white/70" @click="removeTrack(i)"><Trash2 class="h-3 w-3" /></button>
           </div>
           <div class="flex items-center gap-1 text-[11px] text-white/50">
-            <span>from</span><input v-model.number="tk.from" type="number" step="0.05" class="w-14 rounded bg-white/10 px-1 py-0.5" />
-            <span>to</span><input v-model.number="tk.to" type="number" step="0.05" class="w-14 rounded bg-white/10 px-1 py-0.5" />
-            <select v-model="tk.easing" class="rounded bg-white/10 px-1 py-0.5"><option value="linear">Linear</option><option value="pingpong">Ping-pong</option><option value="easeinout">Ease</option></select>
+            <span>from</span><input v-model.number="tk.from" type="number" step="0.05" class="w-14 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
+            <span>to</span><input v-model.number="tk.to" type="number" step="0.05" class="w-14 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
+            <select v-model="tk.easing" class="rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5"><option value="linear">Linear</option><option value="pingpong">Ping-pong</option><option value="easeinout">Ease</option></select>
           </div>
         </div>
         <div class="mt-2 grid grid-cols-2 gap-2">
           <div><label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label><input v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="w-full" /></div>
-          <div><label class="mb-1 block text-[11px] text-white/60">FPS</label><select v-model.number="config.motion.fps" class="w-full rounded bg-white/10 px-1 py-0.5 text-[11px]"><option :value="24">24</option><option :value="30">30</option><option :value="60">60</option></select></div>
+          <div><label class="mb-1 block text-[11px] text-white/60">FPS</label><select v-model.number="config.motion.fps" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"><option :value="24">24</option><option :value="30">30</option><option :value="60">60</option></select></div>
         </div>
       </StudioSection>
     </template>
