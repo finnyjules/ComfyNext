@@ -185,4 +185,17 @@ function xmur(str: string): number {
   return h >>> 0
 }
 
-export const gradientFx = new GradientFxRenderer()
+// One WebGL renderer per page. Cached on `globalThis` rather than a plain module
+// const so that Vite HMR re-evaluating this module during dev cannot spin up a
+// *second* GL context: two renderers drawing the shared preview canvas at different
+// times is exactly what made the editor/canvas flicker after a hot update. In
+// production the module evaluates once, so this is behaviour-identical. Note: editing
+// the engine during dev may need a manual page reload to take visual effect, but there
+// is always exactly one live context.
+interface GradientFxScope { __comfynextGradientFx?: GradientFxRenderer }
+
+export function resolveGradientFx(scope: GradientFxScope): GradientFxRenderer {
+  return scope.__comfynextGradientFx ?? (scope.__comfynextGradientFx = new GradientFxRenderer())
+}
+
+export const gradientFx = resolveGradientFx(globalThis as unknown as GradientFxScope)
