@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { elasticEffect } from '../../app/lib/spacetype/effects/elastic'
 import { defaultsFromControls } from '../../app/lib/spacetype/effect'
 import { ELASTIC_MODES } from '../../app/lib/spacetype/elasticMath'
+import { SPACE_TYPE_EFFECTS, getEffect } from '../../app/lib/spacetype/effects/index'
 
 describe('elasticEffect contract', () => {
   it('has id, label, and a textList + a fillList control', () => {
@@ -28,5 +29,12 @@ describe('elasticEffect contract', () => {
     const d = defaultsFromControls(elasticEffect.controls)
     expect(d.mode).toBe('Wave')
     expect(typeof d.intensity).toBe('number')
+  })
+})
+
+describe('elastic registration', () => {
+  it('is registered in the picker and resolvable by id', () => {
+    expect(SPACE_TYPE_EFFECTS.some(e => e.id === 'elastic')).toBe(true)
+    expect(getEffect('elastic').label).toBe('Elastic')
   })
 })

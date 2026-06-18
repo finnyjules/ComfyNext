@@ -189,7 +189,7 @@ function texOpts() {
   // Coil sizes each segment to its text and adds spacing via margin controls, so it takes
   // the RAW uppercased word (no trailing-gap pad). Tiling effects (ribbon/stripes/field)
   // keep buildRibbonLabel's trailing gap so repeated text has space between copies.
-  const rawWords = effectId.value === 'coil'
+  const rawWords = effectId.value === 'coil' || effectId.value === 'elastic'
   const labels = multiAware
     ? texts.map(t => (rawWords ? t.toUpperCase() : buildRibbonLabel(t, 'upper')))
     : [buildRibbonLabel(texts[0] ?? '', 'upper')]

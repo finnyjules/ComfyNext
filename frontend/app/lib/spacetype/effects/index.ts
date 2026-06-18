@@ -8,6 +8,7 @@ import { cascadeEffect } from './cascade'
 import { boostEffect } from './boost'
 import { meltEffect } from './melt'
 import { onionburstEffect } from './onionburst'
+import { elasticEffect } from './elastic'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -20,6 +21,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   boostEffect,
   meltEffect,
   onionburstEffect,
+  elasticEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
