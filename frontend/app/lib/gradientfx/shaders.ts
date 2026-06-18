@@ -304,11 +304,14 @@ void main() {
 
   vec4 l0 = computeLayer(0, p);
   col = mix(col, l0.rgb, l0.a);
+  float cover = l0.a;                       // shape coverage (0 = background)
 
   if (u_layerCount > 1.5) {
     vec4 l1 = computeLayer(1, p);
     vec3 blended = blendLayers(col, l1.rgb, u_blend[1]);
-    col = mix(col, blended, l1.a * u_opacity[1]);
+    float a = l1.a * u_opacity[1];
+    col = mix(col, blended, a);
+    cover = max(cover, a);
   }
 
   // 3D relief: light the band/ring height-field of layer 0 (the primary structure).
@@ -326,10 +329,15 @@ void main() {
     col *= mix(1.0, shade, u_relief);
   }
 
-  // Film grain.
-  if (u_grain > 0.001) {
-    float g = hash21(gl_FragCoord.xy + u_seed) - 0.5;
-    col += g * u_grain * 0.35;
+  // Film grain. Gated to the shape (cover) so the black background stays clean, shaped
+  // by luminance (a filmic midtone bias — vanishes toward pure black/white), and sampled
+  // at a resolution-independent, aspect-corrected cell size so preview matches exports.
+  if (u_grain > 0.001 && cover > 0.001) {
+    vec2 gp = floor(vec2(p.x * u_aspect, p.y) * 1300.0);
+    float g = hash21(gp + u_seed) - 0.5;
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);   // 0.35 floor .. 1 at lum 0.5
+    col += g * u_grain * 0.16 * cover * midtone;
   }
 
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
