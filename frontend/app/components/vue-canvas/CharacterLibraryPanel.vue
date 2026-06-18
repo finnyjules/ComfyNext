@@ -239,8 +239,8 @@ function tileColor(seed: string): string {
             :key="c.filename"
             class="group relative rounded-lg border transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
             :class="selectedCharacter?.filename === c.filename
-              ? 'border-violet-400 ring-1 ring-violet-400/60'
-              : 'border-white/[0.08] hover:border-violet-400/40'"
+              ? 'border-white/20 ring-1 ring-white/30'
+              : 'border-white/[0.08] hover:border-white/20'"
             @click="pickCharacter(c)"
           >
             <img v-if="c.coverUrl" :src="c.coverUrl" class="absolute inset-0 w-full h-full object-cover" loading="lazy" />
@@ -250,7 +250,7 @@ function tileColor(seed: string): string {
             <!-- Selected check -->
             <div
               v-if="selectedCharacter?.filename === c.filename"
-              class="absolute top-1.5 right-1.5 size-5 rounded-full bg-violet-500 flex items-center justify-center shadow"
+              class="absolute top-1.5 right-1.5 size-5 rounded-full bg-white/15 flex items-center justify-center shadow"
             >
               <Check class="size-3 text-white" />
             </div>
@@ -268,7 +268,7 @@ function tileColor(seed: string): string {
           </p>
           <button
             v-if="localStyles.length"
-            class="text-[11px] text-violet-300 hover:text-violet-200 underline underline-offset-2 cursor-pointer"
+            class="text-[11px] text-white/70 hover:text-white underline underline-offset-2 cursor-pointer"
             @click="showAdd = true"
           >
             Choose from your LoRAs
@@ -290,7 +290,7 @@ function tileColor(seed: string): string {
               <img v-if="l.coverUrl" :src="l.coverUrl" class="w-full h-full object-cover" loading="lazy" />
             </div>
             <span class="text-[11px] text-white/80 truncate flex-1">{{ l.name }}</span>
-            <span class="text-[10px] text-violet-300 shrink-0">{{ tagging.has(l.filename) ? '…' : '+ Character' }}</span>
+            <span class="text-[10px] text-white/70 shrink-0">{{ tagging.has(l.filename) ? '…' : '+ Character' }}</span>
           </button>
         </div>
       </div>
@@ -316,14 +316,14 @@ function tileColor(seed: string): string {
           <!-- None -->
           <button
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-left transition-colors"
-            :class="isStyleSelected({ type: 'none' }) ? 'bg-violet-500/15 ring-1 ring-violet-400/40' : 'hover:bg-white/[0.05]'"
+            :class="isStyleSelected({ type: 'none' }) ? 'bg-white/15 ring-1 ring-white/30' : 'hover:bg-white/[0.05]'"
             @click="pickStyle({ type: 'none' })"
           >
             <div class="size-6 rounded shrink-0 bg-white/[0.06] flex items-center justify-center">
               <X class="size-3 text-white/40" />
             </div>
             <span class="text-[11px] text-white/70 flex-1">No style (character only)</span>
-            <Check v-if="isStyleSelected({ type: 'none' })" class="size-3.5 text-violet-300 shrink-0" />
+            <Check v-if="isStyleSelected({ type: 'none' })" class="size-3.5 text-white/70 shrink-0" />
           </button>
 
           <!-- Your styles -->
@@ -332,7 +332,7 @@ function tileColor(seed: string): string {
             v-for="l in visibleLocalStyles"
             :key="l.filename"
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-left transition-colors"
-            :class="isStyleSelected({ type: 'local', lora: l }) ? 'bg-violet-500/15 ring-1 ring-violet-400/40' : 'hover:bg-white/[0.05]'"
+            :class="isStyleSelected({ type: 'local', lora: l }) ? 'bg-white/15 ring-1 ring-white/30' : 'hover:bg-white/[0.05]'"
             @click="pickStyle({ type: 'local', lora: l })"
           >
             <div class="size-6 rounded shrink-0 overflow-hidden" :style="{ background: tileColor(l.name) }">
@@ -340,7 +340,7 @@ function tileColor(seed: string): string {
             </div>
             <span class="text-[11px] text-white/80 truncate flex-1">{{ l.name }}</span>
             <span v-if="l.trigger" class="text-[9px] font-mono text-white/35 truncate max-w-[70px]">{{ l.trigger }}</span>
-            <Check v-if="isStyleSelected({ type: 'local', lora: l })" class="size-3.5 text-violet-300 shrink-0" />
+            <Check v-if="isStyleSelected({ type: 'local', lora: l })" class="size-3.5 text-white/70 shrink-0" />
           </button>
 
           <!-- Curated styles -->
@@ -349,13 +349,13 @@ function tileColor(seed: string): string {
             v-for="e in visibleCuratedStyles"
             :key="e.hfPath"
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-left transition-colors"
-            :class="isStyleSelected({ type: 'curated', entry: e }) ? 'bg-violet-500/15 ring-1 ring-violet-400/40' : 'hover:bg-white/[0.05]'"
+            :class="isStyleSelected({ type: 'curated', entry: e }) ? 'bg-white/15 ring-1 ring-white/30' : 'hover:bg-white/[0.05]'"
             @click="pickStyle({ type: 'curated', entry: e })"
           >
             <div class="size-6 rounded shrink-0" :style="{ background: tileColor(e.author) }" />
             <span class="text-[11px] text-white/80 truncate flex-1">{{ e.label }}</span>
             <span class="text-[9px] font-mono text-white/35 truncate max-w-[70px]">{{ e.trigger }}</span>
-            <Check v-if="isStyleSelected({ type: 'curated', entry: e })" class="size-3.5 text-violet-300 shrink-0" />
+            <Check v-if="isStyleSelected({ type: 'curated', entry: e })" class="size-3.5 text-white/70 shrink-0" />
           </button>
         </div>
       </div>
@@ -368,13 +368,13 @@ function tileColor(seed: string): string {
             <div class="flex items-center justify-between text-[10.5px] text-white/55 mb-1">
               <span>Character</span><span class="tabular-nums text-white/70">{{ charScale.toFixed(2) }}</span>
             </div>
-            <input v-model.number="charScale" type="range" min="0" max="1.5" step="0.05" class="w-full accent-violet-400" />
+            <input v-model.number="charScale" type="range" min="0" max="1.5" step="0.05" class="w-full accent-white" />
           </label>
           <label v-if="selectedStyle.type !== 'none'" class="block">
             <div class="flex items-center justify-between text-[10.5px] text-white/55 mb-1">
               <span>Style</span><span class="tabular-nums text-white/70">{{ styleScale.toFixed(2) }}</span>
             </div>
-            <input v-model.number="styleScale" type="range" min="0" max="1.5" step="0.05" class="w-full accent-violet-400" />
+            <input v-model.number="styleScale" type="range" min="0" max="1.5" step="0.05" class="w-full accent-white" />
           </label>
         </div>
       </div>
@@ -385,7 +385,7 @@ function tileColor(seed: string): string {
       <button
         class="w-full inline-flex items-center justify-center gap-2 h-9 rounded-lg text-[13px] font-semibold transition-colors"
         :class="canGenerate
-          ? 'bg-violet-500 hover:bg-violet-400 text-white cursor-pointer'
+          ? 'bg-white hover:bg-white/90 text-neutral-900 cursor-pointer'
           : 'bg-white/[0.06] text-white/35 cursor-not-allowed'"
         :disabled="!canGenerate"
         @click="generate"

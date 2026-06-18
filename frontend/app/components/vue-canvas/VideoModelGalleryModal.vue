@@ -379,7 +379,7 @@ const focusedModel = computed<VideoModel | null>(() =>
               <span
                 v-for="m in (item as VideoModel).modes"
                 :key="m"
-                class="text-[10px] uppercase tracking-[0.06em] font-medium px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-400/20"
+                class="text-[10px] uppercase tracking-[0.06em] font-medium px-1.5 py-0.5 rounded bg-white/15 text-white/70 border border-white/20"
                 :title="MODE_LABELS[m]"
               >{{ m }}</span>
             </div>

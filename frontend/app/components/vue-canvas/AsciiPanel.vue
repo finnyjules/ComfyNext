@@ -176,7 +176,7 @@ const blendModeOptions = computed<string[]>(() => getDef('blend_mode')?.options 
         <label class="text-white/60">Background</label>
         <button
           class="justify-self-end relative w-9 h-5 rounded-full transition-colors cursor-pointer"
-          :class="getValue('background') ? 'bg-violet-500' : 'bg-white/15'"
+          :class="getValue('background') ? 'bg-white/40' : 'bg-white/15'"
           @click="setValue('background', !getValue('background'))"
         >
           <span class="absolute top-0.5 size-4 bg-white rounded-full transition-all"
@@ -189,7 +189,7 @@ const blendModeOptions = computed<string[]>(() => getDef('blend_mode')?.options 
         <label class="text-white/60 flex items-center gap-1">Invert order <Info class="size-3 text-white/30" /></label>
         <button
           class="justify-self-end relative w-9 h-5 rounded-full transition-colors cursor-pointer"
-          :class="getValue('invert_order') ? 'bg-violet-500' : 'bg-white/15'"
+          :class="getValue('invert_order') ? 'bg-white/40' : 'bg-white/15'"
           @click="setValue('invert_order', !getValue('invert_order'))"
         >
           <span class="absolute top-0.5 size-4 bg-white rounded-full transition-all"

@@ -16,23 +16,23 @@ const props = defineProps<{
 
 <template>
   <div
-    class="subgraph-io rounded-xl border border-indigo-500/30 select-none backdrop-blur-sm min-w-[180px]"
+    class="subgraph-io rounded-xl border border-white/30 select-none backdrop-blur-sm min-w-[180px]"
     :style="{
       background: data.isInput
-        ? 'linear-gradient(180deg, rgba(99,102,241,0.12) 0%, rgba(30,30,30,0.95) 100%)'
-        : 'linear-gradient(180deg, rgba(139,92,246,0.12) 0%, rgba(30,30,30,0.95) 100%)',
+        ? 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(30,30,30,0.95) 100%)'
+        : 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(30,30,30,0.95) 100%)',
     }"
   >
     <!-- Title bar -->
-    <div class="flex items-center gap-2 px-3 py-2 border-b border-indigo-500/15">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-white/15">
       <!-- Arrow icon -->
-      <svg v-if="data.isInput" class="size-3.5 text-indigo-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg v-if="data.isInput" class="size-3.5 text-white/70 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="9 18 15 12 9 6" />
       </svg>
-      <svg v-else class="size-3.5 text-purple-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg v-else class="size-3.5 text-white/70 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="15 18 9 12 15 6" />
       </svg>
-      <span class="text-xs font-semibold truncate" :class="data.isInput ? 'text-indigo-300' : 'text-purple-300'">
+      <span class="text-xs font-semibold truncate" :class="data.isInput ? 'text-white/70' : 'text-white/70'">
         {{ data.title }}
       </span>
     </div>

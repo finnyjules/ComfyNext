@@ -421,7 +421,7 @@ onBeforeUnmount(() => {
         <!-- Hints -->
         <div class="absolute bottom-3 left-3 text-[10px] text-white/35 leading-relaxed pointer-events-none">
           <div>Drag empty space to orbit · scroll to zoom</div>
-          <div>Click a <span class="text-sky-400">limb or joint</span> to select · drag the ring to rotate it</div>
+          <div>Click a <span class="text-white/70">limb or joint</span> to select · drag the ring to rotate it</div>
           <div v-if="selectedJoint" class="text-white/55">selected: {{ selectedJoint }}</div>
         </div>
       </div>
@@ -429,7 +429,7 @@ onBeforeUnmount(() => {
       <!-- Controls -->
       <div class="w-80 border-l border-white/10 shrink-0 flex flex-col">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-          <Wand2 class="size-4 text-violet-400" />
+          <Wand2 class="size-4 text-white/70" />
           <span class="text-sm font-semibold tracking-tight">Pose Mannequin</span>
         </div>
 
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
 
           <!-- Actions -->
           <div class="flex items-center gap-1.5">
-            <button class="flex-1 h-9 rounded-md bg-violet-500/90 hover:bg-violet-500 text-white text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
+            <button class="flex-1 h-9 rounded-md bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
               :disabled="inpaint.busy.value || !ready || !characterUrl" @click="generate">
               <Loader2 v-if="inpaint.busy.value" class="size-4 animate-spin" />
               <Wand2 v-else class="size-4" />
@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
             <div class="mb-2 text-[11px] uppercase tracking-wide text-white/40">Pick a result</div>
             <div class="grid grid-cols-2 gap-2">
               <button v-for="(img, i) in results" :key="i"
-                class="relative group rounded-md overflow-hidden border border-white/10 hover:border-violet-400/80 cursor-pointer"
+                class="relative group rounded-md overflow-hidden border border-white/10 hover:border-white/40 cursor-pointer"
                 @click="applyResult(img)">
                 <img :src="img" class="w-full aspect-[3/4] object-cover" draggable="false" />
                 <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1"><Check class="size-3" /> Use this</span>

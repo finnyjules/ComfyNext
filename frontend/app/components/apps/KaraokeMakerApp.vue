@@ -213,11 +213,11 @@ function download(url: string, name: string) {
         </div>
 
         <div v-if="vocalsUrl && instrumentalUrl" class="grid grid-cols-2 gap-4">
-          <div class="rounded-xl bg-gradient-to-br from-violet-900/30 to-violet-500/5 border border-violet-500/20 p-5">
+          <div class="rounded-xl bg-gradient-to-br from-white/10 to-white/[0.04] border border-white/20 p-5">
             <div class="flex items-center justify-between mb-3">
               <div class="flex items-center gap-2">
-                <div class="size-8 rounded-full bg-violet-500/20 flex items-center justify-center">
-                  <Music class="size-4 text-violet-300" :stroke-width="1.75" />
+                <div class="size-8 rounded-full bg-white/20 flex items-center justify-center">
+                  <Music class="size-4 text-white/70" :stroke-width="1.75" />
                 </div>
                 <div>
                   <div class="text-[13px] font-medium text-white">Vocals</div>
@@ -234,11 +234,11 @@ function download(url: string, name: string) {
             <audio :src="vocalsUrl" controls preload="metadata" class="w-full" />
           </div>
 
-          <div class="rounded-xl bg-gradient-to-br from-emerald-900/30 to-emerald-500/5 border border-emerald-500/20 p-5">
+          <div class="rounded-xl bg-gradient-to-br from-white/10 to-white/[0.04] border border-white/20 p-5">
             <div class="flex items-center justify-between mb-3">
               <div class="flex items-center gap-2">
-                <div class="size-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                  <Music class="size-4 text-emerald-300" :stroke-width="1.75" />
+                <div class="size-8 rounded-full bg-white/20 flex items-center justify-center">
+                  <Music class="size-4 text-white/70" :stroke-width="1.75" />
                 </div>
                 <div>
                   <div class="text-[13px] font-medium text-white">Instrumental</div>

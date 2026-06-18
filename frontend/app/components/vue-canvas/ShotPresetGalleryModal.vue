@@ -162,7 +162,7 @@ function arrowGlyph(p: ShotPreset): string {
       <div class="px-3 pt-2 pb-3 flex flex-col gap-0.5">
         <div class="text-[12px] font-medium text-white/90 leading-tight">{{ (item as ShotPreset).label }}</div>
         <div class="text-[10px] text-white/45 leading-snug">{{ (item as ShotPreset).recipe }}</div>
-        <div class="text-[10px] text-blue-300/70 italic leading-snug">{{ (item as ShotPreset).pitch }}</div>
+        <div class="text-[10px] text-white/70 italic leading-snug">{{ (item as ShotPreset).pitch }}</div>
       </div>
     </template>
   </CatalogModal>

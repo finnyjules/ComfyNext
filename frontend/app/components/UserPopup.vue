@@ -95,7 +95,7 @@ const providerLabel = computed(() => {
               </div>
             </div>
             <button
-              class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+              class="text-xs text-white/70 hover:text-white transition-colors cursor-pointer"
               @click="emit('openAddCredits'); emit('close')"
             >
               Add credits

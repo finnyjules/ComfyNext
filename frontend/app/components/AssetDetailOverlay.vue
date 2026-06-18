@@ -275,7 +275,7 @@ function removeComment(index: number) {
         v-else-if="/\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(image.filename)"
         class="w-full max-w-2xl flex flex-col items-center gap-8"
       >
-        <svg viewBox="0 0 80 24" class="size-40 text-violet-300/80" fill="currentColor">
+        <svg viewBox="0 0 80 24" class="size-40 text-white/70" fill="currentColor">
           <rect x="0" y="9" width="3" height="6" rx="1.5" />
           <rect x="6" y="6" width="3" height="12" rx="1.5" />
           <rect x="12" y="2" width="3" height="20" rx="1.5" />
@@ -357,7 +357,7 @@ function removeComment(index: number) {
             <button
               class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer"
               :class="saved
-                ? 'bg-blue-500/15 text-blue-400 hover:bg-blue-500/25'
+                ? 'bg-white/15 text-white hover:bg-white/25'
                 : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'"
               @click="toggleSave"
             >

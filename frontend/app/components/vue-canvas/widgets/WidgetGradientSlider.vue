@@ -84,7 +84,7 @@ function onInputChange(e: Event) {
         :min="min"
         :max="max"
         :step="step || (isFloat ? 0.01 : 1)"
-        class="w-14 h-5 text-[10px] text-center bg-[#1a1a1a] border border-[#2a2a2a] rounded text-white/90 focus:outline-none focus:border-blue-500/60"
+        class="w-14 h-5 text-[10px] text-center bg-[#1a1a1a] border border-[#2a2a2a] rounded text-white/90 focus:outline-none focus:border-white/30"
         @change="onInputChange"
       />
     </div>

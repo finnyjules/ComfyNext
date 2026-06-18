@@ -563,14 +563,14 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
         <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] text-white/40 tabular-nums">
           <template v-if="timeline">
             Frame {{ frameIndex }} / {{ timeline.totalFrames - 1 }}
-            <span class="ml-2" :class="inTransition ? 'text-violet-300' : 'text-white/30'">
+            <span class="ml-2" :class="inTransition ? 'text-white/70' : 'text-white/30'">
               {{ inTransition ? `transition · α = ${alpha.toFixed(2)}` : (scrub >= timeline.tEndFrac ? 'Clip B' : 'Clip A') }}
             </span>
           </template>
           <template v-else>
             (waiting for clips to load)
           </template>
-          <span v-if="isPlaying" class="ml-1 text-violet-300">▶</span>
+          <span v-if="isPlaying" class="ml-1 text-white/70">▶</span>
         </div>
       </div>
 
@@ -578,7 +578,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
       <div class="px-6 py-3 border-t border-white/10 shrink-0">
         <div class="flex items-center gap-3 mb-2">
           <button
-            class="flex items-center justify-center size-8 rounded-full bg-violet-500/20 hover:bg-violet-500/30 text-violet-200 transition-colors cursor-pointer"
+            class="flex items-center justify-center size-8 rounded-full bg-white/15 hover:bg-white/20 text-white/70 transition-colors cursor-pointer"
             :title="isPlaying ? 'Pause (Space)' : 'Play (Space)'"
             @click="togglePlay"
           >
@@ -609,7 +609,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
         >
           <!-- Overlap shading spans both lanes -->
           <div
-            class="absolute inset-y-0 bg-violet-500/15"
+            class="absolute inset-y-0 bg-white/15"
             :style="{
               left: ((lenA - overlap) / timeline.totalFrames * 100) + '%',
               width: (overlap / timeline.totalFrames * 100) + '%'
@@ -618,8 +618,8 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
 
           <!-- Lane A (top) -->
           <div
-            class="absolute h-6 top-1 rounded bg-sky-500/70 hover:bg-sky-500/85 transition-colors"
-            :class="[draggingPart === 'a-body' ? 'ring-2 ring-sky-300' : '']"
+            class="absolute h-6 top-1 rounded bg-white/70 hover:bg-white/85 transition-colors"
+            :class="[draggingPart === 'a-body' ? 'ring-2 ring-white/40' : '']"
             :style="{ left: '0%', width: (lenA / timeline.totalFrames * 100) + '%' }"
           >
             <div class="px-2 h-full flex items-center text-[10px] text-black/85 font-medium pointer-events-none truncate">
@@ -627,13 +627,13 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
             </div>
             <!-- Left trim handle: drag to advance trim_in_a -->
             <div
-              class="absolute left-0 top-0 bottom-0 w-1.5 bg-sky-200 cursor-ew-resize"
+              class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
               title="Trim start of clip A"
               @pointerdown="(e) => startDrag('a-in', e)"
             />
             <!-- Right trim handle: drag to pull trim_out_a back -->
             <div
-              class="absolute right-0 top-0 bottom-0 w-1.5 bg-sky-200 cursor-ew-resize"
+              class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
               title="Trim end of clip A"
               @pointerdown="(e) => startDrag('a-out', e)"
             />
@@ -641,8 +641,8 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
 
           <!-- Lane B (bottom). Body-drag changes overlap. -->
           <div
-            class="absolute h-6 top-9 rounded bg-emerald-500/70 hover:bg-emerald-500/85 transition-colors cursor-grab"
-            :class="[draggingPart === 'b-body' ? 'ring-2 ring-emerald-300 cursor-grabbing' : '']"
+            class="absolute h-6 top-9 rounded bg-white/55 hover:bg-white/70 transition-colors cursor-grab"
+            :class="[draggingPart === 'b-body' ? 'ring-2 ring-white/40 cursor-grabbing' : '']"
             :style="{
               left: ((lenA - overlap) / timeline.totalFrames * 100) + '%',
               width: (lenB / timeline.totalFrames * 100) + '%'
@@ -653,12 +653,12 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
               Clip B · {{ lenB }}f
             </div>
             <div
-              class="absolute left-0 top-0 bottom-0 w-1.5 bg-emerald-200 cursor-ew-resize"
+              class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
               title="Trim start of clip B"
               @pointerdown.stop="(e) => startDrag('b-in', e)"
             />
             <div
-              class="absolute right-0 top-0 bottom-0 w-1.5 bg-emerald-200 cursor-ew-resize"
+              class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
               title="Trim end of clip B"
               @pointerdown.stop="(e) => startDrag('b-out', e)"
             />
@@ -695,7 +695,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
           </div>
           <input
             type="range" min="1" max="120" step="1" :value="duration"
-            class="accent-violet-500 mt-1"
+            class="accent-white mt-1"
             @input="duration = parseInt(($event.target as HTMLInputElement).value) || 1"
           />
         </div>
@@ -709,7 +709,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
               :key="c"
               class="flex flex-col items-center p-2 rounded-md cursor-pointer transition-colors group"
               :class="curve === c
-                ? 'bg-violet-500/20 ring-1 ring-violet-400'
+                ? 'bg-white/15 ring-1 ring-white/30'
                 : 'bg-white/[0.04] hover:bg-white/[0.08] ring-1 ring-transparent'"
               @click="curve = c"
             >
@@ -721,7 +721,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
                 <polyline
                   :points="curvePolyline(c)"
                   fill="none"
-                  :stroke="curve === c ? '#c4b5fd' : 'rgba(255,255,255,0.55)'"
+                  :stroke="curve === c ? '#ffffff' : 'rgba(255,255,255,0.55)'"
                   stroke-width="2"
                   class="transition-colors"
                 />
@@ -731,12 +731,12 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
                   :cx="scrub * 60"
                   :cy="40 - evalCurve(scrub, c) * 40"
                   r="3"
-                  fill="#a78bfa"
+                  fill="#ffffff"
                 />
               </svg>
               <span
                 class="text-[10px] mt-1 capitalize tracking-tight transition-colors"
-                :class="curve === c ? 'text-violet-200' : 'text-white/60'"
+                :class="curve === c ? 'text-white' : 'text-white/60'"
               >{{ c.replace('_', ' ') }}</span>
             </button>
           </div>

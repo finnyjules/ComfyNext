@@ -82,7 +82,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <div v-if="formattedDate" class="text-[12px] text-white/40 mt-1">{{ formattedDate }}</div>
           </div>
           <button
-            class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-[#96b4ff] hover:bg-[#a8c2ff] text-[#0a0a0a] text-[12px] font-medium transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium transition-colors cursor-pointer"
             @click="downloadAll"
           >
             <Download class="size-3.5" />
@@ -108,9 +108,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               />
               <div
                 v-else-if="isAudio(img.filename)"
-                class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-violet-900/30 to-violet-500/10"
+                class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/30 to-white/10"
               >
-                <svg viewBox="0 0 80 24" class="size-16 text-violet-300/80" fill="currentColor">
+                <svg viewBox="0 0 80 24" class="size-16 text-white/70" fill="currentColor">
                   <rect x="0" y="9" width="3" height="6" rx="1.5" />
                   <rect x="12" y="2" width="3" height="20" rx="1.5" />
                   <rect x="24" y="4" width="3" height="16" rx="1.5" />

@@ -111,12 +111,12 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocPointerDown, 
 
       <button
         class="w-full flex items-center gap-2 px-3 py-2 text-left border-t border-white/10 disabled:opacity-50"
-        :class="selectedIndex === aiRowIndex ? 'bg-emerald-500/15 text-emerald-200' : 'text-emerald-300/80 hover:bg-white/5'"
+        :class="selectedIndex === aiRowIndex ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/5'"
         :disabled="aiState === 'loading' || !query.trim()"
         @mouseenter="selectedIndex = aiRowIndex"
         @click="submitAi"
       >
-        <span v-if="aiState === 'loading'" class="inline-block h-3 w-3 animate-spin rounded-full border border-emerald-300 border-t-transparent" />
+        <span v-if="aiState === 'loading'" class="inline-block h-3 w-3 animate-spin rounded-full border border-white/70 border-t-transparent" />
         <span v-else>✦</span>
         <span class="truncate">
           {{ aiState === 'loading' ? 'Asking AI…' : (query.trim() ? `Ask AI: "${query.trim()}"` : 'Ask AI (type your intent)') }}
@@ -128,7 +128,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocPointerDown, 
     <div v-if="aiState === 'error' && aiError" class="px-3 py-2 text-xs text-red-400 border-t border-white/10">
       {{ aiError }}
     </div>
-    <div v-else-if="aiState === 'done' && aiNote" class="px-3 py-2 text-xs text-emerald-300 border-t border-white/10">
+    <div v-else-if="aiState === 'done' && aiNote" class="px-3 py-2 text-xs text-white/70 border-t border-white/10">
       ✦ {{ aiNote }}
     </div>
   </div>

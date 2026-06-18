@@ -149,7 +149,7 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
         <button
           v-for="p in EASE_PRESETS" :key="p.value"
           class="px-1.5 py-0.5 rounded text-[10px] normal-case tracking-normal"
-          :class="(store.selectedAxisKeyframe.value!.ease ?? 'linear') === p.value ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/60 hover:bg-white/10'"
+          :class="(store.selectedAxisKeyframe.value!.ease ?? 'linear') === p.value ? 'bg-white text-neutral-900' : 'bg-white/5 text-white/60 hover:bg-white/10'"
           @click="setSelectedEase(p.value)"
         >{{ p.label }}</button>
       </div>
@@ -174,7 +174,7 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
         <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
         <div
           v-for="kf in transformKfs" :key="`tf-${kf.frame}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-violet-100 border border-black/50 -translate-x-1/2 cursor-grab"
+          class="absolute top-1.5 size-2 rotate-45 bg-white border border-black/50 -translate-x-1/2 cursor-grab"
           :style="{ left: framesToPx(clip.start_frame + kf.frame) + 'px' }"
           @pointerdown.stop="(e) => onTransformDown(kf.frame, e)"
         />
@@ -197,7 +197,7 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
         <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
         <div
           v-for="kf in axisKfsFor(ax.tag)" :key="`${ax.tag}-${kf.t}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-emerald-200 border border-black/50 -translate-x-1/2 cursor-grab"
+          class="absolute top-1.5 size-2 rotate-45 bg-white/80 border border-black/50 -translate-x-1/2 cursor-grab"
           :style="{ left: framesToPx(tToFrame(kf.t)) + 'px' }"
           @pointerdown.stop="(e) => { onAxisDown(ax.tag, kf.t, e); store.selectedClipId.value = clip!.id; store.selectedAxisKeyframeT.value = kf.t }"
         />

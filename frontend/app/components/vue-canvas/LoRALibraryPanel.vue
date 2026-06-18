@@ -323,7 +323,7 @@ function clearSearch() {
           <button
             v-for="l in visibleLocal"
             :key="l.filename"
-            class="group relative rounded-lg border border-white/[0.08] hover:border-violet-400/40 transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
+            class="group relative rounded-lg border border-white/[0.08] hover:border-white/20 transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
             :title="l.aesthetic ? `Add ${l.name}\n\nStyle profile (added to prompt):\n${l.aesthetic}` : `Add ${l.name}`"
             @click="useLocalLora(l)"
           >
@@ -339,11 +339,11 @@ function clearSearch() {
               class="absolute inset-0 flex items-center justify-center"
               style="background: linear-gradient(135deg, hsl(265,42%,20%) 0%, hsl(292,46%,12%) 100%)"
             >
-              <Sparkles class="size-6 text-violet-200/30" />
+              <Sparkles class="size-6 text-white/30" />
             </div>
             <!-- Hover action: promote to a character -->
             <button
-              class="absolute top-1.5 right-1.5 size-6 rounded-md bg-black/55 hover:bg-violet-500/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
+              class="absolute top-1.5 right-1.5 size-6 rounded-md bg-black/55 hover:bg-white/15 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
               :title="`Make &quot;${l.name}&quot; a character`"
               :disabled="promoting.has(l.filename)"
               @click="markAsCharacter(l, $event)"

@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
           <div
             v-if="!samSelect && !spaceDown && !panning && cursorScreen"
             class="absolute pointer-events-none rounded-full border-2"
-            :class="brush.mode.value === 'erase' ? 'border-rose-400/90' : 'border-cyan-300/90'"
+            :class="brush.mode.value === 'erase' ? 'border-rose-400/90' : 'border-white/90'"
             :style="{ left: cursorScreen.sx + 'px', top: cursorScreen.sy + 'px', width: brush.sizePx.value * view.scale.value + 'px', height: brush.sizePx.value * view.scale.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
           />
           <div v-if="loadingSrc" class="absolute inset-0 flex items-center justify-center bg-black/30"><Loader2 class="size-6 animate-spin text-white/60" /></div>
@@ -380,7 +380,7 @@ onBeforeUnmount(() => {
       <!-- Controls -->
       <div class="w-80 border-l border-white/10 shrink-0 flex flex-col">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-          <Brush class="size-4 text-emerald-400" />
+          <Brush class="size-4 text-white/70" />
           <span class="text-sm font-semibold tracking-tight">Inpaint</span>
         </div>
 
@@ -394,12 +394,12 @@ onBeforeUnmount(() => {
           <!-- Brush controls -->
           <template v-if="mode === 'mask'">
             <div class="flex items-center gap-1.5">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-cyan-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'erase' ? 'bg-rose-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Erase (X)" @click="brush.mode.value = 'erase'"><Eraser class="size-3.5" /> Erase</button>
-              <button class="ml-auto size-7 rounded-md flex items-center justify-center cursor-pointer" :class="samSelect ? 'bg-emerald-400/90 text-black' : 'bg-white/[0.06] text-white/70'" aria-label="Click-select an object" :title="samSelect ? 'Click an object to auto-select it' : 'Click-select an object (SAM · beta, falls back to brushing)'" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /></button>
+              <button class="ml-auto size-7 rounded-md flex items-center justify-center cursor-pointer" :class="samSelect ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" aria-label="Click-select an object" :title="samSelect ? 'Click an object to auto-select it' : 'Click-select an object (SAM · beta, falls back to brushing)'" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /></button>
             </div>
             <label class="flex items-center gap-2 text-[11px] text-white/50">Size
-              <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-cyan-400 cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
+              <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-white cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
             </label>
             <div class="flex items-center gap-1.5">
               <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
@@ -432,10 +432,10 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="mode === 'mask'" class="grid grid-cols-2 gap-2">
             <label class="flex items-center gap-1.5 text-[11px] text-white/50">Feather
-              <input type="range" min="0" max="40" v-model.number="feather" class="flex-1 accent-cyan-400 cursor-pointer" />
+              <input type="range" min="0" max="40" v-model.number="feather" class="flex-1 accent-white cursor-pointer" />
             </label>
             <label class="flex items-center gap-1.5 text-[11px] text-white/50">Expand
-              <input type="range" min="0" max="40" v-model.number="expand" class="flex-1 accent-cyan-400 cursor-pointer" />
+              <input type="range" min="0" max="40" v-model.number="expand" class="flex-1 accent-white cursor-pointer" />
             </label>
           </div>
 
@@ -457,7 +457,7 @@ onBeforeUnmount(() => {
             <div class="grid grid-cols-4 gap-2">
               <button v-for="item in history" :key="item.id"
                 class="relative group rounded-md overflow-hidden border cursor-pointer"
-                :class="previewResult === item.url ? 'border-emerald-400/90 ring-1 ring-emerald-400/60' : 'border-white/10 hover:border-emerald-400/80'"
+                :class="previewResult === item.url ? 'border-white/90 ring-1 ring-white/30' : 'border-white/10 hover:border-white/40'"
                 :title="item.prompt || (item.mode === 'describe' ? 'described edit' : 'inpaint')"
                 @mouseenter="previewResult = item.url" @mouseleave="previewResult = null" @click="acceptInpaint(item.url)">
                 <img :src="item.url" class="w-full aspect-square object-cover" draggable="false" />

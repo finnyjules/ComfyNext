@@ -1113,7 +1113,7 @@ watch(previewImages, (urls) => {
       'comfy-node--muted': isMuted,
       'comfy-node--bypassed': isBypassed,
       'ring-2 ring-red-500': data.error,
-      'border-indigo-500/30': data.isSubgraph,
+      'border-white/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
     }"
     :data-running="data.running || undefined"
@@ -1149,7 +1149,7 @@ watch(previewImages, (urls) => {
     >
       <!-- Subgraph icon → partner icon → toolbox icon. No fallback dot:
            if nothing resolves, the title fills the space instead. -->
-      <svg v-if="data.isSubgraph" class="size-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg v-if="data.isSubgraph" class="size-4 shrink-0 text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="2" width="8" height="8" rx="1" /><rect x="14" y="2" width="8" height="8" rx="1" /><rect x="8" y="14" width="8" height="8" rx="1" />
       </svg>
       <!-- Per-node generator icon takes precedence over provider logo: a
@@ -1205,7 +1205,7 @@ watch(previewImages, (urls) => {
       <!-- Subgraph node count badge -->
       <span
         v-if="data.isSubgraph && data.innerNodeCount"
-        class="shrink-0 text-[8px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/20"
+        class="shrink-0 text-[8px] font-medium px-1.5 py-0.5 rounded-full bg-white/20 text-white/70 border border-white/20"
       >{{ data.innerNodeCount }} nodes</span>
       <span
         v-else-if="priceLabel"
@@ -1408,7 +1408,7 @@ watch(previewImages, (urls) => {
             v-for="l in LENS_VIZ" :key="'s' + l.mm" :title="l.name"
             class="flex-1 py-1 rounded-[6px] text-[10px] cursor-pointer border transition-colors"
             :class="lensSourceName === l.name
-              ? 'bg-emerald-400/15 text-emerald-300 border-emerald-400/60'
+              ? 'bg-white/15 text-white/70 border-white/30'
               : 'bg-white/[0.04] text-white/55 border-white/10 hover:bg-white/[0.08]'"
             @click.stop="setLens('source_lens', l.name)"
           >{{ l.mm }}</button>
@@ -1418,14 +1418,14 @@ watch(previewImages, (urls) => {
       <div>
         <div class="flex justify-between items-baseline mb-1">
           <span class="text-[10px] text-white/40">Re-shoot as</span>
-          <span v-if="lensDiagram" class="text-[10px] text-emerald-300">{{ lensDiagram.mm }}mm · {{ lensDiagram.tag }}</span>
+          <span v-if="lensDiagram" class="text-[10px] text-white/70">{{ lensDiagram.mm }}mm · {{ lensDiagram.tag }}</span>
         </div>
         <div class="flex gap-1">
           <button
             v-for="l in LENS_VIZ" :key="'t' + l.mm" :title="l.name"
             class="flex-1 py-1 rounded-[6px] text-[10px] cursor-pointer border transition-colors"
             :class="lensTargetName === l.name
-              ? 'bg-emerald-400/15 text-emerald-300 border-emerald-400/60'
+              ? 'bg-white/15 text-white/70 border-white/30'
               : 'bg-white/[0.04] text-white/55 border-white/10 hover:bg-white/[0.08]'"
             @click.stop="setLens('target_lens', l.name)"
           >{{ l.mm }}</button>

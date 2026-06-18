@@ -308,9 +308,9 @@ watch(() => activeTab.value.type, (type) => {
                       />
                       <div
                         v-else-if="isAudioFile(img.filename)"
-                        class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-violet-900/30 to-violet-500/10"
+                        class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/30 to-white/10"
                       >
-                        <svg viewBox="0 0 80 24" class="size-10 text-violet-300/70" fill="currentColor">
+                        <svg viewBox="0 0 80 24" class="size-10 text-white/70" fill="currentColor">
                           <rect x="0" y="9" width="3" height="6" rx="1.5" />
                           <rect x="12" y="2" width="3" height="20" rx="1.5" />
                           <rect x="24" y="4" width="3" height="16" rx="1.5" />
@@ -351,9 +351,9 @@ watch(() => activeTab.value.type, (type) => {
                   />
                   <div
                     v-else-if="isAudioFile(item.images[0].filename)"
-                    class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-violet-900/30 to-violet-500/10"
+                    class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/30 to-white/10"
                   >
-                    <svg viewBox="0 0 80 24" class="size-20 text-violet-300/80" fill="currentColor">
+                    <svg viewBox="0 0 80 24" class="size-20 text-white/70" fill="currentColor">
                       <rect x="0" y="9" width="3" height="6" rx="1.5" />
                       <rect x="6" y="6" width="3" height="12" rx="1.5" />
                       <rect x="12" y="2" width="3" height="20" rx="1.5" />

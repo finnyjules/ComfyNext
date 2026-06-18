@@ -74,7 +74,7 @@ function statusLine(key: string): string {
         </div>
         <!-- Progress bar while downloading -->
         <div v-if="isDownloading(key) && !isErrored(key)" class="mt-1.5 h-1 rounded-full bg-white/10 overflow-hidden">
-          <div class="h-full bg-blue-500 transition-[width] duration-200" :style="{ width: progressPct(key) + '%' }" />
+          <div class="h-full bg-white/15 transition-[width] duration-200" :style="{ width: progressPct(key) + '%' }" />
         </div>
       </div>
 

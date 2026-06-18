@@ -194,7 +194,7 @@ function extractFromIframe(x: number, y: number, w: number, h: number, e: MouseE
   >
     <!-- Selection rectangle -->
     <div
-      class="absolute border border-[rgba(255,255,255,0.06)] bg-blue-400/10 rounded-sm pointer-events-none"
+      class="absolute border border-[rgba(255,255,255,0.06)] bg-white/10 rounded-sm pointer-events-none"
       :style="selectionStyle"
     />
   </div>

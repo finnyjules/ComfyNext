@@ -2408,8 +2408,8 @@ function dismissRunResult() {
           <button
             class="w-full py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer"
             :class="creditsBuying
-              ? 'bg-blue-500/50 text-white/50 cursor-wait'
-              : 'bg-blue-500 hover:bg-blue-600 text-white'"
+              ? 'bg-white/50 text-neutral-900/50 cursor-wait'
+              : 'bg-white text-neutral-900 hover:bg-white/90'"
             :disabled="creditsBuying"
             @click="handleContinueToPayment"
           >

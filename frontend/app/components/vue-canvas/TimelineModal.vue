@@ -30,10 +30,10 @@ const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
 }
 
 const LAYER_COLORS = [
-  { bar: 'bg-violet-500/70',  edge: 'bg-violet-300',  ring: 'ring-violet-400' },
-  { bar: 'bg-sky-500/70',     edge: 'bg-sky-300',     ring: 'ring-sky-400' },
-  { bar: 'bg-emerald-500/70', edge: 'bg-emerald-300', ring: 'ring-emerald-400' },
-  { bar: 'bg-amber-500/70',   edge: 'bg-amber-300',   ring: 'ring-amber-400' },
+  { bar: 'bg-white/70',  edge: 'bg-white/50',  ring: 'ring-white/40' },
+  { bar: 'bg-white/55',  edge: 'bg-white/40',  ring: 'ring-white/30' },
+  { bar: 'bg-white/40',  edge: 'bg-white/30',  ring: 'ring-white/25' },
+  { bar: 'bg-white/25',  edge: 'bg-white/20',  ring: 'ring-white/20' },
 ]
 
 // Output frame rate. Read from the `output_fps` widget if present (Timeline
@@ -749,7 +749,7 @@ function colorFor(slot: number) {
           />
           <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] text-white/40 tabular-nums">
             Frame {{ playheadFrame }} / {{ totalDuration }}
-            <span v-if="isPlaying" class="ml-1 text-violet-300">▶</span>
+            <span v-if="isPlaying" class="ml-1 text-white/70">▶</span>
             <span v-else class="ml-1 text-white/25">⏸</span>
           </div>
         </div>
@@ -875,7 +875,7 @@ function colorFor(slot: number) {
 
           <button
             class="flex items-center gap-1.5 px-2.5 h-7 rounded text-xs transition-colors cursor-pointer border border-white/10 disabled:opacity-50 disabled:cursor-wait"
-            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-violet-500/15 hover:bg-violet-500/25 text-violet-200'"
+            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-white/15 hover:bg-white/20 text-white/70'"
             :disabled="isRendering"
             title="Render the timeline directly to a video file (FFmpeg/PyAV)"
             @click="renderViaFFmpeg"

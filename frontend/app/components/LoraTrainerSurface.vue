@@ -2118,18 +2118,18 @@ onBeforeUnmount(() => {
 
       <!-- Cost + time estimate (cloud mode only) -->
       <section v-if="computeMode === 'cloud'" class="mb-6">
-        <div class="rounded-lg bg-gradient-to-br from-emerald-500/[0.05] to-emerald-500/[0.02] border border-emerald-500/15 p-4 flex items-center gap-4">
-          <div class="size-9 rounded-full bg-emerald-500/[0.12] flex items-center justify-center shrink-0">
-            <Cloud class="size-4 text-emerald-300/85" :stroke-width="1.75" />
+        <div class="rounded-lg bg-gradient-to-br from-white/[0.05] to-white/[0.02] border border-white/15 p-4 flex items-center gap-4">
+          <div class="size-9 rounded-full bg-white/[0.12] flex items-center justify-center shrink-0">
+            <Cloud class="size-4 text-white/70" :stroke-width="1.75" />
           </div>
           <div class="flex-1">
             <div class="text-[12.5px] text-white/85 mb-0.5">
               <span class="font-medium">Estimated {{ totalEstimate.hasDataset ? 'training cost' : 'cost' }}: {{ costEstimate.cost }}</span>
               <span class="text-white/45"> · {{ costEstimate.time }}</span>
             </div>
-            <div v-if="totalEstimate.hasDataset" class="text-[12px] text-emerald-200/90 mb-0.5">
+            <div v-if="totalEstimate.hasDataset" class="text-[12px] text-white/70 mb-0.5">
               + dataset {{ totalEstimate.datasetCost }} ({{ plannedDatasetCount }} shots) ·
-              <span class="font-medium text-emerald-100">total {{ totalEstimate.total }}</span>
+              <span class="font-medium text-white">total {{ totalEstimate.total }}</span>
             </div>
             <p class="text-[11px] text-white/50 leading-relaxed">
               Billed to your Replicate account. {{ costEstimate.note }}

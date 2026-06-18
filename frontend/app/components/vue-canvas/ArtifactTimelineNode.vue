@@ -204,7 +204,7 @@ function runThisNode() {
       title="Resize timeline card"
       @pointerdown="onResizeDown"
     >
-      <div class="absolute bottom-1 right-1 size-2 border-b-2 border-r-2 border-white/30 group-hover/resize:border-cyan-400 rounded-[1px]" />
+      <div class="absolute bottom-1 right-1 size-2 border-b-2 border-r-2 border-white/30 group-hover/resize:border-white/70 rounded-[1px]" />
     </div>
   </div>
 </template>

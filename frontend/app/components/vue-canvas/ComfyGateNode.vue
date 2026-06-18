@@ -141,7 +141,7 @@ async function resumeGate(action: 'continue' | 'redo' | 'restart') {
         <span class="text-xs text-white/60 tracking-[0.12px]">Bypass</span>
         <button
           class="relative w-9 h-5 rounded-full cursor-pointer transition-colors shrink-0"
-          :class="isBypassed ? 'bg-emerald-500' : 'bg-zinc-700'"
+          :class="isBypassed ? 'bg-white/15' : 'bg-zinc-700'"
           @click="toggleBypass"
         >
           <div

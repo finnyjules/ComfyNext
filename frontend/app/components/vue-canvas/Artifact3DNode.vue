@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
       style="box-shadow: 0 4px 16px rgba(0,0,0,0.4)">
       <!-- Header -->
       <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-white/5">
-        <Box class="size-3.5 text-emerald-400 shrink-0" />
+        <Box class="size-3.5 text-white/70 shrink-0" />
         <span class="text-[11px] text-white/70 font-medium truncate">3D Model</span>
         <span class="flex-1" />
         <button class="nopan nodrag size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40"

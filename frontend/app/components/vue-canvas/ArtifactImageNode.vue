@@ -343,7 +343,7 @@ function discardTake(id: string) {
            doesn't fight the big upload/render targets). -->
       <button
         v-if="showUpload || showRender"
-        class="nopan nodrag absolute top-1 left-1 z-10 flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/50 hover:bg-black/70 text-white/55 hover:text-emerald-300 text-[10px] transition-colors cursor-pointer"
+        class="nopan nodrag absolute top-1 left-1 z-10 flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/50 hover:bg-black/70 text-white/55 hover:text-white/70 text-[10px] transition-colors cursor-pointer"
         title="Inpaint — paint a region and describe the change"
         @click.stop="openInpaint"
       >
@@ -380,7 +380,7 @@ function discardTake(id: string) {
             <Eraser class="size-2.5" />
           </button>
           <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-emerald-300 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer"
             title="Inpaint — paint a region and describe the change"
             @click.stop="openInpaint"
           >

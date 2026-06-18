@@ -218,7 +218,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <!-- Selected mark when item.id matches the OUT-OF-MODAL selection -->
                   <span
                     v-if="selectedId === item.id"
-                    class="absolute top-2 left-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.1em] font-semibold text-emerald-200 bg-emerald-900/60 border border-emerald-400/30 rounded px-1.5 py-0.5 backdrop-blur-sm"
+                    class="absolute top-2 left-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.1em] font-semibold text-white/80 bg-white/15 border border-white/30 rounded px-1.5 py-0.5 backdrop-blur-sm"
                   >
                     <Check class="size-2.5" /> Current
                   </span>

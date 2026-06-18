@@ -31,7 +31,7 @@ function fmt(s: number) { return s.toFixed(2) + 's' }
       <span v-if="playing">❚❚</span><span v-else>▶</span>
     </button>
     <input
-      type="range" class="w-48 accent-emerald-400" min="0" :max="motion.duration" step="0.01"
+      type="range" class="w-48 accent-white" min="0" :max="motion.duration" step="0.01"
       :value="t ?? 0"
       @input="emit('scrub', Number(($event.target as HTMLInputElement).value))"
     >
@@ -52,7 +52,7 @@ function fmt(s: number) { return s.toFixed(2) + 's' }
     </label>
     <button
       class="px-2 py-0.5 rounded font-medium"
-      :class="stale ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'"
+      :class="stale ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-white/15 text-white/70 hover:bg-white/20'"
       :disabled="baking"
       :title="stale ? 'Layers changed since last bake' : 'Bake motion to frames'"
       @click="emit('bake')"

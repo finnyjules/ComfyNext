@@ -32,12 +32,12 @@ const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay',
   'soft_light', 'hard_light', 'difference', 'lighten', 'darken', 'add']
 
 const TRACK_COLORS = [
-  { bar: 'bg-violet-500/70', edge: 'bg-violet-300', ring: 'ring-violet-400', text: 'text-violet-300' },
-  { bar: 'bg-sky-500/70', edge: 'bg-sky-300', ring: 'ring-sky-400', text: 'text-sky-300' },
-  { bar: 'bg-emerald-500/70', edge: 'bg-emerald-300', ring: 'ring-emerald-400', text: 'text-emerald-300' },
+  { bar: 'bg-white/70', edge: 'bg-white/50', ring: 'ring-white/40', text: 'text-white/70' },
+  { bar: 'bg-white/55', edge: 'bg-white/45', ring: 'ring-white/35', text: 'text-white/65' },
+  { bar: 'bg-white/45', edge: 'bg-white/40', ring: 'ring-white/30', text: 'text-white/60' },
   { bar: 'bg-amber-500/70', edge: 'bg-amber-300', ring: 'ring-amber-400', text: 'text-amber-300' },
   { bar: 'bg-rose-500/70', edge: 'bg-rose-300', ring: 'ring-rose-400', text: 'text-rose-300' },
-  { bar: 'bg-cyan-500/70', edge: 'bg-cyan-300', ring: 'ring-cyan-400', text: 'text-cyan-300' },
+  { bar: 'bg-white/35', edge: 'bg-white/30', ring: 'ring-white/25', text: 'text-white/55' },
 ]
 
 function trackColor(idx: number) {
@@ -1252,14 +1252,14 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
           <!-- Export button + inline progress fill -->
           <button
             class="relative overflow-hidden flex items-center gap-1.5 px-3 h-7 rounded text-xs transition-colors border border-white/10 disabled:opacity-90 min-w-[110px]"
-            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-violet-500/15 hover:bg-violet-500/25 text-violet-200'"
+            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-white/15 hover:bg-white/20 text-white/70'"
             :disabled="isRendering"
             @click="renderViaFFmpeg"
           >
             <!-- Progress fill -->
             <div
               v-if="renderProgress && renderProgress.total > 0"
-              class="absolute inset-y-0 left-0 bg-violet-400/25 transition-[width]"
+              class="absolute inset-y-0 left-0 bg-white/25 transition-[width]"
               :style="{ width: (renderProgress.current / renderProgress.total * 100).toFixed(1) + '%' }"
             />
             <RotateCw class="size-3 relative" :class="isRendering ? 'animate-spin' : ''" />
@@ -1296,7 +1296,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               @click="assetTab = 'ports'"
             >
               AI Ports
-              <span v-if="portBindings.length" class="ml-1 text-violet-300/80 tabular-nums">{{ portBindings.length }}</span>
+              <span v-if="portBindings.length" class="ml-1 text-white/70 tabular-nums">{{ portBindings.length }}</span>
             </button>
             <button
               class="flex-1 px-2 py-2 text-[11px] transition-colors"
@@ -1314,18 +1314,18 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               <div
                 v-for="binding in portBindings"
                 :key="binding.port_index"
-                class="group flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-grab active:cursor-grabbing hover:bg-violet-500/10 transition-colors"
+                class="group flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-grab active:cursor-grabbing hover:bg-white/10 transition-colors"
                 draggable="true"
                 :title="`Drag onto a track — or click to append`"
                 @dragstart="(e) => onAssetDragStart({ kind: 'port', port_index: binding.port_index, label: binding.preview_label }, e)"
                 @click="addPortToTimeline(binding)"
               >
-                <Cpu class="size-3 text-violet-300/70 shrink-0" />
+                <Cpu class="size-3 text-white/70 shrink-0" />
                 <div class="flex-1 min-w-0">
                   <div class="text-white/80 truncate">Clip{{ binding.port_index }}</div>
                   <div class="text-white/35 text-[10px] truncate">{{ binding.preview_label }}</div>
                 </div>
-                <Plus class="size-3 text-white/30 group-hover:text-violet-300 transition-colors" />
+                <Plus class="size-3 text-white/30 group-hover:text-white/70 transition-colors" />
               </div>
               <div v-if="!portBindings.length" class="text-xs text-white/30 px-2 py-4 italic">
                 Nothing wired to a clip port yet. Drag a LoadVideo or any upstream node into the Timeline node's clip port on the canvas — the port auto-grows.
@@ -1388,7 +1388,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
           <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] text-white/40 tabular-nums">
             {{ store.playheadFrame.value }} / {{ store.totalFrames.value }}f
             · {{ formatTime(store.playhead.value) }}
-            <span v-if="store.isPlaying.value" class="ml-1 text-violet-300">▶</span>
+            <span v-if="store.isPlaying.value" class="ml-1 text-white/70">▶</span>
             <span v-else class="ml-1 text-white/25">⏸</span>
           </div>
         </div>
@@ -1493,7 +1493,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 <div class="flex items-center justify-between mb-1.5">
                   <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Keyframes</div>
                   <button
-                    class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 transition-colors"
+                    class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white/15 hover:bg-white/20 text-white/70 transition-colors"
                     title="Add / update keyframe at playhead"
                     @click="store.addKeyframe(selectedClipData!.id)"
                   ><Diamond class="size-2.5" /> Add</button>
@@ -1503,11 +1503,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                     v-for="kf in selectedClipData.keyframes"
                     :key="kf.frame"
                     class="flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors"
-                    :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'bg-violet-500/20' : 'bg-white/[0.03] hover:bg-white/[0.07]'"
+                    :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'bg-white/15' : 'bg-white/[0.03] hover:bg-white/[0.07]'"
                     @click="seekToKeyframe(selectedClipData!, kf.frame)"
                   >
                     <Diamond class="size-2.5 shrink-0"
-                      :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'text-violet-300' : 'text-white/40'" />
+                      :class="store.clipLocalFrame(selectedClipData) === kf.frame ? 'text-white' : 'text-white/40'" />
                     <span class="w-9 tabular-nums text-white/70">{{ kf.frame }}f</span>
                     <select :value="kf.ease ?? 'linear'"
                       class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/80 outline-none text-[10px]"
@@ -1740,7 +1740,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               v-for="(track, tIdx) in store.state.value.tracks"
               :key="track.id"
               class="relative border-b border-white/5"
-              :class="dragTargetTrackId === track.id ? 'bg-violet-500/[0.04]' : ''"
+              :class="dragTargetTrackId === track.id ? 'bg-white/[0.04]' : ''"
               :style="{ height: trackHeight(track) + 'px' }"
               @dragover="(e) => onTrackDragOver(track.id, e)"
               @dragleave="onTrackDragLeave"
@@ -1820,7 +1820,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                     v-for="kf in clip.keyframes"
                     :key="kf.frame"
                     class="absolute bottom-px size-2 rotate-45 border border-black/50 shadow-sm pointer-events-auto cursor-grab active:cursor-grabbing -translate-x-1/2"
-                    :class="store.playheadFrame.value - clip.start_frame === kf.frame ? 'bg-yellow-300' : 'bg-violet-100 hover:bg-white'"
+                    :class="store.playheadFrame.value - clip.start_frame === kf.frame ? 'bg-yellow-300' : 'bg-white/80 hover:bg-white'"
                     :style="{ left: (kf.frame * pxPerFrame) + 'px' }"
                     :title="`Keyframe @ ${kf.frame}f · drag to retime, click to seek`"
                     @pointerdown.stop="(e) => onKeyframePointerDown(clip.id, kf.frame, e)"
@@ -1832,14 +1832,14 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <!-- Snap guideline (during clip drag) -->
             <div
               v-if="snapGuideFrame !== null"
-              class="absolute pointer-events-none z-[3] w-px bg-fuchsia-400/80 shadow-[0_0_4px_rgba(217,70,239,0.7)]"
+              class="absolute pointer-events-none z-[3] w-px bg-white/80 shadow-[0_0_4px_rgba(255,255,255,0.5)]"
               :style="{ top: 0, bottom: 0, left: framesToPx(snapGuideFrame) + 'px' }"
             />
 
             <!-- Drop ghost (during asset drag-in) -->
             <div
               v-if="dragGhostFrame !== null"
-              class="absolute pointer-events-none z-[3] w-0.5 bg-emerald-400/80 shadow-[0_0_4px_rgba(52,211,153,0.7)]"
+              class="absolute pointer-events-none z-[3] w-0.5 bg-white/80 shadow-[0_0_4px_rgba(255,255,255,0.5)]"
               :style="{ top: RULER_HEIGHT + 'px', bottom: 0, left: framesToPx(dragGhostFrame) + 'px' }"
             />
 

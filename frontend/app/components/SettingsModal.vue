@@ -320,7 +320,7 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                 <button
                   v-if="setting.type === 'toggle'"
                   class="relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0"
-                  :class="getSettingValue(setting.id, false) ? 'bg-blue-500' : 'bg-[#3a3a3a]'"
+                  :class="getSettingValue(setting.id, false) ? 'bg-white/15' : 'bg-[#3a3a3a]'"
                   @click="handleToggle(setting)"
                 >
                   <div
@@ -365,7 +365,7 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                 <div v-else-if="setting.type === 'slider'" class="flex items-center gap-2 shrink-0">
                   <input
                     type="range"
-                    class="w-24 h-1 accent-blue-500 cursor-pointer"
+                    class="w-24 h-1 accent-white cursor-pointer"
                     :value="getSettingValue(setting.id, setting.min ?? 0)"
                     :min="setting.min"
                     :max="setting.max"

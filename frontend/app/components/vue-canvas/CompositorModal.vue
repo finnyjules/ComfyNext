@@ -1304,7 +1304,7 @@ function renderGenOverlay() {
   if (genMaskCanvas && genHasMask.value) {
     ctx.drawImage(genMaskCanvas, 0, 0, W, H)
     ctx.globalCompositeOperation = 'source-in'
-    ctx.fillStyle = '#10b981'                 // emerald region tint
+    ctx.fillStyle = '#ffffff'                 // region tint
     ctx.fillRect(0, 0, W, H)
     ctx.globalCompositeOperation = 'source-over'
   }
@@ -1479,7 +1479,7 @@ onUnmounted(() => {
         <!-- Unified z-order stack (top-first). Grouped layers indent; grip to reorder. -->
         <div @drop="onListDrop" @dragover.prevent>
           <template v-for="(row, idx) in flatRows" :key="row.rk">
-            <div v-if="dropIndex === idx" class="h-0.5 bg-emerald-400 rounded mx-1.5 my-0.5" />
+            <div v-if="dropIndex === idx" class="h-0.5 bg-white/70 rounded mx-1.5 my-0.5" />
             <div
               class="group/row flex items-center gap-1.5 pr-2 py-1.5 rounded transition-colors"
               :class="[
@@ -1553,7 +1553,7 @@ onUnmounted(() => {
               </button>
             </div>
           </template>
-          <div v-if="dropIndex === flatRows.length" class="h-0.5 bg-emerald-400 rounded mx-1.5 my-0.5" />
+          <div v-if="dropIndex === flatRows.length" class="h-0.5 bg-white/70 rounded mx-1.5 my-0.5" />
         </div>
         <div v-if="!layers.length && !localLayers.length" class="text-xs text-white/30 px-1 py-2 italic">
           Connect images to the Compositor's layer ports, or add text/shapes below.
@@ -1643,25 +1643,25 @@ onUnmounted(() => {
         <!-- Brush cursor ring -->
         <div
           v-if="genActive && genTool === 'brush' && genCursor.on"
-          class="absolute pointer-events-none rounded-full border border-emerald-300/90 bg-emerald-300/10"
+          class="absolute pointer-events-none rounded-full border border-white/90 bg-white/10"
           :style="{ left: (genCursor.x - genBrush / 2) + 'px', top: (genCursor.y - genBrush / 2) + 'px', width: genBrush + 'px', height: genBrush + 'px', zIndex: 30 }"
         />
 
         <!-- Multi-select outlines (when 2+ layers selected) -->
         <template v-if="selectedCount > 1 && !nodeEdit.active.value && !genActive">
           <div v-for="l in selectedLayers" :key="'ms-' + l.id"
-            class="absolute pointer-events-none border border-cyan-400/70 rounded-[1px]"
+            class="absolute pointer-events-none border border-white/40 rounded-[1px]"
             :style="multiOutlineStyle(l)" />
         </template>
 
         <!-- Snap guides (while dragging) -->
-        <div v-if="snapGuides.vx != null" class="absolute top-0 bottom-0 w-px bg-fuchsia-400/80 pointer-events-none"
+        <div v-if="snapGuides.vx != null" class="absolute top-0 bottom-0 w-px bg-white/80 pointer-events-none"
           :style="{ left: snapGuides.vx * canvasDisplay.w + 'px' }" />
-        <div v-if="snapGuides.hy != null" class="absolute left-0 right-0 h-px bg-fuchsia-400/80 pointer-events-none"
+        <div v-if="snapGuides.hy != null" class="absolute left-0 right-0 h-px bg-white/80 pointer-events-none"
           :style="{ top: snapGuides.hy * canvasDisplay.h + 'px' }" />
 
         <!-- Marquee (rubber-band) selection rect -->
-        <div v-if="marquee" class="absolute border border-cyan-300/80 bg-cyan-300/10 pointer-events-none"
+        <div v-if="marquee" class="absolute border border-white/80 bg-white/10 pointer-events-none"
           :style="{
             left: Math.min(marquee.x0, marquee.x1) * canvasDisplay.w + 'px',
             top: Math.min(marquee.y0, marquee.y1) * canvasDisplay.h + 'px',
@@ -1676,10 +1676,10 @@ onUnmounted(() => {
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
           viewBox="0 0 100 100" preserveAspectRatio="none"
         >
-          <path :d="pen.previewD.value" fill="none" stroke="#22d3ee" stroke-width="0.4"
+          <path :d="pen.previewD.value" fill="none" stroke="#ffffff" stroke-width="0.4"
             vector-effect="non-scaling-stroke" />
           <g v-for="(a, i) in pen.anchors.value" :key="i">
-            <circle :cx="a.x * 100" :cy="a.y * 100" r="0.8" :fill="i === 0 ? '#fde047' : '#22d3ee'"
+            <circle :cx="a.x * 100" :cy="a.y * 100" r="0.8" :fill="i === 0 ? '#fde047' : '#ffffff'"
               vector-effect="non-scaling-stroke" stroke="#0a0a0a" stroke-width="0.3" />
           </g>
         </svg>
@@ -1691,18 +1691,18 @@ onUnmounted(() => {
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
           viewBox="0 0 100 100" preserveAspectRatio="none"
         >
-          <path :d="nodeEdit.previewD.value" fill="none" stroke="#22d3ee" stroke-width="0.4" vector-effect="non-scaling-stroke" />
+          <path :d="nodeEdit.previewD.value" fill="none" stroke="#ffffff" stroke-width="0.4" vector-effect="non-scaling-stroke" />
           <template v-for="(s, i) in nodeEdit.segments.value" :key="i">
             <template v-if="i === nodeEdit.selected.value">
               <line v-if="s.inH" :x1="s.point.x*100" :y1="s.point.y*100" :x2="s.inH.x*100" :y2="s.inH.y*100"
-                stroke="#22d3ee" stroke-width="0.25" vector-effect="non-scaling-stroke" />
+                stroke="#ffffff" stroke-width="0.25" vector-effect="non-scaling-stroke" />
               <line v-if="s.outH" :x1="s.point.x*100" :y1="s.point.y*100" :x2="s.outH.x*100" :y2="s.outH.y*100"
-                stroke="#22d3ee" stroke-width="0.25" vector-effect="non-scaling-stroke" />
-              <circle v-if="s.inH" :cx="s.inH.x*100" :cy="s.inH.y*100" r="0.7" fill="#0a0a0a" stroke="#22d3ee" stroke-width="0.3" vector-effect="non-scaling-stroke" />
-              <circle v-if="s.outH" :cx="s.outH.x*100" :cy="s.outH.y*100" r="0.7" fill="#0a0a0a" stroke="#22d3ee" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+                stroke="#ffffff" stroke-width="0.25" vector-effect="non-scaling-stroke" />
+              <circle v-if="s.inH" :cx="s.inH.x*100" :cy="s.inH.y*100" r="0.7" fill="#0a0a0a" stroke="#ffffff" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+              <circle v-if="s.outH" :cx="s.outH.x*100" :cy="s.outH.y*100" r="0.7" fill="#0a0a0a" stroke="#ffffff" stroke-width="0.3" vector-effect="non-scaling-stroke" />
             </template>
             <rect :x="s.point.x*100 - 0.8" :y="s.point.y*100 - 0.8" width="1.6" height="1.6"
-              :fill="i === nodeEdit.selected.value ? '#fde047' : '#22d3ee'" stroke="#0a0a0a" stroke-width="0.3" vector-effect="non-scaling-stroke" />
+              :fill="i === nodeEdit.selected.value ? '#fde047' : '#ffffff'" stroke="#0a0a0a" stroke-width="0.3" vector-effect="non-scaling-stroke" />
           </template>
         </svg>
 
@@ -1760,12 +1760,12 @@ onUnmounted(() => {
         >
           <polygon
             :points="`${localHandlePositions.tl.x},${localHandlePositions.tl.y} ${localHandlePositions.tr.x},${localHandlePositions.tr.y} ${localHandlePositions.br.x},${localHandlePositions.br.y} ${localHandlePositions.bl.x},${localHandlePositions.bl.y}`"
-            fill="none" stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"
+            fill="none" stroke="#ffffff" stroke-width="2" vector-effect="non-scaling-stroke"
           />
           <line
             :x1="localHandlePositions.topCenter.x" :y1="localHandlePositions.topCenter.y"
             :x2="localHandlePositions.rot.x" :y2="localHandlePositions.rot.y"
-            stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"
+            stroke="#ffffff" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
         <template v-if="localHandlePositions && !editingId && !genActive">
@@ -1773,13 +1773,13 @@ onUnmounted(() => {
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="'l-' + corner"
             data-handle
-            class="absolute z-20 size-2.5 bg-white border border-cyan-400 cursor-nwse-resize"
+            class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
             :style="{ left: localHandlePositions[corner].x + 'px', top: localHandlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalScalePointerDown($event)"
           />
           <div
             data-handle
-            class="absolute z-20 size-3 rounded-full bg-cyan-400 cursor-grab border-2 border-[#1a1a1a]"
+            class="absolute z-20 size-3 rounded-full bg-white cursor-grab border-2 border-[#1a1a1a]"
             :style="{ left: localHandlePositions.rot.x + 'px', top: localHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalRotatePointerDown($event)"
           />
@@ -1812,7 +1812,7 @@ onUnmounted(() => {
       </div>
       <div
         v-else-if="nodeEdit.active.value"
-        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-cyan-500/15 backdrop-blur-sm rounded-[10px] px-3 py-1.5 border border-cyan-400/30 shadow-lg text-[11px] text-cyan-200"
+        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 backdrop-blur-sm rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
         @pointerdown.stop
       >
         Editing path nodes — drag points & handles · Del removes a point ·
@@ -1843,7 +1843,7 @@ onUnmounted(() => {
             <option value="linocut">Linocut</option>
           </select>
           <button
-            class="flex-1 h-7 rounded-md bg-fuchsia-500/90 hover:bg-fuchsia-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            class="flex-1 h-7 rounded-md bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
             :disabled="aiBusy || !aiPrompt.trim()"
             @click="runGenerate"
           >{{ aiBusy ? 'Generating…' : 'Generate' }}</button>
@@ -1903,7 +1903,7 @@ onUnmounted(() => {
         </button>
         <button
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
-          :class="pen.active.value ? 'bg-cyan-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          :class="pen.active.value ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Pen — click to add points, drag for curves, click the first point or Enter to finish, Esc to cancel"
           @click="togglePen"
         >
@@ -1914,7 +1914,7 @@ onUnmounted(() => {
         </button>
         <button
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
-          :class="aiOpen ? 'bg-fuchsia-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          :class="aiOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="AI vector — generate from text or vectorize a selected image"
           @click="aiOpen = !aiOpen"
         >
@@ -1922,7 +1922,7 @@ onUnmounted(() => {
         </button>
         <button
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
-          :class="genActive ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          :class="genActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Generate in region — mark an area (box, brush, or shape) and regenerate just that part of an image"
           @click="toggleGenMode"
         >
@@ -1942,7 +1942,7 @@ onUnmounted(() => {
         </button>
         <button
           class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
-          :class="brandOpen ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          :class="brandOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Brand — pick the project's active brand kit"
           @click="brandOpen = !brandOpen"
         >
@@ -1965,7 +1965,7 @@ onUnmounted(() => {
       <!-- Generate-in-region controls (mode owns the inspector) -->
       <template v-if="genActive">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-          <Wand2 class="size-3.5 text-emerald-400" />
+          <Wand2 class="size-3.5 text-white/70" />
           <span class="text-sm font-medium">Generate in region</span>
           <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitGenMode"><X class="size-3.5" /></button>
         </div>
@@ -1973,7 +1973,7 @@ onUnmounted(() => {
           <!-- Target -->
           <div class="flex items-center justify-between text-[11px]">
             <span class="text-white/40">Target</span>
-            <span class="text-emerald-300/90">{{ genTargetLabel }}</span>
+            <span class="text-white/70">{{ genTargetLabel }}</span>
           </div>
 
           <!-- Region tool -->
@@ -1982,12 +1982,12 @@ onUnmounted(() => {
             <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
               <button v-for="t in GEN_TOOLS" :key="t"
                 class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer transition-colors"
-                :class="genTool === t ? 'bg-emerald-500/90 text-black font-medium' : 'text-white/70 hover:bg-white/10'"
+                :class="genTool === t ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
                 @click="genTool = t">{{ t }}</button>
             </div>
             <div v-if="genTool === 'brush'" class="flex items-center gap-2 mt-2">
               <span class="text-[10px] text-white/40 w-9 shrink-0">Brush</span>
-              <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-emerald-400 cursor-pointer" />
+              <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-white cursor-pointer" />
               <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
             </div>
             <button v-else-if="genTool === 'shape'"
@@ -2390,7 +2390,7 @@ onUnmounted(() => {
           <div v-if="selectedLocal.kind === 'image'" class="mt-3 flex flex-col gap-1.5">
             <button
               class="w-full py-1.5 rounded text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer"
-              :class="genActive ? 'bg-emerald-500/90 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+              :class="genActive ? 'bg-white text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
               @click="enterGenMode"
             ><Wand2 class="size-3" /> Generate in region…</button>
             <button

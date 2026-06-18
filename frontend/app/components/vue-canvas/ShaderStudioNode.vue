@@ -98,10 +98,10 @@ function openEditor() {
       class="!h-3 !w-3 !rounded-full !border-2 !border-white/40 !bg-[#1a1a1a]" :style="{ top: '50%' }" />
     <!-- Output handle (provenance to generated Image/Video) -->
     <Handle id="output-0" type="source" :position="Position.Right"
-      class="!h-3 !w-3 !rounded-full !border-2 !border-emerald-400 !bg-[#1a1a1a]" :style="{ top: '50%' }" />
+      class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]" :style="{ top: '50%' }" />
 
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
-      <Sparkles class="h-3.5 w-3.5 text-emerald-400" />
+      <Sparkles class="h-3.5 w-3.5 text-white/70" />
       <span class="text-xs font-medium text-white/80">Shader Studio</span>
       <span class="ml-auto truncate text-[10px] uppercase tracking-wide text-white/40">{{ config.effect.id || 'no effect' }}</span>
     </div>

@@ -85,7 +85,7 @@ const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
           <span class="w-20 shrink-0 text-white/60">{{ ax.label }}</span>
           <input
             type="range"
-            class="flex-1 accent-emerald-400"
+            class="flex-1 accent-white"
             :min="ax.min"
             :max="ax.max"
             :step="ax.step ?? 1"
@@ -97,7 +97,7 @@ const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
       </div>
       <button
         type="button"
-        class="mt-1 w-full text-left text-[10px] text-emerald-400/70 hover:text-emerald-400 transition-colors"
+        class="mt-1 w-full text-left text-[10px] text-white/70 hover:text-white transition-colors"
         @click="convertToKeyframes"
       >
         Edit axis animation in keyframe dock ↓
