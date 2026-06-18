@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import {
-  parsePath, serializePath, defaultPath, forwardHandle, backHandle,
+  parsePath, serializePath, defaultPath, forwardHandle, backHandle, autoSmooth,
   type StringPathDoc, type PathPoint,
 } from '~/lib/spacetype/stringPath'
 
@@ -21,6 +21,15 @@ const doc = ref<StringPathDoc>(parsePath(props.modelValue))
 // The string new points are appended to (last by default; Enter adds a fresh one).
 const activeIdx = ref(Math.max(0, doc.value.strings.length - 1))
 const selected = ref<{ s: number; p: number } | null>(null)
+// 'auto' = click-to-smooth (Catmull-Rom handles auto-derived); 'manual' = drag handles.
+const mode = ref<'auto' | 'manual'>(doc.value.mode ?? 'auto')
+const curviness = ref<number>(doc.value.tension ?? 0.5)
+
+function resmoothString(s: number) {
+  const str = doc.value.strings[s]
+  if (str) str.points = autoSmooth(str.points, curviness.value)
+}
+function resmoothAll() { doc.value.strings.forEach((_, s) => resmoothString(s)) }
 
 // On-screen box of the canvas, relative to this overlay's root (= the wrapper).
 const box = reactive({ left: 0, top: 0, width: 1, height: 1 })
@@ -30,12 +39,21 @@ watch(() => props.modelValue, (v) => {
   if (v === lastEmitted) return // ignore our own echo
   doc.value = parsePath(v)
   activeIdx.value = Math.max(0, doc.value.strings.length - 1)
+  mode.value = doc.value.mode ?? 'auto'
+  curviness.value = doc.value.tension ?? 0.5
 })
 
 function emitDoc() {
+  doc.value.mode = mode.value
+  doc.value.tension = curviness.value
   lastEmitted = serializePath(doc.value)
   emit('update:modelValue', lastEmitted)
 }
+
+// Toggling mode (re-smooth when entering auto) and the curviness slider both persist + rebuild.
+watch(mode, (m) => { if (m === 'auto') resmoothAll(); emitDoc() })
+function onCurviness() { resmoothAll() }            // live SVG preview while sliding
+function onCurvinessCommit() { resmoothAll(); emitDoc() } // rebuild the 3D on release
 
 function updateBox() {
   const c = props.canvas, r = rootEl.value
@@ -95,12 +113,15 @@ let drag: Drag | null = null
 
 function hitTest(np: { x: number; y: number }): Drag | null {
   // Handles first (they sit on top of points), then points, across all strings.
-  for (let s = 0; s < doc.value.strings.length; s++) {
-    const pts = doc.value.strings[s]!.points
-    for (let p = 0; p < pts.length; p++) {
-      const f = forwardHandle(pts[p]!); const b = backHandle(pts[p]!)
-      if (near(np.x, np.y, f.x, f.y)) return { kind: 'fwd', s, p }
-      if (near(np.x, np.y, b.x, b.y)) return { kind: 'back', s, p }
+  // Auto mode has no editable handles — only point hits.
+  if (mode.value === 'manual') {
+    for (let s = 0; s < doc.value.strings.length; s++) {
+      const pts = doc.value.strings[s]!.points
+      for (let p = 0; p < pts.length; p++) {
+        const f = forwardHandle(pts[p]!); const b = backHandle(pts[p]!)
+        if (near(np.x, np.y, f.x, f.y)) return { kind: 'fwd', s, p }
+        if (near(np.x, np.y, b.x, b.y)) return { kind: 'back', s, p }
+      }
     }
   }
   for (let s = 0; s < doc.value.strings.length; s++) {
@@ -127,6 +148,7 @@ function onPointerDown(e: PointerEvent) {
     pts.push(pt)
     drag = { kind: 'new', s: activeIdx.value, p: pts.length - 1, dragged: false }
     selected.value = { s: activeIdx.value, p: pts.length - 1 }
+    if (mode.value === 'auto') resmoothString(activeIdx.value)
   }
   ;(e.target as Element).setPointerCapture?.(e.pointerId)
   e.preventDefault()
@@ -139,6 +161,13 @@ function onPointerMove(e: PointerEvent) {
   if (!pts) return
   const pt = pts[drag.p]
   if (!pt) return
+  // Auto mode: any point drag just moves the point, then re-derives handles for the string.
+  if (mode.value === 'auto' && (drag.kind === 'point' || drag.kind === 'new')) {
+    pt.x = Math.min(1, Math.max(0, drag.kind === 'point' ? np.x + drag.ox : np.x))
+    pt.y = Math.min(1, Math.max(0, drag.kind === 'point' ? np.y + drag.oy : np.y))
+    resmoothString(drag.s)
+    return
+  }
   if (drag.kind === 'point') {
     pt.x = Math.min(1, Math.max(0, np.x + drag.ox))
     pt.y = Math.min(1, Math.max(0, np.y + drag.oy))
@@ -180,6 +209,7 @@ function onKey(e: KeyboardEvent) {
     if (!str) return
     str.points.splice(p, 1)
     if (!str.points.length && doc.value.strings.length > 1) doc.value.strings.splice(s, 1)
+    else if (mode.value === 'auto') resmoothString(s)
     activeIdx.value = Math.min(activeIdx.value, doc.value.strings.length - 1)
     selected.value = null
     emitDoc()
@@ -220,14 +250,16 @@ function isSel(s: number, p: number): boolean { return selected.value?.s === s &
       <g v-for="(str, s) in allStrings" :key="s">
         <path :d="pathD(str.points)" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity="0.9" />
         <template v-for="(pt, p) in str.points" :key="p">
-          <!-- handle line + squares -->
-          <line :x1="px(backHandle(pt).x)" :y1="py(backHandle(pt).y)"
-                :x2="px(forwardHandle(pt).x)" :y2="py(forwardHandle(pt).y)"
-                stroke="#ffffff" stroke-width="1" opacity="0.5" />
-          <rect :x="px(forwardHandle(pt).x) - 4" :y="py(forwardHandle(pt).y) - 4" width="8" height="8"
-                fill="#1e3a8a" stroke="#3b82f6" stroke-width="1" />
-          <rect :x="px(backHandle(pt).x) - 4" :y="py(backHandle(pt).y) - 4" width="8" height="8"
-                fill="#1e3a8a" stroke="#3b82f6" stroke-width="1" />
+          <!-- handle line + squares (manual mode only; auto-mode handles are derived) -->
+          <template v-if="mode === 'manual'">
+            <line :x1="px(backHandle(pt).x)" :y1="py(backHandle(pt).y)"
+                  :x2="px(forwardHandle(pt).x)" :y2="py(forwardHandle(pt).y)"
+                  stroke="#ffffff" stroke-width="1" opacity="0.5" />
+            <rect :x="px(forwardHandle(pt).x) - 4" :y="py(forwardHandle(pt).y) - 4" width="8" height="8"
+                  fill="#1e3a8a" stroke="#3b82f6" stroke-width="1" />
+            <rect :x="px(backHandle(pt).x) - 4" :y="py(backHandle(pt).y) - 4" width="8" height="8"
+                  fill="#1e3a8a" stroke="#3b82f6" stroke-width="1" />
+          </template>
           <!-- point -->
           <circle :cx="px(pt.x)" :cy="py(pt.y)" r="6"
                   :fill="isSel(s, p) ? '#3b82f6' : 'rgba(0,0,0,0.25)'" stroke="#3b82f6" stroke-width="1.5" />
@@ -235,8 +267,19 @@ function isSel(s: number, p: number): boolean { return selected.value?.s === s &
       </g>
     </svg>
     <!-- toolbar -->
-    <div class="pointer-events-auto absolute left-2 top-2 flex gap-1 rounded bg-black/50 px-2 py-1 text-[10px] text-white/80">
-      <span class="pr-1">Drag to draw · Enter = new string · Del = remove</span>
+    <div class="pointer-events-auto absolute left-2 top-2 flex flex-wrap items-center gap-1.5 rounded bg-black/50 px-2 py-1 text-[10px] text-white/80">
+      <div class="flex overflow-hidden rounded border border-white/15">
+        <button type="button" class="px-2 py-0.5" :class="mode === 'auto' ? 'bg-blue-600 text-white' : 'hover:bg-white/10'"
+                @click="mode = 'auto'">Auto-smooth</button>
+        <button type="button" class="px-2 py-0.5" :class="mode === 'manual' ? 'bg-blue-600 text-white' : 'hover:bg-white/10'"
+                @click="mode = 'manual'">Manual</button>
+      </div>
+      <label v-if="mode === 'auto'" class="flex items-center gap-1">
+        <span class="text-white/50">Curve</span>
+        <input type="range" min="0" max="1" step="0.02" v-model.number="curviness"
+               class="h-1 w-20" @input="onCurviness" @change="onCurvinessCommit" />
+      </label>
+      <span class="text-white/45">{{ mode === 'auto' ? 'Click to add · drag to move' : 'Drag to draw' }} · Enter = new · Del = remove</span>
       <button type="button" class="rounded bg-white/10 px-2 py-0.5 hover:bg-white/20" @click="reset">Reset</button>
     </div>
   </div>

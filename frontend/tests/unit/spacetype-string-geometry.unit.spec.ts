@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parsePath, serializePath, defaultPath, forwardHandle, backHandle, type PathPoint } from '~/lib/spacetype/stringPath'
+import { parsePath, serializePath, defaultPath, forwardHandle, backHandle, autoSmooth, type PathPoint } from '~/lib/spacetype/stringPath'
 import { cubicPoint, cubicTangent, sampleString, buildStrip, stripSpeedFactor, type WorldPoint } from '~/lib/spacetype/stringGeometry'
 import { loopTiles } from '~/lib/spacetype/ribbonGeometry'
 
@@ -35,6 +35,50 @@ describe('stringPath', () => {
   it('fills missing althl from hl', () => {
     const d = parsePath({ strings: [{ points: [{ x: 0.5, y: 0.5, a: 1, hl: 0.3 }] }] })
     expect(d.strings[0]!.points[0]!.althl).toBe(0.3)
+  })
+
+  it('round-trips mode + tension', () => {
+    const d = parsePath({ strings: [{ points: [{ x: 0.5, y: 0.5 }] }], mode: 'manual', tension: 0.8 })
+    expect(d.mode).toBe('manual')
+    expect(d.tension).toBe(0.8)
+    const back = parsePath(serializePath(d))
+    expect(back.mode).toBe('manual')
+    expect(back.tension).toBe(0.8)
+  })
+})
+
+describe('autoSmooth', () => {
+  const pts = (): PathPoint[] => [
+    { x: 0, y: 0, a: 0, hl: 0, althl: 0 },
+    { x: 1, y: 0, a: 0, hl: 0, althl: 0 },
+    { x: 2, y: 0, a: 0, hl: 0, althl: 0 },
+  ]
+
+  it('< 2 points returns a copy unchanged', () => {
+    const one = [pts()[0]!]
+    expect(autoSmooth(one, 0.5)).toEqual(one)
+  })
+
+  it('handles are symmetric (hl === althl)', () => {
+    for (const p of autoSmooth(pts(), 0.5)) expect(p.hl).toBeCloseTo(p.althl)
+  })
+
+  it('forward = P − T and back = P + T (Catmull-Rom symmetric tangent)', () => {
+    const s = autoSmooth(pts(), 0.5) // f = 0.25; mid tangent T = 0.25·(C−A) = (0.5,0)
+    const mid = s[1]!
+    const f = forwardHandle(mid); const b = backHandle(mid)
+    expect(f.x).toBeCloseTo(0.5); expect(f.y).toBeCloseTo(0) // 1 − 0.5
+    expect(b.x).toBeCloseTo(1.5); expect(b.y).toBeCloseTo(0) // 1 + 0.5
+  })
+
+  it('curviness 0 collapses handles to the point (straight corners)', () => {
+    for (const p of autoSmooth(pts(), 0)) expect(p.hl).toBeCloseTo(0)
+  })
+
+  it('higher curviness → longer handles', () => {
+    const lo = autoSmooth(pts(), 0.3)[1]!.hl
+    const hi = autoSmooth(pts(), 0.9)[1]!.hl
+    expect(hi).toBeGreaterThan(lo)
   })
 })
 
