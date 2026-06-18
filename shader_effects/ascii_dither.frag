@@ -39,8 +39,9 @@ float geoShape(int shp, vec2 q, float t, vec2 cell) {
 }
 
 void main() {
+    int shp = int(u_shape + 0.5);
     vec2 cellPx = vec2(max(u_cell * u_resolution.y, 2.0));
-    cellPx.x *= 2.0 / 3.0; // glyph cells are 2:3
+    if (shp >= 7) cellPx.x *= 2.0 / 3.0; // glyph cells are 2:3; geometric shapes use SQUARE cells
     vec2 cell = floor(v_texCoord * u_resolution / cellPx);
     vec2 cuv = (cell + 0.5) * cellPx / u_resolution;
     vec3 col = texture(u_image0, clamp(cuv, 0.0, 1.0)).rgb;
@@ -55,15 +56,11 @@ void main() {
     vec2 inCell = fract(v_texCoord * u_resolution / cellPx);
     if (u_spacing > 0.0) inCell = (inCell - 0.5) / max(1.0 - u_spacing, 1e-3) + 0.5;
 
-    int shp = int(u_shape + 0.5);
     float glyph;
     if (shp < 7) {
-        // The cell is 2:3 (to fit the glyph atlas). Aspect-correct so the GEOMETRIC shapes
-        // (circles/blocks/diamonds/…) stay round/square in screen space instead of stretching
-        // into ovals/rectangles. Glyph shapes (shp >= 7) keep the raw 2:3 cell unchanged.
-        vec2 q = (inCell - 0.5) * 2.0;
-        q.x *= cellPx.x / cellPx.y;
-        glyph = geoShape(shp, q, g, cell);
+        // Geometric shapes render in the SQUARE cell above ⇒ circles are round, crosses/blocks
+        // symmetric. (Glyph shapes keep the 2:3 atlas cell.)
+        glyph = geoShape(shp, (inCell - 0.5) * 2.0, g, cell);
     } else {
         float gi = min(floor(g * u_glyphCount), u_glyphCount - 1.0);
         int row = shp - 7;
