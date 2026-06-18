@@ -4,7 +4,7 @@
  * mirrors how comfynext_stackOrder lives in node.data.properties. Pure helpers so
  * the logic is unit-testable outside the SFC.
  */
-export interface WiredTreatment { maskedByKey?: string }
+export interface WiredTreatment { maskedByKey?: string; showSource?: boolean }
 export type WiredTreatments = Record<string, WiredTreatment>
 
 export function readWiredTreatments(node: any): WiredTreatments {
@@ -28,6 +28,21 @@ export function setWiredMask(node: any, slot: number, maskedByKey: string) {
     // entry entirely if it's now empty (avoids stale w:<slot> keys lingering).
     const t = { ...cur[key] }
     delete t.maskedByKey
+    if (Object.keys(t).length) cur[key] = t
+    else delete cur[key]
+  }
+  writeWiredTreatments(node, cur)
+}
+
+/** Set/clear the showSource flag for a wired slot (1-based). Preserves other fields. */
+export function setWiredMaskShowSource(node: any, slot: number, show: boolean) {
+  const key = `w:${slot}`
+  const cur = { ...readWiredTreatments(node) }
+  if (show) {
+    cur[key] = { ...cur[key], showSource: true }
+  } else {
+    const t = { ...cur[key] }
+    delete t.showSource
     if (Object.keys(t).length) cur[key] = t
     else delete cur[key]
   }

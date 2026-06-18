@@ -114,6 +114,7 @@ interface LayerCommon {
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
   maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()
   maskedByKey?: string     // clipped by another layer's silhouette; a StackKey ('w:<slot>'|'l:<id>')
+  maskShowSource?: boolean // when true, the mask source also renders normally at its z-position
   /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
    *  Absent ⇒ the layer is static and always visible. */
   animation?: import('~/lib/motion/types').LayerAnimation
@@ -891,19 +892,30 @@ export function paintLayerStack(
   skip?: (layer: LocalLayer) => boolean,
   t?: number,
   motion?: { fps: number; duration: number },
-  /** Per-key treatments for wired layers (mask ref). Locals carry their own. */
-  wiredTreatments?: Record<string, { maskedByKey?: string }>,
+  /** Per-key treatments for wired layers (mask ref + showSource). Locals carry their own. */
+  wiredTreatments?: Record<string, { maskedByKey?: string; showSource?: boolean }>,
 ) {
   const byKey = new Map(items.map(it => [it.key, it]))
   // Resolve every item's mask reference (local → layerMaskRef; wired → treatments).
   const maskRefOf = (it: StackItem): string | undefined =>
     it.type === 'local' ? layerMaskRef(it.layer) : wiredTreatments?.[it.key]?.maskedByKey
-  // Keys used as a mask source by someone → those items only clip, never self-paint.
+  // Whether an item requests that its mask source remains visible at its own z-position.
+  const showSourceOf = (it: StackItem): boolean =>
+    it.type === 'local' ? !!it.layer.maskShowSource : !!wiredTreatments?.[it.key]?.showSource
+  // Keys used as a mask source by someone → those items only clip, never self-paint
+  // (unless the masked item sets showSource, in which case the source also renders normally).
   const maskSourceKeys = new Set<string>()
-  for (const it of items) { const r = maskRefOf(it); if (r) maskSourceKeys.add(r) }
+  const keepVisibleKeys = new Set<string>()
+  for (const it of items) {
+    const r = maskRefOf(it)
+    if (r) {
+      maskSourceKeys.add(r)
+      if (showSourceOf(it)) keepVisibleKeys.add(r)
+    }
+  }
 
   for (const item of items) {
-    if (maskSourceKeys.has(item.key)) continue
+    if (maskSourceKeys.has(item.key) && !keepVisibleKeys.has(item.key)) continue
 
     if (item.type === 'wired') {
       const ref = maskRefOf(item)

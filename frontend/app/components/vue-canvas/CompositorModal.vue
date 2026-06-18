@@ -10,7 +10,7 @@ import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
 } from '~/composables/useCompositorLayers'
-import { readWiredTreatments, setWiredMask, maskCandidateKeys } from '~/composables/useWiredTreatments'
+import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
@@ -1233,6 +1233,20 @@ function setMaskRef(key: StackKey, ref: string) {
   if (r.type === 'local') setLocal(r.layer.id, { maskedByKey: ref || undefined, maskedById: undefined } as any)
   else setWiredMask(compositor.value, (r.layer as Layer).slot, ref)
 }
+// Whether the mask source for this key is also shown at its own z-position.
+function maskShowSource(key: StackKey): boolean {
+  const r = resolveStackKey(key)
+  if (!r) return false
+  if (r.type === 'local') return !!(r.layer as any).maskShowSource
+  return !!wiredTreatments.value[key]?.showSource
+}
+// Toggle the showSource flag for the mask source of the selected key.
+function setMaskShowSource(key: StackKey, show: boolean) {
+  const r = resolveStackKey(key)
+  if (!r) return
+  if (r.type === 'local') setLocal(r.layer.id, { maskShowSource: show || undefined } as any)
+  else setWiredMaskShowSource(compositor.value, (r.layer as Layer).slot, show)
+}
 
 // ── Generative Fill: regenerate a region of an image in place ────────────────
 // A "Generate" mode where you mark a region directly on the canvas — drag a Box,
@@ -2442,6 +2456,11 @@ onUnmounted(() => {
               <option value="">No mask</option>
               <option v-for="o in maskCandidates(localKey(selectedLocal!.id))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
             </select>
+            <label v-if="currentMaskRef(localKey(selectedLocal!.id))" class="mt-1.5 flex items-center gap-1.5 text-[11px] text-white/60 cursor-pointer select-none">
+              <input type="checkbox" :checked="maskShowSource(localKey(selectedLocal!.id))"
+                @change="setMaskShowSource(localKey(selectedLocal!.id), ($event.target as HTMLInputElement).checked)" />
+              Show mask layer
+            </label>
           </div>
 
           <!-- Crop to a rect/ellipse region -->
@@ -2569,6 +2588,11 @@ onUnmounted(() => {
               <option value="">No mask</option>
               <option v-for="o in maskCandidates(wiredKey(selected.slot))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
             </select>
+            <label v-if="currentMaskRef(wiredKey(selected.slot))" class="mt-1.5 flex items-center gap-1.5 text-[11px] text-white/60 cursor-pointer select-none">
+              <input type="checkbox" :checked="maskShowSource(wiredKey(selected.slot))"
+                @change="setMaskShowSource(wiredKey(selected.slot), ($event.target as HTMLInputElement).checked)" />
+              Show mask layer
+            </label>
           </div>
         </div>
         <div v-else class="p-4 text-xs text-white/40 italic">
