@@ -31,7 +31,7 @@ const controls: ControlSpec[] = [
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 400, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 20, step: 1, default: -4, group: 'Type' },
   { key: 'lineTight', label: 'Line tightness', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.85, group: 'Type' },
-  { key: 'lineSpacing', label: 'Line spacing', kind: 'slider', min: 0.6, max: 1.8, step: 0.02, default: 1, group: 'Type' },
+  { key: 'lineSpacing', label: 'Line spacing', kind: 'slider', min: 0.2, max: 1.8, step: 0.02, default: 1, group: 'Type' },
   { key: 'fitWidth', label: 'Stretch to width', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.92, group: 'Type' },
   { key: 'fontVaryUnit', label: 'Vary font by', kind: 'select', options: ['off', 'line', 'word', 'character'], default: 'off', group: 'Type' },
   { key: 'weightJitter', label: 'Weight jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
