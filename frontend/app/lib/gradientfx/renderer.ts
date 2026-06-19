@@ -16,7 +16,7 @@ import {
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const BLEND_IDX: Record<BlendKind, number> = { normal: 0, lighten: 1, screen: 2, add: 3, multiply: 4, darken: 5, overlay: 6 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
-const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2 }
+const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3 }
 
 class GradientFxRenderer {
   private canvas: HTMLCanvasElement | null = null
@@ -98,7 +98,7 @@ class GradientFxRenderer {
     const counts: number[] = [], dir: number[] = [], mirrorH: number[] = [], mirrorV: number[] = [], gradHoriz: number[] = [], gap: number[] = []
     const rounding: number[] = [], mapping: number[] = [], steps: number[] = [], hueDrift: number[] = []
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
-    const crisp: number[] = []
+    const crisp: number[] = [], rotStep: number[] = [], pivot: number[] = []
     for (let i = 0; i < 2; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
@@ -120,6 +120,8 @@ class GradientFxRenderer {
       scrub.push(s.scrub)
       blend.push(BLEND_IDX[L.blend] ?? 0)
       opacity.push(L.opacity)
+      rotStep.push((s.rotStep ?? 0) * Math.PI / 180)  // deg → rad
+      pivot.push(s.pivot ?? 0)
     }
 
     gl.uniform1i(u('u_field0'), 0)
@@ -161,6 +163,8 @@ class GradientFxRenderer {
     gl.uniform1fv(u('u_blend'), arr(blend))
     gl.uniform1fv(u('u_opacity'), arr(opacity))
     gl.uniform1fv(u('u_crisp'), arr(crisp))
+    gl.uniform1fv(u('u_rotStep'), arr(rotStep))
+    gl.uniform1fv(u('u_pivot'), arr(pivot))
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)

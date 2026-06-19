@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Dices, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
+import { Dices, Disc3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
-import { buildConfig, defaultConfig, reroll, rippleConfig, type RerollScope } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
@@ -28,7 +28,8 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 const config = ref<GradientConfig>(defaultConfig('#default0'))
 const activeLayer = ref(0)
 const layer = computed(() => config.value.layers[activeLayer.value] ?? config.value.layers[0]!)
-const isRadial = computed(() => config.value.canvas.layout !== 'linear')
+const isRadial = computed(() => config.value.canvas.layout === 'radial' || config.value.canvas.layout === 'orbit')
+const isStack = computed(() => config.value.canvas.layout === 'stack')
 
 // Proxies for the optional center/light fields so v-model stays simple and type-safe
 // (the fields are backfilled by ensureConfigDefaults, but typed optional).
@@ -128,6 +129,13 @@ function clearRolls() { rolls.splice(0, rolls.length) }
 // Preset: the 3D-embossed rainbow orbit (the reference look).
 function applyRipple() {
   config.value = rippleConfig(randomSeed())
+  activeLayer.value = 0
+  pushRoll(config.value)
+}
+
+// Preset: stacked rotated-gradient circles (the reference's real construction).
+function applyStack() {
+  config.value = stackConfig(randomSeed())
   activeLayer.value = 0
   pushRoll(config.value)
 }
@@ -296,7 +304,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
 })
 
-function setLayout(l: LayoutKind) { config.value.canvas.layout = l }
+function setLayout(l: LayoutKind) {
+  config.value.canvas.layout = l
+  // Backfill stack params so the sliders + render agree the moment you switch to Stack.
+  if (l === 'stack') {
+    const s = layer.value.shape
+    if (s.rotStep == null) s.rotStep = 8
+    if (s.pivot == null) s.pivot = 0.1
+  }
+}
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
 </script>
 
@@ -319,6 +335,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <div class="mx-0.5 h-5 w-px bg-white/10" />
           <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the 3D rainbow-ripple preset" @click="applyRipple">
             <Sparkles class="h-3.5 w-3.5" /> Ripple
+          </button>
+          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the stacked rotated-circles preset" @click="applyStack">
+            <Disc3 class="h-3.5 w-3.5" /> Stack
           </button>
         </div>
       </div>
@@ -348,7 +367,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <span>Layout</span>
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('layout')"><component :is="locked('layout') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
-        <div class="mb-2 grid grid-cols-3 gap-1">
+        <div class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ l }}</button>
@@ -400,13 +419,20 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
 
       <!-- Shape -->
       <StudioSection title="Shape" :badge="`Layer ${activeLayer + 1}`">
-        <div class="mb-2 grid grid-cols-4 gap-1">
+        <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setShape(s)">{{ s }}</button>
         </div>
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Count</span><span class="text-white/40">{{ Math.round(layer.shape.count) }}</span></label>
-        <input v-model.number="layer.shape.count" type="range" min="2" max="64" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>{{ isStack ? 'Ring count' : 'Count' }}</span><span class="text-white/40">{{ Math.round(layer.shape.count) }}</span></label>
+        <input v-model.number="layer.shape.count" type="range" min="2" :max="isStack ? 40 : 64" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <template v-if="isStack">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Rotation / ring</span><span class="text-white/40">{{ Math.round(layer.shape.rotStep ?? 8) }}°</span></label>
+          <input v-model.number="layer.shape.rotStep" type="range" min="0" max="45" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Pivot</span><span class="text-white/40">{{ (layer.shape.pivot ?? 0.1).toFixed(2) }}</span></label>
+          <input v-model.number="layer.shape.pivot" type="range" min="0" max="0.6" step="0.01" v-studio-reset class="studio-range w-full" />
+        </template>
+        <template v-if="!isStack">
         <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Peaks</span><span class="text-white/40">{{ Math.round(layer.shape.peaks) }}</span></label>
           <input v-model.number="layer.shape.peaks" type="range" min="1" max="12" step="1" v-studio-reset class="studio-range mb-2 w-full" />
@@ -453,6 +479,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   :class="layer.shape.mirror === mk ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="layer.shape.mirror = mk">{{ mk === 'horizontal' ? 'Horiz' : mk === 'vertical' ? 'Vert' : mk }}</button>
         </div>
+        </template>
       </StudioSection>
 
       <!-- Color -->

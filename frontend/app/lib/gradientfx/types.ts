@@ -3,7 +3,7 @@
 // data.properties.comfynext_gradientStudio blob, drives the renderer, and (given
 // the same seed + locks) reproduces an identical image.
 
-export type LayoutKind = 'linear' | 'radial' | 'orbit'
+export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type MappingKind = 'across' | 'perbar' | 'field'
 export type Direction = 'up' | 'right' | 'down' | 'left'
@@ -62,6 +62,10 @@ export interface ShapeConfig {
   mirror: MirrorKind
   /** Pyramid: position of the valley/peak, 0..1. */
   valley: number
+  /** Stack layout: gradient rotation added per ring, degrees (optional, back-compat). */
+  rotStep?: number
+  /** Stack layout: per-ring center orbit, 0 (concentric) .. 1 (off-center spiral). */
+  pivot?: number
 }
 
 export interface ColorConfig {
@@ -150,7 +154,7 @@ export interface GradientConfig {
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
 export const BLEND_MODES: BlendKind[] = ['normal', 'lighten', 'screen', 'add', 'multiply', 'darken', 'overlay']
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
-export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit']
+export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
 export const MIRROR_KINDS: MirrorKind[] = ['none', 'horizontal', 'vertical', 'both']

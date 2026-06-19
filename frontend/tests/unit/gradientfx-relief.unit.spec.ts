@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_CENTER, DEFAULT_LIGHT, canvasCenter, cloneConfig, ensureConfigDefaults,
+  DEFAULT_CENTER, DEFAULT_LIGHT, LAYOUTS, canvasCenter, cloneConfig, ensureConfigDefaults,
   lightVector, reliefLight, type GradientConfig,
 } from '~/lib/gradientfx/types'
-import { buildConfig, defaultConfig, reroll, rippleConfig } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, reroll, rippleConfig, stackConfig } from '~/lib/gradientfx/randomize'
 import { resolveGradientFx } from '~/lib/gradientfx/renderer'
 
 describe('lightVector', () => {
@@ -95,6 +95,21 @@ describe('resolveGradientFx (HMR-safe singleton)', () => {
     const existing = resolveGradientFx({})
     const scope = { __comfynextGradientFx: existing }
     expect(resolveGradientFx(scope)).toBe(existing)
+  })
+})
+
+describe('stackConfig preset', () => {
+  it('is a stack layout with ring count + rotStep + pivot', () => {
+    const c = stackConfig('#s')
+    expect(c.canvas.layout).toBe('stack')
+    const sh = c.layers[0]!.shape
+    expect(sh.count).toBeGreaterThanOrEqual(2)
+    expect(sh.rotStep).toBeGreaterThan(0)
+    expect(sh.pivot).toBeGreaterThan(0)
+    expect(c.layers[0]!.color.stops.length).toBeGreaterThanOrEqual(2)
+  })
+  it("'stack' is a registered layout", () => {
+    expect(LAYOUTS).toContain('stack')
   })
 })
 

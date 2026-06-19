@@ -32,6 +32,9 @@ function randShape(rng: Rng): ShapeConfig {
     direction: rng.pick(['up', 'down', 'up', 'down', 'left', 'right'] as const),
     mirror: rng.pick(['none', 'none', 'none', 'horizontal', 'vertical', 'both'] as const),
     valley: rng.range(0.15, 0.85),
+    // Stack-only (ignored by other layouts): rotation per ring + off-center pivot.
+    rotStep: rng.range(3, 18),
+    pivot: rng.chance(0.6) ? rng.range(0.04, 0.22) : 0,
   }
 }
 
@@ -140,6 +143,30 @@ export function rippleConfig(seed = randomSeed()): GradientConfig {
         shape: { type: 'bands', count: 10, minDepth: 0.78, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.88, direction: 'up', mirror: 'none', valley: 0.5 },
         // Angular spectrum: vertical gradientDir + field mapping runs the ramp around the ring.
         color: { stops: spectrumStops(), gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+      },
+    ],
+    motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
+    locks: {},
+  }
+}
+
+/**
+ * The "Stacked rings" preset — the reference's real construction: concentric circles of
+ * shrinking radius, each filled with the same linear gradient rotated a step per ring, with
+ * a slight per-ring orbit for the off-centre spiral core.
+ */
+export function stackConfig(seed = randomSeed()): GradientConfig {
+  return {
+    seed,
+    canvas: { aspect: '1:1', layout: 'stack', margin: 0.06, innerRadius: 0, background: '#000000', center: { ...DEFAULT_CENTER } },
+    relief: { grain: 0.1, relief: 0, light: { ...DEFAULT_LIGHT } },
+    layers: [
+      {
+        blend: 'normal', opacity: 1,
+        // count = ring count; rotStep + pivot drive the ripple/spiral. Other shape fields unused.
+        shape: { type: 'bands', count: 13, minDepth: 0.5, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.5, direction: 'up', mirror: 'none', valley: 0.5, rotStep: 8, pivot: 0.1 },
+        // Reference ramp: blue → yellow → orange → pink (linear; rotated per ring).
+        color: { stops: [{ color: '#5b6ee8', pos: 0 }, { color: '#e9f25a', pos: 0.34 }, { color: '#f3a85f', pos: 0.6 }, { color: '#f6c2e2', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },
     ],
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },

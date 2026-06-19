@@ -49,6 +49,8 @@ uniform float u_scrub[2];
 uniform float u_blend[2];      // 0 normal,1 lighten,2 screen,3 add,4 multiply,5 darken,6 overlay
 uniform float u_opacity[2];
 uniform float u_crisp[2];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
+uniform float u_rotStep[2];    // stack: gradient rotation per ring, radians
+uniform float u_pivot[2];      // stack: per-ring center orbit, 0..1
 
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
@@ -127,6 +129,34 @@ vec4 computeLayer(int i, vec2 p) {
   bool mirrorH = u_mirrorH[i] > 0.5;
   bool mirrorV = u_mirrorV[i] > 0.5;
   bool gradHoriz = u_gradHoriz[i] > 0.5;
+
+  // ---- Stack: N concentric circles of shrinking radius, each filled with the same ramp
+  // gradient rotated by ring*rotStep. The visible pixel takes the SMALLEST circle that
+  // contains it (drawn last/on top). A per-ring center orbit (pivot) makes the off-centre
+  // spiral core. The rotating gradient alone fakes the 3D ripple.
+  if (u_layout > 2.5) {
+    int rings = int(count + 0.5);
+    vec2 q = p - 0.5; q.x *= u_aspect;
+    float maxR = max(0.05, 0.5 - u_margin);
+    float t = -1.0;
+    for (int k = 39; k >= 0; k--) {
+      if (k >= rings) continue;
+      float f = rings > 1 ? float(k) / float(rings - 1) : 0.0;
+      float r = maxR * (1.0 - f * 0.92);
+      float ang = float(k) * u_rotStep[i];
+      vec2 c = vec2(cos(ang), sin(ang)) * (u_pivot[i] * maxR * f);
+      vec2 d = q - c;
+      if (dot(d, d) <= r * r) {
+        float ly = -sin(ang) * d.x + cos(ang) * d.y;   // gradient runs along the ring's local vertical
+        t = clamp(ly / (2.0 * r) + 0.5, 0.0, 1.0);
+        break;
+      }
+    }
+    if (t < 0.0) return vec4(0.0);                      // outside every circle → background
+    t = quantize(t, u_steps[i]);
+    vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
+    return vec4(col, 1.0);
+  }
 
   if (u_layout < 0.5) {
     // ---- Linear: full-height columns. The field offsets the gradient per band,
