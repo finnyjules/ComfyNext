@@ -41,13 +41,17 @@ export function groundSuggestions(
     }
 
     // Token-subset fallback: every word of the suggestion appears in the family.
+    // Require ≥2 tokens — a single vague word ("Sans", "Neue") would otherwise
+    // ground to an unrelated family instead of being correctly dropped.
     if (!match) {
       const tokens = norm.split(' ')
-      const cands = catalog.filter(c => {
-        const cn = normalizeFamily(c.family)
-        return tokens.every(t => cn.includes(t))
-      })
-      match = shortest(cands)
+      if (tokens.length >= 2) {
+        const cands = catalog.filter(c => {
+          const cn = normalizeFamily(c.family)
+          return tokens.every(t => cn.includes(t))
+        })
+        match = shortest(cands)
+      }
     }
 
     if (!match) {

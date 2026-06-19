@@ -48,6 +48,12 @@ describe('groundSuggestions', () => {
     expect(out[0].family).toBe('Playfair Display')
   })
 
+  it('drops a single vague token instead of over-grounding it', () => {
+    // "Neue" substring-matches "Bebas Neue" but is too vague to trust.
+    const out = groundSuggestions([{ family: 'Neue', reason: 'x' }], CATALOG)
+    expect(out).toEqual([])
+  })
+
   it('ignores malformed suggestion entries', () => {
     const out = groundSuggestions([
       { family: '', reason: 'x' } as any,

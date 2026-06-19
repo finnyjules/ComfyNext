@@ -1,4 +1,4 @@
-import { buildSuggestRequest, STANDARD_KEY_ERROR, type FontSuggestion } from '~/lib/fontSuggest'
+import { buildSuggestRequest, type FontSuggestion } from '~/lib/fontSuggest'
 
 /**
  * Drives the ✨ "describe a font" search shared by both font pickers. Reads the
@@ -48,5 +48,5 @@ export function useFontSuggest() {
     }
   }
 
-  return { suggestions, loading, error, hasRun, suggest, clear, STANDARD_KEY_ERROR }
+  return { suggestions, loading, error, hasRun, suggest, clear }
 }

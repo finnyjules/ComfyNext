@@ -28,6 +28,7 @@ const catalog = ref<GoogleFont[]>([])
 const loading = ref(false)
 
 const { suggestions, loading: suggestLoading, error: suggestError, hasRun: suggestRan, suggest, clear: clearSuggest } = useFontSuggest()
+const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
 function ensureCatalog() {
   if (catalog.value.length || loading.value) return
@@ -40,9 +41,15 @@ function runSuggest() {
   suggest(query.value)
 }
 
-function pickSuggestion(family: string) {
-  const font = catalog.value.find(f => f.family === family)
-  if (font) pickGoogle(font)   // closes the panel via pickGoogle
+// Load each suggested face so its preview row paints in-face, not in the fallback.
+watch(suggestions, (list) => { for (const s of list) ensureGoogleFont(s.family) })
+
+function pickSuggestion(s: { family: string; category: string }) {
+  // Prefer the full catalog entry (carries axes); fall back to a minimal font so
+  // the pick always lands even if the catalog hasn't loaded or omits this family.
+  const font = catalog.value.find(f => f.family === s.family)
+    ?? { family: s.family, category: s.category, weights: [400], italic: false, axes: [] }
+  pickGoogle(font)   // closes the panel via pickGoogle
 }
 
 // Invalidate suggestions when the query changes.
@@ -117,7 +124,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
             type="button"
             class="fp__row"
             :class="{ 'fp__row--sel': selectedKey === 'goog:' + s.family }"
-            @click="pickSuggestion(s.family)"
+            @click="pickSuggestion(s)"
           >
             <span class="fp__row-name" :style="{ fontFamily: s.family }">{{ s.family }}</span>
             <span class="fp__row-meta">{{ s.reason }}</span>
