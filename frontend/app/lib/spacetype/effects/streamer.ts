@@ -52,18 +52,18 @@ const VERT = [
   'void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
 ].join('\n')
 
-// FRONT face: the painted ribbon (gradient + text) FLOWS together along the fixed serpentine track
-// — both sampled at vUv.x + uScroll — so the colour and the letters move as one unit and the text
-// stays fixed relative to the ribbon (the streamer moves, the text is static in it).
+// FRONT face: the gradient is PINNED to the ribbon's physical ends (sampled at vUv.x, 0→1 across the
+// whole band) so one end is always the first stop and the other the last, no matter how the shape
+// flows. The TEXT flows along the ribbon (sampled at vUv.x + uScroll) so the letters travel with the
+// moving streamer while the colour stays anchored.
 const FRONT_FRAG = [
   'precision highp float;',
   'uniform sampler2D uText; uniform sampler2D uGrad; uniform vec3 uTextColor; uniform float uScroll; uniform float uNoStripes;',
   'varying vec2 vUv;',
   'void main(){',
-  '  float u = vUv.x + uScroll;',
-  '  float a = texture2D(uText, vec2(u, vUv.y)).a;',
+  '  float a = texture2D(uText, vec2(vUv.x + uScroll, vUv.y)).a;',
   '  if (uNoStripes > 0.5) { if (a < 0.02) discard; gl_FragColor = vec4(uTextColor, 1.0); return; }',
-  '  vec3 g = texture2D(uGrad, vec2(u, 0.5)).rgb;',
+  '  vec3 g = texture2D(uGrad, vec2(vUv.x, 0.5)).rgb;',
   '  gl_FragColor = vec4(mix(g, uTextColor, a), 1.0);',
   '}',
 ].join('\n')
