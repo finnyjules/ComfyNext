@@ -1,11 +1,12 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills } from '../fills'
+import { parseFills, fillTileCanvas, type Fill } from '../fills'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { mulberry32, hashSeed } from '../rng'
 import {
-  revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch, pickTypeColor, stripOffsets,
-  type TypeColorMode, type EaseMode,
+  revealGlitch, ease, churnSeed, scaleXForGlitch, pickTypeColor, stripOffsets,
+  lineLayout, blockSegments,
+  type TypeColorMode, type EaseMode, type BlockUnit,
 } from '../sliceGlitchLayout'
 import { doodleField } from '../doodleField'
 
@@ -30,6 +31,7 @@ const controls: ControlSpec[] = [
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 400, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 20, step: 1, default: -4, group: 'Type' },
   { key: 'lineTight', label: 'Line tightness', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.85, group: 'Type' },
+  { key: 'lineSpacing', label: 'Line spacing', kind: 'slider', min: 0.6, max: 1.8, step: 0.02, default: 1, group: 'Type' },
   { key: 'fitWidth', label: 'Stretch to width', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.92, group: 'Type' },
   // Color
   { key: 'palette', label: 'Palette', kind: 'fillList', default: JSON.stringify([
@@ -40,7 +42,8 @@ const controls: ControlSpec[] = [
       { type: 'solid', a: '#eaff00', b: '#000000', textColor: '#ffffff' },
       { type: 'solid', a: '#3b5bff', b: '#000000', textColor: '#ffffff' },
     ]), group: 'Color' },
-  { key: 'blockDensity', label: 'Blocks / band', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
+  { key: 'blockUnit', label: 'Block unit', kind: 'select', options: ['random', 'line', 'word', 'character'], default: 'random', group: 'Color' },
+  { key: 'blockDensity', label: 'Blocks / band (random)', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
   { key: 'coverage', label: 'Color coverage', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.78, group: 'Color' },
   { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
@@ -84,10 +87,30 @@ const FRAG = [
 const VFIT = 0.9
 
 function n(p: Params, k: string): number { return Number(p[k]) }
-function paletteColors(p: Params): string[] {
+function palette(p: Params): Fill[] {
   const fills = parseFills(p.palette)
-  const cols = fills.map(f => f.a)
-  return cols.length ? cols : ['#ffffff']
+  return fills.length ? fills : parseFills('')
+}
+
+// Cache 2D-canvas pattern tiles by fill recipe so we don't rebuild them every frame.
+const _tileCache = new Map<string, HTMLCanvasElement>()
+function tileFor(fill: Fill): HTMLCanvasElement {
+  const k = `${fill.type}|${fill.a}|${fill.b}|${fill.angle}|${fill.density}`
+  let t = _tileCache.get(k)
+  if (!t) { t = fillTileCanvas(fill); _tileCache.set(k, t) }
+  return t
+}
+
+/** Set ctx.fillStyle for a block of the given fill: flat colour, fitted gradient, or tiled pattern. */
+function setBlockStyle(ctx: CanvasRenderingContext2D, fill: Fill, y: number, h: number): void {
+  if (fill.type === 'solid') { ctx.fillStyle = fill.a; return }
+  if (fill.type === 'gradient') {
+    const g = ctx.createLinearGradient(0, y, 0, y + h)
+    g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
+    ctx.fillStyle = g; return
+  }
+  const pat = ctx.createPattern(tileFor(fill), 'repeat')
+  if (pat) ctx.fillStyle = pat
 }
 function textLines(p: Params): string[] {
   const ls = String(p.text ?? '').split('\n').map(s => s.trim()).filter(Boolean).map(s => s.toUpperCase())
@@ -136,10 +159,11 @@ function mkCanvas(W: number, H: number): CanvasRenderingContext2D {
 
 function draw(s: State, p: Params, glitch: number, seed: number): void {
   const { W, H } = s
-  const pal = paletteColors(p)
+  const fills = palette(p)
+  const palCols = fills.map(f => f.a)
   const bg = String(p.bgColor)
 
-  // 1) type matte (white on transparent)
+  // shared layout: font, line bands (with spacing), per-line centered char boxes
   const tctx = s.typeCtx
   tctx.clearRect(0, 0, W, H)
   tctx.fillStyle = '#ffffff'; tctx.textAlign = 'left'; tctx.textBaseline = 'middle'
@@ -147,23 +171,34 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   const weight = fontHasWeightAxis(family) ? n(p, 'typeWeight') : 400
   const { lines, fs } = measure(tctx, W, H, p)
   tctx.font = `${weight} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
-  const marginY = (H * (1 - VFIT)) / 2
-  const bands = bandLayout(lines.length, H * VFIT).map(b => ({ y: b.y + marginY, h: b.h }))
+
+  // line bands: equal slots advanced by line spacing, vertically centered
+  const slot = (H * VFIT) / lines.length
+  const advance = slot * n(p, 'lineSpacing')
+  const span = advance * (lines.length - 1) + slot
+  const top = (H - span) / 2
+  const bands = lines.map((_, i) => ({ y: top + i * advance, h: slot }))
+
+  // per-line centered char boxes at the current width-morph scaleX (shared by glyphs + blocks)
   const targetW = W * n(p, 'fitWidth')
-  const lineScale = lines.map(l => scaleXForGlitch(l.natW, targetW, glitch))
+  const lineBoxes = lines.map(l => {
+    const sx = scaleXForGlitch(l.natW, targetW, glitch)
+    const adv = l.widths.map(w => w * sx)
+    return { sx, boxes: lineLayout(adv, l.chars.map(c => c === ' '), W) }
+  })
+
+  // 1) type matte (white glyphs on transparent)
   lines.forEach((l, i) => {
-    const band = bands[i]!; const sx = lineScale[i]!
-    const total = l.natW * sx
-    let x = (W - total) / 2
-    const cy = band.y + band.h / 2
+    const cy = bands[i]!.y + bands[i]!.h / 2
+    const { sx, boxes } = lineBoxes[i]!
     for (let c = 0; c < l.chars.length; c++) {
-      tctx.save(); tctx.translate(x + (l.widths[c]! * sx) / 2, cy); tctx.scale(sx, 1)
+      const b = boxes[c]!
+      tctx.save(); tctx.translate(b.x + b.w / 2, cy); tctx.scale(sx, 1)
       tctx.fillText(l.chars[c]!, -l.widths[c]! / 2, 0); tctx.restore()
-      x += l.widths[c]! * sx
     }
   })
 
-  // 2) blocks + masked type
+  // 2) colour blocks (by unit) behind the type, honouring each fill's type
   const cctx = s.compCtx
   cctx.clearRect(0, 0, W, H)
   cctx.globalCompositeOperation = 'source-over'
@@ -172,10 +207,11 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   const blockSeedRng = mulberry32((seed >>> 0) ^ 0xc2b2ae35)
   const density = n(p, 'blockDensity')
   const coverage = n(p, 'coverage')
-  bands.forEach(band => {
-    for (const seg of segmentRow(blockSeedRng, 0, W, density, pal.length)) {
-      if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of segments as bg
-      cctx.fillStyle = pal[seg.colorIndex]!
+  const unit = String(p.blockUnit) as BlockUnit
+  bands.forEach((band, i) => {
+    for (const seg of blockSegments(unit, lineBoxes[i]!.boxes, W, blockSeedRng, density, fills.length)) {
+      if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of blocks as bg
+      setBlockStyle(cctx, fills[seg.colorIndex]!, band.y, band.h)
       cctx.fillRect(seg.x, band.y, seg.w, band.h)
     }
   })
@@ -192,8 +228,8 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   sctx.globalCompositeOperation = 'source-over'
   lines.forEach((_, i) => {
     const band = bands[i]!
-    const ci = pickTypeColor(typeRng, typeMode, pal.length)
-    sctx.fillStyle = ci < 0 ? '#ffffff' : pal[ci]!
+    const ci = pickTypeColor(typeRng, typeMode, palCols.length)
+    sctx.fillStyle = ci < 0 ? '#ffffff' : palCols[ci]!
     sctx.fillRect(0, band.y, W, band.h)        // opaque per-band color
   })
   sctx.globalCompositeOperation = 'destination-in'
@@ -228,7 +264,7 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     const dmode = String(p.doodleColorMode)
     for (const d of field) {
       if (glitch < d.appearAt) continue
-      octx.strokeStyle = dmode === 'white' ? '#ffffff' : pal[d.colorIndex % pal.length]!
+      octx.strokeStyle = dmode === 'white' ? '#ffffff' : palCols[d.colorIndex % palCols.length]!
       octx.save(); octx.translate(d.x, d.y); octx.rotate(d.rotation); octx.scale(d.scale, d.scale)
       octx.beginPath()
       d.points.forEach((pt, k) => { if (k === 0) octx.moveTo(pt.x, pt.y); else octx.lineTo(pt.x, pt.y) })

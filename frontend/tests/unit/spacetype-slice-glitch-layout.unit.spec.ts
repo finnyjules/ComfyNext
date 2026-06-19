@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch,
-  pickTypeColor, stripOffsets,
+  pickTypeColor, stripOffsets, lineLayout, blockSegments, type CharBox,
 } from '../../app/lib/spacetype/sliceGlitchLayout'
 import { mulberry32 } from '../../app/lib/spacetype/rng'
 
@@ -68,6 +68,44 @@ describe('segmentRow', () => {
   })
   it('is deterministic for the same seed', () => {
     expect(segmentRow(mulRng(5), 0, 900, 3, 6)).toEqual(segmentRow(mulRng(5), 0, 900, 3, 6))
+  })
+})
+
+describe('lineLayout', () => {
+  it('centers the advances within W and carries widths/space flags', () => {
+    const boxes = lineLayout([100, 50, 100], [false, true, false], 400)
+    expect(boxes[0]!.x).toBeCloseTo(75)        // (400 - 250) / 2
+    expect(boxes[1]!.x).toBeCloseTo(175)
+    expect(boxes[1]!.isSpace).toBe(true)
+    expect(boxes[2]!.x + boxes[2]!.w).toBeCloseTo(325)
+  })
+})
+
+describe('blockSegments', () => {
+  // "AB C": A,B glyphs, a space, then C
+  const boxes: CharBox[] = [
+    { x: 0, w: 50, isSpace: false }, { x: 50, w: 50, isSpace: false },
+    { x: 100, w: 30, isSpace: true }, { x: 130, w: 50, isSpace: false },
+  ]
+  it('line → one full-width block', () => {
+    const segs = blockSegments('line', boxes, 900, mulRng(1), 3, 6)
+    expect(segs).toHaveLength(1)
+    expect(segs[0]!.x).toBe(0); expect(segs[0]!.w).toBe(900)
+  })
+  it('word → one block per run of non-space chars', () => {
+    const segs = blockSegments('word', boxes, 900, mulRng(1), 3, 6)
+    expect(segs).toHaveLength(2)
+    expect(segs[0]!.x).toBe(0); expect(segs[0]!.w).toBe(100)   // "AB"
+    expect(segs[1]!.x).toBe(130); expect(segs[1]!.w).toBe(50)  // "C"
+  })
+  it('character → one block per non-space char', () => {
+    const segs = blockSegments('character', boxes, 900, mulRng(1), 3, 6)
+    expect(segs).toHaveLength(3)
+    expect(segs.map(s => s.w)).toEqual([50, 50, 50])
+  })
+  it('random → partition summing to W', () => {
+    const segs = blockSegments('random', boxes, 900, mulRng(1), 4, 6)
+    expect(segs.reduce((a, s) => a + s.w, 0)).toBeCloseTo(900)
   })
 })
 

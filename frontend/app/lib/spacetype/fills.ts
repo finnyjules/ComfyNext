@@ -156,6 +156,43 @@ export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Text
   return t
 }
 
+/**
+ * A standalone, tileable 2D-canvas tile for a fill — for effects that composite on a raw 2D
+ * canvas (vs the THREE texture path). `solid` returns a flat swatch; `gradient` a vertical A→B
+ * ramp; the rest reuse the same pixel pickers as the THREE textures so the look matches.
+ * Use as `ctx.createPattern(tile, 'repeat')` (or directly for gradient/solid).
+ */
+export function fillTileCanvas(fill: Fill, size = 128): HTMLCanvasElement {
+  const c = document.createElement('canvas'); c.width = size; c.height = size
+  const ctx = c.getContext('2d')!
+  if (fill.type === 'solid') { ctx.fillStyle = fill.a; ctx.fillRect(0, 0, size, size); return c }
+  if (fill.type === 'gradient') {
+    const g = ctx.createLinearGradient(0, 0, 0, size); g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, size, size); return c
+  }
+  if (fill.type === 'grid') {
+    const d = Math.max(1, Math.round(fill.density)), step = size / d
+    ctx.fillStyle = fill.a; ctx.fillRect(0, 0, size, size)
+    ctx.strokeStyle = fill.b; ctx.lineWidth = Math.max(1, Math.round(6 * (3 / d)))
+    for (let i = 0; i <= d; i++) {
+      ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, size); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke()
+    }
+    return c
+  }
+  const colA = hexBytes(fill.a), colB = hexBytes(fill.b), d = Math.max(2, Math.round(fill.density))
+  const picker: (px: number, py: number) => boolean =
+    fill.type === 'checkerboard' ? (px, py) => (Math.floor(px * d / size) + Math.floor(py * d / size)) % 2 === 1
+    : fill.type === 'stripes' ? (() => {
+        const rad = (fill.angle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad)
+        return (px: number, py: number) => Math.floor((px * dx + py * dy) / (size / d)) % 2 !== 0
+      })()
+    : fill.type === 'noise' ? (px, py) => { const h = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453; return (h - Math.floor(h)) >= 0.5 }
+    : (px, py) => { const cx = Math.floor(px * d / size), cy = Math.floor(py * d / size); const v = Math.sin(cx * 12.9898 + cy * 78.233 + cx * cy * 3.71) * 43758.5453; return (v - Math.floor(v)) > 0.45 }
+  ctx.putImageData(patternImageData(size, size, colA, colB, picker), 0, 0)
+  return c
+}
+
 /** Vertical A→B gradient ramp (a at top, b at bottom). */
 function gradientRamp(three: typeof THREE, a: string, b: string): THREE.Texture {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256

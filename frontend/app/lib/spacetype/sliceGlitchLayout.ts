@@ -2,7 +2,9 @@ import { mulberry32 } from './rng'
 
 export interface Band { y: number; h: number }
 export interface Segment { x: number; w: number; colorIndex: number }
+export interface CharBox { x: number; w: number; isSpace: boolean }
 export type TypeColorMode = 'white' | 'palette' | 'mixed'
+export type BlockUnit = 'random' | 'line' | 'word' | 'character'
 export type EaseMode = 'linear' | 'in' | 'out' | 'in-out'
 
 /** glitch amount from loop time: linear ramp over [0, revealFrac], then 1. */
@@ -49,6 +51,43 @@ export function segmentRow(rng: () => number, x0: number, width: number, density
   }
   const last = segs[segs.length - 1]!
   last.w = x0 + width - last.x
+  return segs
+}
+
+/** Center a line's per-char advances within width W → boxes carrying x/width/space flag. */
+export function lineLayout(advances: number[], isSpace: boolean[], W: number): CharBox[] {
+  const total = advances.reduce((a, b) => a + b, 0)
+  let x = (W - total) / 2
+  return advances.map((w, i) => { const box = { x, w, isSpace: isSpace[i] ?? false }; x += w; return box })
+}
+
+/**
+ * Color-block segments for one line band, by unit:
+ *  - random   → random-width partition across W (segmentRow)
+ *  - line     → one block spanning the whole band
+ *  - word     → one block per run of non-space chars (gaps between words)
+ *  - character→ one block per non-space char
+ * rng drives the palette pick (and, for 'random', the widths).
+ */
+export function blockSegments(
+  unit: BlockUnit, boxes: CharBox[], W: number, rng: () => number, density: number, paletteLen: number,
+): Segment[] {
+  const pick = () => Math.floor(rng() * paletteLen) % paletteLen
+  if (unit === 'random') return segmentRow(rng, 0, W, density, paletteLen)
+  if (unit === 'line') return [{ x: 0, w: W, colorIndex: pick() }]
+  if (unit === 'character') return boxes.filter(b => !b.isSpace).map(b => ({ x: b.x, w: b.w, colorIndex: pick() }))
+  // word: merge consecutive non-space boxes into one segment spanning their extent
+  const segs: Segment[] = []
+  let start = -1
+  for (let i = 0; i <= boxes.length; i++) {
+    const isGap = i === boxes.length || boxes[i]!.isSpace
+    if (!isGap && start < 0) start = i
+    if (isGap && start >= 0) {
+      const a = boxes[start]!, b = boxes[i - 1]!
+      segs.push({ x: a.x, w: (b.x + b.w) - a.x, colorIndex: pick() })
+      start = -1
+    }
+  }
   return segs
 }
 
