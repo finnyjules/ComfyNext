@@ -36,6 +36,8 @@ const controls: ControlSpec[] = [
   { key: 'fontVaryUnit', label: 'Vary font by', kind: 'select', options: ['off', 'line', 'word', 'character'], default: 'off', group: 'Type' },
   { key: 'weightJitter', label: 'Weight jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
   { key: 'slantJitter', label: 'Italic jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
+  { key: 'textStroke', label: 'Text stroke', kind: 'slider', min: 0, max: 16, step: 0.5, default: 0, group: 'Type' },
+  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Type' },
   // Color
   { key: 'palette', label: 'Palette', kind: 'fillList', default: JSON.stringify([
       { type: 'solid', a: '#33dd33', b: '#000000', textColor: '#ffffff' },
@@ -210,10 +212,14 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     return out
   })
 
-  // 1) type matte (white glyphs on transparent), with optional per-unit weight/slant jitter
+  // resolve per-glyph placement once (with optional per-unit weight/slant jitter), reused by
+  // the white matte and the stroke pass so they stay aligned.
   const varyUnit = String(p.fontVaryUnit)
   const wJit = n(p, 'weightJitter'), sJit = n(p, 'slantJitter')
   const hasWeight = fontHasWeightAxis(family)
+  const fontAt = (w: number) => `${Math.round(w)} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
+  interface PlacedGlyph { ch: string; cx: number; cy: number; sx: number; slant: number; font: string; origW: number }
+  const glyphs: PlacedGlyph[] = []
   let globalChar = 0
   lines.forEach((l, i) => {
     const cy = bands[i]!.y + bands[i]!.h / 2
@@ -226,14 +232,19 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
       if (!isSpace) {
         const unitId = varyUnit === 'line' ? i : varyUnit === 'word' ? i * 1000 + word : varyUnit === 'character' ? globalChar : -1
         const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, seed, weight, wJit, sJit)
-        if (hasWeight && unitId >= 0) tctx.font = `${Math.round(jit.weight)} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
         const b = boxes[c]!
-        tctx.save(); tctx.translate(b.x + b.w / 2, cy); tctx.transform(1, 0, jit.slant, 1, 0, 0); tctx.scale(sx, 1)
-        tctx.fillText(ch, -l.widths[c]! / 2, 0); tctx.restore()
+        glyphs.push({ ch, cx: b.x + b.w / 2, cy, sx, slant: jit.slant, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) })
       }
       globalChar++
     }
   })
+
+  // 1) type matte (white glyphs on transparent)
+  for (const g of glyphs) {
+    tctx.font = g.font
+    tctx.save(); tctx.translate(g.cx, g.cy); tctx.transform(1, 0, g.slant, 1, 0, 0); tctx.scale(g.sx, 1)
+    tctx.fillText(g.ch, -g.origW / 2, 0); tctx.restore()
+  }
 
   // 2) colour blocks behind the type, honouring each fill's type
   const cctx = s.compCtx
@@ -245,6 +256,21 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
   }
   cctx.restore()
+
+  // 2b) glyph stroke (outline) — drawn under the fill so it reads as an outline. Uses the same
+  // per-glyph placement so it tracks jitter/slant; always present (a type style, not glitch-faded).
+  const strokeW = n(p, 'textStroke')
+  if (strokeW > 0) {
+    cctx.save()
+    cctx.textAlign = 'left'; cctx.textBaseline = 'middle'
+    cctx.strokeStyle = String(p.strokeColor); cctx.lineWidth = strokeW; cctx.lineJoin = 'round'; cctx.miterLimit = 2
+    for (const g of glyphs) {
+      cctx.font = g.font
+      cctx.save(); cctx.translate(g.cx, g.cy); cctx.transform(1, 0, g.slant, 1, 0, 0); cctx.scale(g.sx, 1)
+      cctx.strokeText(g.ch, -g.origW / 2, 0); cctx.restore()
+    }
+    cctx.restore()
+  }
 
   // 3) per-block text colour: each block paints its swatch's textColor where the glyph sits on
   // it (so type over a green block takes green's textColor). Masked by the glyph alpha. Areas
