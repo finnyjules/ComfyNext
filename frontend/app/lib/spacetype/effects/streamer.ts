@@ -26,10 +26,10 @@ const controls: ControlSpec[] = [
   { key: 'segmentSpace', label: 'Segment space', kind: 'slider', min: 4, max: 60, step: 1, default: 23, group: 'Ribbon' },
   { key: 'segmentCount', label: 'Segment count', kind: 'slider', min: 3, max: 50, step: 1, default: 22, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 200, step: 1, default: 56, group: 'Ribbon' },
-  { key: 'ribbonStretch', label: 'Ribbon stretch', kind: 'slider', min: 0, max: 6, step: 0.1, default: 0, group: 'Ribbon' },
+  { key: 'ribbonStretch', label: 'Ribbon stretch', kind: 'slider', min: 0, max: 6, step: 0.1, default: 0.6, group: 'Ribbon' },
   { key: 'ribbonCount', label: 'Ribbon count', kind: 'slider', min: 1, max: 10, step: 1, default: 4, group: 'Ribbon' },
-  { key: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'slider', min: 1, max: 3, step: 0.01, default: 1.62, group: 'Ribbon' },
-  { key: 'ribbonOffset', label: 'Ribbon offset', kind: 'slider', min: 0, max: 2, step: 0.01, default: 1.3, group: 'Ribbon' },
+  { key: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'slider', min: 1, max: 3, step: 0.01, default: 1.3, group: 'Ribbon' },
+  { key: 'ribbonOffset', label: 'Ribbon offset', kind: 'slider', min: 0, max: 2, step: 0.01, default: 1.5, group: 'Ribbon' },
   { key: 'alternate', label: 'Alternate', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Ribbon' },
   // Color
   { key: 'fills', label: 'Gradient stops', kind: 'fillList', default: JSON.stringify([
@@ -44,10 +44,10 @@ const controls: ControlSpec[] = [
   // Motion
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.4, group: 'Motion' },
   // Transform (consumed by the engine)
-  { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 2.5, group: 'Transform' },
-  { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 1.79, group: 'Transform' },
+  { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 0.9, group: 'Transform' },
+  { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0.95, group: 'Transform' },
   { key: 'rotateY', label: 'Rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
-  { key: 'rotateZ', label: 'Rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -0.31, group: 'Transform' },
+  { key: 'rotateZ', label: 'Rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
 ]
 
 const VERT = [
