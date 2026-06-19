@@ -1,0 +1,82 @@
+<template>
+  <div style="margin:0;background:#000">
+    <canvas ref="canvas" :width="W" :height="H" style="display:block" />
+    <div style="position:fixed;top:6px;left:8px;font:11px monospace;color:#666">spacetype harness · {{ effectId }}</div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import '@fontsource/anton'
+import '@fontsource/inter'
+import { SpaceTypeEngine } from '~/lib/spacetype/engine'
+import { getEffect } from '~/lib/spacetype/effects'
+import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
+import type { TextTextureOptions } from '~/lib/spacetype/textTexture'
+
+definePageMeta({ layout: false })
+
+// Standalone visual harness for Space Type effects (mirrors the shaderfx-harness
+// pattern). Renders an effect into a canvas with a default config, and exposes
+// window.__echo(partialParams) to tweak params live + screenshot. No backend.
+
+const canvas = ref<HTMLCanvasElement | null>(null)
+const W = 900, H = 650
+const effectId = ref('echo')
+let engine: SpaceTypeEngine | null = null
+let raf = 0
+let frame = 0
+let params: Params = {}
+let animate = false
+
+function texOpts(): TextTextureOptions {
+  return {
+    label: String(params.text ?? 'ECHO'),
+    fontFamily: String(params.font ?? 'Anton'),
+    fontWeight: Number(params.typeWeight ?? 400),
+    axes: { wght: Number(params.typeWeight ?? 400) },
+    typeColor: '#ffffff',
+    fontSizePx: Number(params.typeHeight ?? 200),
+    scaleX: 1,
+    tracking: Number(params.tracking ?? 0),
+    strokeColor: '#000000',
+    strokeWidth: Number(params.typeStroke ?? 0),
+  }
+}
+
+function rebuild() { frame = 0; engine?.build(params, texOpts()) }
+
+function loop() {
+  if (!animate) return
+  engine?.renderFrame(frame++, params)
+  raf = requestAnimationFrame(loop)
+}
+
+function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean } = {}) {
+  Object.assign(params, partial)
+  animate = !!opts.animate
+  rebuild()
+  if (animate) { if (!raf) loop() }
+  else { if (raf) { cancelAnimationFrame(raf); raf = 0 }; engine?.renderFrame(0, params) }
+  return { ok: true, params: { ...params } }
+}
+
+onMounted(async () => {
+  if (!canvas.value) return
+  await (document as any).fonts?.ready
+  const eff = getEffect(effectId.value)
+  params = defaultsFromControls(eff.controls)
+  // Use the effect's own defaults; only swap in the reference string.
+  Object.assign(params, { text: 'THE 1795' })
+  engine = new SpaceTypeEngine(canvas.value, {
+    effect: eff, width: W, height: H, fps: 30, loopDuration: 2,
+    alpha: false, bgColor: '#000000', projection: 'perspective',
+  })
+  rebuild()
+  engine.renderFrame(0, params)
+  ;(window as any).__echo = apply
+  ;(window as any).__echoReady = true
+})
+
+onBeforeUnmount(() => { if (raf) cancelAnimationFrame(raf); engine?.dispose(); engine = null })
+</script>
