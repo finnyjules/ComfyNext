@@ -70,9 +70,40 @@ interface CopyHandle {
 
 interface EchoState {
   copies: CopyHandle[]   // index 0 = base (static), 1..count = echoes
-  planeW: number
-  planeH: number
-  glyphH: number         // world height of the actual glyph (card hugs this, not the full plane)
+  // The actual glyph's world-space bounds + centre within the text plane (measured from the
+  // texture's alpha), so the card hugs and centres on the letters — not the font em-box.
+  glyphW: number
+  glyphH: number
+  glyphCX: number
+  glyphCY: number
+}
+
+/** Measure the glyph's pixel bounds from the texture's alpha and convert to world-space size +
+ *  centre offset within a plane of `planeW`×`planeH`. Falls back to the full plane if empty. */
+function measureGlyph(canvas: HTMLCanvasElement | undefined, planeW: number, planeH: number) {
+  const fallback = { glyphW: planeW, glyphH: planeH, glyphCX: 0, glyphCY: 0 }
+  const ctx = canvas?.getContext?.('2d')
+  if (!canvas || !ctx) return fallback
+  const cw = canvas.width, ch = canvas.height
+  if (!cw || !ch) return fallback
+  const d = ctx.getImageData(0, 0, cw, ch).data
+  let minX = cw, maxX = -1, minY = ch, maxY = -1
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      if (d[(y * cw + x) * 4 + 3]! > 16) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x
+        if (y < minY) minY = y; if (y > maxY) maxY = y
+      }
+    }
+  }
+  if (maxX < minX || maxY < minY) return fallback
+  return {
+    glyphW: ((maxX - minX + 1) / cw) * planeW,
+    glyphH: ((maxY - minY + 1) / ch) * planeH,
+    glyphCX: (((minX + maxX + 1) / 2) / cw - 0.5) * planeW,
+    // canvas y is top-down; the plane (flipY texture) is bottom-up → invert.
+    glyphCY: (0.5 - ((minY + maxY + 1) / 2) / ch) * planeH,
+  }
 }
 
 let state: EchoState | null = null
@@ -122,12 +153,10 @@ export const echoEffect: SpaceTypeEffect = {
     const aspect = img && img.width && img.height ? img.width / img.height : 4
     const planeH = PLANE_H
     const planeW = Math.max(0.5, planeH * aspect)
-    // The glyph fills only `typeHeight / textureHeight` of the plane vertically (the rest is
-    // transparent margin). Size the card to the GLYPH so peeking slivers show letters, not blank
-    // card. Texture height defaults to 256px in makeTextTexture.
-    const texH = (img && img.height) ? img.height : 256
-    const glyphFrac = Math.min(1, Math.max(0.05, n(params, 'typeHeight') / texH))
-    const glyphH = planeH * glyphFrac
+    // Measure the real glyph bounds so the card hugs + centres on the letters (the texture has
+    // transparent em/leading margins around the glyphs).
+    const { glyphW, glyphH, glyphCX, glyphCY } = measureGlyph(
+      textTexture.image as HTMLCanvasElement | undefined, planeW, planeH)
 
     const count = Math.max(1, Math.round(n(params, 'count')))
     const total = count + 1
@@ -150,7 +179,7 @@ export const echoEffect: SpaceTypeEffect = {
       copies.push({ group: grp, card, text, uColor: ink.uColor, uOpacity: ink.uOpacity, uStroke: ink.uStroke, cardMat })
     }
 
-    state = { copies, planeW, planeH, glyphH }
+    state = { copies, glyphW, glyphH, glyphCX, glyphCY }
     echoEffect.update(0, params)
     return root
   },
@@ -158,7 +187,7 @@ export const echoEffect: SpaceTypeEffect = {
   update(t01, params) {
     const s = state
     if (!s) return
-    const { copies, planeW, glyphH } = s
+    const { copies, glyphW, glyphH, glyphCX, glyphCY } = s
     const count = copies.length - 1
     if (count < 1) return
 
@@ -212,9 +241,9 @@ export const echoEffect: SpaceTypeEffect = {
       const lookScale = rampScalar(baseScale, endScale, tRamp) * ps
       h.group.scale.set(lookScale, lookScale * (flip ? -1 : 1), lookScale)
 
-      // Card: hugs the GLYPH (+ padding), behind the text by a sliver.
-      h.card.scale.set(planeW + padX * 2, glyphH + padY * 2, 1)
-      h.card.position.set(0, 0, -Z_BIAS * 0.4)
+      // Card: hugs + centres on the measured GLYPH (+ padding), behind the text by a sliver.
+      h.card.scale.set(glyphW + padX * 2, glyphH + padY * 2, 1)
+      h.card.position.set(glyphCX, glyphCY, -Z_BIAS * 0.4)
       if (showBox) {
         // Visible card: paint cardColor, occlude via the depth buffer when opaque.
         h.cardMat.colorWrite = true
