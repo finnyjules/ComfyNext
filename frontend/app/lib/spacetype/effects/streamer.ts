@@ -67,7 +67,7 @@ const FRAG = [
   '    if (a < 0.02) discard;',
   '    gl_FragColor = vec4(uTextColor, a); return;',
   '  }',
-  '  vec3 face = vSide >= 0.0 ? vColor : uBSide;',
+  '  vec3 face = gl_FrontFacing ? uBSide : vColor;',   // gradient on the camera-facing side, B-side on the back
   '  gl_FragColor = vec4(mix(face, uTextColor, a), 1.0);',
   '}',
 ].join('\n')
