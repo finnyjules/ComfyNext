@@ -58,10 +58,10 @@ const VERT = [
 // moving streamer while the colour stays anchored.
 const FRONT_FRAG = [
   'precision highp float;',
-  'uniform sampler2D uText; uniform sampler2D uGrad; uniform vec3 uTextColor; uniform float uScroll; uniform float uNoStripes;',
+  'uniform sampler2D uText; uniform sampler2D uGrad; uniform vec3 uTextColor; uniform float uScroll; uniform float uTextRepeat; uniform float uNoStripes;',
   'varying vec2 vUv;',
   'void main(){',
-  '  float a = texture2D(uText, vec2(vUv.x + uScroll, vUv.y)).a;',
+  '  float a = texture2D(uText, vec2(vUv.x * uTextRepeat + uScroll, vUv.y)).a;',
   '  if (uNoStripes > 0.5) { if (a < 0.02) discard; gl_FragColor = vec4(uTextColor, 1.0); return; }',
   '  vec3 g = texture2D(uGrad, vec2(vUv.x, 0.5)).rgb;',
   '  gl_FragColor = vec4(mix(g, uTextColor, a), 1.0);',
@@ -96,14 +96,21 @@ function buildGradientTexture(three: typeof THREE, stops: string[]): THREE.Canva
   return t
 }
 
-/** Text matte: `cells` glyph cells across the strip (white on transparent), tiled from the input
- *  text. Maps once across the whole path; the text flows by scrolling the texture offset. */
-function buildTextTexture(three: typeof THREE, p: Params, cells: number): THREE.CanvasTexture {
+/** One glyph cells per character of the string + trailing gap. */
+function textUnitCells(p: Params): number {
+  return streamerText(p).length + Math.max(0, Math.round(n(p, 'textGap')))
+}
+
+/** Text matte: exactly ONE string-unit (string + trailing gap) rendered white on transparent. The
+ *  shader tiles it with RepeatWrapping, so the matte repeats seamlessly with no partial-copy seam
+ *  (the canvas is the whole repeat unit), and it realigns cleanly at the motion loop. */
+function buildTextTexture(three: typeof THREE, p: Params): THREE.CanvasTexture {
   const family = resolveFontFamily(String(p.font))
   // Append blank cells so each repetition of the string is separated by a visible gap.
   const txt = streamerText(p) + ' '.repeat(Math.max(0, Math.round(n(p, 'textGap'))))
   const CELL = 64
-  const W = Math.max(1, cells) * CELL
+  const R = Math.max(1, txt.length)
+  const W = R * CELL
   const c = document.createElement('canvas'); c.width = W; c.height = CELL
   const ctx = c.getContext('2d')!
   ctx.clearRect(0, 0, W, CELL)
@@ -112,8 +119,8 @@ function buildTextTexture(three: typeof THREE, p: Params, cells: number): THREE.
   const px = CELL * (0.45 + (n(p, 'typeHeight') / 100) * 0.4)
   ctx.font = `${px}px "${family}", "IBM Plex Mono", monospace`
   ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#ffffff'; ctx.lineJoin = 'round'
-  for (let col = 0; col < cells; col++) {
-    const ch = txt[col % txt.length]!
+  for (let col = 0; col < R; col++) {
+    const ch = txt[col]!
     const cx = col * CELL + CELL / 2, cy = CELL / 2
     if (stroke > 0) { ctx.lineWidth = stroke * 1.5; ctx.strokeText(ch, cx, cy) } else { ctx.fillText(ch, cx, cy) }
   }
@@ -137,6 +144,7 @@ interface State {
   cells: number
   samples: number      // path samples (N+1)
   pathLen: number
+  textPeriodArc: number  // arc-length of one text-string repetition (divides the 2-row geo period)
   rowLen: number
   arcR: number
   half: number
@@ -190,12 +198,20 @@ export const streamerEffect: SpaceTypeEffect = {
     const pathLen = rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius
 
     const gradTex = buildGradientTexture(three, gradientStops(params))
-    const textTex = buildTextTexture(three, params, cells)
+    const textTex = buildTextTexture(three, params)
     const noStripes = String(params.noStripes) === 'on' ? 1 : 0
     const backMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.bSideColor)), side: three.BackSide })
 
+    // Tie the text repeat to the geometry: fit a whole number of string-units into each 2-row geo
+    // period (so the text realigns every period → seamless loop, no scroll seam). Pick the unit
+    // count nearest to the natural glyph density (one cell ≈ segmentSpace).
+    const unitCells = textUnitCells(params)
+    const m = Math.max(1, Math.round((2 * seg) / (unitCells * segmentSpace)))
+    const textPeriodArc = (2 * seg) / m
+    const textRepeat = pathLen / textPeriodArc   // string-units across the whole band
+
     state = {
-      three, textTex, cells, samples, pathLen,
+      three, textTex, cells, samples, pathLen, textPeriodArc,
       rowLen: rowChars * segmentSpace, arcR: arcRadius, half: depth / 2,
       instances: [],
     }
@@ -219,6 +235,7 @@ export const streamerEffect: SpaceTypeEffect = {
           uGrad: { value: gradTex as THREE.Texture },
           uTextColor: { value: new three.Color(String(params.textColor)) },
           uScroll: { value: 0 },
+          uTextRepeat: { value: textRepeat },
           uNoStripes: { value: noStripes },
         },
       })
@@ -251,7 +268,7 @@ export const streamerEffect: SpaceTypeEffect = {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
         if (state && state.textTex === textTex) {
-          const next = buildTextTexture(three, params, cells)
+          const next = buildTextTexture(three, params)
           for (const inst of state.instances) inst.front.uniforms.uText!.value = next
           textTex.dispose()
           state.textTex = next; root.userData.tex = next
@@ -264,8 +281,9 @@ export const streamerEffect: SpaceTypeEffect = {
   update(t01, params) {
     if (!state) return
     // The SHAPE flows: slide the path window by whole 2-row periods (seamless), re-centered each
-    // frame. The text/gradient ride along (uScroll = same offset in uv units) so the text stays
-    // fixed IN the moving ribbon. speed 0 = stopped.
+    // frame. The text rides along, scrolled in units of its repeat period (s0 / textPeriodArc) so
+    // it stays glued to the moving ribbon AND wraps cleanly — over one geo period s0 advances a
+    // whole number of text-units, so the loop has no jump. speed 0 = stopped.
     const seg = state.rowLen + Math.PI * state.arcR
     const periods = Math.max(0, Math.round(n(params, 'speed')))
     const base = periods === 0 ? 0 : t01 * periods * 2 * seg
@@ -275,7 +293,7 @@ export const streamerEffect: SpaceTypeEffect = {
       const s0 = base + inst.phase   // constant phase keeps the loop seamless, staggers the ribbons
       flowGeometry(state, inst, s0)
       const u = inst.front.uniforms
-      u.uScroll!.value = state.pathLen > 0 ? s0 / state.pathLen : 0
+      u.uScroll!.value = state.textPeriodArc > 0 ? s0 / state.textPeriodArc : 0
       u.uTextColor!.value.set(tc)
       u.uNoStripes!.value = ns
     }
