@@ -1,42 +1,60 @@
-export interface TilePose { x: number; y: number; rot: number; side: number; textDir: number; jumper: number }
 export interface Rgb { r: number; g: number; b: number }
+export interface BandGeometry { positions: Float32Array; uvs: Float32Array; indices: Uint32Array; cells: number }
 
 export function streamerRadius(segmentCount: number, segmentSpace: number): number {
   return (segmentCount * segmentSpace) / Math.PI
 }
 
-/** Character slots in one full loop. */
+/** Character cells around one full loop (perimeter / segmentSpace). */
 export function streamerCycle(segmentCount: number, middleStretch: number): number {
   return Math.round(2 * segmentCount + 2 * segmentCount * middleStretch)
 }
 
+/** Racetrack centerline point at arc-length `s` (XY plane): top straight → right semicircle →
+ *  bottom straight → left semicircle. straightLen 0 ⇒ a plain oval. */
+function racetrackPoint(s: number, straightLen: number, arcLen: number, r: number): { x: number; y: number } {
+  if (s < straightLen) return { x: s, y: 0 }                                  // top straight →
+  s -= straightLen
+  if (s < arcLen) { const a = s / r; return { x: straightLen + r * Math.sin(a), y: r - r * Math.cos(a) } }  // right arc ↓
+  s -= arcLen
+  if (s < straightLen) return { x: straightLen - s, y: 2 * r }                // bottom straight ←
+  s -= straightLen
+  const a = s / r; return { x: -r * Math.sin(a), y: r + r * Math.cos(a) }     // left arc ↑
+}
+
 /**
- * STG ribbon 4-phase racetrack pose for character index `i` (loop-local space, before the
- * per-tile translate(0,-radius)+rotateX and ribbon offsets the effect applies). Ported from
- * sketch_ribbon.js: top straight → right semicircle → bottom straight → left semicircle.
+ * Continuous swept band around the racetrack: 2 verts per sample offset ±depth/2 along Z, so the
+ * band has one consistent +Z (front) face and one −Z (back) face all the way around — no per-tile
+ * facing flips. uv.x runs 0→1 once around the loop (for fixed gradient + scrolling text); uv.y
+ * spans the band width. `cells` = character cells around the loop. Pure (no THREE).
  */
-export function tilePose(i: number, segmentCount: number, segmentSpace: number, middleStretch: number): TilePose {
-  const cycle = 2 * segmentCount + 2 * segmentCount * middleStretch
-  const radius = streamerRadius(segmentCount, segmentSpace)
-  const segmentLength = segmentCount * segmentSpace
-  const sinStep = Math.PI / segmentCount
-  const m = ((i % cycle) + cycle) % cycle
-  const jumper = Math.floor(i / cycle)
-  const straightTop = segmentCount * middleStretch
-  let x: number, y: number, rot: number, side: number, textDir: number
-  if (m <= straightTop) {
-    x = m * segmentSpace; y = jumper * radius * 4; rot = 0; side = 1; textDir = -1
-  } else if (m <= segmentCount + segmentCount * middleStretch) {
-    const step = m - straightTop
-    x = segmentLength * middleStretch; y = jumper * radius * 4; rot = step * sinStep; side = 1; textDir = -1
-  } else if (m <= segmentCount + 2 * segmentCount * middleStretch) {
-    const step = m - (straightTop + segmentCount)
-    x = segmentLength * middleStretch - step * segmentSpace; y = radius * 2 + jumper * radius * 4; rot = 0; side = -1; textDir = 1
-  } else {
-    const step = m - (straightTop + segmentCount)
-    x = 0; y = radius * 2 + jumper * radius * 4; rot = -step * sinStep + Math.PI * middleStretch; side = -1; textDir = 1
+export function buildStreamerGeometry(segmentCount: number, segmentSpace: number, middleStretch: number, depth: number): BandGeometry {
+  const r = streamerRadius(segmentCount, segmentSpace)
+  const straightLen = segmentCount * segmentSpace * middleStretch
+  const arcLen = Math.PI * r
+  const perimeter = 2 * straightLen + 2 * arcLen
+  const cells = Math.max(1, Math.round(perimeter / Math.max(1e-3, segmentSpace)))
+  const N = Math.max(96, Math.round(perimeter / Math.max(1e-3, segmentSpace) * 6))  // samples around the loop
+  const half = depth / 2
+  const positions = new Float32Array((N + 1) * 2 * 3)
+  const uvs = new Float32Array((N + 1) * 2 * 2)
+  for (let i = 0; i <= N; i++) {
+    const s = (i / N) * perimeter
+    const p = racetrackPoint(s, straightLen, arcLen, r)
+    const a = i * 2, b = i * 2 + 1
+    positions[a * 3] = p.x; positions[a * 3 + 1] = p.y; positions[a * 3 + 2] = half
+    positions[b * 3] = p.x; positions[b * 3 + 1] = p.y; positions[b * 3 + 2] = -half
+    const u = i / N
+    uvs[a * 2] = u; uvs[a * 2 + 1] = 1
+    uvs[b * 2] = u; uvs[b * 2 + 1] = 0
   }
-  return { x, y, rot, side, textDir, jumper }
+  const indices = new Uint32Array(N * 6)
+  for (let i = 0; i < N; i++) {
+    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1, o = i * 6
+    indices[o] = a; indices[o + 1] = b; indices[o + 2] = c
+    indices[o + 3] = c; indices[o + 4] = b; indices[o + 5] = d
+  }
+  return { positions, uvs, indices, cells }
 }
 
 function hexToRgb(hex: string): Rgb {

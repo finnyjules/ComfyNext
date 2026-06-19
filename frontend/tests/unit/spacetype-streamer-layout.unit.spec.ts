@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { streamerRadius, streamerCycle, tilePose, gradientColorAt } from '../../app/lib/spacetype/streamerLayout'
+import { streamerRadius, streamerCycle, buildStreamerGeometry, gradientColorAt } from '../../app/lib/spacetype/streamerLayout'
 
 describe('streamerRadius / streamerCycle', () => {
   it('radius = segmentCount*segmentSpace/PI', () => {
@@ -11,37 +11,30 @@ describe('streamerRadius / streamerCycle', () => {
   })
 })
 
-describe('tilePose (middleStretch 0 = oval)', () => {
-  const sc = 20, ss = 10, ms = 0
-  it('phase 1/2 (top + right arc) are side +1, phase 3/4 are side -1', () => {
-    expect(tilePose(0, sc, ss, ms).side).toBe(1)
-    expect(tilePose(sc, sc, ss, ms).side).toBe(1)
-    expect(tilePose(sc + 1, sc, ss, ms).side).toBe(-1)
+describe('buildStreamerGeometry', () => {
+  it('oval (middleStretch 0): cells ≈ 2*segmentCount', () => {
+    expect(buildStreamerGeometry(20, 10, 0, 30).cells).toBe(40)
   })
-  it('top arc rotates 0→~PI across segmentCount steps', () => {
-    expect(tilePose(0, sc, ss, ms).rot).toBeCloseTo(0)
-    expect(tilePose(sc, sc, ss, ms).rot).toBeCloseTo(Math.PI)
+  it('racetrack straights add cells (≈ 2*segmentCount*(1+ms))', () => {
+    expect(buildStreamerGeometry(20, 10, 1, 30).cells).toBe(80)
   })
-  it('return run sits a diameter (2*radius) below in y', () => {
-    const r = streamerRadius(sc, ss)
-    expect(tilePose(sc + 5, sc, ss, ms).y).toBeCloseTo(2 * r)
+  it('emits 2 verts per sample, a closing sample, and 6 indices per quad', () => {
+    const g = buildStreamerGeometry(10, 10, 0, 20)
+    expect(g.positions.length % 6).toBe(0)            // 2 verts * 3 floats
+    const verts = g.positions.length / 3
+    expect(verts % 2).toBe(0)
+    // index count = (samples) * 6; verts = (samples+1)*2 ⇒ indices = (verts/2 - 1)*6
+    expect(g.indices.length).toBe((verts / 2 - 1) * 6)
   })
-  it('jumper increments once per full cycle (text longer than one loop)', () => {
-    const cyc = streamerCycle(sc, ms)
-    expect(tilePose(0, sc, ss, ms).jumper).toBe(0)
-    expect(tilePose(cyc, sc, ss, ms).jumper).toBe(1)
+  it('band width is along Z = ±depth/2', () => {
+    const g = buildStreamerGeometry(10, 10, 0, 24)
+    expect(g.positions[2]).toBeCloseTo(12)            // first vert z = +half
+    expect(g.positions[5]).toBeCloseTo(-12)           // second vert z = -half
   })
-  it('is periodic in i modulo the cycle (same pose shape each loop)', () => {
-    const cyc = streamerCycle(sc, ms)
-    const a = tilePose(3, sc, ss, ms), b = tilePose(3 + cyc, sc, ss, ms)
-    expect(b.x).toBeCloseTo(a.x); expect(b.rot).toBeCloseTo(a.rot); expect(b.side).toBe(a.side)
-  })
-})
-
-describe('tilePose (middleStretch > 0 = racetrack straights)', () => {
-  it('top straight advances x by segmentSpace per step, rot 0', () => {
-    const p = tilePose(2, 10, 10, 1)
-    expect(p.rot).toBe(0); expect(p.x).toBeCloseTo(2 * 10); expect(p.side).toBe(1)
+  it('uv.x runs 0→1 once around the loop', () => {
+    const g = buildStreamerGeometry(10, 10, 0, 20)
+    expect(g.uvs[0]).toBeCloseTo(0)                    // first u
+    expect(g.uvs[g.uvs.length - 2]).toBeCloseTo(1)     // last u
   })
 })
 
