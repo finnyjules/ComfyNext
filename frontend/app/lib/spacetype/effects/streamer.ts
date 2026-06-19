@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills } from '../fills'
+import type { Fill, FillType } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint } from '../streamerLayout'
 
@@ -30,16 +31,25 @@ const controls: ControlSpec[] = [
   { key: 'rows', label: 'Rows', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Ribbon' },
   { key: 'count', label: 'Streamers', kind: 'slider', min: 1, max: 5, step: 1, default: 1, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
-  // Color
-  { key: 'fills', label: 'Gradient stops', kind: 'fillList', default: JSON.stringify([
+  // Color — front face
+  { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'grid', 'noise'], default: 'gradient', group: 'Color' },
+  { key: 'fills', label: 'Front colors', kind: 'fillList', default: JSON.stringify([
       { type: 'solid', a: '#3B2BFF', b: '#000', textColor: '#fff' },
       { type: 'solid', a: '#E01B6A', b: '#000', textColor: '#fff' },
       { type: 'solid', a: '#FF7A1A', b: '#000', textColor: '#fff' },
       { type: 'solid', a: '#FFE600', b: '#000', textColor: '#fff' },
     ]), group: 'Color' },
   { key: 'textColor', label: 'Text color', kind: 'color', default: '#111111', group: 'Color' },
-  { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#111111', group: 'Color' },
-  { key: 'noStripes', label: 'No stripes', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
+  { key: 'noStripes', label: 'Text only', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
+  // Color — back face
+  { key: 'backMode', label: 'Back mode', kind: 'select', options: ['solid', 'gradient', 'grid', 'noise'], default: 'solid', group: 'Color' },
+  { key: 'backColorA', label: 'Back color', kind: 'color', default: '#111111', group: 'Color' },
+  { key: 'backColorB', label: 'Back color 2', kind: 'color', default: '#444444', group: 'Color' },
+  { key: 'backDensity', label: 'Back density', kind: 'slider', min: 1, max: 32, step: 1, default: 8, group: 'Color' },
+  // Stroke (border along the band's long edges, per face)
+  { key: 'strokeWidth', label: 'Edge stroke', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0, group: 'Stroke' },
+  { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },
+  { key: 'backStrokeColor', label: 'Back edge', kind: 'color', default: '#000000', group: 'Stroke' },
   // Motion
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
   // Transform (consumed by the engine)
@@ -54,19 +64,29 @@ const VERT = [
   'void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
 ].join('\n')
 
-// FRONT face: the gradient is PINNED to the ribbon's physical ends (sampled at vUv.x, 0→1 across the
-// whole band) so one end is always the first stop and the other the last, no matter how the shape
-// flows. The TEXT flows along the ribbon (sampled at vUv.x + uScroll) so the letters travel with the
-// moving streamer while the colour stays anchored.
-const FRONT_FRAG = [
+// Shared FACE shader (front + back). The fill is either a gradient PINNED to the ribbon's physical
+// ends (uGradMode=1 → sampled at vUv.x so one end is always the first stop, no matter how the shape
+// flows) or a tiled pattern (solid/grid/noise, uGradMode=0 → sampled at vUv·uTile, sRGB-decoded).
+// The front face (uHasText=1) overlays text that FLOWS along the ribbon (vUv.x·uTextRepeat+uScroll)
+// so the letters travel with the moving streamer while the colour stays anchored. An optional edge
+// stroke paints a border along the band's two long edges (per-face colour).
+const FACE_FRAG = [
   'precision highp float;',
-  'uniform sampler2D uText; uniform sampler2D uGrad; uniform vec3 uTextColor; uniform float uScroll; uniform float uTextRepeat; uniform float uNoStripes;',
+  'uniform sampler2D uFace; uniform float uGradMode; uniform vec2 uTile;',
+  'uniform sampler2D uText; uniform float uHasText; uniform vec3 uTextColor; uniform float uScroll; uniform float uTextRepeat; uniform float uNoStripes;',
+  'uniform float uStroke; uniform vec3 uStrokeColor;',
   'varying vec2 vUv;',
+  SRGB_TO_LINEAR_GLSL,
   'void main(){',
-  '  float a = texture2D(uText, vec2(vUv.x * uTextRepeat + uScroll, vUv.y)).a;',
-  '  if (uNoStripes > 0.5) { if (a < 0.02) discard; gl_FragColor = vec4(uTextColor, 1.0); return; }',
-  '  vec3 g = texture2D(uGrad, vec2(vUv.x, 0.5)).rgb;',
-  '  gl_FragColor = vec4(mix(g, uTextColor, a), 1.0);',
+  '  float edge = min(vUv.y, 1.0 - vUv.y);',
+  '  if (uStroke > 0.0 && edge < uStroke) { gl_FragColor = vec4(uStrokeColor, 1.0); return; }',
+  '  vec3 base = (uGradMode > 0.5) ? texture2D(uFace, vec2(vUv.x, 0.5)).rgb : stLin(texture2D(uFace, vUv * uTile).rgb);',
+  '  if (uHasText > 0.5) {',
+  '    float a = texture2D(uText, vec2(vUv.x * uTextRepeat + uScroll, vUv.y)).a;',
+  '    if (uNoStripes > 0.5) { if (a < 0.02) discard; gl_FragColor = vec4(uTextColor, 1.0); return; }',
+  '    gl_FragColor = vec4(mix(base, uTextColor, a), 1.0); return;',
+  '  }',
+  '  gl_FragColor = vec4(base, 1.0);',
   '}',
 ].join('\n')
 
@@ -96,6 +116,43 @@ function buildGradientTexture(three: typeof THREE, stops: string[]): THREE.Canva
   // mirrored repeat so the gradient flows seamlessly when scrolled (no hard last→first colour jump)
   t.wrapS = three.MirroredRepeatWrapping
   return t
+}
+
+type FaceMode = 'solid' | 'gradient' | 'grid' | 'noise'
+
+/** Resolve a face's paint: a length-pinned gradient ramp (gradMode 1), or a tiled solid/grid/noise
+ *  pattern (gradMode 0). `aspect` = band length / width, so patterned cells stay roughly square. */
+function faceTexture(three: typeof THREE, mode: FaceMode, stops: string[], fill: { a: string; b: string; density: number }, aspect: number): { tex: THREE.Texture; gradMode: number; tile: [number, number] } {
+  if (mode === 'gradient') return { tex: buildGradientTexture(three, stops), gradMode: 1, tile: [1, 1] }
+  const f: Fill = { type: mode as FillType, a: fill.a, b: fill.b, textColor: '#fff', angle: 45, density: Math.max(1, Math.round(fill.density)) }
+  const tex = fillShaderTexture(three, f)
+  if (mode === 'solid') return { tex, gradMode: 0, tile: [1, 1] }
+  const base = fillTiling(f)                       // 1 grid, 3 noise
+  return { tex, gradMode: 0, tile: [base * Math.max(1, aspect), base] }
+}
+
+interface FaceOpts {
+  side: THREE.Side; faceTex: THREE.Texture; gradMode: number; tile: [number, number]
+  textTex: THREE.Texture; hasText: number; textColor: string; textRepeat: number; noStripes: number
+  stroke: number; strokeColor: string
+}
+function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMaterial {
+  return new three.ShaderMaterial({
+    vertexShader: VERT, fragmentShader: FACE_FRAG, side: o.side,
+    uniforms: {
+      uFace: { value: o.faceTex },
+      uGradMode: { value: o.gradMode },
+      uTile: { value: new three.Vector2(o.tile[0], o.tile[1]) },
+      uText: { value: o.textTex },
+      uHasText: { value: o.hasText },
+      uTextColor: { value: new three.Color(o.textColor) },
+      uScroll: { value: 0 },
+      uTextRepeat: { value: o.textRepeat },
+      uNoStripes: { value: o.noStripes },
+      uStroke: { value: o.stroke },
+      uStrokeColor: { value: new three.Color(o.strokeColor) },
+    },
+  })
 }
 
 /** One glyph cells per character of the string + trailing gap. */
@@ -205,10 +262,24 @@ export const streamerEffect: SpaceTypeEffect = {
     const rowLens = buildRowLengths(straightLen, rows, n(params, 'lengthJitter'), Math.round(n(params, 'lengthSeed')))
     const cycleArc = rowLens.reduce((a, L) => a + L + Math.PI * arcRadius, 0)
 
-    const gradTex = buildGradientTexture(three, gradientStops(params))
     const textTex = buildTextTexture(three, params)
     const noStripes = String(params.noStripes) === 'on' ? 1 : 0
-    const backMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.bSideColor)), side: three.BackSide })
+    const strokeWidth = Math.max(0, n(params, 'strokeWidth'))
+
+    // Resolve each face's paint (mode + colours). Patterned fills tile to ~square cells via aspect.
+    const aspect = pathLen / Math.max(1, depth)
+    const f0 = parseFills(params.fills)[0] ?? { a: '#ffffff', b: '#000000', density: 8 }
+    const front = faceTexture(three, String(params.frontMode ?? 'gradient') as FaceMode, gradientStops(params), { a: f0.a, b: f0.b, density: f0.density }, aspect)
+    const backA = String(params.backColorA ?? '#111111'), backB = String(params.backColorB ?? '#444444')
+    const back = faceTexture(three, String(params.backMode ?? 'solid') as FaceMode, [backA, backB], { a: backA, b: backB, density: n(params, 'backDensity') }, aspect)
+
+    // Back face is identical for every ribbon and never animates (gradient is end-pinned, no text),
+    // so a single material is shared; only the front carries the per-instance scroll.
+    const backMat = makeFaceMaterial(three, {
+      side: three.BackSide, faceTex: back.tex, gradMode: back.gradMode, tile: back.tile,
+      textTex, hasText: 0, textColor: '#000000', textRepeat: 1, noStripes: 0,
+      stroke: strokeWidth, strokeColor: String(params.backStrokeColor ?? '#000000'),
+    })
 
     // Tie the text repeat to the geometry: fit a whole number of string-units into the full cycle
     // (so the text realigns every cycle → seamless loop, no scroll seam). Pick the unit count
@@ -224,7 +295,7 @@ export const streamerEffect: SpaceTypeEffect = {
       instances: [],
     }
     root.userData.tex = textTex
-    root.userData.tex2 = gradTex
+    root.userData.tex2 = front.tex
 
     // Stack the ribbons vertically as parallel snaking bands, centered as a group. Each instance is
     // centroid-centered by flowGeometry, so spacing one (rows+1)·2r step apart keeps a clean gap.
@@ -236,16 +307,10 @@ export const streamerEffect: SpaceTypeEffect = {
       bufferGeo.setAttribute('uv', new three.BufferAttribute(geo.uvs, 2))
       bufferGeo.setIndex(new three.BufferAttribute(geo.indices, 1))
 
-      const frontMat = new three.ShaderMaterial({
-        vertexShader: VERT, fragmentShader: FRONT_FRAG, side: three.FrontSide,
-        uniforms: {
-          uText: { value: textTex as THREE.Texture },
-          uGrad: { value: gradTex as THREE.Texture },
-          uTextColor: { value: new three.Color(String(params.textColor)) },
-          uScroll: { value: 0 },
-          uTextRepeat: { value: textRepeat },
-          uNoStripes: { value: noStripes },
-        },
+      const frontMat = makeFaceMaterial(three, {
+        side: three.FrontSide, faceTex: front.tex, gradMode: front.gradMode, tile: front.tile,
+        textTex, hasText: 1, textColor: String(params.textColor), textRepeat, noStripes,
+        stroke: strokeWidth, strokeColor: String(params.frontStrokeColor ?? '#000000'),
       })
 
       const sub = new three.Group()
