@@ -76,6 +76,9 @@ const FRAG = [
   '}',
 ].join('\n')
 
+/** Fraction of canvas height the type stack occupies (rest = top/bottom margin). */
+const VFIT = 0.9
+
 function n(p: Params, k: string): number { return Number(p[k]) }
 function paletteColors(p: Params): string[] {
   const fills = parseFills(p.palette)
@@ -96,7 +99,9 @@ function measure(ctx: CanvasRenderingContext2D, W: number, H: number, p: Params)
   const tight = n(p, 'lineTight')
   const tracking = n(p, 'tracking')
   const lineFactor = 1.06 - 0.32 * tight
-  let fs = (H / ls.length) / lineFactor
+  // size to the inset content height (VFIT) so the stack keeps a small top/bottom
+  // margin instead of bleeding off the canvas
+  let fs = (H * VFIT / ls.length) / lineFactor
   ctx.font = `${weight} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
   const measureLine = (line: string) => {
     const chars = [...line]
@@ -111,6 +116,7 @@ function measure(ctx: CanvasRenderingContext2D, W: number, H: number, p: Params)
 
 interface State {
   typeCtx: CanvasRenderingContext2D
+  tintCtx: CanvasRenderingContext2D
   compCtx: CanvasRenderingContext2D
   outCtx: CanvasRenderingContext2D
   tex: THREE.CanvasTexture
@@ -137,7 +143,8 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   const weight = fontHasWeightAxis(family) ? n(p, 'typeWeight') : 400
   const { lines, fs } = measure(tctx, W, H, p)
   tctx.font = `${weight} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
-  const bands = bandLayout(lines.length, H)
+  const marginY = (H * (1 - VFIT)) / 2
+  const bands = bandLayout(lines.length, H * VFIT).map(b => ({ y: b.y + marginY, h: b.h }))
   const targetW = W * n(p, 'fitWidth')
   const lineScale = lines.map(l => scaleXForGlitch(l.natW, targetW, glitch))
   lines.forEach((l, i) => {
@@ -168,23 +175,31 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     }
   })
   cctx.restore()
+  // Recolor the white matte per band on a transparent scratch canvas via
+  // source-in (color shows ONLY where glyph pixels are), then composite the
+  // colored glyphs over the blocks. source-in is used instead of source-atop
+  // because the comp canvas has an opaque bg, which would make source-atop
+  // flood the whole band.
   const typeMode = String(p.typeColorMode) as TypeColorMode
   const typeRng = mulberry32((seed >>> 0) ^ 0x27d4eb2f)
+  const sctx = s.tintCtx
+  sctx.clearRect(0, 0, W, H)
+  sctx.globalCompositeOperation = 'source-over'
   lines.forEach((_, i) => {
     const band = bands[i]!
     const ci = pickTypeColor(typeRng, typeMode, pal.length)
-    const color = ci < 0 ? '#ffffff' : pal[ci]!
-    cctx.save()
-    cctx.beginPath(); cctx.rect(0, band.y, W, band.h); cctx.clip()
-    cctx.globalCompositeOperation = 'source-over'
-    cctx.drawImage(s.typeCtx.canvas, 0, 0)
-    if (ci >= 0) {
-      cctx.globalCompositeOperation = 'source-atop'
-      cctx.fillStyle = color
-      cctx.fillRect(0, band.y, W, band.h)
-    }
-    cctx.restore()
+    sctx.fillStyle = ci < 0 ? '#ffffff' : pal[ci]!
+    sctx.fillRect(0, band.y, W, band.h)        // opaque per-band color
   })
+  sctx.globalCompositeOperation = 'destination-in'
+  sctx.drawImage(s.typeCtx.canvas, 0, 0)       // mask the color bands by the glyph alpha
+  sctx.globalCompositeOperation = 'source-over'
+  // White base glyphs first (so the clean state is all-white), then fade the
+  // per-band colored glyphs in with the glitch amount.
+  cctx.drawImage(s.typeCtx.canvas, 0, 0)
+  cctx.save(); cctx.globalAlpha = glitch
+  cctx.drawImage(s.tintCtx.canvas, 0, 0)
+  cctx.restore()
 
   // 3) strip displacement → outCtx
   const octx = s.outCtx
@@ -232,6 +247,7 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
     const root = new three.Group()
     const W = 900, H = 1150
     const typeCtx = mkCanvas(W, H)
+    const tintCtx = mkCanvas(W, H)
     const compCtx = mkCanvas(W, H)
     const outCtx = mkCanvas(W, H)
 
@@ -245,7 +261,7 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { typeCtx, compCtx, outCtx, tex, uniforms, W, H }
+    state = { typeCtx, tintCtx, compCtx, outCtx, tex, uniforms, W, H }
     draw(state, params, 0, hashSeed(textLines(params).join('|')))
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
