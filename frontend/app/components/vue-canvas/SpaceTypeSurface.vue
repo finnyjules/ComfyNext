@@ -411,6 +411,10 @@ watch(frontLocked, (fl) => {
   if (fl) { projection.value = 'isometric'; panX.value = 0; panY.value = 0 }
 }, { immediate: true })
 
+// Streamer reads best in the orthographic (parallel) projection — like STG's ribbon. Default to
+// it when the effect is selected, but leave the Projection control free (unlike String's lock).
+watch(effectId, (id) => { if (id === 'streamer') projection.value = 'isometric' })
+
 const cfg = computed(() => ({
   effectId: effect.value.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
   W: W.value, H: H.value, alpha: transparent.value, bgColor: bgColor.value, projection: projection.value,

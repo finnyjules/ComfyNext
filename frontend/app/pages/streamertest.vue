@@ -38,6 +38,7 @@ onMounted(async () => {
   ;(window as any).__st = {
     set(o: Record<string, unknown>) { Object.assign(params, o); build() },
     setT(v: number) { t01.value = v; render() },
+    setProj(m: 'perspective' | 'isometric') { engine?.setProjection(m); render() },
     setDims(w: number, h: number) {
       engine?.setSize(w, h)
       if (canvas.value) { canvas.value.style.width = '720px'; canvas.value.style.height = `${Math.round(720 * h / w)}px` }
