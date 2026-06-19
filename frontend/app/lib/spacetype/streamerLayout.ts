@@ -13,11 +13,15 @@ export function buildRowLengths(base: number, count: number, jitter: number, see
   const C = Math.max(2, count % 2 === 0 ? count : count + 1)
   const rng = mulberry32((Number.isFinite(seed) ? seed : 1) >>> 0)
   const j = Number.isFinite(jitter) ? Math.max(0, Math.min(1, jitter)) : 0
-  const out: number[] = []
-  for (let k = 0; k < C; k++) {
+  const half: number[] = []
+  for (let k = 0; k < C / 2; k++) {
     const f = 1 + j * (rng() * 2 - 1) * 0.7
-    out.push(Math.max(base * 0.15, base * f))
+    half.push(Math.max(base * 0.15, base * f))
   }
+  // Mirror into a palindrome: with the alternating turn directions this makes the cycle's net
+  // horizontal drift exactly zero, so the varied serpentine closes on itself and the motion loops.
+  const out = half.slice()
+  for (let k = half.length - 1; k >= 0; k--) out.push(half[k]!)
   return out
 }
 
@@ -35,23 +39,25 @@ export function serpentineVariedPoint(s: number, rowLens: number[], r: number): 
   const cyc = Math.floor(s / cycle)
   let local = s - cyc * cycle
   const yOff = -cyc * C * 2 * r           // descent accumulated over whole cycles
+  let x0 = 0                              // start x of the current row (turn point of the previous)
   for (let k = 0; k < C; k++) {
     const L = rowLens[k]!
     const seg = L + arc
     const dir = k % 2 === 0 ? 1 : -1
     const yRow = -k * 2 * r + yOff
-    if (local <= L) {                     // straight run
-      return { x: dir > 0 ? local : L - local, y: yRow, tx: dir, ty: 0 }
+    if (local <= L) {                     // straight run, chained from the previous turn point
+      return { x: x0 + dir * local, y: yRow, tx: dir, ty: 0 }
     }
-    if (local <= seg) {                   // connecting arc down to the next row
+    if (local <= seg) {                   // connecting arc down to the next row, pivoting at the turn point
       const a = (local - L) / r
-      const cx = dir > 0 ? L : 0
+      const cx = x0 + dir * L
       const cy = yRow - r
       return { x: cx + dir * r * Math.sin(a), y: cy + r * Math.cos(a), tx: dir * Math.cos(a), ty: -Math.sin(a) }
     }
     local -= seg
+    x0 += dir * L                         // next row starts where this row's arc lands
   }
-  return { x: 0, y: yOff, tx: 1, ty: 0 }  // unreachable
+  return { x: x0, y: yOff, tx: 1, ty: 0 } // unreachable
 }
 
 /**

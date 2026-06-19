@@ -57,6 +57,12 @@ describe('buildRowLengths', () => {
     const varied = buildRowLengths(100, 4, 0.5, 7)
     expect(varied.some(L => Math.abs(L - 100) > 1)).toBe(true)
   })
+  it('is a palindrome so the cycle has zero net horizontal drift', () => {
+    const lens = buildRowLengths(100, 6, 0.7, 12)
+    expect(lens).toEqual([...lens].reverse())
+    const drift = lens.reduce((acc, L, k) => acc + (k % 2 === 0 ? L : -L), 0)
+    expect(drift).toBeCloseTo(0)
+  })
 })
 
 describe('serpentineVariedPoint', () => {
@@ -68,16 +74,26 @@ describe('serpentineVariedPoint', () => {
       expect(a.x).toBeCloseTo(b.x); expect(a.y).toBeCloseTo(b.y)
     }
   })
-  it('is periodic: advancing one full cycle drops the shape straight down by C·2r', () => {
-    const lens = [80, 140, 100, 120], r = 10
+  it('is periodic: advancing one full cycle drops the shape straight down by C·2r (palindrome closes in x)', () => {
+    const lens = [80, 140, 140, 80], r = 10   // palindrome → zero net horizontal drift
     const cycle = lens.reduce((acc, L) => acc + L + Math.PI * r, 0)
     const p0 = serpentineVariedPoint(37, lens, r)
     const p1 = serpentineVariedPoint(37 + cycle, lens, r)
     expect(p1.x).toBeCloseTo(p0.x)
     expect(p1.y).toBeCloseTo(p0.y - lens.length * 2 * r)
   })
+  it('rows chain continuously: each row starts where the previous arc lands (no horizontal jump)', () => {
+    const lens = [120, 80, 80, 120], r = 10
+    const arc = Math.PI * r
+    // end of row 0 straight (x = 120) → end of its arc must be the same x (turn pivot)
+    const straightEnd = serpentineVariedPoint(120, lens, r)
+    const arcEnd = serpentineVariedPoint(120 + arc, lens, r)   // start of row 1
+    expect(straightEnd.x).toBeCloseTo(120)
+    expect(arcEnd.x).toBeCloseTo(120)            // row 1 begins exactly at the turn point, not at its own length
+    expect(arcEnd.y).toBeCloseTo(-2 * r)
+  })
   it('row 0 length is honored before the first arc', () => {
-    const p = serpentineVariedPoint(60, [120, 80, 120, 80], 10)
+    const p = serpentineVariedPoint(60, [120, 80, 80, 120], 10)
     expect(p.y).toBeCloseTo(0); expect(p.x).toBeCloseTo(60); expect(p.tx).toBeCloseTo(1)
   })
 })
