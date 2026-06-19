@@ -44,32 +44,39 @@ const controls: ControlSpec[] = [
   // Transform (consumed by the engine)
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 2.5, group: 'Transform' },
   { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 1.79, group: 'Transform' },
-  { key: 'rotateY', label: 'Rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -3.14, group: 'Transform' },
+  { key: 'rotateY', label: 'Rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateZ', label: 'Rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -0.31, group: 'Transform' },
 ]
 
+// Shared vertex shader for both faces.
 const VERT = [
-  'attribute vec4 aCellUV;', 'attribute vec3 aColor;', 'attribute float aSide;',
-  'varying vec2 vUv; varying vec4 vCell; varying vec3 vColor; varying float vSide;',
+  'attribute vec4 aCellUV;', 'attribute vec3 aColor;',
+  'varying vec2 vUv; varying vec4 vCell; varying vec3 vColor;',
   'void main(){',
-  '  vUv = uv; vCell = aCellUV; vColor = aColor; vSide = aSide;',
+  '  vUv = uv; vCell = aCellUV; vColor = aColor;',
   '  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);',
   '}',
 ].join('\n')
 
-const FRAG = [
+// FRONT (A-side): per-tile gradient colour + the glyph in the text colour. Rendered with
+// side: FrontSide so it only shows on the physical front of each tile.
+const FRONT_FRAG = [
   'precision highp float;',
-  'uniform sampler2D uAtlas; uniform vec3 uTextColor; uniform vec3 uBSide; uniform float uNoStripes;',
-  'varying vec2 vUv; varying vec4 vCell; varying vec3 vColor; varying float vSide;',
+  'uniform sampler2D uAtlas; uniform vec3 uTextColor; uniform float uNoStripes;',
+  'varying vec2 vUv; varying vec4 vCell; varying vec3 vColor;',
   'void main(){',
   '  float a = texture2D(uAtlas, vCell.xy + vUv * vCell.zw).a;',
-  '  if (uNoStripes > 0.5) {',
-  '    if (a < 0.02) discard;',
-  '    gl_FragColor = vec4(uTextColor, a); return;',
-  '  }',
-  '  vec3 face = gl_FrontFacing ? uBSide : vColor;',   // gradient on the camera-facing side, B-side on the back
-  '  gl_FragColor = vec4(mix(face, uTextColor, a), 1.0);',
+  '  if (uNoStripes > 0.5) { if (a < 0.02) discard; gl_FragColor = vec4(uTextColor, 1.0); return; }',
+  '  gl_FragColor = vec4(mix(vColor, uTextColor, a), 1.0);',
   '}',
+].join('\n')
+
+// BACK (B-side): a flat colour, NO glyph. Rendered with side: BackSide so it only shows on the
+// physical back of each tile. (A second back-string could be added here later.)
+const BACK_FRAG = [
+  'precision highp float;',
+  'uniform vec3 uBSide; uniform float uNoStripes;',
+  'void main(){ if (uNoStripes > 0.5) discard; gl_FragColor = vec4(uBSide, 1.0); }',
 ].join('\n')
 
 function n(p: Params, k: string): number { return Number(p[k]) }
@@ -120,10 +127,10 @@ function buildAtlas(three: typeof THREE, p: Params): Atlas {
 
 interface State {
   three: typeof THREE
-  mesh: THREE.InstancedMesh
+  front: THREE.InstancedMesh
+  back: THREE.InstancedMesh
   aCellUV: THREE.InstancedBufferAttribute
   aColor: THREE.InstancedBufferAttribute
-  aSide: THREE.InstancedBufferAttribute
   atlas: Atlas
   dummy: THREE.Object3D
   W: number
@@ -165,7 +172,8 @@ function layout(s: State, p: Params, t01: number): void {
       dummy.rotateZ(pose.rot); dummy.translateY(-radius); dummy.rotateX(Math.PI / 2)
       dummy.scale.set(segmentSpace, depth, 1)
       dummy.updateMatrix()
-      s.mesh.setMatrixAt(inst, dummy.matrix)
+      s.front.setMatrixAt(inst, dummy.matrix)
+      s.back.setMatrixAt(inst, dummy.matrix)
       // track the tile-center bounds for framing/centering (dummy.position is the final center)
       const px = dummy.position.x, py = dummy.position.y, pz = dummy.position.z
       if (px < minX) minX = px; if (px > maxX) maxX = px
@@ -177,19 +185,19 @@ function layout(s: State, p: Params, t01: number): void {
       s.aCellUV.setXYZW(inst, cell!.u, cell!.v, cell!.du, cell!.dv)
       const col = gradientColorAt(k, runLength, stops)
       s.aColor.setXYZ(inst, col.r, col.g, col.b)
-      s.aSide.setX(inst, pose.side)
       inst++
     }
   }
-  s.mesh.count = total
-  s.mesh.instanceMatrix.needsUpdate = true
-  s.aCellUV.needsUpdate = true; s.aColor.needsUpdate = true; s.aSide.needsUpdate = true
+  s.front.count = total; s.back.count = total
+  s.front.instanceMatrix.needsUpdate = true; s.back.instanceMatrix.needsUpdate = true
+  s.aCellUV.needsUpdate = true; s.aColor.needsUpdate = true
   // STG works in pixel units; our camera frames ~11 world units. Normalize the loop's largest
   // extent to that and recenter, so the `scale`/rotate params fine-tune from a framed start.
   const ext = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1) + Math.max(segmentSpace, depth)
   const norm = 11 / ext
-  s.mesh.scale.setScalar(norm)
-  s.mesh.position.set(-norm * (minX + maxX) / 2, -norm * (minY + maxY) / 2, -norm * (minZ + maxZ) / 2)
+  const cx = -norm * (minX + maxX) / 2, cy = -norm * (minY + maxY) / 2, cz = -norm * (minZ + maxZ) / 2
+  s.front.scale.setScalar(norm); s.front.position.set(cx, cy, cz)
+  s.back.scale.setScalar(norm); s.back.position.set(cx, cy, cz)
 }
 
 export const streamerEffect: SpaceTypeEffect = {
@@ -203,42 +211,45 @@ export const streamerEffect: SpaceTypeEffect = {
     const root = new three.Group()
 
     const atlas = buildAtlas(three, params)
+    // One shared geometry carries the per-instance attributes; two single-sided InstancedMeshes
+    // (front + back) draw the two physical faces with different content — deterministic per face,
+    // no camera/gl_FrontFacing test, and the back never shows the glyph.
     const geo = new three.PlaneGeometry(1, 1)
     const aCellUV = new three.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES * 4), 4)
     const aColor = new three.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES * 3), 3)
-    const aSide = new three.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES), 1)
     geo.setAttribute('aCellUV', aCellUV)
     geo.setAttribute('aColor', aColor)
-    geo.setAttribute('aSide', aSide)
 
-    const uniforms = {
+    const frontUniforms = {
       uAtlas: { value: atlas.tex as THREE.Texture },
       uTextColor: { value: new three.Color(String(params.textColor)) },
+      uNoStripes: { value: String(params.noStripes) === 'on' ? 1 : 0 },
+    }
+    const backUniforms = {
       uBSide: { value: new three.Color(String(params.bSideColor)) },
       uNoStripes: { value: String(params.noStripes) === 'on' ? 1 : 0 },
     }
-    // Opaque with depth write/test so overlapping tiles occlude correctly (transparent blending
-    // gave no depth sort across instances → flicker as the scroll reordered them). The no-stripes
-    // mode keeps its glyph edges via `discard` (alpha test) rather than blending.
-    const mat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms, side: three.DoubleSide, transparent: false, depthTest: true, depthWrite: true })
-    const mesh = new three.InstancedMesh(geo, mat, MAX_INSTANCES)
-    mesh.frustumCulled = false
-    mesh.userData.tex = atlas.tex
-    root.add(mesh)
+    const frontMat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRONT_FRAG, uniforms: frontUniforms, side: three.FrontSide })
+    const backMat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: BACK_FRAG, uniforms: backUniforms, side: three.BackSide })
+    const front = new three.InstancedMesh(geo, frontMat, MAX_INSTANCES)
+    const back = new three.InstancedMesh(geo, backMat, MAX_INSTANCES)
+    front.frustumCulled = false; back.frustumCulled = false
+    front.userData.tex = atlas.tex
+    root.add(back); root.add(front)
 
-    state = { three, mesh, aCellUV, aColor, aSide, atlas, dummy: new three.Object3D(), W: 1500 }
+    state = { three, front, back, aCellUV, aColor, atlas, dummy: new three.Object3D(), W: 1500 }
     layout(state, params, 0)
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
-        if (state && state.mesh === mesh) {
+        if (state && state.front === front) {
           const next = buildAtlas(three, params)
           state.atlas.tex.dispose()
           state.atlas = next
-          ;(mesh.material as THREE.ShaderMaterial).uniforms['uAtlas']!.value = next.tex
-          mesh.userData.tex = next.tex
+          frontUniforms.uAtlas.value = next.tex
+          front.userData.tex = next.tex
           layout(state, params, 0)
         }
       }).catch(() => {})
@@ -248,10 +259,13 @@ export const streamerEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    const mat = state.mesh.material as THREE.ShaderMaterial
-    mat.uniforms['uTextColor']!.value.set(String(params.textColor))
-    mat.uniforms['uBSide']!.value.set(String(params.bSideColor))
-    mat.uniforms['uNoStripes']!.value = String(params.noStripes) === 'on' ? 1 : 0
+    const fu = (state.front.material as THREE.ShaderMaterial).uniforms
+    const bu = (state.back.material as THREE.ShaderMaterial).uniforms
+    const noStripes = String(params.noStripes) === 'on' ? 1 : 0
+    fu['uTextColor']!.value.set(String(params.textColor))
+    fu['uNoStripes']!.value = noStripes
+    bu['uBSide']!.value.set(String(params.bSideColor))
+    bu['uNoStripes']!.value = noStripes
     layout(state, params, t01)
   },
 }
