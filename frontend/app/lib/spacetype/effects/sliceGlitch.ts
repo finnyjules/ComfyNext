@@ -52,7 +52,7 @@ const controls: ControlSpec[] = [
   { key: 'blockUnit', label: 'Block unit', kind: 'select', options: ['random', 'line', 'word', 'character'], default: 'random', group: 'Color' },
   { key: 'blockDensity', label: 'Blocks / band (random)', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
   { key: 'blockHeight', label: 'Block height', kind: 'slider', min: 0.1, max: 1, step: 0.02, default: 1, group: 'Color' },
-  { key: 'blockSlant', label: 'Mirror slant', kind: 'slider', min: 0, max: 1.5, step: 0.05, default: 0, group: 'Color' },
+  { key: 'blockSlant', label: 'Block slant', kind: 'slider', min: -0.6, max: 0.6, step: 0.02, default: 0, group: 'Color' },
   { key: 'coverage', label: 'Color coverage', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.78, group: 'Color' },
   { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
@@ -227,9 +227,10 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     return out
   })
 
-  // uniform font slant (added to per-unit jitter); blocks mirror it by blockSlant
+  // uniform font slant (added to per-unit jitter); blocks shear by their own absolute slant
+  // (set it equal to baseSlant to mirror the type)
   const baseSlant = n(p, 'baseSlant')
-  const bSlant = baseSlant * n(p, 'blockSlant')
+  const bSlant = n(p, 'blockSlant')
 
   // resolve per-glyph placement once (with optional per-unit weight/slant jitter), reused by
   // the white matte and the stroke pass so they stay aligned.
