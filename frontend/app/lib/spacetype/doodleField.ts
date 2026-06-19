@@ -55,19 +55,25 @@ function strokePoints(kind: DoodleKind, rng: () => number): { x: number; y: numb
   return pts
 }
 
-/** Seeded scatter of doodles across the canvas. Pure given the rng. */
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/**
+ * Seeded scatter of doodles. Pure given the rng. Positions fall within `area` (a sub-rect of the
+ * canvas); when omitted, the full width×height canvas is used.
+ */
 export function doodleField(
-  rng: () => number, count: number, width: number, height: number, sizeRange: [number, number],
+  rng: () => number, count: number, width: number, height: number, sizeRange: [number, number], area?: Rect,
 ): Doodle[] {
   const n = Math.max(0, Math.floor(count))
   const [smin, smax] = sizeRange
+  const ax = area ? area.x : 0, ay = area ? area.y : 0, aw = area ? area.w : width, ah = area ? area.h : height
   const out: Doodle[] = []
   for (let i = 0; i < n; i++) {
     const kind = DOODLE_KINDS[Math.floor(rng() * DOODLE_KINDS.length) % DOODLE_KINDS.length]!
     out.push({
       kind,
-      x: rng() * width,
-      y: rng() * height,
+      x: ax + rng() * aw,
+      y: ay + rng() * ah,
       scale: smin + rng() * (smax - smin),
       rotation: (rng() * 2 - 1) * Math.PI,
       colorIndex: Math.floor(rng() * 1000),

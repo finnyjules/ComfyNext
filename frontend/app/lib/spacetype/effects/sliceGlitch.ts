@@ -65,7 +65,10 @@ const controls: ControlSpec[] = [
   // Doodles
   { key: 'doodlesOn', label: 'Doodles', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Doodles' },
   { key: 'doodleCount', label: 'Doodle count', kind: 'slider', min: 0, max: 40, step: 1, default: 16, group: 'Doodles' },
-  { key: 'doodleSize', label: 'Doodle size', kind: 'slider', min: 20, max: 160, step: 2, default: 60, group: 'Doodles' },
+  { key: 'doodleSize', label: 'Doodle size', kind: 'slider', min: 16, max: 320, step: 2, default: 60, group: 'Doodles' },
+  { key: 'doodleSizeJitter', label: 'Size variation', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.4, group: 'Doodles' },
+  { key: 'doodleAreaW', label: 'Area width', kind: 'slider', min: 0.2, max: 1, step: 0.02, default: 1, group: 'Doodles' },
+  { key: 'doodleAreaH', label: 'Area height', kind: 'slider', min: 0.2, max: 1, step: 0.02, default: 1, group: 'Doodles' },
   { key: 'doodleColorMode', label: 'Doodle color', kind: 'select', options: ['palette', 'white'], default: 'palette', group: 'Doodles' },
   { key: 'doodleWidth', label: 'Doodle width', kind: 'slider', min: 1, max: 12, step: 0.5, default: 3, group: 'Doodles' },
   { key: 'doodleStroke', label: 'Doodle outline', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Doodles' },
@@ -316,7 +319,10 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   if (String(p.doodlesOn) === 'on') {
     const dRng = mulberry32((seed >>> 0) ^ 0x165667b1)
     const size = n(p, 'doodleSize')
-    const field = doodleField(dRng, n(p, 'doodleCount'), W, H, [size * 0.6, size * 1.4])
+    const sj = n(p, 'doodleSizeJitter')
+    const aw = W * n(p, 'doodleAreaW'), ah = H * n(p, 'doodleAreaH')
+    const area = { x: (W - aw) / 2, y: (H - ah) / 2, w: aw, h: ah }
+    const field = doodleField(dRng, n(p, 'doodleCount'), W, H, [size * (1 - sj), size * (1 + sj)], area)
     const dWidth = n(p, 'doodleWidth')
     const dStroke = n(p, 'doodleStroke')   // outline width on each side of the doodle line
     const dStrokeCol = String(p.doodleStrokeColor)

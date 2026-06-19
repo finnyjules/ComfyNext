@@ -10,6 +10,13 @@ describe('doodleField', () => {
     expect(doodleField(mulberry32(2), 4, 900, 1150, [40, 120]))
       .toEqual(doodleField(mulberry32(2), 4, 900, 1150, [40, 120]))
   })
+  it('confines doodles to the spawn area when one is given', () => {
+    const area = { x: 200, y: 300, w: 100, h: 150 }
+    for (const d of doodleField(mulberry32(4), 12, 900, 1150, [40, 120], area)) {
+      expect(d.x).toBeGreaterThanOrEqual(200); expect(d.x).toBeLessThanOrEqual(300)
+      expect(d.y).toBeGreaterThanOrEqual(300); expect(d.y).toBeLessThanOrEqual(450)
+    }
+  })
   it('places doodles within the canvas and gives each a known kind + non-empty path', () => {
     for (const d of doodleField(mulberry32(3), 8, 900, 1150, [40, 120])) {
       expect(d.x).toBeGreaterThanOrEqual(0); expect(d.x).toBeLessThanOrEqual(900)
