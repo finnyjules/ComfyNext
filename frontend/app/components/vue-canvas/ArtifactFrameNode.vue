@@ -6,7 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, type StackItem, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
+import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 
@@ -405,6 +405,20 @@ function moveSelectedZ(dir: number) {
 function drawWiredLayer(ctx: CanvasRenderingContext2D, l: WiredLayer, W: number, H: number) {
   drawWiredImageLayer(ctx, wiredImages.value[l.url], l, W, H)
 }
+// Shared by the live preview AND the export/download so masking and z-order are
+// applied identically (drawn in logical W×H coords; export scales the ctx up).
+function buildStackItems(): StackItem[] {
+  return stackKeys.value.map((key): StackItem | null => {
+    const r = resolveKey(key)
+    if (!r) return null
+    if (r.type === 'wired') {
+      if (hiddenWiredSet.value.has(r.layer.slot + 1)) return null
+      return { type: 'wired', key, draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
+    }
+    return { type: 'local', key, layer: r.layer }
+  }).filter((x): x is StackItem => x != null)
+}
+
 const stackCanvas = ref<HTMLCanvasElement | null>(null)
 function renderStack() {
   const cv = stackCanvas.value
@@ -416,16 +430,7 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  const items = stackKeys.value.map((key): StackItem | null => {
-    const r = resolveKey(key)
-    if (!r) return null
-    if (r.type === 'wired') {
-      if (hiddenWiredSet.value.has(r.layer.slot + 1)) return null
-      return { type: 'wired', key, draw: (c, w, h) => drawWiredLayer(c, r.layer, w, h) }
-    }
-    return { type: 'local', key, layer: r.layer }
-  }).filter((x): x is StackItem => x != null)
-  paintLayerStack(ctx, W, H, items, editor.localLayers.value, l => l.id === editor.editingId.value,
+  paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
     undefined, undefined, wiredTreatments.value)
 }
 watch(
@@ -489,17 +494,10 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   const ctx = cv.getContext('2d')
   if (!ctx) return null
   ctx.scale(sx, sy)  // draw in logical box coords; output is full resolution
-  for (const key of keys) {
-    const r = resolveKey(key)
-    if (!r) continue
-    if (r.type === 'wired') {
-      if (hiddenWiredSet.value.has(r.layer.slot + 1)) continue
-      drawWiredLayer(ctx, r.layer, W, H)
-    } else {
-      if (r.layer.visible === false) continue
-      drawLocalLayer(ctx, r.layer, W, H)
-    }
-  }
+  // Route through the same masked renderer as the preview (no editing-skip — an
+  // export includes every visible layer), so silhouette masks apply on download.
+  paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
+    undefined, undefined, undefined, wiredTreatments.value)
   return cv
 }
 
