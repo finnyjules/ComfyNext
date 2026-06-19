@@ -218,7 +218,10 @@ export const streamerEffect: SpaceTypeEffect = {
       uBSide: { value: new three.Color(String(params.bSideColor)) },
       uNoStripes: { value: String(params.noStripes) === 'on' ? 1 : 0 },
     }
-    const mat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms, side: three.DoubleSide, transparent: true })
+    // Opaque with depth write/test so overlapping tiles occlude correctly (transparent blending
+    // gave no depth sort across instances → flicker as the scroll reordered them). The no-stripes
+    // mode keeps its glyph edges via `discard` (alpha test) rather than blending.
+    const mat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms, side: three.DoubleSide, transparent: false, depthTest: true, depthWrite: true })
     const mesh = new three.InstancedMesh(geo, mat, MAX_INSTANCES)
     mesh.frustumCulled = false
     mesh.userData.tex = atlas.tex
