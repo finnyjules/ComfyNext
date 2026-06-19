@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills } from '../fills'
 import { resolveFontFamily } from '~/data/google-fonts'
-import { buildStreamerGeometry } from '../streamerLayout'
+import { buildStreamerGeometry, serpentinePoint } from '../streamerLayout'
 
 /**
  * STREAMER — an open serpentine ribbon: long straight rows joined by 180° half-circle arcs,
@@ -125,8 +125,37 @@ interface State {
   textTex: THREE.CanvasTexture
   front: THREE.ShaderMaterial
   cells: number
+  // for per-frame geometry flow: slide the band's path window so the SHAPE moves (text glued)
+  posAttr: THREE.BufferAttribute
+  positions: Float32Array
+  samples: number      // path samples (N+1)
+  pathLen: number
+  rowLen: number
+  arcR: number
+  half: number
 }
 let state: State | null = null
+
+/** Resample the band's vertices for a path-window starting at arc-length `s0`, re-centered on the
+ *  window's centroid so the strip stays framed while the serpentine shape flows through it (a
+ *  serpentine doesn't translate uniformly, so the centroid is the stable reference, not an
+ *  endpoint). The text/gradient ride along via the matching uScroll. */
+function flowGeometry(s: State, s0: number): void {
+  const N = s.samples - 1
+  const pts: { x: number; y: number }[] = []
+  let cx = 0, cy = 0
+  for (let i = 0; i <= N; i++) {
+    const p = serpentinePoint(s0 + (i / N) * s.pathLen, s.rowLen, s.arcR)
+    pts.push(p); cx += p.x; cy += p.y
+  }
+  cx /= (N + 1); cy /= (N + 1)
+  for (let i = 0; i <= N; i++) {
+    const p = pts[i]!, a = i * 2, b = i * 2 + 1
+    s.positions[a * 3] = p.x - cx; s.positions[a * 3 + 1] = p.y - cy; s.positions[a * 3 + 2] = s.half
+    s.positions[b * 3] = p.x - cx; s.positions[b * 3 + 1] = p.y - cy; s.positions[b * 3 + 2] = -s.half
+  }
+  s.posAttr.needsUpdate = true
+}
 
 export const streamerEffect: SpaceTypeEffect = {
   id: 'streamer',
@@ -171,6 +200,16 @@ export const streamerEffect: SpaceTypeEffect = {
     root.userData.tex = textTex
     root.userData.tex2 = gradTex
 
+    const posAttr = bufferGeo.getAttribute('position') as THREE.BufferAttribute
+    const positions = geo.positions
+    state = {
+      three, textTex, front: frontMat, cells,
+      posAttr, positions, samples: positions.length / 6,
+      pathLen: rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius,
+      rowLen: rowChars * segmentSpace, arcR: arcRadius, half: depth / 2,
+    }
+    flowGeometry(state, 0)   // re-center on the window midpoint to match the per-frame flow
+
     // STG works in pixel units; our camera frames ~11 world units. Fit + center.
     const box = new three.Box3().setFromObject(root)
     const size = box.getSize(new three.Vector3())
@@ -178,8 +217,6 @@ export const streamerEffect: SpaceTypeEffect = {
     const norm = 11 / Math.max(size.x, size.y, size.z, 1)
     root.scale.setScalar(norm)
     root.position.set(-center.x * norm, -center.y * norm, -center.z * norm)
-
-    state = { three, textTex, front: frontMat, cells }
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
@@ -198,10 +235,15 @@ export const streamerEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    // text flows along the path; whole-tile scroll per loop keeps it seamless. speed 0 = stopped.
-    const strips = Math.max(0, Math.round(n(params, 'speed')))
+    // The SHAPE flows: slide the path window by whole 2-row periods (seamless), re-centered each
+    // frame. The text/gradient ride along (uScroll = same offset in uv units) so the text stays
+    // fixed IN the moving ribbon. speed 0 = stopped.
+    const seg = state.rowLen + Math.PI * state.arcR
+    const periods = Math.max(0, Math.round(n(params, 'speed')))
+    const s0 = periods === 0 ? 0 : t01 * periods * 2 * seg
+    flowGeometry(state, s0)
     const u = state.front.uniforms
-    u.uScroll!.value = strips === 0 ? 0 : t01 * strips
+    u.uScroll!.value = state.pathLen > 0 ? s0 / state.pathLen : 0
     u.uTextColor!.value.set(String(params.textColor))
     u.uNoStripes!.value = String(params.noStripes) === 'on' ? 1 : 0
   },
