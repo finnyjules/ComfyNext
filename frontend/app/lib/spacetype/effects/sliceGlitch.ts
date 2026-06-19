@@ -228,8 +228,9 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   sctx.globalCompositeOperation = 'source-over'
   lines.forEach((_, i) => {
     const band = bands[i]!
-    const ci = pickTypeColor(typeRng, typeMode, palCols.length)
-    sctx.fillStyle = ci < 0 ? '#ffffff' : palCols[ci]!
+    const ci = pickTypeColor(typeRng, typeMode, fills.length)
+    // honour the swatch's textColor (type colour for that row), not its block colour
+    sctx.fillStyle = ci < 0 ? '#ffffff' : fills[ci]!.textColor
     sctx.fillRect(0, band.y, W, band.h)        // opaque per-band color
   })
   sctx.globalCompositeOperation = 'destination-in'
