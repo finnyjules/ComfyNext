@@ -51,7 +51,7 @@ const controls: ControlSpec[] = [
   { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },
   { key: 'backStrokeColor', label: 'Back edge', kind: 'color', default: '#000000', group: 'Stroke' },
   // Motion
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 16, step: 1, default: 2, group: 'Motion' },
+  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 16, step: 1, default: 1, group: 'Motion' },
   // Transform (consumed by the engine)
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -1.07, group: 'Transform' },
