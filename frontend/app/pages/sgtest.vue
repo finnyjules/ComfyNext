@@ -51,6 +51,11 @@ onMounted(async () => {
     setT(v: number) { t01.value = v; render() },
     setMode(m: 'animate' | 'hold') { mode.value = m; build() },
     setGlitch(g: number) { glitch.value = g; build() },
+    setDims(w: number, h: number) {
+      engine?.setSize(w, h)
+      if (canvas.value) { canvas.value.style.width = '600px'; canvas.value.style.height = `${Math.round(600 * h / w)}px` }
+      build()
+    },
   }
 })
 

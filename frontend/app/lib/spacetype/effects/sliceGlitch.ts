@@ -346,11 +346,16 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
   label: 'Slice Glitch',
   controls,
 
-  buildScene(three, params, _textTexture) {
+  buildScene(three, params, _textTexture, env) {
     void _textTexture
     state = null
     const root = new three.Group()
-    const W = 900, H = 1150
+    // Match the output aspect so the composition fills the frame (no letterboxing).
+    // The render canvas is sized to ~1500px on its long edge at the output's aspect ratio.
+    const aspect = env && env.width > 0 && env.height > 0 ? env.width / env.height : 900 / 1150
+    const LONG = 1500
+    const W = Math.round(aspect >= 1 ? LONG : LONG * aspect)
+    const H = Math.round(aspect >= 1 ? LONG / aspect : LONG)
     const typeCtx = mkCanvas(W, H)
     const tintCtx = mkCanvas(W, H)
     const compCtx = mkCanvas(W, H)
@@ -361,6 +366,7 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
     const uniforms = { uTex: { value: tex as THREE.Texture }, uSplit: { value: 0 } }
     const mat = new three.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms, side: three.DoubleSide })
 
+    // planeH = full camera-visible height at z=14; planeW = planeH·aspect fills the frame width.
     const planeH = 11.6, planeW = planeH * (W / H)
     const mesh = new three.Mesh(new three.PlaneGeometry(planeW, planeH), mat)
     mesh.userData.tex = tex
