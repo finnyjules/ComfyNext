@@ -548,22 +548,32 @@ export function drawLocalLayer(
   // "use as mask"). Render the content, then keep only where the mask layer's
   // alpha is, via destination-in on an offscreen.
   if (maskLayer) {
-    const off = document.createElement('canvas')
-    off.width = Math.max(1, Math.round(W))
-    off.height = Math.max(1, Math.round(H))
+    // Offscreens are sized to the DEVICE canvas and rendered through the current
+    // transform, so a masked layer stays sharp under any ctx scale (dpr preview,
+    // or a high-res export that scales logical W×H up). Sizing to logical W×H
+    // would composite at preview resolution and then upscale → blur.
+    const t = ctx.getTransform()
+    const dev = ctx.canvas
+    const mk = () => {
+      const c = document.createElement('canvas')
+      c.width = Math.max(1, dev.width); c.height = Math.max(1, dev.height)
+      return c
+    }
+    const off = mk()
     const octx = off.getContext('2d')
     if (octx) {
+      octx.setTransform(t)
       drawLocalLayerSelf(octx, layer, W, H)
       // The mask must be rendered on its OWN offscreen and composited with
       // drawImage: paintLayer (inside drawLocalLayerSelf) sets
       // globalCompositeOperation itself, which would silently overwrite a
       // destination-in set here and paint the mask instead of clipping with it.
-      const maskOff = document.createElement('canvas')
-      maskOff.width = off.width
-      maskOff.height = off.height
+      const maskOff = mk()
       const mctx = maskOff.getContext('2d')
       if (mctx) {
+        mctx.setTransform(t)
         drawLocalLayerSelf(mctx, maskLayer, W, H)
+        octx.setTransform(1, 0, 0, 1, 0, 0) // composite in device space
         octx.globalCompositeOperation = 'destination-in'
         octx.drawImage(maskOff, 0, 0)
         octx.globalCompositeOperation = 'source-over'
@@ -571,6 +581,7 @@ export function drawLocalLayer(
       // The layer's blend mode applies at the final composite against the real
       // backdrop (inside the offscreen it blends against transparency = no-op).
       ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0) // device-space stamp
       ctx.globalCompositeOperation = localBlendOp(layer)
       ctx.drawImage(off, 0, 0)
       ctx.restore()
@@ -995,18 +1006,30 @@ function drawItemMasked(
   H: number,
   blendOp: string,
 ) {
-  const off = document.createElement('canvas')
-  off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
+  // Device-resolution offscreens rendered through the current transform, so a
+  // masked layer stays sharp under any ctx scale (dpr preview / high-res export).
+  // Logical W×H offscreens would composite at preview res and upscale → blur.
+  const t = ctx.getTransform()
+  const dev = ctx.canvas
+  const mk = () => {
+    const c = document.createElement('canvas')
+    c.width = Math.max(1, dev.width); c.height = Math.max(1, dev.height)
+    return c
+  }
+  const off = mk()
   const octx = off.getContext('2d'); if (!octx) return
+  octx.setTransform(t)
   drawItemContent(octx, content, W, H)
-  const maskOff = document.createElement('canvas')
-  maskOff.width = off.width; maskOff.height = off.height
+  const maskOff = mk()
   const mctx = maskOff.getContext('2d'); if (!mctx) return
+  mctx.setTransform(t)
   drawItemContent(mctx, mask, W, H)
+  octx.setTransform(1, 0, 0, 1, 0, 0) // composite in device space
   octx.globalCompositeOperation = 'destination-in'
   octx.drawImage(maskOff, 0, 0)
   octx.globalCompositeOperation = 'source-over'
   ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0) // device-space stamp
   ctx.globalCompositeOperation = blendOp as GlobalCompositeOperation
   ctx.drawImage(off, 0, 0)
   ctx.restore()
