@@ -41,11 +41,14 @@ const controls: ControlSpec[] = [
       { type: 'solid', a: '#3b5bff', b: '#000000', textColor: '#ffffff' },
     ]), group: 'Color' },
   { key: 'blockDensity', label: 'Blocks / band', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
+  { key: 'coverage', label: 'Color coverage', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.78, group: 'Color' },
+  { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
   { key: 'bgColor', label: 'Background', kind: 'color', default: '#141414', group: 'Color' },
   // Glitch
   { key: 'revealMode', label: 'Reveal mode', kind: 'select', options: ['animate', 'hold'], default: 'animate', group: 'Glitch' },
   { key: 'glitchAmount', label: 'Glitch (hold)', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Glitch' },
+  { key: 'seed', label: 'Seed', kind: 'slider', min: 0, max: 999, step: 1, default: 0, group: 'Glitch' },
   { key: 'revealFrac', label: 'Reveal length', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.4, group: 'Glitch' },
   { key: 'bandShift', label: 'Band shift', kind: 'slider', min: 0, max: 200, step: 2, default: 70, group: 'Glitch' },
   { key: 'tearAmount', label: 'Tear', kind: 'slider', min: 0, max: 80, step: 1, default: 22, group: 'Glitch' },
@@ -165,12 +168,13 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   cctx.clearRect(0, 0, W, H)
   cctx.globalCompositeOperation = 'source-over'
   cctx.fillStyle = bg; cctx.fillRect(0, 0, W, H)
-  cctx.save(); cctx.globalAlpha = glitch
+  cctx.save(); cctx.globalAlpha = glitch * n(p, 'blockOpacity')
   const blockSeedRng = mulberry32((seed >>> 0) ^ 0xc2b2ae35)
   const density = n(p, 'blockDensity')
+  const coverage = n(p, 'coverage')
   bands.forEach(band => {
     for (const seg of segmentRow(blockSeedRng, 0, W, density, pal.length)) {
-      if (blockSeedRng() < 0.22) continue
+      if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of segments as bg
       cctx.fillStyle = pal[seg.colorIndex]!
       cctx.fillRect(seg.x, band.y, seg.w, band.h)
     }
@@ -289,7 +293,8 @@ function currentGlitch(p: Params, t01: number): number {
 }
 
 function currentSeed(p: Params, t01: number): number {
-  const base = hashSeed(textLines(p).join('|'))
+  // text hash gives a stable per-message arrangement; the Seed slider rerolls it
+  const base = (hashSeed(textLines(p).join('|')) ^ Math.imul((n(p, 'seed') | 0) + 1, 0x9e3779b1)) >>> 0
   if (String(p.revealMode) === 'hold') return base
   return churnSeed(t01, n(p, 'churnRate'), base)
 }
