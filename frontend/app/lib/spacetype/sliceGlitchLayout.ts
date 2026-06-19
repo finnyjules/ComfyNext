@@ -30,6 +30,29 @@ export function churnSeed(t01: number, churnRate: number, baseSeed: number): num
   return ((baseSeed >>> 0) ^ Math.imul(step + 1, 0x9e3779b1)) >>> 0
 }
 
+/**
+ * Scene cycle for a seamless loop. The loop runs `speed` full cycles; each cycle visits
+ * `sceneCount` scenes. Each scene holds, then spends `transitionFrac` of its slot transitioning
+ * to the next (wrapping the last back to scene 0 so it loops). `burst` is a 0→1→0 glitch surge
+ * during the transition; the scene index flips at the burst peak (hidden by max displacement).
+ * Returns `scene` (which seed to show) and `burst` (transition intensity). speed 0 / 1 scene = frozen.
+ */
+export function sceneMotion(
+  t01: number, sceneCount: number, transitionFrac: number, speed: number, easeMode: EaseMode,
+): { scene: number; burst: number } {
+  const N = Math.max(1, Math.round(sceneCount))
+  const cycles = Math.max(0, Math.round(speed))
+  if (cycles === 0 || N <= 1) return { scene: 0, burst: 0 }
+  const t = (t01 * cycles) % 1
+  const i = Math.floor(t * N) % N
+  const u = t * N - Math.floor(t * N)
+  const tf = Math.min(0.95, Math.max(0, transitionFrac))
+  const hold = 1 - tf
+  if (tf === 0 || u < hold) return { scene: i, burst: 0 }
+  const e = ease((u - hold) / tf, easeMode)
+  return { scene: e >= 0.5 ? (i + 1) % N : i, burst: Math.sin(e * Math.PI) }
+}
+
 /** Contiguous equal bands covering [0,height]. */
 export function bandLayout(count: number, height: number): Band[] {
   const n = Math.max(1, Math.floor(count))

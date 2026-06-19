@@ -4,8 +4,8 @@ import { parseFills, fillTileCanvas, type Fill } from '../fills'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { mulberry32, hashSeed } from '../rng'
 import {
-  revealGlitch, ease, churnSeed, scaleXForGlitch, stripOffsets,
-  lineLayout, blockSegments, fontJitter,
+  scaleXForGlitch, stripOffsets,
+  lineLayout, blockSegments, fontJitter, sceneMotion,
   type TypeColorMode, type EaseMode, type BlockUnit,
 } from '../sliceGlitchLayout'
 import { doodleField } from '../doodleField'
@@ -79,9 +79,10 @@ const controls: ControlSpec[] = [
   // Motion
   { key: 'revealMode', label: 'Reveal mode', kind: 'select', options: ['animate', 'hold'], default: 'animate', group: 'Motion' },
   { key: 'speed', label: 'Speed (0 = stop)', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
-  { key: 'ease', label: 'Reveal ease', kind: 'select', options: ['linear', 'in', 'out', 'in-out'], default: 'in-out', group: 'Motion' },
-  { key: 'revealFrac', label: 'Reveal length', kind: 'slider', min: 0.04, max: 0.9, step: 0.02, default: 0.3, group: 'Motion' },
-  { key: 'churnRate', label: 'Churn (0 = still)', kind: 'slider', min: 0, max: 24, step: 1, default: 8, group: 'Motion' },
+  { key: 'sceneCount', label: 'Scenes', kind: 'slider', min: 1, max: 8, step: 1, default: 4, group: 'Motion' },
+  { key: 'sceneTransition', label: 'Transition', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.35, group: 'Motion' },
+  { key: 'transitionTear', label: 'Transition tear', kind: 'slider', min: 0, max: 5, step: 0.1, default: 2, group: 'Motion' },
+  { key: 'ease', label: 'Transition ease', kind: 'select', options: ['linear', 'in', 'out', 'in-out'], default: 'in-out', group: 'Motion' },
 ]
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
@@ -193,7 +194,7 @@ function mkCanvas(W: number, H: number): CanvasRenderingContext2D {
   return c.getContext('2d')!
 }
 
-function draw(s: State, p: Params, glitch: number, seed: number): void {
+function draw(s: State, p: Params, glitch: number, seed: number, burst = 0): void {
   const { W, H } = s
   const fills = palette(p)
   const palCols = fills.map(f => f.a)
@@ -356,7 +357,9 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   octx.globalCompositeOperation = 'source-over'
   octx.fillStyle = bg; octx.fillRect(0, 0, W, H)
   const sliceH = n(p, 'sliceH')
-  const offs = stripOffsets({ height: H, sliceH, glitch, seed, bandShift: n(p, 'bandShift'), tearAmount: n(p, 'tearAmount'), tearFrequency: n(p, 'tearFrequency') })
+  // a scene transition surges the displacement (and RGB split) — the tear hides the seed swap
+  const burstMul = 1 + burst * n(p, 'transitionTear')
+  const offs = stripOffsets({ height: H, sliceH, glitch, seed, bandShift: n(p, 'bandShift') * burstMul, tearAmount: n(p, 'tearAmount') * burstMul, tearFrequency: n(p, 'tearFrequency') })
   for (let i = 0; i < offs.length; i++) {
     const sy = i * sliceH; const h = Math.min(sliceH, H - sy)
     if (h <= 0) break
@@ -392,7 +395,7 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   }
 
   s.tex.needsUpdate = true
-  s.uniforms.uSplit.value = n(p, 'rgbSplit') * glitch
+  s.uniforms.uSplit.value = n(p, 'rgbSplit') * glitch * burstMul
 }
 
 export const sliceGlitchEffect: SpaceTypeEffect = {
@@ -427,13 +430,13 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
     root.add(mesh)
 
     state = { typeCtx, tintCtx, compCtx, outCtx, tex, uniforms, W, H }
-    draw(state, params, 0, hashSeed(textLines(params).join('|')))
+    { const m = motion(params, 0); draw(state, params, m.glitch, m.seed, m.burst) }
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`400 40px "${family}"`).then(() => {
-        if (state && state.outCtx === outCtx) draw(state, params, currentGlitch(params, 0), currentSeed(params, 0))
+        if (state && state.outCtx === outCtx) { const m = motion(params, 0); draw(state, params, m.glitch, m.seed, m.burst) }
       }).catch(() => {})
     }
     return root
@@ -441,22 +444,20 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    draw(state, params, currentGlitch(params, t01), currentSeed(params, t01))
+    const m = motion(params, t01)
+    draw(state, params, m.glitch, m.seed, m.burst)
   },
 }
 
-function currentGlitch(p: Params, t01: number): number {
-  if (String(p.revealMode) === 'hold') return n(p, 'glitchAmount')
-  const cycles = Math.round(n(p, 'speed'))
-  if (cycles <= 0) return 1                       // speed 0 = stop on the fully-revealed glitch
-  const tt = (t01 * cycles) % 1
-  return ease(revealGlitch(tt, n(p, 'revealFrac')), String(p.ease) as EaseMode)
-}
+interface Motion { glitch: number; seed: number; burst: number }
 
-function currentSeed(p: Params, t01: number): number {
+/** Per-frame motion: in `hold` it's a frozen still; in `animate` it cycles `sceneCount` scenes,
+ *  transitioning (glitch burst) into each and looping the last back to the first. */
+function motion(p: Params, t01: number): Motion {
   // text hash gives a stable per-message arrangement; the Seed slider rerolls it
   const base = (hashSeed(textLines(p).join('|')) ^ Math.imul((n(p, 'seed') | 0) + 1, 0x9e3779b1)) >>> 0
-  if (String(p.revealMode) === 'hold') return base
-  if (Math.round(n(p, 'speed')) <= 0) return base // stopped: no churn flicker
-  return churnSeed(t01, n(p, 'churnRate'), base)
+  if (String(p.revealMode) === 'hold') return { glitch: n(p, 'glitchAmount'), seed: base, burst: 0 }
+  const { scene, burst } = sceneMotion(t01, n(p, 'sceneCount'), n(p, 'sceneTransition'), n(p, 'speed'), String(p.ease) as EaseMode)
+  const seed = (base ^ Math.imul(scene + 1, 0x85ebca6b)) >>> 0   // each scene a distinct arrangement
+  return { glitch: 1, seed, burst }
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch,
-  pickTypeColor, stripOffsets, lineLayout, blockSegments, fontJitter, type CharBox,
+  pickTypeColor, stripOffsets, lineLayout, blockSegments, fontJitter, sceneMotion, type CharBox,
 } from '../../app/lib/spacetype/sliceGlitchLayout'
 import { mulberry32 } from '../../app/lib/spacetype/rng'
 
@@ -36,6 +36,36 @@ describe('ease', () => {
   it('clamps out-of-range input', () => {
     expect(ease(-1, 'out')).toBeCloseTo(0)
     expect(ease(2, 'in')).toBeCloseTo(1)
+  })
+})
+
+describe('sceneMotion', () => {
+  it('starts on scene 0 with no burst', () => {
+    expect(sceneMotion(0, 4, 0.3, 1, 'in-out')).toEqual({ scene: 0, burst: 0 })
+  })
+  it('loops: end of the cycle returns to scene 0, burst 0 (matches the start)', () => {
+    const end = sceneMotion(0.9999, 4, 0.3, 1, 'linear')
+    expect(end.scene).toBe(0)
+    expect(end.burst).toBeCloseTo(0, 2)
+  })
+  it('speed 0 or single scene is frozen on scene 0', () => {
+    expect(sceneMotion(0.5, 4, 0.3, 0, 'linear')).toEqual({ scene: 0, burst: 0 })
+    expect(sceneMotion(0.5, 1, 0.3, 1, 'linear')).toEqual({ scene: 0, burst: 0 })
+  })
+  it('holds the scene index outside the transition window', () => {
+    // 4 scenes, transition 0.3 → scene 1 holds for t in [0.25, 0.25+0.7*0.25)
+    expect(sceneMotion(0.30, 4, 0.3, 1, 'linear').scene).toBe(1)
+    expect(sceneMotion(0.30, 4, 0.3, 1, 'linear').burst).toBe(0)
+  })
+  it('bursts during the transition and visits all scenes across the cycle', () => {
+    const scenes = new Set<number>()
+    let maxBurst = 0
+    for (let k = 0; k < 200; k++) {
+      const m = sceneMotion(k / 200, 4, 0.4, 1, 'linear')
+      scenes.add(m.scene); maxBurst = Math.max(maxBurst, m.burst)
+    }
+    expect(scenes).toEqual(new Set([0, 1, 2, 3]))
+    expect(maxBurst).toBeGreaterThan(0.9)
   })
 })
 
