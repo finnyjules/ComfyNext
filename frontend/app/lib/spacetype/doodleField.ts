@@ -6,7 +6,7 @@ export interface Doodle {
   x: number; y: number          // center, canvas px
   scale: number                 // px
   rotation: number              // radians
-  colorIndex: number            // into palette
+  colorIndex: number            // raw seeded index; caller mods by palette length
   appearAt: number              // 0..1 reveal threshold (draw-on order)
   points: { x: number; y: number }[]  // local-space polyline, roughly within [-1,1]
 }

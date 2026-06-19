@@ -60,7 +60,8 @@ const controls: ControlSpec[] = [
   { key: 'doodleColorMode', label: 'Doodle color', kind: 'select', options: ['palette', 'white'], default: 'palette', group: 'Doodles' },
   { key: 'doodleWidth', label: 'Doodle stroke', kind: 'slider', min: 1, max: 12, step: 0.5, default: 3, group: 'Doodles' },
   // Motion
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
+  // Freeze is via revealMode 'hold', not speed 0 — so speed is ≥ 1 cycle.
+  { key: 'speed', label: 'Speed', kind: 'slider', min: 1, max: 4, step: 1, default: 1, group: 'Motion' },
 ]
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
