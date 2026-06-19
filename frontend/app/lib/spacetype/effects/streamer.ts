@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills } from '../fills'
 import { resolveFontFamily } from '~/data/google-fonts'
-import { buildStreamerGeometry, serpentinePoint } from '../streamerLayout'
+import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint } from '../streamerLayout'
 
 /**
  * STREAMER — an open serpentine ribbon: long straight rows joined by 180° half-circle arcs,
@@ -23,6 +23,8 @@ const controls: ControlSpec[] = [
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 6, step: 0.5, default: 0, group: 'Type' },
   // Ribbon
   { key: 'straightLength', label: 'Straight length', kind: 'slider', min: 80, max: 1400, step: 10, default: 572, group: 'Ribbon' },
+  { key: 'lengthJitter', label: 'Length jitter', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
+  { key: 'lengthSeed', label: 'Jitter seed', kind: 'slider', min: 1, max: 999, step: 1, default: 1, group: 'Ribbon' },
   { key: 'arcRadius', label: 'Turn radius', kind: 'slider', min: 12, max: 320, step: 2, default: 70, group: 'Ribbon' },
   { key: 'segmentSpace', label: 'Segment space', kind: 'slider', min: 6, max: 60, step: 1, default: 26, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Ribbon' },
@@ -143,9 +145,10 @@ interface State {
   textTex: THREE.CanvasTexture
   cells: number
   samples: number      // path samples (N+1)
-  pathLen: number
-  textPeriodArc: number  // arc-length of one text-string repetition (divides the 2-row geo period)
-  rowLen: number
+  pathLen: number        // constant sampling window width (nominal, uniform-based)
+  cycleArc: number       // arc-length of the full row-length cycle (the seamless motion period)
+  textPeriodArc: number  // arc-length of one text-string repetition (divides the cycle period)
+  rowLens: number[]      // repeating per-row straight lengths
   arcR: number
   half: number
   instances: Instance[]
@@ -161,7 +164,7 @@ function flowGeometry(s: State, inst: Instance, s0: number): void {
   const pts: { x: number; y: number }[] = []
   let cx = 0, cy = 0
   for (let i = 0; i <= N; i++) {
-    const p = serpentinePoint(s0 + (i / N) * s.pathLen, s.rowLen, s.arcR)
+    const p = serpentineVariedPoint(s0 + (i / N) * s.pathLen, s.rowLens, s.arcR)
     pts.push(p); cx += p.x; cy += p.y
   }
   cx /= (N + 1); cy /= (N + 1)
@@ -195,25 +198,29 @@ export const streamerEffect: SpaceTypeEffect = {
     const geo = buildStreamerGeometry(rowChars, segmentSpace, rows, depth, arcRadius)
     const cells = geo.cells
     const samples = geo.positions.length / 6
-    const seg = rowChars * segmentSpace + Math.PI * arcRadius
     const pathLen = rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius
+
+    // Repeating per-row length cycle (jitter 0 → uniform = the original look). The cycle's arc length
+    // is the seamless motion period: advancing by whole cycles reproduces the shape (translated).
+    const rowLens = buildRowLengths(straightLen, rows, n(params, 'lengthJitter'), Math.round(n(params, 'lengthSeed')))
+    const cycleArc = rowLens.reduce((a, L) => a + L + Math.PI * arcRadius, 0)
 
     const gradTex = buildGradientTexture(three, gradientStops(params))
     const textTex = buildTextTexture(three, params)
     const noStripes = String(params.noStripes) === 'on' ? 1 : 0
     const backMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.bSideColor)), side: three.BackSide })
 
-    // Tie the text repeat to the geometry: fit a whole number of string-units into each 2-row geo
-    // period (so the text realigns every period → seamless loop, no scroll seam). Pick the unit
-    // count nearest to the natural glyph density (one cell ≈ segmentSpace).
+    // Tie the text repeat to the geometry: fit a whole number of string-units into the full cycle
+    // (so the text realigns every cycle → seamless loop, no scroll seam). Pick the unit count
+    // nearest to the natural glyph density (one cell ≈ segmentSpace).
     const unitCells = textUnitCells(params)
-    const m = Math.max(1, Math.round((2 * seg) / (unitCells * segmentSpace)))
-    const textPeriodArc = (2 * seg) / m
+    const m = Math.max(1, Math.round(cycleArc / (unitCells * segmentSpace)))
+    const textPeriodArc = cycleArc / m
     const textRepeat = pathLen / textPeriodArc   // string-units across the whole band
 
     state = {
-      three, textTex, cells, samples, pathLen, textPeriodArc,
-      rowLen: rowChars * segmentSpace, arcR: arcRadius, half: depth / 2,
+      three, textTex, cells, samples, pathLen, cycleArc, textPeriodArc,
+      rowLens, arcR: arcRadius, half: depth / 2,
       instances: [],
     }
     root.userData.tex = textTex
@@ -250,7 +257,7 @@ export const streamerEffect: SpaceTypeEffect = {
       const inst: Instance = {
         posAttr: bufferGeo.getAttribute('position') as THREE.BufferAttribute,
         positions, front: frontMat,
-        phase: (k * 2 * seg) / count,   // spread starts across one 2-row period
+        phase: (k * cycleArc) / count,   // spread starts across one full cycle
       }
       state.instances.push(inst)
       flowGeometry(state, inst, inst.phase)
@@ -281,13 +288,12 @@ export const streamerEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    // The SHAPE flows: slide the path window by whole 2-row periods (seamless), re-centered each
+    // The SHAPE flows: slide the path window by whole row-length cycles (seamless), re-centered each
     // frame. The text rides along, scrolled in units of its repeat period (s0 / textPeriodArc) so
-    // it stays glued to the moving ribbon AND wraps cleanly — over one geo period s0 advances a
-    // whole number of text-units, so the loop has no jump. speed 0 = stopped.
-    const seg = state.rowLen + Math.PI * state.arcR
+    // it stays glued to the moving ribbon AND wraps cleanly — over one cycle s0 advances a whole
+    // number of text-units, so the loop has no jump. speed 0 = stopped.
     const periods = Math.max(0, Math.round(n(params, 'speed')))
-    const base = periods === 0 ? 0 : t01 * periods * 2 * seg
+    const base = periods === 0 ? 0 : t01 * periods * state.cycleArc
     const tc = String(params.textColor)
     const ns = String(params.noStripes) === 'on' ? 1 : 0
     for (const inst of state.instances) {

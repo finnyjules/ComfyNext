@@ -1,5 +1,58 @@
+import { mulberry32 } from './rng'
+
 export interface Rgb { r: number; g: number; b: number }
 export interface BandGeometry { positions: Float32Array; uvs: Float32Array; indices: Uint32Array; cells: number }
+
+/**
+ * A repeating cycle of straight-row lengths (one entry per row in the cycle). `count` is forced
+ * EVEN so the boustrophedon direction parity repeats with the cycle (the path stays periodic, which
+ * keeps the motion loop seamless). `jitter` 0..1 scales each row up to ±70% around `base`, seeded so
+ * the same seed always yields the same pattern. jitter 0 → every row equals `base` (uniform).
+ */
+export function buildRowLengths(base: number, count: number, jitter: number, seed: number): number[] {
+  const C = Math.max(2, count % 2 === 0 ? count : count + 1)
+  const rng = mulberry32((Number.isFinite(seed) ? seed : 1) >>> 0)
+  const j = Number.isFinite(jitter) ? Math.max(0, Math.min(1, jitter)) : 0
+  const out: number[] = []
+  for (let k = 0; k < C; k++) {
+    const f = 1 + j * (rng() * 2 - 1) * 0.7
+    out.push(Math.max(base * 0.15, base * f))
+  }
+  return out
+}
+
+/**
+ * Varied open serpentine at arc-length `s`: like serpentinePoint but each row takes its length from
+ * the repeating `rowLens` cycle (length must be even). The path is periodic — advancing `s` by one
+ * full cycle reproduces the shape translated straight down by C·2r — so the flow loops seamlessly
+ * after the centroid re-centering. `r` = arc radius (uniform).
+ */
+export function serpentineVariedPoint(s: number, rowLens: number[], r: number): { x: number; y: number; tx: number; ty: number } {
+  const C = rowLens.length
+  const arc = Math.PI * r
+  let cycle = 0
+  for (let k = 0; k < C; k++) cycle += rowLens[k]! + arc
+  const cyc = Math.floor(s / cycle)
+  let local = s - cyc * cycle
+  const yOff = -cyc * C * 2 * r           // descent accumulated over whole cycles
+  for (let k = 0; k < C; k++) {
+    const L = rowLens[k]!
+    const seg = L + arc
+    const dir = k % 2 === 0 ? 1 : -1
+    const yRow = -k * 2 * r + yOff
+    if (local <= L) {                     // straight run
+      return { x: dir > 0 ? local : L - local, y: yRow, tx: dir, ty: 0 }
+    }
+    if (local <= seg) {                   // connecting arc down to the next row
+      const a = (local - L) / r
+      const cx = dir > 0 ? L : 0
+      const cy = yRow - r
+      return { x: cx + dir * r * Math.sin(a), y: cy + r * Math.cos(a), tx: dir * Math.cos(a), ty: -Math.sin(a) }
+    }
+    local -= seg
+  }
+  return { x: 0, y: yOff, tx: 1, ty: 0 }  // unreachable
+}
 
 /**
  * Open serpentine (boustrophedon) centerline at arc-length `s`: straight rows alternating
