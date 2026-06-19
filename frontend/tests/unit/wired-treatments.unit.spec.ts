@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readWiredTreatments, setWiredMask, maskCandidateKeys } from '~/composables/useWiredTreatments'
+import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 
 function node() { return { data: { properties: {} as any } } }
 
@@ -17,6 +17,14 @@ describe('wired treatments store', () => {
     setWiredMask(n, 2, 'w:1')
     setWiredMask(n, 2, '')
     expect(readWiredTreatments(n)['w:2']).toBeUndefined()
+  })
+  it('sets and clears showSource without losing maskedByKey', () => {
+    const n = node()
+    setWiredMask(n, 2, 'w:1')
+    setWiredMaskShowSource(n, 2, true)
+    expect(readWiredTreatments(n)['w:2']).toEqual({ maskedByKey: 'w:1', showSource: true })
+    setWiredMaskShowSource(n, 2, false)
+    expect(readWiredTreatments(n)['w:2']).toEqual({ maskedByKey: 'w:1' })
   })
 })
 

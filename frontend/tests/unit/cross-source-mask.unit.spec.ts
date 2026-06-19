@@ -47,6 +47,24 @@ describe('paintLayerStack cross-source masking', () => {
     expect(mainCtx.drawImage).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the mask source visible (also painting on main ctx) when showSource is set', () => {
+    const mainCtx = stubCtx('main')
+    const drawA = vi.fn() // w:2 mask source
+    const drawB = vi.fn() // w:1 content masked by w:2
+    const items: StackItem[] = [
+      { type: 'wired', key: 'w:2', draw: drawA },
+      { type: 'wired', key: 'w:1', draw: drawB },
+    ]
+    paintLayerStack(mainCtx, 10, 10, items, [], undefined, undefined, undefined, {
+      'w:1': { maskedByKey: 'w:2', showSource: true },
+    })
+    // w:2 now ALSO paints directly on the main ctx (kept visible)...
+    expect(drawA.mock.calls.some((c: any[]) => c[0] === mainCtx)).toBe(true)
+    // ...while w:1 is still masked (rendered via offscreen, not directly on main).
+    expect(drawB.mock.calls.every((c: any[]) => c[0] !== mainCtx)).toBe(true)
+    expect(mainCtx.drawImage).toHaveBeenCalled()
+  })
+
   it('renders an unmasked wired item directly onto the main ctx', () => {
     const mainCtx = stubCtx('main')
     const draw = vi.fn()
