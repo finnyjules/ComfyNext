@@ -563,8 +563,8 @@ async function generateVideo() {
                   </select>
                   <StudioColor v-model="f.a" />
                   <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
-                  <input v-if="f.type === 'stripes'" type="range" v-model.number="f.angle"
-                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" title="Stripe angle" />
+                  <input v-if="f.type === 'stripes' || f.type === 'gradient'" type="range" v-model.number="f.angle"
+                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" :title="f.type === 'gradient' ? 'Gradient angle' : 'Stripe angle'" />
                   <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
                          v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range w-14 shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>

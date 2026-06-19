@@ -132,11 +132,16 @@ function nearestJitterSlant(bandGlyphs: { cx: number; jitterSlant: number }[], c
   return best.jitterSlant
 }
 
-/** Set ctx.fillStyle for a block of the given fill: flat colour, fitted gradient, or tiled pattern. */
-function setBlockStyle(ctx: CanvasRenderingContext2D, fill: Fill, y: number, h: number): void {
+/** Set ctx.fillStyle for a block of the given fill: flat colour, angled gradient, or tiled pattern. */
+function setBlockStyle(ctx: CanvasRenderingContext2D, fill: Fill, x: number, y: number, w: number, h: number): void {
   if (fill.type === 'solid') { ctx.fillStyle = fill.a; return }
   if (fill.type === 'gradient') {
-    const g = ctx.createLinearGradient(0, y, 0, y + h)
+    // gradient line through the block centre along `angle`, spanning the block's extent
+    const rad = (fill.angle || 0) * Math.PI / 180
+    const dx = Math.cos(rad), dy = Math.sin(rad)
+    const cx = x + w / 2, cy = y + h / 2
+    const half = Math.abs((w / 2) * dx) + Math.abs((h / 2) * dy)
+    const g = ctx.createLinearGradient(cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half)
     g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
     ctx.fillStyle = g; return
   }
@@ -293,7 +298,7 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
       const slant = bSlant + nearestJitterSlant(glyphsByBand[i]!, b.x + b.w / 2)   // base + local letter lean
       cctx.save()
       if (slant !== 0) shearAbout(cctx, slant, b.cy)
-      setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
+      setBlockStyle(cctx, b.fill, b.x, b.y, b.w, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
       cctx.restore()
     }
   })
