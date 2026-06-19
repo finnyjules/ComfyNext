@@ -143,10 +143,10 @@ function layout(s: State, p: Params, t01: number): void {
   const alt = String(p.alternate) === 'on'
   const txt = streamerText(p)
   const runLength = Math.min(txt.length, Math.floor(MAX_INSTANCES / count))
-  // Seamless loop: scroll a whole number of cycles (positions realign) AND tile the text to that
-  // same period (content realigns). speed→cycles/loop; 0 = stopped.
+  // Each letter is glued to its tile slot `k` (like STG): the whole ribbon crawls as a rigid unit,
+  // letters don't re-index per frame. Seamless loop = scroll a whole number of cycles so positions
+  // realign; the (fixed) letters need no tiling. speed → cycles/loop; 0 = stopped.
   const loops = Math.max(0, Math.round(n(p, 'speed') * 4))
-  const period = Math.max(1, loops) * cycle
   const scroll = loops === 0 ? 0 : t01 * loops * cycle
   const stops = gradientStops(p)
 
@@ -171,9 +171,8 @@ function layout(s: State, p: Params, t01: number): void {
       if (px < minX) minX = px; if (px > maxX) maxX = px
       if (py < minY) minY = py; if (py > maxY) maxY = py
       if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz
-      // index into a text tiled to the scroll period, so the content loops seamlessly
-      const wrapped = ((Math.round(i) % period) + period) % period
-      const ch = txt[wrapped % txt.length]!
+      // letter is fixed to the tile slot k (glued to the tile; the ribbon crawls rigidly)
+      const ch = txt[((k % txt.length) + txt.length) % txt.length]!
       const cell = s.atlas.cells.get(ch) ?? s.atlas.cells.values().next().value
       s.aCellUV.setXYZW(inst, cell!.u, cell!.v, cell!.du, cell!.dv)
       const col = gradientColorAt(k, runLength, stops)
