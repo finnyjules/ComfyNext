@@ -33,6 +33,10 @@ describe('planWiredMaskJobs', () => {
     expect(jobs).toEqual([{ contentSlot: 1, sourceKey: 'w:2', showSource: true }])
   })
 
+  it('skips a self-referential mask (a layer cannot mask itself)', () => {
+    expect(planWiredMaskJobs({ 'w:1': { maskedByKey: 'w:1' } }, [1, 2])).toEqual([])
+  })
+
   it('only emits jobs for slots that are themselves connected', () => {
     // w:5 is masked but not connected → no job; w:1 masked + connected → job.
     const jobs = planWiredMaskJobs(

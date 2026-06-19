@@ -20,6 +20,7 @@ export function planWiredMaskJobs(
   for (const slot of connectedSlots1Based) {
     const t = treatments[`w:${slot}`]
     if (!t?.maskedByKey) continue
+    if (t.maskedByKey === `w:${slot}`) continue // a layer can't mask itself
     // A wired source must be present to mask against; a local source is always usable.
     if (t.maskedByKey.startsWith('w:') && !present.has(Number(t.maskedByKey.slice(2)))) continue
     jobs.push({ contentSlot: slot, sourceKey: t.maskedByKey, showSource: !!t.showSource })

@@ -2603,7 +2603,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       const i = liveDefs?.findIndex((d: any) => d?.name === name) ?? -1
       return i >= 0 ? liveWv?.[i] : undefined
     }
-    const resolveWiredSlot = (slot1: number): { url: string; x: number; y: number; rotation: number; scale: number } | null => {
+    const resolveWiredSlot = (slot1: number): { url: string; x: number; y: number; rotation: number; scale: number; opacity: number } | null => {
       const edge = (edges.value as any[]).find((e: any) =>
         e.target === liveNode.id && e.targetHandle === `input-${slot1 - 1}`)
       if (!edge) return null
@@ -2616,6 +2616,10 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         y: Number(liveWidget(`layer${slot1}_y`)) || 0,
         rotation: Number(liveWidget(`layer${slot1}_rotation`)) || 0,
         scale: Number(liveWidget(`layer${slot1}_scale`)) || 1,
+        // Match the editor: the mask silhouette folds in the source's own opacity
+        // (drawItemContent uses the layer's real opacity), so a semi-transparent
+        // source masks partially rather than as a hard full-shape clip.
+        opacity: liveWidget(`layer${slot1}_opacity`) == null ? 1 : Number(liveWidget(`layer${slot1}_opacity`)),
       }
     }
 
@@ -2644,7 +2648,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         let img: HTMLImageElement
         try { img = await loadImage(w.url) } catch { console.warn('[compositor mask] image load failed', w.url); continue }
         // Clean silhouette: full opacity, normal blend — only the shape matters.
-        drawWiredImageLayer(ctx, img, { x: w.x, y: w.y, scale: w.scale, rotation: w.rotation, opacity: 1, blend: 'normal' }, canvas.width, canvas.height)
+        drawWiredImageLayer(ctx, img, { x: w.x, y: w.y, scale: w.scale, rotation: w.rotation, opacity: w.opacity, blend: 'normal' }, canvas.width, canvas.height)
       } else {
         const layer = localById.get(sourceKey.slice(2))
         if (!layer) { console.warn('[compositor mask] could not resolve local source', sourceKey); continue }
