@@ -4,8 +4,8 @@ import { parseFills, fillTileCanvas, type Fill } from '../fills'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { mulberry32, hashSeed } from '../rng'
 import {
-  revealGlitch, ease, churnSeed, scaleXForGlitch, pickTypeColor, stripOffsets,
-  lineLayout, blockSegments,
+  revealGlitch, ease, churnSeed, scaleXForGlitch, stripOffsets,
+  lineLayout, blockSegments, fontJitter,
   type TypeColorMode, type EaseMode, type BlockUnit,
 } from '../sliceGlitchLayout'
 import { doodleField } from '../doodleField'
@@ -33,6 +33,9 @@ const controls: ControlSpec[] = [
   { key: 'lineTight', label: 'Line tightness', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.85, group: 'Type' },
   { key: 'lineSpacing', label: 'Line spacing', kind: 'slider', min: 0.6, max: 1.8, step: 0.02, default: 1, group: 'Type' },
   { key: 'fitWidth', label: 'Stretch to width', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.92, group: 'Type' },
+  { key: 'fontVaryUnit', label: 'Vary font by', kind: 'select', options: ['off', 'line', 'word', 'character'], default: 'off', group: 'Type' },
+  { key: 'weightJitter', label: 'Weight jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
+  { key: 'slantJitter', label: 'Italic jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
   // Color
   { key: 'palette', label: 'Palette', kind: 'fillList', default: JSON.stringify([
       { type: 'solid', a: '#33dd33', b: '#000000', textColor: '#ffffff' },
@@ -44,6 +47,7 @@ const controls: ControlSpec[] = [
     ]), group: 'Color' },
   { key: 'blockUnit', label: 'Block unit', kind: 'select', options: ['random', 'line', 'word', 'character'], default: 'random', group: 'Color' },
   { key: 'blockDensity', label: 'Blocks / band (random)', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
+  { key: 'blockHeight', label: 'Block height', kind: 'slider', min: 0.1, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'coverage', label: 'Color coverage', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.78, group: 'Color' },
   { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
@@ -187,57 +191,81 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     return { sx, boxes: lineLayout(adv, l.chars.map(c => c === ' '), W) }
   })
 
-  // 1) type matte (white glyphs on transparent)
+  // colour-block segments per band (computed once, reused for blocks + per-block text colour).
+  // Each block can be shorter than its line slot (blockHeight), centred in the slot.
+  const blockSeedRng = mulberry32((seed >>> 0) ^ 0xc2b2ae35)
+  const density = n(p, 'blockDensity')
+  const coverage = n(p, 'coverage')
+  const unit = String(p.blockUnit) as BlockUnit
+  const blockH = n(p, 'blockHeight')
+  interface PlacedBlock { x: number; w: number; y: number; h: number; fill: Fill }
+  const bandSegs: PlacedBlock[][] = bands.map((band, i) => {
+    const bh = band.h * blockH
+    const by = band.y + (band.h - bh) / 2
+    const out: PlacedBlock[] = []
+    for (const seg of blockSegments(unit, lineBoxes[i]!.boxes, W, blockSeedRng, density, fills.length)) {
+      if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of blocks as bg
+      out.push({ x: seg.x, w: seg.w, y: by, h: bh, fill: fills[seg.colorIndex]! })
+    }
+    return out
+  })
+
+  // 1) type matte (white glyphs on transparent), with optional per-unit weight/slant jitter
+  const varyUnit = String(p.fontVaryUnit)
+  const wJit = n(p, 'weightJitter'), sJit = n(p, 'slantJitter')
+  const hasWeight = fontHasWeightAxis(family)
+  let globalChar = 0
   lines.forEach((l, i) => {
     const cy = bands[i]!.y + bands[i]!.h / 2
     const { sx, boxes } = lineBoxes[i]!
+    let word = 0, prevSpace = true
     for (let c = 0; c < l.chars.length; c++) {
-      const b = boxes[c]!
-      tctx.save(); tctx.translate(b.x + b.w / 2, cy); tctx.scale(sx, 1)
-      tctx.fillText(l.chars[c]!, -l.widths[c]! / 2, 0); tctx.restore()
+      const ch = l.chars[c]!, isSpace = ch === ' '
+      if (!isSpace && prevSpace) word++
+      prevSpace = isSpace
+      if (!isSpace) {
+        const unitId = varyUnit === 'line' ? i : varyUnit === 'word' ? i * 1000 + word : varyUnit === 'character' ? globalChar : -1
+        const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, seed, weight, wJit, sJit)
+        if (hasWeight && unitId >= 0) tctx.font = `${Math.round(jit.weight)} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
+        const b = boxes[c]!
+        tctx.save(); tctx.translate(b.x + b.w / 2, cy); tctx.transform(1, 0, jit.slant, 1, 0, 0); tctx.scale(sx, 1)
+        tctx.fillText(ch, -l.widths[c]! / 2, 0); tctx.restore()
+      }
+      globalChar++
     }
   })
 
-  // 2) colour blocks (by unit) behind the type, honouring each fill's type
+  // 2) colour blocks behind the type, honouring each fill's type
   const cctx = s.compCtx
   cctx.clearRect(0, 0, W, H)
   cctx.globalCompositeOperation = 'source-over'
   cctx.fillStyle = bg; cctx.fillRect(0, 0, W, H)
   cctx.save(); cctx.globalAlpha = glitch * n(p, 'blockOpacity')
-  const blockSeedRng = mulberry32((seed >>> 0) ^ 0xc2b2ae35)
-  const density = n(p, 'blockDensity')
-  const coverage = n(p, 'coverage')
-  const unit = String(p.blockUnit) as BlockUnit
-  bands.forEach((band, i) => {
-    for (const seg of blockSegments(unit, lineBoxes[i]!.boxes, W, blockSeedRng, density, fills.length)) {
-      if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of blocks as bg
-      setBlockStyle(cctx, fills[seg.colorIndex]!, band.y, band.h)
-      cctx.fillRect(seg.x, band.y, seg.w, band.h)
-    }
-  })
+  for (const segs of bandSegs) for (const b of segs) {
+    setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
+  }
   cctx.restore()
-  // Recolor the white matte per band on a transparent scratch canvas via
-  // source-in (color shows ONLY where glyph pixels are), then composite the
-  // colored glyphs over the blocks. source-in is used instead of source-atop
-  // because the comp canvas has an opaque bg, which would make source-atop
-  // flood the whole band.
+
+  // 3) per-block text colour: each block paints its swatch's textColor where the glyph sits on
+  // it (so type over a green block takes green's textColor). Masked by the glyph alpha. Areas
+  // with no block stay white. 'white' mode skips this; 'mixed' randomly leaves some blocks white.
   const typeMode = String(p.typeColorMode) as TypeColorMode
-  const typeRng = mulberry32((seed >>> 0) ^ 0x27d4eb2f)
   const sctx = s.tintCtx
   sctx.clearRect(0, 0, W, H)
   sctx.globalCompositeOperation = 'source-over'
-  lines.forEach((_, i) => {
-    const band = bands[i]!
-    const ci = pickTypeColor(typeRng, typeMode, fills.length)
-    // honour the swatch's textColor (type colour for that row), not its block colour
-    sctx.fillStyle = ci < 0 ? '#ffffff' : fills[ci]!.textColor
-    sctx.fillRect(0, band.y, W, band.h)        // opaque per-band color
-  })
-  sctx.globalCompositeOperation = 'destination-in'
-  sctx.drawImage(s.typeCtx.canvas, 0, 0)       // mask the color bands by the glyph alpha
-  sctx.globalCompositeOperation = 'source-over'
-  // White base glyphs first (so the clean state is all-white), then fade the
-  // per-band colored glyphs in with the glitch amount.
+  if (typeMode !== 'white') {
+    const tcRng = mulberry32((seed >>> 0) ^ 0x27d4eb2f)
+    for (const segs of bandSegs) for (const b of segs) {
+      if (typeMode === 'mixed' && tcRng() < 0.5) continue   // leave white
+      sctx.fillStyle = b.fill.textColor
+      sctx.fillRect(b.x, b.y, b.w, b.h)
+    }
+    sctx.globalCompositeOperation = 'destination-in'
+    sctx.drawImage(s.typeCtx.canvas, 0, 0)       // mask the textColor rects by the glyph alpha
+    sctx.globalCompositeOperation = 'source-over'
+  }
+  // White base glyphs first (clean state is all-white), then fade the per-block coloured glyphs
+  // in with the glitch amount.
   cctx.drawImage(s.typeCtx.canvas, 0, 0)
   cctx.save(); cctx.globalAlpha = glitch
   cctx.drawImage(s.tintCtx.canvas, 0, 0)

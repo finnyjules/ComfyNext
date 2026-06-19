@@ -54,6 +54,19 @@ export function segmentRow(rng: () => number, x0: number, width: number, density
   return segs
 }
 
+export interface Jitter { weight: number; slant: number }
+/**
+ * Seeded per-unit font jitter. `unitId` is a stable id for the jitter unit (line index,
+ * word index, or char index) so all glyphs in the same unit share a value. Returns a clamped
+ * weight near `baseWeight` and a slant (skew tangent, ± for synthetic italic).
+ */
+export function fontJitter(unitId: number, seed: number, baseWeight: number, weightAmt: number, slantAmt: number): Jitter {
+  const r = mulberry32((seed >>> 0) ^ Math.imul((unitId | 0) + 1, 0x9e3779b1))
+  const weight = Math.min(900, Math.max(100, baseWeight + (r() * 2 - 1) * 500 * weightAmt))
+  const slant = (r() * 2 - 1) * 0.35 * slantAmt
+  return { weight, slant }
+}
+
 /** Center a line's per-char advances within width W → boxes carrying x/width/space flag. */
 export function lineLayout(advances: number[], isSpace: boolean[], W: number): CharBox[] {
   const total = advances.reduce((a, b) => a + b, 0)

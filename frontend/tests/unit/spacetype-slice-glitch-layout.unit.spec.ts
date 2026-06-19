@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch,
-  pickTypeColor, stripOffsets, lineLayout, blockSegments, type CharBox,
+  pickTypeColor, stripOffsets, lineLayout, blockSegments, fontJitter, type CharBox,
 } from '../../app/lib/spacetype/sliceGlitchLayout'
 import { mulberry32 } from '../../app/lib/spacetype/rng'
 
@@ -106,6 +106,25 @@ describe('blockSegments', () => {
   it('random → partition summing to W', () => {
     const segs = blockSegments('random', boxes, 900, mulRng(1), 4, 6)
     expect(segs.reduce((a, s) => a + s.w, 0)).toBeCloseTo(900)
+  })
+})
+
+describe('fontJitter', () => {
+  it('zero amounts → base weight, no slant', () => {
+    const j = fontJitter(3, 1, 400, 0, 0)
+    expect(j.weight).toBe(400)
+    expect(j.slant).toBeCloseTo(0)
+  })
+  it('same unitId+seed is deterministic; different unitId diverges', () => {
+    expect(fontJitter(2, 9, 400, 1, 1)).toEqual(fontJitter(2, 9, 400, 1, 1))
+    expect(fontJitter(2, 9, 400, 1, 1).weight).not.toBe(fontJitter(5, 9, 400, 1, 1).weight)
+  })
+  it('weight stays within [100,900] and slant within ±0.35', () => {
+    for (let u = 0; u < 50; u++) {
+      const j = fontJitter(u, 7, 500, 1, 1)
+      expect(j.weight).toBeGreaterThanOrEqual(100); expect(j.weight).toBeLessThanOrEqual(900)
+      expect(Math.abs(j.slant)).toBeLessThanOrEqual(0.35)
+    }
   })
 })
 
