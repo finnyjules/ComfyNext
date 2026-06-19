@@ -143,13 +143,17 @@ function layout(s: State, p: Params, t01: number): void {
   const alt = String(p.alternate) === 'on'
   const txt = streamerText(p)
   const runLength = Math.min(txt.length, Math.floor(MAX_INSTANCES / count))
+  // Seamless loop: scroll a whole number of cycles (positions realign) AND tile the text to that
+  // same period (content realigns). speed→cycles/loop; 0 = stopped.
   const loops = Math.max(0, Math.round(n(p, 'speed') * 4))
-  const scroll = t01 * loops * cycle
+  const period = Math.max(1, loops) * cycle
+  const scroll = loops === 0 ? 0 : t01 * loops * cycle
   const stops = gradientStops(p)
 
   const dummy = s.dummy
   let inst = 0
   const total = count * runLength
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity
   for (let j = 0; j < count; j++) {
     const ribY = alt ? (j % 2) * radius * 2 : j * offset * radius * 2
     const ribZ = j * depth * spacing
@@ -162,8 +166,15 @@ function layout(s: State, p: Params, t01: number): void {
       dummy.scale.set(segmentSpace, depth, 1)
       dummy.updateMatrix()
       s.mesh.setMatrixAt(inst, dummy.matrix)
-      const ti = ((Math.round(i) % txt.length) + txt.length) % txt.length
-      const cell = s.atlas.cells.get(txt[ti]!) ?? s.atlas.cells.values().next().value
+      // track the tile-center bounds for framing/centering (dummy.position is the final center)
+      const px = dummy.position.x, py = dummy.position.y, pz = dummy.position.z
+      if (px < minX) minX = px; if (px > maxX) maxX = px
+      if (py < minY) minY = py; if (py > maxY) maxY = py
+      if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz
+      // index into a text tiled to the scroll period, so the content loops seamlessly
+      const wrapped = ((Math.round(i) % period) + period) % period
+      const ch = txt[wrapped % txt.length]!
+      const cell = s.atlas.cells.get(ch) ?? s.atlas.cells.values().next().value
       s.aCellUV.setXYZW(inst, cell!.u, cell!.v, cell!.du, cell!.dv)
       const col = gradientColorAt(k, runLength, stops)
       s.aColor.setXYZ(inst, col.r, col.g, col.b)
@@ -174,7 +185,12 @@ function layout(s: State, p: Params, t01: number): void {
   s.mesh.count = total
   s.mesh.instanceMatrix.needsUpdate = true
   s.aCellUV.needsUpdate = true; s.aColor.needsUpdate = true; s.aSide.needsUpdate = true
-  s.mesh.position.set(-segmentSpace * segmentCount * ms / 2, -radius, 0)
+  // STG works in pixel units; our camera frames ~11 world units. Normalize the loop's largest
+  // extent to that and recenter, so the `scale`/rotate params fine-tune from a framed start.
+  const ext = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1) + Math.max(segmentSpace, depth)
+  const norm = 11 / ext
+  s.mesh.scale.setScalar(norm)
+  s.mesh.position.set(-norm * (minX + maxX) / 2, -norm * (minY + maxY) / 2, -norm * (minZ + maxZ) / 2)
 }
 
 export const streamerEffect: SpaceTypeEffect = {
