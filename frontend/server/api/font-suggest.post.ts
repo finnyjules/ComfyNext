@@ -49,13 +49,15 @@ export default defineEventHandler(async (event) => {
 USER DESCRIPTION: "${description}"
 
 Work in two steps:
-1. ANALYSIS — Determine the concrete typographic traits the description implies. If it names a brand, logo, era, team, or genre (e.g. "New York Knicks logo", "1970s disco", "brutalist poster"), recall what those letterforms ACTUALLY look like — classification (sans / serif / slab serif / script / display), weight, width (condensed/normal/extended), stroke contrast, and mood. The Knicks wordmark, for example, is a bold, slightly slanted athletic/collegiate block serif — NOT a delicate fashion serif.
-2. SUGGESTIONS — Pick up to 8 Google Fonts whose letterforms genuinely match those traits.
+1. ANALYSIS — Determine the concrete typographic traits the description implies. State a PRIMARY classification (sans / serif / slab serif / script / display) plus weight, width (condensed/normal/extended), stroke contrast, and mood. If it names a brand, logo, era, team, or genre (e.g. "New York Knicks logo", "1970s disco", "brutalist poster"), recall what those letterforms ACTUALLY look like. The Knicks wordmark, for example, is a bold, slightly slanted athletic/collegiate block serif — NOT a delicate fashion serif and NOT a casual rounded script.
+2. SUGGESTIONS — Pick Google Fonts whose letterforms genuinely match those traits.
 
 Rules:
-- Match the FORM, not just the vibe. Do not default to generic "elegant serif" picks (Playfair Display, Cormorant) unless the analysis truly calls for a high-contrast fashion serif.
-- Only real Google Fonts families, spelled exactly as Google Fonts spells them.
-- Favor variety across the matching style; avoid near-duplicates.
+- PRECISION OVER QUANTITY. Return only fonts that clearly match — 3 strong matches beat 8 padded ones. Never add a font just to reach a count.
+- Every suggestion's classification MUST match the analysis's PRIMARY classification. If the analysis says "athletic block serif", do not include scripts, casual rounded faces, or delicate fashion serifs.
+- Before finalizing, re-read each pick and DROP any that you wouldn't confidently defend against the analysis.
+- Match the FORM, not just the vibe. Don't default to generic "elegant serif" picks (Playfair Display, Cormorant) unless the analysis truly calls for a high-contrast fashion serif.
+- Only real Google Fonts families, spelled exactly as Google Fonts spells them. Favor variety across the matching style; avoid near-duplicates.
 - Each "reason" (≤12 words) must tie the font to a SPECIFIC trait from your analysis.`
 
   let suggestions: { family: string; reason: string }[]
