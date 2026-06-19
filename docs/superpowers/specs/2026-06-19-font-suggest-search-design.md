@@ -22,7 +22,10 @@ to map a free-text description onto real Google Fonts families.
   `vue-canvas/widgets/FontPicker.vue` — via a shared route + composable.
 - **Presentation:** a separate ✨ "Suggested" section pinned **above** the normal
   literal-search list. The literal name search is unchanged. Each suggestion row
-  shows a live font preview + a one-line "why it fits" reason.
+  renders the **family name set in that font's own face** (a live preview — you see
+  what it looks like, not just the name), plus a one-line "why it fits" reason. The
+  real face is loaded on demand before the row paints so the preview is never a
+  fallback font.
 - **Trigger:** explicit — a ✨ button next to the search box, plus pressing Enter
   in the search input. No debounce, no auto-fire, so there are no surprise API
   calls.
@@ -115,11 +118,12 @@ Mirrors `pipeline-suggest.post.ts`:
   `suggest(search)`.
 - Render a new **✨ Suggested** section at the very top of the scroll list (above
   Brand / Curated / Google), only when there are suggestions, a loading spinner,
-  or an error/empty message. Each suggestion row: same row markup as Google rows
-  (preview via `:style="{ fontFamily }"`), with the `reason` shown as a small
-  dimmed sub-line, and the category badge. Call `ensureGoogleFont(family)` for the
-  preview face (reuse the existing `watch(filtered, …)` pattern — add a watcher on
-  `suggestions`).
+  or an error/empty message. Each suggestion row: same row markup as Google rows,
+  with the **family name set in its own face** via `:style="{ fontFamily }"` (the
+  live preview), the `reason` shown as a small dimmed sub-line, and the category
+  badge. Call `ensureGoogleFont(family)` for the preview face (reuse the existing
+  `watch(filtered, …)` pattern — add a watcher on `suggestions`) so the face is
+  loaded before the row paints.
 - Clicking a suggestion calls the existing `select(family)` — no new selection
   path needed.
 - Keep the existing Enter behavior (single-match / custom-apply) only when there's
