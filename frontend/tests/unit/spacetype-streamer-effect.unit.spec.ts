@@ -15,7 +15,7 @@ describe('streamerEffect contract', () => {
   })
   it('exposes the signature controls', () => {
     const keys = streamerEffect.controls.map(c => c.key)
-    for (const k of ['text', 'font', 'segmentSpace', 'segmentCount', 'ribbonHeight', 'ribbonStretch', 'ribbonCount', 'speed', 'fills', 'scale', 'rotateX']) {
+    for (const k of ['text', 'font', 'segmentSpace', 'segmentCount', 'ribbonHeight', 'rows', 'arcRadius', 'speed', 'fills', 'scale', 'rotateX']) {
       expect(keys).toContain(k)
     }
   })

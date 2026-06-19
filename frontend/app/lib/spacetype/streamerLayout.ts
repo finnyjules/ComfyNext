@@ -1,46 +1,54 @@
 export interface Rgb { r: number; g: number; b: number }
 export interface BandGeometry { positions: Float32Array; uvs: Float32Array; indices: Uint32Array; cells: number }
 
-export function streamerRadius(segmentCount: number, segmentSpace: number): number {
-  return (segmentCount * segmentSpace) / Math.PI
-}
-
-/** Character cells around one full loop (perimeter / segmentSpace). */
-export function streamerCycle(segmentCount: number, middleStretch: number): number {
-  return Math.round(2 * segmentCount + 2 * segmentCount * middleStretch)
-}
-
-/** Racetrack centerline point at arc-length `s` (XY plane): top straight → right semicircle →
- *  bottom straight → left semicircle. straightLen 0 ⇒ a plain oval. */
-function racetrackPoint(s: number, straightLen: number, arcLen: number, r: number): { x: number; y: number } {
-  if (s < straightLen) return { x: s, y: 0 }                                  // top straight →
-  s -= straightLen
-  if (s < arcLen) { const a = s / r; return { x: straightLen + r * Math.sin(a), y: r - r * Math.cos(a) } }  // right arc ↓
-  s -= arcLen
-  if (s < straightLen) return { x: straightLen - s, y: 2 * r }                // bottom straight ←
-  s -= straightLen
-  const a = s / r; return { x: -r * Math.sin(a), y: r + r * Math.cos(a) }     // left arc ↑
+/**
+ * Open serpentine (boustrophedon) centerline at arc-length `s`: straight rows alternating
+ * direction, joined by 180° half-circle arcs on alternating ends, descending. NOT a closed loop.
+ * `rowLen` = straight length, `r` = arc radius (rows are 2r apart). Returns position + the unit
+ * tangent (for sweeping the band width perpendicular to flow).
+ */
+export function serpentinePoint(s: number, rowLen: number, r: number): { x: number; y: number; tx: number; ty: number } {
+  const arc = Math.PI * r
+  const seg = rowLen + arc                 // one straight + one connecting arc
+  const ss = Math.max(0, s)
+  const row = Math.floor(ss / seg)
+  const t = ss - row * seg
+  const dir = row % 2 === 0 ? 1 : -1       // even rows flow +x, odd rows −x
+  const yRow = -row * 2 * r
+  if (t <= rowLen) {                       // straight run
+    const x = dir > 0 ? t : rowLen - t
+    return { x, y: yRow, tx: dir, ty: 0 }
+  }
+  // half-circle arc down to the next row, on the right end (even rows) or left end (odd rows)
+  const a = (t - rowLen) / r               // 0..π
+  const cx = dir > 0 ? rowLen : 0          // arc centre x at the run's end
+  const cy = yRow - r                      // centre half a gap below
+  const sgn = dir                          // bulge outward on the flow side
+  const x = cx + sgn * r * Math.sin(a)
+  const y = cy + r * Math.cos(a)
+  // tangent = d/da (sin, cos) scaled by dir → (cos a, -sin a) on the flow side
+  return { x, y, tx: sgn * Math.cos(a), ty: -Math.sin(a) }
 }
 
 /**
- * Continuous swept band around the racetrack: 2 verts per sample offset ±depth/2 along Z, so the
- * band has one consistent +Z (front) face and one −Z (back) face all the way around — no per-tile
- * facing flips. uv.x runs 0→1 once around the loop (for fixed gradient + scrolling text); uv.y
- * spans the band width. `cells` = character cells around the loop. Pure (no THREE).
+ * Continuous swept band along the serpentine: 2 verts per sample offset ±depth/2 along Z, so the
+ * band keeps one consistent +Z (front) face and one −Z (back) face the whole way — no facing
+ * flips. uv.x runs 0→1 across the WHOLE path (for the gradient + the text that flows along it);
+ * uv.y spans the band width. `cells` = character cells along the path. Pure (no THREE).
  */
-export function buildStreamerGeometry(segmentCount: number, segmentSpace: number, middleStretch: number, depth: number): BandGeometry {
-  const r = streamerRadius(segmentCount, segmentSpace)
-  const straightLen = segmentCount * segmentSpace * middleStretch
-  const arcLen = Math.PI * r
-  const perimeter = 2 * straightLen + 2 * arcLen
-  const cells = Math.max(1, Math.round(perimeter / Math.max(1e-3, segmentSpace)))
-  const N = Math.max(96, Math.round(perimeter / Math.max(1e-3, segmentSpace) * 6))  // samples around the loop
+export function buildStreamerGeometry(rowChars: number, segmentSpace: number, rows: number, depth: number, arcRadius: number): BandGeometry {
+  const rowLen = Math.max(1, rowChars) * segmentSpace
+  const r = Math.max(1, arcRadius)
+  const nRows = Math.max(1, Math.round(rows))
+  const pathLen = nRows * rowLen + (nRows - 1) * Math.PI * r   // straights + connecting arcs (open ends)
+  const cells = Math.max(1, Math.round(pathLen / Math.max(1e-3, segmentSpace)))
+  const N = Math.max(96, cells * 6)
   const half = depth / 2
   const positions = new Float32Array((N + 1) * 2 * 3)
   const uvs = new Float32Array((N + 1) * 2 * 2)
   for (let i = 0; i <= N; i++) {
-    const s = (i / N) * perimeter
-    const p = racetrackPoint(s, straightLen, arcLen, r)
+    const s = (i / N) * pathLen
+    const p = serpentinePoint(s, rowLen, r)
     const a = i * 2, b = i * 2 + 1
     positions[a * 3] = p.x; positions[a * 3 + 1] = p.y; positions[a * 3 + 2] = half
     positions[b * 3] = p.x; positions[b * 3 + 1] = p.y; positions[b * 3 + 2] = -half
