@@ -5,6 +5,7 @@
 
 export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
+export type RingShape = 'circle' | 'diamond' | 'square'
 export type MappingKind = 'across' | 'perbar' | 'field'
 export type Direction = 'up' | 'right' | 'down' | 'left'
 export type MirrorKind = 'none' | 'horizontal' | 'vertical' | 'both'
@@ -68,6 +69,8 @@ export interface ShapeConfig {
   pivot?: number
   /** Stack layout: disc size multiplier, 1 = touches edges, >1 bleeds past to fill the frame. */
   ringScale?: number
+  /** Stack layout: ring contour — circle / diamond / square (optional, defaults to circle). */
+  ringShape?: RingShape
 }
 
 export interface ColorConfig {
@@ -157,6 +160,7 @@ export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as 
 export const BLEND_MODES: BlendKind[] = ['normal', 'lighten', 'screen', 'add', 'multiply', 'darken', 'overlay']
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
 export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack']
+export const RING_SHAPES: RingShape[] = ['circle', 'diamond', 'square']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
 export const MIRROR_KINDS: MirrorKind[] = ['none', 'horizontal', 'vertical', 'both']

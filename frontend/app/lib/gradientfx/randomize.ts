@@ -32,9 +32,11 @@ function randShape(rng: Rng): ShapeConfig {
     direction: rng.pick(['up', 'down', 'up', 'down', 'left', 'right'] as const),
     mirror: rng.pick(['none', 'none', 'none', 'horizontal', 'vertical', 'both'] as const),
     valley: rng.range(0.15, 0.85),
-    // Stack-only (ignored by other layouts): rotation per ring + off-center pivot.
+    // Stack-only (ignored by other layouts): rotation per ring + off-center pivot + contour.
     rotStep: rng.range(3, 18),
     pivot: rng.chance(0.6) ? rng.range(0.04, 0.22) : 0,
+    ringScale: rng.chance(0.4) ? rng.range(1, 1.8) : 1,
+    ringShape: rng.pick(['circle', 'circle', 'diamond', 'square'] as const),
   }
 }
 
@@ -164,7 +166,7 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
       {
         blend: 'normal', opacity: 1,
         // count = ring count; rotStep + pivot drive the ripple/spiral. Other shape fields unused.
-        shape: { type: 'bands', count: 13, minDepth: 0.5, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.5, direction: 'up', mirror: 'none', valley: 0.5, rotStep: 8, pivot: 0.1, ringScale: 1 },
+        shape: { type: 'bands', count: 13, minDepth: 0.5, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.5, direction: 'up', mirror: 'none', valley: 0.5, rotStep: 8, pivot: 0.1, ringScale: 1, ringShape: 'circle' },
         // Reference ramp: blue → yellow → orange → pink (linear; rotated per ring).
         color: { stops: [{ color: '#5b6ee8', pos: 0 }, { color: '#e9f25a', pos: 0.34 }, { color: '#f3a85f', pos: 0.6 }, { color: '#f6c2e2', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },

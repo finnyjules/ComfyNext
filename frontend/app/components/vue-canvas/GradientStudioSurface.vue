@@ -11,7 +11,7 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import {
-  ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -312,6 +312,7 @@ function setLayout(l: LayoutKind) {
     if (s.rotStep == null) s.rotStep = 8
     if (s.pivot == null) s.pivot = 0.1
     if (s.ringScale == null) s.ringScale = 1
+    if (s.ringShape == null) s.ringShape = 'circle'
   }
 }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
@@ -433,7 +434,13 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Pivot</span><span class="text-white/40">{{ (layer.shape.pivot ?? 0.1).toFixed(2) }}</span></label>
           <input v-model.number="layer.shape.pivot" type="range" min="0" max="0.6" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Disc size</span><span class="text-white/40">{{ (layer.shape.ringScale ?? 1).toFixed(2) }}×</span></label>
-          <input v-model.number="layer.shape.ringScale" type="range" min="1" max="2.2" step="0.02" v-studio-reset class="studio-range w-full" />
+          <input v-model.number="layer.shape.ringScale" type="range" min="1" max="2.2" step="0.02" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 block text-xs text-white/60">Ring shape</label>
+          <div class="grid grid-cols-3 gap-1">
+            <button v-for="rs in RING_SHAPES" :key="rs" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                    :class="(layer.shape.ringShape ?? 'circle') === rs ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                    @click="layer.shape.ringShape = rs">{{ rs }}</button>
+          </div>
         </template>
         <template v-if="!isStack">
         <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
