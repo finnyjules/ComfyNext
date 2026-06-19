@@ -412,8 +412,10 @@ watch(frontLocked, (fl) => {
 }, { immediate: true })
 
 // Streamer reads best in the orthographic (parallel) projection — like STG's ribbon. Default to
-// it when the effect is selected, but leave the Projection control free (unlike String's lock).
-watch(effectId, (id) => { if (id === 'streamer') projection.value = 'isometric' })
+// it when the effect is selected/loaded, but leave the Projection control free (unlike String's
+// lock). immediate so a freshly-opened Streamer comes up orthographic; a saved node's stored
+// projection is applied afterward in the load path and still wins.
+watch(effectId, (id) => { if (id === 'streamer') projection.value = 'isometric' }, { immediate: true })
 
 const cfg = computed(() => ({
   effectId: effect.value.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
