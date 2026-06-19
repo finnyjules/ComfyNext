@@ -67,7 +67,9 @@ const controls: ControlSpec[] = [
   { key: 'doodleCount', label: 'Doodle count', kind: 'slider', min: 0, max: 40, step: 1, default: 16, group: 'Doodles' },
   { key: 'doodleSize', label: 'Doodle size', kind: 'slider', min: 20, max: 160, step: 2, default: 60, group: 'Doodles' },
   { key: 'doodleColorMode', label: 'Doodle color', kind: 'select', options: ['palette', 'white'], default: 'palette', group: 'Doodles' },
-  { key: 'doodleWidth', label: 'Doodle stroke', kind: 'slider', min: 1, max: 12, step: 0.5, default: 3, group: 'Doodles' },
+  { key: 'doodleWidth', label: 'Doodle width', kind: 'slider', min: 1, max: 12, step: 0.5, default: 3, group: 'Doodles' },
+  { key: 'doodleStroke', label: 'Doodle outline', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Doodles' },
+  { key: 'doodleStrokeColor', label: 'Outline color', kind: 'color', default: '#000000', group: 'Doodles' },
   // Motion
   { key: 'revealMode', label: 'Reveal mode', kind: 'select', options: ['animate', 'hold'], default: 'animate', group: 'Motion' },
   { key: 'speed', label: 'Speed (0 = stop)', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
@@ -315,16 +317,23 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     const dRng = mulberry32((seed >>> 0) ^ 0x165667b1)
     const size = n(p, 'doodleSize')
     const field = doodleField(dRng, n(p, 'doodleCount'), W, H, [size * 0.6, size * 1.4])
-    octx.lineCap = 'round'; octx.lineJoin = 'round'; octx.lineWidth = n(p, 'doodleWidth')
+    const dWidth = n(p, 'doodleWidth')
+    const dStroke = n(p, 'doodleStroke')   // outline width on each side of the doodle line
+    const dStrokeCol = String(p.doodleStrokeColor)
+    octx.lineCap = 'round'; octx.lineJoin = 'round'
     const dmode = String(p.doodleColorMode)
     for (const d of field) {
       if (glitch < d.appearAt) continue
-      octx.strokeStyle = dmode === 'white' ? '#ffffff' : palCols[d.colorIndex % palCols.length]!
+      // build the path (in device space — transform applied during point recording, then restored)
       octx.save(); octx.translate(d.x, d.y); octx.rotate(d.rotation); octx.scale(d.scale, d.scale)
       octx.beginPath()
       d.points.forEach((pt, k) => { if (k === 0) octx.moveTo(pt.x, pt.y); else octx.lineTo(pt.x, pt.y) })
       octx.restore()
-      octx.stroke()
+      if (dStroke > 0) {   // outline behind, then the coloured line on top
+        octx.strokeStyle = dStrokeCol; octx.lineWidth = dWidth + 2 * dStroke; octx.stroke()
+      }
+      octx.strokeStyle = dmode === 'white' ? '#ffffff' : palCols[d.colorIndex % palCols.length]!
+      octx.lineWidth = dWidth; octx.stroke()
     }
   }
 
