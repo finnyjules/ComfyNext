@@ -36,6 +36,7 @@ const controls: ControlSpec[] = [
   { key: 'fontVaryUnit', label: 'Vary font by', kind: 'select', options: ['off', 'line', 'word', 'character'], default: 'off', group: 'Type' },
   { key: 'weightJitter', label: 'Weight jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
   { key: 'slantJitter', label: 'Italic jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
+  { key: 'fontSeed', label: 'Font jitter seed', kind: 'slider', min: 0, max: 999, step: 1, default: 0, group: 'Type' },
   { key: 'textStroke', label: 'Text stroke', kind: 'slider', min: 0, max: 16, step: 0.5, default: 0, group: 'Type' },
   { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Type' },
   // Color
@@ -221,6 +222,9 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   // the white matte and the stroke pass so they stay aligned.
   const varyUnit = String(p.fontVaryUnit)
   const wJit = n(p, 'weightJitter'), sJit = n(p, 'slantJitter')
+  // dedicated, churn-independent seed so the weight/italic pattern is stable across the
+  // animation and rerolls only with the fontSeed control
+  const fontBase = (hashSeed(textLines(p).join('|')) ^ Math.imul((n(p, 'fontSeed') | 0) + 1, 0x85ebca6b)) >>> 0
   const hasWeight = fontHasWeightAxis(family)
   const fontAt = (w: number) => `${Math.round(w)} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
   interface PlacedGlyph { ch: string; cx: number; cy: number; sx: number; slant: number; font: string; origW: number }
@@ -236,7 +240,7 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
       prevSpace = isSpace
       if (!isSpace) {
         const unitId = varyUnit === 'line' ? i : varyUnit === 'word' ? i * 1000 + word : varyUnit === 'character' ? globalChar : -1
-        const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, seed, weight, wJit, sJit)
+        const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, fontBase, weight, wJit, sJit)
         const b = boxes[c]!
         glyphs.push({ ch, cx: b.x + b.w / 2, cy, sx, slant: jit.slant, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) })
       }
