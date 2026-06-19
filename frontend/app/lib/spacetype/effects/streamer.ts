@@ -22,11 +22,11 @@ const controls: ControlSpec[] = [
   { key: 'textGap', label: 'Text spacing', kind: 'slider', min: 0, max: 30, step: 1, default: 4, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 6, step: 0.5, default: 0, group: 'Type' },
   // Ribbon
+  { key: 'straightLength', label: 'Straight length', kind: 'slider', min: 80, max: 1400, step: 10, default: 572, group: 'Ribbon' },
+  { key: 'arcRadius', label: 'Turn radius', kind: 'slider', min: 12, max: 320, step: 2, default: 70, group: 'Ribbon' },
   { key: 'segmentSpace', label: 'Segment space', kind: 'slider', min: 6, max: 60, step: 1, default: 26, group: 'Ribbon' },
-  { key: 'segmentCount', label: 'Chars per row', kind: 'slider', min: 4, max: 60, step: 1, default: 22, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Ribbon' },
   { key: 'count', label: 'Streamers', kind: 'slider', min: 1, max: 5, step: 1, default: 1, group: 'Ribbon' },
-  { key: 'arcRadius', label: 'Arc radius', kind: 'slider', min: 20, max: 200, step: 2, default: 70, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
   // Color
   { key: 'fills', label: 'Gradient stops', kind: 'fillList', default: JSON.stringify([
@@ -184,8 +184,9 @@ export const streamerEffect: SpaceTypeEffect = {
     state = null
     const root = new three.Group()
 
-    const rowChars = Math.max(1, Math.round(n(params, 'segmentCount')))
     const segmentSpace = n(params, 'segmentSpace')
+    const straightLen = Math.max(segmentSpace, n(params, 'straightLength'))
+    const rowChars = straightLen / segmentSpace   // straight length in glyph-cell units (may be fractional)
     const rows = Math.max(1, Math.round(n(params, 'rows')))
     const depth = n(params, 'ribbonHeight')
     const arcRadius = n(params, 'arcRadius')
