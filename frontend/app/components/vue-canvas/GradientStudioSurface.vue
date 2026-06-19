@@ -311,6 +311,7 @@ function setLayout(l: LayoutKind) {
     const s = layer.value.shape
     if (s.rotStep == null) s.rotStep = 8
     if (s.pivot == null) s.pivot = 0.1
+    if (s.ringScale == null) s.ringScale = 1
   }
 }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
@@ -430,7 +431,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Rotation / ring</span><span class="text-white/40">{{ Math.round(layer.shape.rotStep ?? 8) }}°</span></label>
           <input v-model.number="layer.shape.rotStep" type="range" min="0" max="45" step="1" v-studio-reset class="studio-range mb-2 w-full" />
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Pivot</span><span class="text-white/40">{{ (layer.shape.pivot ?? 0.1).toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.pivot" type="range" min="0" max="0.6" step="0.01" v-studio-reset class="studio-range w-full" />
+          <input v-model.number="layer.shape.pivot" type="range" min="0" max="0.6" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Disc size</span><span class="text-white/40">{{ (layer.shape.ringScale ?? 1).toFixed(2) }}×</span></label>
+          <input v-model.number="layer.shape.ringScale" type="range" min="1" max="2.2" step="0.02" v-studio-reset class="studio-range w-full" />
         </template>
         <template v-if="!isStack">
         <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">

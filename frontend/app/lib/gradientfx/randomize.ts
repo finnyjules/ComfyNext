@@ -164,7 +164,7 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
       {
         blend: 'normal', opacity: 1,
         // count = ring count; rotStep + pivot drive the ripple/spiral. Other shape fields unused.
-        shape: { type: 'bands', count: 13, minDepth: 0.5, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.5, direction: 'up', mirror: 'none', valley: 0.5, rotStep: 8, pivot: 0.1 },
+        shape: { type: 'bands', count: 13, minDepth: 0.5, curveExp: 1, jitter: 0, peaks: 2, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0.5, direction: 'up', mirror: 'none', valley: 0.5, rotStep: 8, pivot: 0.1, ringScale: 1 },
         // Reference ramp: blue → yellow → orange → pink (linear; rotated per ring).
         color: { stops: [{ color: '#5b6ee8', pos: 0 }, { color: '#e9f25a', pos: 0.34 }, { color: '#f3a85f', pos: 0.6 }, { color: '#f6c2e2', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },

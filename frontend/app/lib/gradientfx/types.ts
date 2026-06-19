@@ -66,6 +66,8 @@ export interface ShapeConfig {
   rotStep?: number
   /** Stack layout: per-ring center orbit, 0 (concentric) .. 1 (off-center spiral). */
   pivot?: number
+  /** Stack layout: disc size multiplier, 1 = touches edges, >1 bleeds past to fill the frame. */
+  ringScale?: number
 }
 
 export interface ColorConfig {

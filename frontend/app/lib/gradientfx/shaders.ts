@@ -51,6 +51,7 @@ uniform float u_opacity[2];
 uniform float u_crisp[2];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
 uniform float u_rotStep[2];    // stack: gradient rotation per ring, radians
 uniform float u_pivot[2];      // stack: per-ring center orbit, 0..1
+uniform float u_ringScale[2];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
 
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
@@ -137,7 +138,7 @@ vec4 computeLayer(int i, vec2 p) {
   if (u_layout > 2.5) {
     int rings = int(count + 0.5);
     vec2 q = p - 0.5; q.x *= u_aspect;
-    float maxR = max(0.05, 0.5 - u_margin);
+    float maxR = max(0.05, (0.5 - u_margin) * max(0.1, u_ringScale[i]));
     float t = -1.0;
     for (int k = 39; k >= 0; k--) {
       if (k >= rings) continue;
