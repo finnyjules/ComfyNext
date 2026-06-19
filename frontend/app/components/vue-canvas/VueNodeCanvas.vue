@@ -9,7 +9,9 @@ import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
-import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers } from '~/composables/useCompositorLayers'
+import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
+import { readWiredTreatments } from '~/composables/useWiredTreatments'
+import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
@@ -2477,11 +2479,17 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     const keptSet = new Set(kept)
     const order = [...kept, ...presentKeys.filter(k => !keptSet.has(k))]
 
+    // Phase 2 masking: which wired content slots get a silhouette mask compiled
+    // into their layer{N}_mask input at submit (mirroring the editor's masking).
+    const treatments = readWiredTreatments(liveNode)
+    const maskJobs = planWiredMaskJobs(treatments, connectedSlots.map(s => s + 1))
+
     // Bake resolution mirrors the Frame's aspect: explicit artboard dims win,
     // else the lowest wired layer's native size, else a square default (a
-    // locals-only frame with no preset). Only needed when there are locals.
+    // locals-only frame with no preset). Needed when there are locals to bake
+    // OR mask jobs to render a silhouette for.
     let W = 0, H = 0
-    if (locals.length) {
+    if (locals.length || maskJobs.length) {
       const defs = liveNode.data?.widgetDefs as any[] | undefined
       const wv = liveNode.data?.widgetsValues as any[] | undefined
       const wi = defs?.findIndex((d: any) => d.name === 'width') ?? -1
@@ -2501,8 +2509,10 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         }
         if (!(W > 0 && H > 0)) { W = 1024; H = 1024 }
       }
-      await ensureLayerFonts(locals, W)
-      await ensureLayerImages(locals)
+      if (locals.length) {
+        await ensureLayerFonts(locals, W)
+        await ensureLayerImages(locals)
+      }
     }
 
     const localById = new Map(locals.map(l => [l.id, l] as [string, LocalLayer]))
@@ -2576,6 +2586,127 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       setNamedWidget(comp, `layer${slot + 1}_z`, z, objectInfo.value)
     }
 
+    // ── Phase 2 masking: compile each wired content slot's silhouette mask into
+    // its layer{N}_mask input, so the SERVER render honours the same masking the
+    // editor shows. The Python node folds a = a*(1-mask); LoadImage MASK = 1-alpha
+    // of the uploaded PNG. So we upload a PNG whose ALPHA = the mask source's
+    // shape → MASK = 1-shape → node keeps content where the source is opaque
+    // (destination-in). Local sources that masked something can optionally be
+    // hidden from the composite (showSource:false).
+    const hiddenLocalMaskSources = new Set<string>() // local layer ids to drop
+
+    // Resolve a wired slot's upstream image URL + transform from the LIVE node
+    // (mirrors collectCompositorLayers' edge walk + reads layer{N}_* widgets).
+    const liveDefs = liveNode.data?.widgetDefs as any[] | undefined
+    const liveWv = liveNode.data?.widgetsValues as any[] | undefined
+    const liveWidget = (name: string): any => {
+      const i = liveDefs?.findIndex((d: any) => d?.name === name) ?? -1
+      return i >= 0 ? liveWv?.[i] : undefined
+    }
+    const resolveWiredSlot = (slot1: number): { url: string; x: number; y: number; rotation: number; scale: number } | null => {
+      const edge = (edges.value as any[]).find((e: any) =>
+        e.target === liveNode.id && e.targetHandle === `input-${slot1 - 1}`)
+      if (!edge) return null
+      const src = (nodes.value as any[]).find((n: any) => n.id === edge.source)
+      const url = getUpstreamImageUrl(src)
+      if (!url) return null
+      return {
+        url,
+        x: Number(liveWidget(`layer${slot1}_x`)) || 0,
+        y: Number(liveWidget(`layer${slot1}_y`)) || 0,
+        rotation: Number(liveWidget(`layer${slot1}_rotation`)) || 0,
+        scale: Number(liveWidget(`layer${slot1}_scale`)) || 1,
+      }
+    }
+
+    for (const job of maskJobs) {
+      const { contentSlot, sourceKey, showSource } = job
+      // Respect a hand-wired mask: never clobber an existing layer{N}_mask link.
+      const existingMask = comp.inputs.find((p: any) => p?.name === `layer${contentSlot}_mask`)
+      if (existingMask?.link != null) {
+        console.log('[compositor mask] slot', contentSlot, 'already has a wired mask — skipping')
+        continue
+      }
+      if (!(W > 0 && H > 0)) continue
+
+      // Render the source's shape (alpha) to a W×H canvas.
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(W))
+      canvas.height = Math.max(1, Math.round(H))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) continue
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+      if (sourceKey.startsWith('w:')) {
+        const srcSlot = Number(sourceKey.slice(2))
+        const w = resolveWiredSlot(srcSlot)
+        if (!w) { console.warn('[compositor mask] could not resolve wired source', sourceKey); continue }
+        let img: HTMLImageElement
+        try { img = await loadImage(w.url) } catch { console.warn('[compositor mask] image load failed', w.url); continue }
+        // Clean silhouette: full opacity, normal blend — only the shape matters.
+        drawWiredImageLayer(ctx, img, { x: w.x, y: w.y, scale: w.scale, rotation: w.rotation, opacity: 1, blend: 'normal' }, canvas.width, canvas.height)
+      } else {
+        const layer = localById.get(sourceKey.slice(2))
+        if (!layer) { console.warn('[compositor mask] could not resolve local source', sourceKey); continue }
+        drawLayerSilhouette(ctx, { type: 'local', key: sourceKey, layer }, canvas.width, canvas.height)
+      }
+
+      const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
+      if (!blob) { console.warn('[compositor mask] toBlob returned null for slot', contentSlot); continue }
+
+      const file = new File([blob], `comfynext_mask_${comp.id}_${contentSlot}_${Date.now()}.png`, { type: 'image/png' })
+      const fd = new FormData()
+      fd.append('image', file)
+      fd.append('overwrite', 'true')
+      let name: string
+      try {
+        const res = await fetch('/upload/image', { method: 'POST', body: fd })
+        if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
+        name = (await res.json())?.name || file.name
+      } catch (err) {
+        console.error('[compositor mask] upload failed:', err)
+        continue
+      }
+
+      // Find-or-create the layer{N}_mask MASK port and wire ONLY the LoadImage's
+      // MASK output (slot index 1) into it. The IMAGE output is left unlinked.
+      let maskIdx = comp.inputs.findIndex((p: any) => p?.name === `layer${contentSlot}_mask`)
+      if (maskIdx < 0) { comp.inputs.push({ name: `layer${contentSlot}_mask`, type: 'MASK', link: null }); maskIdx = comp.inputs.length - 1 }
+
+      const loadId = (workflow.last_node_id || 0) + 1
+      workflow.last_node_id = loadId
+      const maskLink = (workflow.last_link_id || 0) + 1
+      workflow.last_link_id = maskLink
+
+      workflow.nodes.push({
+        id: loadId,
+        type: 'LoadImage',
+        pos: [(comp.pos?.[0] ?? 0) - 520, (comp.pos?.[1] ?? 0) + contentSlot * 60],
+        size: [220, 280],
+        flags: {},
+        mode: 0,
+        inputs: [],
+        outputs: [
+          { name: 'IMAGE', type: 'IMAGE', links: [], slot_index: 0 },
+          { name: 'MASK', type: 'MASK', links: [maskLink], slot_index: 1 },
+        ],
+        properties: {},
+        widgets_values: [name, 'image'],
+      })
+      comp.inputs[maskIdx].link = maskLink
+      workflow.links.push([maskLink, loadId, 1, comp.id, maskIdx, 'MASK'])
+      console.log('[compositor mask] slot', contentSlot, 'masked by', sourceKey)
+
+      // Hide the source from the composite unless the user opted to keep it.
+      if (!showSource) {
+        if (sourceKey.startsWith('w:')) {
+          setNamedWidget(comp, `layer${Number(sourceKey.slice(2))}_opacity`, 0, objectInfo.value)
+        } else {
+          hiddenLocalMaskSources.add(sourceKey.slice(2))
+        }
+      }
+    }
+
     // Walk bottom→top: stamp each wired layer's z, accumulating contiguous local
     // runs and flushing them (at the run's bottom depth) when a wired layer or
     // the end interrupts the run. Stack index = z, so all depths are distinct.
@@ -2599,6 +2730,8 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       } else {
         const layer = localById.get(key.slice(2))
         if (!layer || layer.visible === false) continue
+        // Local layer used as a mask source with showSource:false → drop it.
+        if (hiddenLocalMaskSources.has(layer.id)) continue
         const blend = layer.blend && layer.blend !== 'normal' ? layer.blend : null
         if (blend) {
           await flush()
