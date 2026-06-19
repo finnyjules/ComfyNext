@@ -19,6 +19,7 @@ const controls: ControlSpec[] = [
   { key: 'font', label: 'Font', kind: 'font', default: 'IBM Plex Mono', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 0, max: 100, step: 1, default: 50, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: 0, max: 100, step: 1, default: 40, group: 'Type' },
+  { key: 'textGap', label: 'Text spacing', kind: 'slider', min: 0, max: 30, step: 1, default: 4, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 6, step: 0.5, default: 0, group: 'Type' },
   // Ribbon
   { key: 'segmentSpace', label: 'Segment space', kind: 'slider', min: 6, max: 60, step: 1, default: 26, group: 'Ribbon' },
@@ -99,7 +100,8 @@ function buildGradientTexture(three: typeof THREE, stops: string[]): THREE.Canva
  *  text. Maps once across the whole path; the text flows by scrolling the texture offset. */
 function buildTextTexture(three: typeof THREE, p: Params, cells: number): THREE.CanvasTexture {
   const family = resolveFontFamily(String(p.font))
-  const txt = streamerText(p)
+  // Append blank cells so each repetition of the string is separated by a visible gap.
+  const txt = streamerText(p) + ' '.repeat(Math.max(0, Math.round(n(p, 'textGap'))))
   const CELL = 64
   const W = Math.max(1, cells) * CELL
   const c = document.createElement('canvas'); c.width = W; c.height = CELL
