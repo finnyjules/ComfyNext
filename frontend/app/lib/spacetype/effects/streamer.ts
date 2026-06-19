@@ -24,6 +24,7 @@ const controls: ControlSpec[] = [
   { key: 'segmentSpace', label: 'Segment space', kind: 'slider', min: 6, max: 60, step: 1, default: 26, group: 'Ribbon' },
   { key: 'segmentCount', label: 'Chars per row', kind: 'slider', min: 4, max: 60, step: 1, default: 22, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Ribbon' },
+  { key: 'count', label: 'Streamers', kind: 'slider', min: 1, max: 5, step: 1, default: 1, group: 'Ribbon' },
   { key: 'arcRadius', label: 'Arc radius', kind: 'slider', min: 20, max: 200, step: 2, default: 70, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
   // Color
@@ -120,27 +121,32 @@ function buildTextTexture(three: typeof THREE, p: Params, cells: number): THREE.
   return t
 }
 
+// One serpentine ribbon. Each has its own mutable position buffer + front material (so it can flow
+// at its own motion phase), but shares the immutable uv/index data and the gradient texture.
+interface Instance {
+  posAttr: THREE.BufferAttribute
+  positions: Float32Array
+  front: THREE.ShaderMaterial
+  phase: number        // constant arc-length offset → staggered motion + distinct visible text
+}
 interface State {
   three: typeof THREE
   textTex: THREE.CanvasTexture
-  front: THREE.ShaderMaterial
   cells: number
-  // for per-frame geometry flow: slide the band's path window so the SHAPE moves (text glued)
-  posAttr: THREE.BufferAttribute
-  positions: Float32Array
   samples: number      // path samples (N+1)
   pathLen: number
   rowLen: number
   arcR: number
   half: number
+  instances: Instance[]
 }
 let state: State | null = null
 
-/** Resample the band's vertices for a path-window starting at arc-length `s0`, re-centered on the
- *  window's centroid so the strip stays framed while the serpentine shape flows through it (a
+/** Resample one instance's band vertices for a path-window starting at arc-length `s0`, re-centered
+ *  on the window's centroid so the strip stays framed while the serpentine shape flows through it (a
  *  serpentine doesn't translate uniformly, so the centroid is the stable reference, not an
  *  endpoint). The text/gradient ride along via the matching uScroll. */
-function flowGeometry(s: State, s0: number): void {
+function flowGeometry(s: State, inst: Instance, s0: number): void {
   const N = s.samples - 1
   const pts: { x: number; y: number }[] = []
   let cx = 0, cy = 0
@@ -149,12 +155,13 @@ function flowGeometry(s: State, s0: number): void {
     pts.push(p); cx += p.x; cy += p.y
   }
   cx /= (N + 1); cy /= (N + 1)
+  const pos = inst.positions
   for (let i = 0; i <= N; i++) {
     const p = pts[i]!, a = i * 2, b = i * 2 + 1
-    s.positions[a * 3] = p.x - cx; s.positions[a * 3 + 1] = p.y - cy; s.positions[a * 3 + 2] = s.half
-    s.positions[b * 3] = p.x - cx; s.positions[b * 3 + 1] = p.y - cy; s.positions[b * 3 + 2] = -s.half
+    pos[a * 3] = p.x - cx; pos[a * 3 + 1] = p.y - cy; pos[a * 3 + 2] = s.half
+    pos[b * 3] = p.x - cx; pos[b * 3 + 1] = p.y - cy; pos[b * 3 + 2] = -s.half
   }
-  s.posAttr.needsUpdate = true
+  inst.posAttr.needsUpdate = true
 }
 
 export const streamerEffect: SpaceTypeEffect = {
@@ -172,43 +179,62 @@ export const streamerEffect: SpaceTypeEffect = {
     const rows = Math.max(1, Math.round(n(params, 'rows')))
     const depth = n(params, 'ribbonHeight')
     const arcRadius = n(params, 'arcRadius')
+    const count = Math.max(1, Math.round(n(params, 'count')))
 
     const geo = buildStreamerGeometry(rowChars, segmentSpace, rows, depth, arcRadius)
     const cells = geo.cells
-    const bufferGeo = new three.BufferGeometry()
-    bufferGeo.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
-    bufferGeo.setAttribute('uv', new three.BufferAttribute(geo.uvs, 2))
-    bufferGeo.setIndex(new three.BufferAttribute(geo.indices, 1))
+    const samples = geo.positions.length / 6
+    const seg = rowChars * segmentSpace + Math.PI * arcRadius
+    const pathLen = rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius
 
     const gradTex = buildGradientTexture(three, gradientStops(params))
     const textTex = buildTextTexture(three, params, cells)
     const noStripes = String(params.noStripes) === 'on' ? 1 : 0
-
-    const frontMat = new three.ShaderMaterial({
-      vertexShader: VERT, fragmentShader: FRONT_FRAG, side: three.FrontSide,
-      uniforms: {
-        uText: { value: textTex as THREE.Texture },
-        uGrad: { value: gradTex as THREE.Texture },
-        uTextColor: { value: new three.Color(String(params.textColor)) },
-        uScroll: { value: 0 },
-        uNoStripes: { value: noStripes },
-      },
-    })
     const backMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.bSideColor)), side: three.BackSide })
-    root.add(new three.Mesh(bufferGeo, backMat))
-    root.add(new three.Mesh(bufferGeo, frontMat))
+
+    state = {
+      three, textTex, cells, samples, pathLen,
+      rowLen: rowChars * segmentSpace, arcR: arcRadius, half: depth / 2,
+      instances: [],
+    }
     root.userData.tex = textTex
     root.userData.tex2 = gradTex
 
-    const posAttr = bufferGeo.getAttribute('position') as THREE.BufferAttribute
-    const positions = geo.positions
-    state = {
-      three, textTex, front: frontMat, cells,
-      posAttr, positions, samples: positions.length / 6,
-      pathLen: rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius,
-      rowLen: rowChars * segmentSpace, arcR: arcRadius, half: depth / 2,
+    // Stack the ribbons vertically as parallel snaking bands, centered as a group. Each instance is
+    // centroid-centered by flowGeometry, so spacing one (rows+1)·2r step apart keeps a clean gap.
+    const stepY = (rows + 1) * 2 * arcRadius
+    for (let k = 0; k < count; k++) {
+      const positions = geo.positions.slice()   // own mutable copy (flowed independently)
+      const bufferGeo = new three.BufferGeometry()
+      bufferGeo.setAttribute('position', new three.BufferAttribute(positions, 3))
+      bufferGeo.setAttribute('uv', new three.BufferAttribute(geo.uvs, 2))
+      bufferGeo.setIndex(new three.BufferAttribute(geo.indices, 1))
+
+      const frontMat = new three.ShaderMaterial({
+        vertexShader: VERT, fragmentShader: FRONT_FRAG, side: three.FrontSide,
+        uniforms: {
+          uText: { value: textTex as THREE.Texture },
+          uGrad: { value: gradTex as THREE.Texture },
+          uTextColor: { value: new three.Color(String(params.textColor)) },
+          uScroll: { value: 0 },
+          uNoStripes: { value: noStripes },
+        },
+      })
+
+      const sub = new three.Group()
+      sub.add(new three.Mesh(bufferGeo, backMat))
+      sub.add(new three.Mesh(bufferGeo, frontMat))
+      sub.position.y = (k - (count - 1) / 2) * stepY
+      root.add(sub)
+
+      const inst: Instance = {
+        posAttr: bufferGeo.getAttribute('position') as THREE.BufferAttribute,
+        positions, front: frontMat,
+        phase: (k * 2 * seg) / count,   // spread starts across one 2-row period
+      }
+      state.instances.push(inst)
+      flowGeometry(state, inst, inst.phase)
     }
-    flowGeometry(state, 0)   // re-center on the window midpoint to match the per-frame flow
 
     // STG works in pixel units; our camera frames ~11 world units. Fit + center.
     const box = new three.Box3().setFromObject(root)
@@ -224,7 +250,7 @@ export const streamerEffect: SpaceTypeEffect = {
       fonts.load(`40px "${family}"`).then(() => {
         if (state && state.textTex === textTex) {
           const next = buildTextTexture(three, params, cells)
-          frontMat.uniforms.uText!.value = next
+          for (const inst of state.instances) inst.front.uniforms.uText!.value = next
           textTex.dispose()
           state.textTex = next; root.userData.tex = next
         }
@@ -240,11 +266,16 @@ export const streamerEffect: SpaceTypeEffect = {
     // fixed IN the moving ribbon. speed 0 = stopped.
     const seg = state.rowLen + Math.PI * state.arcR
     const periods = Math.max(0, Math.round(n(params, 'speed')))
-    const s0 = periods === 0 ? 0 : t01 * periods * 2 * seg
-    flowGeometry(state, s0)
-    const u = state.front.uniforms
-    u.uScroll!.value = state.pathLen > 0 ? s0 / state.pathLen : 0
-    u.uTextColor!.value.set(String(params.textColor))
-    u.uNoStripes!.value = String(params.noStripes) === 'on' ? 1 : 0
+    const base = periods === 0 ? 0 : t01 * periods * 2 * seg
+    const tc = String(params.textColor)
+    const ns = String(params.noStripes) === 'on' ? 1 : 0
+    for (const inst of state.instances) {
+      const s0 = base + inst.phase   // constant phase keeps the loop seamless, staggers the ribbons
+      flowGeometry(state, inst, s0)
+      const u = inst.front.uniforms
+      u.uScroll!.value = state.pathLen > 0 ? s0 / state.pathLen : 0
+      u.uTextColor!.value.set(tc)
+      u.uNoStripes!.value = ns
+    }
   },
 }
