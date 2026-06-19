@@ -4,8 +4,8 @@ import { parseFills } from '../fills'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { mulberry32, hashSeed } from '../rng'
 import {
-  revealGlitch, churnSeed, bandLayout, segmentRow, scaleXForGlitch, pickTypeColor, stripOffsets,
-  type TypeColorMode,
+  revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch, pickTypeColor, stripOffsets,
+  type TypeColorMode, type EaseMode,
 } from '../sliceGlitchLayout'
 import { doodleField } from '../doodleField'
 
@@ -45,17 +45,14 @@ const controls: ControlSpec[] = [
   { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
   { key: 'bgColor', label: 'Background', kind: 'color', default: '#141414', group: 'Color' },
-  // Glitch
-  { key: 'revealMode', label: 'Reveal mode', kind: 'select', options: ['animate', 'hold'], default: 'animate', group: 'Glitch' },
+  // Glitch (look — shape of the glitch, not its motion)
   { key: 'glitchAmount', label: 'Glitch (hold)', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Glitch' },
   { key: 'seed', label: 'Seed', kind: 'slider', min: 0, max: 999, step: 1, default: 0, group: 'Glitch' },
-  { key: 'revealFrac', label: 'Reveal length', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.4, group: 'Glitch' },
   { key: 'bandShift', label: 'Band shift', kind: 'slider', min: 0, max: 200, step: 2, default: 70, group: 'Glitch' },
   { key: 'tearAmount', label: 'Tear', kind: 'slider', min: 0, max: 80, step: 1, default: 22, group: 'Glitch' },
   { key: 'tearFrequency', label: 'Tear frequency', kind: 'slider', min: 1, max: 60, step: 1, default: 24, group: 'Glitch' },
   { key: 'sliceH', label: 'Slice height', kind: 'slider', min: 2, max: 40, step: 1, default: 8, group: 'Glitch' },
   { key: 'rgbSplit', label: 'RGB split', kind: 'slider', min: 0, max: 0.02, step: 0.0005, default: 0.004, group: 'Glitch' },
-  { key: 'churnRate', label: 'Churn rate', kind: 'slider', min: 0, max: 24, step: 1, default: 8, group: 'Glitch' },
   // Doodles
   { key: 'doodlesOn', label: 'Doodles', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Doodles' },
   { key: 'doodleCount', label: 'Doodle count', kind: 'slider', min: 0, max: 40, step: 1, default: 16, group: 'Doodles' },
@@ -63,8 +60,11 @@ const controls: ControlSpec[] = [
   { key: 'doodleColorMode', label: 'Doodle color', kind: 'select', options: ['palette', 'white'], default: 'palette', group: 'Doodles' },
   { key: 'doodleWidth', label: 'Doodle stroke', kind: 'slider', min: 1, max: 12, step: 0.5, default: 3, group: 'Doodles' },
   // Motion
-  // Freeze is via revealMode 'hold', not speed 0 — so speed is ≥ 1 cycle.
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 1, max: 4, step: 1, default: 1, group: 'Motion' },
+  { key: 'revealMode', label: 'Reveal mode', kind: 'select', options: ['animate', 'hold'], default: 'animate', group: 'Motion' },
+  { key: 'speed', label: 'Speed (0 = stop)', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
+  { key: 'ease', label: 'Reveal ease', kind: 'select', options: ['linear', 'in', 'out', 'in-out'], default: 'in-out', group: 'Motion' },
+  { key: 'revealFrac', label: 'Reveal length', kind: 'slider', min: 0.04, max: 0.9, step: 0.02, default: 0.3, group: 'Motion' },
+  { key: 'churnRate', label: 'Churn (0 = still)', kind: 'slider', min: 0, max: 24, step: 1, default: 8, group: 'Motion' },
 ]
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
@@ -287,14 +287,16 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
 
 function currentGlitch(p: Params, t01: number): number {
   if (String(p.revealMode) === 'hold') return n(p, 'glitchAmount')
-  const cycles = Math.max(1, Math.round(n(p, 'speed')) || 1)
+  const cycles = Math.round(n(p, 'speed'))
+  if (cycles <= 0) return 1                       // speed 0 = stop on the fully-revealed glitch
   const tt = (t01 * cycles) % 1
-  return revealGlitch(tt, n(p, 'revealFrac'))
+  return ease(revealGlitch(tt, n(p, 'revealFrac')), String(p.ease) as EaseMode)
 }
 
 function currentSeed(p: Params, t01: number): number {
   // text hash gives a stable per-message arrangement; the Seed slider rerolls it
   const base = (hashSeed(textLines(p).join('|')) ^ Math.imul((n(p, 'seed') | 0) + 1, 0x9e3779b1)) >>> 0
   if (String(p.revealMode) === 'hold') return base
+  if (Math.round(n(p, 'speed')) <= 0) return base // stopped: no churn flicker
   return churnSeed(t01, n(p, 'churnRate'), base)
 }

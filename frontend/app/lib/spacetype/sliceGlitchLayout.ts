@@ -3,11 +3,23 @@ import { mulberry32 } from './rng'
 export interface Band { y: number; h: number }
 export interface Segment { x: number; w: number; colorIndex: number }
 export type TypeColorMode = 'white' | 'palette' | 'mixed'
+export type EaseMode = 'linear' | 'in' | 'out' | 'in-out'
 
 /** glitch amount from loop time: linear ramp over [0, revealFrac], then 1. */
 export function revealGlitch(t01: number, revealFrac: number): number {
   if (revealFrac <= 0) return 1
   return Math.min(1, Math.max(0, t01) / revealFrac)
+}
+
+/** Shape a 0..1 progress with an easing curve (cubic). Endpoints are fixed at 0 and 1. */
+export function ease(x: number, mode: EaseMode): number {
+  const t = Math.min(1, Math.max(0, x))
+  switch (mode) {
+    case 'in': return t * t * t                                   // slow start, snaps at the end
+    case 'out': return 1 - Math.pow(1 - t, 3)                     // snaps immediately, eases out
+    case 'in-out': return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+    default: return t
+  }
 }
 
 /** Quantize loop time into churnRate steps; mix with base seed for a flicker seed. */

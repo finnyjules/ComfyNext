@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  revealGlitch, churnSeed, bandLayout, segmentRow, scaleXForGlitch,
+  revealGlitch, ease, churnSeed, bandLayout, segmentRow, scaleXForGlitch,
   pickTypeColor, stripOffsets,
 } from '../../app/lib/spacetype/sliceGlitchLayout'
 import { mulberry32 } from '../../app/lib/spacetype/rng'
@@ -16,6 +16,26 @@ describe('revealGlitch', () => {
   })
   it('reveal fraction 0 means always fully glitched', () => {
     expect(revealGlitch(0, 0)).toBeCloseTo(1)
+  })
+})
+
+describe('ease', () => {
+  it('fixes endpoints at 0 and 1 for every mode', () => {
+    for (const m of ['linear', 'in', 'out', 'in-out'] as const) {
+      expect(ease(0, m)).toBeCloseTo(0)
+      expect(ease(1, m)).toBeCloseTo(1)
+    }
+  })
+  it('linear is the identity', () => {
+    expect(ease(0.3, 'linear')).toBeCloseTo(0.3)
+  })
+  it('ease-in lags below linear (slow start), ease-out leads above (snappy)', () => {
+    expect(ease(0.3, 'in')).toBeLessThan(0.3)
+    expect(ease(0.3, 'out')).toBeGreaterThan(0.3)
+  })
+  it('clamps out-of-range input', () => {
+    expect(ease(-1, 'out')).toBeCloseTo(0)
+    expect(ease(2, 'in')).toBeCloseTo(1)
   })
 })
 
