@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { serpentinePoint, buildStreamerGeometry, gradientColorAt, buildRowLengths, serpentineVariedPoint } from '../../app/lib/spacetype/streamerLayout'
+import { serpentinePoint, buildStreamerGeometry, gradientColorAt, buildRowLengths, serpentineVariedPoint, minimalRowPeriod } from '../../app/lib/spacetype/streamerLayout'
 
 describe('serpentinePoint', () => {
   const rowLen = 100, r = 10
@@ -95,6 +95,19 @@ describe('serpentineVariedPoint', () => {
   it('row 0 length is honored before the first arc', () => {
     const p = serpentineVariedPoint(60, [120, 80, 80, 120], 10)
     expect(p.y).toBeCloseTo(0); expect(p.x).toBeCloseTo(60); expect(p.tx).toBeCloseTo(1)
+  })
+})
+
+describe('minimalRowPeriod', () => {
+  it('uniform lengths repeat every 2 rows (finest seamless step)', () => {
+    expect(minimalRowPeriod([100, 100, 100, 100])).toBe(2)
+    expect(minimalRowPeriod([100, 100])).toBe(2)
+  })
+  it('a jittered palindrome falls back to the full cycle', () => {
+    expect(minimalRowPeriod([80, 140, 140, 80])).toBe(4)
+  })
+  it('detects a genuine 2-row sub-period in a longer cycle', () => {
+    expect(minimalRowPeriod([90, 130, 90, 130, 90, 130])).toBe(2)
   })
 })
 

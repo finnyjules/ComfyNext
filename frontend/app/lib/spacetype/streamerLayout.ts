@@ -26,6 +26,24 @@ export function buildRowLengths(base: number, count: number, jitter: number, see
 }
 
 /**
+ * Smallest EVEN row-count `p` (dividing the cycle) over which `rowLens` already repeats — the
+ * minimal seamless motion period. Even so the boustrophedon direction parity also repeats. For a
+ * uniform ribbon this is 2 (one down-and-back), giving the finest seamless speed step; for a jittered
+ * palindrome it falls back to the full cycle. The geometry is periodic over this many rows, so
+ * advancing the motion by whole multiples of it loops with no jump.
+ */
+export function minimalRowPeriod(rowLens: number[]): number {
+  const C = rowLens.length
+  for (let p = 2; p < C; p += 2) {
+    if (C % p !== 0) continue
+    let ok = true
+    for (let k = p; k < C && ok; k++) if (Math.abs(rowLens[k]! - rowLens[k % p]!) > 1e-6) ok = false
+    if (ok) return p
+  }
+  return Math.max(2, C)
+}
+
+/**
  * Varied open serpentine at arc-length `s`: like serpentinePoint but each row takes its length from
  * the repeating `rowLens` cycle (length must be even). The path is periodic — advancing `s` by one
  * full cycle reproduces the shape translated straight down by C·2r — so the flow loops seamlessly

@@ -3,7 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import type { Fill, FillType } from '../fills'
 import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { resolveFontFamily } from '~/data/google-fonts'
-import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint } from '../streamerLayout'
+import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint, minimalRowPeriod } from '../streamerLayout'
 
 /**
  * STREAMER — an open serpentine ribbon: long straight rows joined by 180° half-circle arcs,
@@ -51,7 +51,7 @@ const controls: ControlSpec[] = [
   { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },
   { key: 'backStrokeColor', label: 'Back edge', kind: 'color', default: '#000000', group: 'Stroke' },
   // Motion
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
+  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 16, step: 1, default: 2, group: 'Motion' },
   // Transform (consumed by the engine)
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -1.07, group: 'Transform' },
@@ -203,8 +203,8 @@ interface State {
   cells: number
   samples: number      // path samples (N+1)
   pathLen: number        // constant sampling window width (nominal, uniform-based)
-  cycleArc: number       // arc-length of the full row-length cycle (the seamless motion period)
-  textPeriodArc: number  // arc-length of one text-string repetition (divides the cycle period)
+  periodArc: number      // arc-length of the MINIMAL seamless motion period (the speed unit)
+  textPeriodArc: number  // arc-length of one text-string repetition (divides the period)
   rowLens: number[]      // repeating per-row straight lengths
   arcR: number
   half: number
@@ -257,10 +257,12 @@ export const streamerEffect: SpaceTypeEffect = {
     const samples = geo.positions.length / 6
     const pathLen = rows * (rowChars * segmentSpace) + (rows - 1) * Math.PI * arcRadius
 
-    // Repeating per-row length cycle (jitter 0 → uniform = the original look). The cycle's arc length
-    // is the seamless motion period: advancing by whole cycles reproduces the shape (translated).
+    // Repeating per-row length cycle (jitter 0 → uniform = the original look). The MINIMAL period
+    // (2 rows when uniform, the full cycle when jittered) is the seamless motion unit: advancing by
+    // whole multiples of it reproduces the shape (translated), so the loop never jumps.
     const rowLens = buildRowLengths(straightLen, rows, n(params, 'lengthJitter'), Math.round(n(params, 'lengthSeed')))
-    const cycleArc = rowLens.reduce((a, L) => a + L + Math.PI * arcRadius, 0)
+    const period = minimalRowPeriod(rowLens)
+    const periodArc = rowLens.slice(0, period).reduce((a, L) => a + L + Math.PI * arcRadius, 0)
 
     const textTex = buildTextTexture(three, params)
     const noStripes = String(params.noStripes) === 'on' ? 1 : 0
@@ -281,16 +283,16 @@ export const streamerEffect: SpaceTypeEffect = {
       stroke: strokeWidth, strokeColor: String(params.backStrokeColor ?? '#000000'),
     })
 
-    // Tie the text repeat to the geometry: fit a whole number of string-units into the full cycle
-    // (so the text realigns every cycle → seamless loop, no scroll seam). Pick the unit count
-    // nearest to the natural glyph density (one cell ≈ segmentSpace).
+    // Tie the text repeat to the geometry: fit a whole number of string-units into the period (so
+    // the text realigns every period → seamless loop, no scroll seam). Pick the unit count nearest
+    // to the natural glyph density (one cell ≈ segmentSpace).
     const unitCells = textUnitCells(params)
-    const m = Math.max(1, Math.round(cycleArc / (unitCells * segmentSpace)))
-    const textPeriodArc = cycleArc / m
+    const m = Math.max(1, Math.round(periodArc / (unitCells * segmentSpace)))
+    const textPeriodArc = periodArc / m
     const textRepeat = pathLen / textPeriodArc   // string-units across the whole band
 
     state = {
-      three, textTex, cells, samples, pathLen, cycleArc, textPeriodArc,
+      three, textTex, cells, samples, pathLen, periodArc, textPeriodArc,
       rowLens, arcR: arcRadius, half: depth / 2,
       instances: [],
     }
@@ -322,7 +324,7 @@ export const streamerEffect: SpaceTypeEffect = {
       const inst: Instance = {
         posAttr: bufferGeo.getAttribute('position') as THREE.BufferAttribute,
         positions, front: frontMat,
-        phase: (k * cycleArc) / count,   // spread starts across one full cycle
+        phase: (k * periodArc) / count,   // spread starts across one period
       }
       state.instances.push(inst)
       flowGeometry(state, inst, inst.phase)
@@ -353,12 +355,12 @@ export const streamerEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    // The SHAPE flows: slide the path window by whole row-length cycles (seamless), re-centered each
+    // The SHAPE flows: slide the path window by whole minimal-periods (seamless), re-centered each
     // frame. The text rides along, scrolled in units of its repeat period (s0 / textPeriodArc) so
-    // it stays glued to the moving ribbon AND wraps cleanly — over one cycle s0 advances a whole
+    // it stays glued to the moving ribbon AND wraps cleanly — over one period s0 advances a whole
     // number of text-units, so the loop has no jump. speed 0 = stopped.
     const periods = Math.max(0, Math.round(n(params, 'speed')))
-    const base = periods === 0 ? 0 : t01 * periods * state.cycleArc
+    const base = periods === 0 ? 0 : t01 * periods * state.periodArc
     const tc = String(params.textColor)
     const ns = String(params.noStripes) === 'on' ? 1 : 0
     for (const inst of state.instances) {
