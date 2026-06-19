@@ -119,9 +119,9 @@ const baking = ref(false)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
-const SECTION_ORDER = ['Path', 'Type', 'Blend', 'Style', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
+const SECTION_ORDER = ['Path', 'Type', 'Stack', 'Occlusion', 'Look', 'Blend', 'Style', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Glitch', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
 const openSections = reactive<Record<string, boolean>>({
-  Path: true, Type: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
+  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
@@ -216,13 +216,14 @@ function texOpts() {
   const multiAware = effect.value.controls.some(c => c.kind === 'textList')
   const rawTexts = String(params.text ?? '').split('\n').map(t => t.trim()).filter(Boolean)
   const texts = rawTexts.length ? rawTexts : ['']
-  // Coil sizes each segment to its text and adds spacing via margin controls, so it takes
-  // the RAW uppercased word (no trailing-gap pad). Tiling effects (ribbon/stripes/field)
-  // keep buildRibbonLabel's trailing gap so repeated text has space between copies.
-  const rawWords = effectId.value === 'coil' || effectId.value === 'elastic'
+  // Coil/elastic/echo size to their own text (no tiling), so they take the RAW uppercased
+  // word with NO trailing-gap pad — otherwise the gap is dead space that throws off centering.
+  // Tiling effects (ribbon/stripes/field) keep buildRibbonLabel's trailing gap so repeated
+  // text has space between copies.
+  const rawWords = effectId.value === 'coil' || effectId.value === 'elastic' || effectId.value === 'echo'
   const labels = multiAware
     ? texts.map(t => (rawWords ? t.toUpperCase() : buildRibbonLabel(t, 'upper')))
-    : [buildRibbonLabel(texts[0] ?? '', 'upper')]
+    : [rawWords ? (texts[0] ?? '').toUpperCase() : buildRibbonLabel(texts[0] ?? '', 'upper')]
   return {
     label: labels[0]!,
     labels,
@@ -360,6 +361,8 @@ watch(
     rowHeight: 0, fontHeight: 0, waveLength: 0,
     // boost live params (read per-frame in update)
     depth: 0, tumble: 0, holdFraction: 0, extrudeMode: 0, punchDistance: 0, cubeFlip: 0, cubeAlternate: 0,
+    // echo live param (drift advances per-frame in update)
+    driftSpeed: 0,
   }) + JSON.stringify(gradientStops),
   async () => { await ensureEffectFonts(); rebuild() },
 )
@@ -560,8 +563,8 @@ async function generateVideo() {
                   </select>
                   <StudioColor v-model="f.a" />
                   <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
-                  <input v-if="f.type === 'stripes'" type="range" v-model.number="f.angle"
-                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" title="Stripe angle" />
+                  <input v-if="f.type === 'stripes' || f.type === 'gradient'" type="range" v-model.number="f.angle"
+                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" :title="f.type === 'gradient' ? 'Gradient angle' : 'Stripe angle'" />
                   <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
                          v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range w-14 shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>

@@ -47,7 +47,6 @@ const isOpen = ref(props.open)
 .studio-sheen::before {
   transform: translateY(calc(var(--studio-scroll, 0) * 0.4px));
   background: linear-gradient(115deg, transparent 18%, rgba(255, 255, 255, 0.055) 50%, transparent 82%);
-  filter: url(#studioRefract);
 }
 .studio-sheen::after {
   transform: translateY(calc(var(--studio-scroll, 0) * 0.22px));

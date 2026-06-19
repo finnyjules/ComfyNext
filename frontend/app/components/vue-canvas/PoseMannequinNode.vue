@@ -104,7 +104,7 @@ function openEditor() {
 
 <template>
   <div
-    class="pose-node relative select-none w-[260px] rounded-xl border backdrop-blur-sm"
+    class="pose-node relative select-none w-[260px] rounded-xl border"
     :class="data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10'"
     :style="{
       background: 'linear-gradient(180deg, #252525 0%, #1e1e1e 100%)',

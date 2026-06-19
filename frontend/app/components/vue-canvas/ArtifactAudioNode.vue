@@ -206,7 +206,7 @@ async function downloadAudio() {
     />
 
     <div
-      class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10 backdrop-blur-sm"
+      class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
       <!-- File picker — always mounted so Replace works in any state. -->

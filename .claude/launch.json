@@ -8,6 +8,18 @@
       "port": 3002
     },
     {
+      "name": "frontend-harness",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "frontend", "dev", "--host", "127.0.0.1"],
+      "autoPort": true
+    },
+    {
+      "name": "frontend-sg",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "frontend", "dev", "--host", "::", "--port", "3017"],
+      "port": 3017
+    },
+    {
       "name": "comfyui",
       "runtimeExecutable": "/Users/julien/Documents/GitHub/ComfyNext/.venv/bin/python3.12",
       "runtimeArgs": ["main.py", "--listen", "127.0.0.1", "--port", "8188"],

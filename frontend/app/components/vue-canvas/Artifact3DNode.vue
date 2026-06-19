@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
     <Handle :id="`output-${glbOutIdx}`" type="source" :position="Position.Right"
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]" :style="{ borderColor: stringColor, top: '50%' }" />
 
-    <div class="rounded-lg overflow-hidden bg-[#0e0e0e] border backdrop-blur-sm"
+    <div class="rounded-lg overflow-hidden bg-[#0e0e0e] border"
       :class="data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10'"
       style="box-shadow: 0 4px 16px rgba(0,0,0,0.4)">
       <!-- Header -->

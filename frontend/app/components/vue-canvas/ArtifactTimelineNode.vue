@@ -154,7 +154,7 @@ function runThisNode() {
 
     <div
       ref="shellRef"
-      class="artifact-frame relative rounded-lg overflow-hidden bg-[#0e0e0e] border backdrop-blur-sm"
+      class="artifact-frame relative rounded-lg overflow-hidden bg-[#0e0e0e] border"
       :class="data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10'"
     >
       <!-- Header -->

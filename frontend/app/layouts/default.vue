@@ -2833,7 +2833,7 @@ function dismissRunResult() {
             </span>
           </button>
           <button
-            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
+            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
             title="Stop"
             @click="stopVueWorkflow"
           >
@@ -2841,7 +2841,7 @@ function dismissRunResult() {
           </button>
           <div class="w-px h-5 bg-white/10" />
           <button
-            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
+            class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
             :class="{ '!bg-[#2a2a2a] border-white/20': vueRightPanelOpen }"
             title="Toggle workflow overview"
             @click="vueRightPanelOpen = !vueRightPanelOpen"
@@ -2921,7 +2921,7 @@ function dismissRunResult() {
         <!-- Floating toolbar overlay (only visible on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-40"
+          class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-40"
         >
           <template v-for="(item) in sidebarItems" :key="item.label">
             <div
@@ -2943,7 +2943,7 @@ function dismissRunResult() {
                    unified artifact node onto the canvas. -->
               <div
                 v-if="item.submenu === 'load' && loadMenuOpen"
-                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 backdrop-blur-sm border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
                 <template v-for="opt in loadOptions" :key="opt.label">
@@ -2964,7 +2964,7 @@ function dismissRunResult() {
                    a window-level event the canvas listens for. -->
               <div
                 v-if="item.submenu === 'annotate' && annotateMenuOpen"
-                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[180px] bg-[#1a1a1a]/95 backdrop-blur-sm border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[180px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
                 <button
@@ -2984,7 +2984,7 @@ function dismissRunResult() {
         <!-- Floating zoom/map toolbar (bottom-right, only on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 right-3 flex items-center gap-1 bg-[#1a1a1a]/90 backdrop-blur-sm rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-50"
+          class="absolute bottom-3 right-3 flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-50"
         >
           <button
             class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer transition-colors group hover:bg-white/5"
