@@ -33,6 +33,7 @@ const controls: ControlSpec[] = [
   { key: 'lineTight', label: 'Line tightness', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.85, group: 'Type' },
   { key: 'lineSpacing', label: 'Line spacing', kind: 'slider', min: 0.2, max: 1.8, step: 0.02, default: 1, group: 'Type' },
   { key: 'fitWidth', label: 'Stretch to width', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.92, group: 'Type' },
+  { key: 'baseSlant', label: 'Slant', kind: 'slider', min: -0.6, max: 0.6, step: 0.02, default: 0, group: 'Type' },
   { key: 'fontVaryUnit', label: 'Vary font by', kind: 'select', options: ['off', 'line', 'word', 'character'], default: 'off', group: 'Type' },
   { key: 'weightJitter', label: 'Weight jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
   { key: 'slantJitter', label: 'Italic jitter', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Type' },
@@ -51,6 +52,7 @@ const controls: ControlSpec[] = [
   { key: 'blockUnit', label: 'Block unit', kind: 'select', options: ['random', 'line', 'word', 'character'], default: 'random', group: 'Color' },
   { key: 'blockDensity', label: 'Blocks / band (random)', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
   { key: 'blockHeight', label: 'Block height', kind: 'slider', min: 0.1, max: 1, step: 0.02, default: 1, group: 'Color' },
+  { key: 'blockSlant', label: 'Mirror slant', kind: 'slider', min: 0, max: 1.5, step: 0.05, default: 0, group: 'Color' },
   { key: 'coverage', label: 'Color coverage', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.78, group: 'Color' },
   { key: 'blockOpacity', label: 'Block opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Color' },
   { key: 'typeColorMode', label: 'Type color', kind: 'select', options: ['white', 'palette', 'mixed'], default: 'mixed', group: 'Color' },
@@ -111,6 +113,12 @@ function tileFor(fill: Fill): HTMLCanvasElement {
   let t = _tileCache.get(k)
   if (!t) { t = fillTileCanvas(fill); _tileCache.set(k, t) }
   return t
+}
+
+/** Shear the context horizontally about y=cy (so a rect becomes a parallelogram leaning by `slant`,
+ *  matching glyphs skewed about the same baseline). */
+function shearAbout(ctx: CanvasRenderingContext2D, slant: number, cy: number): void {
+  ctx.translate(0, cy); ctx.transform(1, 0, slant, 1, 0, 0); ctx.translate(0, -cy)
 }
 
 /** Set ctx.fillStyle for a block of the given fill: flat colour, fitted gradient, or tiled pattern. */
@@ -206,17 +214,22 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   const coverage = n(p, 'coverage')
   const unit = String(p.blockUnit) as BlockUnit
   const blockH = n(p, 'blockHeight')
-  interface PlacedBlock { x: number; w: number; y: number; h: number; fill: Fill }
+  interface PlacedBlock { x: number; w: number; y: number; h: number; cy: number; fill: Fill }
   const bandSegs: PlacedBlock[][] = bands.map((band, i) => {
     const bh = band.h * blockH
     const by = band.y + (band.h - bh) / 2
+    const cy = band.y + band.h / 2
     const out: PlacedBlock[] = []
     for (const seg of blockSegments(unit, lineBoxes[i]!.boxes, W, blockSeedRng, density, fills.length)) {
       if (blockSeedRng() >= coverage) continue   // leave (1-coverage) of blocks as bg
-      out.push({ x: seg.x, w: seg.w, y: by, h: bh, fill: fills[seg.colorIndex]! })
+      out.push({ x: seg.x, w: seg.w, y: by, h: bh, cy, fill: fills[seg.colorIndex]! })
     }
     return out
   })
+
+  // uniform font slant (added to per-unit jitter); blocks mirror it by blockSlant
+  const baseSlant = n(p, 'baseSlant')
+  const bSlant = baseSlant * n(p, 'blockSlant')
 
   // resolve per-glyph placement once (with optional per-unit weight/slant jitter), reused by
   // the white matte and the stroke pass so they stay aligned.
@@ -242,7 +255,7 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
         const unitId = varyUnit === 'line' ? i : varyUnit === 'word' ? i * 1000 + word : varyUnit === 'character' ? globalChar : -1
         const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, fontBase, weight, wJit, sJit)
         const b = boxes[c]!
-        glyphs.push({ ch, cx: b.x + b.w / 2, cy, sx, slant: jit.slant, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) })
+        glyphs.push({ ch, cx: b.x + b.w / 2, cy, sx, slant: baseSlant + jit.slant, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) })
       }
       globalChar++
     }
@@ -262,7 +275,10 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   cctx.fillStyle = bg; cctx.fillRect(0, 0, W, H)
   cctx.save(); cctx.globalAlpha = glitch * n(p, 'blockOpacity')
   for (const segs of bandSegs) for (const b of segs) {
+    cctx.save()
+    if (bSlant !== 0) shearAbout(cctx, bSlant, b.cy)
     setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
+    cctx.restore()
   }
   cctx.restore()
 
@@ -293,7 +309,10 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
     for (const segs of bandSegs) for (const b of segs) {
       if (typeMode === 'mixed' && tcRng() < 0.5) continue   // leave white
       sctx.fillStyle = b.fill.textColor
+      sctx.save()
+      if (bSlant !== 0) shearAbout(sctx, bSlant, b.cy)   // match the block shear so colours align
       sctx.fillRect(b.x, b.y, b.w, b.h)
+      sctx.restore()
     }
     sctx.globalCompositeOperation = 'destination-in'
     sctx.drawImage(s.typeCtx.canvas, 0, 0)       // mask the textColor rects by the glyph alpha
