@@ -8,20 +8,27 @@ import { groundSuggestions } from '../utils/fontMatch'
 const SUGGEST_SCHEMA = {
   type: 'object',
   properties: {
+    // The model reasons here FIRST (chain-of-thought) so its family picks match
+    // the reference's actual letterforms instead of a generic vibe. Not shown to
+    // the user.
+    analysis: {
+      type: 'string',
+      description: 'The concrete typographic traits implied by the description: classification (sans/serif/slab/script/display), weight, width (condensed/extended), contrast, mood/era, and any specific reference letterforms.',
+    },
     suggestions: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
           family: { type: 'string', description: 'Exact Google Fonts family name' },
-          reason: { type: 'string', description: 'Max ~12 words on why it fits the description' },
+          reason: { type: 'string', description: 'Max ~12 words tying the font to a SPECIFIC trait from the analysis' },
         },
         required: ['family', 'reason'],
         additionalProperties: false,
       },
     },
   },
-  required: ['suggestions'],
+  required: ['analysis', 'suggestions'],
   additionalProperties: false,
 }
 
@@ -37,14 +44,19 @@ export default defineEventHandler(async (event) => {
   }
   const description = query.trim().slice(0, 200)
 
-  const prompt = `You recommend fonts. The user describes the look they want; suggest up to 8 real Google Fonts families that match.
+  const prompt = `You are a typographer matching a description to real Google Fonts families.
 
 USER DESCRIPTION: "${description}"
 
+Work in two steps:
+1. ANALYSIS — Determine the concrete typographic traits the description implies. If it names a brand, logo, era, team, or genre (e.g. "New York Knicks logo", "1970s disco", "brutalist poster"), recall what those letterforms ACTUALLY look like — classification (sans / serif / slab serif / script / display), weight, width (condensed/normal/extended), stroke contrast, and mood. The Knicks wordmark, for example, is a bold, slightly slanted athletic/collegiate block serif — NOT a delicate fashion serif.
+2. SUGGESTIONS — Pick up to 8 Google Fonts whose letterforms genuinely match those traits.
+
 Rules:
-- Only real Google Fonts families. Spell each exactly as Google Fonts spells it.
-- Favor variety over near-duplicates of the same family.
-- "reason" is at most ~12 words on why that font fits the description.`
+- Match the FORM, not just the vibe. Do not default to generic "elegant serif" picks (Playfair Display, Cormorant) unless the analysis truly calls for a high-contrast fashion serif.
+- Only real Google Fonts families, spelled exactly as Google Fonts spells them.
+- Favor variety across the matching style; avoid near-duplicates.
+- Each "reason" (≤12 words) must tie the font to a SPECIFIC trait from your analysis.`
 
   let suggestions: { family: string; reason: string }[]
   try {
@@ -56,8 +68,8 @@ Rules:
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 1024,
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
         output_config: { format: { type: 'json_schema', schema: SUGGEST_SCHEMA } },
         messages: [{ role: 'user', content: prompt }],
       }),
