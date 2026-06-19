@@ -121,6 +121,17 @@ function shearAbout(ctx: CanvasRenderingContext2D, slant: number, cy: number): v
   ctx.translate(0, cy); ctx.transform(1, 0, slant, 1, 0, 0); ctx.translate(0, -cy)
 }
 
+/** Jitter slant of the glyph nearest `centerX` in a band — lets a block follow the local letter lean. */
+function nearestJitterSlant(bandGlyphs: { cx: number; jitterSlant: number }[], centerX: number): number {
+  if (!bandGlyphs.length) return 0
+  let best = bandGlyphs[0]!, bd = Math.abs(best.cx - centerX)
+  for (let k = 1; k < bandGlyphs.length; k++) {
+    const d = Math.abs(bandGlyphs[k]!.cx - centerX)
+    if (d < bd) { bd = d; best = bandGlyphs[k]! }
+  }
+  return best.jitterSlant
+}
+
 /** Set ctx.fillStyle for a block of the given fill: flat colour, fitted gradient, or tiled pattern. */
 function setBlockStyle(ctx: CanvasRenderingContext2D, fill: Fill, y: number, h: number): void {
   if (fill.type === 'solid') { ctx.fillStyle = fill.a; return }
@@ -241,8 +252,9 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   const fontBase = (hashSeed(textLines(p).join('|')) ^ Math.imul((n(p, 'fontSeed') | 0) + 1, 0x85ebca6b)) >>> 0
   const hasWeight = fontHasWeightAxis(family)
   const fontAt = (w: number) => `${Math.round(w)} ${fs}px "${family}", Anton, Impact, "Arial Narrow", sans-serif`
-  interface PlacedGlyph { ch: string; cx: number; cy: number; sx: number; slant: number; font: string; origW: number }
+  interface PlacedGlyph { ch: string; cx: number; cy: number; sx: number; slant: number; jitterSlant: number; band: number; font: string; origW: number }
   const glyphs: PlacedGlyph[] = []
+  const glyphsByBand: PlacedGlyph[][] = bands.map(() => [])
   let globalChar = 0
   lines.forEach((l, i) => {
     const cy = bands[i]!.y + bands[i]!.h / 2
@@ -256,7 +268,8 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
         const unitId = varyUnit === 'line' ? i : varyUnit === 'word' ? i * 1000 + word : varyUnit === 'character' ? globalChar : -1
         const jit = unitId < 0 ? { weight, slant: 0 } : fontJitter(unitId, fontBase, weight, wJit, sJit)
         const b = boxes[c]!
-        glyphs.push({ ch, cx: b.x + b.w / 2, cy, sx, slant: baseSlant + jit.slant, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) })
+        const g: PlacedGlyph = { ch, cx: b.x + b.w / 2, cy, sx, slant: baseSlant + jit.slant, jitterSlant: jit.slant, band: i, origW: l.widths[c]!, font: hasWeight && unitId >= 0 ? fontAt(jit.weight) : fontAt(weight) }
+        glyphs.push(g); glyphsByBand[i]!.push(g)
       }
       globalChar++
     }
@@ -275,12 +288,15 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   cctx.globalCompositeOperation = 'source-over'
   cctx.fillStyle = bg; cctx.fillRect(0, 0, W, H)
   cctx.save(); cctx.globalAlpha = glitch * n(p, 'blockOpacity')
-  for (const segs of bandSegs) for (const b of segs) {
-    cctx.save()
-    if (bSlant !== 0) shearAbout(cctx, bSlant, b.cy)
-    setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
-    cctx.restore()
-  }
+  bandSegs.forEach((segs, i) => {
+    for (const b of segs) {
+      const slant = bSlant + nearestJitterSlant(glyphsByBand[i]!, b.x + b.w / 2)   // base + local letter lean
+      cctx.save()
+      if (slant !== 0) shearAbout(cctx, slant, b.cy)
+      setBlockStyle(cctx, b.fill, b.y, b.h); cctx.fillRect(b.x, b.y, b.w, b.h)
+      cctx.restore()
+    }
+  })
   cctx.restore()
 
   // 2b) glyph stroke (outline) — drawn under the fill so it reads as an outline. Uses the same
@@ -307,14 +323,17 @@ function draw(s: State, p: Params, glitch: number, seed: number): void {
   sctx.globalCompositeOperation = 'source-over'
   if (typeMode !== 'white') {
     const tcRng = mulberry32((seed >>> 0) ^ 0x27d4eb2f)
-    for (const segs of bandSegs) for (const b of segs) {
-      if (typeMode === 'mixed' && tcRng() < 0.5) continue   // leave white
-      sctx.fillStyle = b.fill.textColor
-      sctx.save()
-      if (bSlant !== 0) shearAbout(sctx, bSlant, b.cy)   // match the block shear so colours align
-      sctx.fillRect(b.x, b.y, b.w, b.h)
-      sctx.restore()
-    }
+    bandSegs.forEach((segs, i) => {
+      for (const b of segs) {
+        if (typeMode === 'mixed' && tcRng() < 0.5) continue   // leave white
+        const slant = bSlant + nearestJitterSlant(glyphsByBand[i]!, b.x + b.w / 2)   // match the block shear
+        sctx.fillStyle = b.fill.textColor
+        sctx.save()
+        if (slant !== 0) shearAbout(sctx, slant, b.cy)
+        sctx.fillRect(b.x, b.y, b.w, b.h)
+        sctx.restore()
+      }
+    })
     sctx.globalCompositeOperation = 'destination-in'
     sctx.drawImage(s.typeCtx.canvas, 0, 0)       // mask the textColor rects by the glyph alpha
     sctx.globalCompositeOperation = 'source-over'
