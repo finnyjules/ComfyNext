@@ -159,6 +159,17 @@ function selectFont(key: string, family: string) {
   fontPickerOpen.value = false
   fontSearch.value = ''
 }
+
+// ✨ Describe-a-font search: type a description ("fonts like the Knicks logo"),
+// an LLM suggests real Google families (grounded against fontCatalog), shown atop
+// the literal list. Faces are loaded so each suggestion row previews in-face.
+const { suggestions: fontSuggestions, loading: fontSuggestLoading, error: fontSuggestError, hasRun: fontSuggestRan, suggest: runFontSuggestApi, clear: clearFontSuggest } = useFontSuggest()
+const { ensure: ensureFontFace } = useGoogleFontPreview()
+function runFontSuggest() { runFontSuggestApi(fontSearch.value) }
+watch(fontSuggestions, (list) => { for (const s of list) ensureFontFace(s.family) })
+watch(fontSearch, () => { if (fontSuggestRan.value) clearFontSuggest() })
+// Reset suggestions whenever the picker closes so a stale list doesn't reappear.
+watch(fontPickerOpen, (open) => { if (!open && fontSuggestRan.value) clearFontSuggest() })
 // Whether the currently-selected font has a continuous Weight axis (variable font).
 // Drives the Type-weight slider's visibility (hidden for static families).
 const fontIsVariable = computed(() => {
@@ -602,12 +613,36 @@ async function generateVideo() {
                   <span class="ml-2 shrink-0 text-white/40">{{ fontPickerOpen ? '▴' : '▾' }}</span>
                 </button>
                 <div v-if="fontPickerOpen" class="mt-1 rounded bg-black/40 p-1">
-                  <input v-model="fontSearch" placeholder="Search fonts…" autofocus
-                         class="mb-1 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
+                  <div class="mb-1 flex items-center gap-1">
+                    <input v-model="fontSearch" placeholder="Search or describe fonts…" autofocus
+                           @keydown.enter.prevent="runFontSuggest"
+                           class="w-full flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
+                    <button type="button" title="Suggest fonts from a description"
+                            :disabled="fontSuggestLoading" @click="runFontSuggest"
+                            class="shrink-0 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨</button>
+                  </div>
                   <label class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
                     <span>Variable fonts only</span>
                     <StudioSwitch v-model="variableOnly" />
                   </label>
+                  <!-- ✨ Suggested (from a description) -->
+                  <div v-if="fontSuggestLoading || fontSuggestError || fontSuggestions.length || fontSuggestRan" class="mb-1">
+                    <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">✨ Suggested</p>
+                    <p v-if="fontSuggestLoading" class="px-2 py-1 text-white/40">Finding fonts…</p>
+                    <p v-else-if="fontSuggestError" class="px-2 py-1 text-white/40">{{ fontSuggestError }}</p>
+                    <p v-else-if="!fontSuggestions.length" class="px-2 py-1 text-white/40">No matches — try describing the style differently.</p>
+                    <button v-for="s in fontSuggestions" :key="'s' + s.family" type="button"
+                            @click="selectFont(c.key, s.family)"
+                            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
+                            :class="{ 'bg-white/15': params[c.key] === s.family }">
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate" :style="{ fontFamily: s.family }">{{ s.family }}</span>
+                        <span class="block truncate text-[10px] text-white/40">{{ s.reason }}</span>
+                      </span>
+                      <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wide text-white/40">{{ s.category }}</span>
+                    </button>
+                    <div class="mx-2 my-1 border-t border-white/10" />
+                  </div>
                   <div class="max-h-48 overflow-y-auto">
                     <button v-for="f in filteredFonts" :key="f.family" type="button"
                             @click="selectFont(c.key, f.family)"
