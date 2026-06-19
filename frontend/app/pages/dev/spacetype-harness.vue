@@ -52,7 +52,8 @@ function loop() {
   raf = requestAnimationFrame(loop)
 }
 
-function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean; frame?: number } = {}) {
+function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean; frame?: number; bg?: string } = {}) {
+  if (opts.bg) engine?.setBackground(false, opts.bg)
   Object.assign(params, partial)
   animate = !!opts.animate
   rebuild()

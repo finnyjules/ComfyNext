@@ -21,7 +21,7 @@ await page.waitForFunction(() => window.__echoReady === true, { timeout: 30000 }
 
 for (const [name, partial, opts] of SHOTS) {
   await page.evaluate(({ partial, opts }) => {
-    window.__echo(partial, { animate: !!opts.animate, frame: opts.frame })
+    window.__echo(partial, { animate: !!opts.animate, frame: opts.frame, bg: opts.bg })
   }, { partial, opts })
   // let fonts/texture settle + one rAF
   await page.waitForTimeout(opts.animate ? 600 : 150)

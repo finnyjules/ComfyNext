@@ -26,7 +26,10 @@ const controls: ControlSpec[] = [
   { key: 'perspective', label: 'Perspective', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1, group: 'Stack' },
   { key: 'spacingCurve', label: 'Spacing curve', kind: 'slider', min: -1, max: 1, step: 0.02, default: 0, group: 'Stack' },
   { key: 'layout', label: 'Spread', kind: 'select', options: ['directional', 'bidirectional', 'mirror'], default: 'directional', group: 'Stack' },
-  // Occlusion — the "pile of papers". Cards are opaque by default so they occlude.
+  // Occlusion — the "pile of papers". The card occludes the layers behind it; by default it is
+  // an INVISIBLE occluder (writes depth only) so it cuts the echoes yet reveals the background
+  // instead of a visible box. Turn "Show box" on to paint it as a solid colored card.
+  { key: 'showBox', label: 'Show box', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Occlusion' },
   { key: 'cardPadX', label: 'Card pad X', kind: 'slider', min: 0, max: 4, step: 0.05, default: 0.4, group: 'Occlusion' },
   { key: 'cardPadY', label: 'Card pad Y', kind: 'slider', min: 0, max: 4, step: 0.05, default: 0.15, group: 'Occlusion' },
   { key: 'cardColor', label: 'Card color', kind: 'color', default: '#000000', group: 'Occlusion' },
@@ -166,6 +169,7 @@ export const echoEffect: SpaceTypeEffect = {
     const padX = n(params, 'cardPadX'), padY = n(params, 'cardPadY')
     const cardColor = new THREE.Color(String(params.cardColor))
     const cardOpacity = n(params, 'cardOpacity')
+    const showBox = String(params.showBox) === 'on'
     const baseOnTop = String(params.zOrder) === 'base'
     const drift = Math.max(0, Math.round(n(params, 'driftSpeed')))
     const frac = drift > 0 ? (t01 * drift) % 1 : 0
@@ -211,10 +215,21 @@ export const echoEffect: SpaceTypeEffect = {
       // Card: hugs the GLYPH (+ padding), behind the text by a sliver.
       h.card.scale.set(planeW + padX * 2, glyphH + padY * 2, 1)
       h.card.position.set(0, 0, -Z_BIAS * 0.4)
-      h.cardMat.color.copy(cardColor)
-      h.cardMat.opacity = cardOpacity
-      h.cardMat.transparent = cardOpacity < 1
-      h.cardMat.depthWrite = cardOpacity >= 1 // opaque cards occlude via the depth buffer
+      if (showBox) {
+        // Visible card: paint cardColor, occlude via the depth buffer when opaque.
+        h.cardMat.colorWrite = true
+        h.cardMat.color.copy(cardColor)
+        h.cardMat.opacity = cardOpacity
+        h.cardMat.transparent = cardOpacity < 1
+        h.cardMat.depthWrite = cardOpacity >= 1
+      } else {
+        // Invisible occluder: write DEPTH only (no colour) so it still hides the layers behind
+        // it but reveals the background instead of a box — the "paper" is there but unseen.
+        h.cardMat.colorWrite = false
+        h.cardMat.transparent = false
+        h.cardMat.opacity = 1
+        h.cardMat.depthWrite = true
+      }
 
       // Text: in front of its own card; ramped ink.
       h.text.position.set(0, 0, Z_BIAS * 0.4)
