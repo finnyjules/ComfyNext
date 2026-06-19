@@ -21,10 +21,7 @@ await page.waitForFunction(() => window.__echoReady === true, { timeout: 30000 }
 
 for (const [name, partial, opts] of SHOTS) {
   await page.evaluate(({ partial, opts }) => {
-    window.__echo(partial, { animate: !!opts.animate })
-    if (!opts.animate && typeof opts.frame === 'number') {
-      // render a specific frame for motion stills
-    }
+    window.__echo(partial, { animate: !!opts.animate, frame: opts.frame })
   }, { partial, opts })
   // let fonts/texture settle + one rAF
   await page.waitForTimeout(opts.animate ? 600 : 150)

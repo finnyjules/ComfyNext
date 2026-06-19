@@ -360,6 +360,8 @@ watch(
     rowHeight: 0, fontHeight: 0, waveLength: 0,
     // boost live params (read per-frame in update)
     depth: 0, tumble: 0, holdFraction: 0, extrudeMode: 0, punchDistance: 0, cubeFlip: 0, cubeAlternate: 0,
+    // echo live param (drift advances per-frame in update)
+    driftSpeed: 0,
   }) + JSON.stringify(gradientStops),
   async () => { await ensureEffectFonts(); rebuild() },
 )

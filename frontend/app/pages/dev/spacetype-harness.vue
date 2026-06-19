@@ -52,12 +52,15 @@ function loop() {
   raf = requestAnimationFrame(loop)
 }
 
-function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean } = {}) {
+function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean; frame?: number } = {}) {
   Object.assign(params, partial)
   animate = !!opts.animate
   rebuild()
   if (animate) { if (!raf) loop() }
-  else { if (raf) { cancelAnimationFrame(raf); raf = 0 }; engine?.renderFrame(0, params) }
+  else {
+    if (raf) { cancelAnimationFrame(raf); raf = 0 }
+    engine?.renderFrame(typeof opts.frame === 'number' ? opts.frame : 0, params)
+  }
   return { ok: true, params: { ...params } }
 }
 
