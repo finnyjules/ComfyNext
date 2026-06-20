@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronDown, Search, X as XIcon } from 'lucide-vue-next'
+import { Check, ChevronDown, Search, Sparkles, X as XIcon } from 'lucide-vue-next'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 
 interface FontEntry {
@@ -100,6 +100,16 @@ const dropdownPos = ref({ top: 0, left: 0, width: 0 })
 
 const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
+const { suggestions, loading: suggestLoading, error: suggestError, hasRun: suggestRan, suggest, clear: clearSuggest } = useFontSuggest()
+
+function runSuggest() { suggest(search.value) }
+
+// Load the real face for each suggestion so the preview row paints in-face.
+watch(suggestions, (list) => { for (const s of list) ensureGoogleFont(s.family) })
+
+// A fresh search query invalidates a prior suggestion run.
+watch(search, () => { if (suggestRan.value) clearSuggest() })
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
   if (!q) return ALL_FONTS.value
@@ -155,8 +165,7 @@ function onKeydown(e: KeyboardEvent) {
   }
   if (e.key === 'Enter') {
     e.preventDefault()
-    if (filtered.value.length === 1) { select(filtered.value[0].name); return }
-    if (showCustomApply.value) select(search.value)
+    runSuggest()
   }
 }
 
@@ -217,10 +226,48 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
         >
           <XIcon class="size-3" />
         </button>
+        <button
+          type="button"
+          tabindex="-1"
+          title="Suggest fonts from a description"
+          class="shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] text-white/40 hover:text-white/90 cursor-pointer transition-colors disabled:opacity-40"
+          :disabled="suggestLoading"
+          @click="runSuggest"
+        >
+          <Sparkles class="size-3.5" /> Ask AI
+        </button>
       </div>
 
       <!-- Scrollable font list -->
       <div class="overflow-y-auto" style="max-height: 280px;">
+        <!-- ✨ Suggested (from a description) -->
+        <template v-if="suggestLoading || suggestError || suggestions.length || suggestRan">
+          <div class="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-[0.14em] text-white/40 font-medium select-none flex items-center gap-1.5">
+            <Sparkles class="size-2.5" /> Suggested
+          </div>
+          <div v-if="suggestLoading" class="px-3 py-2 text-[12px] text-white/40 italic">Finding fonts…</div>
+          <div v-else-if="suggestError" class="px-3 py-2 text-[12px] text-white/40">{{ suggestError }}</div>
+          <div v-else-if="!suggestions.length" class="px-3 py-2 text-[12px] text-white/40">
+            No matches — try describing the style differently.
+          </div>
+          <button
+            v-for="s in suggestions"
+            :key="'s' + s.family"
+            type="button"
+            class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
+            :class="s.family === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            @click="select(s.family)"
+          >
+            <span class="flex-1 min-w-0 text-left">
+              <span class="block text-[15px] text-white leading-tight truncate" :style="{ fontFamily: s.family }">{{ s.family }}</span>
+              <span class="block text-[10px] text-white/35 leading-tight truncate">{{ s.reason }}</span>
+            </span>
+            <span class="text-[9px] text-white/20 uppercase tracking-wider shrink-0 select-none">{{ s.category }}</span>
+            <Check v-if="s.family === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+          </button>
+          <div class="mx-3 my-1 border-t border-white/[0.05]" />
+        </template>
+
         <!-- Empty state -->
         <div
           v-if="filtered.length === 0"

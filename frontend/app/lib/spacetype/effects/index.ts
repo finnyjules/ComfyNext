@@ -13,6 +13,7 @@ import { stringEffect } from './string'
 import { blendEffect } from './blend'
 import { echoEffect } from './echo'
 import { sliceGlitchEffect } from './sliceGlitch'
+import { streamerEffect } from './streamer'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -30,6 +31,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   blendEffect,
   echoEffect,
   sliceGlitchEffect,
+  streamerEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {

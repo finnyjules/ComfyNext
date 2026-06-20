@@ -27,6 +27,34 @@ const query = ref('')
 const catalog = ref<GoogleFont[]>([])
 const loading = ref(false)
 
+const { suggestions, loading: suggestLoading, error: suggestError, hasRun: suggestRan, suggest, clear: clearSuggest } = useFontSuggest()
+const { ensure: ensureGoogleFont } = useGoogleFontPreview()
+
+function ensureCatalog() {
+  if (catalog.value.length || loading.value) return
+  loading.value = true
+  loadGoogleCatalog().then(list => { catalog.value = list }).finally(() => { loading.value = false })
+}
+
+function runSuggest() {
+  ensureCatalog()           // suggestions resolve against the catalog
+  suggest(query.value)
+}
+
+// Load each suggested face so its preview row paints in-face, not in the fallback.
+watch(suggestions, (list) => { for (const s of list) ensureGoogleFont(s.family) })
+
+function pickSuggestion(s: { family: string; category: string }) {
+  // Prefer the full catalog entry (carries axes); fall back to a minimal font so
+  // the pick always lands even if the catalog hasn't loaded or omits this family.
+  const font = catalog.value.find(f => f.family === s.family)
+    ?? { family: s.family, category: s.category, weights: [400], italic: false, axes: [] }
+  pickGoogle(font)   // closes the panel via pickGoogle
+}
+
+// Invalidate suggestions when the query changes.
+watch(query, () => { if (suggestRan.value) clearSuggest() })
+
 onClickOutside(root, () => { if (open.value) close() })
 
 function toggle() {
@@ -74,13 +102,35 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
     </button>
 
     <div v-if="open" class="fp__panel">
-      <input
-        ref="searchEl"
-        v-model="query"
-        class="fp__search"
-        placeholder="Search fonts…"
-      />
+      <div class="fp__searchrow">
+        <input
+          ref="searchEl"
+          v-model="query"
+          class="fp__search"
+          placeholder="Search or describe fonts…"
+          @keydown.enter.prevent="runSuggest"
+        />
+        <button type="button" class="fp__sparkle" title="Suggest fonts from a description" :disabled="suggestLoading" @click="runSuggest">✨ Ask AI</button>
+      </div>
       <div class="fp__list">
+        <template v-if="suggestLoading || suggestError || suggestions.length || suggestRan">
+          <div class="fp__group">✨ Suggested</div>
+          <div v-if="suggestLoading" class="fp__more">Finding fonts…</div>
+          <div v-else-if="suggestError" class="fp__more">{{ suggestError }}</div>
+          <div v-else-if="!suggestions.length" class="fp__more">No matches — try describing the style differently.</div>
+          <button
+            v-for="s in suggestions"
+            :key="'s' + s.family"
+            type="button"
+            class="fp__row"
+            :class="{ 'fp__row--sel': selectedKey === 'goog:' + s.family }"
+            @click="pickSuggestion(s)"
+          >
+            <span class="fp__row-name" :style="{ fontFamily: s.family }">{{ s.family }}</span>
+            <span class="fp__row-meta">{{ s.reason }}</span>
+          </button>
+        </template>
+
         <template v-if="featured.length">
           <div class="fp__group">Featured</div>
           <button
@@ -166,6 +216,20 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
   outline: none;
 }
 .fp__search:focus { border-color: rgba(129,140,248,0.5); }
+.fp__searchrow { display: flex; align-items: center; gap: 6px; }
+.fp__searchrow .fp__search { flex: 1; }
+.fp__sparkle {
+  flex-shrink: 0;
+  white-space: nowrap;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fp__sparkle:hover { border-color: rgba(255,255,255,0.25); }
+.fp__sparkle:disabled { opacity: 0.4; cursor: default; }
 .fp__list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
 .fp__group {
   display: flex; justify-content: space-between; align-items: center;
