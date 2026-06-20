@@ -70,12 +70,18 @@ export async function ensureBoostFont(family: string): Promise<void> {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function loadFontkitFont(family: string): Promise<BoostFont> {
   const slug = family.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  // Probe candidate weights in PARALLEL, then pick the best available (heaviest first
+  // for the bold extrude look). Sequential probing cost a single-weight font FOUR 404
+  // round-trips before the 400 hit — measured at 3–6s, which read as "the font never
+  // changed" (boost shows the fallback until the real outline finally lands).
+  const weights = [800, 700, 900, 600, 500, 400]
+  const fetched = await Promise.all(weights.map(w =>
+    fetch(`https://cdn.jsdelivr.net/npm/@fontsource/${slug}/files/${slug}-latin-${w}-normal.woff2`)
+      .then(r => (r.ok ? r.arrayBuffer().then(buf => ({ w, buf })) : null))
+      .catch(() => null),
+  ))
   let buf: ArrayBuffer | null = null
-  for (const w of [800, 700, 900, 600, 400]) {
-    const url = `https://cdn.jsdelivr.net/npm/@fontsource/${slug}/files/${slug}-latin-${w}-normal.woff2`
-    const r = await fetch(url).catch(() => null)
-    if (r && r.ok) { buf = await r.arrayBuffer(); break }
-  }
+  for (const w of weights) { const f = fetched.find(x => x && x.w === w); if (f) { buf = f.buf; break } }
   if (!buf) throw new Error(`no fontsource file for "${family}"`)
   const fontkitUrl = 'https://esm.sh/fontkit@2'   // variable ⇒ TS treats the import as dynamic
   const mod: any = await import(/* @vite-ignore */ fontkitUrl)
