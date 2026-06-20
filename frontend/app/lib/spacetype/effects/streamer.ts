@@ -157,32 +157,41 @@ function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMateria
   })
 }
 
-/** One glyph cells per character of the string + trailing gap. */
+/** Letter-spacing factor: widens each glyph's horizontal cell without changing glyph size. 1.0 at
+ *  the default (tracking 40) preserves the original look; higher spreads letters, lower tightens. */
+function trackScale(p: Params): number {
+  return Math.min(2.2, Math.max(0.66, 1 + (n(p, 'tracking') - 40) / 100 * 1.2))
+}
+
+/** One string-unit's width in glyph-cell units (string + trailing gap), scaled by tracking. Drives
+ *  the on-ribbon text period, so glyph SIZE stays constant while spacing follows `trackScale`. */
 function textUnitCells(p: Params): number {
-  return streamerText(p).length + Math.max(0, Math.round(n(p, 'textGap')))
+  return (streamerText(p).length + Math.max(0, Math.round(n(p, 'textGap')))) * trackScale(p)
 }
 
 /** Text matte: exactly ONE string-unit (string + trailing gap) rendered white on transparent. The
  *  shader tiles it with RepeatWrapping, so the matte repeats seamlessly with no partial-copy seam
- *  (the canvas is the whole repeat unit), and it realigns cleanly at the motion loop. */
+ *  (the canvas is the whole repeat unit), and it realigns cleanly at the motion loop. Tracking only
+ *  widens the horizontal cell advance — the canvas height (glyph vertical size) is fixed. */
 function buildTextTexture(three: typeof THREE, p: Params): THREE.CanvasTexture {
   const family = resolveFontFamily(String(p.font))
   // Append blank cells so each repetition of the string is separated by a visible gap.
   const txt = streamerText(p) + ' '.repeat(Math.max(0, Math.round(n(p, 'textGap'))))
-  const CELL = 64
+  const BASE = 64
+  const cell = BASE * trackScale(p)          // horizontal advance per glyph (spacing)
   const R = Math.max(1, txt.length)
-  const W = R * CELL
-  const c = document.createElement('canvas'); c.width = W; c.height = CELL
+  const W = Math.max(1, Math.round(R * cell)), H = BASE
+  const c = document.createElement('canvas'); c.width = W; c.height = H
   const ctx = c.getContext('2d')!
-  ctx.clearRect(0, 0, W, CELL)
+  ctx.clearRect(0, 0, W, H)
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
   const stroke = n(p, 'typeStroke')
-  const px = CELL * (0.45 + (n(p, 'typeHeight') / 100) * 0.4)
+  const px = Math.min(BASE * (0.45 + (n(p, 'typeHeight') / 100) * 0.4), cell * 0.92)
   ctx.font = `${px}px "${family}", "IBM Plex Mono", monospace`
   ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#ffffff'; ctx.lineJoin = 'round'
   for (let col = 0; col < R; col++) {
     const ch = txt[col]!
-    const cx = col * CELL + CELL / 2, cy = CELL / 2
+    const cx = col * cell + cell / 2, cy = H / 2
     if (stroke > 0) { ctx.lineWidth = stroke * 1.5; ctx.strokeText(ch, cx, cy) } else { ctx.fillText(ch, cx, cy) }
   }
   const t = new three.CanvasTexture(c)
