@@ -51,7 +51,7 @@ const controls: ControlSpec[] = [
   { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },
   { key: 'backStrokeColor', label: 'Back edge', kind: 'color', default: '#000000', group: 'Stroke' },
   // Motion
-  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 16, step: 1, default: 1, group: 'Motion' },
+  { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 100, step: 1, default: 12, group: 'Motion' },
   // Transform (consumed by the engine)
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.01, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Rotate X', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: -1.07, group: 'Transform' },
@@ -359,8 +359,11 @@ export const streamerEffect: SpaceTypeEffect = {
     // frame. The text rides along, scrolled in units of its repeat period (s0 / textPeriodArc) so
     // it stays glued to the moving ribbon AND wraps cleanly — over one period s0 advances a whole
     // number of text-units, so the loop has no jump. speed 0 = stopped.
-    const periods = Math.max(0, Math.round(n(params, 'speed')))
-    const base = periods === 0 ? 0 : t01 * periods * state.periodArc
+    // Speed is 0–100 % of one full looping cycle per loop: 100 advances exactly one minimal period
+    // (perfectly seamless), low values barely move (1 ≈ nearly still). The loop seam grows with the
+    // fractional part but is negligible at the slow end where the whole advance is tiny.
+    const pct = Math.max(0, n(params, 'speed')) / 100
+    const base = pct === 0 ? 0 : t01 * pct * state.periodArc
     const tc = String(params.textColor)
     const ns = String(params.noStripes) === 'on' ? 1 : 0
     for (const inst of state.instances) {
