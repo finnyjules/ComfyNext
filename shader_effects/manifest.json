@@ -562,6 +562,93 @@
       ]
     },
     {
+      "id": "block_glitch",
+      "name": "Block Glitch",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_grid",
+          "label": "Cells Across",
+          "type": "float",
+          "min": 4.0,
+          "max": 120.0,
+          "default": 42.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_growth",
+          "label": "Block Growth",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.55,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_style",
+          "label": "Style",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Random", "value": 0 },
+            { "label": "Horizontal Smear", "value": 1 },
+            { "label": "Wave / Melt", "value": 2 },
+            { "label": "Mixed", "value": 3 }
+          ]
+        },
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.12,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 6.0,
+          "default": 1.4,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_step",
+          "label": "Jitter Step",
+          "type": "float",
+          "min": 1.0,
+          "max": 24.0,
+          "default": 6.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_dstart",
+          "label": "Decay Start",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.12,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_diag",
+          "label": "Diagonal Bias",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.8,
+          "default": 0.25,
+          "step": 0.01
+        }
+      ]
+    },
+    {
       "id": "mondrian",
       "name": "Mondrian",
       "category": "stylize",
