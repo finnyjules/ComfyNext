@@ -60,7 +60,9 @@ export async function ensureBoostFont(family: string): Promise<void> {
   if (_boostFontCache.has(family)) return
   try {
     _boostFontCache.set(family, await loadFontkitFont(family))
-  } catch {
+    if (typeof console !== 'undefined') console.info('[boost] loaded outline for', family)
+  } catch (e) {
+    if (typeof console !== 'undefined') console.warn('[boost] outline load failed → bundled fallback for', family, e)
     _boostFontCache.set(family, bundledFont())   // cache the fallback so we don't retry endlessly
   }
 }
@@ -113,6 +115,11 @@ const controls: ControlSpec[] = [
   { key: 'align', label: 'Align', kind: 'select', options: ['center', 'left', 'right'], default: 'center', group: 'Type' },
   // Extrude.
   { key: 'depth', label: 'Extrude depth', kind: 'slider', min: 0, max: 6, step: 0.05, default: 1.2, group: 'Ribbon' },
+  // Direction the body leans (oblique extrude): angle picks the screen direction, lean is how
+  // far it shears per unit depth. Lean 0 = straight back (unchanged). Distinct from Perspective,
+  // which CONVERGES the body to a point — this is a PARALLEL lean. Both are live (no rebuild).
+  { key: 'extrudeAngle', label: 'Direction', kind: 'slider', min: 0, max: 360, step: 1, default: 0, group: 'Ribbon' },
+  { key: 'extrudeLean', label: 'Lean', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0, group: 'Ribbon' },
   // key is 'extrudePerspective' (not 'perspective') so it's NOT in the surface's live-param
   // exclusion list — this taper is baked into geometry and must trigger a rebuild on change.
   { key: 'extrudePerspective', label: 'Perspective', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Ribbon' },
@@ -171,6 +178,14 @@ interface BoostState {
   letters: BoostLetter[]
 }
 let state: BoostState | null = null
+
+// Reused per-frame scratch for the oblique-lean matrix (T·R·Shear·S) so we don't
+// allocate a Matrix4 per letter per frame.
+const _m = new THREE.Matrix4()
+const _mShear = new THREE.Matrix4()
+const _mScale = new THREE.Matrix4()
+const _mRot = new THREE.Matrix4()
+const _euler = new THREE.Euler()
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -563,26 +578,54 @@ export const boostEffect: SpaceTypeEffect = {
     const cubeFlip = (n(params, 'cubeFlip') * Math.PI) / 180   // up/down tilt onto cube faces (radians)
     const alternate = String(params.cubeAlternate) !== 'off'
 
+    // Oblique lean: shear the extruded body toward a screen direction (face stays put).
+    // Keyed on the SCALED local z, so the lean grows with depth and vanishes at depth 0.
+    const lean = n(params, 'extrudeLean') || 0
+    const angle = (n(params, 'extrudeAngle') || 0) * Math.PI / 180
+    const useShear = lean > 1e-4
+    const shearX = Math.cos(angle) * lean
+    const shearY = Math.sin(angle) * lean
+
     for (let i = 0; i < s.letters.length; i++) {
       const L = s.letters[i]!
       // Alternate: even up / odd down (opposite cube faces). Off: every letter tilts the same.
       const flipX = (alternate ? (i % 2 === 0 ? 1 : -1) : 1) * cubeFlip
-      L.group.scale.set(1, 1, Math.max(0.0001, depth * a))
-      L.group.position.set(L.baseX, L.baseY, 0)
+      const scaleZ = Math.max(0.0001, depth * a)
+      let scaleXY = 1, posX = L.baseX, posY = L.baseY
+      let rotX = 0, rotY = 0, rotZ = 0
 
       if (mode === 'tumble') {
-        L.group.rotation.set(L.rx * tumble * a + flipX, L.ry * tumble * a, L.rz * tumble * a)
+        rotX = L.rx * tumble * a + flipX; rotY = L.ry * tumble * a; rotZ = L.rz * tumble * a
       } else if (mode === 'zoom') {
-        const zs = 0.3 + 0.7 * a
-        L.group.scale.set(zs, zs, Math.max(0.0001, depth * a))
-        L.group.rotation.set(flipX, 0, 0)
+        scaleXY = 0.3 + 0.7 * a; rotX = flipX
       } else if (mode === 'punch') {
         const blast = punchDist * a
-        L.group.position.set(L.baseX + L.bx * blast, L.baseY + L.by * blast, 0)
-        L.group.rotation.set(L.rx * tumble * a + flipX, L.ry * tumble * a, L.rz * tumble * a)
+        posX = L.baseX + L.bx * blast; posY = L.baseY + L.by * blast
+        rotX = L.rx * tumble * a + flipX; rotY = L.ry * tumble * a; rotZ = L.rz * tumble * a
       } else {
         // static: fixed extrude + fixed tumble tilt + cube flip (no time animation).
-        L.group.rotation.set(L.rx * tumble + flipX, L.ry * tumble, L.rz * tumble)
+        rotX = L.rx * tumble + flipX; rotY = L.ry * tumble; rotZ = L.rz * tumble
+      }
+
+      if (useShear) {
+        // group.matrix = T · R · Shear · S. Shear maps scaled z into x/y (e8,e9) and the
+        // translation columns (e12,e13) anchor the camera-facing (+z) cap so the readable
+        // face stays put and ONLY the body trails toward the lean direction (no face skew).
+        _mScale.makeScale(scaleXY, scaleXY, scaleZ)
+        _mShear.identity()
+        _mShear.elements[8] = -shearX; _mShear.elements[9] = -shearY
+        _mShear.elements[12] = 0.5 * shearX * scaleZ; _mShear.elements[13] = 0.5 * shearY * scaleZ
+        _euler.set(rotX, rotY, rotZ); _mRot.makeRotationFromEuler(_euler)
+        _m.makeTranslation(posX, posY, 0)
+        _m.multiply(_mRot).multiply(_mShear).multiply(_mScale)
+        L.group.matrixAutoUpdate = false
+        L.group.matrix.copy(_m)
+        L.group.matrixWorldNeedsUpdate = true
+      } else {
+        if (!L.group.matrixAutoUpdate) L.group.matrixAutoUpdate = true
+        L.group.scale.set(scaleXY, scaleXY, scaleZ)
+        L.group.position.set(posX, posY, 0)
+        L.group.rotation.set(rotX, rotY, rotZ)
       }
     }
   },

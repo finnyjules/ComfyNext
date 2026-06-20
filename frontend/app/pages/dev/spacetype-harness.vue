@@ -11,6 +11,7 @@ import '@fontsource/anton'
 import '@fontsource/inter'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { getEffect } from '~/lib/spacetype/effects'
+import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import type { TextTextureOptions } from '~/lib/spacetype/textTexture'
 
@@ -55,10 +56,12 @@ function loop() {
   raf = requestAnimationFrame(loop)
 }
 
-function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean; frame?: number; bg?: string } = {}) {
+async function apply(partial: Record<string, unknown> = {}, opts: { animate?: boolean; frame?: number; bg?: string } = {}) {
   if (opts.bg) engine?.setBackground(false, opts.bg)
   Object.assign(params, partial)
   animate = !!opts.animate
+  // boost builds glyphs from vector outlines — preload like SpaceTypeSurface does.
+  if (effectId.value === 'boost') { try { await ensureBoostFont(String(params.font)) } catch { /* noop */ } }
   rebuild()
   if (animate) { if (!raf) loop() }
   else {
