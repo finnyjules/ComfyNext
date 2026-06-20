@@ -4,6 +4,7 @@ import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { SPACE_TYPE_EFFECTS, getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
+import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
@@ -119,9 +120,9 @@ const baking = ref(false)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
-const SECTION_ORDER = ['Path', 'Type', 'Stack', 'Occlusion', 'Look', 'Blend', 'Style', 'Layout', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Color', 'Stroke', 'Glitch', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output'] as const
+const SECTION_ORDER = SPACE_TYPE_SECTIONS
 const openSections = reactive<Record<string, boolean>>({
-  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
+  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Layers: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
@@ -374,6 +375,10 @@ watch(
     depth: 0, tumble: 0, holdFraction: 0, extrudeMode: 0, punchDistance: 0, cubeFlip: 0, cubeAlternate: 0,
     // echo live param (drift advances per-frame in update)
     driftSpeed: 0,
+    // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
+    rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
+    flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
+    perspective: 0, depth: 0, shadow: 0,
   }) + JSON.stringify(gradientStops),
   async () => { await ensureEffectFonts(); rebuild() },
 )

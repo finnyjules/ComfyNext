@@ -14,6 +14,9 @@ import { blendEffect } from './blend'
 import { echoEffect } from './echo'
 import { sliceGlitchEffect } from './sliceGlitch'
 import { streamerEffect } from './streamer'
+import { spiralEffect } from './spiral'
+import { tunnelEffect } from './tunnel'
+import { contourEffect } from './contour'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -32,6 +35,9 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   echoEffect,
   sliceGlitchEffect,
   streamerEffect,
+  spiralEffect,
+  tunnelEffect,
+  contourEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {

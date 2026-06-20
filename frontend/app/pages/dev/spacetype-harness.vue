@@ -22,7 +22,10 @@ definePageMeta({ layout: false })
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const W = 900, H = 650
-const effectId = ref('echo')
+// Effect id from ?effect= (so the harness can preview any effect without editing), default 'echo'.
+const effectId = ref(
+  (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('effect')) || 'echo',
+)
 let engine: SpaceTypeEngine | null = null
 let raf = 0
 let frame = 0
