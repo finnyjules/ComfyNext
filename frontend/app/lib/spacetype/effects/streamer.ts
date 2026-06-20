@@ -46,7 +46,7 @@ const controls: ControlSpec[] = [
   { key: 'backColorA', label: 'Back color', kind: 'color', default: '#111111', group: 'Color' },
   { key: 'backColorB', label: 'Back color 2', kind: 'color', default: '#444444', group: 'Color' },
   { key: 'backDensity', label: 'Back density', kind: 'slider', min: 1, max: 32, step: 1, default: 8, group: 'Color' },
-  // Stroke (border along the band's long edges, per face)
+  // Stroke (border around all of the band's edges — sides + end caps — per face)
   { key: 'strokeWidth', label: 'Edge stroke', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0, group: 'Stroke' },
   { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },
   { key: 'backStrokeColor', label: 'Back edge', kind: 'color', default: '#000000', group: 'Stroke' },
@@ -69,17 +69,18 @@ const VERT = [
 // flows) or a tiled pattern (solid/grid/noise, uGradMode=0 → sampled at vUv·uTile, sRGB-decoded).
 // The front face (uHasText=1) overlays text that FLOWS along the ribbon (vUv.x·uTextRepeat+uScroll)
 // so the letters travel with the moving streamer while the colour stays anchored. An optional edge
-// stroke paints a border along the band's two long edges (per-face colour).
+// stroke paints a border around the band's edges (per-face colour) — uStroke is the width across
+// the band (long edges, in v) and uStrokeU is the matching width at the ends (short edges, in u),
+// aspect-scaled so the border is a uniform world thickness all the way round.
 const FACE_FRAG = [
   'precision highp float;',
   'uniform sampler2D uFace; uniform float uGradMode; uniform vec2 uTile;',
   'uniform sampler2D uText; uniform float uHasText; uniform vec3 uTextColor; uniform float uScroll; uniform float uTextRepeat; uniform float uNoStripes;',
-  'uniform float uStroke; uniform vec3 uStrokeColor;',
+  'uniform float uStroke; uniform float uStrokeU; uniform vec3 uStrokeColor;',
   'varying vec2 vUv;',
   SRGB_TO_LINEAR_GLSL,
   'void main(){',
-  '  float edge = min(vUv.y, 1.0 - vUv.y);',
-  '  if (uStroke > 0.0 && edge < uStroke) { gl_FragColor = vec4(uStrokeColor, 1.0); return; }',
+  '  if (uStroke > 0.0 && (min(vUv.y, 1.0 - vUv.y) < uStroke || min(vUv.x, 1.0 - vUv.x) < uStrokeU)) { gl_FragColor = vec4(uStrokeColor, 1.0); return; }',
   '  vec3 base = (uGradMode > 0.5) ? texture2D(uFace, vec2(vUv.x, 0.5)).rgb : stLin(texture2D(uFace, vUv * uTile).rgb);',
   '  if (uHasText > 0.5) {',
   '    float a = texture2D(uText, vec2(vUv.x * uTextRepeat + uScroll, vUv.y)).a;',
@@ -134,7 +135,7 @@ function faceTexture(three: typeof THREE, mode: FaceMode, stops: string[], fill:
 interface FaceOpts {
   side: THREE.Side; faceTex: THREE.Texture; gradMode: number; tile: [number, number]
   textTex: THREE.Texture; hasText: number; textColor: string; textRepeat: number; noStripes: number
-  stroke: number; strokeColor: string
+  stroke: number; strokeU: number; strokeColor: string
 }
 function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMaterial {
   return new three.ShaderMaterial({
@@ -150,6 +151,7 @@ function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMateria
       uTextRepeat: { value: o.textRepeat },
       uNoStripes: { value: o.noStripes },
       uStroke: { value: o.stroke },
+      uStrokeU: { value: o.strokeU },
       uStrokeColor: { value: new three.Color(o.strokeColor) },
     },
   })
@@ -270,6 +272,7 @@ export const streamerEffect: SpaceTypeEffect = {
 
     // Resolve each face's paint (mode + colours). Patterned fills tile to ~square cells via aspect.
     const aspect = pathLen / Math.max(1, depth)
+    const strokeU = aspect > 0 ? strokeWidth / aspect : strokeWidth   // end-cap stroke, matched world thickness
     const f0 = parseFills(params.fills)[0] ?? { a: '#ffffff', b: '#000000', density: 8 }
     const front = faceTexture(three, String(params.frontMode ?? 'gradient') as FaceMode, gradientStops(params), { a: f0.a, b: f0.b, density: f0.density }, aspect)
     const backA = String(params.backColorA ?? '#111111'), backB = String(params.backColorB ?? '#444444')
@@ -280,7 +283,7 @@ export const streamerEffect: SpaceTypeEffect = {
     const backMat = makeFaceMaterial(three, {
       side: three.BackSide, faceTex: back.tex, gradMode: back.gradMode, tile: back.tile,
       textTex, hasText: 0, textColor: '#000000', textRepeat: 1, noStripes: 0,
-      stroke: strokeWidth, strokeColor: String(params.backStrokeColor ?? '#000000'),
+      stroke: strokeWidth, strokeU, strokeColor: String(params.backStrokeColor ?? '#000000'),
     })
 
     // Tie the text repeat to the geometry: fit a whole number of string-units into the period (so
@@ -312,7 +315,7 @@ export const streamerEffect: SpaceTypeEffect = {
       const frontMat = makeFaceMaterial(three, {
         side: three.FrontSide, faceTex: front.tex, gradMode: front.gradMode, tile: front.tile,
         textTex, hasText: 1, textColor: String(params.textColor), textRepeat, noStripes,
-        stroke: strokeWidth, strokeColor: String(params.frontStrokeColor ?? '#000000'),
+        stroke: strokeWidth, strokeU, strokeColor: String(params.frontStrokeColor ?? '#000000'),
       })
 
       const sub = new three.Group()
