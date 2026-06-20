@@ -17,6 +17,7 @@ import { streamerEffect } from './streamer'
 import { spiralEffect } from './spiral'
 import { tunnelEffect } from './tunnel'
 import { contourEffect } from './contour'
+import { ballEffect } from './ball'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -38,6 +39,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   spiralEffect,
   tunnelEffect,
   contourEffect,
+  ballEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
