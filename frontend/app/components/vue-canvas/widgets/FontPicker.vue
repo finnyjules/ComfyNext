@@ -110,7 +110,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
           placeholder="Search or describe fonts…"
           @keydown.enter.prevent="runSuggest"
         />
-        <button type="button" class="fp__sparkle" title="Suggest fonts from a description" :disabled="suggestLoading" @click="runSuggest">✨</button>
+        <button type="button" class="fp__sparkle" title="Suggest fonts from a description" :disabled="suggestLoading" @click="runSuggest">✨ Ask AI</button>
       </div>
       <div class="fp__list">
         <template v-if="suggestLoading || suggestError || suggestions.length || suggestRan">
@@ -220,6 +220,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
 .fp__searchrow .fp__search { flex: 1; }
 .fp__sparkle {
   flex-shrink: 0;
+  white-space: nowrap;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 6px;

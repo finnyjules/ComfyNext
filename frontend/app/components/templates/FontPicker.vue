@@ -230,11 +230,11 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
           type="button"
           tabindex="-1"
           title="Suggest fonts from a description"
-          class="shrink-0 text-white/40 hover:text-white/90 cursor-pointer transition-colors disabled:opacity-40"
+          class="shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] text-white/40 hover:text-white/90 cursor-pointer transition-colors disabled:opacity-40"
           :disabled="suggestLoading"
           @click="runSuggest"
         >
-          <Sparkles class="size-3.5" />
+          <Sparkles class="size-3.5" /> Ask AI
         </button>
       </div>
 

@@ -619,7 +619,7 @@ async function generateVideo() {
                            class="w-full flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
                     <button type="button" title="Suggest fonts from a description"
                             :disabled="fontSuggestLoading" @click="runFontSuggest"
-                            class="shrink-0 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨</button>
+                            class="shrink-0 whitespace-nowrap rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨ Ask AI</button>
                   </div>
                   <label class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
                     <span>Variable fonts only</span>
