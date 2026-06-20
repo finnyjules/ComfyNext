@@ -15,6 +15,7 @@
 
 import https from 'node:https'
 import zlib from 'node:zlib'
+import { parseKreaBoard } from './parse'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36'
 const KREA_MOODBOARD_URL = /^https?:\/\/(www\.)?krea\.ai\/moodboard-feed\//i
@@ -56,13 +57,6 @@ function fetchHtml(url: string, redirects = 4): Promise<string> {
   })
 }
 
-/** Extract `key:"value"` from the RSC stream, JSON-unescaping the captured string. */
-function extractString(html: string, key: string): string | null {
-  const m = html.match(new RegExp(`${key}:"((?:[^"\\\\]|\\\\.)*)"`))
-  if (!m) return null
-  try { return JSON.parse(`"${m[1]}"`) } catch { return m[1] || null }
-}
-
 export default defineEventHandler(async (event) => {
   const url = String(getQuery(event).url ?? '').trim()
   if (!KREA_MOODBOARD_URL.test(url)) {
@@ -71,45 +65,23 @@ export default defineEventHandler(async (event) => {
 
   const html = await fetchHtml(url)
 
-  // Image URLs (full-res originals; skip the optim-images thumbnails). Dedup,
-  // preserve first-seen order.
-  const matches = html.match(
-    /https:\/\/(?:gen\.krea\.ai\/images\/[a-f0-9-]+\.png|app-uploads\.krea\.ai\/[^\s"'\\]+\.(?:png|jpe?g|webp))/gi,
-  ) || []
-  const seen = new Set<string>()
-  const images: string[] = []
-  for (const u of matches) { if (!seen.has(u)) { seen.add(u); images.push(u) } }
-
-  if (!images.length) {
+  // Scope extraction to the board's OWN images:[…] array — NOT a page-wide URL
+  // scrape, which would also pull in the relatedMoodboards thumbnails (other
+  // boards in the feed) and yield extra images that aren't in the moodboard.
+  const board = parseKreaBoard(html)
+  if (!board) {
     throw createError({
       statusCode: 422,
       message: 'No images found on that page. It may be a private board (only public/browse boards can be fetched by URL) — use “paste JSON” for your own boards.',
     })
   }
 
-  const name = extractString(html, 'styleName') || extractString(html, ',name') || 'Krea moodboard'
-  const aesthetic = extractString(html, 'tasteProfile')
-  let positiveKeywords: string[] = []
-  const km = html.match(/keywords:(\[(?:"(?:[^"\\]|\\.)*"(?:,)?)*\])/)
-  if (km) { try { const arr = JSON.parse(km[1]); if (Array.isArray(arr)) positiveKeywords = arr } catch { /* ignore */ } }
-
-  // imageCount from the payload tells us if the page only inlined a subset.
-  let totalImages = images.length
-  const cm = html.match(/imageCount:(\d+)/)
-  if (cm) totalImages = Number(cm[1]) || images.length
-
   const idMatch = url.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
 
   return {
     moodboards: [{
       id: idMatch ? idMatch[0] : null,
-      name,
-      imageCount: totalImages,
-      loadedImages: images.length, // how many we could actually scrape from the page
-      aesthetic: aesthetic || null,
-      positiveKeywords,
-      previewImages: images.slice(0, 4),
-      images: images.map((u) => ({ url: u, width: null, height: null })),
+      ...board,
     }],
   }
 })
