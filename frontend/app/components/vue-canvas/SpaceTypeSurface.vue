@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { SPACE_TYPE_EFFECTS, getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
@@ -282,12 +282,20 @@ function stopPreview() {
   raf = 0
 }
 
+// True only while loadConfig() is restoring a saved blob. Setting effectId fires
+// the effectId watcher one tick LATER, and that watcher resets params to the new
+// effect's defaults — which would wipe the scene we just restored on reopen. The
+// guard makes the watcher skip that reset during hydration (onMounted already
+// builds the engine with the restored effect + params).
+let hydrating = false
+
 // Hydrate local editor state from a previously-saved config blob, so reopening
 // the editor on an existing node restores exactly what the user last authored.
 function loadConfig() {
   const n = currentNode()
   const c = n?.data?.properties?.comfynext_spaceType
   if (!c) return // first edit of a fresh node — keep the defaults.
+  hydrating = true
   // Restore effectId BEFORE params so the engine builds with the right effect
   // and the control panel (sections) reflects the saved effect's controls.
   if (typeof c.effectId === 'string') effectId.value = c.effectId
@@ -309,6 +317,9 @@ function loadConfig() {
   }
   // Explicit W/H override the preset (restores Custom dimensions).
   if (typeof c.W === 'number' && typeof c.H === 'number') { W.value = c.W; H.value = c.H }
+  // Fallback clear: if the saved effect equals the current one, the effectId
+  // watcher never fires (so it can't self-clear the flag) — release it next tick.
+  nextTick(() => { hydrating = false })
 }
 
 // Persist the full current editor state back onto the node's properties so the
@@ -373,12 +384,15 @@ watch(
     rowHeight: 0, fontHeight: 0, waveLength: 0,
     // boost live params (read per-frame in update)
     depth: 0, tumble: 0, holdFraction: 0, extrudeMode: 0, punchDistance: 0, cubeFlip: 0, cubeAlternate: 0,
+    extrudeAngle: 0, extrudeLean: 0,
     // echo live param (drift advances per-frame in update)
     driftSpeed: 0,
+    // ball live param (axis tilt read per-frame in update; spinSpeed already excluded above)
+    axisTilt: 0,
     // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
     rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
     flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
-    perspective: 0, depth: 0, shadow: 0,
+    perspective: 0, shadow: 0,
   }) + JSON.stringify(gradientStops),
   async () => { await ensureEffectFonts(); rebuild() },
 )
@@ -391,6 +405,9 @@ watch(
 // new one edge-on (Ribbon wants its −0.5 tilt; Coil sits at 0).
 const CARRY_ON_SWITCH = new Set(['text', 'font'])
 watch(effectId, async () => {
+  // Restoring a saved scene — keep the hydrated params instead of resetting to
+  // this effect's defaults. Self-clears so the next real user switch resets.
+  if (hydrating) { hydrating = false; return }
   const next = defaultsFromControls(effect.value.controls)
   for (const k of Object.keys(next)) if (CARRY_ON_SWITCH.has(k) && k in params) next[k] = (params as any)[k]
   for (const k of Object.keys(params)) delete (params as any)[k]
