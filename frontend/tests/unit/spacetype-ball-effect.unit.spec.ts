@@ -18,7 +18,7 @@ describe('ballEffect contract', () => {
 
   it('exposes the signature controls', () => {
     const keys = ballEffect.controls.map(c => c.key)
-    for (const k of ['text', 'font', 'radius', 'around', 'rows', 'axisTilt', 'spinSpeed', 'fills', 'shading', 'scale', 'rotateX']) {
+    for (const k of ['text', 'font', 'radius', 'segments', 'around', 'rows', 'axisTilt', 'spinSpeed', 'fills', 'shading', 'scale', 'rotateX']) {
       expect(keys).toContain(k)
     }
   })

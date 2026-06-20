@@ -1,17 +1,16 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling } from '../fills'
 
 /**
  * Ball — the text atlas wrapped around a spinning globe (a sibling of Cylinder/Coil).
  *
- * The shared text texture (one tile, glyph coverage in its alpha channel) is tiled
- * `around × rows` over a SphereGeometry with RepeatWrapping. The sphere's UVs pinch
- * at the poles, which gives the natural "starburst" where the bands converge. The
- * material uses ONLY the texture's alpha (coverage) and composites a base colour →
- * text colour, so the globe is solid (FrontSide) and you see white glyphs on a black
- * sphere by default — exactly the reference look. Spins around a tilted axis, one
- * revolution per loop at speed 1 (seamless).
+ * The sphere is split into `segments` LONGITUDE wedges (vertical beach-ball panels), each
+ * painted by one fill from the list (cycled), so a multi-fill list reads as a beach ball.
+ * Every fill type is supported (solid / gradient / ombre / grid / noise / …) via the shared
+ * fill-texture rails. The text atlas (glyph coverage in its alpha) is tiled `around × rows`
+ * over the wedges and composited on top in each fill's text colour. Solid globe (FrontSide).
+ * Spins around a tilted axis, one revolution per loop at speed 1 (seamless).
  */
 const controls: ControlSpec[] = [
   // TYPE — shared text controls.
@@ -22,6 +21,7 @@ const controls: ControlSpec[] = [
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   // SPHERE shape (grouped under the suite's geometry section, 'Ribbon').
   { key: 'radius', label: 'Radius', kind: 'slider', min: 2, max: 10, step: 0.1, default: 5, group: 'Ribbon' },
+  { key: 'segments', label: 'Panels', kind: 'slider', min: 1, max: 16, step: 1, default: 6, group: 'Ribbon' },
   { key: 'around', label: 'Around', kind: 'slider', min: 1, max: 20, step: 1, default: 4, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 2, max: 28, step: 1, default: 11, group: 'Ribbon' },
   { key: 'axisTilt', label: 'Axis tilt', kind: 'slider', min: -1, max: 1, step: 0.01, default: 0.18, group: 'Ribbon' },
@@ -32,42 +32,49 @@ const controls: ControlSpec[] = [
   { key: 'rotateX', label: 'Camera rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.12, group: 'Transform' },
   { key: 'rotateY', label: 'Camera rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateZ', label: 'Camera rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
-  // COLOR — first fill drives base (sphere) colour + text colour. Black base + white text = reference.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#000000","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
-  // SHADING — flat = crisp uniform text (reference); lit = subtle directional shading for roundness.
-  { key: 'shading', label: 'Shading', kind: 'select', options: ['flat', 'lit'], default: 'flat', group: 'Shadow' },
+  // COLOR — one fill PER PANEL (cycled). Each fill: panel colour/pattern (a/b/type) + text colour.
+  // Default = a 6-colour beach ball; add/remove fills or change types (gradient/ombre/…) freely.
+  { key: 'fills', label: 'Panels', kind: 'fillList', default: '[{"type":"solid","a":"#e23b3b","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#f5c542","b":"#000000","textColor":"#1a1a1a"},{"type":"solid","a":"#3b78e2","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#36b37e","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#1a1a1a"},{"type":"solid","a":"#e2843b","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
+  // SHADING — flat = uniform panels; lit = directional shading for a round, ball-like read.
+  { key: 'shading', label: 'Shading', kind: 'select', options: ['flat', 'lit'], default: 'lit', group: 'Shadow' },
   { key: 'shadeStrength', label: 'Shade depth', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
-interface BallState { mesh: THREE.Mesh; spinGroup: THREE.Group }
-// Single active engine/surface instance (see the other effects): buildScene populates
-// this module-level handle and update() reads it.
+interface BallState { spinGroup: THREE.Group; tiltGroup: THREE.Group }
+// Single active engine/surface instance (see the other effects).
 let state: BallState | null = null
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
 /**
- * Globe material: use ONLY the text texture's alpha (glyph coverage) and composite
- * uBaseColor → uTextColor, so the sphere is a solid colour with text painted on it
- * (NOT the texture's own RGB). flat = MeshBasic (uniform), lit = MeshLambert (shaded
- * by the scene light for dimensional roundness).
+ * Per-panel material: paint the panel with its fill (any type → a tiling texture, sampled at the
+ * panel's raw UV) and composite the text on top in the fill's text colour. Uses ONLY the text
+ * atlas's alpha for coverage (its RGB is ignored). flat = MeshBasic, lit = MeshLambert (shaded by
+ * the scene light for roundness). Mirrors stripes.ts's fill-compositing.
  */
-function ballMaterial(
+function panelMaterial(
   three: typeof THREE,
-  map: THREE.Texture,
-  baseColor: THREE.Color,
+  textMap: THREE.Texture,
+  fillTex: THREE.Texture,
+  fillScale: THREE.Vector2,
   textColor: THREE.Color,
   lit: boolean,
 ): THREE.Material {
   const MatClass = lit ? three.MeshLambertMaterial : three.MeshBasicMaterial
-  const mat = new MatClass({ map, side: three.FrontSide })
+  const mat = new MatClass({ map: textMap, side: three.FrontSide })
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uBaseColor = { value: baseColor }
+    shader.uniforms.uFillTex = { value: fillTex }
+    shader.uniforms.uFillScale = { value: fillScale }
     shader.uniforms.uTextColor = { value: textColor }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawUv = uv;')
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uBaseColor;\nuniform vec3 uTextColor;')
-      // map_fragment leaves glyph coverage in diffuseColor.a → mix the two solid colours by it.
-      .replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor = vec4(mix(uBaseColor, uTextColor, diffuseColor.a), 1.0);')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform vec2 uFillScale;\nuniform vec3 uTextColor;\nvarying vec2 vRawUv;')
+      // uFillTex is SRGB-tagged → texture2D returns linear (no manual decode), same as stripes.
+      // uFillScale carries the wedge aspect (V scaled by height:width) so patterns read square
+      // instead of vertically stretched. map_fragment leaves glyph coverage in diffuseColor.a.
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 panel = texture2D(uFillTex, vRawUv * uFillScale).rgb; diffuseColor = vec4(mix(panel, uTextColor, diffuseColor.a), 1.0); }')
   }
   return mat
 }
@@ -80,28 +87,52 @@ export const ballEffect: SpaceTypeEffect = {
   buildScene(three, params, textTexture) {
     const root = new three.Group()
     const fills = parseFills(params.fills)
-    const f0 = fills[0]!
     const radius = Math.max(0.5, n(params, 'radius'))
-    const around = Math.max(1, Math.round(n(params, 'around')))
+    const segments = Math.max(1, Math.round(n(params, 'segments')))
+    const around = Math.max(0.001, n(params, 'around'))
     const rows = Math.max(1, Math.round(n(params, 'rows')))
     const lit = String(params.shading) === 'lit'
 
-    // Clone the shared atlas so our wrap/repeat doesn't mutate the engine's texture.
-    const tex = textTexture.clone()
-    tex.needsUpdate = true
-    tex.wrapS = three.RepeatWrapping
-    tex.wrapT = three.RepeatWrapping
-    tex.repeat.set(around, rows)
-
-    const geo = new three.SphereGeometry(radius, 128, 96)
-    const mat = ballMaterial(three, tex, new three.Color(f0.a), new three.Color(f0.textColor), lit)
-    const mesh = new three.Mesh(geo, mat)
-    mesh.userData.tex = tex   // so disposeRoot() frees the cloned texture on rebuild
-
-    // Pole axis tilts within spinGroup; the mesh spins around its (now-tilted) local Y.
+    // axisTilt tilts the pole; spinGroup spins the panels around the (tilted) Y axis.
+    const tiltGroup = new three.Group()
     const spinGroup = new three.Group()
-    spinGroup.add(mesh)
-    root.add(spinGroup)
+    tiltGroup.add(spinGroup)
+    root.add(tiltGroup)
+
+    const TWO_PI = Math.PI * 2
+    // Width segments per panel — keep the wedge smooth without exploding the vert count.
+    const wSeg = Math.max(6, Math.round(128 / segments))
+    // Each wedge spans 2π/segments of longitude but the full π of latitude, so it's
+    // (segments/2)× taller than wide at the equator. Scale the fill's V sampling by that
+    // ratio so patterns (grid/checkerboard/stripes/noise/ombre grain) read SQUARE, not
+    // vertically stretched. Gradients are excepted (they should fade once pole-to-pole).
+    const aspect = Math.max(0.25, segments / 2)
+
+    for (let i = 0; i < segments; i++) {
+      const fill = fills[i % fills.length]!
+      // One LONGITUDE wedge (a vertical beach-ball panel).
+      const geo = new three.SphereGeometry(radius, wSeg, 96, (i / segments) * TWO_PI, (1 / segments) * TWO_PI)
+
+      // The panel's slice of the global text tiling: local u 0→1 maps to global
+      // u ∈ [i/segments,(i+1)/segments], so the text stays continuous across panels.
+      const tex = textTexture.clone()
+      tex.needsUpdate = true
+      tex.wrapS = three.RepeatWrapping
+      tex.wrapT = three.RepeatWrapping
+      tex.repeat.set(around / segments, rows)
+      tex.offset.x = (i * around) / segments
+
+      const fillTex = fillShaderTexture(three, fill)
+      const tiling = fillTiling(fill)
+      // Gradient = a single smooth fade across the panel → don't aspect-scale V (no repeat).
+      const fillScale = fill.type === 'gradient'
+        ? new three.Vector2(tiling, tiling)
+        : new three.Vector2(tiling, tiling * aspect)
+      const mat = panelMaterial(three, tex, fillTex, fillScale, new three.Color(fill.textColor), lit)
+      const mesh = new three.Mesh(geo, mat)
+      mesh.userData.tex = tex   // so disposeRoot() frees the cloned text texture on rebuild
+      spinGroup.add(mesh)
+    }
 
     if (lit) {
       const key = new three.DirectionalLight(0xffffff, 1.0)
@@ -110,7 +141,7 @@ export const ballEffect: SpaceTypeEffect = {
       root.add(new three.AmbientLight(0xffffff, Math.max(0.15, 1 - n(params, 'shadeStrength') * 0.7)))
     }
 
-    state = { mesh, spinGroup }
+    state = { spinGroup, tiltGroup }
     ballEffect.update(0, params)
     return root
   },
@@ -118,8 +149,8 @@ export const ballEffect: SpaceTypeEffect = {
   update(t01, params) {
     const s = state
     if (!s) return
-    s.spinGroup.rotation.z = n(params, 'axisTilt')
+    s.tiltGroup.rotation.z = n(params, 'axisTilt')
     // One full revolution per loop at speed 1 → always seamless (integer speed stays seamless).
-    s.mesh.rotation.y = t01 * Math.PI * 2 * n(params, 'spinSpeed')
+    s.spinGroup.rotation.y = t01 * Math.PI * 2 * n(params, 'spinSpeed')
   },
 }
