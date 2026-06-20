@@ -4,11 +4,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Shared slim white slider for the media studios (StudioSlider + auto-built controls). */
-.studio-range { -webkit-appearance: none; appearance: none; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
-.studio-range::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 9999px; background: #fff; cursor: pointer; }
+/* Shared slim white slider for the media studios (StudioSlider + auto-built controls).
+   The hit area is tall enough to CONTAIN the 12px thumb (so it never overflows into the
+   labels above/below), with the visible track drawn thin via the track pseudo-element.
+   Margin: snug under its own label, clear gap before the next control — so each
+   label+slider reads as one group. */
+.studio-range { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; margin: 0 0 0.85rem; background: transparent; cursor: pointer; }
+.studio-range::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+.studio-range::-moz-range-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+.studio-range::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -5px; width: 12px; height: 12px; border-radius: 9999px; background: #fff; cursor: pointer; }
 .studio-range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 9999px; background: #fff; cursor: pointer; }
-.studio-range:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12); }
+.studio-range:focus-visible { outline: none; }
+.studio-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
+.studio-range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
 
 @theme inline {
   --font-sans: 'PP Neue Montreal', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

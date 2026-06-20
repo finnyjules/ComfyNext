@@ -52,6 +52,7 @@ uniform float u_crisp[2];      // 1 = crisp bands (sharp seams), 0 = soft-blende
 uniform float u_rotStep[2];    // stack: gradient rotation per ring, radians
 uniform float u_pivot[2];      // stack: per-ring center orbit, 0..1
 uniform float u_ringScale[2];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
+uniform float u_ringShape[2];  // stack: 0 circle, 1 diamond, 2 square
 
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
@@ -145,15 +146,22 @@ vec4 computeLayer(int i, vec2 p) {
       float f = rings > 1 ? float(k) / float(rings - 1) : 0.0;
       float r = maxR * (1.0 - f * 0.92);
       float ang = float(k) * u_rotStep[i];
-      vec2 c = vec2(cos(ang), sin(ang)) * (u_pivot[i] * maxR * f);
+      float ca = cos(ang), sa = sin(ang);
+      vec2 c = vec2(ca, sa) * (u_pivot[i] * maxR * f);
       vec2 d = q - c;
-      if (dot(d, d) <= r * r) {
-        float ly = -sin(ang) * d.x + cos(ang) * d.y;   // gradient runs along the ring's local vertical
+      vec2 dr = vec2(ca * d.x + sa * d.y, -sa * d.x + ca * d.y);  // d rotated by -ang (shape + gradient rotate together)
+      // Ring contour distance: circle = Euclidean, diamond = Manhattan, square = Chebyshev.
+      float shp = u_ringShape[i];
+      float dist = shp > 1.5 ? max(abs(dr.x), abs(dr.y))
+                 : shp > 0.5 ? abs(dr.x) + abs(dr.y)
+                 : length(dr);
+      if (dist <= r) {
+        float ly = dr.y;                               // gradient runs along the ring's local vertical
         t = clamp(ly / (2.0 * r) + 0.5, 0.0, 1.0);
         break;
       }
     }
-    if (t < 0.0) return vec4(0.0);                      // outside every circle → background
+    if (t < 0.0) return vec4(0.0);                      // outside every ring → background
     t = quantize(t, u_steps[i]);
     vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
     return vec4(col, 1.0);
