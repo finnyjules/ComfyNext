@@ -116,7 +116,7 @@ function buildGradientTexture(three: typeof THREE, stops: string[]): THREE.Canva
   return t
 }
 
-type FaceMode = 'solid' | 'gradient' | 'grid' | 'noise'
+type FaceMode = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise'
 
 /** Resolve a face's paint: a path-sampled gradient ramp (gradMode 1) or a tiled pattern (gradMode 0). */
 function faceTexture(three: typeof THREE, mode: FaceMode, stops: string[], fill: { a: string; b: string; density: number }, aspect: number): { tex: THREE.Texture; gradMode: number; tile: [number, number] } {
@@ -237,9 +237,15 @@ export const spiralEffect: SpaceTypeEffect = {
     const stops = gradientStops(params)
     const bandColor = String(params.bandColor ?? '#000000')
 
-    // OUTER face: the text on an opaque band (or transparent). INNER / underside face: the gradient.
+    // OUTER face: the text on an opaque band (or transparent). INNER / underside face: the underside
+    // is the multi-stop holographic gradient by default, but if the first fill picks a single-fill
+    // type (ombre/grid/noise/solid) the underside renders THAT instead (a/b from the fill).
+    const f0 = parseFills(params.fills)[0]!
+    const underMode: FaceMode = (f0.type === 'ombre' || f0.type === 'grid' || f0.type === 'noise' || f0.type === 'solid') ? f0.type : 'gradient'
     const front = faceTexture(three, 'solid', stops, { a: bandColor, b: bandColor, density: 8 }, aspect)
-    const back = faceTexture(three, 'gradient', stops, { a: stops[0]!, b: stops[stops.length - 1]!, density: 8 }, aspect)
+    const back = underMode === 'gradient'
+      ? faceTexture(three, 'gradient', stops, { a: stops[0]!, b: stops[stops.length - 1]!, density: 8 }, aspect)
+      : faceTexture(three, underMode, stops, { a: f0.a, b: f0.b, density: f0.density }, aspect)
 
     // The helix winding puts the OUTER (viewer-facing) surface on one geometric side — BackSide
     // normally, FrontSide when the coil is reversed (winding flips). Text rides the outer face (the

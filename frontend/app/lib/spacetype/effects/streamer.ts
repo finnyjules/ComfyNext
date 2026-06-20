@@ -32,7 +32,7 @@ const controls: ControlSpec[] = [
   { key: 'count', label: 'Streamers', kind: 'slider', min: 1, max: 5, step: 1, default: 1, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
   // Color — front face
-  { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'grid', 'noise'], default: 'gradient', group: 'Color' },
+  { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'gradient', group: 'Color' },
   { key: 'fills', label: 'Front colors', kind: 'fillList', default: JSON.stringify([
       { type: 'solid', a: '#3B2BFF', b: '#000', textColor: '#fff' },
       { type: 'solid', a: '#E01B6A', b: '#000', textColor: '#fff' },
@@ -42,7 +42,7 @@ const controls: ControlSpec[] = [
   { key: 'textColor', label: 'Text color', kind: 'color', default: '#111111', group: 'Color' },
   { key: 'noStripes', label: 'Text only', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
   // Color — back face
-  { key: 'backMode', label: 'Back mode', kind: 'select', options: ['solid', 'gradient', 'grid', 'noise'], default: 'solid', group: 'Color' },
+  { key: 'backMode', label: 'Back mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'solid', group: 'Color' },
   { key: 'backColorA', label: 'Back color', kind: 'color', default: '#111111', group: 'Color' },
   { key: 'backColorB', label: 'Back color 2', kind: 'color', default: '#444444', group: 'Color' },
   { key: 'backDensity', label: 'Back density', kind: 'slider', min: 1, max: 32, step: 1, default: 8, group: 'Color' },
@@ -119,7 +119,7 @@ function buildGradientTexture(three: typeof THREE, stops: string[]): THREE.Canva
   return t
 }
 
-type FaceMode = 'solid' | 'gradient' | 'grid' | 'noise'
+type FaceMode = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise'
 
 /** Resolve a face's paint: a length-pinned gradient ramp (gradMode 1), or a tiled solid/grid/noise
  *  pattern (gradMode 0). `aspect` = band length / width, so patterned cells stay roughly square. */

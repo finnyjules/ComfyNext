@@ -6,6 +6,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
+import { ombreSideTexture } from '../fills'
 // Typeface fonts ship with three and import synchronously (no runtime TTF parsing).
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json'
@@ -112,6 +113,13 @@ const controls: ControlSpec[] = [
   { key: 'align', label: 'Align', kind: 'select', options: ['center', 'left', 'right'], default: 'center', group: 'Type' },
   // Extrude.
   { key: 'depth', label: 'Extrude depth', kind: 'slider', min: 0, max: 6, step: 0.05, default: 1.2, group: 'Ribbon' },
+  // key is 'extrudePerspective' (not 'perspective') so it's NOT in the surface's live-param
+  // exclusion list — this taper is baked into geometry and must trigger a rebuild on change.
+  { key: 'extrudePerspective', label: 'Perspective', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Ribbon' },
+  { key: 'convergeX', label: 'Center X', kind: 'slider', min: -1, max: 1, step: 0.02, default: 0, group: 'Ribbon' },
+  { key: 'convergeY', label: 'Center Y', kind: 'slider', min: -1, max: 1, step: 0.02, default: 0, group: 'Ribbon' },
+  { key: 'centerGlow', label: 'Center glow', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Ribbon' },
+  { key: 'arc', label: 'Arc', kind: 'slider', min: -1, max: 1, step: 0.02, default: 0, group: 'Ribbon' },
   { key: 'curveRes', label: 'Curve detail', kind: 'slider', min: 1, max: 12, step: 1, default: 5, group: 'Ribbon' },
   { key: 'extrudeMode', label: 'Mode', kind: 'select', options: ['static', 'tumble', 'zoom', 'punch'], default: 'static', group: 'Ribbon' },
   { key: 'tumble', label: 'Tumble', kind: 'slider', min: 0, max: 2, step: 0.05, default: 0.6, group: 'Ribbon' },
@@ -128,7 +136,8 @@ const controls: ControlSpec[] = [
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // Colour.
   { key: 'faceColor', label: 'Face', kind: 'color', default: '#ffffff', group: 'Color' },
-  { key: 'sideMode', label: 'Sides', kind: 'select', options: ['palette', 'gradient', 'rainbow', 'grid', 'noise', 'solid', 'mixed', 'custom'], default: 'palette', group: 'Color' },
+  { key: 'centerColor', label: 'Center color', kind: 'color', default: '#ffffff', group: 'Color' },
+  { key: 'sideMode', label: 'Sides', kind: 'select', options: ['palette', 'gradient', 'ombre', 'rainbow', 'grid', 'noise', 'solid', 'mixed', 'custom'], default: 'palette', group: 'Color' },
   // `custom` ⇒ assign a style per letter from this list (cycles if shorter than the text).
   // Tokens are separated by spaces/commas, e.g. "rainbow grid noise solid".
   { key: 'letterStyles', label: 'Per-letter styles', kind: 'text', default: 'rainbow, grid, noise, solid', group: 'Color' },
@@ -255,6 +264,9 @@ function buildLetterGeo(
   sideColorAt: (seg: number, t: number) => THREE.Color,
   zSub: number,
   curveRes: number,
+  centerColor: THREE.Color,
+  centerGlow: number,
+  depthV = false,
 ): { geo: THREE.BufferGeometry; strokePts: number[] } {
   const fr = -0.5, bk = 0.5
   const capPos: number[] = [], capCol: number[] = []
@@ -298,8 +310,12 @@ function buildLetterGeo(
         for (let j = 0; j < zSub; j++) {
           const t0 = j / zSub, t1 = (j + 1) / zSub
           const z0 = fr + (bk - fr) * t0, z1 = fr + (bk - fr) * t1
-          const v0 = t0 / TILE, v1 = t1 / TILE
-          const c = sideColorAt(seg, (j + 0.5) / zSub)
+          // ombre maps V across the full 0→1 depth (one fade); grid/noise tile V by TILE.
+          const v0 = depthV ? t0 : t0 / TILE, v1 = depthV ? t1 : t1 / TILE
+          // t=0 is the far/centre end (converges to the convergence point) → fade toward centerColor.
+          const tt = (j + 0.5) / zSub
+          const c0 = sideColorAt(seg, tt)
+          const c = centerGlow > 0 ? c0.clone().lerp(centerColor, centerGlow * Math.pow(1 - tt, 1.5)) : c0
           pushSideTri(a.x, a.y, z0, u0, v0, a.x, a.y, z1, u0, v1, b.x, b.y, z0, u1, v0, c)
           pushSideTri(b.x, b.y, z0, u1, v0, a.x, a.y, z1, u0, v1, b.x, b.y, z1, u1, v1, c)
         }
@@ -341,6 +357,14 @@ export const boostEffect: SpaceTypeEffect = {
     const tracking = n(params, 'tracking') * size
     const leading = n(params, 'leading') * size
     const align = String(params.align)
+    // Perspective taper: rake the far end of each glyph's extrude toward a SHARED convergence point
+    // so the walls all meet there (0 = parallel prism). vx/vy move that point; centerGlow fades the
+    // walls toward centerColor as they near it; arc bends each line into a curve. Baked into geometry.
+    const persp = Math.min(0.92, Math.max(0, n(params, 'extrudePerspective') / 100))
+    const vx = n(params, 'convergeX') * 6, vy = n(params, 'convergeY') * 6   // convergence point (world)
+    const centerGlow = Math.min(1, Math.max(0, n(params, 'centerGlow') / 100))
+    const centerColor = new three.Color(String(params.centerColor))
+    const arcAmt = n(params, 'arc')
 
     const lines = String(params.text ?? '').split('\n')
     const usable = lines.length ? lines : ['']
@@ -360,20 +384,25 @@ export const boostEffect: SpaceTypeEffect = {
     // style (by index); `custom` reads an explicit per-letter list. The catalog below is what
     // both pick from. grid/noise carry their colour in the TEXTURE, so the vertex colour is
     // white (identity multiply) for those.
-    const STYLES = ['palette', 'gradient', 'rainbow', 'grid', 'noise', 'solid'] as const
+    const STYLES = ['palette', 'gradient', 'ombre', 'rainbow', 'grid', 'noise', 'solid'] as const
     const resolveSide = (style: string, letterIdx: number) => {
-      const zSub = (style === 'gradient' || style === 'rainbow') ? depthBands : 1
+      const zSub = (style === 'gradient' || style === 'rainbow' || style === 'ombre') ? depthBands : 1
+      const ombreB = paletteCount > 1 ? palette[1]! : sideSolid   // grainy fade colours
       const mapped = style === 'grid' ? gridTexture(three, gridCell, gridLine)
         : style === 'noise' ? noiseTexture(three, noiseDark, noiseLight)
+        // ombre = a 256px DITHER texture (fine pointillist grain) along the depth — NOT per-band
+        // vertex cells (those read as blocky QR squares at low band counts).
+        : style === 'ombre' ? ombreSideTexture(three, '#' + palette[0]!.getHexString(), '#' + ombreB.getHexString())
         : null
       const sideColorAt = (seg: number, t: number): THREE.Color => {
-        if (style === 'grid' || style === 'noise') return WHITE
+        // grid / noise / ombre carry colour in the texture → white identity multiply.
+        if (style === 'grid' || style === 'noise' || style === 'ombre') return WHITE
         if (style === 'solid') return sideSolid
         if (style === 'gradient') return lerpPalette(palette, t)
         if (style === 'rainbow') return new three.Color().setHSL(t * 0.85, 0.95, 0.55)
         return palette[Math.floor(hash01(letterIdx * 97 + seg * 13) * paletteCount) % paletteCount]!
       }
-      return { zSub, sideMap: mapped, sideColorAt }
+      return { zSub, sideMap: mapped, sideColorAt, depthV: style === 'ombre' }
     }
     // Parse the per-letter list once: lowercase tokens, keep only known styles (cycled per letter).
     const KNOWN = new Set(STYLES as readonly string[])
@@ -408,14 +437,57 @@ export const boostEffect: SpaceTypeEffect = {
           const shapes = font.shapes(ch, size)
           if (shapes.length) {
             const letterIdx = li
-            const { zSub, sideMap, sideColorAt } = resolveSide(pickStyle(letterIdx), letterIdx)
-            const { geo, strokePts } = buildLetterGeo(three, shapes, faceColor, sideColorAt, zSub, curveRes)
+            const { zSub, sideMap, sideColorAt, depthV } = resolveSide(pickStyle(letterIdx), letterIdx)
+            const { geo, strokePts } = buildLetterGeo(three, shapes, faceColor, sideColorAt, zSub, curveRes, centerColor, centerGlow, depthV)
 
             geo.computeBoundingBox()
             const bb = geo.boundingBox!
             const cx = (bb.min.x + bb.max.x) / 2
             const cy = (bb.min.y + bb.max.y) / 2
             geo.translate(-cx, -cy, 0)   // pivot at glyph centre (so rotation tumbles in place)
+            let baseX = cursor + cx, baseY = y + cy   // glyph centre in the (origin-centred) layout
+
+            // Arc: bend each line into a curve around the convergence point. A glyph swings on a
+            // circle whose radius is its distance from the centre line and rotates to stay tangent
+            // (top line bows ∩, bottom ∪, so the lines wrap the point). Rotation baked into the geo.
+            if (Math.abs(arcAmt) > 1e-3) {
+              const fx = baseX - vx, fy = baseY - vy
+              const kc = Math.abs(arcAmt) * 0.14
+              if (Math.abs(fy) > 1e-3) {
+                const R = 1 / kc, psi = fx / R
+                const dip = Math.sign(arcAmt) * -Math.sign(fy)   // curve toward (arc>0) / away (arc<0) from centre
+                baseX = vx + R * Math.sin(psi)
+                baseY = baseY + dip * R * (1 - Math.cos(psi))
+                const arcRot = psi * dip
+                geo.rotateZ(arcRot)
+                for (let q = 0; q < strokePts.length; q += 3) {
+                  const rx = strokePts[q]! - cx, ry = strokePts[q + 1]! - cy
+                  strokePts[q] = cx + rx * Math.cos(arcRot) - ry * Math.sin(arcRot)
+                  strokePts[q + 1] = cy + rx * Math.sin(arcRot) + ry * Math.cos(arcRot)
+                }
+              }
+            }
+
+            // Perspective taper: rake the BACK of every glyph's extrude toward the SHARED scene
+            // centre (0,0) as a function of depth (z), so ALL the extrusions converge to one point
+            // in the middle (the deeper the perspective, the harder they rake in). 0 = parallel
+            // prism. Recompute normals for shading.
+            if (persp > 0.001) {
+              const pa = geo.attributes.position as THREE.BufferAttribute
+              for (let vi = 0; vi < pa.count; vi++) {
+                const k = persp * (0.5 - pa.getZ(vi))            // 0 at the near cap (+0.5) → persp at the far cap (−0.5)
+                pa.setX(vi, pa.getX(vi) * (1 - k) + (vx - baseX) * k)   // local → world (vx,vy) as k→1
+                pa.setY(vi, pa.getY(vi) * (1 - k) + (vy - baseY) * k)
+              }
+              pa.needsUpdate = true
+              geo.computeVertexNormals()
+              // Stroke outline converges to the same point (its coords are uncentred glyph space).
+              for (let q = 0; q < strokePts.length; q += 3) {
+                const k = persp * (0.5 - strokePts[q + 2]!)
+                strokePts[q] = (baseX - cx + strokePts[q]!) * (1 - k) + vx * k - (baseX - cx)
+                strokePts[q + 1] = (baseY - cy + strokePts[q + 1]!) * (1 - k) + vy * k - (baseY - cy)
+              }
+            }
 
             // Caps (material 0) = faceColor via vertex colour; sides (material 1) = vertex colour
             // (× grid/noise texture when chosen). DoubleSide so thin walls read from both sides.
@@ -435,7 +507,6 @@ export const boostEffect: SpaceTypeEffect = {
               line.position.set(-cx, -cy, 0)   // match the mesh geo's centring translate
               grp.add(line)
             }
-            const baseX = cursor + cx, baseY = y + cy
             grp.position.set(baseX, baseY, 0)
             root.add(grp)
             // Blast direction = radial from scene centre; centred letters fall back to a hash angle.

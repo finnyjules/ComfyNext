@@ -6,12 +6,13 @@ import * as THREE from 'three'
  * slot; effects turn a fill into either a solid THREE.Color (`solid`) or a tiling THREE.Texture
  * (`gradient`/`grid`/`noise`). Stored in params as a single JSON string so ParamValue stays scalar.
  */
-export type FillType = 'solid' | 'gradient' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr'
+export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
  *  `angle` (degrees) only applies to `stripes`; `density` controls cell/stripe count for patterned fills. */
 export interface Fill { type: FillType; a: string; b: string; textColor: string; angle: number; density: number }
 
-const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
+/** All fill types, in picker order. SINGLE SOURCE OF TRUTH — imported by SpaceTypeSurface's dropdown. */
+export const FILL_TYPES: FillType[] = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
 const DEFAULT_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
 
 /** True when the fill needs a texture (anything but a flat colour). */
@@ -56,6 +57,7 @@ export function fillTexture(three: typeof THREE, fill: Fill): THREE.Texture | nu
   const hit = _cache.get(key)
   if (hit) return hit
   const t = fill.type === 'gradient' ? gradientRamp(three, fill.a, fill.b)
+    : fill.type === 'ombre' ? ombreTex(three, fill.a, fill.b, fill.angle)
     : fill.type === 'grid' ? gridTex(three, fill.a, fill.b, fill.density)
     : fill.type === 'noise' ? noiseTex(three, fill.a, fill.b)
     : fill.type === 'checkerboard' ? checkerboardTex(three, fill.a, fill.b, fill.density)
@@ -118,6 +120,8 @@ export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Text
       const g = ctx.createLinearGradient(0, y0, 0, y0 + BAND)
       g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
       ctx.fillStyle = g; ctx.fillRect(0, y0, W, BAND)
+    } else if (fill.type === 'ombre') {
+      ctx.putImageData(patternImageData(W, BAND, hexBytes(fill.a), hexBytes(fill.b), ombrePicker(W, BAND, fill.angle)), 0, y0)
     } else if (fill.type === 'grid') {
       const d = Math.max(1, Math.round(fill.density)), step = W / d
       ctx.fillStyle = fill.a; ctx.fillRect(0, y0, W, BAND)
@@ -170,6 +174,10 @@ export function fillTileCanvas(fill: Fill, size = 128): HTMLCanvasElement {
     const g = ctx.createLinearGradient(0, 0, 0, size); g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
     ctx.fillStyle = g; ctx.fillRect(0, 0, size, size); return c
   }
+  if (fill.type === 'ombre') {
+    ctx.putImageData(patternImageData(size, size, hexBytes(fill.a), hexBytes(fill.b), ombrePicker(size, size, fill.angle)), 0, 0)
+    return c
+  }
   if (fill.type === 'grid') {
     const d = Math.max(1, Math.round(fill.density)), step = size / d
     ctx.fillStyle = fill.a; ctx.fillRect(0, 0, size, size)
@@ -202,6 +210,51 @@ function gradientRamp(three: typeof THREE, a: string, b: string): THREE.Texture 
   ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 256)
   const t = new three.CanvasTexture(c); t.wrapS = t.wrapT = three.ClampToEdgeWrapping
   t.colorSpace = three.SRGBColorSpace
+  return t
+}
+
+/** Ombre: a GRAINY / pointillist A→B fade at `angle` degrees — each pixel is colB with probability
+ *  = its position along the gradient (else colA), so the two colours mix as scattered dots whose
+ *  density shifts across the fade (solid A → grain → solid B). Deterministic hash for stable dots. */
+export function ombrePicker(w: number, h: number, angle: number): (px: number, py: number) => boolean {
+  const rad = (angle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad)
+  const cor = [0, w * dx, h * dy, w * dx + h * dy]
+  const pmin = Math.min(...cor), range = (Math.max(...cor) - pmin) || 1
+  return (px, py) => {
+    const t = (px * dx + py * dy - pmin) / range            // 0→1 along the fade direction
+    const hsh = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453
+    return (hsh - Math.floor(hsh)) < t                       // colB density grows with t
+  }
+}
+
+/** Ombre dither for an EXTRUDE side wall: the grainy fade runs along V (the extrude depth) and
+ *  the perimeter (U) tiles. ClampToEdge on V so the whole 0→1 depth is ONE fade (no repeat banding),
+ *  unlike the tiled grid/noise side textures. Solid `a` at the near face → grain → solid `b` at the far. */
+export function ombreSideTexture(three: typeof THREE, a: string, b: string): THREE.Texture {
+  const N = 256
+  const c = document.createElement('canvas'); c.width = N; c.height = N
+  const ctx = c.getContext('2d')!
+  // angle 90 → fade along the canvas height (V); flipY (CanvasTexture default) puts V=0 at the bottom.
+  ctx.putImageData(patternImageData(N, N, hexBytes(a), hexBytes(b), ombrePicker(N, N, 90)), 0, 0)
+  const t = new three.CanvasTexture(c)
+  t.colorSpace = three.SRGBColorSpace
+  t.wrapS = three.RepeatWrapping
+  t.wrapT = three.ClampToEdgeWrapping
+  t.magFilter = three.NearestFilter; t.minFilter = three.NearestFilter
+  t.generateMipmaps = false
+  return t
+}
+
+function ombreTex(three: typeof THREE, a: string, b: string, angle: number): THREE.Texture {
+  const N = 256
+  const c = document.createElement('canvas'); c.width = N; c.height = N
+  const ctx = c.getContext('2d')!
+  ctx.putImageData(patternImageData(N, N, hexBytes(a), hexBytes(b), ombrePicker(N, N, angle)), 0, 0)
+  const t = new three.CanvasTexture(c)
+  t.colorSpace = three.SRGBColorSpace
+  t.wrapS = t.wrapT = three.RepeatWrapping
+  t.magFilter = three.NearestFilter; t.minFilter = three.NearestFilter
+  t.generateMipmaps = false
   return t
 }
 

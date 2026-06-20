@@ -5,7 +5,7 @@ import { SPACE_TYPE_EFFECTS, getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
-import { parseFills, serializeFills, type Fill, type FillType } from '~/lib/spacetype/fills'
+import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
@@ -86,8 +86,8 @@ function removeTextRow(i: number) { textLines.splice(i, 1); if (!textLines.lengt
 
 // Fill rows for a `fillList` control (per-slot solid/gradient/grid/noise). Mirrors textLines:
 // edit a local reactive array, sync back into the (scalar) param as a JSON string. `fillKey`
-// is the control's key (effects have at most one fillList).
-const FILL_TYPES: FillType[] = ['solid', 'gradient', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
+// is the control's key (effects have at most one fillList). FILL_TYPES is imported from fills.ts
+// (single source of truth — keeps the dropdown in sync with the renderable types).
 const fills = reactive<Fill[]>([])
 let syncingFills = false
 function fillKey(): string | null {
@@ -585,8 +585,8 @@ async function generateVideo() {
                   </select>
                   <StudioColor v-model="f.a" />
                   <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
-                  <input v-if="f.type === 'stripes' || f.type === 'gradient'" type="range" v-model.number="f.angle"
-                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" :title="f.type === 'gradient' ? 'Gradient angle' : 'Stripe angle'" />
+                  <input v-if="f.type === 'stripes' || f.type === 'gradient' || f.type === 'ombre'" type="range" v-model.number="f.angle"
+                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" :title="f.type === 'stripes' ? 'Stripe angle' : 'Fade angle'" />
                   <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
                          v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range w-14 shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>
