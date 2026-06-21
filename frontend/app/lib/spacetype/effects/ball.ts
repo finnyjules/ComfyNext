@@ -21,6 +21,9 @@ const controls: ControlSpec[] = [
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   // SPHERE shape (grouped under the suite's geometry section, 'Ribbon').
   { key: 'radius', label: 'Radius', kind: 'slider', min: 2, max: 10, step: 0.1, default: 5, group: 'Ribbon' },
+  // fixed = the Panels slider sets the count; per-word = one panel per text repeat (Around),
+  // each word centred on its own panel so the panels track the text as you resize.
+  { key: 'panelMode', label: 'Panel sizing', kind: 'select', options: ['fixed', 'per-word'], default: 'fixed', group: 'Ribbon' },
   { key: 'segments', label: 'Panels', kind: 'slider', min: 1, max: 16, step: 1, default: 6, group: 'Ribbon' },
   { key: 'around', label: 'Around', kind: 'slider', min: 1, max: 20, step: 1, default: 4, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 2, max: 28, step: 1, default: 11, group: 'Ribbon' },
@@ -88,10 +91,15 @@ export const ballEffect: SpaceTypeEffect = {
     const root = new three.Group()
     const fills = parseFills(params.fills)
     const radius = Math.max(0.5, n(params, 'radius'))
-    const segments = Math.max(1, Math.round(n(params, 'segments')))
     const around = Math.max(0.001, n(params, 'around'))
     const rows = Math.max(1, Math.round(n(params, 'rows')))
     const lit = String(params.shading) === 'lit'
+    // per-word: one panel per text repeat (panel count = Around), each word centred on its
+    // panel. fixed: the Panels slider sets the count and the text tiles continuously across.
+    const perWord = String(params.panelMode) === 'per-word'
+    const segments = perWord ? Math.max(1, Math.round(around)) : Math.max(1, Math.round(n(params, 'segments')))
+    // Word width as a fraction of its (word + trailing gap) tile, to centre it in per-word mode.
+    const wordFrac = Number((textTexture.userData?.wordFracs as number[] | undefined)?.[0] ?? 1) || 1
 
     // axisTilt tilts the pole; spinGroup spins the panels around the (tilted) Y axis.
     const tiltGroup = new three.Group()
@@ -113,14 +121,20 @@ export const ballEffect: SpaceTypeEffect = {
       // One LONGITUDE wedge (a vertical beach-ball panel).
       const geo = new three.SphereGeometry(radius, wSeg, 96, (i / segments) * TWO_PI, (1 / segments) * TWO_PI)
 
-      // The panel's slice of the global text tiling: local u 0→1 maps to global
-      // u ∈ [i/segments,(i+1)/segments], so the text stays continuous across panels.
       const tex = textTexture.clone()
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
       tex.wrapT = three.RepeatWrapping
-      tex.repeat.set(around / segments, rows)
-      tex.offset.x = (i * around) / segments
+      if (perWord) {
+        // One full text repeat per panel, centred (symmetric gaps from the trailing space).
+        tex.repeat.set(1, rows)
+        tex.offset.x = i - (0.5 - wordFrac / 2)
+      } else {
+        // The panel's slice of the global text tiling: local u 0→1 maps to global
+        // u ∈ [i/segments,(i+1)/segments], so the text stays continuous across panels.
+        tex.repeat.set(around / segments, rows)
+        tex.offset.x = (i * around) / segments
+      }
 
       const fillTex = fillShaderTexture(three, fill)
       const tiling = fillTiling(fill)
