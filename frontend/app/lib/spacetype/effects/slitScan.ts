@@ -34,6 +34,8 @@ const controls: ControlSpec[] = [
   { key: 'speed', label: 'Speed', kind: 'slider', min: 1, max: 8, step: 1, default: 2, group: 'Motion' },
   // Cycle through the text lines (one per row of the Text field). Integer passes/loop ⇒ seamless.
   { key: 'ssTextCycle', label: 'Cycle texts', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Motion' },
+  // Crossfade length between consecutive lines (fraction of each line's on-screen slot). 0 = hard cut.
+  { key: 'ssTextBlend', label: 'Cycle blend', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Motion' },
   // TRANSFORM.
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Camera rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
@@ -61,31 +63,33 @@ const FRAG = [
   'precision highp float;',
   'varying vec2 vUv;',
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
-  'uniform float uWf; uniform float uVMid; uniform float uVH;',
-  'uniform float uRowV; uniform float uHScale;',                     // active-string atlas row + its aspect inset
+  'uniform float uVMid; uniform float uVH;',
+  // Two string slots (current + next) so the cycle can CROSSFADE between lines instead of hard-cutting.
+  'uniform float uWf0; uniform float uRowV0; uniform float uHS0;',
+  'uniform float uWf1; uniform float uRowV1; uniform float uHS1; uniform float uMix;',
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
   'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
   'const float TAU = 6.2831853;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
-  // glyph alpha at word-space x (tx∈[0,1]) and screen vy
-  'float glyph(float tx, float vy){',
-  '  float txc = (tx - 0.5) / max(0.01, uHScale) + 0.5;',           // keep each string\'s aspect, centred in the plane
+  // glyph alpha for ONE string slot (wf/rowV/hs) at word-space x (tx∈[0,1]) and screen vy
+  'float glyph(float tx, float vy, float wf, float rowV, float hs){',
+  '  float txc = (tx - 0.5) / max(0.01, hs) + 0.5;',                // keep each string\'s aspect, centred in the plane
   '  if (txc < 0.0 || txc > 1.0) return 0.0;',
-  '  float ix = txc * uWf;',
-  '  float iy = uVMid + uRowV + (vy - 0.5) * uVH * 1.35;',          // uRowV picks the active string\'s atlas row
-  '  if (ix < 0.0 || ix > uWf || iy < 0.0 || iy > 1.0) return 0.0;',
+  '  float ix = txc * wf;',
+  '  float iy = uVMid + rowV + (vy - 0.5) * uVH * 1.35;',           // rowV picks this string\'s atlas row
+  '  if (ix < 0.0 || ix > wf || iy < 0.0 || iy > 1.0) return 0.0;',
   '  return texture2D(uText, vec2(clamp(ix, 0.0, 1.0), clamp(iy, 0.0, 1.0))).a;',
   '}',
-  // base squish-wipe at normalized time tau: copy A shrinks to the left, copy B grows from the right.
-  // The squish minifies the text hard, so supersample across the horizontal footprint (dFdx) to
-  // anti-alias — using dFdx (not fwidth) avoids the vertical band-boundary spike.
-  'float base(vec2 uv, float tau){',
+  // base squish-wipe at normalized time tau for ONE string slot: copy A shrinks to the left, copy B
+  // grows from the right. The squish minifies hard, so supersample across the horizontal footprint
+  // (dFdx) to anti-alias — using dFdx (not fwidth) avoids the vertical band-boundary spike.
+  'float base(vec2 uv, float tau, float wf, float rowV, float hs){',
   '  float p = fract(tau);',
   '  float b = 1.0 - p;',
   '  float tx = (uv.x < b) ? uv.x / max(1e-3, b) : (uv.x - b) / max(1e-3, p);',
   '  float foot = clamp(abs(dFdx(tx)), 0.0, 0.25);',
   '  float a = 0.0;',
-  '  for (int i = 0; i < 5; i++) a += glyph(tx + (float(i) - 2.0) * foot, uv.y);',
+  '  for (int i = 0; i < 5; i++) a += glyph(tx + (float(i) - 2.0) * foot, uv.y, wf, rowV, hs);',
   '  return a * 0.2;',
   '}',
   'void main(){',
@@ -113,7 +117,10 @@ const FRAG = [
   '  }',
   '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
   '  float tau = uTime * spd - g * dly;',                              // per-pixel TIME offset
-  '  float a = base(vUv, tau);',
+  // Crossfade the two string slots (same per-pixel displacement, different atlas row) so lines
+  // dissolve into one another; uMix 0 ⇒ pure current line (no extra cost beyond a skipped sample).
+  '  float a = base(vUv, tau, uWf0, uRowV0, uHS0);',
+  '  if (uMix > 0.001) a = mix(a, base(vUv, tau, uWf1, uRowV1, uHS1), uMix);',
   '  vec3 col = mix(uBg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
   '}',
@@ -159,8 +166,9 @@ export const slitScanEffect: SpaceTypeEffect = {
         uText: { value: tex },
         uTextColor: { value: new three.Color(String(params.textColor)) },
         uBg: { value: new three.Color(String(params.bgColor)) },
-        uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
-        uRowV: { value: 0 }, uHScale: { value: 1 },
+        uVMid: { value: inkVMid }, uVH: { value: inkVH },
+        uWf0: { value: wf }, uRowV0: { value: 0 }, uHS0: { value: 1 },
+        uWf1: { value: wf }, uRowV1: { value: 0 }, uHS1: { value: 1 }, uMix: { value: 0 },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
       },
@@ -181,12 +189,25 @@ export const slitScanEffect: SpaceTypeEffect = {
     if (!s) return
     const u = s.material.uniforms
     u.uTime!.value = t01
-    // Cycle through the text lines: integer passes/loop keeps the loop seamless (idx returns to 0).
+    // Cycle through the text lines: integer passes/loop keeps the loop seamless (phase returns to 0).
+    const N = s.numTexts
     const cycles = Math.max(1, Math.round(n(params, 'ssTextCycle') || 1))
-    const idx = s.numTexts > 1 ? Math.floor(t01 * s.numTexts * cycles) % s.numTexts : 0
-    u.uWf!.value = s.wordInk[idx] ?? s.wordInk[0] ?? 1
-    u.uRowV!.value = idx / s.numTexts
-    u.uHScale!.value = (s.aspects[idx] ?? s.planeAspect) / s.planeAspect
+    const blend = N > 1 ? Math.min(1, Math.max(0, n(params, 'ssTextBlend'))) : 0
+    const phase = t01 * N * cycles
+    const idx = N > 1 ? Math.floor(phase) % N : 0
+    const next = (idx + 1) % N
+    const frac = phase - Math.floor(phase)               // 0..1 within the current line's slot
+    // Crossfade only over the LAST `blend` fraction of each slot; smoothstep for an easy in/out.
+    const t = blend > 0 ? Math.min(1, Math.max(0, (frac - (1 - blend)) / blend)) : 0
+    const mix = t * t * (3 - 2 * t)
+    const set = (slot: number, i: number) => {
+      u[`uWf${slot}`]!.value = s.wordInk[i] ?? s.wordInk[0] ?? 1
+      u[`uRowV${slot}`]!.value = i / N
+      u[`uHS${slot}`]!.value = (s.aspects[i] ?? s.planeAspect) / s.planeAspect
+    }
+    set(0, idx)
+    set(1, next)
+    u.uMix!.value = mix
     u.uSpeed!.value = Math.max(1, Math.round(n(params, 'speed')))   // integer cycles/loop → seamless
     u.uDelay!.value = Math.max(0, n(params, 'ssDelay'))
     u.uMapDir!.value = String(params.ssMapDir) === 'horizontal' ? 1 : 0
