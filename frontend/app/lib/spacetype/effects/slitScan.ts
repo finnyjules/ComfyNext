@@ -81,6 +81,7 @@ const FRAG = [
   '  float coord = (uMapDir < 0.5) ? vUv.y : vUv.x;',                   // gradient axis
   '  float g = coord;',
   '  float spd = uSpeed;',
+  '  float dly = uDelay;',                                             // band-offset span (cycles)
   '  if (uBands >= 2.0) {',                                             // quantise into N bands…
   '    float band = floor(coord * uBands);',
   '    float bn = band / max(1.0, uBands - 1.0);',                      // 0..1 band index
@@ -91,12 +92,16 @@ const FRAG = [
   '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // …random speed
   '    } else {',
   '      g = bne;',                                                     // progressive: ordered/eased band offset
+  // The squish base repeats every 1.0 cycle, so a span ≥ 1 wraps and adjacent bands ALIAS
+  // (delay 0,0.5,1.0,1.5 → fract 0,0.5,0,0.5 → looks alternating, not progressive). Cap the
+  // progressive span just under one cycle so the offsets stay monotonic 0→0.92, no wrap.
+  '      dly = min(uDelay, 0.92);',
   '      extra = floor(bne * uBandSpeed + 0.5);',                       // …eased progressive speed
   '    }',
   '    spd = uSpeed + extra;',
   '  }',
   '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
-  '  float tau = uTime * spd - g * uDelay;',                            // per-pixel TIME offset
+  '  float tau = uTime * spd - g * dly;',                              // per-pixel TIME offset
   '  float a = base(vUv, tau);',
   '  vec3 col = mix(uBg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
