@@ -63,11 +63,17 @@ const FRAG = [
   '  if (ix < 0.0 || ix > uWf || iy < 0.0 || iy > 1.0) return 0.0;',
   '  return texture2D(uText, vec2(clamp(ix, 0.0, 1.0), clamp(iy, 0.0, 1.0))).a;',
   '}',
-  // base squish-wipe at normalized time tau: copy A shrinks to the left, copy B grows from the right
+  // base squish-wipe at normalized time tau: copy A shrinks to the left, copy B grows from the right.
+  // The squish minifies the text hard, so supersample across the horizontal footprint (dFdx) to
+  // anti-alias — using dFdx (not fwidth) avoids the vertical band-boundary spike.
   'float base(vec2 uv, float tau){',
   '  float p = fract(tau);',
-  '  float tx = (uv.x < (1.0 - p)) ? uv.x / max(1e-3, 1.0 - p) : (uv.x - (1.0 - p)) / max(1e-3, p);',
-  '  return glyph(tx, uv.y);',
+  '  float b = 1.0 - p;',
+  '  float tx = (uv.x < b) ? uv.x / max(1e-3, b) : (uv.x - b) / max(1e-3, p);',
+  '  float foot = clamp(abs(dFdx(tx)), 0.0, 0.25);',
+  '  float a = 0.0;',
+  '  for (int i = 0; i < 5; i++) a += glyph(tx + (float(i) - 2.0) * foot, uv.y);',
+  '  return a * 0.2;',
   '}',
   'void main(){',
   '  float coord = (uMapDir < 0.5) ? vUv.y : vUv.x;',                   // gradient axis
@@ -95,6 +101,10 @@ export const slitScanEffect: SpaceTypeEffect = {
     const root = new three.Group()
     const tex = textTexture.clone()
     tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
+    // No mipmaps: the per-band time jumps spike the GPU's LOD derivative → coarse-mip gray streaks.
+    // Squish minification is anti-aliased manually in the shader (dFdx supersample) instead.
+    tex.minFilter = three.LinearFilter
+    tex.generateMipmaps = false
     tex.needsUpdate = true
 
     const ud = textTexture.userData ?? {}
@@ -119,7 +129,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 },
       },
       vertexShader: VERT,
-      fragmentShader: FRAG,
+      fragmentShader: FRAG,   // dFdx (used for squish anti-alias) is built in under WebGL2
     })
     const mesh = new three.Mesh(new three.PlaneGeometry(planeW, planeH), material)
     mesh.userData.tex = tex
