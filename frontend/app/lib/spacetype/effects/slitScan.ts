@@ -98,9 +98,9 @@ const FRAG = [
   '  bool inA = uv.x < b;',
   '  float tx = inA ? uv.x / max(1e-3, b) : (uv.x - b) / max(1e-3, p);',
   '  float row = inA ? mod(k, uN) : mod(k + 1.0, uN);',             // shrinking = current line, growing = next
-  // Aspect-correct each clone cell: tile aspect = plane × (tileY/tileX), so scale the horizontal
-  // inset by tileX/tileY → square grids (tileX==tileY) keep the word undistorted.
-  '  float wf = lookupWf(row); float hs = lookupHS(row) * (uTileX / max(1.0, uTileY)); float rowV = row / max(1.0, uN);',
+  // Cells are undistorted because the PLANE aspect is fit to the grid (word × columns/rows), so
+  // each cell already has the word's aspect — no per-cell correction needed here.
+  '  float wf = lookupWf(row); float hs = lookupHS(row); float rowV = row / max(1.0, uN);',
   '  float foot = clamp(abs(dFdx(tx)), 0.0, 0.25);',
   '  float a = 0.0;',
   '  for (int i = 0; i < 5; i++) a += glyph(tx + (float(i) - 2.0) * foot, uv.y, wf, rowV, hs);',
@@ -148,7 +148,7 @@ export const slitScanEffect: SpaceTypeEffect = {
   label: 'Slit Scan',
   controls,
 
-  buildScene(three, params, textTexture) {
+  buildScene(three, params, textTexture, env) {
     const root = new three.Group()
     const tex = textTexture.clone()
     tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
@@ -171,13 +171,25 @@ export const slitScanEffect: SpaceTypeEffect = {
     const numTexts = Math.max(1, Math.floor(Number(ud.numTexts ?? wordInk.length)))
     const aspects = Array.from({ length: numTexts }, (_, k) =>
       Math.max(0.05, ((wordFr[k] ?? 1) * (wordInk[k] ?? 1) * texAspect) / inkVH))
-    const planeAspect = Math.max(...aspects)
+    const wordAspect = Math.max(...aspects)
     // Per-line metric arrays for the shader (padded to MAXN; rows beyond numTexts are never sampled).
     const wfArr = Array.from({ length: MAXN }, (_, k) => Number(wordInk[k] ?? 1) || 1)
-    const hsArr = Array.from({ length: MAXN }, (_, k) => Math.max(0.01, (aspects[k] ?? planeAspect) / planeAspect))
-    const BOX = 9
-    const planeW = planeAspect >= 1 ? BOX : BOX * planeAspect
-    const planeH = planeAspect >= 1 ? BOX / planeAspect : BOX
+    const hsArr = Array.from({ length: MAXN }, (_, k) => Math.max(0.01, (aspects[k] ?? wordAspect) / wordAspect))
+    // Clone grid: the overall block aspect = word aspect × (columns / rows). Fitting the PLANE to
+    // this makes every cell carry the word's own aspect (no per-cell correction needed).
+    const tileX = Math.max(1, Math.round(n(params, 'ssTileX') || 1))
+    const tileY = Math.max(1, Math.round(n(params, 'ssTileY') || 1))
+    const gridAspect = wordAspect * (tileX / tileY)
+    // Fit the plane to FILL the camera view (was a fixed BOX=9, which left big margins in wide
+    // outputs — a clone grid looked tiny). VIEW_H mirrors the engine's z=14 / 45°-FOV framing at
+    // scale 1; the user's Scale then zooms on top. Contain the grid aspect within the view.
+    const VIEW_H = Math.tan((45 / 2) * Math.PI / 180) * 14 * 2   // ≈ 11.6 world units tall at scale 1
+    const FILL = 0.96
+    const viewAspect = Math.max(0.1, (env?.width ?? 1) / (env?.height ?? 1))
+    const viewW = VIEW_H * viewAspect
+    const fitW = gridAspect >= viewAspect       // grid wider than the frame → width-limited
+    const planeW = fitW ? viewW * FILL : VIEW_H * FILL * gridAspect
+    const planeH = fitW ? (viewW * FILL) / gridAspect : VIEW_H * FILL
 
     const material = new three.ShaderMaterial({
       side: three.DoubleSide,
@@ -187,7 +199,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uBg: { value: new three.Color(String(params.bgColor)) },
         uVMid: { value: inkVMid }, uVH: { value: inkVH }, uN: { value: numTexts },
         uWfArr: { value: wfArr }, uHSArr: { value: hsArr },
-        uTileX: { value: 1 }, uTileY: { value: 1 },
+        uTileX: { value: tileX }, uTileY: { value: tileY },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
       },
