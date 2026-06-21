@@ -596,16 +596,16 @@ async function generateVideo() {
                 <p class="mt-1 text-[10px] text-white/40">Multiple texts alternate per repeat.</p>
               </template>
               <template v-else-if="c.kind === 'fillList'">
-                <div v-for="(f, i) in fills" :key="i" class="mb-1.5 flex items-center gap-1">
-                  <select v-model="f.type" class="min-w-0 flex-1 rounded bg-white/10 px-1 py-1">
+                <div v-for="(f, i) in fills" :key="i" class="mb-1.5 flex flex-wrap items-center gap-1">
+                  <select v-model="f.type" class="min-w-[5rem] flex-1 rounded bg-white/10 px-1 py-1">
                     <option v-for="ft in FILL_TYPES" :key="ft" :value="ft">{{ ft }}</option>
                   </select>
                   <StudioColor v-model="f.a" />
                   <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
                   <input v-if="f.type === 'stripes' || f.type === 'gradient' || f.type === 'ombre'" type="range" v-model.number="f.angle"
-                         min="0" max="180" step="5" v-studio-reset class="studio-range w-14 shrink-0" :title="f.type === 'stripes' ? 'Stripe angle' : 'Fade angle'" />
+                         min="0" max="180" step="5" v-studio-reset class="studio-range studio-range-inline shrink-0" :title="f.type === 'stripes' ? 'Stripe angle' : 'Fade angle'" />
                   <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
-                         v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range w-14 shrink-0" title="Pattern density" />
+                         v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range studio-range-inline shrink-0" title="Pattern density" />
                   <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>
                   <StudioColor v-model="f.textColor" />
                   <button v-if="fills.length > 1" type="button" @click="removeFill(i)"

@@ -10,6 +10,10 @@
    Margin: snug under its own label, clear gap before the next control — so each
    label+slider reads as one group. */
 .studio-range { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; margin: 0 0 0.85rem; background: transparent; cursor: pointer; }
+/* Inline variant for sliders that sit IN a row (e.g. fillList angle/density) rather than
+   full-width under a label. Two classes → beats `.studio-range`'s width:100% (and the Tailwind
+   width utility, which is in @layer utilities and so loses to non-layered rules). */
+.studio-range.studio-range-inline { width: 3.5rem; margin: 0; flex: none; }
 .studio-range::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
 .studio-range::-moz-range-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
 .studio-range::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -5px; width: 12px; height: 12px; border-radius: 9999px; background: #fff; cursor: pointer; }
