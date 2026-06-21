@@ -64,6 +64,9 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   // Per-row width fraction (each text's width ÷ the widest), so effects can size their
   // per-text region/segment proportionally to the text length.
   const wordFracs = widths.map(x => x / maxLabelW)
+  // Word INK fraction (visible word ÷ its own tile, incl. the trailing gap from
+  // buildRibbonLabel): lets an effect centre a single repeat within its slot.
+  const wordInkFracs = labels.map((l, k) => Math.min(1, Math.max(1, ctx.measureText(l.trimEnd()).width) / widths[k]!))
 
   canvas.width = w
   canvas.height = rowH * n
@@ -97,6 +100,7 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   tex.userData.uRepeat = opts.uRepeat ?? 1
   tex.userData.numTexts = n
   tex.userData.wordFracs = wordFracs
+  tex.userData.wordInkFracs = wordInkFracs
   tex.userData.gradient = (opts.gradientOn && opts.gradientStops && opts.gradientStops.some(s => s.on))
     ? makeGradientTexture(opts.gradientStops, opts.typeColor)
     : undefined

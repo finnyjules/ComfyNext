@@ -98,8 +98,8 @@ export const ballEffect: SpaceTypeEffect = {
     // panel. fixed: the Panels slider sets the count and the text tiles continuously across.
     const perWord = String(params.panelMode) === 'per-word'
     const segments = perWord ? Math.max(1, Math.round(around)) : Math.max(1, Math.round(n(params, 'segments')))
-    // Word width as a fraction of its (word + trailing gap) tile, to centre it in per-word mode.
-    const wordFrac = Number((textTexture.userData?.wordFracs as number[] | undefined)?.[0] ?? 1) || 1
+    // Word INK fraction of its (word + trailing gap) tile, to centre it in per-word mode.
+    const wordFrac = Number((textTexture.userData?.wordInkFracs as number[] | undefined)?.[0] ?? 1) || 1
 
     // axisTilt tilts the pole; spinGroup spins the panels around the (tilted) Y axis.
     const tiltGroup = new three.Group()
