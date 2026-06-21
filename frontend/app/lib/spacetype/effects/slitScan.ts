@@ -41,6 +41,8 @@ const controls: ControlSpec[] = [
   // How many full passes through the text lines per loop (each line melts into the next via a wipe).
   { key: 'ssTextCycle', label: 'Cycle texts', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Motion' },
   // TRANSFORM.
+  { key: 'ssTileX', label: 'Clone columns', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Transform' },
+  { key: 'ssTileY', label: 'Clone rows', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Transform' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Camera rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateY', label: 'Camera rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
@@ -67,6 +69,7 @@ const FRAG = [
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
   'uniform float uVMid; uniform float uVH; uniform float uN;',      // uN = number of text lines (atlas rows)
   'uniform float uWfArr[16]; uniform float uHSArr[16];',            // per-line ink-width frac + aspect inset
+  'uniform float uTileX; uniform float uTileY;',                    // clone the word into a columns×rows grid
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
   'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
   'const float TAU = 6.2831853;',
@@ -95,7 +98,9 @@ const FRAG = [
   '  bool inA = uv.x < b;',
   '  float tx = inA ? uv.x / max(1e-3, b) : (uv.x - b) / max(1e-3, p);',
   '  float row = inA ? mod(k, uN) : mod(k + 1.0, uN);',             // shrinking = current line, growing = next
-  '  float wf = lookupWf(row); float hs = lookupHS(row); float rowV = row / max(1.0, uN);',
+  // Aspect-correct each clone cell: tile aspect = plane × (tileY/tileX), so scale the horizontal
+  // inset by tileX/tileY → square grids (tileX==tileY) keep the word undistorted.
+  '  float wf = lookupWf(row); float hs = lookupHS(row) * (uTileX / max(1.0, uTileY)); float rowV = row / max(1.0, uN);',
   '  float foot = clamp(abs(dFdx(tx)), 0.0, 0.25);',
   '  float a = 0.0;',
   '  for (int i = 0; i < 5; i++) a += glyph(tx + (float(i) - 2.0) * foot, uv.y, wf, rowV, hs);',
@@ -129,7 +134,10 @@ const FRAG = [
   '  }',
   '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
   '  float tau = uTime * spd - g * dly;',                              // per-pixel TIME offset
-  '  float a = base(vUv, tau);',                                       // melts line floor(tau) → floor(tau)+1
+  // Clone into a grid: tile the SAMPLE coord (each cell runs a full melt) while the displacement
+  // field above stays global, so the slit-scan plays continuously across all clones.
+  '  vec2 tuv = vec2(fract(vUv.x * uTileX), fract(vUv.y * uTileY));',
+  '  float a = base(tuv, tau);',                                       // melts line floor(tau) → floor(tau)+1
   '  vec3 col = mix(uBg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
   '}',
@@ -179,6 +187,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uBg: { value: new three.Color(String(params.bgColor)) },
         uVMid: { value: inkVMid }, uVH: { value: inkVH }, uN: { value: numTexts },
         uWfArr: { value: wfArr }, uHSArr: { value: hsArr },
+        uTileX: { value: 1 }, uTileY: { value: 1 },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
       },
@@ -205,6 +214,8 @@ export const slitScanEffect: SpaceTypeEffect = {
     const N = s.numTexts
     const cycles = Math.max(1, Math.round(n(params, 'ssTextCycle') || 1))
     u.uSpeed!.value = N > 1 ? N * cycles : Math.max(1, Math.round(n(params, 'speed')))
+    u.uTileX!.value = Math.max(1, Math.round(n(params, 'ssTileX') || 1))
+    u.uTileY!.value = Math.max(1, Math.round(n(params, 'ssTileY') || 1))
     u.uDelay!.value = Math.max(0, n(params, 'ssDelay'))
     u.uMapDir!.value = String(params.ssMapDir) === 'horizontal' ? 1 : 0
     u.uBump!.value = Math.max(0, n(params, 'ssBump'))
