@@ -23,6 +23,8 @@ const controls: ControlSpec[] = [
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   // WARP — the displacement map / time delay.
   { key: 'ssDelay', label: 'Delay spread', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.5, group: 'Warp' },
+  { key: 'ssBands', label: 'Bands', kind: 'slider', min: 0, max: 40, step: 1, default: 10, group: 'Warp' },
+  { key: 'ssBandSpeed', label: 'Band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp' },
   { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal'], default: 'vertical', group: 'Warp' },
   { key: 'ssBump', label: 'Bumps', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Warp' },
   { key: 'ssBumpFreq', label: 'Bump freq', kind: 'slider', min: 1, max: 10, step: 0.5, default: 3, group: 'Warp' },
@@ -51,8 +53,9 @@ const FRAG = [
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
   'uniform float uWf; uniform float uVMid; uniform float uVH;',
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
-  'uniform float uBump; uniform float uBumpFreq;',
+  'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed;',
   'const float TAU = 6.2831853;',
+  'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
   // glyph alpha at word-space x (tx∈[0,1]) and screen vy
   'float glyph(float tx, float vy){',
   '  float ix = tx * uWf;',
@@ -67,10 +70,16 @@ const FRAG = [
   '  return glyph(tx, uv.y);',
   '}',
   'void main(){',
-  '  float g = (uMapDir < 0.5) ? vUv.y : vUv.x;',                       // linear gradient map
-  '  g += uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq);', // soft bumps
-  '  g = clamp(g, 0.0, 1.0);',
-  '  float tau = uTime * uSpeed - g * uDelay;',                         // per-pixel TIME offset
+  '  float coord = (uMapDir < 0.5) ? vUv.y : vUv.x;',                   // gradient axis
+  '  float g = coord;',
+  '  float spd = uSpeed;',
+  '  if (uBands >= 2.0) {',                                             // quantise into N bands…
+  '    float band = floor(coord * uBands);',
+  '    g = band / (uBands - 1.0);',                                     // stepped delay per band
+  '    spd = uSpeed + floor(hash(band * 1.73) * (uBandSpeed + 0.999));', // …each its own integer speed
+  '  }',
+  '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
+  '  float tau = uTime * spd - g * uDelay;',                            // per-pixel TIME offset
   '  float a = base(vUv, tau);',
   '  vec3 col = mix(uBg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
@@ -107,7 +116,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uBg: { value: new three.Color(String(params.bgColor)) },
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
-        uBump: { value: 0 }, uBumpFreq: { value: 3 },
+        uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -131,6 +140,8 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uMapDir!.value = String(params.ssMapDir) === 'horizontal' ? 1 : 0
     u.uBump!.value = Math.max(0, n(params, 'ssBump'))
     u.uBumpFreq!.value = Math.max(1, n(params, 'ssBumpFreq'))
+    u.uBands!.value = Math.max(0, Math.round(n(params, 'ssBands')))
+    u.uBandSpeed!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed')))
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
   },
