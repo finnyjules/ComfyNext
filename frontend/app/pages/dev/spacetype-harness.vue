@@ -85,6 +85,7 @@ onMounted(async () => {
   rebuild()
   engine.renderFrame(0, params)
   ;(window as any).__echo = apply
+  ;(window as any).__engine = engine
   ;(window as any).__echoReady = true
 })
 

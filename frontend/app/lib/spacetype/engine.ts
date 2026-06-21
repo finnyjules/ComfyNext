@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { Params, SpaceTypeEffect } from './effect'
 import type { TextTextureOptions } from './textTexture'
 import { makeTextTexture } from './textTexture'
+import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -34,6 +35,8 @@ export class SpaceTypeEngine {
   private root: THREE.Object3D | null = null
   private textTex: THREE.Texture | null = null
   private opts: EngineOptions
+  private post: PostSettings = DEFAULT_POST
+  private postChain: PostChain | null = null
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
@@ -104,6 +107,7 @@ export class SpaceTypeEngine {
     this.orthoCam.top = ORTHO_HALF_H
     this.orthoCam.bottom = -ORTHO_HALF_H
     this.orthoCam.updateProjectionMatrix()
+    this.postChain?.setSize(width, height)
   }
 
   /** Toggle transparency / background color live without rebuilding the renderer. */
@@ -126,6 +130,17 @@ export class SpaceTypeEngine {
   /** Switch the active effect (call rebuild/build afterwards). */
   setEffect(effect: SpaceTypeEffect): void {
     this.effect = effect
+  }
+
+  /** Update shared post-processing (bloom / colour / chroma / lens blur). Lazily builds the
+   *  composer on first use; when everything is off, renderFrame bypasses it entirely. */
+  setPost(post: PostSettings): void {
+    this.post = post
+    if (!postEnabled(post)) return
+    if (!this.postChain) {
+      this.postChain = new PostChain(this.renderer, this.scene, this.activeCam, this.opts.width, this.opts.height)
+    }
+    this.postChain.setSettings(post)
   }
 
   private disposeRoot(): void {
@@ -181,7 +196,8 @@ export class SpaceTypeEngine {
       this.applyPan(this.perspCam)
     }
     this.effect.update(t01, params)
-    this.renderer.render(this.scene, this.activeCam)
+    if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
+    else this.renderer.render(this.scene, this.activeCam)
   }
 
   /** Read the current canvas back as a PNG blob (after renderFrame). */
@@ -194,6 +210,7 @@ export class SpaceTypeEngine {
 
   dispose(): void {
     this.disposeRoot()
+    this.postChain?.dispose()
     this.renderer.dispose()
   }
 }

@@ -7,6 +7,7 @@ import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
+import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
@@ -60,6 +61,9 @@ const loopDuration = ref(6)
 const transparent = ref(false)
 const bgColor = ref('#0e0e10')
 const projection = ref<'perspective' | 'isometric'>('perspective')
+// Shared post-processing (bloom / colour / chroma / lens blur) — applies to EVERY effect, live in
+// the preview and in exports. Lives on the surface (global), persisted in the node config.
+const post = reactive<PostSettings>({ ...DEFAULT_POST })
 // Off-centre framing (−1…1 = half a frame each way). View-level like projection, so it lives
 // outside the per-effect `params` (which gets wiped on effect switch).
 const panX = ref(0)
@@ -122,7 +126,7 @@ const baking = ref(false)
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
 const SECTION_ORDER = SPACE_TYPE_SECTIONS
 const openSections = reactive<Record<string, boolean>>({
-  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Layers: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Output: false,
+  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Layers: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Post: false, Output: false,
 })
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
@@ -308,6 +312,7 @@ function loadConfig() {
   if (Array.isArray(c.gradientStops)) {
     gradientStops.splice(0, gradientStops.length, ...c.gradientStops.map((s: any) => ({ ...s })))
   }
+  if (c.post && typeof c.post === 'object') Object.assign(post, c.post)
   if (typeof c.fps === 'number') fps.value = c.fps
   if (typeof c.loopDuration === 'number') loopDuration.value = c.loopDuration
   if (typeof c.transparent === 'boolean') transparent.value = c.transparent
@@ -339,6 +344,7 @@ function saveConfig() {
     effectId: effectId.value,
     params: { ...params },
     gradientStops: gradientStops.map(s => ({ ...s })),
+    post: { ...post },
     fps: fps.value, loopDuration: loopDuration.value,
     dimsKey: dimsKey.value, W: W.value, H: H.value, transparent: transparent.value, bgColor: bgColor.value,
     projection: projection.value,
@@ -360,6 +366,7 @@ onMounted(async () => {
     alpha: transparent.value, bgColor: bgColor.value, projection: projection.value,
     panX: panX.value, panY: panY.value,
   })
+  engine.setPost({ ...post })
   await ensureEffectFonts()
   rebuild()
   startPreview()
@@ -432,6 +439,9 @@ watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgC
 watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrame(previewFrame, params) })
 // Pan re-frames live (no rebuild) — read by the engine per frame as a camera view-offset.
 watch([panX, panY], () => { engine?.setPan(panX.value, panY.value); engine?.renderFrame(previewFrame, params) })
+// Post-processing applies live (composer uniforms; no scene rebuild). Re-render the held frame so a
+// paused preview updates immediately too.
+watch(post, () => { engine?.setPost({ ...post }); engine?.renderFrame(previewFrame, params) }, { deep: true })
 // Loop length affects the engine's frameCount used during bake.
 watch(loopDuration, d => engine?.setLoopDuration(d))
 // fps affects the engine's frameCount used during bake/preview.
@@ -731,6 +741,49 @@ async function generateVideo() {
                 <StudioColor v-model="bgColor" />
               </div>
             </template>
+          </div>
+        </StudioSection>
+
+        <!-- Shared post-processing — applies to every effect, live + in exports. -->
+        <StudioSection title="Post" :open="openSections.Post">
+          <div class="space-y-3">
+            <label data-control class="flex items-center justify-between text-xs text-white/70">
+              <span>Bloom</span><StudioSwitch v-model="post.bloom" />
+            </label>
+            <template v-if="post.bloom">
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Strength</span><span class="text-white/80">{{ post.bloomStrength.toFixed(2) }}</span></label>
+                <input type="range" min="0" max="3" step="0.05" v-studio-reset v-model.number="post.bloomStrength" class="studio-range w-full" /></div>
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Radius</span><span class="text-white/80">{{ post.bloomRadius.toFixed(2) }}</span></label>
+                <input type="range" min="0" max="1" step="0.05" v-studio-reset v-model.number="post.bloomRadius" class="studio-range w-full" /></div>
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Threshold</span><span class="text-white/80">{{ post.bloomThreshold.toFixed(2) }}</span></label>
+                <input type="range" min="0" max="1" step="0.05" v-studio-reset v-model.number="post.bloomThreshold" class="studio-range w-full" /></div>
+            </template>
+
+            <label data-control class="flex items-center justify-between text-xs text-white/70">
+              <span>Color</span><StudioSwitch v-model="post.color" />
+            </label>
+            <template v-if="post.color">
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Exposure</span><span class="text-white/80">{{ post.exposure.toFixed(2) }}</span></label>
+                <input type="range" min="0.2" max="2" step="0.05" v-studio-reset v-model.number="post.exposure" class="studio-range w-full" /></div>
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Contrast</span><span class="text-white/80">{{ post.contrast.toFixed(2) }}</span></label>
+                <input type="range" min="0" max="2" step="0.05" v-studio-reset v-model.number="post.contrast" class="studio-range w-full" /></div>
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Saturation</span><span class="text-white/80">{{ post.saturation.toFixed(2) }}</span></label>
+                <input type="range" min="0" max="2" step="0.05" v-studio-reset v-model.number="post.saturation" class="studio-range w-full" /></div>
+              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Hue</span><span class="text-white/80">{{ post.hue.toFixed(2) }}</span></label>
+                <input type="range" min="-3.14" max="3.14" step="0.05" v-studio-reset v-model.number="post.hue" class="studio-range w-full" /></div>
+            </template>
+
+            <label data-control class="flex items-center justify-between text-xs text-white/70">
+              <span>Chroma</span><StudioSwitch v-model="post.chroma" />
+            </label>
+            <div v-if="post.chroma" data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Amount</span><span class="text-white/80">{{ post.chromaAmount.toFixed(2) }}</span></label>
+              <input type="range" min="0" max="1.5" step="0.02" v-studio-reset v-model.number="post.chromaAmount" class="studio-range w-full" /></div>
+
+            <label data-control class="flex items-center justify-between text-xs text-white/70">
+              <span>Lens blur</span><StudioSwitch v-model="post.blur" />
+            </label>
+            <div v-if="post.blur" data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Amount</span><span class="text-white/80">{{ post.blurAmount.toFixed(3) }}</span></label>
+              <input type="range" min="0" max="0.04" step="0.002" v-studio-reset v-model.number="post.blurAmount" class="studio-range w-full" /></div>
           </div>
         </StudioSection>
     </template>
