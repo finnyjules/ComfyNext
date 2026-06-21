@@ -83,14 +83,15 @@ const FRAG = [
   '  float spd = uSpeed;',
   '  if (uBands >= 2.0) {',                                             // quantise into N bands…
   '    float band = floor(coord * uBands);',
-  '    g = band / (uBands - 1.0);',                                     // stepped delay per band
+  '    float bn = band / max(1.0, uBands - 1.0);',                      // 0..1 band index
+  '    float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), uEase);',        // eased index (smoothstep)
   '    float extra;',                                                   // …each its own integer speed:
   '    if (uSpeedMode < 0.5) {',
-  '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // random
+  '      g = bn;',                                                      // random: linear delay offset
+  '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // …random speed
   '    } else {',
-  '      float tn = band / max(1.0, uBands - 1.0);',                    // progressive ramp top→bottom
-  '      tn = mix(tn, tn * tn * (3.0 - 2.0 * tn), uEase);',             // …eased in/out (smoothstep)
-  '      extra = floor(tn * uBandSpeed + 0.5);',
+  '      g = bne;',                                                     // progressive: EASED delay offset (continuous → visible)
+  '      extra = floor(bne * uBandSpeed + 0.5);',                       // …eased progressive speed
   '    }',
   '    spd = uSpeed + extra;',
   '  }',
