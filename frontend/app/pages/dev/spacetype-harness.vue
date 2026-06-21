@@ -34,8 +34,12 @@ let params: Params = {}
 let animate = false
 
 function texOpts(): TextTextureOptions {
+  // Split on newlines into a multi-row atlas (matches SpaceTypeSurface), so effects that
+  // cycle through multiple text lines can be exercised in the harness.
+  const lines = String(params.text ?? 'ECHO').split('\n').map(t => t.trim()).filter(Boolean)
   return {
-    label: String(params.text ?? 'ECHO'),
+    label: lines[0] ?? 'ECHO',
+    labels: lines.length ? lines : ['ECHO'],
     fontFamily: String(params.font ?? 'Anton'),
     fontWeight: Number(params.typeWeight ?? 400),
     axes: { wght: Number(params.typeWeight ?? 400) },

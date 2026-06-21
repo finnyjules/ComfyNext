@@ -32,6 +32,8 @@ const controls: ControlSpec[] = [
   { key: 'ssBumpFreq', label: 'Bump freq', kind: 'slider', min: 1, max: 10, step: 0.5, default: 3, group: 'Warp' },
   // MOTION — base wipe cycles per loop (integer ⇒ seamless).
   { key: 'speed', label: 'Speed', kind: 'slider', min: 1, max: 8, step: 1, default: 2, group: 'Motion' },
+  // Cycle through the text lines (one per row of the Text field). Integer passes/loop ⇒ seamless.
+  { key: 'ssTextCycle', label: 'Cycle texts', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Motion' },
   // TRANSFORM.
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
   { key: 'rotateX', label: 'Camera rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
@@ -42,7 +44,13 @@ const controls: ControlSpec[] = [
   { key: 'bgColor', label: 'Background', kind: 'color', default: '#000000', group: 'Color' },
 ]
 
-interface SlitState { material: THREE.ShaderMaterial }
+interface SlitState {
+  material: THREE.ShaderMaterial
+  wordInk: number[]      // per-line ink-width fraction (selects horizontal sample range)
+  aspects: number[]      // per-line ink aspect ratio
+  planeAspect: number    // widest line's aspect (the plane is fit to this)
+  numTexts: number
+}
 let state: SlitState | null = null
 
 function n(p: Params, k: string): number { return Number(p[k]) }
@@ -54,14 +62,17 @@ const FRAG = [
   'varying vec2 vUv;',
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
   'uniform float uWf; uniform float uVMid; uniform float uVH;',
+  'uniform float uRowV; uniform float uHScale;',                     // active-string atlas row + its aspect inset
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
   'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
   'const float TAU = 6.2831853;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
   // glyph alpha at word-space x (tx∈[0,1]) and screen vy
   'float glyph(float tx, float vy){',
-  '  float ix = tx * uWf;',
-  '  float iy = uVMid + (vy - 0.5) * uVH * 1.35;',
+  '  float txc = (tx - 0.5) / max(0.01, uHScale) + 0.5;',           // keep each string\'s aspect, centred in the plane
+  '  if (txc < 0.0 || txc > 1.0) return 0.0;',
+  '  float ix = txc * uWf;',
+  '  float iy = uVMid + uRowV + (vy - 0.5) * uVH * 1.35;',          // uRowV picks the active string\'s atlas row
   '  if (ix < 0.0 || ix > uWf || iy < 0.0 || iy > 1.0) return 0.0;',
   '  return texture2D(uText, vec2(clamp(ix, 0.0, 1.0), clamp(iy, 0.0, 1.0))).a;',
   '}',
@@ -126,13 +137,21 @@ export const slitScanEffect: SpaceTypeEffect = {
     const ud = textTexture.userData ?? {}
     const img = textTexture.image as { width?: number; height?: number } | undefined
     const texAspect = Math.max(0.1, (img?.width ?? 1) / (img?.height ?? 1))
-    const wf = Number((ud.wordInkFracs as number[] | undefined)?.[0] ?? 1) || 1
     const inkVH = Math.max(0.05, Number(ud.inkHeightFrac ?? 0.6))
     const inkVMid = Number(ud.inkVMid ?? 0.5)
-    const inkAspect = Math.max(0.05, (wf * texAspect) / inkVH)
+    // One atlas row per text line; we cycle through them over the loop. Each row's ink box has its
+    // own aspect (texAspect scoped to that line's ink width ÷ ink height); fit the plane to the
+    // WIDEST so every line fits, and inset narrower lines via uHScale so they keep their proportion.
+    const wordInk = (ud.wordInkFracs as number[] | undefined)?.length ? (ud.wordInkFracs as number[]) : [1]
+    const wordFr = (ud.wordFracs as number[] | undefined)?.length ? (ud.wordFracs as number[]) : [1]
+    const numTexts = Math.max(1, Math.floor(Number(ud.numTexts ?? wordInk.length)))
+    const aspects = Array.from({ length: numTexts }, (_, k) =>
+      Math.max(0.05, ((wordFr[k] ?? 1) * (wordInk[k] ?? 1) * texAspect) / inkVH))
+    const planeAspect = Math.max(...aspects)
+    const wf = Number(wordInk[0] ?? 1) || 1
     const BOX = 9
-    const planeW = inkAspect >= 1 ? BOX : BOX * inkAspect
-    const planeH = inkAspect >= 1 ? BOX / inkAspect : BOX
+    const planeW = planeAspect >= 1 ? BOX : BOX * planeAspect
+    const planeH = planeAspect >= 1 ? BOX / planeAspect : BOX
 
     const material = new three.ShaderMaterial({
       side: three.DoubleSide,
@@ -141,6 +160,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uTextColor: { value: new three.Color(String(params.textColor)) },
         uBg: { value: new three.Color(String(params.bgColor)) },
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
+        uRowV: { value: 0 }, uHScale: { value: 1 },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
       },
@@ -151,7 +171,7 @@ export const slitScanEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { material }
+    state = { material, wordInk, aspects, planeAspect, numTexts }
     slitScanEffect.update(0, params)
     return root
   },
@@ -161,6 +181,12 @@ export const slitScanEffect: SpaceTypeEffect = {
     if (!s) return
     const u = s.material.uniforms
     u.uTime!.value = t01
+    // Cycle through the text lines: integer passes/loop keeps the loop seamless (idx returns to 0).
+    const cycles = Math.max(1, Math.round(n(params, 'ssTextCycle') || 1))
+    const idx = s.numTexts > 1 ? Math.floor(t01 * s.numTexts * cycles) % s.numTexts : 0
+    u.uWf!.value = s.wordInk[idx] ?? s.wordInk[0] ?? 1
+    u.uRowV!.value = idx / s.numTexts
+    u.uHScale!.value = (s.aspects[idx] ?? s.planeAspect) / s.planeAspect
     u.uSpeed!.value = Math.max(1, Math.round(n(params, 'speed')))   // integer cycles/loop → seamless
     u.uDelay!.value = Math.max(0, n(params, 'ssDelay'))
     u.uMapDir!.value = String(params.ssMapDir) === 'horizontal' ? 1 : 0
