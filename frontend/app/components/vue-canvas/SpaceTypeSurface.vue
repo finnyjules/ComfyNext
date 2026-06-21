@@ -406,6 +406,8 @@ watch(
     ttCols: 0, ttRows: 0, ttGradient: 0, ttTwist: 0,
     // tear live params (displacement uniforms read per-frame in update; speed excluded above)
     tearAmount: 0, tearFreq: 0, tearPhase: 0, tearStyle: '', tearDir: '', tearEdge: 0, tearOverlap: 0, tearSlant: 0,
+    // slit-scan live params (time-displacement uniforms read per-frame; speed excluded above)
+    ssDelay: 0, ssMapDir: '', ssBump: 0, ssBumpFreq: 0,
     // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
     rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
     flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
