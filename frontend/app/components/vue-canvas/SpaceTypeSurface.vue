@@ -245,6 +245,11 @@ function texOpts() {
   const labels = multiAware
     ? texts.map(t => (rawWords ? cased(t) : buildRibbonLabel(t, caseMode)))
     : [rawWords ? cased(texts[0] ?? '') : buildRibbonLabel(texts[0] ?? '', caseMode)]
+  // Slit Scan renders on a single flat quad that FILLS the frame and stretches the glyphs, so it
+  // magnifies the text far beyond the default ~256px atlas → blur. Supersample its atlas (scale the
+  // glyph AND the row together so the ink proportions — and thus the look — are unchanged, just
+  // higher-res). Other effects keep the default resolution.
+  const atlasSS = effectId.value === 'slitscan' ? 3 : 1
   return {
     label: labels[0]!,
     labels,
@@ -254,7 +259,8 @@ function texOpts() {
     fontWeight: weight,
     axes: { wght: weight, ...fontAxes },
     typeColor: String(params.typeColor),
-    fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 180),
+    fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 180) * atlasSS,
+    heightPx: 256 * atlasSS,
     scaleX: Number(params.typeXScale ?? 1),
     tracking: Number(params.tracking),
     strokeColor: '#000000',

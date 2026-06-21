@@ -37,6 +37,8 @@ function texOpts(): TextTextureOptions {
   // Split on newlines into a multi-row atlas (matches SpaceTypeSurface), so effects that
   // cycle through multiple text lines can be exercised in the harness.
   const lines = String(params.text ?? 'ECHO').split('\n').map(t => t.trim()).filter(Boolean)
+  // Mirror SpaceTypeSurface: supersample the slit-scan atlas (it fills the frame → magnifies text).
+  const atlasSS = effectId.value === 'slitscan' ? 3 : 1
   return {
     label: lines[0] ?? 'ECHO',
     labels: lines.length ? lines : ['ECHO'],
@@ -44,7 +46,8 @@ function texOpts(): TextTextureOptions {
     fontWeight: Number(params.typeWeight ?? 400),
     axes: { wght: Number(params.typeWeight ?? 400) },
     typeColor: '#ffffff',
-    fontSizePx: Number(params.typeHeight ?? 200),
+    fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 200) * atlasSS,
+    heightPx: 256 * atlasSS,
     scaleX: 1,
     tracking: Number(params.tracking ?? 0),
     strokeColor: '#000000',
