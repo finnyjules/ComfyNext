@@ -25,6 +25,7 @@ const controls: ControlSpec[] = [
   { key: 'tearDir', label: 'Direction', kind: 'select', options: ['vertical', 'horizontal'], default: 'vertical', group: 'Glitch' },
   { key: 'tearAmount', label: 'Amount', kind: 'slider', min: 0, max: 0.6, step: 0.005, default: 0.05, group: 'Glitch' },
   { key: 'tearFreq', label: 'Slices', kind: 'slider', min: 1, max: 90, step: 1, default: 12, group: 'Glitch' },
+  { key: 'tearSlant', label: 'Slant', kind: 'slider', min: -3, max: 3, step: 0.05, default: 0, group: 'Glitch' },
   { key: 'tearEdge', label: 'Edge / bevel', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Glitch' },
   { key: 'tearOverlap', label: 'Overlap (ghost)', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Glitch' },
   { key: 'tearPhase', label: 'Phase (static)', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Glitch' },
@@ -53,7 +54,7 @@ const FRAG = [
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
   'uniform float uWf; uniform float uVMid; uniform float uVH;',       // glyph placement in the tile
   'uniform float uAmount; uniform float uFreq; uniform float uPhase; uniform float uSpeed; uniform float uTime;',
-  'uniform float uStyle; uniform float uDir; uniform float uEdge; uniform float uOverlap;',
+  'uniform float uStyle; uniform float uDir; uniform float uEdge; uniform float uOverlap; uniform float uSlant;',
   'const float PI = 3.14159265;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
   // Centre the glyph in the plane (small margin); tile is transparent above/below/right, only the
@@ -65,8 +66,9 @@ const FRAG = [
   '  return a * step(0.0, tx) * step(tx, uWf) * step(0.0, ty) * step(ty, 1.0);',
   '}',
   'void main(){',
-  // Displacement MAP: repeating stripes along the flute axis (vertical stripes vary on x).
-  '  float axis = (uDir < 0.5) ? vUv.x : vUv.y;',
+  // Displacement MAP: repeating stripes along the flute axis (vertical stripes vary on x). Slant
+  // shears the slice coordinate by the perpendicular axis so the slices tilt diagonally.
+  '  float axis = (uDir < 0.5) ? (vUv.x + (vUv.y - 0.5) * uSlant) : (vUv.y + (vUv.x - 0.5) * uSlant);',
   '  float coord = axis * uFreq + uPhase + uTime * uSpeed;',
   '  float mlum;',
   '  if (uStyle < 0.5) mlum = fract(coord);',                          // ramp: black→white ramp per stripe
@@ -117,7 +119,7 @@ export const tearEffect: SpaceTypeEffect = {
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
         uAmount: { value: 0.05 }, uFreq: { value: 12 }, uPhase: { value: 0 },
         uSpeed: { value: 2 }, uTime: { value: 0 },
-        uStyle: { value: 0 }, uDir: { value: 0 }, uEdge: { value: 0 }, uOverlap: { value: 0 },
+        uStyle: { value: 0 }, uDir: { value: 0 }, uEdge: { value: 0 }, uOverlap: { value: 0 }, uSlant: { value: 0 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -144,6 +146,7 @@ export const tearEffect: SpaceTypeEffect = {
     u.uDir!.value = String(params.tearDir) === 'horizontal' ? 1 : 0
     u.uEdge!.value = Math.max(0, n(params, 'tearEdge'))
     u.uOverlap!.value = Math.max(0, n(params, 'tearOverlap'))
+    u.uSlant!.value = n(params, 'tearSlant')
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
   },
