@@ -18,7 +18,7 @@ describe('turntableEffect contract', () => {
 
   it('exposes the signature controls', () => {
     const keys = turntableEffect.controls.map(c => c.key)
-    for (const k of ['text', 'font', 'radius', 'ttRings', 'ttRows', 'speed', 'ttGradient', 'ttTwist', 'direction', 'textColor', 'bgColor', 'scale']) {
+    for (const k of ['text', 'font', 'radius', 'ttRings', 'ttCols', 'ttRows', 'speed', 'ttGradient', 'ttTwist', 'direction', 'fills', 'scale']) {
       expect(keys).toContain(k)
     }
   })

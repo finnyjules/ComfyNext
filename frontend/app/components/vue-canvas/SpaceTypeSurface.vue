@@ -394,8 +394,9 @@ watch(
     driftSpeed: 0,
     // ball live param (axis tilt read per-frame in update; spinSpeed already excluded above)
     axisTilt: 0,
-    // turntable live params (band rotation read per-frame in update; speed/direction excluded above)
-    ttRings: 0, ttCols: 0, ttRows: 0, ttGradient: 0, ttTwist: 0,
+    // turntable live params (band rotation read per-frame in update; speed/direction excluded above).
+    // ttRings is STRUCTURAL (changes the ring-mesh count) → intentionally NOT excluded.
+    ttCols: 0, ttRows: 0, ttGradient: 0, ttTwist: 0,
     // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
     rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
     flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
