@@ -59,8 +59,8 @@ const FRAG = [
   // Centre the glyph in the plane (small margin); tile is transparent above/below/right, only the
   // left needs a clip. Sample coords clamped so ClampToEdge never streaks an edge column.
   'float inkA(vec2 p){',
-  '  float tx = (p.x - 0.5) * uWf * 1.22 + uWf * 0.5;',
-  '  float ty = uVMid + (p.y - 0.5) * uVH * 1.22;',
+  '  float tx = (p.x - 0.5) * uWf * 1.55 + uWf * 0.5;',                // ~26% black margin each side
+  '  float ty = uVMid + (p.y - 0.5) * uVH * 1.55;',                    // so edge slices refract into black
   '  float a = texture2D(uText, vec2(clamp(tx, 0.0, 1.0), clamp(ty, 0.0, 1.0))).a;',
   '  return a * step(0.0, tx) * step(tx, uWf) * step(0.0, ty) * step(ty, 1.0);',
   '}',
