@@ -26,6 +26,7 @@ const controls: ControlSpec[] = [
   { key: 'ssBands', label: 'Bands', kind: 'slider', min: 0, max: 40, step: 1, default: 10, group: 'Warp' },
   { key: 'ssBandSpeed', label: 'Band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp' },
   { key: 'ssSpeedMode', label: 'Speed pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp' },
+  { key: 'ssEase', label: 'Speed ease', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1, group: 'Warp' },
   { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal'], default: 'vertical', group: 'Warp' },
   { key: 'ssBump', label: 'Bumps', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Warp' },
   { key: 'ssBumpFreq', label: 'Bump freq', kind: 'slider', min: 1, max: 10, step: 0.5, default: 3, group: 'Warp' },
@@ -54,7 +55,7 @@ const FRAG = [
   'uniform sampler2D uText; uniform vec3 uTextColor; uniform vec3 uBg;',
   'uniform float uWf; uniform float uVMid; uniform float uVH;',
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
-  'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode;',
+  'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
   'const float TAU = 6.2831853;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
   // glyph alpha at word-space x (tx∈[0,1]) and screen vy
@@ -83,9 +84,14 @@ const FRAG = [
   '  if (uBands >= 2.0) {',                                             // quantise into N bands…
   '    float band = floor(coord * uBands);',
   '    g = band / (uBands - 1.0);',                                     // stepped delay per band
-  '    float extra = (uSpeedMode < 0.5)',                              // …each its own integer speed:
-  '      ? floor(hash(band * 1.73) * (uBandSpeed + 0.999))',           // random
-  '      : floor((band / max(1.0, uBands - 1.0)) * uBandSpeed + 0.5);', // progressive ramp top→bottom
+  '    float extra;',                                                   // …each its own integer speed:
+  '    if (uSpeedMode < 0.5) {',
+  '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // random
+  '    } else {',
+  '      float tn = band / max(1.0, uBands - 1.0);',                    // progressive ramp top→bottom
+  '      tn = mix(tn, tn * tn * (3.0 - 2.0 * tn), uEase);',             // …eased in/out (smoothstep)
+  '      extra = floor(tn * uBandSpeed + 0.5);',
+  '    }',
   '    spd = uSpeed + extra;',
   '  }',
   '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
@@ -130,7 +136,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uBg: { value: new three.Color(String(params.bgColor)) },
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
-        uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 },
+        uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,   // dFdx (used for squish anti-alias) is built in under WebGL2
@@ -157,6 +163,7 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uBands!.value = Math.max(0, Math.round(n(params, 'ssBands')))
     u.uBandSpeed!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed')))
     u.uSpeedMode!.value = String(params.ssSpeedMode) === 'progressive' ? 1 : 0
+    u.uEase!.value = Math.min(1, Math.max(0, n(params, 'ssEase')))
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
   },
