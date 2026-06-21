@@ -18,7 +18,7 @@ describe('tearEffect contract', () => {
 
   it('exposes the signature controls', () => {
     const keys = tearEffect.controls.map(c => c.key)
-    for (const k of ['text', 'font', 'tearAmount', 'tearFreq', 'tearShape', 'tearPhase', 'speed', 'textColor', 'bgColor', 'scale']) {
+    for (const k of ['text', 'font', 'tearAmount', 'tearFreq', 'tearStyle', 'tearDir', 'tearEdge', 'tearOverlap', 'tearPhase', 'speed', 'textColor', 'bgColor', 'scale']) {
       expect(keys).toContain(k)
     }
   })
