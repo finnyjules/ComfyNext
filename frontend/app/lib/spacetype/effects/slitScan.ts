@@ -40,6 +40,9 @@ const controls: ControlSpec[] = [
   { key: 'speed', label: 'Speed', kind: 'slider', min: 1, max: 8, step: 1, default: 2, group: 'Motion' },
   // How many full passes through the text lines per loop (each line melts into the next via a wipe).
   { key: 'ssTextCycle', label: 'Cycle texts', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Motion' },
+  // Freeze the animation and pose the warp by hand: 'static' replaces loop time with the Pose slider.
+  { key: 'ssMotion', label: 'Motion', kind: 'select', options: ['animate', 'static'], default: 'animate', group: 'Motion' },
+  { key: 'ssPhase', label: 'Pose (static)', kind: 'slider', min: 0, max: 1, step: 0.005, default: 0, group: 'Motion' },
   // TRANSFORM.
   { key: 'ssTileX', label: 'Clone columns', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Transform' },
   { key: 'ssTileY', label: 'Clone rows', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Transform' },
@@ -219,7 +222,8 @@ export const slitScanEffect: SpaceTypeEffect = {
     const s = state
     if (!s) return
     const u = s.material.uniforms
-    u.uTime!.value = t01
+    // 'static' freezes the animation and poses the warp by hand via the Pose slider (replaces loop time).
+    u.uTime!.value = String(params.ssMotion) === 'static' ? Math.max(0, n(params, 'ssPhase')) : t01
     // One squish-wipe melts one line into the next. With N lines, run `cycles` full passes per loop
     // → N*cycles wipes (a multiple of N, so the line index returns to start ⇒ seamless). One line:
     // the wipe just pulses at the Speed rate (no melt, since floor(tau) mod 1 = 0 always).
