@@ -68,8 +68,11 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   // buildRibbonLabel): lets an effect centre a single repeat within its slot.
   const wordInkFracs = labels.map((l, k) => Math.min(1, Math.max(1, ctx.measureText(l.trimEnd()).width) / widths[k]!))
   // Vertical ink box of the FIRST label (glyph top/bottom, not the whole row) — lets an effect
-  // fit/centre the actual letters rather than the full tile. Row 0 is drawn at the bottom of the
-  // (flipY) atlas; metrics may be unsupported, so fall back to typical cap proportions.
+  // fit/centre the actual letters rather than the full tile. MUST measure with the SAME baseline
+  // the glyph is drawn at (middle), or actualBoundingBox* is relative to the alphabetic baseline
+  // and the box is offset (clips letters with ascenders/caps). Metrics may be unsupported → fall
+  // back to typical cap proportions.
+  ctx.textBaseline = 'middle'
   const m0 = ctx.measureText((labels[0] ?? ' ').trimEnd())
   const asc0 = (m0 as TextMetrics).actualBoundingBoxAscent || fontPx * 0.36
   const desc0 = (m0 as TextMetrics).actualBoundingBoxDescent || fontPx * 0.04
