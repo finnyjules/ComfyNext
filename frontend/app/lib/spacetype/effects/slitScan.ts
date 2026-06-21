@@ -25,7 +25,7 @@ const controls: ControlSpec[] = [
   { key: 'ssDelay', label: 'Delay spread', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.5, group: 'Warp' },
   { key: 'ssBands', label: 'Bands', kind: 'slider', min: 0, max: 40, step: 1, default: 10, group: 'Warp' },
   { key: 'ssBandSpeed', label: 'Band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp' },
-  { key: 'ssSpeedMode', label: 'Speed pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp' },
+  { key: 'ssSpeedMode', label: 'Band pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp' },
   { key: 'ssEase', label: 'Speed ease', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1, group: 'Warp' },
   { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal'], default: 'vertical', group: 'Warp' },
   { key: 'ssBump', label: 'Bumps', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Warp' },
@@ -87,10 +87,10 @@ const FRAG = [
   '    float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), uEase);',        // eased index (smoothstep)
   '    float extra;',                                                   // …each its own integer speed:
   '    if (uSpeedMode < 0.5) {',
-  '      g = bn;',                                                      // random: linear delay offset
+  '      g = hash(band * 2.3);',                                        // random: SCRAMBLED band offset (differs even at Band speed 0)
   '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // …random speed
   '    } else {',
-  '      g = bne;',                                                     // progressive: EASED delay offset (continuous → visible)
+  '      g = bne;',                                                     // progressive: ordered/eased band offset
   '      extra = floor(bne * uBandSpeed + 0.5);',                       // …eased progressive speed
   '    }',
   '    spd = uSpeed + extra;',
