@@ -19,6 +19,7 @@ import { tunnelEffect } from './tunnel'
 import { contourEffect } from './contour'
 import { ballEffect } from './ball'
 import { turntableEffect } from './turntable'
+import { tearEffect } from './tear'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -42,6 +43,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   contourEffect,
   ballEffect,
   turntableEffect,
+  tearEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {

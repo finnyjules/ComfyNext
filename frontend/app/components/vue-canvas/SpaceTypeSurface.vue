@@ -404,6 +404,8 @@ watch(
     // turntable live params (band rotation read per-frame in update; speed/direction excluded above).
     // ttRings is STRUCTURAL (changes the ring-mesh count) → intentionally NOT excluded.
     ttCols: 0, ttRows: 0, ttGradient: 0, ttTwist: 0,
+    // tear live params (displacement uniforms read per-frame in update; speed excluded above)
+    tearAmount: 0, tearFreq: 0, tearPhase: 0, tearShape: '',
     // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
     rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
     flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',

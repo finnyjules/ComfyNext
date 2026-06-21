@@ -67,6 +67,16 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   // Word INK fraction (visible word ÷ its own tile, incl. the trailing gap from
   // buildRibbonLabel): lets an effect centre a single repeat within its slot.
   const wordInkFracs = labels.map((l, k) => Math.min(1, Math.max(1, ctx.measureText(l.trimEnd()).width) / widths[k]!))
+  // Vertical ink box of the FIRST label (glyph top/bottom, not the whole row) — lets an effect
+  // fit/centre the actual letters rather than the full tile. Row 0 is drawn at the bottom of the
+  // (flipY) atlas; metrics may be unsupported, so fall back to typical cap proportions.
+  const m0 = ctx.measureText((labels[0] ?? ' ').trimEnd())
+  const asc0 = (m0 as TextMetrics).actualBoundingBoxAscent || fontPx * 0.36
+  const desc0 = (m0 as TextMetrics).actualBoundingBoxDescent || fontPx * 0.04
+  const cy0 = (n - 1) * rowH + rowH / 2   // canvas-y where row 0 is drawn (textBaseline 'middle')
+  const totalH0 = rowH * n
+  const inkHeightFrac = Math.min(1, (asc0 + desc0) / totalH0)
+  const inkVMid = 1 - (cy0 + (desc0 - asc0) / 2) / totalH0   // v (flipY) of the ink's vertical centre
 
   canvas.width = w
   canvas.height = rowH * n
@@ -101,6 +111,8 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   tex.userData.numTexts = n
   tex.userData.wordFracs = wordFracs
   tex.userData.wordInkFracs = wordInkFracs
+  tex.userData.inkHeightFrac = inkHeightFrac
+  tex.userData.inkVMid = inkVMid
   tex.userData.gradient = (opts.gradientOn && opts.gradientStops && opts.gradientStops.some(s => s.on))
     ? makeGradientTexture(opts.gradientStops, opts.typeColor)
     : undefined
