@@ -19,6 +19,7 @@ in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
 uniform float u_placement;
+// u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
 uniform vec3 u_a, u_b, u_bg;
 
@@ -72,9 +73,9 @@ void main(){
     if (u_family > 2.5) { // multiscale: read level from u_stateTex, descend 3× when level=1
       float lvl = texelFetch(u_stateTex, ivec2(int(cx), int(cy)), 0).r > 0.5 ? 1.0 : 0.0;
       vec2 lf = vec2(fx, fy); float sub = 0.0;
-      if (lvl >= 1.0) {
+      if (lvl > 0.5) {
         float sx = min(2.0, floor(fx*3.0)), sy = min(2.0, floor(fy*3.0));
-        lf = vec2(fx*3.0 - sx, fy*3.0 - sy); sub = sx*3.0 + sy + 1.0;
+        lf = vec2(fx*3.0 - sx, fy*3.0 - sy); sub = sx*3.0 + sy + 1.0; // sub: 0 = whole cell, 1-9 = row-major 3×3 sub-cell index (+1) — mirrors pattern.ts
       }
       float st2 = hash1(cx*73856093.0 + cy*19349663.0 + sub*50331653.0 + u_seed*83492791.0) < 0.5 ? 0.0 : 1.0;
       frag = vec4(arcCov(lf, st2, u_tw) ? u_a : u_bg, 1.0);
@@ -213,6 +214,7 @@ class TextureFxRenderer {
     const structured = String(p.mode) === 'truchet' && family !== 'multiscale' && String(p.placement) === 'structured'
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.stateTex!)
     if (multiscale || structured) {
+      // integer cells/seed for the CPU grid generator; the u_cells/u_seed float uniforms above are unrounded by design
       const cellsI = Math.max(2, Math.round(Number(p.cells) || 8))
       const seedI = Math.round(Number(p.seed) || 1)
       const grid = multiscale
