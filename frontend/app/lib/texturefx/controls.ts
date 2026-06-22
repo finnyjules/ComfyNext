@@ -1,5 +1,5 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
-import { LATTICES, MODES, MOTIFS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { LATTICES, MODES, MOTIFS, PLACEMENTS, TILE_FAMILIES } from '~/lib/texturefx/types'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
 // predicate for contextual reveal (e.g. show procedural controls only in
@@ -26,7 +26,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
 
   // Truchet controls — shown only in truchet mode.
   { key: 'tileFamily', label: 'Tile family', kind: 'select', options: [...TILE_FAMILIES], default: 'arcs', group: 'Truchet', when: isTruchet },
-  { key: 'rotBias', label: 'Rotation bias', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, group: 'Truchet', when: isTruchet },
+  { key: 'placement', label: 'Placement', kind: 'select', options: [...PLACEMENTS], default: 'random', group: 'Truchet', when: isTruchet },
+  { key: 'rotBias', label: 'Rotation bias', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, group: 'Truchet', when: (p) => isTruchet(p) && String(p.placement) === 'random' },
+  { key: 'coherence', label: 'Coherence', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.6, group: 'Truchet', when: (p) => isTruchet(p) && String(p.placement) === 'structured' },
   { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: isTruchet }, // same label as lineWeight; distinct key, only one mode visible at a time
 
   { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color' },

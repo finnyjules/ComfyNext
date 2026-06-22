@@ -14,3 +14,6 @@ export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave'] as const
 
 export type Mode = typeof MODES[number]
 export type TileFamily = typeof TILE_FAMILIES[number]
+
+export const PLACEMENTS = ['random', 'structured'] as const
+export type Placement = typeof PLACEMENTS[number]

@@ -39,4 +39,25 @@ describe('texturefx controls', () => {
       expect(TEXTURE_CONTROLS.find((c) => c.key === key)!.when).toBeUndefined()
     }
   })
+
+  it('placement shows only in truchet; rotBias↔coherence swap by placement', () => {
+    const proc = textureDefaults()
+    const truRandom = { ...textureDefaults(), mode: 'truchet', placement: 'random' }
+    const truStructured = { ...textureDefaults(), mode: 'truchet', placement: 'structured' }
+    const placement = TEXTURE_CONTROLS.find((c) => c.key === 'placement')!
+    const rotBias = TEXTURE_CONTROLS.find((c) => c.key === 'rotBias')!
+    const coherence = TEXTURE_CONTROLS.find((c) => c.key === 'coherence')!
+    expect(placement.when!(proc)).toBe(false)
+    expect(placement.when!(truRandom)).toBe(true)
+    expect(rotBias.when!(truRandom)).toBe(true)
+    expect(rotBias.when!(truStructured)).toBe(false)
+    expect(coherence.when!(truStructured)).toBe(true)
+    expect(coherence.when!(truRandom)).toBe(false)
+  })
+
+  it('defaults pick up placement and coherence', () => {
+    const d = textureDefaults()
+    expect(d.placement).toBe('random')
+    expect(d.coherence).toBe(0.6)
+  })
 })
