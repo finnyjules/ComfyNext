@@ -2,6 +2,8 @@
 // drawImage() the returned canvas (preview) or toBlob() it (export). A single
 // fragment shader synthesizes the whole tile from lattice + motif uniforms,
 // mirroring the pure-TS patternColor / latticeCell math in pattern.ts exactly.
+// For structured placement it also imports truchetStates() from pattern.ts so
+// the GPU samples the exact same state grid the CPU computes (shared source, not a mirror).
 
 import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
@@ -137,6 +139,7 @@ class TextureFxRenderer {
       // No VAO needed: this renderer owns its own GL context and never shares it, so the default VAO's attribute state is stable across frames.
       this.stateTex = gl.createTexture()!
       gl.bindTexture(gl.TEXTURE_2D, this.stateTex)
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1) // R8 rows aren't 4-aligned; set once (isolated context)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
@@ -192,12 +195,14 @@ class TextureFxRenderer {
     const structured = String(p.mode) === 'truchet' && String(p.placement) === 'structured'
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.stateTex!)
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
     if (structured) {
       const cellsI = Math.max(2, Math.round(Number(p.cells) || 8))
       const seedI = Math.round(Number(p.seed) || 1)
       const coherence = Math.min(1, Math.max(0, Number(p.coherence) || 0))
       const grid = truchetStates(cellsI, seedI, coherence)
+      // R8 is normalized: a stored byte b samples as b/255 in the shader, and the
+      // shader tests `.r > 0.5`. So state 1 MUST be stored as 255 (→1.0), not 1
+      // (→0.004, which would read as state 0). Do not "simplify" this to pass grid directly.
       const data = new Uint8Array(grid.length)
       for (let i = 0; i < grid.length; i++) data[i] = grid[i] ? 255 : 0
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cellsI, cellsI, 0, gl.RED, gl.UNSIGNED_BYTE, data)
