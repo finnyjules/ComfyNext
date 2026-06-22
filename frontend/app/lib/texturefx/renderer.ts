@@ -27,8 +27,7 @@ uniform float u_hasRaster, u_seamMethod, u_feather, u_rasterScale;
 uniform vec3 u_a, u_b, u_bg;
 
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
-float r_fract(float x){ return x - floor(x); }
-float r_tri(float x){ return abs(2.0*r_fract(x)-1.0); }
+float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
 
 // Deterministic 0..1 hash of a float cell index. Uses a multiply chain that is
 // a float reimplementation of the intent of pattern.ts's hash1 (XOR-shift on
@@ -60,11 +59,11 @@ void main(){
     vec3 col;
     if (u_seamMethod > 0.5) { // feather: offset-wrap + cross-fade heal at the centre seam
       // primary sample: fract(fract(cu)+0.5) mirrors raster.ts fract(zu+0.5) where zu=fract(cu)
-      vec2 a = vec2(r_fract(r_fract(cu) + 0.5), r_fract(r_fract(cv) + 0.5));
+      vec2 a = vec2(fract(fract(cu) + 0.5), fract(fract(cv) + 0.5));
       col = texture(u_rasterTex, a).rgb;
       // mirror sample: used only in the heal blend
       vec3 mir = texture(u_rasterTex, vec2(r_tri(cu), r_tri(cv))).rgb;
-      float zu = r_fract(cu), zv = r_fract(cv);
+      float zu = fract(cu), zv = fract(cv);
       float fx = smoothstep(0.5 - u_feather, 0.5, zu) * (1.0 - smoothstep(0.5, 0.5 + u_feather, zu));
       float fy = smoothstep(0.5 - u_feather, 0.5, zv) * (1.0 - smoothstep(0.5, 0.5 + u_feather, zv));
       col = mix(col, mir, max(fx, fy));
@@ -168,6 +167,7 @@ class TextureFxRenderer {
   private prog: WebGLProgram | null = null
   private stateTex?: WebGLTexture
   private rasterTex?: WebGLTexture
+  private _lastRasterSrc: string | null = null
 
   private ensure(w: number, h: number): WebGL2RenderingContext {
     if (!this.gl) {
@@ -197,6 +197,7 @@ class TextureFxRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]))
     }
     const c = this.canvas!
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
@@ -265,17 +266,22 @@ class TextureFxRenderer {
     }
     gl.uniform1i(u('u_stateTex'), 0)
     gl.uniform1f(u('u_placement'), structured ? 1 : 0)
-    // Raster texture on UNIT 1 — uploaded every frame only when mode=raster (cheap otherwise: 1×1 black pixel)
-    const rasterMode = String(p.mode) === 'raster'
-    const rimg = rasterMode ? getRaster(String(p.rasterSrc ?? '')) : null
+    // Raster texture on UNIT 1 — only re-upload when rasterSrc changes (avoids full texImage2D every slider drag)
+    const raster = String(p.mode) === 'raster'
+    const rimg = raster ? getRaster(String(p.rasterSrc ?? '')) : null
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.rasterTex!)
     if (rimg) {
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, rimg)
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
-    } else {
+      if (String(p.rasterSrc) !== this._lastRasterSrc) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, rimg)
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+        this._lastRasterSrc = String(p.rasterSrc)
+      }
+    } else if (this._lastRasterSrc !== null) {
+      // fell out of raster mode (or image cleared) — reset to the 1×1 placeholder once
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]))
+      this._lastRasterSrc = null
     }
     gl.uniform1i(u('u_rasterTex'), 1)
     gl.uniform1f(u('u_hasRaster'), rimg ? 1 : 0)
