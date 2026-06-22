@@ -45,3 +45,21 @@ describe('validatePatch', () => {
     expect(validatePatch({ face: '' }, described)).toEqual({})
   })
 })
+
+import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
+
+describe('vibePrompt', () => {
+  it('schema is strict (no open objects)', () => {
+    expect(VIBE_SCHEMA.additionalProperties).toBe(false)
+    expect(VIBE_SCHEMA.properties.changes.items.additionalProperties).toBe(false)
+    expect(VIBE_SCHEMA.required).toEqual(['changes', 'rationale'])
+  })
+  it('prompt embeds the phrase, effect label, control labels and ranges', () => {
+    const described = describeControls(CONTROLS, { depth: 0.7 })
+    const p = buildVibePrompt(described, 'warmer and deeper', 'Extrude')
+    expect(p).toContain('warmer and deeper')
+    expect(p).toContain('Extrude')
+    expect(p).toContain('depth')
+    expect(p).toContain('higher = deeper') // the hint
+  })
+})
