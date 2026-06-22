@@ -29,16 +29,15 @@ uniform vec3 u_a, u_b, u_bg;
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
 float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
 
-// Deterministic 0..1 hash of a float cell index. Uses a multiply chain that is
-// a float reimplementation of the intent of pattern.ts's hash1 (XOR-shift on
-// integers). Exact bit-equality is not required — both produce a deterministic
-// value per (cx, cy, seed) triple. Only the modded cx/cy are ever hashed, so
-// seamlessness is guaranteed across tile boundaries.
-float hash1(float i){
-  float x = i*374761393.0 + 668265263.0;
-  x = mod(x, 2147483647.0);
-  x = mod((x*1274126177.0), 2147483647.0);
-  return fract(x/2147483647.0);
+// Precision-safe per-cell hash to 0..1, well-distributed. Takes the SMALL modded
+// cell coords (cx,cy up to cells) plus a salt (reduced seed, optionally + sub),
+// so it never forms a huge float. The old cx*73856093 + ... overflowed float32
+// 24-bit integer precision, collapsing the distribution and making rotBias
+// erratic. (Dave Hoskins hash13.) Hashing the modded cx/cy keeps tiles seamless.
+float cellHash(float cx, float cy, float salt){
+  vec3 p = fract(vec3(cx, cy, salt) * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
 }
 
 // Shared arc-coverage helper: true when pixel f lies on one of the two quarter-
@@ -94,6 +93,7 @@ void main(){
   float cy = posmod(floor(gy), cells);
   float fx = gx - floor(gx);
   float fy = gy - floor(gy);
+  float hseed = mod(u_seed, 977.0); // small, precision-safe seed salt for cellHash
 
   // Truchet families — mirrors truchetColor() + the 'truchet' branch in patternColor().
   // u_mode: 0 = procedural, 1 = truchet  (MODES order)
@@ -106,11 +106,11 @@ void main(){
         float sx = min(2.0, floor(fx*3.0)), sy = min(2.0, floor(fy*3.0));
         lf = vec2(fx*3.0 - sx, fy*3.0 - sy); sub = sx*3.0 + sy + 1.0; // sub: 0 = whole cell, 1-9 = row-major 3×3 sub-cell index (+1) — mirrors pattern.ts
       }
-      float st2 = hash1(cx*73856093.0 + cy*19349663.0 + sub*50331653.0 + u_seed*83492791.0) < 0.5 ? 0.0 : 1.0;
+      float st2 = cellHash(cx, cy, hseed + sub*1.7) < 0.5 ? 0.0 : 1.0;
       frag = vec4(arcCov(lf, st2, u_tw) ? u_a : u_bg, 1.0);
       return;
     }
-    float h = hash1(cx*73856093.0 + cy*19349663.0 + u_seed*83492791.0);
+    float h = cellHash(cx, cy, hseed);
     float st;
     if (u_placement > 0.5) {
       st = texelFetch(u_stateTex, ivec2(int(cx), int(cy)), 0).r > 0.5 ? 1.0 : 0.0;
@@ -139,7 +139,7 @@ void main(){
 
   // Per-cell jitter: swap ink A/B for cells where hash < jitter threshold.
   // Hashes the modded cx/cy so the tile repeats seamlessly.
-  float swap = (u_jitter > 0.0 && hash1(cx*73856093.0 + cy*19349663.0 + u_seed*83492791.0) < u_jitter) ? 1.0 : 0.0;
+  float swap = (u_jitter > 0.0 && cellHash(cx, cy, hseed + 3.0) < u_jitter) ? 1.0 : 0.0;
   vec3 ink  = mix(u_a, u_b, swap);
   vec3 ink2 = mix(u_b, u_a, swap);
 
