@@ -7,7 +7,7 @@
 
 import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
-import { truchetStates } from '~/lib/texturefx/pattern'
+import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 
 const VS = `#version 300 es
 in vec2 a_pos; out vec2 v_uv;
@@ -36,6 +36,15 @@ float hash1(float i){
   return fract(x/2147483647.0);
 }
 
+// Shared arc-coverage helper: true when pixel f lies on one of the two quarter-
+// circle arcs for state st. Mirrors arcCoverage() in pattern.ts exactly.
+// state 0 -> centres (0,0)&(1,1); state 1 -> (1,0)&(0,1).
+bool arcCov(vec2 f, float st, float tw) {
+  vec2 a = (st < 0.5) ? vec2(0.0,0.0) : vec2(1.0,0.0);
+  vec2 b = (st < 0.5) ? vec2(1.0,1.0) : vec2(0.0,1.0);
+  return abs(distance(f,a)-0.5) < tw*0.5 || abs(distance(f,b)-0.5) < tw*0.5;
+}
+
 void main(){
   float cells = max(2.0, floor(u_cells + 0.5));
   float gx = v_uv.x * cells;
@@ -58,8 +67,19 @@ void main(){
 
   // Truchet families — mirrors truchetColor() + the 'truchet' branch in patternColor().
   // u_mode: 0 = procedural, 1 = truchet  (MODES order)
-  // u_family: 0 = arcs, 1 = diagonal, 2 = weave  (TILE_FAMILIES order)
+  // u_family: 0 = arcs, 1 = diagonal, 2 = weave, 3 = multiscale  (TILE_FAMILIES order)
   if (u_mode > 0.5) {
+    if (u_family > 2.5) { // multiscale: read level from u_stateTex, descend 3× when level=1
+      float lvl = texelFetch(u_stateTex, ivec2(int(cx), int(cy)), 0).r > 0.5 ? 1.0 : 0.0;
+      vec2 lf = vec2(fx, fy); float sub = 0.0;
+      if (lvl >= 1.0) {
+        float sx = min(2.0, floor(fx*3.0)), sy = min(2.0, floor(fy*3.0));
+        lf = vec2(fx*3.0 - sx, fy*3.0 - sy); sub = sx*3.0 + sy + 1.0;
+      }
+      float st2 = hash1(cx*73856093.0 + cy*19349663.0 + sub*50331653.0 + u_seed*83492791.0) < 0.5 ? 0.0 : 1.0;
+      frag = vec4(arcCov(lf, st2, u_tw) ? u_a : u_bg, 1.0);
+      return;
+    }
     float h = hash1(cx*73856093.0 + cy*19349663.0 + u_seed*83492791.0);
     float st;
     if (u_placement > 0.5) {
@@ -69,11 +89,7 @@ void main(){
     }
     vec3 col;
     if (u_family < 0.5) {            // arcs: state 0 → centers (0,0)&(1,1); state 1 → (1,0)&(0,1)
-      vec2 a = (st < 0.5) ? vec2(0.0,0.0) : vec2(1.0,0.0);
-      vec2 b = (st < 0.5) ? vec2(1.0,1.0) : vec2(0.0,1.0);
-      float d0 = abs(distance(vec2(fx,fy), a) - 0.5);
-      float d1 = abs(distance(vec2(fx,fy), b) - 0.5);
-      col = (d0 < u_tw*0.5 || d1 < u_tw*0.5) ? u_a : u_bg;
+      col = arcCov(vec2(fx,fy), st, u_tw) ? u_a : u_bg;
     } else if (u_family < 1.5) {     // diagonal two-tone
       bool side = (st < 0.5) ? (fy < fx) : (fy < 1.0 - fx);
       col = side ? u_a : u_b;
@@ -192,18 +208,18 @@ class TextureFxRenderer {
     gl.uniform3fv(u('u_a'), hex(String(p.colorA)))
     gl.uniform3fv(u('u_b'), hex(String(p.colorB)))
     gl.uniform3fv(u('u_bg'), hex(String(p.background)))
-    const structured = String(p.mode) === 'truchet' && String(p.placement) === 'structured'
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, this.stateTex!)
-    if (structured) {
+    const family = String(p.tileFamily)
+    const multiscale = String(p.mode) === 'truchet' && family === 'multiscale'
+    const structured = String(p.mode) === 'truchet' && family !== 'multiscale' && String(p.placement) === 'structured'
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.stateTex!)
+    if (multiscale || structured) {
       const cellsI = Math.max(2, Math.round(Number(p.cells) || 8))
       const seedI = Math.round(Number(p.seed) || 1)
-      const coherence = Math.min(1, Math.max(0, Number(p.coherence) || 0))
-      const grid = truchetStates(cellsI, seedI, coherence)
-      // R8 is normalized: a stored byte b samples as b/255 in the shader, and the
-      // shader tests `.r > 0.5`. So state 1 MUST be stored as 255 (→1.0), not 1
-      // (→0.004, which would read as state 0). Do not "simplify" this to pass grid directly.
+      const grid = multiscale
+        ? multiscaleLevels(cellsI, seedI, Math.min(1, Math.max(0, Number(p.subdivide) || 0)))
+        : truchetStates(cellsI, seedI, Math.min(1, Math.max(0, Number(p.coherence) || 0)))
       const data = new Uint8Array(grid.length)
+      // R8 is normalized (samples b/255, shader tests >0.5): store 1 as 255, not 1.
       for (let i = 0; i < grid.length; i++) data[i] = grid[i] ? 255 : 0
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cellsI, cellsI, 0, gl.RED, gl.UNSIGNED_BYTE, data)
     } else {
