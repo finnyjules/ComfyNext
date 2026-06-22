@@ -87,8 +87,8 @@ async function onVibe(phrase: string) {
   }
   catch (e: any) {
     vibeProposal.value = null
-    // surface the error via whatever toast/notice this surface already uses
     console.error('[vibe]', e?.message || e)
+    alert(e?.message || 'Vibe control failed. See console.')
   }
   finally {
     vibeBusy.value = false
