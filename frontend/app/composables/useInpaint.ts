@@ -122,6 +122,25 @@ export function useInpaint() {
     }
   }
 
+  /** Generate from a trained LoRA's private Replicate model (Style mode with a
+   *  style selected). `name` is the LoRA's .safetensors filename. */
+  async function loraGen(name: string, prompt: string, aspectRatio = '1:1'): Promise<string[]> {
+    busy.value = true; error.value = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/lora-gen', {
+        method: 'POST',
+        body: { name, prompt, aspectRatio },
+      })
+      results.value = res.images
+      return res.images
+    } catch (err: any) {
+      error.value = err?.data?.message || err?.message || 'Generation failed'
+      throw err
+    } finally {
+      busy.value = false
+    }
+  }
+
   /** Put a character into a mannequin's pose via Nano Banana 2. `character` and
    *  `pose` are data URLs (the character image and the gray mannequin render).
    *  Returns the posed character(s) as data URLs. */
@@ -183,5 +202,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, text2img, pose, removeBackground, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, text2img, loraGen, pose, removeBackground, uploadDataUrl }
 }
