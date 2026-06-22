@@ -34,3 +34,16 @@ export const DITHER_PERIOD: Record<number, number> = { 0: 2, 1: 4, 2: 8, 3: 8, 8
 export const STYLIZE_EFFECT_ID: Record<string, string> = {
   dither: 'bayer_dither', posterize: 'posterize', duotone: 'duotone',
 }
+
+export const FILL_TYPES = ['solid', 'gradient', 'image', 'pattern'] as const
+export const FILL_FRAMES = ['cell', 'tile'] as const
+export const GRADIENT_KINDS = ['linear', 'radial'] as const
+export type FillType = typeof FILL_TYPES[number]
+export type Frame = typeof FILL_FRAMES[number]
+export type GradientStop = { c: string; p: number }
+export type Fill =
+  | { type: 'solid'; color: string }
+  | { type: 'gradient'; frame: Frame; kind: 'linear' | 'radial'; angle: number; stops: GradientStop[] }
+  | { type: 'image'; frame: Frame; src: string; seam: string; scale: number }
+  | { type: 'pattern'; frame: Frame; sub: Record<string, unknown> }
+export type FillsByRole = Record<string, Fill>
