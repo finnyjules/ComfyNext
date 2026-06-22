@@ -1230,6 +1230,17 @@
           ]
         },
         {
+          "uniform": "u_edge",
+          "label": "Edge",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Mirror-tile", "value": 0 },
+            { "label": "Clamp", "value": 1 },
+            { "label": "Transparent", "value": 2 }
+          ]
+        },
+        {
           "uniform": "u_segments",
           "label": "Segments",
           "type": "float",
@@ -1308,6 +1319,17 @@
           ]
         },
         {
+          "uniform": "u_edge",
+          "label": "Edge",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Mirror-tile", "value": 0 },
+            { "label": "Clamp", "value": 1 },
+            { "label": "Transparent", "value": 2 }
+          ]
+        },
+        {
           "uniform": "u_angle",
           "label": "Angle",
           "type": "float",
@@ -1373,6 +1395,17 @@
             { "label": "Zoom", "value": 0 },
             { "label": "Spiral", "value": 1 },
             { "label": "Tunnel", "value": 2 }
+          ]
+        },
+        {
+          "uniform": "u_edge",
+          "label": "Edge",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Mirror-tile", "value": 0 },
+            { "label": "Clamp", "value": 1 },
+            { "label": "Transparent", "value": 2 }
           ]
         },
         {

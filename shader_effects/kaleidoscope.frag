@@ -12,12 +12,24 @@ uniform float u_segments;
 uniform float u_rotation;
 uniform float u_zoom;
 uniform float u_speed;     // adds to rotation over time (0 = still)
+uniform float u_edge;      // 0 Mirror-tile, 1 Clamp, 2 Transparent
 uniform float u_centerX;
 uniform float u_centerY;
 
 const float TAU = 6.28318530718;
 
 vec2 mirrorWrap(vec2 uv) { return abs(fract(uv * 0.5) * 2.0 - 1.0); }
+
+// Sample the input asset, handling out-of-bounds per the Edge mode.
+vec4 sampleEdge(vec2 uv) {
+    int e = int(u_edge + 0.5);
+    if (e == 1) return vec4(texture(u_image0, clamp(uv, 0.0, 1.0)).rgb, 1.0);
+    if (e == 2) {
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
+        return vec4(texture(u_image0, uv).rgb, 1.0);
+    }
+    return vec4(texture(u_image0, mirrorWrap(uv)).rgb, 1.0);
+}
 
 // Fold an angle into a mirrored wedge of width seg.
 float wedge(float a, float seg) {
@@ -63,6 +75,5 @@ void main() {
         uv = vec2(cos(a), sin(a)) * length(local) + 0.5;
     }
 
-    uv = mirrorWrap(uv);
-    fragColor0 = vec4(texture(u_image0, uv).rgb, 1.0);
+    fragColor0 = sampleEdge(uv);
 }

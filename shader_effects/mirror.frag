@@ -11,11 +11,23 @@ uniform float u_mode;     // 0 Axis, 1 Quad, 2 Octal, 3 Mirror-ball
 uniform float u_angle;    // mirror axis orientation, degrees
 uniform float u_zoom;
 uniform float u_speed;    // axis rotation over time (0 = still)
+uniform float u_edge;     // 0 Mirror-tile, 1 Clamp, 2 Transparent
 uniform float u_centerX;
 uniform float u_centerY;
 
 // triangle-wave mirror wrap: keeps samples in-bounds with no seam
 vec2 mirrorWrap(vec2 uv) { return abs(fract(uv * 0.5) * 2.0 - 1.0); }
+
+// Sample the input asset, handling out-of-bounds per the Edge mode.
+vec4 sampleEdge(vec2 uv) {
+    int e = int(u_edge + 0.5);
+    if (e == 1) return vec4(texture(u_image0, clamp(uv, 0.0, 1.0)).rgb, 1.0);
+    if (e == 2) {
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
+        return vec4(texture(u_image0, uv).rgb, 1.0);
+    }
+    return vec4(texture(u_image0, mirrorWrap(uv)).rgb, 1.0);
+}
 
 void main() {
     vec2 asp = vec2(u_resolution.x / u_resolution.y, 1.0);
@@ -49,6 +61,5 @@ void main() {
     }
 
     vec2 uv = (Rinv * q) / asp + center;
-    uv = mirrorWrap(uv);
-    fragColor0 = vec4(texture(u_image0, uv).rgb, 1.0);
+    fragColor0 = sampleEdge(uv);
 }

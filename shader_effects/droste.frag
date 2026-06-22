@@ -12,12 +12,24 @@ uniform float u_scale;    // size ratio between recursion levels
 uniform float u_twist;    // spiral strength (Spiral mode)
 uniform float u_speed;    // infinite-zoom drift rate (0 = still)
 uniform float u_zoom;
+uniform float u_edge;     // 0 Mirror-tile, 1 Clamp, 2 Transparent
 uniform float u_centerX;
 uniform float u_centerY;
 
 const float TAU = 6.28318530718;
 
 vec2 mirrorWrap(vec2 uv) { return abs(fract(uv * 0.5) * 2.0 - 1.0); }
+
+// Sample the input asset, handling out-of-bounds per the Edge mode.
+vec4 sampleEdge(vec2 uv) {
+    int e = int(u_edge + 0.5);
+    if (e == 1) return vec4(texture(u_image0, clamp(uv, 0.0, 1.0)).rgb, 1.0);
+    if (e == 2) {
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
+        return vec4(texture(u_image0, uv).rgb, 1.0);
+    }
+    return vec4(texture(u_image0, mirrorWrap(uv)).rgb, 1.0);
+}
 
 void main() {
     vec2 asp = vec2(u_resolution.x / u_resolution.y, 1.0);
@@ -44,6 +56,5 @@ void main() {
     float er = exp(lp.x);                            // radius within one recursion band
     vec2 dir = vec2(cos(lp.y), sin(lp.y));
     vec2 uv = dir * er * u_zoom * (0.5 / max(u_scale, 1.05)) / asp + center;
-    uv = mirrorWrap(uv);
-    fragColor0 = vec4(texture(u_image0, uv).rgb, 1.0);
+    fragColor0 = sampleEdge(uv);
 }
