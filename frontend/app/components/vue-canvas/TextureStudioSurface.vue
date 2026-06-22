@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { Dices } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
@@ -95,16 +96,18 @@ async function sendToCanvas() {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
       closeEditor()
-    }
+    } else { bakeMsg.value = 'Upload failed — see console.' }
   } catch (e) { console.error('[texture] send failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false }
 }
 
 async function downloadPng() {
-  const blob = await textureFx.renderToBlob(params, 1024, 1024, 0)
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = `texture_${params.seed}.png`; a.click()
-  URL.revokeObjectURL(a.href)
+  try {
+    const blob = await textureFx.renderToBlob(params, 1024, 1024, 0)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob); a.download = `texture_${params.seed}.png`; a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) { console.error('[texture] PNG download failed', e) }
 }
 
 // Keyboard shortcut: Escape closes the editor.
@@ -115,6 +118,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => {
+  bakeMsg.value = ''
   loadParams()
   renderPreview()
   window.addEventListener('keydown', onKey)
@@ -145,7 +149,7 @@ onBeforeUnmount(() => {
     </template>
 
     <template #actions>
-      <StudioButton variant="secondary" @click="roll">🎲 Roll · seed {{ params.seed }}</StudioButton>
+      <StudioButton variant="secondary" @click="roll"><Dices :size="14" /> Roll · seed {{ params.seed }}</StudioButton>
       <StudioButton variant="secondary" @click="downloadPng">Download PNG</StudioButton>
       <StudioButton variant="primary" :disabled="baking" @click="sendToCanvas">{{ baking ? bakeMsg : 'Send to canvas' }}</StudioButton>
     </template>
