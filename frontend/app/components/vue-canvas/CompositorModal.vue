@@ -1257,6 +1257,15 @@ function setMaskShowSource(key: StackKey, show: boolean) {
 const inpaint = useInpaint()
 const genPrompt = ref('')
 
+// Generate Object: new-layer generation has two modes — Style (prompt, optional
+// trained LoRA) and Scene (fit the existing frame). Both output a transparent
+// cutout. Only shown when there's no target image (i.e. making a NEW layer).
+type GenMode = 'style' | 'scene'
+const genMode = ref<GenMode>('style')
+const styleList = useStyleList()
+const genStyle = ref<import('~/composables/useStyleList').StyleItem | null>(null)
+const stylePickerOpen = ref(false)
+
 type GenTool = 'box' | 'brush' | 'shape'
 const GEN_TOOLS: GenTool[] = ['box', 'brush', 'shape']
 const genActive = ref(false)
@@ -1307,6 +1316,9 @@ function enterGenMode() {
   aiOpen.value = false
   genActive.value = true
   genTargetId.value = sel
+  genStyle.value = null
+  stylePickerOpen.value = false
+  styleList.refresh()
   clearGenMask()
 }
 function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask() }
@@ -2082,6 +2094,51 @@ onUnmounted(() => {
             <span class="text-white/40">Target</span>
             <span class="text-white/70">{{ genTargetLabel }}</span>
           </div>
+
+          <!-- Mode + style (new-object generation only) -->
+          <template v-if="!genTarget">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mode</div>
+              <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
+                <button
+                  class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+                  :class="genMode === 'style' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
+                  @click="genMode = 'style'">Style</button>
+                <button
+                  class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+                  :class="genMode === 'scene' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
+                  @click="genMode = 'scene'">Scene</button>
+              </div>
+              <p class="text-[10px] text-white/35 mt-1.5">
+                {{ genMode === 'style' ? 'Generate from your prompt (optionally a trained style).' : 'Fit the new object to the existing frame.' }}
+              </p>
+            </div>
+
+            <!-- Style picker (Style mode) -->
+            <div v-if="genMode === 'style'">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Style</div>
+              <button
+                class="w-full h-8 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
+                @click="stylePickerOpen = !stylePickerOpen">
+                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover" />
+                <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None (flux-schnell)' }}</span>
+                <button v-if="genStyle" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></button>
+              </button>
+              <div v-if="stylePickerOpen" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
+                <button class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer"
+                  @click="genStyle = null; stylePickerOpen = false">None (flux-schnell)</button>
+                <button v-for="s in styleList.styles.value" :key="s.filename"
+                  class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                  @click="genStyle = s; stylePickerOpen = false">
+                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-5 rounded object-cover" />
+                  <span class="truncate">{{ s.name }}</span>
+                </button>
+                <p v-if="!styleList.styles.value.length" class="px-2 py-2 text-[11px] text-white/30">
+                  {{ styleList.loading.value ? 'Loading…' : 'No trained styles yet.' }}
+                </p>
+              </div>
+            </div>
+          </template>
 
           <!-- Region tool -->
           <div>
