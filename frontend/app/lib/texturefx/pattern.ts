@@ -56,6 +56,9 @@ export function truchetStates(cells: number, seed: number, coherence: number): U
   return f
 }
 
+// Single-entry memo: patternColor is called per-pixel with fixed params per
+// render, and only one Texture Studio renders at a time, so one slot suffices.
+// (If coherence is ever animated frame-to-frame, widen this to an LRU.)
 let _statesCache: { key: string, grid: Uint8Array } | null = null
 function cachedStates(cells: number, seed: number, coherence: number): Uint8Array {
   const key = `${cells}|${seed}|${coherence}`
