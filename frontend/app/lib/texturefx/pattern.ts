@@ -18,6 +18,50 @@ function hash1(i: number): number {
 }
 
 const posmod = (a: number, n: number) => ((a % n) + n) % n
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x)
+
+/**
+ * Toroidal, deterministic Truchet state field (0/1) for "structured" placement.
+ * Seeds a hashed random field, then runs fixed coherence-weighted majority
+ * smoothing passes (each cell adopts its 4 toroidal neighbours' majority with
+ * probability `coherence`). Wraps because every index is taken mod `cells`.
+ */
+export function truchetStates(cells: number, seed: number, coherence: number): Uint8Array {
+  const n = cells * cells
+  const f = new Uint8Array(n)
+  for (let y = 0; y < cells; y++) {
+    for (let x = 0; x < cells; x++) {
+      f[y * cells + x] = hash1(x * 73856093 + y * 19349663 + seed * 83492791) < 0.5 ? 0 : 1
+    }
+  }
+  const co = clamp01(coherence)
+  const PASSES = 3
+  for (let pass = 0; pass < PASSES; pass++) {
+    const g = f.slice()
+    for (let y = 0; y < cells; y++) {
+      for (let x = 0; x < cells; x++) {
+        if (hash1(x * 26699 + y * 43889 + pass * 15485863 + seed * 2246822519) >= co) continue
+        const up = f[((y - 1 + cells) % cells) * cells + x]
+        const dn = f[((y + 1) % cells) * cells + x]
+        const lf = f[y * cells + ((x - 1 + cells) % cells)]
+        const rt = f[y * cells + ((x + 1) % cells)]
+        const sum = up + dn + lf + rt
+        if (sum >= 3) g[y * cells + x] = 1
+        else if (sum <= 1) g[y * cells + x] = 0
+        // sum === 2 is a tie → keep current state
+      }
+    }
+    f.set(g)
+  }
+  return f
+}
+
+let _statesCache: { key: string, grid: Uint8Array } | null = null
+function cachedStates(cells: number, seed: number, coherence: number): Uint8Array {
+  const key = `${cells}|${seed}|${coherence}`
+  if (!_statesCache || _statesCache.key !== key) _statesCache = { key, grid: truchetStates(cells, seed, coherence) }
+  return _statesCache.grid
+}
 
 export function latticeCell(lattice: string, cells: number, u: number, v: number) {
   let gx = u * cells
@@ -87,9 +131,15 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
 
   if (String(p.mode) === 'truchet') {
     const tw = Number(p.truchetWeight) || 0.18
-    const rotBias = Number(p.rotBias)
-    const bias = Number.isFinite(rotBias) ? rotBias : 0.5
-    const state = cellHash < bias ? 0 : 1
+    let state: number
+    if (String(p.placement) === 'structured') {
+      const grid = cachedStates(cells, seed, clamp01(Number(p.coherence) || 0))
+      state = grid[cy * cells + cx]
+    } else {
+      const rotBias = Number(p.rotBias)
+      const bias = Number.isFinite(rotBias) ? rotBias : 0.5
+      state = cellHash < bias ? 0 : 1
+    }
     return truchetColor(String(p.tileFamily), fx, fy, cx, cy, state, tw, A, B, BG)
   }
 

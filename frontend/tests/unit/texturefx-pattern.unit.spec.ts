@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { patternColor } from '~/lib/texturefx/pattern'
+import { patternColor, truchetStates } from '~/lib/texturefx/pattern'
 import { textureDefaults } from '~/lib/texturefx/controls'
 import { MOTIFS, LATTICES, TILE_FAMILIES } from '~/lib/texturefx/types'
 
@@ -53,4 +53,31 @@ describe('patternColor seamlessness', () => {
     const upper = patternColor(p, 0.1 / 8, 0.9 / 8)
     expect(eq(lower, upper)).toBe(false)
   })
+})
+
+describe('truchetStates (structured placement)', () => {
+  it('is deterministic for the same inputs', () => {
+    expect(Array.from(truchetStates(8, 7, 0.6))).toEqual(Array.from(truchetStates(8, 7, 0.6)))
+  })
+  it('returns a cells*cells grid of 0/1', () => {
+    const g = truchetStates(8, 7, 0.6)
+    expect(g.length).toBe(64)
+    for (const v of g) expect(v === 0 || v === 1).toBe(true)
+  })
+  it('different seeds generally differ', () => {
+    expect(Array.from(truchetStates(8, 7, 0.6))).not.toEqual(Array.from(truchetStates(8, 99, 0.6)))
+  })
+})
+
+describe('structured placement seamlessness', () => {
+  for (const family of ['arcs', 'diagonal'] as const) {
+    it(`truchet ${family}/structured wraps both axes`, () => {
+      const p = { ...textureDefaults(), mode: 'truchet', tileFamily: family, placement: 'structured', lattice: 'square', cells: 8, coherence: 0.7 }
+      for (let i = 0; i <= 10; i++) {
+        const t = i / 10
+        expect(eq(patternColor(p, 0, t), patternColor(p, 1, t)), `x-wrap @ v=${t}`).toBe(true)
+        expect(eq(patternColor(p, t, 0), patternColor(p, t, 1)), `y-wrap @ u=${t}`).toBe(true)
+      }
+    })
+  }
 })
