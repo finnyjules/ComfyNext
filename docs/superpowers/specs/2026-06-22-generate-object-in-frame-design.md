@@ -67,6 +67,17 @@ frontend** (Style mode with a style selected). Everything else is wired.
 
 ## Architecture
 
+> **Implementation note (revised after code review):** the modal already ships a
+> "Generative Fill" mode (`CompositorModal.vue:1251+`) with a **box drag tool**, a
+> region overlay, a nearest-aspect picker, a **"New layer" text2img path**
+> (`runRegionFill`, places a new image layer sized to the box), and a
+> `removeImageBg` cutout helper. Rather than build a parallel marquee + standalone
+> panel + composable, this feature **extends that existing flow**: add a
+> Style↔Scene toggle, a LoRA picker, and an always-on cutout step. The unit list
+> below is kept for intent; the plan implements it as edits to the existing
+> Generative Fill, not new `GenerateObjectPanel.vue` / `useGenerateObject.ts`
+> files.
+
 ### Components / units
 
 1. **Marquee + floating panel UI** (in `CompositorModal.vue`, extracted into a
