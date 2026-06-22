@@ -38,6 +38,12 @@ export function describeControls(controls: ControlSpec[], params: Params): Descr
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/
 
+function stepDecimals(step: number): number {
+  const s = String(step)
+  const dot = s.indexOf('.')
+  return dot === -1 ? 0 : s.length - dot - 1
+}
+
 /** Validate/clamp a raw patch against the descriptor. Unknown keys, out-of-enum
  *  selects, and malformed colors are dropped; sliders are coerced, clamped to
  *  [min,max] and snapped to step. The result is safe to apply to params. */
@@ -47,7 +53,7 @@ export function validatePatch(
 ): Record<string, ParamValue> {
   const byPath = new Map(described.map(d => [d.path, d]))
   const out: Record<string, ParamValue> = {}
-  for (const [key, raw] of Object.entries(patch ?? {})) {
+  for (const [key, raw] of Object.entries(patch)) {
     const d = byPath.get(key)
     if (!d) continue
     if (d.kind === 'slider') {
@@ -55,7 +61,7 @@ export function validatePatch(
       if (!Number.isFinite(n)) continue
       const snapped = Math.round((n - d.min!) / d.step!) * d.step! + d.min!
       const clamped = Math.min(d.max!, Math.max(d.min!, snapped))
-      out[key] = Number(clamped.toFixed(6))
+      out[key] = Number(clamped.toFixed(stepDecimals(d.step!)))
     }
     else if (d.kind === 'select') {
       if (typeof raw === 'string' && d.options!.includes(raw)) out[key] = raw
