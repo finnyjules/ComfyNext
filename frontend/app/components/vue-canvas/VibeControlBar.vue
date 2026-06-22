@@ -29,7 +29,7 @@ function go() {
         v-model="phrase"
         :disabled="busy"
         type="text"
-        placeholder="Describe a vibe — "warmer, more chaotic""
+        placeholder="Describe a vibe — 'warmer, more chaotic'"
         class="flex-1 bg-transparent text-[12.5px] text-white/90 placeholder:text-white/35 outline-none"
         @keydown.enter="go"
       >
