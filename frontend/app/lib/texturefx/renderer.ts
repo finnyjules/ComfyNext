@@ -11,6 +11,7 @@ import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
 import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
 import { rolesFor } from '~/lib/texturefx/roles'
+import { getPatternFillCanvas, patternFillKey } from '~/lib/texturefx/patternfill'
 
 const VS = `#version 300 es
 in vec2 a_pos; out vec2 v_uv;
@@ -65,6 +66,12 @@ vec3 sampleFillSeam(int r, vec2 uv){
 vec3 evalFill(int r, vec2 fc, vec2 tc){
   if (u_fillType[r] == 0) return u_fillC0[r];
   if (u_fillType[r] == 2) {
+    vec2 uv = (u_fillFrame[r]==1) ? tc : fc;
+    return sampleFillSeam(r, uv);
+  }
+  // Pattern fill (type 3): sub-pattern already tiles, so direct wrap (seam=2).
+  // Scale and frame are honoured via sampleFillSeam like image fills.
+  if (u_fillType[r] == 3) {
     vec2 uv = (u_fillFrame[r]==1) ? tc : fc;
     return sampleFillSeam(r, uv);
   }
@@ -358,6 +365,28 @@ class TextureFxRenderer {
           gl.uniform1i(loc('u_fillType'), 0)
           gl.uniform3fv(loc('u_fillC0'), hexToRgb('#808080'))
         }
+      } else if ((fill as any).type === 'pattern') {
+        const pf = fill as any
+        const pc = getPatternFillCanvas(pf.sub as Record<string, unknown>)
+        if (pc) {
+          gl.activeTexture(gl.TEXTURE0 + 2 + r)
+          gl.bindTexture(gl.TEXTURE_2D, this.fillTex[r]!)
+          const pkey = patternFillKey(pf.sub as Record<string, unknown>)
+          if (pkey !== this._lastFillSrc[r]) {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, pc)
+            this._lastFillSrc[r] = pkey
+          }
+          gl.uniform1i(loc('u_fillType'), 3)
+          // Sub-pattern already tiles cleanly; use direct wrap (seam=2) always.
+          gl.uniform1i(loc('u_fillSeam'), 2)
+          gl.uniform1f(loc('u_fillScale'), Number(pf.scale) || 1)
+          gl.uniform1i(loc('u_fillFrame'), pf.frame === 'tile' ? 1 : 0)
+        } else {
+          // Sub-render failed or not ready — solid gray fallback
+          this._lastFillSrc[r] = null
+          gl.uniform1i(loc('u_fillType'), 0)
+          gl.uniform3fv(loc('u_fillC0'), hexToRgb('#808080'))
+        }
       } else if (fill.type === 'gradient') {
         this._lastFillSrc[r] = null
         gl.uniform1i(loc('u_fillType'), 1)
@@ -434,6 +463,10 @@ class TextureFxRenderer {
 // const so that Vite HMR re-evaluating this module during dev cannot spin up a
 // second GL context — mirrors the same pattern as gradientfx/renderer.ts.
 interface Scope { __comfynextTextureFx?: TextureFxRenderer }
+
+// Factory for creating an independent renderer instance (used by patternfill.ts
+// to sub-render pattern fills on a separate GL context without re-entering the singleton).
+export function createTextureFx(): TextureFxRenderer { return new TextureFxRenderer() }
 
 export function resolveTextureFx(scope: Scope): TextureFxRenderer {
   return scope.__comfynextTextureFx ?? (scope.__comfynextTextureFx = new TextureFxRenderer())
