@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
+import { loadRaster, getRaster } from '~/lib/texturefx/raster'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
@@ -28,12 +29,35 @@ const seams = ref(true)
 const baking = ref(false)
 const bakeMsg = ref('')
 const canvas = ref<HTMLCanvasElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+async function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
+  try {
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) return
+    const data = await res.json() as { name?: string; subfolder?: string }
+    const name = data.subfolder ? `${data.subfolder}/${data.name}` : (data.name ?? '')
+    if (!name) return
+    params.rasterSrc = name
+    await recordAsset(activeTab.value?.projectUuid, 'image', name)
+    await loadRaster(name)
+    renderPreview()
+  } catch (err) { console.error('[texture] import failed', err) }
+  finally { input.value = '' } // allow re-importing the same file
+}
 
 function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
 
 function loadParams() {
   const p = currentNode()?.data?.properties?.comfynext_textureStudio
   if (p && typeof p === 'object') Object.assign(params, { ...textureDefaults(), ...cloneParams(p) })
+  if (String(params.mode) === 'raster' && params.rasterSrc) {
+    loadRaster(String(params.rasterSrc)).then(renderPreview).catch(() => {})
+  }
 }
 function saveParams() {
   const n = currentNode(); if (!n) return
@@ -90,7 +114,12 @@ function renderPreview() {
 function roll() { params.seed = Math.floor(Math.random() * 1e6); renderPreview() }
 function setRepeat(n: number) { repeat.value = n; renderPreview() }
 function toggleSeams() { seams.value = !seams.value; renderPreview() }
-function onParam() { renderPreview() }
+function onParam() {
+  if (String(params.mode) === 'raster' && params.rasterSrc && !getRaster(String(params.rasterSrc))) {
+    loadRaster(String(params.rasterSrc)).then(renderPreview).catch(() => {})
+  }
+  renderPreview()
+}
 
 // Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
 // 64 so dither stays seamless.
@@ -163,6 +192,13 @@ onBeforeUnmount(() => {
                   class="rounded border px-2 py-1 transition-colors"
                   :class="seams ? 'border-white bg-white/10 text-white' : 'border-white/15 text-white/55 hover:bg-white/10'"
                   @click="toggleSeams">Highlight seams</button>
+        </div>
+        <div v-if="params.mode === 'raster'" class="flex items-center gap-2 text-xs">
+          <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onImportFile">
+          <button type="button"
+                  class="rounded border border-white/15 px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
+                  @click="fileInput?.click()">Import image…</button>
+          <span class="truncate text-white/45" style="max-width:220px">{{ params.rasterSrc || 'no image — mirror/feather makes it seamless' }}</span>
         </div>
       </div>
     </template>

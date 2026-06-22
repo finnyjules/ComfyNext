@@ -5,6 +5,7 @@ import { Layers, Pencil } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { textureDefaults } from '~/lib/texturefx/controls'
+import { loadRaster, getRaster } from '~/lib/texturefx/raster'
 import type { Params } from '~/lib/spacetype/effect'
 
 // Texture Studio — a frontend-only config node (no backend class_type, never
@@ -55,6 +56,10 @@ function renderFrame() {
 let timer: ReturnType<typeof setTimeout> | null = null
 watch(params, () => {
   if (timer) clearTimeout(timer)
+  const p = params.value
+  if (String(p.mode) === 'raster' && p.rasterSrc && !getRaster(String(p.rasterSrc))) {
+    loadRaster(String(p.rasterSrc)).then(renderFrame).catch(() => {})
+  }
   timer = setTimeout(renderFrame, 60)
 }, { deep: true })
 
@@ -62,6 +67,11 @@ onMounted(() => {
   renderFrame()
   // Stylize effects load async; re-render the thumbnail once they're ready.
   preloadStylize().then(renderFrame).catch(() => {})
+  // Restore a saved raster image so the card preview renders correctly on load.
+  const p = params.value
+  if (String(p.mode) === 'raster' && p.rasterSrc && !getRaster(String(p.rasterSrc))) {
+    loadRaster(String(p.rasterSrc)).then(renderFrame).catch(() => {})
+  }
 })
 onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
 
