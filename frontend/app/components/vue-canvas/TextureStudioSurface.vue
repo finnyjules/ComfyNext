@@ -116,7 +116,10 @@ function setRepeat(n: number) { repeat.value = n; renderPreview() }
 function toggleSeams() { seams.value = !seams.value; renderPreview() }
 function onParam() {
   if (String(params.mode) === 'raster' && params.rasterSrc && !getRaster(String(params.rasterSrc))) {
+    // Image not cached yet — let the deferred render fire once it loads; skip the
+    // immediate render to avoid a blank-raster flash.
     loadRaster(String(params.rasterSrc)).then(renderPreview).catch(() => {})
+    return
   }
   renderPreview()
 }
