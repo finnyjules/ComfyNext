@@ -1475,21 +1475,51 @@ async function runRegionFill() {
       const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
       setLocal(layer.id, { filename: newName })
     } else {
-      // No image selected → generate a BRAND-NEW image from the prompt, sized to
-      // the painted region's bbox, and drop it in as a new layer. Pure
-      // text-to-image — we never inpaint the composite here, so "nothing
-      // selected" always means "make me a new image".
+      // No target image → generate a BRAND-NEW object, sized to the painted
+      // region's bbox, and drop it in as a new transparent cutout layer.
       const W = canvasDisplay.w, H = canvasDisplay.h
       const bnd = genMaskBounds(); if (!bnd) return
       const cx = (bnd.minX + bnd.maxX) / 2, cy = (bnd.minY + bnd.maxY) / 2
       const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
-      const results = await inpaint.text2img(genPrompt.value.trim() || 'subject', pickAspectRatio(boxW / boxH))
-      if (!results.length) return
-      const gi = await loadImage(results[0])
+      const prompt = genPrompt.value.trim() || 'subject'
+      const aspect = pickAspectRatio(boxW / boxH)
+
+      // 1) Generate the raw image for the object.
+      let raw: string | undefined
+      if (genMode.value === 'scene') {
+        // Inpaint the box region of the current composite so the result matches
+        // the scene, then crop the box out for cutting.
+        const compBlob = await renderStaticComposite(W, H); if (!compBlob) return
+        const compImg = await loadImage(URL.createObjectURL(compBlob))
+        const { w: capW, h: capH } = capDims(W, H)
+        const imageData = imageToDataUrl(compImg, capW, capH)
+        const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
+        const mctx = mc.getContext('2d')!
+        mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)        // BLACK = keep
+        if (genMaskCanvas) mctx.drawImage(genMaskCanvas, 0, 0, capW, capH) // WHITE region = generate
+        const filled = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), prompt)
+        if (!filled.length) return
+        const r0 = await loadImage(filled[0])
+        const sx = (bnd.minX / W) * capW, sy = (bnd.minY / H) * capH
+        const sw = (boxW / W) * capW, sh = (boxH / H) * capH
+        const crop = document.createElement('canvas')
+        crop.width = Math.max(1, Math.round(sw)); crop.height = Math.max(1, Math.round(sh))
+        crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
+        raw = crop.toDataURL('image/png')
+      } else if (genStyle.value) {
+        const r = await inpaint.loraGen(genStyle.value.filename, prompt, aspect)
+        raw = r[0]
+      } else {
+        const r = await inpaint.text2img(prompt, aspect)
+        raw = r[0]
+      }
+      if (!raw) return
+
+      // 2) Always cut out → transparent object, then place sized to the box.
+      const cutout = await inpaint.removeBackground(raw)
+      const gi = await loadImage(cutout)
       const genAspect = (gi.naturalWidth || 1) / (gi.naturalHeight || 1)
-      const name = await inpaint.uploadDataUrl(results[0], 'compgen')
-      // Set BOTH w and h so the box matches the generated image's real aspect
-      // (createImageLayer derives h from its default width, not our override).
+      const name = await inpaint.uploadDataUrl(cutout, 'compobj')
       const lw = boxW / W
       addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w: lw, h: lw / genAspect })
     }
@@ -2122,7 +2152,7 @@ onUnmounted(() => {
                 @click="stylePickerOpen = !stylePickerOpen">
                 <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover" />
                 <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None (flux-schnell)' }}</span>
-                <button v-if="genStyle" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></button>
+                <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
               </button>
               <div v-if="stylePickerOpen" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
                 <button class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer"
