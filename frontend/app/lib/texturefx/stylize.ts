@@ -85,5 +85,12 @@ export function stylizeTile(base: HTMLCanvasElement, p: Params, w: number, h: nu
     u_time: 0, u_seed: 42, u_hasInput: 1, ...L.uniforms,
   }
   const passes: ShaderPass[] = expandPasses(L.effect.id, L.effect.source, uniforms, L.textures, L.effect.passes ?? 1)
-  return shaderFx.render(passes, base, w, h)
+  try {
+    return shaderFx.render(passes, base, w, h)
+  } catch (e) {
+    // Never let a stylize failure (shader error, broken texture) break the
+    // base render — fall back to the un-stylized tile.
+    console.error('[texture] stylize render failed', e)
+    return base
+  }
 }
