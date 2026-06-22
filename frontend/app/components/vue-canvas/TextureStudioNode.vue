@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Layers, Pencil } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
+import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { textureDefaults } from '~/lib/texturefx/controls'
 import type { Params } from '~/lib/spacetype/effect'
 
@@ -41,7 +42,8 @@ function renderFrame() {
     canvas.height = PREVIEW_H
   }
   try {
-    const out = textureFx.render(params.value, PREVIEW_W, PREVIEW_H, 0)
+    const base = textureFx.render(params.value, PREVIEW_W, PREVIEW_H, 0)
+    const out = stylizeTile(base, params.value, PREVIEW_W, PREVIEW_H)
     canvas.getContext('2d')!.drawImage(out, 0, 0)
     glError.value = null
   }
@@ -56,7 +58,11 @@ watch(params, () => {
   timer = setTimeout(renderFrame, 60)
 }, { deep: true })
 
-onMounted(renderFrame)
+onMounted(() => {
+  renderFrame()
+  // Stylize effects load async; re-render the thumbnail once they're ready.
+  preloadStylize().then(renderFrame).catch(() => {})
+})
 onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
 
 function openEditor() {

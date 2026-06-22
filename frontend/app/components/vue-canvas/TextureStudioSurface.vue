@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
+import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
@@ -69,7 +70,9 @@ function renderPreview() {
   const n = repeat.value
   el.width = TILE * n; el.height = TILE * n
   const ctx = el.getContext('2d')!
-  const tile = textureFx.render(params, TILE, TILE, 0)
+  // Base tile → stylize (dither/posterize/duotone). TILE=256 is a multiple of 64
+  // so the dither pattern stays seamless across the repeat.
+  const tile = stylizeTile(textureFx.render(params, TILE, TILE, 0), params, TILE, TILE)
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       ctx.drawImage(tile, x * TILE, y * TILE)
@@ -89,10 +92,18 @@ function setRepeat(n: number) { repeat.value = n; renderPreview() }
 function toggleSeams() { seams.value = !seams.value; renderPreview() }
 function onParam() { renderPreview() }
 
+// Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
+// 64 so dither stays seamless.
+async function exportBlob(): Promise<Blob> {
+  const styled = stylizeTile(textureFx.render(params, 1024, 1024, 0), params, 1024, 1024)
+  return await new Promise<Blob>((res, rej) =>
+    styled.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
+}
+
 async function sendToCanvas() {
   baking.value = true; bakeMsg.value = 'Rendering…'
   try {
-    const blob = await textureFx.renderToBlob(params, 1024, 1024, 0)
+    const blob = await exportBlob()
     const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
     const [filename] = await uploadFrameBatch([blob], 'texture_img')
     if (filename) {
@@ -109,7 +120,7 @@ async function sendToCanvas() {
 
 async function downloadPng() {
   try {
-    const blob = await textureFx.renderToBlob(params, 1024, 1024, 0)
+    const blob = await exportBlob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = `texture_${params.seed}.png`; a.click()
     URL.revokeObjectURL(a.href)
@@ -127,6 +138,8 @@ onMounted(() => {
   bakeMsg.value = ''
   loadParams()
   renderPreview()
+  // Stylize effects load async; re-render once ready so the preview reflects them.
+  preloadStylize().then(renderPreview).catch(() => {})
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
