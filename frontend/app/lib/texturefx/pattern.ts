@@ -35,6 +35,43 @@ export function latticeCell(lattice: string, cells: number, u: number, v: number
   return { cx, cy, fx: gx - Math.floor(gx), fy: gy - Math.floor(gy) }
 }
 
+// --- Truchet families ------------------------------------------------------
+// Per-cell state ∈ {0,1} chosen by a seamless hash of the already-modded cell
+// index (so it wraps), biased by rotBias. Each family is fully edge-connected
+// and tiles seamlessly for any state combination.
+function truchetColor(
+  fam: string, fx: number, fy: number, cx: number, cy: number, state: number, tw: number,
+  A: [number, number, number], B: [number, number, number], BG: [number, number, number],
+): RGBA {
+  const out = (c: [number, number, number]): RGBA => [c[0], c[1], c[2], 1]
+  if (fam === 'diagonal') {
+    // state 0: split by main diagonal (ink below fy<fx); state 1: anti-diagonal.
+    const side = state === 0 ? fy < fx : fy < 1 - fx
+    return out(side ? A : B)
+  }
+  if (fam === 'weave') {
+    // Warp (vertical, A) and weft (horizontal, B) bands; at crossings the
+    // cell parity decides which is on top. Gaps show background. Bands span the
+    // full cell so they connect across edges → seamless. Fixed band width.
+    const bw = 0.62
+    const inV = Math.abs(fx - 0.5) < bw * 0.5
+    const inH = Math.abs(fy - 0.5) < bw * 0.5
+    const warpOnTop = posmod(cx + cy, 2) === 0
+    if (inV && inH) return out(warpOnTop ? A : B)
+    if (inV) return out(A)
+    if (inH) return out(B)
+    return out(BG)
+  }
+  // arcs (Smith): two quarter-circle arcs joining edge midpoints. state 0 joins
+  // corners (0,0)&(1,1); state 1 joins (1,0)&(0,1). Either way all four edge
+  // midpoints are arc endpoints, so neighbours always connect → seamless.
+  const c0x = state === 0 ? 0 : 1, c0y = 0
+  const c1x = state === 0 ? 1 : 0, c1y = 1
+  const d0 = Math.abs(Math.hypot(fx - c0x, fy - c0y) - 0.5)
+  const d1 = Math.abs(Math.hypot(fx - c1x, fy - c1y) - 0.5)
+  return (d0 < tw * 0.5 || d1 < tw * 0.5) ? out(A) : out(BG)
+}
+
 export function patternColor(p: Params, u: number, v: number): RGBA {
   const cells = Math.max(2, Math.round(Number(p.cells) || 8))
   const A = hexToRgb(String(p.colorA))
@@ -48,6 +85,15 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
   const motif = String(p.motif)
 
   const { cx, cy, fx, fy } = latticeCell(String(p.lattice), cells, u, v)
+
+  if (String(p.mode) === 'truchet') {
+    const tw = Number(p.truchetWeight) || 0.18
+    const rotBias = Number(p.rotBias)
+    const bias = Number.isFinite(rotBias) ? rotBias : 0.5
+    const h = hash1(cx * 73856093 + cy * 19349663 + seed * 83492791)
+    const state = h < bias ? 0 : 1
+    return truchetColor(String(p.tileFamily), fx, fy, cx, cy, state, tw, A, B, BG)
+  }
 
   const swap = jitter > 0 && hash1(cx * 73856093 + cy * 19349663 + seed * 83492791) < jitter
   const ink: [number, number, number] = swap ? B : A
