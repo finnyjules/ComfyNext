@@ -1522,8 +1522,13 @@ async function runRegionFill() {
       const gi = await loadImage(cutout)
       const genAspect = (gi.naturalWidth || 1) / (gi.naturalHeight || 1)
       const name = await inpaint.uploadDataUrl(cutout, 'compobj')
-      const lw = boxW / W
-      addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w: lw, h: lw / genAspect })
+      // Contain the cutout fully within the drawn box (no overflow), preserving
+      // its aspect and centering on the box. Layer w/h are both normalized to
+      // canvas width, so the box height in those units is boxH / W.
+      const bwN = boxW / W, bhN = boxH / W
+      let w = bwN, h = bwN / genAspect
+      if (h > bhN) { h = bhN; w = bhN * genAspect }
+      addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w, h })
     }
     clearGenMask()
   } catch (err) {
