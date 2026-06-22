@@ -8,6 +8,8 @@ function hexToRgb(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
 }
 
+const out = (c: [number, number, number]): RGBA => [c[0], c[1], c[2], 1]
+
 // Deterministic 0..1 hash of an integer cell index.
 function hash1(i: number): number {
   let x = (i | 0) * 374761393 + 668265263
@@ -43,7 +45,6 @@ function truchetColor(
   fam: string, fx: number, fy: number, cx: number, cy: number, state: number, tw: number,
   A: [number, number, number], B: [number, number, number], BG: [number, number, number],
 ): RGBA {
-  const out = (c: [number, number, number]): RGBA => [c[0], c[1], c[2], 1]
   if (fam === 'diagonal') {
     // state 0: split by main diagonal (ink below fy<fx); state 1: anti-diagonal.
     const side = state === 0 ? fy < fx : fy < 1 - fx
@@ -77,29 +78,30 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
   const A = hexToRgb(String(p.colorA))
   const B = hexToRgb(String(p.colorB))
   const BG = hexToRgb(String(p.background))
-  const scale = Number(p.scale) || 0.7
-  const lw = Number(p.lineWeight) || 0.12
-  const jitter = Number(p.jitter) || 0
   // seed is injected by textureDefaults()/Roll, not part of TEXTURE_CONTROLS
   const seed = Math.round(Number(p.seed) || 1)
-  const motif = String(p.motif)
 
   const { cx, cy, fx, fy } = latticeCell(String(p.lattice), cells, u, v)
+  // One seamless per-cell hash (modded cx/cy) shared by truchet state + jitter swap.
+  const cellHash = hash1(cx * 73856093 + cy * 19349663 + seed * 83492791)
 
   if (String(p.mode) === 'truchet') {
     const tw = Number(p.truchetWeight) || 0.18
     const rotBias = Number(p.rotBias)
     const bias = Number.isFinite(rotBias) ? rotBias : 0.5
-    const h = hash1(cx * 73856093 + cy * 19349663 + seed * 83492791)
-    const state = h < bias ? 0 : 1
+    const state = cellHash < bias ? 0 : 1
     return truchetColor(String(p.tileFamily), fx, fy, cx, cy, state, tw, A, B, BG)
   }
 
-  const swap = jitter > 0 && hash1(cx * 73856093 + cy * 19349663 + seed * 83492791) < jitter
+  // Procedural motif path (only reached when mode !== 'truchet').
+  const scale = Number(p.scale) || 0.7
+  const lw = Number(p.lineWeight) || 0.12
+  const jitter = Number(p.jitter) || 0
+  const motif = String(p.motif)
+
+  const swap = jitter > 0 && cellHash < jitter
   const ink: [number, number, number] = swap ? B : A
   const ink2: [number, number, number] = swap ? A : B
-
-  const out = (c: [number, number, number]): RGBA => [c[0], c[1], c[2], 1]
 
   switch (motif) {
     case 'stripes':
