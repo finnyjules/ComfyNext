@@ -114,7 +114,7 @@ const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'A\nSAD\nWILD\nTHING', group: 'Type' },
   // Full Google picker; the outline is loaded via fontkit (bold weight), falling back to a
   // bundled typeface if the font can't be fetched/parsed.
-  { key: 'font', label: 'Font', kind: 'font', default: 'Archivo Black', group: 'Type' },
+  { key: 'font', label: 'Font', kind: 'font', default: 'Archivo Black', group: 'Type', hint: 'typeface of the letters' },
   { key: 'typeSize', label: 'Type size', kind: 'slider', min: 0.5, max: 6, step: 0.1, default: 2.6, group: 'Type', hint: 'higher = larger text' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -0.5, max: 1.5, step: 0.02, default: 0, group: 'Type', hint: 'higher = wider letter spacing; lower = tighter' },
   { key: 'leading', label: 'Line spacing', kind: 'slider', min: 0.6, max: 2.5, step: 0.05, default: 1.1, group: 'Type', hint: 'higher = more space between lines' },
