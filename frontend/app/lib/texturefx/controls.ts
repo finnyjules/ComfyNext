@@ -20,8 +20,11 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
 
   // Procedural motif controls — shown only in procedural mode.
   { key: 'motif', label: 'Motif', kind: 'select', options: [...MOTIFS], default: 'checker', group: 'Content', when: isProcedural },
-  { key: 'scale', label: 'Motif size', kind: 'slider', min: 0.1, max: 1, step: 0.01, default: 0.7, group: 'Content', when: isProcedural },
-  { key: 'lineWeight', label: 'Line weight', kind: 'slider', min: 0.02, max: 0.5, step: 0.01, default: 0.12, group: 'Content', when: isProcedural },
+  // 'Motif size' only affects dots (radius) + stripes (width); checker/grid are
+  // sized by 'Cells'. 'Line weight' is only used by the grid motif. Reveal each
+  // only where it does something, so neither reads as a dead slider.
+  { key: 'scale', label: 'Motif size', kind: 'slider', min: 0.1, max: 1, step: 0.01, default: 0.7, group: 'Content', when: (p) => isProcedural(p) && (String(p.motif) === 'dots' || String(p.motif) === 'stripes') },
+  { key: 'lineWeight', label: 'Line weight', kind: 'slider', min: 0.02, max: 0.5, step: 0.01, default: 0.12, group: 'Content', when: (p) => isProcedural(p) && String(p.motif) === 'grid' },
   { key: 'jitter', label: 'Color jitter', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Content', when: isProcedural },
 
   // Truchet controls — shown only in truchet mode.

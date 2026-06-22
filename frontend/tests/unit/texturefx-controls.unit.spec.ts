@@ -105,4 +105,18 @@ describe('texturefx controls', () => {
     expect(find('feather').when!(ras)).toBe(false)
     expect(find('feather').when!(rasFeather)).toBe(true)
   })
+
+  it('motif size shows only for dots/stripes; line weight only for grid', () => {
+    const proc = (motif: string) => ({ ...textureDefaults(), mode: 'procedural', motif })
+    const find = (k: string) => TEXTURE_CONTROLS.find((c) => c.key === k)!
+    // scale ("Motif size") is only meaningful for dots (radius) + stripes (width)
+    expect(find('scale').when!(proc('dots'))).toBe(true)
+    expect(find('scale').when!(proc('stripes'))).toBe(true)
+    expect(find('scale').when!(proc('checker'))).toBe(false)
+    expect(find('scale').when!(proc('grid'))).toBe(false)
+    // lineWeight ("Line weight") is only used by grid
+    expect(find('lineWeight').when!(proc('grid'))).toBe(true)
+    expect(find('lineWeight').when!(proc('checker'))).toBe(false)
+    expect(find('lineWeight').when!(proc('dots'))).toBe(false)
+  })
 })
