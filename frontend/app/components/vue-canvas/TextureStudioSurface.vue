@@ -35,7 +35,12 @@ async function onImportFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
+  // Unique upload name → fresh cache key every import (avoids serving a stale
+  // cached image when two source files share a name).
+  const safe = (file.name || 'img').replace(/[^\w.\-]/g, '_')
+  const fd = new FormData()
+  fd.append('image', new File([file], `texraster_${Date.now()}_${safe}`, { type: file.type || 'image/png' }))
+  fd.append('overwrite', 'true')
   try {
     const res = await fetch('/upload/image', { method: 'POST', body: fd })
     if (!res.ok) return
