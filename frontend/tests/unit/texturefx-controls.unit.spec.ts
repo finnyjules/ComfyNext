@@ -77,4 +77,18 @@ describe('texturefx controls', () => {
     expect(fam.kind === 'select' && fam.options.includes('multiscale')).toBe(true)
     expect(textureDefaults().subdivide).toBe(0.5)
   })
+
+  it('stylize controls reveal by kind', () => {
+    const none = textureDefaults()
+    const dith = { ...textureDefaults(), stylize: 'dither' }
+    const post = { ...textureDefaults(), stylize: 'posterize' }
+    const find = (k: string) => TEXTURE_CONTROLS.find((c) => c.key === k)!
+    expect(find('stylize').when).toBeUndefined()
+    expect(find('ditherPattern').when!(none)).toBe(false)
+    expect(find('ditherPattern').when!(dith)).toBe(true)
+    expect(find('posterizeLevels').when!(dith)).toBe(false)
+    expect(find('posterizeLevels').when!(post)).toBe(true)
+  })
+
+  it('stylize defaults to none', () => { expect(textureDefaults().stylize).toBe('none') })
 })

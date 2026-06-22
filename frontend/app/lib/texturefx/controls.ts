@@ -1,5 +1,5 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
-import { LATTICES, MODES, MOTIFS, PLACEMENTS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
 // predicate for contextual reveal (e.g. show procedural controls only in
@@ -35,6 +35,16 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color' },
   { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Color' },
   { key: 'background', label: 'Background', kind: 'color', default: '#0e1116', group: 'Color' },
+
+  { key: 'stylize', label: 'Stylize', kind: 'select', options: [...STYLIZE_KINDS], default: 'none', group: 'Stylize' },
+  { key: 'ditherPattern', label: 'Dither pattern', kind: 'select', options: Object.keys(DITHER_PATTERNS), default: 'Bayer 4×4', group: 'Stylize', when: (p) => String(p.stylize) === 'dither' },
+  { key: 'ditherScale', label: 'Dither size', kind: 'slider', min: 0.004, max: 0.05, step: 0.001, default: 0.012, group: 'Stylize', when: (p) => String(p.stylize) === 'dither' },
+  { key: 'ditherLevels', label: 'Dither levels', kind: 'slider', min: 2, max: 8, step: 1, default: 3, group: 'Stylize', when: (p) => String(p.stylize) === 'dither' },
+  { key: 'ditherColor', label: 'Dither color', kind: 'select', options: ['color', 'mono'], default: 'color', group: 'Stylize', when: (p) => String(p.stylize) === 'dither' },
+  { key: 'posterizeLevels', label: 'Posterize levels', kind: 'slider', min: 2, max: 12, step: 1, default: 5, group: 'Stylize', when: (p) => String(p.stylize) === 'posterize' },
+  { key: 'duoShadow', label: 'Shadow hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.62, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
+  { key: 'duoLight', label: 'Light hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
+  { key: 'duoContrast', label: 'Duotone contrast', kind: 'slider', min: 0, max: 2, step: 0.01, default: 0.5, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
 ]
 
 // Numeric seed lives outside the control list (driven by the Roll button).
