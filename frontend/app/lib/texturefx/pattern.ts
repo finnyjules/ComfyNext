@@ -23,6 +23,9 @@ export function latticeCell(lattice: string, cells: number, u: number, v: number
   const row = Math.floor(gy)
   const col = Math.floor(gx)
   if (lattice === 'brick' && posmod(row, 2) === 1) gx += 0.5
+  // diagonal = independent half-cell offsets on both axes (odd rows shift x,
+  // odd columns shift y) → a quincunx/diamond lattice. row & col are read from
+  // the original grid, so the two offsets stay independent. Seamless for even cells.
   if (lattice === 'diagonal') {
     if (posmod(row, 2) === 1) gx += 0.5
     if (posmod(col, 2) === 1) gy += 0.5
@@ -40,6 +43,7 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
   const scale = Number(p.scale) || 0.7
   const lw = Number(p.lineWeight) || 0.12
   const jitter = Number(p.jitter) || 0
+  // seed is injected by textureDefaults()/Roll, not part of TEXTURE_CONTROLS
   const seed = Math.round(Number(p.seed) || 1)
   const motif = String(p.motif)
 
@@ -53,12 +57,15 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
 
   switch (motif) {
     case 'stripes':
-      return out(fx < 0.5 ? ink : ink2)
+      // `scale` sets the stripe split point (fraction of each cell that is ink).
+      return out(fx < scale ? ink : ink2)
     case 'dots': {
       const d = Math.hypot(fx - 0.5, fy - 0.5)
       return d < scale * 0.5 ? out(ink) : out(BG)
     }
     case 'grid':
+      // Stroke only the top/left edge of each cell; the neighbor supplies the
+      // other two edges, so seams stay single-width. Seamless by construction.
       return (fx < lw || fy < lw) ? out(ink) : out(BG)
     case 'checker':
     default:
