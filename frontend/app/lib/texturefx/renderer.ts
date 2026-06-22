@@ -5,6 +5,7 @@
 
 import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { truchetStates } from '~/lib/texturefx/pattern'
 
 const VS = `#version 300 es
 in vec2 a_pos; out vec2 v_uv;
@@ -15,6 +16,8 @@ precision highp float;
 in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
+uniform float u_placement;
+uniform sampler2D u_stateTex;
 uniform vec3 u_a, u_b, u_bg;
 
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
@@ -56,7 +59,12 @@ void main(){
   // u_family: 0 = arcs, 1 = diagonal, 2 = weave  (TILE_FAMILIES order)
   if (u_mode > 0.5) {
     float h = hash1(cx*73856093.0 + cy*19349663.0 + u_seed*83492791.0);
-    float st = (h < u_rotBias) ? 0.0 : 1.0;
+    float st;
+    if (u_placement > 0.5) {
+      st = texelFetch(u_stateTex, ivec2(int(cx), int(cy)), 0).r > 0.5 ? 1.0 : 0.0;
+    } else {
+      st = (h < u_rotBias) ? 0.0 : 1.0;
+    }
     vec3 col;
     if (u_family < 0.5) {            // arcs: state 0 → centers (0,0)&(1,1); state 1 → (1,0)&(0,1)
       vec2 a = (st < 0.5) ? vec2(0.0,0.0) : vec2(1.0,0.0);
@@ -111,6 +119,7 @@ class TextureFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
+  private stateTex?: WebGLTexture
 
   private ensure(w: number, h: number): WebGL2RenderingContext {
     if (!this.gl) {
@@ -126,6 +135,12 @@ class TextureFxRenderer {
       gl.enableVertexAttribArray(loc)
       gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
       // No VAO needed: this renderer owns its own GL context and never shares it, so the default VAO's attribute state is stable across frames.
+      this.stateTex = gl.createTexture()!
+      gl.bindTexture(gl.TEXTURE_2D, this.stateTex)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     }
     const c = this.canvas!
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
@@ -174,6 +189,23 @@ class TextureFxRenderer {
     gl.uniform3fv(u('u_a'), hex(String(p.colorA)))
     gl.uniform3fv(u('u_b'), hex(String(p.colorB)))
     gl.uniform3fv(u('u_bg'), hex(String(p.background)))
+    const structured = String(p.mode) === 'truchet' && String(p.placement) === 'structured'
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.stateTex!)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+    if (structured) {
+      const cellsI = Math.max(2, Math.round(Number(p.cells) || 8))
+      const seedI = Math.round(Number(p.seed) || 1)
+      const coherence = Math.min(1, Math.max(0, Number(p.coherence) || 0))
+      const grid = truchetStates(cellsI, seedI, coherence)
+      const data = new Uint8Array(grid.length)
+      for (let i = 0; i < grid.length; i++) data[i] = grid[i] ? 255 : 0
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cellsI, cellsI, 0, gl.RED, gl.UNSIGNED_BYTE, data)
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]))
+    }
+    gl.uniform1i(u('u_stateTex'), 0)
+    gl.uniform1f(u('u_placement'), structured ? 1 : 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     return this.canvas!
   }
