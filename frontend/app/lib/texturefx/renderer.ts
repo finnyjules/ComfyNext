@@ -263,9 +263,12 @@ class TextureFxRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]))
       // fill textures on UNITS 2/3/4 - one per role, gray 1x1 placeholder
+      // Pre-bind each to its intended unit at creation so samplers never read an
+      // unbound unit (which returns (0,0,0,0)) even before the first image upload.
       this.fillTex = []
       for (let i = 0; i < 3; i++) {
         const ft = gl.createTexture()!
+        gl.activeTexture(gl.TEXTURE0 + 2 + i)
         gl.bindTexture(gl.TEXTURE_2D, ft)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -274,6 +277,7 @@ class TextureFxRenderer {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]))
         this.fillTex.push(ft)
       }
+      gl.activeTexture(gl.TEXTURE0)
     }
     const c = this.canvas!
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
@@ -327,6 +331,11 @@ class TextureFxRenderer {
       const roleKey = roles[r]
       const fill = roleKey !== undefined ? fillForRole(p, roleKey, r) : { type: 'solid' as const, color: '#000000' }
       const loc = (n: string) => gl.getUniformLocation(this.prog!, `${n}[${r}]`)
+      // Unconditionally reset image-only uniforms to sane defaults so a role that
+      // previously held an image and is now solid/gradient does not keep stale values.
+      // The image branch below overrides these when an image is actually present.
+      gl.uniform1i(loc('u_fillSeam'), 0)
+      gl.uniform1f(loc('u_fillScale'), 1)
       if (fill.type === 'image') {
         const fimg = getRaster(String(fill.src ?? ''))
         if (fimg) {
