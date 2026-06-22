@@ -212,6 +212,16 @@ function setFill(rk: string, fill: Fill) {
   ;(params as any).fills[rk] = fill
   onParam()
 }
+// Fills — dynamic ref map (Vue 3 script-setup: $refs with dynamic string keys are unreliable)
+const fillInputRefs = new Map<string, HTMLInputElement>()
+function setFillInputRef(key: string, el: any) {
+  if (el) fillInputRefs.set(key, el as HTMLInputElement)
+  else fillInputRefs.delete(key)
+}
+function openFillImport(rk: string, i: number) {
+  fillInputRefs.get(`${rk}_${i}`)?.click()
+}
+
 function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image') {
   const cur = roleFill(rk, i)
   if (type === 'solid')
@@ -479,13 +489,13 @@ onBeforeUnmount(() => {
               <!-- Source row -->
               <label class="text-[11px] text-white/55">Source</label>
               <div class="flex items-center gap-2">
-                <StudioButton @click="($refs[`fillInput_${rk}_${i}`] as HTMLInputElement)?.click()">Import image…</StudioButton>
+                <StudioButton @click="openFillImport(rk, i)">Import image…</StudioButton>
                 <span class="truncate text-[11px] text-white/40">{{ (roleFill(rk, i) as any).src ? (roleFill(rk, i) as any).src.split('/').pop() : 'none' }}</span>
                 <input
-                  :ref="`fillInput_${rk}_${i}`"
                   type="file"
                   accept="image/*"
                   class="hidden"
+                  :ref="(el) => setFillInputRef(`${rk}_${i}`, el)"
                   @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onFillImport(rk, i, f) }"
                 >
               </div>
