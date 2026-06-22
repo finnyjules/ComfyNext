@@ -222,14 +222,21 @@ function openFillImport(rk: string, i: number) {
   fillInputRefs.get(`${rk}_${i}`)?.click()
 }
 
-function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image') {
+function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image' | 'pattern') {
   const cur = roleFill(rk, i)
   if (type === 'solid')
     setFill(rk, { type: 'solid', color: cur.type === 'solid' ? cur.color : ((cur as any).stops?.[0]?.c ?? '#7aa2f7') })
   else if (type === 'gradient')
     setFill(rk, { type: 'gradient', frame: 'cell', kind: 'linear', angle: 0, stops: [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }] })
+  else if (type === 'pattern')
+    setFill(rk, { type: 'pattern', frame: 'tile', scale: 1, sub: { mode: 'procedural', motif: 'checker', cells: 4, colorA: '#e8eef5', colorB: '#7aa2f7', background: '#0e1116' } })
   else
     setFill(rk, { type: 'image', frame: 'tile', src: '', seam: 'mirror', scale: 1 } as any)
+}
+
+function setSub(rk: string, i: number, patch: Record<string, unknown>) {
+  const f = roleFill(rk, i) as any
+  setFill(rk, { ...f, sub: { ...f.sub, ...patch } })
 }
 
 async function onFillImport(rk: string, i: number, file: File) {
@@ -419,12 +426,12 @@ onBeforeUnmount(() => {
         <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
           <label class="mb-1 block text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</label>
 
-          <!-- Fill-type picker: Solid / Gradient / Image -->
+          <!-- Fill-type picker: Solid / Gradient / Image / Pattern -->
           <label class="mb-1 block text-[11px] text-white/55">Type</label>
           <StudioSelect
-            :options="['solid', 'gradient', 'image']"
-            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : roleFill(rk, i).type === 'image' ? 'image' : 'solid'"
-            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image')"
+            :options="['solid', 'gradient', 'image', 'pattern']"
+            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : roleFill(rk, i).type === 'image' ? 'image' : roleFill(rk, i).type === 'pattern' ? 'pattern' : 'solid'"
+            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern')"
           />
 
           <!-- Solid: single color picker -->
@@ -516,6 +523,59 @@ onBeforeUnmount(() => {
                 :model-value="(roleFill(rk, i) as any).scale ?? 1"
                 @update:model-value="(scale: number) => setFill(rk, { ...(roleFill(rk, i) as any), scale })"
               />
+
+              <label class="text-[11px] text-white/55">Frame</label>
+              <StudioSelect
+                :options="['cell', 'tile']"
+                :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
+                @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
+              />
+            </div>
+          </template>
+
+          <!-- Pattern: nested motif sub-picker -->
+          <template v-else-if="roleFill(rk, i).type === 'pattern'">
+            <div class="mt-1 flex flex-col gap-1">
+              <label class="text-[11px] text-white/55">Motif</label>
+              <StudioSelect
+                :options="['checker', 'stripes', 'dots', 'grid']"
+                :model-value="(roleFill(rk, i) as any).sub?.motif ?? 'checker'"
+                @update:model-value="(motif: string) => setSub(rk, i, { mode: 'procedural', motif })"
+              />
+
+              <StudioSlider
+                label="Cells"
+                :min="2"
+                :max="12"
+                :step="1"
+                :default="4"
+                :model-value="(roleFill(rk, i) as any).sub?.cells ?? 4"
+                @update:model-value="(cells: number) => setSub(rk, i, { cells })"
+              />
+
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/55">Color A</label>
+                <StudioColor
+                  :model-value="(roleFill(rk, i) as any).sub?.colorA ?? '#e8eef5'"
+                  @update:model-value="(colorA: string) => setSub(rk, i, { colorA })"
+                />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/55">Color B</label>
+                <StudioColor
+                  :model-value="(roleFill(rk, i) as any).sub?.colorB ?? '#7aa2f7'"
+                  @update:model-value="(colorB: string) => setSub(rk, i, { colorB })"
+                />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/55">Background</label>
+                <StudioColor
+                  :model-value="(roleFill(rk, i) as any).sub?.background ?? '#0e1116'"
+                  @update:model-value="(background: string) => setSub(rk, i, { background })"
+                />
+              </div>
 
               <label class="text-[11px] text-white/55">Frame</label>
               <StudioSelect
