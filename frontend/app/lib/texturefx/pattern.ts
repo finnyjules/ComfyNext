@@ -75,16 +75,17 @@ export function multiscaleLevels(cells: number, seed: number, subdivide: number)
   for (let y = 0; y < cells; y++) {
     for (let x = 0; x < cells; x++) val[y * cells + x] = hash1(x * 60493 + y * 19990303 + seed * 6151)
   }
+  // 2 plain box-blur passes (not truchetStates' stochastic majority): a smaller correlation radius keeps subdivided regions as compact clusters rather than large blobs.
   for (let pass = 0; pass < 2; pass++) {
-    const g = val.slice()
+    const blurred = val.slice()
     for (let y = 0; y < cells; y++) {
       for (let x = 0; x < cells; x++) {
         const up = val[((y - 1 + cells) % cells) * cells + x], dn = val[((y + 1) % cells) * cells + x]
         const lf = val[y * cells + ((x - 1 + cells) % cells)], rt = val[y * cells + ((x + 1) % cells)]
-        g[y * cells + x] = (val[y * cells + x] + up + dn + lf + rt) / 5
+        blurred[y * cells + x] = (val[y * cells + x] + up + dn + lf + rt) / 5
       }
     }
-    val.set(g)
+    val.set(blurred)
   }
   const lvl = new Uint8Array(cells * cells)
   for (let i = 0; i < lvl.length; i++) lvl[i] = val[i] < sd ? 1 : 0
@@ -178,8 +179,8 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
       const level = cachedLevels(cells, seed, clamp01(Number(p.subdivide) || 0))[cy * cells + cx]
       let lfx = fx, lfy = fy, sub = 0
       if (level >= 1) {
-        const sx = Math.min(2, Math.floor(fx * 3)), sy = Math.min(2, Math.floor(fy * 3))
-        lfx = fx * 3 - sx; lfy = fy * 3 - sy; sub = sx * 3 + sy + 1
+        const sx = Math.min(2, Math.floor(fx * 3)), sy = Math.min(2, Math.floor(fy * 3)) // clamp guards fx===1.0 at the UV seam (floor(3)=3 → index 2)
+        lfx = fx * 3 - sx; lfy = fy * 3 - sy; sub = sx * 3 + sy + 1 // sub: 0 = whole cell, 1-9 = row-major 3×3 sub-cell index (+1), so each sub-cell hashes to its own arc orientation
       }
       const st = hash1(cx * 73856093 + cy * 19349663 + sub * 50331653 + seed * 83492791) < 0.5 ? 0 : 1
       return arcCoverage(lfx, lfy, st, tw) ? out(A) : out(BG)
