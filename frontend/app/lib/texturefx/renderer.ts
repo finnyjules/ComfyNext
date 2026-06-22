@@ -57,7 +57,9 @@ void main(){
     float cu = (v_uv.x - 0.5)/u_rasterScale + 0.5;
     float cv = (v_uv.y - 0.5)/u_rasterScale + 0.5;
     vec3 col;
-    if (u_seamMethod > 0.5) { // feather: offset-wrap + cross-fade heal at the centre seam
+    if (u_seamMethod > 1.5) {        // direct: image already seamless → plain wrap
+      col = texture(u_rasterTex, vec2(fract(cu), fract(cv))).rgb;
+    } else if (u_seamMethod > 0.5) { // feather: offset-wrap + cross-fade heal at the centre seam
       // primary sample: fract(fract(cu)+0.5) mirrors raster.ts fract(zu+0.5) where zu=fract(cu)
       vec2 a = vec2(fract(fract(cu) + 0.5), fract(fract(cv) + 0.5));
       col = texture(u_rasterTex, a).rgb;
@@ -67,7 +69,7 @@ void main(){
       float fx = smoothstep(0.5 - u_feather, 0.5, zu) * (1.0 - smoothstep(0.5, 0.5 + u_feather, zu));
       float fy = smoothstep(0.5 - u_feather, 0.5, zv) * (1.0 - smoothstep(0.5, 0.5 + u_feather, zv));
       col = mix(col, mir, max(fx, fy));
-    } else { // mirror: triangle wave → seamless by construction; mirrors raster.ts tri(cu)
+    } else {                         // mirror: triangle wave → seamless by construction; mirrors raster.ts tri(cu)
       col = texture(u_rasterTex, vec2(r_tri(cu), r_tri(cv))).rgb;
     }
     frag = vec4(col, 1.0);
@@ -285,7 +287,7 @@ class TextureFxRenderer {
     }
     gl.uniform1i(u('u_rasterTex'), 1)
     gl.uniform1f(u('u_hasRaster'), rimg ? 1 : 0)
-    gl.uniform1f(u('u_seamMethod'), Math.max(0, ['mirror', 'feather'].indexOf(String(p.seamMethod))))
+    gl.uniform1f(u('u_seamMethod'), Math.max(0, ['mirror', 'feather', 'direct'].indexOf(String(p.seamMethod))))
     gl.uniform1f(u('u_feather'), Number(p.feather) || 0.15)
     gl.uniform1f(u('u_rasterScale'), Number(p.rasterScale) || 1)
     // Restore active texture to UNIT 0 so subsequent state-tex reads remain correct

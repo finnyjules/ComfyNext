@@ -11,7 +11,7 @@ export function cloneParams<T>(value: T): T {
 
 export const MODES = ['procedural', 'truchet', 'raster'] as const
 export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale'] as const
-export const SEAM_METHODS = ['mirror', 'feather'] as const
+export const SEAM_METHODS = ['mirror', 'feather', 'direct'] as const
 
 export type Mode = typeof MODES[number]
 export type SeamMethod = typeof SEAM_METHODS[number]

@@ -4,7 +4,7 @@ import { rasterSampleUV } from '~/lib/texturefx/raster'
 const close = (a: number, b: number) => Math.abs(a - b) < 1e-9
 
 describe('rasterSampleUV seamlessness', () => {
-  for (const method of ['mirror', 'feather'] as const) {
+  for (const method of ['mirror', 'feather', 'direct'] as const) {
     it(`${method} sample coord matches opposite edges`, () => {
       for (let i = 0; i <= 10; i++) {
         const t = i / 10
