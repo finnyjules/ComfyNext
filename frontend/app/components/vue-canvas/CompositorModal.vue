@@ -1398,26 +1398,138 @@ function genUseShape() {
   genHasMask.value = true; genVersion.value++
 }
 
-// Tinted preview of the region mask (a separate visible canvas above the stack).
+// Animated region overlay: a subtle fill, a slowly-sliding PASTEL GRADIENT
+// STROKE around the marked region (derived from the mask silhouette, so it works
+// for box / brush / shape alike), and a gradient SWIPE that sweeps through the
+// region while a generation is running.
 const genOverlayCanvas = ref<HTMLCanvasElement | null>(null)
-function renderGenOverlay() {
+let genRingCanvas: HTMLCanvasElement | null = null   // cached ring silhouette (logical px)
+let genScratch: HTMLCanvasElement | null = null      // per-frame compositing scratch
+let genPastel: HTMLCanvasElement | null = null       // tileable pastel strip
+let genRaf = 0
+let genT0 = 0
+const PASTEL = ['#ffd6e7', '#cfe8ff', '#d6ffe0', '#fff4cc', '#e7d6ff', '#ffd6e7']
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+function ensurePastel(): HTMLCanvasElement {
+  if (genPastel) return genPastel
+  const c = document.createElement('canvas'); c.width = 512; c.height = 8
+  const g = c.getContext('2d')!
+  const grad = g.createLinearGradient(0, 0, c.width, 0)
+  PASTEL.forEach((col, i) => grad.addColorStop(i / (PASTEL.length - 1), col))
+  g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height)
+  genPastel = c; return c
+}
+
+// Build a ring (outline) from the mask: dilate it by offset-drawing in a circle,
+// then punch out the original → an outer stroke band of ~`sw` px.
+function rebuildGenRing() {
+  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
+  if (!genRingCanvas) genRingCanvas = document.createElement('canvas')
+  if (genRingCanvas.width !== W || genRingCanvas.height !== H) { genRingCanvas.width = W; genRingCanvas.height = H }
+  const rctx = genRingCanvas.getContext('2d'); if (!rctx) return
+  rctx.setTransform(1, 0, 0, 1, 0, 0)
+  rctx.clearRect(0, 0, W, H)
+  if (!genMaskCanvas || !genHasMask.value) return
+  const sw = 3.5, steps = 16
+  for (let i = 0; i < steps; i++) {
+    const a = (i / steps) * Math.PI * 2
+    rctx.drawImage(genMaskCanvas, Math.cos(a) * sw, Math.sin(a) * sw, W, H)
+  }
+  rctx.globalCompositeOperation = 'destination-out'
+  rctx.drawImage(genMaskCanvas, 0, 0, W, H)
+  rctx.globalCompositeOperation = 'source-over'
+}
+
+function genScratchCtx(W: number, H: number): CanvasRenderingContext2D {
+  if (!genScratch) genScratch = document.createElement('canvas')
+  if (genScratch.width !== W || genScratch.height !== H) { genScratch.width = W; genScratch.height = H }
+  const c = genScratch.getContext('2d')!
+  c.setTransform(1, 0, 0, 1, 0, 0)
+  c.clearRect(0, 0, W, H)
+  return c
+}
+
+function renderGenOverlay(now?: number) {
   const cv = genOverlayCanvas.value; if (!cv) return
-  const W = canvasDisplay.w, H = canvasDisplay.h
+  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
-  cv.width = Math.max(1, Math.round(W * dpr)); cv.height = Math.max(1, Math.round(H * dpr))
+  const pw = Math.round(W * dpr), ph = Math.round(H * dpr)
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph }
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  if (genMaskCanvas && genHasMask.value) {
-    ctx.drawImage(genMaskCanvas, 0, 0, W, H)
-    ctx.globalCompositeOperation = 'source-in'
-    ctx.fillStyle = '#ffffff'                 // region tint
-    ctx.fillRect(0, 0, W, H)
-    ctx.globalCompositeOperation = 'source-over'
+  if (!genMaskCanvas || !genHasMask.value) return
+  const t = ((now ?? nowMs()) - genT0) / 1000
+
+  // Subtle region fill.
+  ctx.save()
+  ctx.globalAlpha = 0.08
+  ctx.drawImage(genMaskCanvas, 0, 0, W, H)
+  ctx.globalCompositeOperation = 'source-in'
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H)
+  ctx.restore()
+
+  // Pastel gradient stroke — tint the cached ring with a slowly-sliding pattern.
+  if (genRingCanvas) {
+    const sctx = genScratchCtx(W, H)
+    sctx.drawImage(genRingCanvas, 0, 0)
+    sctx.globalCompositeOperation = 'source-in'
+    const pat = sctx.createPattern(ensurePastel(), 'repeat')
+    if (pat) {
+      if (pat.setTransform && typeof DOMMatrix !== 'undefined') {
+        pat.setTransform(new DOMMatrix().translateSelf(-(t * 26) % 512, 0).rotateSelf(28))
+      }
+      sctx.fillStyle = pat
+    } else {
+      sctx.fillStyle = '#ffd6e7'
+    }
+    sctx.fillRect(0, 0, W, H)
+    sctx.globalCompositeOperation = 'source-over'
+    ctx.drawImage(genScratch!, 0, 0, W, H)
+  }
+
+  // Generate swipe — a bright band sweeping across the region while busy.
+  if (inpaint.busy.value) {
+    const sctx = genScratchCtx(W, H)
+    const band = Math.max(60, W * 0.18)
+    const sweep = ((t % 1.1) / 1.1) * (W + band * 2) - band
+    const g = sctx.createLinearGradient(sweep - band, 0, sweep + band, 0)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.55)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    sctx.fillStyle = g; sctx.fillRect(0, 0, W, H)
+    sctx.globalCompositeOperation = 'source-in'
+    sctx.drawImage(genMaskCanvas, 0, 0, W, H)
+    sctx.globalCompositeOperation = 'source-over'
+    ctx.drawImage(genScratch!, 0, 0, W, H)
   }
 }
-watch([genVersion, genActive, () => canvasDisplay.w, () => canvasDisplay.h],
-  () => nextTick(renderGenOverlay))
+
+function genLoop() {
+  if (!genActive.value) { genRaf = 0; return }
+  renderGenOverlay(nowMs())
+  genRaf = requestAnimationFrame(genLoop)
+}
+function startGenLoop() {
+  if (genRaf) return
+  genT0 = nowMs()
+  genRaf = requestAnimationFrame(genLoop)
+}
+function stopGenLoop() {
+  if (genRaf) cancelAnimationFrame(genRaf)
+  genRaf = 0
+}
+
+watch(genActive, (on) => {
+  if (on) { rebuildGenRing(); startGenLoop() }
+  else stopGenLoop()
+})
+watch([genVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => {
+  rebuildGenRing()
+  if (genActive.value && !genRaf) startGenLoop()
+})
+onBeforeUnmount(stopGenLoop)
 
 // flux-dev's supported aspect ratios → nearest match for a region's bbox.
 const FLUX_ASPECTS: [string, number][] = [
@@ -1801,7 +1913,7 @@ onUnmounted(() => {
           v-show="genActive"
           ref="genOverlayCanvas"
           class="absolute inset-0 pointer-events-none"
-          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px', opacity: 0.55 }"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px', opacity: 0.9 }"
         />
         <!-- Brush cursor ring -->
         <div
