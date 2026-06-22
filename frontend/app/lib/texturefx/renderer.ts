@@ -33,11 +33,41 @@ uniform int u_fillKind[3];
 uniform float u_fillAngle[3];
 uniform vec3 u_fillC0[3];
 uniform vec3 u_fillC1[3];
+uniform sampler2D u_fillTex0, u_fillTex1, u_fillTex2;
+uniform int u_fillSeam[3];   // 0 mirror, 1 feather, 2 direct
+uniform float u_fillScale[3];
 
-// Evaluate role r fill at cell-local fc and tile coord tc. Solid + 2-stop gradient.
+float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
+float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
+
+// Dispatch to a constant sampler per branch - dynamic array indexing is illegal in GLSL ES 3.00.
+vec3 sampleFillTex(int r, vec2 uv){
+  if (r == 0) return texture(u_fillTex0, uv).rgb;
+  if (r == 1) return texture(u_fillTex1, uv).rgb;
+  return texture(u_fillTex2, uv).rgb;
+}
+
+// Scale around center then apply seam mode before sampling.
+vec3 sampleFillSeam(int r, vec2 uv){
+  float s = max(u_fillScale[r], 0.0001);
+  float cu = (uv.x - 0.5)/s + 0.5;
+  float cv = (uv.y - 0.5)/s + 0.5;
+  if (u_fillSeam[r] == 2) return sampleFillTex(r, vec2(fract(cu), fract(cv)));
+  if (u_fillSeam[r] == 1) {
+    vec2 a = fract(vec2(cu, cv) + 0.5);
+    return sampleFillTex(r, a);
+  }
+  return sampleFillTex(r, vec2(r_tri(cu), r_tri(cv)));
+}
+
+// Evaluate role r fill at cell-local fc and tile coord tc. Solid + image + 2-stop gradient.
 // Tile-global linear uses mirrored ramp for seamless tiling.
 vec3 evalFill(int r, vec2 fc, vec2 tc){
   if (u_fillType[r] == 0) return u_fillC0[r];
+  if (u_fillType[r] == 2) {
+    vec2 uv = (u_fillFrame[r]==1) ? tc : fc;
+    return sampleFillSeam(r, uv);
+  }
   float g;
   if (u_fillKind[r] == 1) {
     vec2 p = (u_fillFrame[r]==1) ? tc : fc;
@@ -58,9 +88,6 @@ vec3 evalFill(int r, vec2 fc, vec2 tc){
   }
   return mix(u_fillC0[r], u_fillC1[r], g);
 }
-
-float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
-float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
 
 // Precision-safe per-cell hash to 0..1, well-distributed. Takes the SMALL modded
 // cell coords (cx,cy up to cells) plus a salt (reduced seed, optionally + sub),
@@ -202,7 +229,9 @@ class TextureFxRenderer {
   private prog: WebGLProgram | null = null
   private stateTex?: WebGLTexture
   private rasterTex?: WebGLTexture
+  private fillTex: WebGLTexture[] = []
   private _lastRasterSrc: string | null = null
+  private _lastFillSrc: (string | null)[] = [null, null, null]
 
   private ensure(w: number, h: number): WebGL2RenderingContext {
     if (!this.gl) {
@@ -233,6 +262,18 @@ class TextureFxRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]))
+      // fill textures on UNITS 2/3/4 - one per role, gray 1x1 placeholder
+      this.fillTex = []
+      for (let i = 0; i < 3; i++) {
+        const ft = gl.createTexture()!
+        gl.bindTexture(gl.TEXTURE_2D, ft)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]))
+        this.fillTex.push(ft)
+      }
     }
     const c = this.canvas!
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
@@ -286,7 +327,30 @@ class TextureFxRenderer {
       const roleKey = roles[r]
       const fill = roleKey !== undefined ? fillForRole(p, roleKey, r) : { type: 'solid' as const, color: '#000000' }
       const loc = (n: string) => gl.getUniformLocation(this.prog!, `${n}[${r}]`)
-      if (fill.type === 'gradient') {
+      if (fill.type === 'image') {
+        const fimg = getRaster(String(fill.src ?? ''))
+        if (fimg) {
+          gl.activeTexture(gl.TEXTURE0 + 2 + r)
+          gl.bindTexture(gl.TEXTURE_2D, this.fillTex[r]!)
+          if (String(fill.src) !== this._lastFillSrc[r]) {
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, fimg)
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+            this._lastFillSrc[r] = String(fill.src)
+          }
+          const seam = fill.seam === 'direct' ? 2 : fill.seam === 'feather' ? 1 : 0
+          gl.uniform1i(loc('u_fillType'), 2)
+          gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
+          gl.uniform1i(loc('u_fillSeam'), seam)
+          gl.uniform1f(loc('u_fillScale'), Number(fill.scale) || 1)
+        } else {
+          // image not yet decoded - show neutral gray placeholder
+          this._lastFillSrc[r] = null
+          gl.uniform1i(loc('u_fillType'), 0)
+          gl.uniform3fv(loc('u_fillC0'), hexToRgb('#808080'))
+        }
+      } else if (fill.type === 'gradient') {
+        this._lastFillSrc[r] = null
         gl.uniform1i(loc('u_fillType'), 1)
         gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
         gl.uniform1i(loc('u_fillKind'), fill.kind === 'radial' ? 1 : 0)
@@ -294,10 +358,15 @@ class TextureFxRenderer {
         gl.uniform3fv(loc('u_fillC0'), hexToRgb(String(fill.stops?.[0]?.c ?? '#ffffff')))
         gl.uniform3fv(loc('u_fillC1'), hexToRgb(String(fill.stops?.[fill.stops.length - 1]?.c ?? '#000000')))
       } else {
+        this._lastFillSrc[r] = null
         gl.uniform1i(loc('u_fillType'), 0)
         gl.uniform3fv(loc('u_fillC0'), hexToRgb(String((fill as any).color ?? '#000000')))
       }
     }
+    // Bind fill sampler uniforms once after the loop (units 2/3/4)
+    gl.uniform1i(u('u_fillTex0'), 2)
+    gl.uniform1i(u('u_fillTex1'), 3)
+    gl.uniform1i(u('u_fillTex2'), 4)
     const family = String(p.tileFamily)
     const multiscale = String(p.mode) === 'truchet' && family === 'multiscale'
     const structured = String(p.mode) === 'truchet' && family !== 'multiscale' && String(p.placement) === 'structured'
