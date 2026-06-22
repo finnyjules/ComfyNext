@@ -31,3 +31,4 @@ uv.lock
 
 # Stray root-level node_modules (real deps live in frontend/)
 /node_modules/
+.playground/
