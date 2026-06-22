@@ -75,6 +75,8 @@ Reuses the existing shaderFx passes: dither (the 12 patterns — Bayer/clustered
 1. **Procedural / Truchet / lattice** → seamless *by construction* (domain wraps with `mod()`); nothing to fix.
 2. **Imported / generated raster** → cheap, deterministic: **offset-wrap** (half-tile shift to expose the seam) + **edge feather/mirror** blend, with a "seam nudge" control.
 3. **Raster, painterly fidelity** → **AI-seamless** toggle: round-trips the tile through a tiling-aware generation pass so organic art (e.g., dithered-flowers motif) wraps with no blend smear. Offered as a clean first-class toggle (cost is not a constraint for this studio).
+   - **Mechanism:** runs locally on the ComfyUI backend — **Flux.1-dev** with **circular ("asymmetric tiling") padding** patched into the UNet conv layers (and VAE decode), as a **low-denoise img2img pass (~0.2–0.4)** over the tier-2 offset-wrapped tile. Circular padding makes seamlessness *guaranteed by the convolution* rather than blended; low denoise heals the seam while preserving composition. **SDXL** is the documented lighter/faster fallback. The same Flux checkpoint also powers Stage-2 "generate from prompt", so one model serves both.
+   - **UX — hide the complexity:** this is a **single "Make seamless (AI)" toggle**, nothing else. Model load, conv patching, denoise strength, and the offset-wrap pre-step are all internal defaults — no exposed knobs. If it can't run easily (no/weak local GPU, model not present), the toggle degrades gracefully to tier-2 and says so, rather than failing. The promise is "flip it, get a seamless painterly tile" with the diffusion machinery invisible.
 
 Every preview includes a **1×/2×/3× repeat view** with a **"Highlight seams"** toggle, so tileability is visible before export.
 
