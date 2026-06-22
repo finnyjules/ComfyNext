@@ -39,4 +39,17 @@ describe('gradientRampCoord seamlessness', () => {
     }
   })
   it('returns 0..1', () => { expect(gradientRampCoord('tile',0,0,0.3,0.7,45)).toBeGreaterThanOrEqual(0) })
+  it('triangle ramp — not sawtooth (angle=0°, t=ux)', () => {
+    // Peak at tile center: t=0.5 → 1 - |2·0.5 - 1| = 1
+    expect(gradientRampCoord('tile',0,0, 0.5, 0, 0)).toBeCloseTo(1, 9)
+    // Quarter point: t=0.25 → 1 - |2·0.25 - 1| = 0.5
+    expect(gradientRampCoord('tile',0,0, 0.25, 0, 0)).toBeCloseTo(0.5, 9)
+    // Three-quarter point: t=0.75 → 1 - |2·0.75 - 1| = 0.5
+    expect(gradientRampCoord('tile',0,0, 0.75, 0, 0)).toBeCloseTo(0.5, 9)
+    // Adjacent-tile join: value just before 1.0 ≈ value just after 0.0 (sawtooth fails this)
+    const eps = 1e-4
+    const nearOne  = gradientRampCoord('tile',0,0, 1 - eps, 0, 0)
+    const nearZero = gradientRampCoord('tile',0,0, eps, 0, 0)
+    expect(Math.abs(nearOne - nearZero)).toBeLessThan(1e-9)
+  })
 })
