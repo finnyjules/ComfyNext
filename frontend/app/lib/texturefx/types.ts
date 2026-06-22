@@ -9,10 +9,12 @@ export function cloneParams<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
 }
 
-export const MODES = ['procedural', 'truchet'] as const
+export const MODES = ['procedural', 'truchet', 'raster'] as const
 export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale'] as const
+export const SEAM_METHODS = ['mirror', 'feather'] as const
 
 export type Mode = typeof MODES[number]
+export type SeamMethod = typeof SEAM_METHODS[number]
 export type TileFamily = typeof TILE_FAMILIES[number]
 
 export const PLACEMENTS = ['random', 'structured'] as const

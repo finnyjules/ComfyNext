@@ -34,8 +34,9 @@ describe('texturefx controls', () => {
     expect(family.when!(tru)).toBe(true)
   })
 
-  it('lattice and color controls have no `when` (always visible)', () => {
-    for (const key of ['lattice', 'cells', 'colorA', 'colorB', 'background', 'mode']) {
+  it('color and mode controls have no `when` (always visible)', () => {
+    // lattice/cells now have a `when` (hidden in raster mode) — excluded here
+    for (const key of ['colorA', 'colorB', 'background', 'mode']) {
       expect(TEXTURE_CONTROLS.find((c) => c.key === key)!.when).toBeUndefined()
     }
   })
@@ -91,4 +92,17 @@ describe('texturefx controls', () => {
   })
 
   it('stylize defaults to none', () => { expect(textureDefaults().stylize).toBe('none') })
+
+  it('raster controls reveal; lattice hidden for raster', () => {
+    const proc = textureDefaults()
+    const ras = { ...textureDefaults(), mode: 'raster' }
+    const rasFeather = { ...textureDefaults(), mode: 'raster', seamMethod: 'feather' }
+    const find = (k: string) => TEXTURE_CONTROLS.find((c) => c.key === k)!
+    expect(find('seamMethod').when!(proc)).toBe(false)
+    expect(find('seamMethod').when!(ras)).toBe(true)
+    expect(find('lattice').when!(ras)).toBe(false)
+    expect(find('lattice').when!(proc)).toBe(true)
+    expect(find('feather').when!(ras)).toBe(false)
+    expect(find('feather').when!(rasFeather)).toBe(true)
+  })
 })

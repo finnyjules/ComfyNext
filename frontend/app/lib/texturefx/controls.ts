@@ -1,20 +1,20 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
-import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, SEAM_METHODS, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
 // predicate for contextual reveal (e.g. show procedural controls only in
 // procedural mode). The predicate reads the live params object.
 export type TextureControl = ControlSpec & { when?: (p: Params) => boolean }
 
-// Positive checks so adding a third mode (e.g. raster) later doesn't accidentally
-// reveal procedural controls. `mode` is always defined (textureDefaults sets it).
+// Positive checks — `mode` is always defined (textureDefaults sets it).
 const isProcedural = (p: Params) => String(p.mode) === 'procedural'
 const isTruchet = (p: Params) => String(p.mode) === 'truchet'
+const isRaster = (p: Params) => String(p.mode) === 'raster'
 
 export const TEXTURE_CONTROLS: TextureControl[] = [
-  // Lattice, Cell (mode), and Color controls are always visible — no `when`.
-  { key: 'lattice', label: 'Lattice', kind: 'select', options: [...LATTICES], default: 'square', group: 'Lattice' },
-  { key: 'cells', label: 'Cells', kind: 'slider', min: 2, max: 40, step: 2, default: 8, group: 'Lattice' },
+  // Lattice controls — hidden in raster mode (raster is whole-tile, no lattice).
+  { key: 'lattice', label: 'Lattice', kind: 'select', options: [...LATTICES], default: 'square', group: 'Lattice', when: (p) => !isRaster(p) },
+  { key: 'cells', label: 'Cells', kind: 'slider', min: 2, max: 40, step: 2, default: 8, group: 'Lattice', when: (p) => !isRaster(p) },
 
   { key: 'mode', label: 'Content', kind: 'select', options: [...MODES], default: 'procedural', group: 'Cell' },
 
@@ -35,6 +35,11 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color' },
   { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Color' },
   { key: 'background', label: 'Background', kind: 'color', default: '#0e1116', group: 'Color' },
+
+  // Raster controls — rasterSrc is set by the surface's import button, not here.
+  { key: 'seamMethod', label: 'Seamless method', kind: 'select', options: [...SEAM_METHODS], default: 'mirror', group: 'Raster', when: isRaster },
+  { key: 'feather', label: 'Seam feather', kind: 'slider', min: 0.02, max: 0.5, step: 0.01, default: 0.15, group: 'Raster', when: (p) => isRaster(p) && String(p.seamMethod) === 'feather' },
+  { key: 'rasterScale', label: 'Image scale', kind: 'slider', min: 0.25, max: 4, step: 0.05, default: 1, group: 'Raster', when: isRaster },
 
   { key: 'stylize', label: 'Stylize', kind: 'select', options: [...STYLIZE_KINDS], default: 'none', group: 'Stylize' },
   { key: 'ditherPattern', label: 'Dither pattern', kind: 'select', options: Object.keys(DITHER_PATTERNS), default: 'Bayer 4×4', group: 'Stylize', when: (p) => String(p.stylize) === 'dither' },
