@@ -16,7 +16,7 @@ import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVector
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
-import { useInpaint, loadImage, capDims, imageToDataUrl } from '~/composables/useInpaint'
+import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from '~/composables/useInpaint'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
@@ -1517,10 +1517,11 @@ async function runRegionFill() {
       }
       if (!raw) return
 
-      // 2) Always cut out → transparent object, then place sized to the box.
-      const cutout = await inpaint.removeBackground(raw)
-      const gi = await loadImage(cutout)
-      const genAspect = (gi.naturalWidth || 1) / (gi.naturalHeight || 1)
+      // 2) Cut out → transparent object. Clean the bg-removal haze (stray
+      //    low-alpha residue, e.g. a corner blob) and crop tight to the subject
+      //    so nothing spills past the object.
+      const cutoutRaw = await inpaint.removeBackground(raw)
+      const { url: cutout, aspect: genAspect } = await cleanCutoutAlpha(cutoutRaw)
       const name = await inpaint.uploadDataUrl(cutout, 'compobj')
       // Contain the cutout fully within the drawn box (no overflow), preserving
       // its aspect and centering on the box. Layer w/h are both normalized to

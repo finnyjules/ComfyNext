@@ -43,6 +43,107 @@ export function imageToDataUrl(img: HTMLImageElement, w: number, h: number): str
   return cv.toDataURL('image/png')
 }
 
+/**
+ * Clean a cutout's alpha IN PLACE (pure pixel op, no DOM — unit-testable).
+ *
+ * Cloud background removers (851-labs) often leave a faint translucent HAZE of
+ * leftover background — low-alpha pixels far from the subject (e.g. a corner
+ * blob) that read as an ugly rectangular fragment when placed. We keep the
+ * solid subject (the large connected components of alpha ≥ `core`), grow that
+ * region by `grow` px to retain the subject's own soft edges, and zero alpha
+ * everywhere else. Returns the tight bbox of what survives (or null if empty).
+ *
+ * `data` is RGBA (length w*h*4); only the alpha bytes are modified.
+ */
+export function cleanAlphaPixels(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  opts: { core?: number; minFrac?: number; minPx?: number; grow?: number } = {},
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const core = opts.core ?? 110        // alpha at/above this = "solid subject"
+  const minFrac = opts.minFrac ?? 0.02 // keep components ≥ this fraction of the largest
+  const minPx = opts.minPx ?? 8        // …and ≥ this absolute size (drops opaque specks)
+  const grow = opts.grow ?? 3          // px to grow the kept region (recover soft edges)
+  const N = w * h
+
+  // Solid mask + 8-connected components (iterative stack).
+  const label = new Int32Array(N)
+  const sizes: number[] = [0]
+  const stack = new Int32Array(N)
+  let cur = 0
+  for (let s = 0; s < N; s++) {
+    if (data[s * 4 + 3] < core || label[s]) continue
+    cur++; let sp = 0; stack[sp++] = s; label[s] = cur; let cnt = 0
+    while (sp) {
+      const p = stack[--sp]; cnt++
+      const x = p % w, y = (p / w) | 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue
+        const nx = x + dx, ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+        const q = ny * w + nx
+        if (data[q * 4 + 3] >= core && !label[q]) { label[q] = cur; stack[sp++] = q }
+      }
+    }
+    sizes[cur] = cnt
+  }
+  if (cur === 0) return null
+
+  let maxSize = 0
+  for (let c = 1; c <= cur; c++) if (sizes[c] > maxSize) maxSize = sizes[c]
+  const minKeep = Math.max(minPx, minFrac * maxSize)
+  const keep = new Uint8Array(cur + 1)
+  for (let c = 1; c <= cur; c++) if (sizes[c] >= minKeep) keep[c] = 1
+
+  let mask = new Uint8Array(N)
+  for (let i = 0; i < N; i++) if (label[i] && keep[label[i]]) mask[i] = 1
+  for (let g = 0; g < grow; g++) {
+    const next = mask.slice()
+    for (let i = 0; i < N; i++) {
+      if (mask[i]) continue
+      const x = i % w, y = (i / w) | 0
+      if ((x > 0 && mask[i - 1]) || (x < w - 1 && mask[i + 1]) ||
+          (y > 0 && mask[i - w]) || (y < h - 1 && mask[i + w])) next[i] = 1
+    }
+    mask = next
+  }
+
+  let minX = w, minY = h, maxX = -1, maxY = -1
+  for (let i = 0; i < N; i++) {
+    if (!mask[i]) { data[i * 4 + 3] = 0; continue }
+    if (data[i * 4 + 3] > 0) {
+      const x = i % w, y = (i / w) | 0
+      if (x < minX) minX = x; if (x > maxX) maxX = x
+      if (y < minY) minY = y; if (y > maxY) maxY = y
+    }
+  }
+  return maxX < minX ? null : { minX, minY, maxX, maxY }
+}
+
+/** Clean a cutout data URL (remove background-removal haze) and crop it tight to
+ *  the surviving subject. Returns the new data URL + its aspect (w/h). Falls
+ *  back to the original on any failure. */
+export async function cleanCutoutAlpha(dataUrl: string): Promise<{ url: string; aspect: number }> {
+  try {
+    const img = await loadImage(dataUrl)
+    const w = img.naturalWidth || 1, h = img.naturalHeight || 1
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+    const ctx = cv.getContext('2d')!
+    ctx.drawImage(img, 0, 0)
+    const id = ctx.getImageData(0, 0, w, h)
+    const bbox = cleanAlphaPixels(id.data, w, h)
+    if (!bbox) return { url: dataUrl, aspect: w / h }
+    ctx.putImageData(id, 0, 0)
+    const cw = bbox.maxX - bbox.minX + 1, ch = bbox.maxY - bbox.minY + 1
+    const out = document.createElement('canvas'); out.width = cw; out.height = ch
+    out.getContext('2d')!.drawImage(cv, bbox.minX, bbox.minY, cw, ch, 0, 0, cw, ch)
+    return { url: out.toDataURL('image/png'), aspect: cw / ch }
+  } catch {
+    return { url: dataUrl, aspect: 1 }
+  }
+}
+
 /** Convert a data URL to a File for FormData upload. */
 function dataUrlToFile(dataUrl: string, filename: string): File {
   const comma = dataUrl.indexOf(',')
