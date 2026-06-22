@@ -31,6 +31,39 @@ const bakeMsg = ref('')
 const canvas = ref<HTMLCanvasElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
+const generating = ref(false)
+const genError = ref('')
+
+async function onGenerate() {
+  const prompt = String(params.texturePrompt ?? '').trim()
+  if (!prompt || generating.value) return
+  generating.value = true; genError.value = ''
+  try {
+    const res = await $fetch<{ images?: string[] }>('/api/inpaint/text2img', {
+      method: 'POST',
+      body: { prompt, aspect_ratio: '1:1', count: 1 },
+    })
+    const dataUrl = res?.images?.[0]
+    if (!dataUrl) { genError.value = 'No image returned'; return }
+    const blob = await (await fetch(dataUrl)).blob()
+    const name = `texgen_${Date.now()}.png`
+    const fd = new FormData()
+    fd.append('image', new File([blob], name, { type: 'image/png' }))
+    fd.append('overwrite', 'true')
+    const up = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!up.ok) { genError.value = 'Upload failed'; return }
+    const d = await up.json() as { name?: string; subfolder?: string }
+    const fname = d.subfolder ? `${d.subfolder}/${d.name}` : (d.name ?? name)
+    params.rasterSrc = fname
+    await recordAsset(activeTab.value?.projectUuid, 'image', fname)
+    await loadRaster(fname)
+    renderPreview()
+  } catch (e: any) {
+    console.error('[texture] generate failed', e)
+    genError.value = e?.statusMessage || e?.message || 'Generate failed'
+  } finally { generating.value = false }
+}
+
 async function onImportFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -201,12 +234,30 @@ onBeforeUnmount(() => {
                   :class="seams ? 'border-white bg-white/10 text-white' : 'border-white/15 text-white/55 hover:bg-white/10'"
                   @click="toggleSeams">Highlight seams</button>
         </div>
-        <div v-if="params.mode === 'raster'" class="flex items-center gap-2 text-xs">
-          <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onImportFile">
-          <button type="button"
-                  class="rounded border border-white/15 px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
-                  @click="fileInput?.click()">Import image…</button>
-          <span class="truncate text-white/45" style="max-width:220px">{{ params.rasterSrc || 'no image — mirror/feather makes it seamless' }}</span>
+        <div v-if="params.mode === 'raster'" class="flex flex-col items-center gap-2">
+          <div class="flex items-center gap-2 text-xs">
+            <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onImportFile">
+            <button type="button"
+                    class="rounded border border-white/15 px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
+                    @click="fileInput?.click()">Import image…</button>
+            <span class="truncate text-white/45" style="max-width:220px">{{ params.rasterSrc || 'no image — mirror/feather makes it seamless' }}</span>
+          </div>
+          <div class="flex w-full max-w-[420px] items-center gap-2 text-xs">
+            <input
+              v-model="params.texturePrompt"
+              type="text"
+              placeholder="Describe a texture to generate…"
+              class="min-w-0 flex-1 rounded border border-white/15 bg-white/5 px-2 py-1 text-white/90 placeholder:text-white/35"
+              @keydown.enter="onGenerate"
+            >
+            <button
+              type="button"
+              class="shrink-0 rounded border border-white/15 px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
+              :disabled="generating || !String(params.texturePrompt ?? '').trim()"
+              @click="onGenerate"
+            >{{ generating ? 'Generating…' : 'Generate' }}</button>
+          </div>
+          <p v-if="genError" class="text-[10px] text-red-300">{{ genError }}</p>
         </div>
       </div>
     </template>
