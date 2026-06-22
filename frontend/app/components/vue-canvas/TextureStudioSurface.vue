@@ -5,7 +5,8 @@ import { textureFx } from '~/lib/texturefx/renderer'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
-import type { ControlSpec, Params } from '~/lib/spacetype/effect'
+import type { Params } from '~/lib/spacetype/effect'
+import type { TextureControl } from '~/lib/texturefx/controls'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
@@ -44,16 +45,21 @@ function closeEditor() {
   emit('close')
 }
 
-// Build sections by grouping TEXTURE_CONTROLS by group, filtered by TEXTURE_SECTIONS order.
+// Group visible controls by section, in TEXTURE_SECTIONS order. A control with
+// a `when` predicate is shown only when it returns true for the current params
+// (contextual reveal); sections with no visible controls are omitted.
 const sections = computed(() => {
-  const byGroup = new Map<string, ControlSpec[]>()
-  for (const c of TEXTURE_CONTROLS) {
+  const byGroup = new Map<string, TextureControl[]>()
+  for (const c of TEXTURE_CONTROLS as TextureControl[]) {
+    if (c.when && !c.when(params)) continue
     const g = String(c.group)
     if (!(TEXTURE_SECTIONS as readonly string[]).includes(g)) continue
     if (!byGroup.has(g)) byGroup.set(g, [])
     byGroup.get(g)!.push(c)
   }
-  return TEXTURE_SECTIONS.filter((g) => byGroup.has(g)).map((g) => ({ title: g, controls: byGroup.get(g)! }))
+  return TEXTURE_SECTIONS
+    .filter((g) => byGroup.has(g) && byGroup.get(g)!.length > 0)
+    .map((g) => ({ title: g, controls: byGroup.get(g)! }))
 })
 
 const TILE = 256
