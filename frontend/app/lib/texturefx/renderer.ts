@@ -149,8 +149,11 @@ void main(){
     c = (posmod(cx+cy,2.0)==0.0) ? ink : ink2;
   } else if (u_motif < 1.5) {          // stripes — split point = u_scale, mirrors pattern.ts
     c = (fx < u_scale) ? ink : ink2;
-  } else if (u_motif < 2.5) {          // dots
-    c = (distance(vec2(fx,fy), vec2(0.5)) < u_scale*0.5) ? ink : u_bg;
+  } else if (u_motif < 2.5) {          // dots — anti-aliased circle (smooth edge)
+    float d = distance(vec2(fx, fy), vec2(0.5));
+    float aa = max(fwidth(d), 1e-4);              // ~1px screen-space edge, res-independent
+    float cov = 1.0 - smoothstep(u_scale*0.5 - aa, u_scale*0.5 + aa, d);
+    c = mix(u_bg, ink, cov);
   } else {                             // grid
     c = (fx < u_lw || fy < u_lw) ? ink : u_bg;
   }
