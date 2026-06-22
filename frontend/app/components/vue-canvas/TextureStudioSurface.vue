@@ -212,12 +212,32 @@ function setFill(rk: string, fill: Fill) {
   ;(params as any).fills[rk] = fill
   onParam()
 }
-function setFillType(rk: string, i: number, type: 'solid' | 'gradient') {
+function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image') {
   const cur = roleFill(rk, i)
   if (type === 'solid')
     setFill(rk, { type: 'solid', color: cur.type === 'solid' ? cur.color : ((cur as any).stops?.[0]?.c ?? '#7aa2f7') })
-  else
+  else if (type === 'gradient')
     setFill(rk, { type: 'gradient', frame: 'cell', kind: 'linear', angle: 0, stops: [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }] })
+  else
+    setFill(rk, { type: 'image', frame: 'tile', src: '', seam: 'mirror', scale: 1 } as any)
+}
+
+async function onFillImport(rk: string, i: number, file: File) {
+  const name = `fillimg_${rk}_${Date.now()}.png`
+  const fd = new FormData()
+  fd.append('image', new File([file], name, { type: file.type || 'image/png' }))
+  fd.append('overwrite', 'true')
+  try {
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) { console.error('[texture] fill import upload failed'); return }
+    const data = await res.json() as { name?: string; subfolder?: string }
+    const fname = data.subfolder ? `${data.subfolder}/${data.name}` : (data.name ?? name)
+    if (!fname) return
+    await recordAsset(activeTab.value?.projectUuid, 'image', fname)
+    await loadRaster(fname)
+    setFill(rk, { ...(roleFill(rk, i) as any), type: 'image', src: fname })
+    renderPreview()
+  } catch (err) { console.error('[texture] fill import failed', err) }
 }
 function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'radial'; angle: number; frame: 'cell' | 'tile'; stops: { c: string; p: number }[] }>) {
   const f = roleFill(rk, i) as any
@@ -389,12 +409,12 @@ onBeforeUnmount(() => {
         <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
           <label class="mb-1 block text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</label>
 
-          <!-- Fill-type picker: Solid / Gradient -->
+          <!-- Fill-type picker: Solid / Gradient / Image -->
           <label class="mb-1 block text-[11px] text-white/55">Type</label>
           <StudioSelect
-            :options="['solid', 'gradient']"
-            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : 'solid'"
-            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient')"
+            :options="['solid', 'gradient', 'image']"
+            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : roleFill(rk, i).type === 'image' ? 'image' : 'solid'"
+            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image')"
           />
 
           <!-- Solid: single color picker -->
@@ -409,7 +429,7 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- Gradient: kind, angle, two stops, frame -->
-          <template v-else>
+          <template v-else-if="roleFill(rk, i).type === 'gradient'">
             <div class="mt-1 flex flex-col gap-1">
               <label class="text-[11px] text-white/55">Kind</label>
               <StudioSelect
@@ -449,6 +469,49 @@ onBeforeUnmount(() => {
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'cell'"
                 @update:model-value="(fr: string) => setGradient(rk, i, { frame: fr as any })"
+              />
+            </div>
+          </template>
+
+          <!-- Image: source import, seam, scale, frame -->
+          <template v-else-if="roleFill(rk, i).type === 'image'">
+            <div class="mt-1 flex flex-col gap-1">
+              <!-- Source row -->
+              <label class="text-[11px] text-white/55">Source</label>
+              <div class="flex items-center gap-2">
+                <StudioButton @click="($refs[`fillInput_${rk}_${i}`] as HTMLInputElement)?.click()">Import image…</StudioButton>
+                <span class="truncate text-[11px] text-white/40">{{ (roleFill(rk, i) as any).src ? (roleFill(rk, i) as any).src.split('/').pop() : 'none' }}</span>
+                <input
+                  :ref="`fillInput_${rk}_${i}`"
+                  type="file"
+                  accept="image/*"
+                  class="hidden"
+                  @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onFillImport(rk, i, f) }"
+                >
+              </div>
+
+              <label class="text-[11px] text-white/55">Seam</label>
+              <StudioSelect
+                :options="['mirror', 'feather', 'direct']"
+                :model-value="(roleFill(rk, i) as any).seam ?? 'mirror'"
+                @update:model-value="(seam: string) => setFill(rk, { ...(roleFill(rk, i) as any), seam })"
+              />
+
+              <StudioSlider
+                label="Scale"
+                :min="0.25"
+                :max="4"
+                :step="0.05"
+                :default="1"
+                :model-value="(roleFill(rk, i) as any).scale ?? 1"
+                @update:model-value="(scale: number) => setFill(rk, { ...(roleFill(rk, i) as any), scale })"
+              />
+
+              <label class="text-[11px] text-white/55">Frame</label>
+              <StudioSelect
+                :options="['cell', 'tile']"
+                :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
+                @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
               />
             </div>
           </template>
