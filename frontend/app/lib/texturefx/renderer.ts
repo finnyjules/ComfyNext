@@ -94,6 +94,7 @@ class TextureFxRenderer {
       const loc = gl.getAttribLocation(this.prog, 'a_pos')
       gl.enableVertexAttribArray(loc)
       gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
+      // No VAO needed: this renderer owns its own GL context and never shares it, so the default VAO's attribute state is stable across frames.
     }
     const c = this.canvas!
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
@@ -119,6 +120,7 @@ class TextureFxRenderer {
     return p
   }
 
+  // _time is reserved for future animated/looping variants (time uniform wired later).
   render(p: Params, width: number, height: number, _time = 0): HTMLCanvasElement {
     const gl = this.ensure(width, height)
     gl.useProgram(this.prog!)
