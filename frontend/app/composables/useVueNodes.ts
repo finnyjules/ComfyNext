@@ -173,6 +173,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Shader Studio: client-side WebGL image shader compositor. Frontend-only
   // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
   ShaderStudio: 'shader-studio',
+  // Texture Studio: client-side WebGL tileable texture generator. Frontend-only
+  // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
+  TextureStudio: 'texture-studio',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,
