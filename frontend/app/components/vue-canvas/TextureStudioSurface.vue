@@ -7,6 +7,9 @@ import { loadRaster, getRaster, buildSeamlessInputs } from '~/lib/texturefx/rast
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
+import { rolesFor } from '~/lib/texturefx/roles'
+import { fillForRole } from '~/lib/texturefx/fills'
+import type { Fill } from '~/lib/texturefx/types'
 import type { Params } from '~/lib/spacetype/effect'
 import type { TextureControl } from '~/lib/texturefx/controls'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -202,6 +205,21 @@ function onParam() {
   renderPreview()
 }
 
+// ── Fills panel helpers ───────────────────────────────────────────────────────
+function roleFill(rk: string, i: number): Fill { return fillForRole(params, rk, i) }
+function setFill(rk: string, fill: Fill) {
+  if (!(params as any).fills) (params as any).fills = {}
+  ;(params as any).fills[rk] = fill
+  onParam()
+}
+function setFillType(rk: string, i: number, type: 'solid' | 'gradient') {
+  const cur = roleFill(rk, i)
+  if (type === 'solid')
+    setFill(rk, { type: 'solid', color: cur.type === 'solid' ? cur.color : ((cur as any).stops?.[0]?.c ?? '#7aa2f7') })
+  else
+    setFill(rk, { type: 'gradient', frame: 'cell', kind: 'linear', angle: 0, stops: [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }] })
+}
+
 // Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
 // 64 so dither stays seamless.
 async function exportBlob(): Promise<Blob> {
@@ -347,6 +365,78 @@ onBeforeUnmount(() => {
               <StudioColor
                 :model-value="String(params[c.key])"
                 @update:model-value="(v: string) => { params[c.key] = v; onParam() }"
+              />
+            </div>
+          </template>
+        </div>
+      </StudioSection>
+
+      <!-- Fills panel: per-role solid/gradient fill pickers (not driven by TEXTURE_CONTROLS). -->
+      <!-- Hidden in raster mode (raster has no ink/ground roles). -->
+      <StudioSection v-if="params.mode !== 'raster'" title="Fills">
+        <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
+          <label class="mb-1 block text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</label>
+
+          <!-- Fill-type picker: Solid / Gradient -->
+          <label class="mb-1 block text-[11px] text-white/55">Type</label>
+          <StudioSelect
+            :options="['solid', 'gradient']"
+            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : 'solid'"
+            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient')"
+          />
+
+          <!-- Solid: single color picker -->
+          <template v-if="roleFill(rk, i).type === 'solid'">
+            <div class="mt-1 flex items-center gap-2">
+              <label class="text-[11px] text-white/55">Color</label>
+              <StudioColor
+                :model-value="(roleFill(rk, i) as any).color ?? '#7aa2f7'"
+                @update:model-value="(c: string) => setFill(rk, { type: 'solid', color: c })"
+              />
+            </div>
+          </template>
+
+          <!-- Gradient: kind, angle, two stops, frame -->
+          <template v-else>
+            <div class="mt-1 flex flex-col gap-1">
+              <label class="text-[11px] text-white/55">Kind</label>
+              <StudioSelect
+                :options="['linear', 'radial']"
+                :model-value="(roleFill(rk, i) as any).kind ?? 'linear'"
+                @update:model-value="(k: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, kind: k }) }"
+              />
+
+              <StudioSlider
+                label="Angle"
+                :min="0"
+                :max="360"
+                :step="1"
+                :default="0"
+                :model-value="(roleFill(rk, i) as any).angle ?? 0"
+                @update:model-value="(a: number) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, angle: a }) }"
+              />
+
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/55">Start</label>
+                <StudioColor
+                  :model-value="(roleFill(rk, i) as any).stops?.[0]?.c ?? '#e8eef5'"
+                  @update:model-value="(c: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, stops: [{ c, p: 0 }, f.stops?.[1] ?? { c: '#7aa2f7', p: 1 }] }) }"
+                />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-white/55">End</label>
+                <StudioColor
+                  :model-value="(roleFill(rk, i) as any).stops?.[1]?.c ?? '#7aa2f7'"
+                  @update:model-value="(c: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, stops: [f.stops?.[0] ?? { c: '#e8eef5', p: 0 }, { c, p: 1 }] }) }"
+                />
+              </div>
+
+              <label class="text-[11px] text-white/55">Frame</label>
+              <StudioSelect
+                :options="['cell', 'tile']"
+                :model-value="(roleFill(rk, i) as any).frame ?? 'cell'"
+                @update:model-value="(fr: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, frame: fr }) }"
               />
             </div>
           </template>

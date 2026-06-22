@@ -34,11 +34,16 @@ describe('texturefx controls', () => {
     expect(family.when!(tru)).toBe(true)
   })
 
-  it('color and mode controls have no `when` (always visible)', () => {
-    // lattice/cells now have a `when` (hidden in raster mode) — excluded here
-    for (const key of ['colorA', 'colorB', 'background', 'mode']) {
-      expect(TEXTURE_CONTROLS.find((c) => c.key === key)!.when).toBeUndefined()
+  it('color controls are hidden (when always false); mode has no `when`', () => {
+    // colorA/colorB/background are superseded by the Fills panel; hidden via when:()=>false
+    // so they still contribute defaults but never render.
+    for (const key of ['colorA', 'colorB', 'background']) {
+      const c = TEXTURE_CONTROLS.find((c) => c.key === key)!
+      expect(typeof c.when).toBe('function')
+      expect(c.when!({}  as any)).toBe(false)
     }
+    // mode has no `when` — always visible
+    expect(TEXTURE_CONTROLS.find((c) => c.key === 'mode')!.when).toBeUndefined()
   })
 
   it('placement shows only in truchet; rotBias↔coherence swap by placement', () => {

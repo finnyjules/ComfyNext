@@ -37,9 +37,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   // Hidden for diagonal (a solid two-tone split has no stroke to size).
   { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'diagonal' },
 
-  { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color' },
-  { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Color' },
-  { key: 'background', label: 'Background', kind: 'color', default: '#0e1116', group: 'Color' },
+  { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color', when: () => false },
+  { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Color', when: () => false },
+  { key: 'background', label: 'Background', kind: 'color', default: '#0e1116', group: 'Color', when: () => false },
 
   // Raster controls — rasterSrc is set by the surface's import button, not here.
   { key: 'seamMethod', label: 'Seamless method', kind: 'select', options: [...SEAM_METHODS], default: 'mirror', group: 'Raster', when: isRaster },
