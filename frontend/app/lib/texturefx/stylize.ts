@@ -2,7 +2,7 @@ import type { Params } from '~/lib/spacetype/effect'
 import type { EffectDef } from '~/lib/shaderfx/types'
 import { shaderFx, expandPasses, type ShaderPass } from '~/lib/shaderfx/renderer'
 import { resolveUniforms } from '~/lib/shaderfx/params'
-import { getEffect } from '~/lib/shaderfx/catalog'
+import { getEffect, assetUrl } from '~/lib/shaderfx/catalog'
 import { DITHER_PATTERNS, DITHER_PERIOD, STYLIZE_EFFECT_ID } from '~/lib/texturefx/types'
 
 // Snap u_scale so dither cells-across (= 1/scale for a square tile) is a multiple
@@ -46,7 +46,7 @@ async function loadEffectTextures(effect: EffectDef): Promise<{ textures: Record
   for (const t of effect.textures ?? []) {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.src = `/shader_effects/assets/${t.file}${t.v ? `?v=${t.v}` : ''}`
+    img.src = assetUrl(t.file, t.v) // /comfynext/shader_effects/assets/<file> — same route as ShaderStudio
     await img.decode().catch(() => {})
     textures[t.uniform] = img
     Object.assign(uniforms, t.extraUniforms ?? {})
