@@ -39,6 +39,14 @@ describe('gradientRampCoord seamlessness', () => {
     }
   })
   it('returns 0..1', () => { expect(gradientRampCoord('tile',0,0,0.3,0.7,45)).toBeGreaterThanOrEqual(0) })
+  it('tile ramp is seamless at a non-axis angle (45 deg snaps to integer wave numbers)', () => {
+    for (let i = 0; i <= 10; i++) { const t = i / 10
+      // left edge (ux=0) vs right edge (ux=1)
+      expect(Math.abs(gradientRampCoord('tile',0,0,0,t,45) - gradientRampCoord('tile',0,0,1,t,45))).toBeLessThan(1e-9)
+      // top edge (uy=0) vs bottom edge (uy=1)
+      expect(Math.abs(gradientRampCoord('tile',0,0,t,0,45) - gradientRampCoord('tile',0,0,t,1,45))).toBeLessThan(1e-9)
+    }
+  })
   it('triangle ramp — not sawtooth (angle=0°, t=ux)', () => {
     // Peak at tile center: t=0.5 → 1 - |2·0.5 - 1| = 1
     expect(gradientRampCoord('tile',0,0, 0.5, 0, 0)).toBeCloseTo(1, 9)

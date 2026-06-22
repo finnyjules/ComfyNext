@@ -9,7 +9,7 @@ import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
 import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
-import { fillForRole } from '~/lib/texturefx/fills'
+import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
 import { rolesFor } from '~/lib/texturefx/roles'
 
 const VS = `#version 300 es
@@ -45,8 +45,16 @@ vec3 evalFill(int r, vec2 fc, vec2 tc){
   } else {
     float a = radians(u_fillAngle[r]);
     vec2 d = vec2(cos(a), sin(a));
-    if (u_fillFrame[r]==1) { float t = dot(tc, d); g = 1.0 - abs(2.0*fract(t) - 1.0); }
-    else { g = clamp(dot(fc, d), 0.0, 1.0); }
+    if (u_fillFrame[r]==1) {
+      // Snap direction to integer wave numbers so the ramp completes whole
+      // cycles per tile in each axis -- seamless at any angle (8 directions).
+      float m = max(abs(d.x), abs(d.y));
+      vec2 k = (m > 0.0) ? vec2(floor(d.x/m + 0.5), floor(d.y/m + 0.5)) : vec2(1.0, 0.0);
+      float t = dot(tc, k);
+      g = 1.0 - abs(2.0*fract(t) - 1.0);
+    } else {
+      g = clamp(dot(fc, d), 0.0, 1.0);
+    }
   }
   return mix(u_fillC0[r], u_fillC1[r], g);
 }
@@ -188,12 +196,6 @@ void main(){
   frag = vec4(c, 1.0);
 }`
 
-function hex(h: string): [number, number, number] {
-  const s = h.replace('#', '')
-  const n = parseInt(s.length === 3 ? s.split('').map((c) => c + c).join('') : s, 16)
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
-}
-
 class TextureFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
@@ -276,9 +278,9 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
-    gl.uniform3fv(u('u_a'), hex(String(p.colorA)))
-    gl.uniform3fv(u('u_b'), hex(String(p.colorB)))
-    gl.uniform3fv(u('u_bg'), hex(String(p.background)))
+    gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))
+    gl.uniform3fv(u('u_b'), hexToRgb(String(p.colorB)))
+    gl.uniform3fv(u('u_bg'), hexToRgb(String(p.background)))
     const roles = rolesFor(p)
     for (let r = 0; r < 3; r++) {
       const roleKey = roles[r]
@@ -289,11 +291,11 @@ class TextureFxRenderer {
         gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
         gl.uniform1i(loc('u_fillKind'), fill.kind === 'radial' ? 1 : 0)
         gl.uniform1f(loc('u_fillAngle'), Number(fill.angle) || 0)
-        gl.uniform3fv(loc('u_fillC0'), hex(String(fill.stops?.[0]?.c ?? '#ffffff')))
-        gl.uniform3fv(loc('u_fillC1'), hex(String(fill.stops?.[fill.stops.length - 1]?.c ?? '#000000')))
+        gl.uniform3fv(loc('u_fillC0'), hexToRgb(String(fill.stops?.[0]?.c ?? '#ffffff')))
+        gl.uniform3fv(loc('u_fillC1'), hexToRgb(String(fill.stops?.[fill.stops.length - 1]?.c ?? '#000000')))
       } else {
         gl.uniform1i(loc('u_fillType'), 0)
-        gl.uniform3fv(loc('u_fillC0'), hex(String((fill as any).color ?? '#000000')))
+        gl.uniform3fv(loc('u_fillC0'), hexToRgb(String((fill as any).color ?? '#000000')))
       }
     }
     const family = String(p.tileFamily)

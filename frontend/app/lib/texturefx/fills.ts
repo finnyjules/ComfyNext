@@ -17,14 +17,20 @@ export function hexToRgb(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
 }
 
-// Tile-global linear gradient coord is a MIRRORED ramp (0→1→0) so opposite tile
-// edges match → seamless. Cell-local is a plain ramp in cell coords. Returns 0..1.
+// Mirrors the GLSL evalFill tile-linear ramp in renderer.ts -- the two must stay in sync.
+// Tile-global linear gradient coord is a MIRRORED ramp (0->1->0) so opposite tile
+// edges match -> seamless. Direction snapped to integer wave numbers (8 directions)
+// so ramp completes whole cycles per tile in each axis -- seamless at any angle.
+// Cell-local is a plain ramp in cell coords. Returns 0..1.
 export function gradientRampCoord(frame: string, fcx: number, fcy: number, ux: number, uy: number, angleDeg: number): number {
   const a = (angleDeg * Math.PI) / 180
   const dx = Math.cos(a), dy = Math.sin(a)
   if (frame === 'tile') {
-    const t = ux * dx + uy * dy        // projection across the tile
-    return 1 - Math.abs(2 * (t - Math.floor(t)) - 1) // mirrored triangle ramp → seamless
+    const m = Math.max(Math.abs(dx), Math.abs(dy))
+    const kx = m > 0 ? Math.round(dx / m) : 1
+    const ky = m > 0 ? Math.round(dy / m) : 0
+    const t = ux * kx + uy * ky
+    return 1 - Math.abs(2 * (t - Math.floor(t)) - 1)
   }
   const t = fcx * dx + fcy * dy
   return Math.min(1, Math.max(0, t))   // cell-local plain ramp
