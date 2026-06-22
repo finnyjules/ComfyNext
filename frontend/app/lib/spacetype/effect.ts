@@ -3,7 +3,13 @@ import type * as THREE from 'three'
 export type ParamValue = number | string | boolean
 export type Params = Record<string, ParamValue>
 
-export type ControlSpec =
+/** Optional metadata any control kind may carry. `hint` is a short semantic
+ *  description used by the AI control copilot (and doubles as tooltip text).
+ *  `aiEditable` overrides the kind-based default (slider/select/color/font are
+ *  editable; text/textList/fillList/path are not). */
+type ControlMeta = { hint?: string; aiEditable?: boolean }
+
+export type ControlSpec = (
   | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; group?: string }
   | { key: string; label: string; kind: 'text'; default: string; group?: string }
   // Multiple texts that the effect ALTERNATES per word-repeat/instance. Stored as one
@@ -19,6 +25,7 @@ export type ControlSpec =
   // An interactive bézier path drawn on the preview (String effect). Stored as one JSON
   // string in params (StringPathDoc); the surface renders the StringPathEditor overlay.
   | { key: string; label: string; kind: 'path'; default: string; group?: string }
+) & ControlMeta
 
 /** Build the param object from a control list's declared defaults. */
 export function defaultsFromControls(controls: ControlSpec[]): Params {
