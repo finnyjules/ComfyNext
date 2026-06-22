@@ -219,6 +219,18 @@ function setFillType(rk: string, i: number, type: 'solid' | 'gradient') {
   else
     setFill(rk, { type: 'gradient', frame: 'cell', kind: 'linear', angle: 0, stops: [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }] })
 }
+function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'radial'; angle: number; frame: 'cell' | 'tile'; stops: { c: string; p: number }[] }>) {
+  const f = roleFill(rk, i) as any
+  const cur = f?.type === 'gradient' ? f : {}
+  setFill(rk, {
+    type: 'gradient',
+    frame: cur.frame ?? 'cell',
+    kind: cur.kind ?? 'linear',
+    angle: cur.angle ?? 0,
+    stops: cur.stops ?? [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }],
+    ...patch,
+  } as Fill)
+}
 
 // Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
 // 64 so dither stays seamless.
@@ -403,7 +415,7 @@ onBeforeUnmount(() => {
               <StudioSelect
                 :options="['linear', 'radial']"
                 :model-value="(roleFill(rk, i) as any).kind ?? 'linear'"
-                @update:model-value="(k: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, kind: k }) }"
+                @update:model-value="(k: string) => setGradient(rk, i, { kind: k as any })"
               />
 
               <StudioSlider
@@ -413,14 +425,14 @@ onBeforeUnmount(() => {
                 :step="1"
                 :default="0"
                 :model-value="(roleFill(rk, i) as any).angle ?? 0"
-                @update:model-value="(a: number) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, angle: a }) }"
+                @update:model-value="(a: number) => setGradient(rk, i, { angle: a })"
               />
 
               <div class="flex items-center gap-2">
                 <label class="text-[11px] text-white/55">Start</label>
                 <StudioColor
                   :model-value="(roleFill(rk, i) as any).stops?.[0]?.c ?? '#e8eef5'"
-                  @update:model-value="(c: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, stops: [{ c, p: 0 }, f.stops?.[1] ?? { c: '#7aa2f7', p: 1 }] }) }"
+                  @update:model-value="(c: string) => { const s = (roleFill(rk, i) as any).stops; setGradient(rk, i, { stops: [{ c, p: 0 }, s?.[1] ?? { c: '#7aa2f7', p: 1 }] }) }"
                 />
               </div>
 
@@ -428,7 +440,7 @@ onBeforeUnmount(() => {
                 <label class="text-[11px] text-white/55">End</label>
                 <StudioColor
                   :model-value="(roleFill(rk, i) as any).stops?.[1]?.c ?? '#7aa2f7'"
-                  @update:model-value="(c: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, stops: [f.stops?.[0] ?? { c: '#e8eef5', p: 0 }, { c, p: 1 }] }) }"
+                  @update:model-value="(c: string) => { const s = (roleFill(rk, i) as any).stops; setGradient(rk, i, { stops: [s?.[0] ?? { c: '#e8eef5', p: 0 }, { c, p: 1 }] }) }"
                 />
               </div>
 
@@ -436,7 +448,7 @@ onBeforeUnmount(() => {
               <StudioSelect
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'cell'"
-                @update:model-value="(fr: string) => { const f = roleFill(rk, i) as any; setFill(rk, { ...f, frame: fr }) }"
+                @update:model-value="(fr: string) => setGradient(rk, i, { frame: fr as any })"
               />
             </div>
           </template>
