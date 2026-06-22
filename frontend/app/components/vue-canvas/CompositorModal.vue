@@ -1483,6 +1483,12 @@ async function runRegionFill() {
       const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
       const prompt = genPrompt.value.trim() || 'subject'
       const aspect = pickAspectRatio(boxW / boxH)
+      // Style mode generates a free-standing OBJECT: bias toward the whole
+      // subject visible (not a cropped close-up), centered with margin, on a
+      // plain background so it reads as a complete object and cuts out cleanly.
+      // Scene mode intentionally fills the region to fit the frame, so it keeps
+      // the bare prompt.
+      const objectPrompt = `${prompt}, the entire subject fully visible and not cropped, complete object centered with empty margin around it, isolated on a plain solid white background`
 
       // 1) Generate the raw image for the object.
       let raw: string | undefined
@@ -1509,10 +1515,10 @@ async function runRegionFill() {
         crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
         raw = crop.toDataURL('image/png')
       } else if (genStyle.value) {
-        const r = await inpaint.loraGen(genStyle.value.filename, prompt, aspect)
+        const r = await inpaint.loraGen(genStyle.value.filename, objectPrompt, aspect)
         raw = r[0]
       } else {
-        const r = await inpaint.text2img(prompt, aspect)
+        const r = await inpaint.text2img(objectPrompt, aspect)
         raw = r[0]
       }
       if (!raw) return
