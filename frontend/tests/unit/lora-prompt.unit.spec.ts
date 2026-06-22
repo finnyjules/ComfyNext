@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildLoraPrompt } from './loraPrompt'
+import { buildLoraPrompt } from '../../server/utils/loraPrompt'
 
 describe('buildLoraPrompt', () => {
   it('composes aesthetic + trigger + prompt', () => {
