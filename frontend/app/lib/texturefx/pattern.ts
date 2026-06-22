@@ -66,6 +66,38 @@ function cachedStates(cells: number, seed: number, coherence: number): Uint8Arra
   return _statesCache.grid
 }
 
+// Per-base-cell subdivision level (0 = whole-cell arc, 1 = 3×3 subdivided).
+// A toroidal coherent value field thresholded at `subdivide`, so subdivided
+// regions cluster and the tile wraps.
+export function multiscaleLevels(cells: number, seed: number, subdivide: number): Uint8Array {
+  const sd = clamp01(subdivide)
+  const val = new Float64Array(cells * cells)
+  for (let y = 0; y < cells; y++) {
+    for (let x = 0; x < cells; x++) val[y * cells + x] = hash1(x * 60493 + y * 19990303 + seed * 6151)
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const g = val.slice()
+    for (let y = 0; y < cells; y++) {
+      for (let x = 0; x < cells; x++) {
+        const up = val[((y - 1 + cells) % cells) * cells + x], dn = val[((y + 1) % cells) * cells + x]
+        const lf = val[y * cells + ((x - 1 + cells) % cells)], rt = val[y * cells + ((x + 1) % cells)]
+        g[y * cells + x] = (val[y * cells + x] + up + dn + lf + rt) / 5
+      }
+    }
+    val.set(g)
+  }
+  const lvl = new Uint8Array(cells * cells)
+  for (let i = 0; i < lvl.length; i++) lvl[i] = val[i] < sd ? 1 : 0
+  return lvl
+}
+
+let _levelCache: { key: string, grid: Uint8Array } | null = null
+function cachedLevels(cells: number, seed: number, subdivide: number): Uint8Array {
+  const key = `${cells}|${seed}|${subdivide}`
+  if (!_levelCache || _levelCache.key !== key) _levelCache = { key, grid: multiscaleLevels(cells, seed, subdivide) }
+  return _levelCache.grid
+}
+
 export function latticeCell(lattice: string, cells: number, u: number, v: number) {
   let gx = u * cells
   let gy = v * cells
@@ -82,6 +114,17 @@ export function latticeCell(lattice: string, cells: number, u: number, v: number
   const cx = posmod(Math.floor(gx), cells)
   const cy = posmod(Math.floor(gy), cells)
   return { cx, cy, fx: gx - Math.floor(gx), fy: gy - Math.floor(gy) }
+}
+
+// True where pixel (fx,fy) lies on one of the two quarter-circle arcs for `state`.
+// state 0 joins corners (0,0)&(1,1); state 1 joins (1,0)&(0,1). Either way the
+// arcs hit all four edge midpoints, so neighbours connect.
+function arcCoverage(fx: number, fy: number, state: number, tw: number): boolean {
+  const c0x = state === 0 ? 0 : 1, c0y = 0
+  const c1x = state === 0 ? 1 : 0, c1y = 1
+  const d0 = Math.abs(Math.hypot(fx - c0x, fy - c0y) - 0.5)
+  const d1 = Math.abs(Math.hypot(fx - c1x, fy - c1y) - 0.5)
+  return d0 < tw * 0.5 || d1 < tw * 0.5
 }
 
 // --- Truchet families ------------------------------------------------------
@@ -113,11 +156,7 @@ function truchetColor(
   // arcs (Smith): two quarter-circle arcs joining edge midpoints. state 0 joins
   // corners (0,0)&(1,1); state 1 joins (1,0)&(0,1). Either way all four edge
   // midpoints are arc endpoints, so neighbours always connect → seamless.
-  const c0x = state === 0 ? 0 : 1, c0y = 0
-  const c1x = state === 0 ? 1 : 0, c1y = 1
-  const d0 = Math.abs(Math.hypot(fx - c0x, fy - c0y) - 0.5)
-  const d1 = Math.abs(Math.hypot(fx - c1x, fy - c1y) - 0.5)
-  return (d0 < tw * 0.5 || d1 < tw * 0.5) ? out(A) : out(BG)
+  return arcCoverage(fx, fy, state, tw) ? out(A) : out(BG)
 }
 
 export function patternColor(p: Params, u: number, v: number): RGBA {
@@ -134,6 +173,18 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
 
   if (String(p.mode) === 'truchet') {
     const tw = Number(p.truchetWeight) || 0.18
+
+    if (String(p.tileFamily) === 'multiscale') {
+      const level = cachedLevels(cells, seed, clamp01(Number(p.subdivide) || 0))[cy * cells + cx]
+      let lfx = fx, lfy = fy, sub = 0
+      if (level >= 1) {
+        const sx = Math.min(2, Math.floor(fx * 3)), sy = Math.min(2, Math.floor(fy * 3))
+        lfx = fx * 3 - sx; lfy = fy * 3 - sy; sub = sx * 3 + sy + 1
+      }
+      const st = hash1(cx * 73856093 + cy * 19349663 + sub * 50331653 + seed * 83492791) < 0.5 ? 0 : 1
+      return arcCoverage(lfx, lfy, st, tw) ? out(A) : out(BG)
+    }
+
     let state: number
     if (String(p.placement) === 'structured') {
       const grid = cachedStates(cells, seed, clamp01(Number(p.coherence) || 0))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { patternColor, truchetStates } from '~/lib/texturefx/pattern'
+import { patternColor, truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { textureDefaults } from '~/lib/texturefx/controls'
 import { MOTIFS, LATTICES, TILE_FAMILIES } from '~/lib/texturefx/types'
 
@@ -66,6 +66,31 @@ describe('truchetStates (structured placement)', () => {
   })
   it('different seeds generally differ', () => {
     expect(Array.from(truchetStates(8, 7, 0.6))).not.toEqual(Array.from(truchetStates(8, 99, 0.6)))
+  })
+})
+
+describe('multiscaleLevels', () => {
+  it('is deterministic + cells*cells + 0/1', () => {
+    const a = multiscaleLevels(8, 7, 0.5)
+    const b = multiscaleLevels(8, 7, 0.5)
+    expect(Array.from(a)).toEqual(Array.from(b))
+    expect(a.length).toBe(64)
+    for (const v of a) expect(v === 0 || v === 1).toBe(true)
+  })
+  it('subdivide 0 → all level 0; subdivide 1 → all level 1', () => {
+    expect(Array.from(multiscaleLevels(8, 7, 0)).every((v) => v === 0)).toBe(true)
+    expect(Array.from(multiscaleLevels(8, 7, 1)).every((v) => v === 1)).toBe(true)
+  })
+})
+
+describe('multiscale seamlessness', () => {
+  it('multiscale/square wraps both axes', () => {
+    const p = { ...textureDefaults(), mode: 'truchet', tileFamily: 'multiscale', lattice: 'square', cells: 8, subdivide: 0.6, truchetWeight: 0.18 }
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10
+      expect(eq(patternColor(p, 0, t), patternColor(p, 1, t)), `x-wrap @ v=${t}`).toBe(true)
+      expect(eq(patternColor(p, t, 0), patternColor(p, t, 1)), `y-wrap @ u=${t}`).toBe(true)
+    }
   })
 })
 
