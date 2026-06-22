@@ -1490,7 +1490,9 @@ async function runRegionFill() {
         // Inpaint the box region of the current composite so the result matches
         // the scene, then crop the box out for cutting.
         const compBlob = await renderStaticComposite(W, H); if (!compBlob) return
-        const compImg = await loadImage(URL.createObjectURL(compBlob))
+        const compUrl = URL.createObjectURL(compBlob)
+        const compImg = await loadImage(compUrl)
+        URL.revokeObjectURL(compUrl)
         const { w: capW, h: capH } = capDims(W, H)
         const imageData = imageToDataUrl(compImg, capW, capH)
         const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
@@ -2197,7 +2199,7 @@ onUnmounted(() => {
             <textarea
               v-model="genPrompt"
               rows="3"
-              placeholder="what to generate in the region…"
+              placeholder="what object to generate…"
               class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
               @keydown.enter.exact.prevent="runRegionFill"
             />
