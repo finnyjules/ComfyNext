@@ -672,7 +672,7 @@ async function generateVideo() {
               :class="{ 'rounded-md ring-1 ring-amber-400/30 px-1 -mx-1': vibeMoved.has(c.key) }"
               data-control class="text-xs">
               <label v-if="c.kind !== 'slider'" class="mb-1 block text-white/60">{{ c.label }}</label>
-              <span v-if="vibeMoved.has(c.key) && vibeSnapshot" class="ml-1 text-[10px] text-amber-400/80">was {{ fmt(vibeSnapshot[c.key]) }}</span>
+              <span v-if="vibeMoved.has(c.key) && vibeSnapshot && c.kind !== 'slider'" class="ml-1 text-[10px] text-amber-400/80">was {{ fmt(vibeSnapshot[c.key]) }}</span>
               <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
                             :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
                             :default="Number(c.default ?? 0)"
