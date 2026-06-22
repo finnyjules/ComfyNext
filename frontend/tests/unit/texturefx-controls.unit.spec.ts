@@ -22,4 +22,21 @@ describe('texturefx controls', () => {
       if (c.kind === 'select') expect(c.options).toContain(c.default)
     }
   })
+
+  it('procedural and truchet controls are mutually exclusive via `when`', () => {
+    const proc = textureDefaults()
+    const tru = { ...textureDefaults(), mode: 'truchet' }
+    const motif = TEXTURE_CONTROLS.find((c) => c.key === 'motif')!
+    const family = TEXTURE_CONTROLS.find((c) => c.key === 'tileFamily')!
+    expect(motif.when!(proc)).toBe(true)
+    expect(motif.when!(tru)).toBe(false)
+    expect(family.when!(proc)).toBe(false)
+    expect(family.when!(tru)).toBe(true)
+  })
+
+  it('lattice and color controls have no `when` (always visible)', () => {
+    for (const key of ['lattice', 'cells', 'colorA', 'colorB', 'background', 'mode']) {
+      expect(TEXTURE_CONTROLS.find((c) => c.key === key)!.when).toBeUndefined()
+    }
+  })
 })
