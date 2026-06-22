@@ -9,13 +9,18 @@ import type { Params } from '~/lib/spacetype/effect'
 
 let _r: ReturnType<typeof createTextureFx> | null = null
 const _cache = new Map<string, HTMLCanvasElement>()
+const CACHE_CAP = 32
 
 // Render a sub-pattern (ONE level: fills stripped) to a cached canvas on a
 // SEPARATE renderer so the main render is never reentered.
 export function getPatternFillCanvas(sub: Record<string, unknown>, size = 256): HTMLCanvasElement | null {
   if (!sub) return null
   const key = JSON.stringify(sub) + ':' + size
-  const hit = _cache.get(key); if (hit) return hit
+  const hit = _cache.get(key)
+  if (hit) {
+    // Refresh recency: re-insert moves the entry to newest in insertion order.
+    _cache.delete(key); _cache.set(key, hit); return hit
+  }
   try {
     if (!_r) _r = createTextureFx()
     const safe = { ...sub } as any; delete safe.fills   // hard guard: never recurse
@@ -23,7 +28,10 @@ export function getPatternFillCanvas(sub: Record<string, unknown>, size = 256): 
     // Copy out (the renderer reuses its own canvas) so the cache entry is stable.
     const out = document.createElement('canvas'); out.width = size; out.height = size
     out.getContext('2d')!.drawImage(c, 0, 0)
-    _cache.set(key, out); return out
+    _cache.set(key, out)
+    // Evict oldest entries while over cap.
+    while (_cache.size > CACHE_CAP) { const oldest = _cache.keys().next().value; if (oldest === undefined) break; _cache.delete(oldest) }
+    return out
   } catch { return null }
 }
 

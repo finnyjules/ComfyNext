@@ -365,13 +365,12 @@ class TextureFxRenderer {
           gl.uniform1i(loc('u_fillType'), 0)
           gl.uniform3fv(loc('u_fillC0'), hexToRgb('#808080'))
         }
-      } else if ((fill as any).type === 'pattern') {
-        const pf = fill as any
-        const pc = getPatternFillCanvas(pf.sub as Record<string, unknown>)
+      } else if (fill.type === 'pattern') {
+        const pc = getPatternFillCanvas(fill.sub as Record<string, unknown>)
         if (pc) {
           gl.activeTexture(gl.TEXTURE0 + 2 + r)
           gl.bindTexture(gl.TEXTURE_2D, this.fillTex[r]!)
-          const pkey = patternFillKey(pf.sub as Record<string, unknown>)
+          const pkey = patternFillKey(fill.sub as Record<string, unknown>)
           if (pkey !== this._lastFillSrc[r]) {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, pc)
             this._lastFillSrc[r] = pkey
@@ -379,8 +378,8 @@ class TextureFxRenderer {
           gl.uniform1i(loc('u_fillType'), 3)
           // Sub-pattern already tiles cleanly; use direct wrap (seam=2) always.
           gl.uniform1i(loc('u_fillSeam'), 2)
-          gl.uniform1f(loc('u_fillScale'), Number(pf.scale) || 1)
-          gl.uniform1i(loc('u_fillFrame'), pf.frame === 'tile' ? 1 : 0)
+          gl.uniform1f(loc('u_fillScale'), Number(fill.scale) || 1)
+          gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
         } else {
           // Sub-render failed or not ready — solid gray fallback
           this._lastFillSrc[r] = null
