@@ -1,0 +1,340 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Grid-Cell Displacement — Type Glitch Playground</title>
+<style>
+  :root{
+    --bg:#0c0c0d; --panel:#141416; --line:#26262a; --ink:#e7e7ea;
+    --muted:#86868c; --accent:#e7e2df; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
+  .wrap{display:grid;grid-template-columns:300px 1fr;height:100vh}
+  .panel{background:var(--panel);border-right:1px solid var(--line);
+    padding:16px;overflow-y:auto}
+  .stage{display:flex;flex-direction:column;min-width:0}
+  .view{flex:1;display:flex;align-items:center;justify-content:center;
+    padding:24px;min-height:0}
+  canvas#gl{max-width:100%;max-height:100%;border-radius:8px;
+    box-shadow:0 8px 40px rgba(0,0,0,.5)}
+  canvas#src{display:none}
+  h1{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 14px;font-weight:600}
+  .grp{margin:0 0 18px;padding:0 0 16px;border-bottom:1px solid var(--line)}
+  .grp:last-child{border:0}
+  .grp>label.h{display:block;font-size:11px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:600}
+  .row{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;margin:0 0 9px}
+  .row label{flex:0 0 auto;color:var(--ink)}
+  .row .val{font-family:var(--mono);font-size:11px;color:var(--muted);
+    min-width:42px;text-align:right}
+  input[type=range]{flex:1;accent-color:var(--accent);height:3px}
+  input[type=text]{width:100%;background:#0c0c0d;border:1px solid var(--line);
+    color:var(--ink);padding:7px 9px;border-radius:6px;font:inherit}
+  select{width:100%;background:#0c0c0d;border:1px solid var(--line);
+    color:var(--ink);padding:6px 8px;border-radius:6px;font:inherit}
+  .chk{display:flex;align-items:center;gap:8px;cursor:pointer}
+  .chk input{accent-color:var(--accent)}
+  .presets{display:flex;flex-wrap:wrap;gap:6px}
+  .presets button{background:#0c0c0d;border:1px solid var(--line);color:var(--ink);
+    padding:6px 9px;border-radius:14px;font-size:11px;cursor:pointer}
+  .presets button:hover{border-color:var(--accent)}
+  .swatches{display:flex;gap:8px}
+  .swatches label{display:flex;flex-direction:column;gap:4px;flex:1;font-size:11px;color:var(--muted)}
+  input[type=color]{width:100%;height:28px;background:#0c0c0d;border:1px solid var(--line);
+    border-radius:6px;padding:2px;cursor:pointer}
+  .out{border-top:1px solid var(--line);background:var(--panel);padding:14px 16px}
+  .out .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .out .top span{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .out textarea{width:100%;height:74px;resize:vertical;background:#0c0c0d;
+    border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:10px;
+    font-family:var(--mono);font-size:11px;line-height:1.5}
+  .copy{background:var(--accent);color:#111;border:0;padding:6px 12px;
+    border-radius:6px;font-size:12px;font-weight:600;cursor:pointer}
+</style>
+
+<div class="wrap">
+  <div class="panel">
+    <h1>Grid Glitch</h1>
+
+    <div class="grp">
+      <label class="h">Presets</label>
+      <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="grp">
+      <label class="h">Source</label>
+      <input type="text" id="text" value="REQUESTS" spellcheck="false">
+      <div class="row" style="margin-top:9px"><label>Rows</label>
+        <input type="range" id="rows" min="1" max="9" step="1" value="5"><span class="val" id="rows_v"></span></div>
+      <div class="row"><label>Condense</label>
+        <input type="range" id="condense" min="0.5" max="1.4" step="0.01" value="0.92"><span class="val" id="condense_v"></span></div>
+    </div>
+
+    <div class="grp">
+      <label class="h">Grid</label>
+      <div class="row"><label>Cells across</label>
+        <input type="range" id="grid" min="4" max="120" step="1" value="42"><span class="val" id="grid_v"></span></div>
+      <div class="row"><label>Block growth ↓</label>
+        <input type="range" id="growth" min="0" max="1" step="0.01" value="0.55"><span class="val" id="growth_v"></span></div>
+    </div>
+
+    <div class="grp">
+      <label class="h">Displacement</label>
+      <div class="row"><label>Style</label></div>
+      <select id="style">
+        <option value="0">Random per-cell</option>
+        <option value="1">Horizontal sample-hold (RLE smear)</option>
+        <option value="2">Wave / melt</option>
+        <option value="3">Mixed (per-band)</option>
+      </select>
+      <div class="row" style="margin-top:9px"><label>Amount</label>
+        <input type="range" id="amount" min="0" max="0.5" step="0.005" value="0.12"><span class="val" id="amount_v"></span></div>
+      <div class="row"><label>Speed</label>
+        <input type="range" id="speed" min="0" max="6" step="0.05" value="1.4"><span class="val" id="speed_v"></span></div>
+      <div class="row"><label>Jitter step</label>
+        <input type="range" id="step" min="1" max="24" step="1" value="6"><span class="val" id="step_v"></span></div>
+    </div>
+
+    <div class="grp">
+      <label class="h">Decay ramp</label>
+      <div class="row"><label>Start (top clean)</label>
+        <input type="range" id="dstart" min="0" max="1" step="0.01" value="0.12"><span class="val" id="dstart_v"></span></div>
+      <div class="row"><label>Diagonal bias</label>
+        <input type="range" id="diag" min="0" max="0.8" step="0.01" value="0.25"><span class="val" id="diag_v"></span></div>
+      <label class="chk" style="margin-top:6px"><input type="checkbox" id="showramp"> show ramp</label>
+    </div>
+
+    <div class="grp">
+      <label class="h">Texture</label>
+      <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="dither" checked> Bayer dither (checkerboard)</label>
+      <div class="row"><label>Dither at decay ≥</label>
+        <input type="range" id="dithat" min="0" max="1" step="0.01" value="0.35"><span class="val" id="dithat_v"></span></div>
+      <label class="chk"><input type="checkbox" id="thresh" checked> Hard threshold (1-bit)</label>
+    </div>
+
+    <div class="grp">
+      <label class="h">Duotone</label>
+      <div class="swatches">
+        <label>Ink<input type="color" id="ink" value="#0d0c0c"></label>
+        <label>Paper<input type="color" id="paper" value="#e8e2df"></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="view"><canvas id="gl" width="720" height="720"></canvas></div>
+    <div class="out">
+      <div class="top"><span>Shader recipe → paste back to Claude</span>
+        <button class="copy" id="copy">Copy</button></div>
+      <textarea id="prompt" readonly></textarea>
+    </div>
+  </div>
+</div>
+
+<canvas id="src" width="1024" height="1024"></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULTS = {text:"REQUESTS",rows:5,condense:0.92,grid:42,growth:0.55,style:"0",
+  amount:0.12,speed:1.4,step:6,dstart:0.12,diag:0.25,dither:true,dithat:0.35,thresh:true,
+  ink:"#0d0c0c",paper:"#e8e2df",showramp:false};
+
+const state = {...DEFAULTS};
+
+const PRESETS = {
+  "Reference": {grid:42,growth:0.55,style:"3",amount:0.13,speed:1.2,step:6,dstart:0.12,diag:0.28,dither:true,dithat:0.34,thresh:true,rows:5,condense:0.9},
+  "Datamosh":  {grid:28,growth:0.7,style:"1",amount:0.22,speed:2.4,step:4,dstart:0.05,diag:0.1,dither:false,thresh:true,rows:4,condense:1.0},
+  "Pixel rain":{grid:80,growth:0.2,style:"0",amount:0.06,speed:3.2,step:2,dstart:0.0,diag:0.0,dither:true,dithat:0.2,thresh:true,rows:6,condense:0.85},
+  "Melt":      {grid:18,growth:0.3,style:"2",amount:0.18,speed:0.8,step:24,dstart:0.2,diag:0.15,dither:false,thresh:true,rows:5,condense:1.05},
+  "Subtle":    {grid:54,growth:0.4,style:"3",amount:0.04,speed:0.6,step:8,dstart:0.4,diag:0.3,dither:true,dithat:0.6,thresh:false,rows:5,condense:0.92},
+};
+
+// ---------- source text canvas ----------
+const src = $("src"), sctx = src.getContext("2d");
+function hexrgb(h){return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
+function drawSource(){
+  const W=src.width,H=src.height;
+  sctx.setTransform(1,0,0,1,0,0);
+  sctx.fillStyle="#ffffff"; sctx.fillRect(0,0,W,H);   // white = paper region, mapped later
+  sctx.fillStyle="#000000";                            // black = ink region
+  const t=(state.text||"X").toUpperCase();
+  const rows=state.rows, pad=W*0.03;
+  const rowH=(H-pad*2)/rows;
+  sctx.textBaseline="middle"; sctx.textAlign="left";
+  for(let r=0;r<rows;r++){
+    let fs=rowH*1.02;
+    sctx.font=`800 ${fs}px "Arial Narrow",Helvetica,Arial,sans-serif`;
+    let w=sctx.measureText(t).width;
+    const sx=((W-pad*2)/w)*state.condense;
+    const y=pad+rowH*(r+0.5);
+    sctx.save();
+    sctx.translate(pad,y);
+    sctx.scale(sx,1.06);
+    sctx.fillText(t,0,0);
+    sctx.restore();
+  }
+}
+
+// ---------- webgl ----------
+const cv=$("gl"); const gl=cv.getContext("webgl2",{antialias:false});
+const VS=`#version 300 es
+in vec2 p; out vec2 uv;
+void main(){ uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); gl_Position=vec4(p,0,1); }`;
+const FS=`#version 300 es
+precision highp float;
+in vec2 uv; out vec4 o;
+uniform sampler2D tex; uniform float time;
+uniform float u_grid,u_growth,u_amount,u_speed,u_step;
+uniform int u_style; uniform float u_dstart,u_diag;
+uniform int u_dither,u_thresh,u_showramp; uniform float u_dithat;
+uniform vec3 u_ink,u_paper;
+float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+float bayer(vec2 c){
+  int x=int(mod(c.x,4.0)), y=int(mod(c.y,4.0));
+  int m[16]=int[16](0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5);
+  return float(m[y*4+x])/16.0;
+}
+void main(){
+  vec2 p=uv;
+  float decay=smoothstep(u_dstart,1.0, p.y + (p.x-0.5)*u_diag);
+  if(u_showramp==1){ o=vec4(vec3(decay),1.0); return; }
+
+  // coarser cells lower down (block growth)
+  float cells=mix(u_grid, max(4.0,u_grid*(1.0-0.85*u_growth)), decay);
+  vec2 cid=floor(p*cells);
+  float tq=floor(time*u_speed*max(1.0,u_step))/max(1.0,u_step); // quantized time -> jitter steps
+  float r1=hash(cid+tq), r2=hash(cid.yx+tq*1.7);
+  float amt=u_amount*decay;
+
+  vec2 off=vec2(0.0);
+  int st=u_style;
+  if(st==3){ // mixed per horizontal band
+    float band=floor(p.y*3.999);
+    st = band<1.0?0 : (band<2.0?1 : 2);
+  }
+  if(st==0){ off=(vec2(r1,r2)-0.5)*2.0*amt; }
+  else if(st==1){ // horizontal sample-hold: shift whole columns sideways, hold
+    float col=floor(p.x*cells);
+    float rr=hash(vec2(col,floor(p.y*4.0))+tq);
+    off=vec2((rr-0.5)*2.0*amt*2.2, 0.0);
+    // quantize x to the cell (the "smear")
+    p.x=mix(p.x, (cid.x+0.5)/cells, 0.85);
+  }
+  else { // wave / melt
+    off=vec2(sin(p.y*40.0+time*u_speed)*amt*1.4, cos(p.x*22.0+time*u_speed*0.7)*amt*0.4);
+  }
+
+  vec2 suv=clamp(p+off,0.001,0.999);
+  float ink=1.0-texture(tex,suv).r;   // black text -> 1.0
+
+  if(u_dither==1){
+    float d=bayer(gl_FragCoord.xy);
+    float k=smoothstep(u_dithat,1.0,decay);
+    ink = mix(ink, ink>d?1.0:0.0, k);
+  }
+  if(u_thresh==1){ ink=step(0.5,ink); }
+
+  vec3 col=mix(u_paper,u_ink, clamp(ink,0.0,1.0))/255.0;
+  o=vec4(col,1.0);
+}`;
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);
+  if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(x));return x;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+gl.linkProgram(prog);gl.useProgram(prog);
+const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const loc=gl.getAttribLocation(prog,"p");gl.enableVertexAttribArray(loc);
+gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+const U={};["tex","time","u_grid","u_growth","u_amount","u_speed","u_step","u_style",
+  "u_dstart","u_diag","u_dither","u_thresh","u_showramp","u_dithat","u_ink","u_paper"]
+  .forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+
+function uploadTex(){
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
+}
+let t0=performance.now();
+function frame(){
+  const time=(performance.now()-t0)/1000;
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.useProgram(prog);
+  gl.uniform1f(U.time,time);
+  gl.uniform1f(U.u_grid,state.grid);
+  gl.uniform1f(U.u_growth,state.growth);
+  gl.uniform1f(U.u_amount,state.amount);
+  gl.uniform1f(U.u_speed,state.speed);
+  gl.uniform1f(U.u_step,state.step);
+  gl.uniform1i(U.u_style,parseInt(state.style));
+  gl.uniform1f(U.u_dstart,state.dstart);
+  gl.uniform1f(U.u_diag,state.diag);
+  gl.uniform1i(U.u_dither,state.dither?1:0);
+  gl.uniform1i(U.u_thresh,state.thresh?1:0);
+  gl.uniform1i(U.u_showramp,state.showramp?1:0);
+  gl.uniform1f(U.u_dithat,state.dithat);
+  gl.uniform3fv(U.u_ink,hexrgb(state.ink));
+  gl.uniform3fv(U.u_paper,hexrgb(state.paper));
+  gl.uniform1i(U.tex,0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  requestAnimationFrame(frame);
+}
+
+// ---------- bindings ----------
+function setVal(id){const e=$(id+"_v"); if(e) e.textContent=
+  (typeof state[id]==="number"? (Number.isInteger(state[id])?state[id]:state[id].toFixed(2)) : state[id]);}
+const numIds=["rows","condense","grid","growth","amount","speed","step","dstart","diag","dithat"];
+numIds.forEach(id=>{const el=$(id);el.addEventListener("input",()=>{
+  state[id]=parseFloat(el.value);setVal(id);
+  if(id==="rows"||id==="condense")drawSource(),uploadTex();
+  updatePrompt();});});
+$("text").addEventListener("input",e=>{state.text=e.target.value;drawSource();uploadTex();updatePrompt();});
+$("style").addEventListener("change",e=>{state.style=e.target.value;updatePrompt();});
+["dither","thresh","showramp"].forEach(id=>$(id).addEventListener("change",e=>{
+  state[id]=e.target.checked;updatePrompt();}));
+["ink","paper"].forEach(id=>$(id).addEventListener("input",e=>{state[id]=e.target.value;updatePrompt();}));
+
+function syncUI(){
+  numIds.forEach(id=>{$(id).value=state[id];setVal(id);});
+  $("text").value=state.text; $("style").value=state.style;
+  $("dither").checked=state.dither; $("thresh").checked=state.thresh;
+  $("showramp").checked=state.showramp; $("ink").value=state.ink; $("paper").value=state.paper;
+  setVal("rows");
+}
+
+// presets
+const pc=$("presets");
+Object.keys(PRESETS).forEach(name=>{
+  const b=document.createElement("button");b.textContent=name;
+  b.onclick=()=>{Object.assign(state,DEFAULTS,PRESETS[name]);syncUI();drawSource();uploadTex();updatePrompt();};
+  pc.appendChild(b);
+});
+
+// prompt
+const STYLE_NAMES={0:"random per-cell",1:"horizontal sample-hold (RLE smear)",2:"wave/melt",3:"mixed per-band (random→smear→melt)"};
+function updatePrompt(){
+  const p=[];
+  p.push(`Grid-cell displacement glitch shader for the Type Studio.`);
+  p.push(`Word "${state.text}" × ${state.rows} rows, condensed ${state.condense.toFixed(2)}, black-on-warm-paper duotone (ink ${state.ink}, paper ${state.paper}).`);
+  p.push(`Grid: ${state.grid} cells across, block-growth ${state.growth.toFixed(2)} (cells coarsen toward the bottom).`);
+  p.push(`Displacement style: ${STYLE_NAMES[state.style]}, amount ${state.amount.toFixed(3)}, anim speed ${state.speed.toFixed(2)}, jitter quantized to ${state.step} steps/sec.`);
+  p.push(`Vertical decay ramp: clean until y=${state.dstart.toFixed(2)}, diagonal bias ${state.diag.toFixed(2)} — effect intensifies top→bottom-right.`);
+  const tx=[];
+  if(state.dither) tx.push(`Bayer dither kicking in at decay≥${state.dithat.toFixed(2)}`);
+  if(state.thresh) tx.push(`hard 1-bit threshold`);
+  if(tx.length) p.push(`Texture: ${tx.join(", ")}.`);
+  p.push(`\nBuild this as a new shaderFx effect (shader_effects/block_glitch.frag + manifest entry), driven by a single "decay" ramp = smoothstep(dstart, 1.0, uv.y + (uv.x-0.5)*diag).`);
+  $("prompt").value=p.join("\n");
+}
+$("copy").onclick=()=>{navigator.clipboard.writeText($("prompt").value);
+  $("copy").textContent="Copied!";setTimeout(()=>$("copy").textContent="Copy",1200);};
+
+// init
+syncUI();drawSource();uploadTex();updatePrompt();requestAnimationFrame(frame);
+</script>

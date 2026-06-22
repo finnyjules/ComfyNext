@@ -1211,12 +1211,24 @@
       "id": "kaleidoscope",
       "name": "Kaleidoscope",
       "category": "distortion",
-      "animated": false,
+      "animated": true,
       "passes": 1,
-      "centerParam": null,
+      "centerParam": [ "u_centerX", "u_centerY" ],
       "textures": [],
       "generative": false,
       "params": [
+        {
+          "uniform": "u_mode",
+          "label": "Mode",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Wedge", "value": 0 },
+            { "label": "Nested", "value": 1 },
+            { "label": "Square (p4m)", "value": 2 },
+            { "label": "Hex (p6m)", "value": 3 }
+          ]
+        },
         {
           "uniform": "u_segments",
           "label": "Segments",
@@ -1243,6 +1255,179 @@
           "max": 3.0,
           "default": 1.0,
           "step": 0.05
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "id": "mirror",
+      "name": "Mirror",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": [ "u_centerX", "u_centerY" ],
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_mode",
+          "label": "Mode",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Axis", "value": 0 },
+            { "label": "Quad", "value": 1 },
+            { "label": "Octal", "value": 2 },
+            { "label": "Mirror-ball", "value": 3 }
+          ]
+        },
+        {
+          "uniform": "u_angle",
+          "label": "Angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 360.0,
+          "default": 0.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_zoom",
+          "label": "Zoom",
+          "type": "float",
+          "min": 0.5,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "id": "droste",
+      "name": "Droste",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": [ "u_centerX", "u_centerY" ],
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_mode",
+          "label": "Mode",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Zoom", "value": 0 },
+            { "label": "Spiral", "value": 1 },
+            { "label": "Tunnel", "value": 2 }
+          ]
+        },
+        {
+          "uniform": "u_scale",
+          "label": "Scale",
+          "type": "float",
+          "min": 1.1,
+          "max": 4.0,
+          "default": 2.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_twist",
+          "label": "Twist",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.3,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_zoom",
+          "label": "Zoom",
+          "type": "float",
+          "min": 0.5,
+          "max": 3.0,
+          "default": 1.0,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
         }
       ]
     },
