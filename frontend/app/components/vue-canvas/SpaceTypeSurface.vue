@@ -20,6 +20,8 @@ import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
+import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
+import { useVibeControl } from '~/composables/useVibeControl'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -57,6 +59,57 @@ function onCustomDims() {
 const effectId = ref('ribbon')
 const effect = computed(() => getEffect(effectId.value))
 const params = reactive<Params>(defaultsFromControls(effect.value.controls))
+
+const { requestPatch } = useVibeControl()
+const vibeBusy = ref(false)
+const vibeProposal = ref<{ rationale: string; chips: { label: string; before: string; after: string; path: string }[] } | null>(null)
+const vibeSnapshot = ref<Params | null>(null)
+const vibeMoved = computed(() => new Set((vibeProposal.value?.chips ?? []).map(c => c.path)))
+
+function fmt(v: unknown): string {
+  return typeof v === 'number' ? Number(v).toFixed(2) : String(v)
+}
+
+async function onVibe(phrase: string) {
+  vibeBusy.value = true
+  try {
+    const before: Params = { ...params }
+    const { patch, rationale } = await requestPatch(effect.value.controls, params, effect.value.label, phrase)
+    const keys = Object.keys(patch)
+    if (!keys.length) { vibeProposal.value = null; return }
+    vibeSnapshot.value = before
+    const labelFor = (k: string) => effect.value.controls.find(c => c.key === k)?.label ?? k
+    vibeProposal.value = {
+      rationale,
+      chips: keys.map(k => ({ path: k, label: labelFor(k), before: fmt(before[k]), after: fmt(patch[k]) })),
+    }
+    Object.assign(params, patch) // live preview updates via existing reactivity
+  }
+  catch (e: any) {
+    vibeProposal.value = null
+    // surface the error via whatever toast/notice this surface already uses
+    console.error('[vibe]', e?.message || e)
+  }
+  finally {
+    vibeBusy.value = false
+  }
+}
+
+function onVibeKeep() { vibeProposal.value = null; vibeSnapshot.value = null }
+
+function onVibeRevert() {
+  if (vibeSnapshot.value && vibeProposal.value) {
+    for (const chip of vibeProposal.value.chips) params[chip.path] = vibeSnapshot.value[chip.path]
+  }
+  vibeProposal.value = null
+  vibeSnapshot.value = null
+}
+
+function onVibeFocus(path: string) {
+  const el = document.querySelector(`[data-control-key="${path}"]`)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 const loopDuration = ref(6)
 const transparent = ref(false)
 const bgColor = ref('#0e0e10')
@@ -576,6 +629,14 @@ async function generateVideo() {
       </StudioButton>
     </template>
     <template #controls>
+      <VibeControlBar
+        :busy="vibeBusy"
+        :proposal="vibeProposal"
+        @submit="onVibe"
+        @keep="onVibeKeep"
+        @revert="onVibeRevert"
+        @focus-control="onVibeFocus"
+      />
       <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
           <label class="mb-1 block text-[11px] text-white/50">Effect</label>
           <select v-model="effectId" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
@@ -604,9 +665,14 @@ async function generateVideo() {
           :open="openSections[section.name]"
         >
           <div class="space-y-3">
-            <div v-for="c in section.controls" :key="c.key" v-show="!(c.key === 'typeWeight' && !fontIsVariable)"
-                 data-control class="text-xs">
+            <div
+              v-for="c in section.controls" :key="c.key"
+              v-show="!(c.key === 'typeWeight' && !fontIsVariable)"
+              :data-control-key="c.key"
+              :class="{ 'rounded-md ring-1 ring-amber-400/30 px-1 -mx-1': vibeMoved.has(c.key) }"
+              data-control class="text-xs">
               <label v-if="c.kind !== 'slider'" class="mb-1 block text-white/60">{{ c.label }}</label>
+              <span v-if="vibeMoved.has(c.key) && vibeSnapshot" class="ml-1 text-[10px] text-amber-400/80">was {{ fmt(vibeSnapshot[c.key]) }}</span>
               <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
                             :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
                             :default="Number(c.default ?? 0)"
