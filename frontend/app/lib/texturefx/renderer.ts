@@ -123,11 +123,11 @@ void main(){
     } else if (u_family < 1.5) {     // diagonal two-tone
       bool side = (st < 0.5) ? (fy < fx) : (fy < 1.0 - fx);
       col = side ? u_a : u_b;
-    } else {                          // weave: warp(A) over weft(B), parity decides crossing
-      float bw = 0.62;
+    } else {                          // weave: band width from u_tw; over/under = parity XOR state
+      float bw = 0.44 + u_tw;
       bool inV = abs(fx - 0.5) < bw*0.5;
       bool inH = abs(fy - 0.5) < bw*0.5;
-      bool warpTop = posmod(cx+cy, 2.0) == 0.0;
+      bool warpTop = (posmod(cx+cy, 2.0) == 0.0) != (st > 0.5);
       if (inV && inH) col = warpTop ? u_a : u_b;
       else if (inV) col = u_a;
       else if (inH) col = u_b;

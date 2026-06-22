@@ -106,6 +106,15 @@ describe('texturefx controls', () => {
     expect(find('feather').when!(rasFeather)).toBe(true)
   })
 
+  it('truchet line weight hidden for diagonal (solid split has no stroke)', () => {
+    const T = (fam: string) => ({ ...textureDefaults(), mode: 'truchet', tileFamily: fam })
+    const tw = TEXTURE_CONTROLS.find((c) => c.key === 'truchetWeight')!
+    expect(tw.when!(T('arcs'))).toBe(true)
+    expect(tw.when!(T('weave'))).toBe(true)
+    expect(tw.when!(T('multiscale'))).toBe(true)
+    expect(tw.when!(T('diagonal'))).toBe(false)
+  })
+
   it('motif size shows only for dots/stripes; line weight only for grid', () => {
     const proc = (motif: string) => ({ ...textureDefaults(), mode: 'procedural', motif })
     const find = (k: string) => TEXTURE_CONTROLS.find((c) => c.key === k)!

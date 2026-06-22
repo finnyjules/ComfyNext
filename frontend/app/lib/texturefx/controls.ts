@@ -33,7 +33,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'rotBias', label: 'Rotation bias', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'multiscale' && String(p.placement) === 'random' },
   { key: 'coherence', label: 'Coherence', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.6, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'multiscale' && String(p.placement) === 'structured' },
   { key: 'subdivide', label: 'Subdivide', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) === 'multiscale' },
-  { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: isTruchet }, // same label as lineWeight; distinct key, only one mode visible at a time
+  // 'Line weight' sizes the arc/band stroke — used by arcs, weave, multiscale.
+  // Hidden for diagonal (a solid two-tone split has no stroke to size).
+  { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'diagonal' },
 
   { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Color' },
   { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Color' },

@@ -142,13 +142,15 @@ function truchetColor(
     return out(side ? A : B)
   }
   if (fam === 'weave') {
-    // Warp (vertical, A) and weft (horizontal, B) bands; at crossings the
-    // cell parity decides which is on top. Gaps show background. Bands span the
-    // full cell so they connect across edges → seamless. Fixed band width.
-    const bw = 0.62
+    // Warp (vertical, A) and weft (horizontal, B) bands. Band width follows the
+    // line-weight control (tw); the over/under at each crossing is the cell
+    // parity XOR the per-cell state, so coherence/placement vary the weave
+    // (uniform state = a clean basket weave; mixed = irregular). Bands span the
+    // full cell so they connect across edges → seamless.
+    const bw = 0.44 + tw
     const inV = Math.abs(fx - 0.5) < bw * 0.5
     const inH = Math.abs(fy - 0.5) < bw * 0.5
-    const warpOnTop = posmod(cx + cy, 2) === 0
+    const warpOnTop = (posmod(cx + cy, 2) === 0) !== (state === 1)
     if (inV && inH) return out(warpOnTop ? A : B)
     if (inV) return out(A)
     if (inH) return out(B)
