@@ -23,9 +23,12 @@ const props = defineProps<{
 const PREVIEW_W = 220
 const PREVIEW_H = 148 // ~3:2
 
-const params = computed<Params>(
-  () => (props.data?.properties?.comfynext_textureStudio as Params) ?? textureDefaults(),
-)
+const params = computed<Params>(() => {
+  // Merge over defaults so nodes saved before newer keys existed (e.g. mode/
+  // tileFamily) still render — symmetric with the surface's loadParams().
+  const saved = props.data?.properties?.comfynext_textureStudio as Params | undefined
+  return saved ? { ...textureDefaults(), ...saved } : textureDefaults()
+})
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
