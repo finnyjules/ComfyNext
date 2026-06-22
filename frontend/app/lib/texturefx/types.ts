@@ -1,7 +1,3 @@
-import type { Params } from '~/lib/spacetype/effect'
-
-export type TextureParams = Params
-
 export const LATTICES = ['square', 'brick', 'diagonal'] as const
 export const MOTIFS = ['checker', 'stripes', 'dots', 'grid'] as const
 
