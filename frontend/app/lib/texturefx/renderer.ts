@@ -4,7 +4,7 @@
 // mirroring the pure-TS patternColor / latticeCell math in pattern.ts exactly.
 
 import type { Params } from '~/lib/spacetype/effect'
-import { LATTICES, MOTIFS } from '~/lib/texturefx/types'
+import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
 
 const VS = `#version 300 es
 in vec2 a_pos; out vec2 v_uv;
@@ -14,6 +14,7 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
+uniform float u_mode, u_family, u_rotBias, u_tw;
 uniform vec3 u_a, u_b, u_bg;
 
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
@@ -49,6 +50,36 @@ void main(){
   float cy = posmod(floor(gy), cells);
   float fx = gx - floor(gx);
   float fy = gy - floor(gy);
+
+  // Truchet families — mirrors truchetColor() + the 'truchet' branch in patternColor().
+  // u_mode: 0 = procedural, 1 = truchet  (MODES order)
+  // u_family: 0 = arcs, 1 = diagonal, 2 = weave  (TILE_FAMILIES order)
+  if (u_mode > 0.5) {
+    float h = hash1(cx*73856093.0 + cy*19349663.0 + u_seed*83492791.0);
+    float st = (h < u_rotBias) ? 0.0 : 1.0;
+    vec3 col;
+    if (u_family < 0.5) {            // arcs: state 0 → centers (0,0)&(1,1); state 1 → (1,0)&(0,1)
+      vec2 a = (st < 0.5) ? vec2(0.0,0.0) : vec2(1.0,0.0);
+      vec2 b = (st < 0.5) ? vec2(1.0,1.0) : vec2(0.0,1.0);
+      float d0 = abs(distance(vec2(fx,fy), a) - 0.5);
+      float d1 = abs(distance(vec2(fx,fy), b) - 0.5);
+      col = (d0 < u_tw*0.5 || d1 < u_tw*0.5) ? u_a : u_bg;
+    } else if (u_family < 1.5) {     // diagonal two-tone
+      bool side = (st < 0.5) ? (fy < fx) : (fy < 1.0 - fx);
+      col = side ? u_a : u_b;
+    } else {                          // weave: warp(A) over weft(B), parity decides crossing
+      float bw = 0.62;
+      bool inV = abs(fx - 0.5) < bw*0.5;
+      bool inH = abs(fy - 0.5) < bw*0.5;
+      bool warpTop = posmod(cx+cy, 2.0) == 0.0;
+      if (inV && inH) col = warpTop ? u_a : u_b;
+      else if (inV) col = u_a;
+      else if (inH) col = u_b;
+      else col = u_bg;
+    }
+    frag = vec4(col, 1.0);
+    return;
+  }
 
   // Per-cell jitter: swap ink A/B for cells where hash < jitter threshold.
   // Hashes the modded cx/cy so the tile repeats seamlessly.
@@ -136,6 +167,10 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_lw'), Number(p.lineWeight) || 0.12)
     gl.uniform1f(u('u_jitter'), Number(p.jitter) || 0)
     gl.uniform1f(u('u_seed'), Math.round(Number(p.seed) || 1))
+    gl.uniform1f(u('u_mode'), Math.max(0, MODES.indexOf(String(p.mode) as typeof MODES[number])))
+    gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
+    gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
+    gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hex(String(p.colorA)))
     gl.uniform3fv(u('u_b'), hex(String(p.colorB)))
     gl.uniform3fv(u('u_bg'), hex(String(p.background)))
