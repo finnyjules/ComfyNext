@@ -60,4 +60,21 @@ describe('texturefx controls', () => {
     expect(d.placement).toBe('random')
     expect(d.coherence).toBe(0.6)
   })
+
+  it('subdivide shows only for multiscale; placement hidden for multiscale', () => {
+    const tru = { ...textureDefaults(), mode: 'truchet' }
+    const multi = { ...textureDefaults(), mode: 'truchet', tileFamily: 'multiscale' }
+    const subdivide = TEXTURE_CONTROLS.find((c) => c.key === 'subdivide')!
+    const placement = TEXTURE_CONTROLS.find((c) => c.key === 'placement')!
+    expect(subdivide.when!(tru)).toBe(false)
+    expect(subdivide.when!(multi)).toBe(true)
+    expect(placement.when!(multi)).toBe(false)
+    expect(placement.when!(tru)).toBe(true)
+  })
+
+  it('multiscale is a valid tileFamily option with a default', () => {
+    const fam = TEXTURE_CONTROLS.find((c) => c.key === 'tileFamily')!
+    expect(fam.kind === 'select' && fam.options.includes('multiscale')).toBe(true)
+    expect(textureDefaults().subdivide).toBe(0.5)
+  })
 })

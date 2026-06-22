@@ -10,7 +10,7 @@ export function cloneParams<T>(value: T): T {
 }
 
 export const MODES = ['procedural', 'truchet'] as const
-export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave'] as const
+export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale'] as const
 
 export type Mode = typeof MODES[number]
 export type TileFamily = typeof TILE_FAMILIES[number]
