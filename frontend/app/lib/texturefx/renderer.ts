@@ -9,6 +9,8 @@ import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
 import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
+import { fillForRole } from '~/lib/texturefx/fills'
+import { rolesFor } from '~/lib/texturefx/roles'
 
 const VS = `#version 300 es
 in vec2 a_pos; out vec2 v_uv;
@@ -25,6 +27,29 @@ uniform sampler2D u_stateTex;
 uniform sampler2D u_rasterTex;
 uniform float u_hasRaster, u_seamMethod, u_feather, u_rasterScale;
 uniform vec3 u_a, u_b, u_bg;
+uniform int u_fillType[3];
+uniform int u_fillFrame[3];
+uniform int u_fillKind[3];
+uniform float u_fillAngle[3];
+uniform vec3 u_fillC0[3];
+uniform vec3 u_fillC1[3];
+
+// Evaluate role r fill at cell-local fc and tile coord tc. Solid + 2-stop gradient.
+// Tile-global linear uses mirrored ramp for seamless tiling.
+vec3 evalFill(int r, vec2 fc, vec2 tc){
+  if (u_fillType[r] == 0) return u_fillC0[r];
+  float g;
+  if (u_fillKind[r] == 1) {
+    vec2 p = (u_fillFrame[r]==1) ? tc : fc;
+    g = clamp(length(p - vec2(0.5)) * 2.0, 0.0, 1.0);
+  } else {
+    float a = radians(u_fillAngle[r]);
+    vec2 d = vec2(cos(a), sin(a));
+    if (u_fillFrame[r]==1) { float t = dot(tc, d); g = 1.0 - abs(2.0*fract(t) - 1.0); }
+    else { g = clamp(dot(fc, d), 0.0, 1.0); }
+  }
+  return mix(u_fillC0[r], u_fillC1[r], g);
+}
 
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
 float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
@@ -107,7 +132,7 @@ void main(){
         lf = vec2(fx*3.0 - sx, fy*3.0 - sy); sub = sx*3.0 + sy + 1.0; // sub: 0 = whole cell, 1-9 = row-major 3×3 sub-cell index (+1) — mirrors pattern.ts
       }
       float st2 = cellHash(cx, cy, hseed + sub*1.7) < 0.5 ? 0.0 : 1.0;
-      frag = vec4(arcCov(lf, st2, u_tw) ? u_a : u_bg, 1.0);
+      frag = vec4(arcCov(lf, st2, u_tw) ? evalFill(0, lf, v_uv) : evalFill(1, lf, v_uv), 1.0);
       return;
     }
     float h = cellHash(cx, cy, hseed);
@@ -118,44 +143,47 @@ void main(){
       st = (h < u_rotBias) ? 0.0 : 1.0;
     }
     vec3 col;
-    if (u_family < 0.5) {            // arcs: state 0 → centers (0,0)&(1,1); state 1 → (1,0)&(0,1)
-      col = arcCov(vec2(fx,fy), st, u_tw) ? u_a : u_bg;
-    } else if (u_family < 1.5) {     // diagonal two-tone
+    if (u_family < 0.5) {            // arcs: stroke=role0, ground=role1
+      col = arcCov(vec2(fx,fy), st, u_tw) ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
+    } else if (u_family < 1.5) {     // diagonal two-tone: sideA=role0, sideB=role1
       bool side = (st < 0.5) ? (fy < fx) : (fy < 1.0 - fx);
-      col = side ? u_a : u_b;
-    } else {                          // weave: band width from u_tw; over/under = parity XOR state
+      col = side ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
+    } else {                          // weave: warp=role0, weft=role1, gap=role2
       float bw = 0.44 + u_tw;
       bool inV = abs(fx - 0.5) < bw*0.5;
       bool inH = abs(fy - 0.5) < bw*0.5;
       bool warpTop = (posmod(cx+cy, 2.0) == 0.0) != (st > 0.5);
-      if (inV && inH) col = warpTop ? u_a : u_b;
-      else if (inV) col = u_a;
-      else if (inH) col = u_b;
-      else col = u_bg;
+      if (inV && inH) col = warpTop ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
+      else if (inV) col = evalFill(0, vec2(fx,fy), v_uv);
+      else if (inH) col = evalFill(1, vec2(fx,fy), v_uv);
+      else col = evalFill(2, vec2(fx,fy), v_uv);
     }
     frag = vec4(col, 1.0);
     return;
   }
 
-  // Per-cell jitter: swap ink A/B for cells where hash < jitter threshold.
-  // Hashes the modded cx/cy so the tile repeats seamlessly.
+  // Per-cell jitter: swap role0/role1 for cells where hash < jitter threshold.
+  // Swap applies only to checker and stripes (two-tone motifs); dots/grid use roles directly.
   float swap = (u_jitter > 0.0 && cellHash(cx, cy, hseed + 3.0) < u_jitter) ? 1.0 : 0.0;
-  vec3 ink  = mix(u_a, u_b, swap);
-  vec3 ink2 = mix(u_b, u_a, swap);
+  vec3 F0 = evalFill(0, vec2(fx,fy), v_uv);
+  vec3 F1 = evalFill(1, vec2(fx,fy), v_uv);
+  // Jitter-swapped aliases for checker/stripes only
+  vec3 ink  = (swap > 0.5) ? F1 : F0;
+  vec3 ink2 = (swap > 0.5) ? F0 : F1;
 
   vec3 c;
   // u_motif: 0 = checker, 1 = stripes, 2 = dots, 3 = grid  (MOTIFS order)
-  if (u_motif < 0.5) {                 // checker
+  if (u_motif < 0.5) {                 // checker: role0/role1 with jitter swap
     c = (posmod(cx+cy,2.0)==0.0) ? ink : ink2;
-  } else if (u_motif < 1.5) {          // stripes — split point = u_scale, mirrors pattern.ts
+  } else if (u_motif < 1.5) {          // stripes: role0/role1 with jitter swap
     c = (fx < u_scale) ? ink : ink2;
-  } else if (u_motif < 2.5) {          // dots — anti-aliased circle (smooth edge)
+  } else if (u_motif < 2.5) {          // dots: role0=dot, role1=ground, no swap
     float d = distance(vec2(fx, fy), vec2(0.5));
-    float aa = max(fwidth(d), 1e-4);              // ~1px screen-space edge, res-independent
+    float aa = max(fwidth(d), 1e-4);
     float cov = 1.0 - smoothstep(u_scale*0.5 - aa, u_scale*0.5 + aa, d);
-    c = mix(u_bg, ink, cov);
-  } else {                             // grid
-    c = (fx < u_lw || fy < u_lw) ? ink : u_bg;
+    c = mix(F1, F0, cov);
+  } else {                             // grid: role0=line, role1=ground, no swap
+    c = (fx < u_lw || fy < u_lw) ? F0 : F1;
   }
   frag = vec4(c, 1.0);
 }`
@@ -251,6 +279,23 @@ class TextureFxRenderer {
     gl.uniform3fv(u('u_a'), hex(String(p.colorA)))
     gl.uniform3fv(u('u_b'), hex(String(p.colorB)))
     gl.uniform3fv(u('u_bg'), hex(String(p.background)))
+    const roles = rolesFor(p)
+    for (let r = 0; r < 3; r++) {
+      const roleKey = roles[r]
+      const fill = roleKey !== undefined ? fillForRole(p, roleKey, r) : { type: 'solid' as const, color: '#000000' }
+      const loc = (n: string) => gl.getUniformLocation(this.prog!, `${n}[${r}]`)
+      if (fill.type === 'gradient') {
+        gl.uniform1i(loc('u_fillType'), 1)
+        gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
+        gl.uniform1i(loc('u_fillKind'), fill.kind === 'radial' ? 1 : 0)
+        gl.uniform1f(loc('u_fillAngle'), Number(fill.angle) || 0)
+        gl.uniform3fv(loc('u_fillC0'), hex(String(fill.stops?.[0]?.c ?? '#ffffff')))
+        gl.uniform3fv(loc('u_fillC1'), hex(String(fill.stops?.[fill.stops.length - 1]?.c ?? '#000000')))
+      } else {
+        gl.uniform1i(loc('u_fillType'), 0)
+        gl.uniform3fv(loc('u_fillC0'), hex(String((fill as any).color ?? '#000000')))
+      }
+    }
     const family = String(p.tileFamily)
     const multiscale = String(p.mode) === 'truchet' && family === 'multiscale'
     const structured = String(p.mode) === 'truchet' && family !== 'multiscale' && String(p.placement) === 'structured'
