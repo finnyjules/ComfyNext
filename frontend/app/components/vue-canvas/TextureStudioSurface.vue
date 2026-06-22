@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
-import { loadRaster, getRaster } from '~/lib/texturefx/raster'
+import { loadRaster, getRaster, buildSeamlessInputs } from '~/lib/texturefx/raster'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
@@ -62,6 +62,46 @@ async function onGenerate() {
     console.error('[texture] generate failed', e)
     genError.value = e?.statusMessage || e?.message || 'Generate failed'
   } finally { generating.value = false }
+}
+
+const sealing = ref(false)
+async function onMakeSeamless() {
+  const src = String(params.rasterSrc ?? '')
+  if (!src || sealing.value) return
+  sealing.value = true; genError.value = ''
+  try {
+    await loadRaster(src)
+    const img = getRaster(src)
+    if (!img) { genError.value = 'Image not loaded yet'; return }
+    const { image, mask } = buildSeamlessInputs(img)
+    const res = await $fetch<{ images?: string[] }>('/api/inpaint/flux-fill', {
+      method: 'POST',
+      body: {
+        image, mask,
+        prompt: String(params.texturePrompt ?? '').trim() || 'seamless continuous texture, fill to match the surrounding pattern',
+        tier: 'dev', count: 1,
+      },
+    })
+    const dataUrl = res?.images?.[0]
+    if (!dataUrl) { genError.value = 'No image returned'; return }
+    const blob = await (await fetch(dataUrl)).blob()
+    const name = `texseam_${Date.now()}.png`
+    const fd = new FormData()
+    fd.append('image', new File([blob], name, { type: 'image/png' }))
+    fd.append('overwrite', 'true')
+    const up = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!up.ok) { genError.value = 'Upload failed'; return }
+    const d = await up.json() as { name?: string; subfolder?: string }
+    const fname = d.subfolder ? `${d.subfolder}/${d.name}` : (d.name ?? name)
+    params.rasterSrc = fname
+    params.seamMethod = 'direct'   // baked image is already seamless → sample 1:1
+    await recordAsset(activeTab.value?.projectUuid, 'image', fname)
+    await loadRaster(fname)
+    renderPreview()
+  } catch (e: any) {
+    console.error('[texture] make-seamless failed', e)
+    genError.value = e?.statusMessage || e?.message || 'Make seamless failed'
+  } finally { sealing.value = false }
 }
 
 async function onImportFile(e: Event) {
@@ -256,6 +296,14 @@ onBeforeUnmount(() => {
               :disabled="generating || !String(params.texturePrompt ?? '').trim()"
               @click="onGenerate"
             >{{ generating ? 'Generating…' : 'Generate' }}</button>
+          </div>
+          <div v-if="params.rasterSrc" class="flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              class="rounded border border-white/15 px-2 py-1 text-xs transition-colors hover:bg-white/10 disabled:opacity-50"
+              :disabled="sealing"
+              @click="onMakeSeamless"
+            >{{ sealing ? 'Sealing…' : 'Make seamless (AI)' }}</button>
           </div>
           <p v-if="genError" class="text-[10px] text-red-300">{{ genError }}</p>
         </div>
