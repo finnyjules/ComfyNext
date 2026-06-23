@@ -1669,7 +1669,7 @@ onBeforeUnmount(() => {
             <span
               v-if="importedAesthetic"
               class="ml-2 text-[9.5px] uppercase tracking-wide text-emerald-100/90 bg-emerald-500/20 px-1.5 py-0.5 rounded align-middle"
-              :title="`Aesthetic from Krea (added to prompts):\n\n${importedAesthetic}`"
+              :title="`Aesthetic ${aestheticSource === 'krea' ? 'from Krea' : 'from your images'} (added to prompts):\n\n${importedAesthetic}`"
             >aesthetic ✓</span>
           </label>
           <div class="flex items-center gap-2">
