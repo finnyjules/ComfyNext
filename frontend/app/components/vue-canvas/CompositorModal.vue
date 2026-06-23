@@ -49,6 +49,11 @@ const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light',
 const FONT_NAMES = TEMPLATE_FONTS.map(f => f.name)
 
 const compositor = computed(() => props.nodes.find((n: any) => n.id === props.nodeId))
+// The Frame's display name (user-renamed node title), shown top-left.
+const frameName = computed(() => {
+  const d = compositor.value?.data as any
+  return (d?.title || d?.subgraphName || 'Frame') as string
+})
 
 function getNodeImageUrl(node: any): string | null {
   if (node?.data?.images?.length) return node.data.images[0]
@@ -1738,7 +1743,8 @@ onUnmounted(() => {
     <!-- Left sidebar: floating glass layer panel -->
     <div class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <div class="px-4 pt-3 pb-1.5">
-        <h2 class="text-sm font-semibold tracking-tight">Compositor</h2>
+        <h2 class="text-sm font-semibold tracking-tight truncate" :title="frameName">{{ frameName }}</h2>
+        <div class="text-[10px] uppercase tracking-[0.12em] text-white/30">Compositor</div>
       </div>
       <div class="px-3 pb-3 flex-1 min-h-0 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
