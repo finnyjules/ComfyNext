@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
 import {
-  Loader2, Download, RefreshCw, Pencil, Frame as FrameIcon, ImagePlus,
+  Loader2, Download, RefreshCw, Maximize2, Frame as FrameIcon, ImagePlus,
   MousePointer2, Check, Type, Square, Circle, Minus, Trash2,
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
@@ -771,11 +771,11 @@ onUnmounted(() => {
       <div v-else class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
         <span class="text-[10px] text-white/45 tabular-nums">{{ sizeLabel }}</span>
         <span class="flex-1" />
-        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Edit on canvas" @click.stop="toggleEdit">
-          <MousePointer2 class="size-2.5" /> Edit
+        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Edit directly on the canvas" @click.stop="toggleEdit">
+          <MousePointer2 class="size-2.5" /> Edit here
         </button>
-        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Open editor (precise / blend / focused work)" @click.stop="openEditor">
-          <Pencil class="size-2.5" /> Modal
+        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Open the full editor for precise / blend / focused work" @click.stop="openEditor">
+          <Maximize2 class="size-2.5" /> Open editor
         </button>
         <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="!hasAnyLayer && !compositeUrl" title="Download" @click.stop="downloadImage"><Download class="size-2.5" /></button>
         <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="data.running || isMuted || isBypassed" :title="data.running ? 'Running…' : 'Render'" @click.stop="runThisNode">
