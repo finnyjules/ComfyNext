@@ -723,8 +723,76 @@ describe('shapeRegion weave3d (isometric triaxial weave)', () => {
   })
 })
 
+describe('shapeRegion tripods (interlocking 3D Y-blocks)', () => {
+  const cells = 6
+  const p = { armLength: 0.6, armWidth: 0.3, bevel: 0.45 } as any
+
+  it('rolesFor: tripods resolves to [armA, armB, armC]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'tripods' } as any)).toEqual(['armA', 'armB', 'armC'])
+  })
+
+  it('produces all three arm roles AND recess (role 3) over a dense grid', () => {
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 48; i++) for (let j = 0; j <= 48; j++) {
+      const r = shapeRegion('tripods', i / 48, j / 48, cells, p)
+      expect(r.role >= 0 && r.role <= 3).toBe(true)
+      roleSet.add(r.role)
+    }
+    expect(roleSet).toEqual(new Set([0, 1, 2, 3]))
+  })
+
+  it('bevel: some arm pixels carry shade<1 (side wall) and some carry shade=1 (top)', () => {
+    let dark = 0, light = 0
+    for (let i = 0; i <= 60; i++) for (let j = 0; j <= 60; j++) {
+      const r = shapeRegion('tripods', i / 60, j / 60, cells, p)
+      if (r.role <= 2) { if ((r.shade ?? 1) < 0.99) dark++; else light++ }
+    }
+    expect(dark).toBeGreaterThan(0)
+    expect(light).toBeGreaterThan(0)
+  })
+
+  it('bevel=0 → all arm pixels shade=1 (flat)', () => {
+    const flat = { armLength: 0.6, armWidth: 0.3, bevel: 0 } as any
+    for (let i = 0; i <= 30; i++) for (let j = 0; j <= 30; j++) {
+      const r = shapeRegion('tripods', i / 30, j / 30, cells, flat)
+      if (r.role <= 2) expect(r.shade ?? 1).toBeCloseTo(1, 5)
+    }
+  })
+
+  it('longer arms shrink the recess (fewer role-3 pixels)', () => {
+    const countRecess = (armLength: number) => {
+      let n = 0
+      for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) {
+        if (shapeRegion('tripods', (i + 0.5) / 40, (j + 0.5) / 40, cells, { armLength, armWidth: 0.3, bevel: 0.45 } as any).role === 3) n++
+      }
+      return n
+    }
+    expect(countRecess(0.78)).toBeLessThan(countRecess(0.46))
+  })
+
+  it('interior periodicity: pattern repeats every 1/nx in u and 2/ny in v', () => {
+    const K = 1.1547005
+    const nx = Math.max(2, Math.round(cells))
+    const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
+    const pts = [[0.13, 0.27], [0.4, 0.55], [0.72, 0.81], [0.9, 0.1]]
+    for (const [u, v] of pts) {
+      const base = shapeRegion('tripods', u, v, cells, p).role
+      expect(shapeRegion('tripods', u + 1 / nx, v, cells, p).role).toBe(base)
+      expect(shapeRegion('tripods', u, v + 2 / ny, cells, p).role).toBe(base)
+    }
+  })
+
+  it('seamless wrap at cells=6: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 1; i <= 15; i++) {
+      const t = (i + 0.3) / 16
+      expect(shapeRegion('tripods', 0, t, cells, p).role).toBe(shapeRegion('tripods', 1, t, cells, p).role)
+      expect(shapeRegion('tripods', t, 0, cells, p).role).toBe(shapeRegion('tripods', t, 1, cells, p).role)
+    }
+  })
+})
+
 describe('isStrokeEdge (shape outline detection)', () => {
-  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d']
+  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods']
 
   it('flags region boundaries and not deep interiors, for every family', () => {
     // Each family must produce SOME edge pixels and SOME non-edge (interior) pixels

@@ -27,6 +27,7 @@ uniform float u_pinwheel;
 uniform float u_hexFlat;
 uniform float u_fsRadius, u_fsRowSpacing, u_fsWidth;
 uniform float u_weaveWidth;              // weave3d strand half-width (lattice units)
+uniform float u_armLen, u_armWidth, u_bevel;  // tripods arm geometry + 3D bevel strength
 uniform float u_strokeMode, u_strokeW;   // 0 off, 1 uniform, 2 per-role; width as fraction of a cell
 uniform vec3 u_strokeColor;              // uniform-mode stroke
 uniform vec3 u_strokeRole[3];            // per-role stroke colors
@@ -184,12 +185,13 @@ bool arcCov(vec2 f, float st, float tw) {
 
 // Geometric shapes role+cell-coord at a UV. Factored out so the stroke pass can
 // re-sample role at neighbor UVs for boundary detection. Mirrors shapes.ts.
-int shapeRole(vec2 uv, out vec2 cf) {
+int shapeRole(vec2 uv, out vec2 cf, out float shade) {
   vec2 v_uv = uv;                 // local alias so the per-family bodies read unchanged
   vec2 g = v_uv * u_cells;
   vec2 f = fract(g);
   int role = 0;
   cf = f;
+  shade = 1.0;                    // fill multiplier; only tripods sets <1 (baked bevel)
   if (u_shapeFamily < 0.5) {
       // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
       float c = 0.29;
@@ -343,7 +345,7 @@ int shapeRole(vec2 uv, out vec2 cf) {
       float ang = mod(degrees(atan(dy, dx)) - 30.0, 360.0);
       role = int(mod(floor(ang / 120.0), 3.0));
       cf = vec2((uw - bcx) / sx + 0.5, (vw - bcy) / sy + 0.5);
-    } else {                              // weave3d — isometric triaxial over-under weave (role 3 = recess/bg)
+    } else if (u_shapeFamily < 10.5) {    // weave3d — isometric triaxial over-under weave (role 3 = recess/bg)
       float uw = fract(v_uv.x); float vw = fract(v_uv.y);
       float K = 1.1547005;
       float nx = max(2.0, floor(u_cells + 0.5));
@@ -367,6 +369,31 @@ int shapeRole(vec2 uv, out vec2 cf) {
         float along = fract(tt[int(mod(float(vis) + 2.0, 3.0))]);
         cf = vec2(along, vs / bw * 0.5 + 0.5);
       }
+    } else {                              // tripods — interlocking 3D Y-blocks (role 3 = recess/bg)
+      float uw = fract(v_uv.x); float vw = fract(v_uv.y);
+      float K = 1.1547005;
+      float nx = max(2.0, floor(u_cells + 0.5));
+      float ny = 2.0 * max(1.0, floor(nx * K / 2.0 + 0.5));
+      float sx = 1.0 / nx; float sy = 1.0 / ny;
+      float armLen = u_armLen; float armW = u_armWidth; float bevel = u_bevel;
+      float r0 = floor(vw / sy + 0.5);
+      float bestH = -1e9; role = 3; cf = vec2(0.5);
+      for (int dr = -1; dr <= 1; dr++) {
+        float row = r0 + float(dr); float off = mod(row, 2.0) * 0.5; float c0 = floor(uw / sx - off + 0.5);
+        for (int dc = -1; dc <= 1; dc++) {
+          float cl = c0 + float(dc); float cx = (cl + off) * sx; float cy = row * sy;
+          float dx = uw - cx; float dyA = (vw - cy) * (sx / sy);
+          float r = length(vec2(dx, dyA)) / sx;
+          float aa = atan(dyA, dx);
+          float sect = floor(mod(degrees(aa) - 30.0, 360.0) / 120.0);
+          float aRel = aa - radians(90.0 + 120.0 * sect);
+          float along = r * cos(aRel); float across = r * sin(aRel);
+          if (along > 0.0 && along < armLen && abs(across) < armW) {
+            float h = -r;
+            if (h > bestH) { bestH = h; role = int(sect); cf = vec2(min(1.0, along / armLen), across / armW * 0.5 + 0.5); shade = (across > 0.0) ? (1.0 - bevel) : 1.0; }
+          }
+        }
+      }
     }
   return role;
 }
@@ -374,22 +401,23 @@ int shapeRole(vec2 uv, out vec2 cf) {
 void main(){
   // shapes mode (MODES index 3) -- geometric tiling families. Mirrors shapes.ts.
   if (u_mode > 2.5) {
-    vec2 cf;
-    int role = shapeRole(v_uv, cf);
-    // role 3 is the weave3d recess → tile background; real regions use their fill.
-    vec3 col = (role > 2) ? u_bg : evalFill(role, cf, v_uv);
+    vec2 cf; float shade;
+    int role = shapeRole(v_uv, cf, shade);
+    // role 3 is the weave3d/tripods recess → tile background; real regions use their
+    // fill, optionally darkened by the tripods bevel (shade<1 on arm side-walls).
+    vec3 col = (role > 2) ? u_bg : evalFill(role, cf, v_uv) * clamp(shade, 0.0, 1.0);
     // Stroke: paint pixels near a role boundary. Re-sample role at 4 axis neighbors
     // (offset = stroke width as a fraction of a cell); if any differs, we're on an edge.
     // fract()-based wrapping inside shapeRole keeps the stroke seamless at tile edges.
     // Recess pixels (role 3) are left unstroked so holes read cleanly.
     if (u_strokeMode > 0.5 && role <= 2) {
       float w = u_strokeW / max(u_cells, 1.0);
-      vec2 dummy;
+      vec2 dummy; float sdummy;
       bool edge =
-        shapeRole(v_uv + vec2(w, 0.0), dummy) != role ||
-        shapeRole(v_uv - vec2(w, 0.0), dummy) != role ||
-        shapeRole(v_uv + vec2(0.0, w), dummy) != role ||
-        shapeRole(v_uv - vec2(0.0, w), dummy) != role;
+        shapeRole(v_uv + vec2(w, 0.0), dummy, sdummy) != role ||
+        shapeRole(v_uv - vec2(w, 0.0), dummy, sdummy) != role ||
+        shapeRole(v_uv + vec2(0.0, w), dummy, sdummy) != role ||
+        shapeRole(v_uv - vec2(0.0, w), dummy, sdummy) != role;
       if (edge) col = (u_strokeMode > 1.5) ? u_strokeRole[role] : u_strokeColor;
     }
     frag = vec4(col, 1.0);
@@ -613,6 +641,9 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
     gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
     gl.uniform1f(u('u_weaveWidth'),   Number.isFinite(Number(p.weaveWidth))   ? Number(p.weaveWidth)   : 0.36)
+    gl.uniform1f(u('u_armLen'),    Number.isFinite(Number(p.armLength)) ? Number(p.armLength) : 0.6)
+    gl.uniform1f(u('u_armWidth'),  Number.isFinite(Number(p.armWidth))  ? Number(p.armWidth)  : 0.3)
+    gl.uniform1f(u('u_bevel'),     Number.isFinite(Number(p.bevel))     ? Number(p.bevel)     : 0.45)
     const strokeMode = String(p.shapeStroke) === 'per-role' ? 2 : String(p.shapeStroke) === 'uniform' ? 1 : 0
     gl.uniform1f(u('u_strokeMode'), strokeMode)
     gl.uniform1f(u('u_strokeW'), Number.isFinite(Number(p.shapeStrokeWidth)) ? Number(p.shapeStrokeWidth) : 0.08)

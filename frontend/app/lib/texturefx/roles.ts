@@ -18,11 +18,12 @@ export const ROLES_BY_FAMILY: Record<string, string[]> = {
   cairo: ['a', 'b', 'c'],
   cubes: ['top', 'left', 'right'],
   weave3d: ['strandA', 'strandB', 'strandC'],
+  tripods: ['armA', 'armB', 'armC'],
 }
 
 const PROCEDURAL_FAMILIES = new Set(['checker', 'stripes', 'dots', 'grid'])
 const TRUCHET_FAMILIES = new Set(['arcs', 'diagonal', 'weave', 'multiscale'])
-const SHAPE_FAMILIES = new Set(['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d'])
+const SHAPE_FAMILIES = new Set(['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods'])
 
 // Which family is active given the params (procedural motif, truchet tileFamily, …).
 export function activeFamily(p: Params): string {
@@ -47,7 +48,7 @@ const GROUND_IS_BG = new Set(['dots', 'grid', 'arcs', 'multiscale'])
 export function legacyColor(p: Params, family: string, roleIndex: number): string {
   // weave3d wants 3 light→dark strand tones over the dark Background recess, so it
   // reads as a 3D isometric weave out of the box (role2 must NOT default to bg).
-  if (family === 'weave3d') return ['#d8dee9', '#9aa5b8', '#5b6472'][roleIndex] ?? '#5b6472'
+  if (family === 'weave3d' || family === 'tripods') return ['#d8dee9', '#9aa5b8', '#5b6472'][roleIndex] ?? '#5b6472'
   if (roleIndex === 0) return String(p.colorA ?? '#e8eef5')
   if (roleIndex === 2) return String(p.background ?? '#0e1116')
   // roleIndex 1

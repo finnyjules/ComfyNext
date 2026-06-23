@@ -1,6 +1,8 @@
 import type { Params } from '~/lib/spacetype/effect'
 
-export type ShapeRegion = { role: number; fx: number; fy: number }
+// shade is a per-pixel fill multiplier (1 = unchanged). Used by tripods to darken
+// arm side-walls vs top faces for a baked 3D bevel. Other families omit it (=1).
+export type ShapeRegion = { role: number; fx: number; fy: number; shade?: number }
 
 // Pure, seamless tiling-family sampler. u,v in [0,1]; integer `cells`.
 // Returns the role index a pixel belongs to + its cell-local coords (fx,fy).
@@ -221,6 +223,41 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       }
       const along = ((t[(vis.k + 2) % 3]! % 1) + 1) % 1
       return { role: vis.k, fx: along, fy: vis.s / bw * 0.5 + 0.5 }
+    }
+    case 'tripods': {
+      // Interlocking 3D Y-blocks on the cube/hex lattice. Each hex node emits 3 arms
+      // (one per 120° sector); arms of neighbouring nodes mesh, leaving hexagonal
+      // recesses (role 3 = background). Nearest node's arm wins where two overlap.
+      // shade darkens the arm's side wall (across>0) vs top face for a baked bevel.
+      // Seamless: same integer lattice as cubes (nx integer, ny even).
+      const uw = ((u % 1) + 1) % 1, vw = ((v % 1) + 1) % 1
+      const K = 1.1547005
+      const nx = Math.max(2, Math.round(cells))
+      const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
+      const sx = 1 / nx, sy = 1 / ny
+      const armLen = Number.isFinite(Number((_p as any)?.armLength)) ? Number((_p as any).armLength) : 0.6
+      const armW = Number.isFinite(Number((_p as any)?.armWidth)) ? Number((_p as any).armWidth) : 0.3
+      const bevel = Number.isFinite(Number((_p as any)?.bevel)) ? Number((_p as any).bevel) : 0.45
+      const r0 = Math.round(vw / sy)
+      let bestH = -1e9, bRole = 3, bFx = 0.5, bFy = 0.5, bShade = 1
+      for (let dr = -1; dr <= 1; dr++) {
+        const row = r0 + dr, off = (((row % 2) + 2) % 2) * 0.5, c0 = Math.round(uw / sx - off)
+        for (let dc = -1; dc <= 1; dc++) {
+          const col = c0 + dc, cx = (col + off) * sx, cy = row * sy
+          const dx = uw - cx, dyA = (vw - cy) * (sx / sy)
+          const r = Math.hypot(dx, dyA) / sx
+          const aa = Math.atan2(dyA, dx)
+          const sect = Math.floor(((((aa * 180 / Math.PI - 30) % 360) + 360) % 360) / 120)
+          const bis = (90 + 120 * sect) * Math.PI / 180
+          const aRel = aa - bis
+          const along = r * Math.cos(aRel), across = r * Math.sin(aRel)
+          if (along > 0 && along < armLen && Math.abs(across) < armW) {
+            const h = -r // nearest node on top
+            if (h > bestH) { bestH = h; bRole = sect; bFx = Math.min(1, along / armLen); bFy = across / armW * 0.5 + 0.5; bShade = across > 0 ? (1 - bevel) : 1 }
+          }
+        }
+      }
+      return { role: bRole, fx: bFx, fy: bFy, shade: bShade }
     }
     default:
       return { role: 0, fx, fy }
