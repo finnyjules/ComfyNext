@@ -1,5 +1,5 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
-import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, SEAM_METHODS, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, SEAM_METHODS, SHAPE_FAMILIES, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
 // predicate for contextual reveal (e.g. show procedural controls only in
@@ -10,6 +10,7 @@ export type TextureControl = ControlSpec & { when?: (p: Params) => boolean }
 const isProcedural = (p: Params) => String(p.mode) === 'procedural'
 const isTruchet = (p: Params) => String(p.mode) === 'truchet'
 const isRaster = (p: Params) => String(p.mode) === 'raster'
+const isShapes = (p: Params) => String(p.mode) === 'shapes'
 
 export const TEXTURE_CONTROLS: TextureControl[] = [
   // Lattice controls — hidden in raster mode (raster is whole-tile, no lattice).
@@ -17,6 +18,7 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'cells', label: 'Cells', kind: 'slider', min: 2, max: 40, step: 2, default: 8, group: 'Lattice', when: (p) => !isRaster(p) },
 
   { key: 'mode', label: 'Content', kind: 'select', options: [...MODES], default: 'procedural', group: 'Cell' },
+  { key: 'shapeFamily', label: 'Shape', kind: 'select', options: [...SHAPE_FAMILIES], default: 'octagon', group: 'Cell', when: isShapes },
 
   // Procedural motif controls — shown only in procedural mode.
   { key: 'motif', label: 'Motif', kind: 'select', options: [...MOTIFS], default: 'checker', group: 'Content', when: isProcedural },

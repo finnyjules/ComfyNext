@@ -6,7 +6,7 @@
 // the GPU samples the exact same state grid the CPU computes (shared source, not a mirror).
 
 import type { Params } from '~/lib/spacetype/effect'
-import { LATTICES, MOTIFS, MODES, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES } from '~/lib/texturefx/types'
 import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
 import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
@@ -22,6 +22,7 @@ precision highp float;
 in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
+uniform float u_shapeFamily;
 uniform float u_placement;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
@@ -150,7 +151,20 @@ bool arcCov(vec2 f, float st, float tw) {
 }
 
 void main(){
-  // raster branch — must be FIRST so it returns before any truchet/procedural logic
+  // shapes mode (MODES index 3) -- geometric tiling families. Mirrors shapes.ts.
+  if (u_mode > 2.5) {
+    vec2 g = v_uv * u_cells;
+    vec2 f = fract(g);
+    int role = 0;
+    // u_shapeFamily: 0 = octagon (SHAPE_FAMILIES order)
+    // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
+    float c = 0.29;
+    bool corner = (f.x + f.y < c) || ((1.0 - f.x) + f.y < c) || (f.x + (1.0 - f.y) < c) || ((1.0 - f.x) + (1.0 - f.y) < c);
+    role = corner ? 1 : 0;
+    frag = vec4(evalFill(role, f, v_uv), 1.0);
+    return;
+  }
+  // raster branch -- catches index 2 only (shapes returned above)
   if (u_mode > 1.5) { // raster (MODES index 2)
     if (u_hasRaster < 0.5) { frag = vec4(u_bg, 1.0); return; }
     float cu = (v_uv.x - 0.5)/u_rasterScale + 0.5;
@@ -361,6 +375,7 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_seed'), Math.round(Number(p.seed) || 1))
     gl.uniform1f(u('u_mode'), Math.max(0, MODES.indexOf(String(p.mode) as typeof MODES[number])))
     gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
+    gl.uniform1f(u('u_shapeFamily'), Math.max(0, SHAPE_FAMILIES.indexOf(String(p.shapeFamily) as any)))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))
