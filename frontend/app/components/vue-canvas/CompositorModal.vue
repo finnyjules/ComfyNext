@@ -2333,15 +2333,13 @@ onUnmounted(() => {
           <!-- Prompt -->
           <div>
             <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Prompt</div>
-            <div class="gen-border rounded-md p-px">
-              <textarea
-                v-model="genPrompt"
-                rows="3"
-                placeholder="what object to generate…"
-                class="block w-full bg-[#16161b] rounded-[5px] text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
-                @keydown.enter.exact.prevent="runRegionFill"
-              />
-            </div>
+            <textarea
+              v-model="genPrompt"
+              rows="3"
+              placeholder="what object to generate…"
+              class="gen-border block w-full rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+              @keydown.enter.exact.prevent="runRegionFill"
+            />
           </div>
 
           <div class="flex items-center gap-1.5">
@@ -2859,10 +2857,14 @@ input[type="number"] {
   to { background-position: 100% 50%; }
 }
 
-/* Hairline pastel-gradient border: the 1px wrapper shows the gradient; the inner
-   element's own (slightly smaller-radius) background covers everything but the
-   1px ring. Uses the same --gen-pastel source as the button/stroke. */
+/* Hairline pastel-gradient border with clean rounded corners: a transparent 1px
+   border, then two backgrounds — a solid interior clipped to the padding box and
+   the gradient clipped to the border box (origin border-box). Follows the radius
+   exactly. Uses the same --gen-pastel source as the button/stroke. */
 .gen-border {
-  background-image: var(--gen-pastel);
+  border: 1px solid transparent;
+  background-image: linear-gradient(#16161b, #16161b), var(--gen-pastel);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
 }
 </style>
