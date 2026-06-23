@@ -35,7 +35,7 @@ export const STYLIZE_EFFECT_ID: Record<string, string> = {
   dither: 'bayer_dither', posterize: 'posterize', duotone: 'duotone',
 }
 
-export const FILL_TYPES = ['solid', 'gradient', 'image', 'pattern'] as const
+export const FILL_TYPES = ['solid', 'gradient', 'image', 'pattern', 'link'] as const
 export const FILL_FRAMES = ['cell', 'tile'] as const
 export const GRADIENT_KINDS = ['linear', 'radial'] as const
 export type FillType = typeof FILL_TYPES[number]

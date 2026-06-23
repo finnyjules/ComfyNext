@@ -33,7 +33,6 @@ uniform int u_fillFrame[3];
 uniform int u_fillKind[3];
 uniform float u_fillAngle[3];
 uniform vec3 u_fillC0[3];
-uniform vec3 u_fillC1[3];
 uniform int u_fillStopCount[3];
 uniform vec3 u_fillStops[12];
 uniform float u_fillStopPos[12];
