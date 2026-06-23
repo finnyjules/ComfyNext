@@ -285,3 +285,74 @@ describe('rolesFor fishscale and pythagorean', () => {
     expect(rolesFor({ mode: 'shapes', shapeFamily: 'pythagorean' } as any)).toEqual(['big', 'small'])
   })
 })
+
+describe('shapeRegion hex', () => {
+  const cells = 12
+
+  it('3-coloring valid: all three roles appear over a sampled grid', () => {
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 32; i++) {
+      for (let j = 0; j <= 32; j++) {
+        const r = shapeRegion('hex', i / 32, j / 32, cells)
+        expect(r.role >= 0 && r.role <= 2).toBe(true)
+        roleSet.add(r.role)
+      }
+    }
+    expect(roleSet).toEqual(new Set([0, 1, 2]))
+  })
+
+  it('adjacency: two horizontally-adjacent hex centers have different roles', () => {
+    // Compute hex grid params as the implementation does
+    const K = 1.1547005
+    const nx = Math.max(9, Math.round(cells / 3) * 3)
+    const ny = 2 * Math.round((nx * K) / 2)
+    const sx = 1 / nx, sy = 1 / ny
+    // Row 0, col 0 center vs col 1 center (no offset for even row)
+    const u0 = 0 * sx, v0 = 0 * sy
+    const u1 = 1 * sx, v1 = 0 * sy
+    const r0 = shapeRegion('hex', u0, v0, cells)
+    const r1 = shapeRegion('hex', u1, v1, cells)
+    expect(r0.role).not.toBe(r1.role)
+  })
+
+  it('rolesFor: hex resolves to [a, b, c]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'hex' } as any)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('seamless wrap at cells=12: u=0 matches u=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const v = i / 16
+      expect(shapeRegion('hex', 0, v, 12).role)
+        .toBe(shapeRegion('hex', 1, v, 12).role)
+    }
+  })
+
+  it('seamless wrap at cells=12: v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const u = i / 16
+      expect(shapeRegion('hex', u, 0, 12).role)
+        .toBe(shapeRegion('hex', u, 1, 12).role)
+    }
+  })
+
+  it('seamless wrap at cells=9: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('hex', 0, t, 9).role)
+        .toBe(shapeRegion('hex', 1, t, 9).role)
+      expect(shapeRegion('hex', t, 0, 9).role)
+        .toBe(shapeRegion('hex', t, 1, 9).role)
+    }
+  })
+
+  it('flat orientation: hex(u,v,flat) equals hex(v,u,pointy) with fx/fy swapped', () => {
+    const testPoints = [[0.1, 0.3], [0.6, 0.2], [0.8, 0.7]]
+    for (const [u, v] of testPoints) {
+      const flat = shapeRegion('hex', u, v, 12, { hexOrient: 'flat' } as any)
+      const pointy = shapeRegion('hex', v, u, 12, { hexOrient: 'pointy' } as any)
+      expect(flat.role).toBe(pointy.role)
+      expect(flat.fx).toBeCloseTo(pointy.fy, 5)
+      expect(flat.fy).toBeCloseTo(pointy.fx, 5)
+    }
+  })
+})

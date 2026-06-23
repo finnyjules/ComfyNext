@@ -82,6 +82,31 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       }
       return { role: 1, fx: 0, fy: 0 }
     }
+    case 'hex': {
+      const flat = _p && String((_p as any).hexOrient) === 'flat'
+      const uw = ((u % 1) + 1) % 1, vw = ((v % 1) + 1) % 1
+      const x0 = flat ? vw : uw, y0 = flat ? uw : vw
+      const K = 1.1547005
+      const nx = Math.max(9, Math.round(cells / 3) * 3)
+      const ny = 2 * Math.round((nx * K) / 2)
+      const sx = 1 / nx, sy = 1 / ny
+      const r0 = Math.round(y0 / sy)
+      let best = 1e9, bcol = 0, brow = 0, bcx = 0, bcy = 0
+      for (let dr = -1; dr <= 1; dr++) {
+        const row = r0 + dr
+        const off = (((row % 2) + 2) % 2) * 0.5
+        const c0 = Math.round(x0 / sx - off)
+        for (let dc = -1; dc <= 1; dc++) {
+          const col = c0 + dc
+          const cx = (col + off) * sx, cy = row * sy
+          const d = (x0 - cx) ** 2 + (y0 - cy) ** 2
+          if (d < best) { best = d; bcol = col; brow = row; bcx = cx; bcy = cy }
+        }
+      }
+      const role = (((bcol - Math.floor(brow / 2) - brow) % 3) + 3) % 3
+      const lx = (x0 - bcx) / sx + 0.5, ly = (y0 - bcy) / sy + 0.5
+      return flat ? { role, fx: ly, fy: lx } : { role, fx: lx, fy: ly }
+    }
     default:
       return { role: 0, fx, fy }
   }

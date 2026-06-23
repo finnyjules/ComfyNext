@@ -24,6 +24,7 @@ uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
 uniform float u_shapeFamily;
 uniform float u_pinwheel;
+uniform float u_hexFlat;
 uniform float u_placement;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
@@ -212,7 +213,7 @@ void main(){
       }
       role = (best < R) ? 0 : 1;
       cf = vec2((gx - bcx) / (2.0 * R) + 0.5, (gy - bcy) / (2.0 * R) + 0.5);
-    } else {                              // Pythagorean / two-square
+    } else if (u_shapeFamily < 6.5) {    // Pythagorean / two-square
       float a = 2.0; float b = 1.0; float s2 = 5.0;
       float chP = max(5.0, floor(u_cells / 5.0 + 0.5) * 5.0);
       float x = v_uv.x * chP; float y = v_uv.y * chP;
@@ -225,6 +226,30 @@ void main(){
         if (x >= Lx && x < Lx + a && y >= Ly && y < Ly + a) { role = 0; cf = vec2((x - Lx) / a, (y - Ly) / a); }
         else if (x >= Lx + a && x < Lx + a + b && y >= Ly && y < Ly + b) { role = 1; cf = vec2((x - (Lx + a)) / b, (y - Ly) / b); }
       }
+    } else {                              // hex (penny mosaic, 3-color)
+      float fl = u_hexFlat;
+      float x0 = (fl > 0.5) ? fract(v_uv.y) : fract(v_uv.x);
+      float y0 = (fl > 0.5) ? fract(v_uv.x) : fract(v_uv.y);
+      float K = 1.1547005;
+      float nx = max(9.0, floor(u_cells / 3.0 + 0.5) * 3.0);
+      float ny = 2.0 * floor(nx * K / 2.0 + 0.5);
+      float sx = 1.0 / nx; float sy = 1.0 / ny;
+      float r0 = floor(y0 / sy + 0.5);
+      float best = 1e9; float bcol = 0.0; float brow = 0.0; float bcx = 0.0; float bcy = 0.0;
+      for (int dr = -1; dr <= 1; dr++) {
+        float rw = r0 + float(dr);
+        float off = mod(rw, 2.0) * 0.5;
+        float c0 = floor(x0 / sx - off + 0.5);
+        for (int dc = -1; dc <= 1; dc++) {
+          float cl = c0 + float(dc);
+          float cx = (cl + off) * sx; float cy = rw * sy;
+          float d = (x0 - cx) * (x0 - cx) + (y0 - cy) * (y0 - cy);
+          if (d < best) { best = d; bcol = cl; brow = rw; bcx = cx; bcy = cy; }
+        }
+      }
+      role = int(mod(bcol - floor(brow / 2.0) - brow, 3.0) + 3.0) % 3;
+      float lx = (x0 - bcx) / sx + 0.5; float ly = (y0 - bcy) / sy + 0.5;
+      cf = (fl > 0.5) ? vec2(ly, lx) : vec2(lx, ly);
     }
     frag = vec4(evalFill(role, cf, v_uv), 1.0);
     return;
@@ -442,6 +467,7 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
     gl.uniform1f(u('u_shapeFamily'), Math.max(0, SHAPE_FAMILIES.indexOf(String(p.shapeFamily) as any)))
     gl.uniform1f(u('u_pinwheel'), String(p.pinwheel) !== 'off' ? 1 : 0)
+    gl.uniform1f(u('u_hexFlat'), String(p.hexOrient) === 'flat' ? 1 : 0)
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))
