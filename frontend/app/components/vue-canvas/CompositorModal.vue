@@ -1611,10 +1611,10 @@ async function generateObjectInto(maskCanvas: HTMLCanvasElement, bnd: GenBounds)
   const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
   const prompt = genPrompt.value.trim() || 'subject'
   const aspect = pickAspectRatio(boxW / boxH)
-  // Style: bias toward a whole, uncropped object centered with margin on a plain
-  // background (reads as a complete object, cuts out cleanly). Scene keeps the
-  // bare prompt — it fills the region to fit the frame.
-  const objectPrompt = `${prompt}, the entire subject fully visible and not cropped, complete object centered with empty margin around it, isolated on a plain solid white background`
+  // Style: push hard for a WHOLE, uncropped object. Models (esp. flux-schnell)
+  // otherwise zoom in and clip the subject at the frame. Scene keeps the bare
+  // prompt — it fills the region to fit the frame.
+  const objectPrompt = `${prompt}. Show the COMPLETE object in full: the entire subject visible from top to bottom and side to side, nothing cut off or cropped, nothing touching the image edges. Zoomed out, small in frame, with generous empty margin on all four sides. Centered, isolated on a plain solid white background.`
 
   let raw: string | undefined
   if (genMode.value === 'scene') {
