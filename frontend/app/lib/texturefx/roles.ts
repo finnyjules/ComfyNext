@@ -7,15 +7,18 @@ import type { Fill } from '~/lib/texturefx/types'
 export const ROLES_BY_FAMILY: Record<string, string[]> = {
   checker: ['a', 'b'], stripes: ['ink', 'ink2'], dots: ['dot', 'ground'], grid: ['line', 'ground'],
   arcs: ['stroke', 'ground'], diagonal: ['sideA', 'sideB'], weave: ['warp', 'weft', 'gap'], multiscale: ['arc', 'ground'],
+  octagon: ['tile', 'joint'],
 }
 
 const PROCEDURAL_FAMILIES = new Set(['checker', 'stripes', 'dots', 'grid'])
 const TRUCHET_FAMILIES = new Set(['arcs', 'diagonal', 'weave', 'multiscale'])
+const SHAPE_FAMILIES = new Set(['octagon'])
 
 // Which family is active given the params (procedural motif, truchet tileFamily, …).
 export function activeFamily(p: Params): string {
   if (String(p.mode) === 'truchet') return String(p.tileFamily)
   if (String(p.mode) === 'procedural') return String(p.motif)
+  if (String(p.mode) === 'shapes') return String(p.shapeFamily)
   return 'checker' // raster mode has no roles; harmless default
 }
 export function rolesFor(p: Params): string[] {
@@ -25,6 +28,7 @@ export function rolesFor(p: Params): string[] {
   // families from being accidentally resolved in procedural mode and vice-versa.
   if (mode === 'truchet' && !TRUCHET_FAMILIES.has(family)) return ['a', 'b']
   if (mode === 'procedural' && !PROCEDURAL_FAMILIES.has(family)) return ['a', 'b']
+  if (mode === 'shapes' && !SHAPE_FAMILIES.has(family)) return ['a', 'b']
   return ROLES_BY_FAMILY[family] ?? ['a', 'b']
 }
 
