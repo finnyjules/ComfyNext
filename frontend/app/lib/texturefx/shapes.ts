@@ -129,6 +129,29 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       }
       return { role: 0, fx: 0, fy: 0 } // unreachable (full coverage); safe fallback
     }
+    case 'cubes': {
+      const uw = ((u % 1) + 1) % 1, vw = ((v % 1) + 1) % 1
+      const K = 1.1547005
+      const nx = Math.max(9, Math.round(cells / 3) * 3)
+      const ny = 2 * Math.round((nx * K) / 2)
+      const sx = 1 / nx, sy = 1 / ny
+      const r0 = Math.round(vw / sy)
+      let best = 1e9, bcx = 0, bcy = 0
+      for (let dr = -1; dr <= 1; dr++) {
+        const row = r0 + dr
+        const off = (((row % 2) + 2) % 2) * 0.5
+        const c0 = Math.round(uw / sx - off)
+        for (let dc = -1; dc <= 1; dc++) {
+          const cx = (c0 + dc + off) * sx, cy = row * sy
+          const d = (uw - cx) ** 2 + (vw - cy) ** 2
+          if (d < best) { best = d; bcx = cx; bcy = cy }
+        }
+      }
+      const dx = uw - bcx, dy = (vw - bcy) * (sx / sy)
+      const ang = (((Math.atan2(dy, dx) * 180) / Math.PI - 30) % 360 + 360) % 360
+      const role = Math.floor(ang / 120) % 3
+      return { role, fx: (uw - bcx) / sx + 0.5, fy: (vw - bcy) / sy + 0.5 }
+    }
     default:
       return { role: 0, fx, fy }
   }

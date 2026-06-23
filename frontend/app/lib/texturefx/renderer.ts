@@ -250,7 +250,7 @@ void main(){
       role = int(mod(bcol - floor(brow / 2.0) - brow, 3.0) + 3.0) % 3;
       float lx = (x0 - bcx) / sx + 0.5; float ly = (y0 - bcy) / sy + 0.5;
       cf = (fl > 0.5) ? vec2(ly, lx) : vec2(lx, ly);
-    } else {                              // Cairo pentagonal (3-color)
+    } else if (u_shapeFamily < 8.5) {    // Cairo pentagonal (3-color)
       float chC = 6.0 * max(1.0, floor(u_cells / 6.0 + 0.5));
       vec2 P = v_uv * chC;
       float ic = floor((P.x - 3.0) / 6.0 + 0.5);
@@ -277,6 +277,28 @@ void main(){
           }
         }
       }
+    } else {                              // 3D cubes / tumbling blocks (rhombille, 3-color)
+      float uw = fract(v_uv.x); float vw = fract(v_uv.y);
+      float K = 1.1547005;
+      float nx = max(9.0, floor(u_cells / 3.0 + 0.5) * 3.0);
+      float ny = 2.0 * floor(nx * K / 2.0 + 0.5);
+      float sx = 1.0 / nx; float sy = 1.0 / ny;
+      float r0 = floor(vw / sy + 0.5);
+      float best = 1e9; float bcx = 0.0; float bcy = 0.0;
+      for (int dr = -1; dr <= 1; dr++) {
+        float rw = r0 + float(dr);
+        float off = mod(rw, 2.0) * 0.5;
+        float c0 = floor(uw / sx - off + 0.5);
+        for (int dc = -1; dc <= 1; dc++) {
+          float cx = (c0 + float(dc) + off) * sx; float cy = rw * sy;
+          float d = (uw - cx) * (uw - cx) + (vw - cy) * (vw - cy);
+          if (d < best) { best = d; bcx = cx; bcy = cy; }
+        }
+      }
+      float dx = uw - bcx; float dy = (vw - bcy) * (sx / sy);
+      float ang = mod(degrees(atan(dy, dx)) - 30.0, 360.0);
+      role = int(mod(floor(ang / 120.0), 3.0));
+      cf = vec2((uw - bcx) / sx + 0.5, (vw - bcy) / sy + 0.5);
     }
     frag = vec4(evalFill(role, cf, v_uv), 1.0);
     return;

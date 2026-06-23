@@ -12,7 +12,7 @@ export function cloneParams<T>(value: T): T {
 export const MODES = ['procedural', 'truchet', 'raster', 'shapes'] as const
 export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale'] as const
 export const SEAM_METHODS = ['mirror', 'feather', 'direct'] as const
-export const SHAPE_FAMILIES = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo'] as const
+export const SHAPE_FAMILIES = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes'] as const
 
 export type Mode = typeof MODES[number]
 export type SeamMethod = typeof SEAM_METHODS[number]

@@ -457,3 +457,78 @@ describe('shapeRegion cairo', () => {
     }
   })
 })
+
+describe('shapeRegion cubes', () => {
+  const cells = 12
+
+  it('role set: all three roles (top/left/right = 0/1/2) appear over a sampled grid', () => {
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 32; i++) {
+      for (let j = 0; j <= 32; j++) {
+        const r = shapeRegion('cubes', i / 32, j / 32, cells)
+        expect(r.role >= 0 && r.role <= 2).toBe(true)
+        roleSet.add(r.role)
+        expect(isFinite(r.fx)).toBe(true)
+        expect(isFinite(r.fy)).toBe(true)
+      }
+    }
+    expect(roleSet).toEqual(new Set([0, 1, 2]))
+  })
+
+  it('face-by-angle spot check: top, left-face, right-face sectors produce correct roles', () => {
+    // Compute hex center for row=2, col=2 (even row, off=0) with cells=12
+    // K=1.1547005, nx=12, ny=2*round(12*K/2)=2*7=14, sx=1/12, sy=1/14
+    const K = 1.1547005
+    const nx = Math.max(9, Math.round(cells / 3) * 3) // 12
+    const ny = 2 * Math.round((nx * K) / 2) // 14
+    const sx = 1 / nx, sy = 1 / ny
+    const bcx = 2 * sx  // col=2, off=0 → cx=(2+0)*sx
+    const bcy = 2 * sy  // row=2 → cy=2*sy
+    // Sector centers after aspect correction (dy_aspect = dy_raw * sx/sy):
+    //   ang = (atan2(dy_aspect, dx) * 180/PI - 30 + 360) % 360 → role = floor(ang/120) % 3
+    //   Role 0 (top):   raw atan2 ∈ [30°,150°)  — center at 90°: dx=0, dy>0 (+v direction)
+    //   Role 1 (left):  raw atan2 ∈ [150°,270°) — center at 210°: dx<0, dy<0 (upper-left)
+    //   Role 2 (right): raw atan2 ∈ [270°,390°) — center at 330°: dx>0, dy<0 (upper-right)
+    const eps = sy * 0.2
+    // Top: straight down in aspect-corrected space (dx=0, dy_aspect>0 → dy_raw>0 → +v)
+    const rTop = shapeRegion('cubes', bcx, bcy + eps, cells)
+    expect(rTop.role).toBe(0)
+    // Left face: dx<0, dy<0 (upper-left in UV; atan2≈210°)
+    const rLeft = shapeRegion('cubes', bcx - eps, bcy - eps * 0.5, cells)
+    expect(rLeft.role).toBe(1)
+    // Right face: dx>0, dy<0 (upper-right in UV; atan2≈330°)
+    const rRight = shapeRegion('cubes', bcx + eps, bcy - eps * 0.5, cells)
+    expect(rRight.role).toBe(2)
+  })
+
+  it('rolesFor: cubes resolves to [top, left, right]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'cubes' } as any)).toEqual(['top', 'left', 'right'])
+  })
+
+  it('seamless wrap at cells=12: u=0 edge matches u=1 edge', () => {
+    // Sample interior v values to avoid measure-zero boundary ties at exact centers
+    for (let i = 1; i <= 15; i++) {
+      const v = (i + 0.3) / 16
+      expect(shapeRegion('cubes', 0, v, cells).role)
+        .toBe(shapeRegion('cubes', 1, v, cells).role)
+    }
+  })
+
+  it('seamless wrap at cells=12: v=0 edge matches v=1 edge', () => {
+    for (let i = 1; i <= 15; i++) {
+      const u = (i + 0.3) / 16
+      expect(shapeRegion('cubes', u, 0, cells).role)
+        .toBe(shapeRegion('cubes', u, 1, cells).role)
+    }
+  })
+
+  it('seamless wrap at cells=9: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 1; i <= 15; i++) {
+      const t = (i + 0.3) / 16
+      expect(shapeRegion('cubes', 0, t, 9).role)
+        .toBe(shapeRegion('cubes', 1, t, 9).role)
+      expect(shapeRegion('cubes', t, 0, 9).role)
+        .toBe(shapeRegion('cubes', t, 1, 9).role)
+    }
+  })
+})
