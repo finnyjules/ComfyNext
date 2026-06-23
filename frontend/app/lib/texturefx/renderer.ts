@@ -23,6 +23,7 @@ in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
 uniform float u_shapeFamily;
+uniform float u_pinwheel;
 uniform float u_placement;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
@@ -156,11 +157,29 @@ void main(){
     vec2 g = v_uv * u_cells;
     vec2 f = fract(g);
     int role = 0;
-    // u_shapeFamily: 0 = octagon (SHAPE_FAMILIES order)
-    // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
-    float c = 0.29;
-    bool corner = (f.x + f.y < c) || ((1.0 - f.x) + f.y < c) || (f.x + (1.0 - f.y) < c) || ((1.0 - f.x) + (1.0 - f.y) < c);
-    role = corner ? 1 : 0;
+    if (u_shapeFamily < 0.5) {
+      // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
+      float c = 0.29;
+      bool corner = (f.x + f.y < c) || ((1.0 - f.x) + f.y < c) || (f.x + (1.0 - f.y) < c) || ((1.0 - f.x) + (1.0 - f.y) < c);
+      role = corner ? 1 : 0;
+    } else if (u_shapeFamily < 1.5) {
+      // pinwheel / HST: diagonal split, optionally rotated by 90deg per 2x2 block
+      float cx = floor(g.x); float cy = floor(g.y);
+      vec2 r = f;
+      if (u_pinwheel > 0.5) {
+        float kx = mod(cx, 2.0); float ky = mod(cy, 2.0);
+        float k = (kx < 0.5) ? ((ky < 0.5) ? 0.0 : 3.0) : ((ky < 0.5) ? 1.0 : 2.0);
+        if (k > 2.5) r = vec2(1.0 - f.y, f.x);
+        else if (k > 1.5) r = vec2(1.0 - f.x, 1.0 - f.y);
+        else if (k > 0.5) r = vec2(f.y, 1.0 - f.x);
+      }
+      role = (r.x > r.y) ? 0 : 1;
+    } else {
+      // chevron: zigzag stripes via triangle-wave offset
+      float zig = abs(fract(v_uv.x * u_cells) * 2.0 - 1.0);
+      float band = floor(v_uv.y * u_cells + zig);
+      role = int(mod(band, 2.0));
+    }
     frag = vec4(evalFill(role, f, v_uv), 1.0);
     return;
   }
@@ -376,6 +395,7 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_mode'), Math.max(0, MODES.indexOf(String(p.mode) as typeof MODES[number])))
     gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
     gl.uniform1f(u('u_shapeFamily'), Math.max(0, SHAPE_FAMILIES.indexOf(String(p.shapeFamily) as any)))
+    gl.uniform1f(u('u_pinwheel'), String(p.pinwheel) !== 'off' ? 1 : 0)
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))
