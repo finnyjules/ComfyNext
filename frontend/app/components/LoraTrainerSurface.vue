@@ -15,6 +15,7 @@
  */
 import { ArrowRight, ChevronDown, ChevronRight, Cloud, Cpu, Download, Drama, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { assembleAesthetic } from '~/lib/lora/aesthetic'
 import JSZip from 'jszip'
 import {
   CHARACTER_SHOT_SCENES,
@@ -1255,6 +1256,42 @@ async function generateAesthetic(): Promise<void> {
   }
 }
 
+// Manual, button-triggered aesthetic generation for own-file datasets. Builds a
+// montage of the uploaded images, asks the vision endpoint for a Krea-shaped
+// taste profile (prose + keywords), and writes it into the editable field.
+// Explicit (never auto) so we never fire a paid vision call without a click.
+const aestheticGenerating = ref(false)
+const aestheticError = ref<string | null>(null)
+
+async function autoFillAesthetic(): Promise<void> {
+  if (aestheticGenerating.value || images.value.length === 0) return
+  if (
+    importedAesthetic.value
+    && !window.confirm('Replace the current aesthetic with one generated from your images?')
+  ) return
+  aestheticGenerating.value = true
+  aestheticError.value = null
+  try {
+    const imageDataUrl = await buildStyleMontageDataUrl()
+    if (!imageDataUrl) throw new Error('Could not read the uploaded images.')
+    const res = await fetch('/api/cloud-train/aesthetic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl }),
+    })
+    if (!res.ok) throw new Error(await res.text() || `Failed (${res.status})`)
+    const { aesthetic, keywords } = await res.json() as { aesthetic?: string; keywords?: string[] }
+    const out = assembleAesthetic(aesthetic || '', shuffleArray(keywords || []))
+    if (!out) throw new Error('The model returned an empty aesthetic.')
+    importedAesthetic.value = out
+    aestheticSource.value = 'images'
+  } catch (e: any) {
+    aestheticError.value = humanizeError(e?.message ?? String(e))
+  } finally {
+    aestheticGenerating.value = false
+  }
+}
+
 async function startCloudTraining() {
   if (images.value.length < 2) return
   errorMessage.value = null
@@ -2046,15 +2083,33 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <!-- Aesthetic (surfaced after a moodboard import) -->
+          <!-- Aesthetic — shown after a Krea import OR once own images exist -->
           <div v-if="importedAesthetic !== null">
-            <label class="block text-[12px] font-medium text-white/80 mb-1">
-              Aesthetic
-              <span class="text-white/55 font-normal ml-1">added to your prompts</span>
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[12px] font-medium text-white/80">
+                Aesthetic
+                <span class="text-white/55 font-normal ml-1">added to your prompts</span>
+              </label>
+              <button
+                v-if="aestheticSource === 'images'"
+                type="button"
+                class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                :disabled="aestheticGenerating || images.length === 0"
+                @click="autoFillAesthetic"
+              >
+                <Loader2 v-if="aestheticGenerating" class="size-3.5 animate-spin" />
+                <Wand v-else class="size-3.5" />
+                {{ aestheticGenerating ? 'Reading images…' : 'Auto-fill from images' }}
+              </button>
+            </div>
             <p class="text-[11px] text-white/45 mb-2 leading-relaxed">
               A short style description prepended to prompts when you use this style, so generations match the look.
-              Imported from your Krea moodboard<span v-if="kreaRework"> and reworded to be original</span> — edit freely.
+              <template v-if="aestheticSource === 'krea'">
+                Imported from your Krea moodboard<span v-if="kreaRework"> and reworded to be original</span> — edit freely.
+              </template>
+              <template v-else>
+                Describe the aesthetic, or auto-fill it from your uploaded images — edit freely.
+              </template>
             </p>
             <textarea
               v-model="importedAesthetic"
@@ -2062,7 +2117,8 @@ onBeforeUnmount(() => {
               placeholder="Describe the aesthetic — color, texture, light, composition…"
               class="w-full rounded-md bg-white/[0.04] border border-white/[0.08] hover:border-white/15 focus:border-white/25 focus:outline-none px-3 py-2 text-[12.5px] leading-relaxed text-white/85 placeholder:text-white/25 resize-y"
             />
-            <p class="text-[10.5px] text-white/30 mt-1">{{ (importedAesthetic || '').trim().split(/\s+/).filter(Boolean).length }} words</p>
+            <p v-if="aestheticError" class="text-[11px] text-rose-300/80 mt-1">{{ aestheticError }}</p>
+            <p v-else class="text-[10.5px] text-white/30 mt-1">{{ (importedAesthetic || '').trim().split(/\s+/).filter(Boolean).length }} words</p>
           </div>
 
           <!-- Training knobs — collapsed; the defaults work for most runs -->
