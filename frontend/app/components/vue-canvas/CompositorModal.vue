@@ -1492,11 +1492,11 @@ function renderGenOverlay(now?: number) {
   // Generate swipe — a bright band sweeping across the region while busy.
   if (inpaint.busy.value) {
     const sctx = genScratchCtx(W, H)
-    const band = Math.max(60, W * 0.18)
-    const sweep = ((t % 1.1) / 1.1) * (W + band * 2) - band
+    const band = Math.max(160, W * 0.45)
+    const sweep = ((t % 1.6) / 1.6) * (W + band * 2) - band
     const g = sctx.createLinearGradient(sweep - band, 0, sweep + band, 0)
     g.addColorStop(0, 'rgba(255,255,255,0)')
-    g.addColorStop(0.5, 'rgba(255,255,255,0.55)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.38)')
     g.addColorStop(1, 'rgba(255,255,255,0)')
     sctx.fillStyle = g; sctx.fillRect(0, 0, W, H)
     sctx.globalCompositeOperation = 'source-in'
