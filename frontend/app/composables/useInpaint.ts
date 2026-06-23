@@ -242,6 +242,26 @@ export function useInpaint() {
     }
   }
 
+  /** High-quality object generation via Nano Banana 2 (Gemini image). Pass an
+   *  optional `image` (a cropped scene region) to paint the object into a scene;
+   *  omit it for a clean text→image object. Returns data URLs. */
+  async function nanoGen(prompt: string, image?: string): Promise<string[]> {
+    busy.value = true; error.value = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/nano-gen', {
+        method: 'POST',
+        body: { prompt, image },
+      })
+      results.value = res.images
+      return res.images
+    } catch (err: any) {
+      error.value = err?.data?.message || err?.message || 'Generation failed'
+      throw err
+    } finally {
+      busy.value = false
+    }
+  }
+
   /** Put a character into a mannequin's pose via Nano Banana 2. `character` and
    *  `pose` are data URLs (the character image and the gray mannequin render).
    *  Returns the posed character(s) as data URLs. */
@@ -303,5 +323,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, text2img, loraGen, pose, removeBackground, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, text2img, loraGen, nanoGen, pose, removeBackground, uploadDataUrl }
 }

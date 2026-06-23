@@ -1274,6 +1274,10 @@ const genMode = ref<GenMode>('style')
 const styleList = useStyleList()
 const genStyle = ref<import('~/composables/useStyleList').StyleItem | null>(null)
 const stylePickerOpen = ref(false)
+// "High quality" path → Google Nano Banana 2 (slower/pricier, sharper & more
+// scene-aware). Doesn't apply when a trained style is picked (those need Flux).
+const genHQ = ref(false)
+const genHQApplies = computed(() => !(genMode.value === 'style' && genStyle.value))
 
 type GenTool = 'box' | 'brush' | 'shape'
 const GEN_TOOLS: GenTool[] = ['box', 'brush', 'shape']
@@ -1619,29 +1623,43 @@ async function runRegionFill() {
       // 1) Generate the raw image for the object.
       let raw: string | undefined
       if (genMode.value === 'scene') {
-        // Inpaint the box region of the current composite so the result matches
-        // the scene, then crop the box out for cutting.
+        // Render the composite so the result can match the scene.
         const compBlob = await renderStaticComposite(W, H); if (!compBlob) return
         const compUrl = URL.createObjectURL(compBlob)
         const compImg = await loadImage(compUrl)
         URL.revokeObjectURL(compUrl)
-        const { w: capW, h: capH } = capDims(W, H)
-        const imageData = imageToDataUrl(compImg, capW, capH)
-        const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
-        const mctx = mc.getContext('2d')!
-        mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)        // BLACK = keep
-        if (genMaskCanvas) mctx.drawImage(genMaskCanvas, 0, 0, capW, capH) // WHITE region = generate
-        const filled = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), prompt)
-        if (!filled.length) return
-        const r0 = await loadImage(filled[0])
-        const sx = (bnd.minX / W) * capW, sy = (bnd.minY / H) * capH
-        const sw = (boxW / W) * capW, sh = (boxH / H) * capH
-        const crop = document.createElement('canvas')
-        crop.width = Math.max(1, Math.round(sw)); crop.height = Math.max(1, Math.round(sh))
-        crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
-        raw = crop.toDataURL('image/png')
+        if (genHQ.value) {
+          // High quality: crop the box region and let Nano Banana paint the
+          // object into it, matched to the surrounding scene.
+          const cw = Math.max(1, Math.round(boxW)), ch = Math.max(1, Math.round(boxH))
+          const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch
+          crop.getContext('2d')!.drawImage(compImg, bnd.minX, bnd.minY, boxW, boxH, 0, 0, cw, ch)
+          const instr = `Add ${prompt} into this image, integrated naturally and matching the existing lighting, perspective, colour and style. The object should sit within the frame; keep the rest of the scene unchanged.`
+          const r = await inpaint.nanoGen(instr, crop.toDataURL('image/png'))
+          raw = r[0]
+        } else {
+          // Flux Fill: inpaint the masked box region, then crop it out.
+          const { w: capW, h: capH } = capDims(W, H)
+          const imageData = imageToDataUrl(compImg, capW, capH)
+          const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
+          const mctx = mc.getContext('2d')!
+          mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)        // BLACK = keep
+          if (genMaskCanvas) mctx.drawImage(genMaskCanvas, 0, 0, capW, capH) // WHITE region = generate
+          const filled = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), prompt)
+          if (!filled.length) return
+          const r0 = await loadImage(filled[0])
+          const sx = (bnd.minX / W) * capW, sy = (bnd.minY / H) * capH
+          const sw = (boxW / W) * capW, sh = (boxH / H) * capH
+          const crop = document.createElement('canvas')
+          crop.width = Math.max(1, Math.round(sw)); crop.height = Math.max(1, Math.round(sh))
+          crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
+          raw = crop.toDataURL('image/png')
+        }
       } else if (genStyle.value) {
         const r = await inpaint.loraGen(genStyle.value.filename, objectPrompt, aspect)
+        raw = r[0]
+      } else if (genHQ.value) {
+        const r = await inpaint.nanoGen(objectPrompt)
         raw = r[0]
       } else {
         const r = await inpaint.text2img(objectPrompt, aspect)
@@ -2328,6 +2346,13 @@ onUnmounted(() => {
               </div>
               </Transition>
             </div>
+
+            <!-- High quality (Nano Banana 2) -->
+            <label class="flex items-center justify-between gap-2" :class="genHQApplies ? 'cursor-pointer' : 'opacity-40 cursor-default'">
+              <span class="text-[11px] text-white/70">High quality <span class="text-white/35">· nano-banana 2</span></span>
+              <input type="checkbox" v-model="genHQ" :disabled="!genHQApplies" class="accent-white cursor-pointer" />
+            </label>
+            <p class="text-[10px] text-white/30 -mt-1">{{ genHQApplies ? 'Sharper, scene-aware — slower and pricier.' : 'Trained styles always use Flux.' }}</p>
           </template>
 
           <!-- Region tool -->
