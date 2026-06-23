@@ -1405,20 +1405,23 @@ function genUseShape() {
 const genOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 let genRingCanvas: HTMLCanvasElement | null = null   // cached ring silhouette (logical px)
 let genScratch: HTMLCanvasElement | null = null      // per-frame compositing scratch
-let genPastel: HTMLCanvasElement | null = null       // tileable pastel strip
 let genRaf = 0
 let genT0 = 0
-const PASTEL = ['#ffd6e7', '#cfe8ff', '#d6ffe0', '#fff4cc', '#e7d6ff', '#ffd6e7']
+const PASTEL = ['#ffd6e7', '#cfe8ff', '#d6ffe0', '#fff4cc', '#e7d6ff', '#ffd6e7'] // [5]===[0] (cyclic)
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
-function ensurePastel(): HTMLCanvasElement {
-  if (genPastel) return genPastel
-  const c = document.createElement('canvas'); c.width = 512; c.height = 8
-  const g = c.getContext('2d')!
-  const grad = g.createLinearGradient(0, 0, c.width, 0)
-  PASTEL.forEach((col, i) => grad.addColorStop(i / (PASTEL.length - 1), col))
-  g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height)
-  genPastel = c; return c
+function lerpHex(a: string, b: string, u: number): string {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16)
+  const ar = (pa >> 16) & 255, ag = (pa >> 8) & 255, ab = pa & 255
+  const br = (pb >> 16) & 255, bg = (pb >> 8) & 255, bb = pb & 255
+  return `rgb(${Math.round(ar + (br - ar) * u)},${Math.round(ag + (bg - ag) * u)},${Math.round(ab + (bb - ab) * u)})`
+}
+// Sample the cyclic pastel palette at fractional position `u` (wraps).
+function pastelAt(u: number): string {
+  u = ((u % 1) + 1) % 1
+  const n = PASTEL.length - 1 // 5 cyclic segments
+  const x = u * n, i = Math.floor(x) % n
+  return lerpHex(PASTEL[i], PASTEL[(i + 1) % PASTEL.length], x - Math.floor(x))
 }
 
 // Build a ring (outline) from the mask: dilate it by offset-drawing in a circle,
@@ -1470,20 +1473,17 @@ function renderGenOverlay(now?: number) {
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H)
   ctx.restore()
 
-  // Pastel gradient stroke — tint the cached ring with a slowly-sliding pattern.
+  // Pastel gradient stroke — tint the cached ring with a colour-flowing gradient
+  // (stops at fixed positions, colours sampled at a slowly-advancing offset, so
+  // the palette visibly flows along the stroke).
   if (genRingCanvas) {
     const sctx = genScratchCtx(W, H)
     sctx.drawImage(genRingCanvas, 0, 0)
     sctx.globalCompositeOperation = 'source-in'
-    const pat = sctx.createPattern(ensurePastel(), 'repeat')
-    if (pat) {
-      if (pat.setTransform && typeof DOMMatrix !== 'undefined') {
-        pat.setTransform(new DOMMatrix().translateSelf(-(t * 26) % 512, 0).rotateSelf(28))
-      }
-      sctx.fillStyle = pat
-    } else {
-      sctx.fillStyle = '#ffd6e7'
-    }
+    const shift = t * 0.16
+    const g = sctx.createLinearGradient(0, 0, W, H)
+    for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, pastelAt(i / 6 + shift))
+    sctx.fillStyle = g
     sctx.fillRect(0, 0, W, H)
     sctx.globalCompositeOperation = 'source-over'
     ctx.drawImage(genScratch!, 0, 0, W, H)
