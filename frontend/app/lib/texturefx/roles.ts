@@ -15,11 +15,12 @@ export const ROLES_BY_FAMILY: Record<string, string[]> = {
   fishscale: ['scale', 'ground'],
   pythagorean: ['big', 'small'],
   hex: ['a', 'b', 'c'],
+  cairo: ['a', 'b', 'c'],
 }
 
 const PROCEDURAL_FAMILIES = new Set(['checker', 'stripes', 'dots', 'grid'])
 const TRUCHET_FAMILIES = new Set(['arcs', 'diagonal', 'weave', 'multiscale'])
-const SHAPE_FAMILIES = new Set(['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex'])
+const SHAPE_FAMILIES = new Set(['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo'])
 
 // Which family is active given the params (procedural motif, truchet tileFamily, …).
 export function activeFamily(p: Params): string {

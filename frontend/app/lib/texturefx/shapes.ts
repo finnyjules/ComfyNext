@@ -107,6 +107,28 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       const lx = (x0 - bcx) / sx + 0.5, ly = (y0 - bcy) / sy + 0.5
       return flat ? { role, fx: ly, fy: lx } : { role, fx: lx, fy: ly }
     }
+    case 'cairo': {
+      const chC = 6 * Math.max(1, Math.round(cells / 6))
+      const Px = u * chC, Py = v * chC
+      const ic = Math.round((Px - 3) / 6), jc = Math.round((Py - 3) / 6)
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+        const cx = 3 + 6 * (ic + di), cy = 3 + 6 * (jc + dj)
+        const dx = Px - cx, dy = Py - cy
+        for (let k = 0; k < 4; k++) {
+          let rx: number, ry: number
+          if (k === 0) { rx = dx; ry = dy }
+          else if (k === 1) { rx = dy; ry = -dx }
+          else if (k === 2) { rx = -dx; ry = -dy }
+          else { rx = -dy; ry = dx }
+          const lx = rx + 3, ly = ry + 3
+          if (ly >= 0 && (ly - 3 * lx + 6) >= 0 && (-lx - 3 * ly + 12) >= 0 && (lx - 3 * ly + 12) >= 0 && (3 * lx + ly + 6) >= 0) {
+            const role = k < 2 ? 0 : (k === 2 ? 1 : 2)
+            return { role, fx: (lx + 3) / 6, fy: ly / 4 }
+          }
+        }
+      }
+      return { role: 0, fx: 0, fy: 0 } // unreachable (full coverage); safe fallback
+    }
     default:
       return { role: 0, fx, fy }
   }

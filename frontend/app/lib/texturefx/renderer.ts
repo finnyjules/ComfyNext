@@ -226,7 +226,7 @@ void main(){
         if (x >= Lx && x < Lx + a && y >= Ly && y < Ly + a) { role = 0; cf = vec2((x - Lx) / a, (y - Ly) / a); }
         else if (x >= Lx + a && x < Lx + a + b && y >= Ly && y < Ly + b) { role = 1; cf = vec2((x - (Lx + a)) / b, (y - Ly) / b); }
       }
-    } else {                              // hex (penny mosaic, 3-color)
+    } else if (u_shapeFamily < 7.5) {    // hex (penny mosaic, 3-color)
       float fl = u_hexFlat;
       float x0 = (fl > 0.5) ? fract(v_uv.y) : fract(v_uv.x);
       float y0 = (fl > 0.5) ? fract(v_uv.x) : fract(v_uv.y);
@@ -250,6 +250,33 @@ void main(){
       role = int(mod(bcol - floor(brow / 2.0) - brow, 3.0) + 3.0) % 3;
       float lx = (x0 - bcx) / sx + 0.5; float ly = (y0 - bcy) / sy + 0.5;
       cf = (fl > 0.5) ? vec2(ly, lx) : vec2(lx, ly);
+    } else {                              // Cairo pentagonal (3-color)
+      float chC = 6.0 * max(1.0, floor(u_cells / 6.0 + 0.5));
+      vec2 P = v_uv * chC;
+      float ic = floor((P.x - 3.0) / 6.0 + 0.5);
+      float jc = floor((P.y - 3.0) / 6.0 + 0.5);
+      bool found = false;
+      for (int di = -1; di <= 1; di++) {
+        for (int dj = -1; dj <= 1; dj++) {
+          float cx = 3.0 + 6.0 * (ic + float(di));
+          float cy = 3.0 + 6.0 * (jc + float(dj));
+          vec2 d = P - vec2(cx, cy);
+          for (int k = 0; k < 4; k++) {
+            if (found) continue;
+            vec2 rd;
+            if (k == 0) rd = d;
+            else if (k == 1) rd = vec2(d.y, -d.x);
+            else if (k == 2) rd = vec2(-d.x, -d.y);
+            else rd = vec2(-d.y, d.x);
+            vec2 lu = rd + vec2(3.0, 3.0);
+            if (lu.y >= 0.0 && (lu.y - 3.0 * lu.x + 6.0) >= 0.0 && (-lu.x - 3.0 * lu.y + 12.0) >= 0.0 && (lu.x - 3.0 * lu.y + 12.0) >= 0.0 && (3.0 * lu.x + lu.y + 6.0) >= 0.0) {
+              role = (k < 2) ? 0 : ((k == 2) ? 1 : 2);
+              cf = vec2((lu.x + 3.0) / 6.0, lu.y / 4.0);
+              found = true;
+            }
+          }
+        }
+      }
     }
     frag = vec4(evalFill(role, cf, v_uv), 1.0);
     return;
