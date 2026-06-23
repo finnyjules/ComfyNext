@@ -43,9 +43,17 @@ function renderFrame() {
     canvas.height = PREVIEW_H
   }
   try {
-    const base = textureFx.render(params.value, PREVIEW_W, PREVIEW_H, 0)
-    const out = stylizeTile(base, params.value, PREVIEW_W, PREVIEW_H)
-    canvas.getContext('2d')!.drawImage(out, 0, 0)
+    // Render the seamless tile SQUARE (so cells stay square / undistorted), then
+    // repeat-fill the 3:2 preview. Drawing a square tile straight into a 3:2 canvas
+    // stretched the pattern horizontally.
+    const TILE = PREVIEW_H
+    const base = textureFx.render(params.value, TILE, TILE, 0)
+    const out = stylizeTile(base, params.value, TILE, TILE)
+    const ctx = canvas.getContext('2d')!
+    ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H)
+    const pat = ctx.createPattern(out, 'repeat')
+    if (pat) { ctx.fillStyle = pat; ctx.fillRect(0, 0, PREVIEW_W, PREVIEW_H) }
+    else ctx.drawImage(out, 0, 0)
     glError.value = null
   }
   catch (e: any) {
