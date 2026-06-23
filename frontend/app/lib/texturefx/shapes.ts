@@ -31,6 +31,25 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       const band = Math.floor(v * cells + tri(u * cells))
       return { role: ((band % 2) + 2) % 2, fx, fy }
     }
+    case 'basketweave': {
+      const ch = Math.max(4, Math.round(cells / 4) * 4)
+      const bx = u * ch, by = v * ch
+      const cx = Math.floor(bx), cy = Math.floor(by)
+      const lfx = bx - cx, lfy = by - cy
+      const P = (Math.floor(cx / 2) + Math.floor(cy / 2)) % 2
+      if (P === 0) return { role: 0, fx: ((cx % 2) + lfx) / 2, fy: lfy }       // horizontal planks
+      return { role: 1, fx: lfx, fy: ((cy % 2) + lfy) / 2 }                    // vertical planks
+    }
+    case 'herringbone': {
+      const ch = Math.max(4, Math.round(cells / 4) * 4)
+      const bx = u * ch, by = v * ch
+      const cx = Math.floor(bx), cy = Math.floor(by)
+      const lfx = bx - cx, lfy = by - cy
+      const role = Math.floor((cx + cy) / 2) % 2
+      const par = (cx + cy) % 2
+      if (role === 0) return { role: 0, fx: (par + lfx) / 2, fy: lfy }         // horizontal brick
+      return { role: 1, fx: lfx, fy: (par + lfy) / 2 }                         // vertical brick
+    }
     default:
       return { role: 0, fx, fy }
   }

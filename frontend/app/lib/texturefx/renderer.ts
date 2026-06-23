@@ -157,6 +157,7 @@ void main(){
     vec2 g = v_uv * u_cells;
     vec2 f = fract(g);
     int role = 0;
+    vec2 cf = f;
     if (u_shapeFamily < 0.5) {
       // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
       float c = 0.29;
@@ -174,13 +175,28 @@ void main(){
         else if (k > 0.5) r = vec2(f.y, 1.0 - f.x);
       }
       role = (r.x > r.y) ? 0 : 1;
-    } else {
+    } else if (u_shapeFamily < 2.5) {
       // chevron: zigzag stripes via triangle-wave offset
       float zig = abs(fract(v_uv.x * u_cells) * 2.0 - 1.0);
       float band = floor(v_uv.y * u_cells + zig);
       role = int(mod(band, 2.0));
+    } else if (u_shapeFamily < 3.5) {     // basket-weave
+      float ch = max(4.0, floor(u_cells / 4.0 + 0.5) * 4.0);
+      vec2 bg = v_uv * ch; vec2 bf = fract(bg);
+      float cx = floor(bg.x); float cy = floor(bg.y);
+      float P = mod(floor(cx * 0.5) + floor(cy * 0.5), 2.0);
+      if (P < 0.5) { role = 0; cf = vec2((mod(cx, 2.0) + bf.x) * 0.5, bf.y); }
+      else { role = 1; cf = vec2(bf.x, (mod(cy, 2.0) + bf.y) * 0.5); }
+    } else {                              // herringbone
+      float ch = max(4.0, floor(u_cells / 4.0 + 0.5) * 4.0);
+      vec2 bg = v_uv * ch; vec2 bf = fract(bg);
+      float cx = floor(bg.x); float cy = floor(bg.y);
+      float rr = mod(floor((cx + cy) * 0.5), 2.0);
+      float par = mod(cx + cy, 2.0);
+      if (rr < 0.5) { role = 0; cf = vec2((par + bf.x) * 0.5, bf.y); }
+      else { role = 1; cf = vec2(bf.x, (par + bf.y) * 0.5); }
     }
-    frag = vec4(evalFill(role, f, v_uv), 1.0);
+    frag = vec4(evalFill(role, cf, v_uv), 1.0);
     return;
   }
   // raster branch -- catches index 2 only (shapes returned above)

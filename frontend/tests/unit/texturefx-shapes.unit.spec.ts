@@ -90,3 +90,113 @@ describe('shapeRegion chevron', () => {
     }
   })
 })
+
+describe('shapeRegion basketweave', () => {
+  it('roles are only 0 or 1', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      for (let j = 0; j <= 16; j++) {
+        const u = i / 16, v = j / 16
+        const r = shapeRegion('basketweave', u, v, cells)
+        expect(r.role === 0 || r.role === 1).toBe(true)
+      }
+    }
+  })
+  it('fx and fy are in [0,1)', () => {
+    const cells = 8
+    for (let i = 1; i <= 15; i++) {
+      for (let j = 1; j <= 15; j++) {
+        const r = shapeRegion('basketweave', i / 16, j / 16, cells)
+        expect(r.fx).toBeGreaterThanOrEqual(0)
+        expect(r.fx).toBeLessThan(1)
+        expect(r.fy).toBeGreaterThanOrEqual(0)
+        expect(r.fy).toBeLessThan(1)
+      }
+    }
+  })
+  it('adjacent 2x2 blocks (by ch) have different roles', () => {
+    // ch=8; blocks of size 2 in ch-space. Block A: (cx=0,cy=0) P=0 (role 0). Block B: (cx=2,cy=0) P=1 (role 1).
+    // Sample centers: cx=0 -> u=(0.5)/8=0.0625; cx=2 -> u=(2.5)/8=0.3125 (with ch=8, cells=8)
+    const rA = shapeRegion('basketweave', 0.0625, 0.0625, 8)
+    const rB = shapeRegion('basketweave', 0.3125, 0.0625, 8)
+    expect(rA.role).not.toBe(rB.role)
+  })
+  it('seamless wrap at cells=8 (multiple of 4): u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('basketweave', 0, t, cells).role)
+        .toBe(shapeRegion('basketweave', 1, t, cells).role)
+      expect(shapeRegion('basketweave', t, 0, cells).role)
+        .toBe(shapeRegion('basketweave', t, 1, cells).role)
+    }
+  })
+  it('seamless wrap at cells=6 (quantized to 8): u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 6
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('basketweave', 0, t, cells).role)
+        .toBe(shapeRegion('basketweave', 1, t, cells).role)
+      expect(shapeRegion('basketweave', t, 0, cells).role)
+        .toBe(shapeRegion('basketweave', t, 1, cells).role)
+    }
+  })
+})
+
+describe('shapeRegion herringbone', () => {
+  it('roles are only 0 or 1', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      for (let j = 0; j <= 16; j++) {
+        const u = i / 16, v = j / 16
+        const r = shapeRegion('herringbone', u, v, cells)
+        expect(r.role === 0 || r.role === 1).toBe(true)
+      }
+    }
+  })
+  it('spot-check known cells at cells=4 (ch=4): role = floor((cx+cy)/2) % 2', () => {
+    // ch=4; sample center of cell (cx,cy) at u=(cx+0.5)/4, v=(cy+0.5)/4
+    const cases: [number, number, number][] = [
+      [0, 0, 0], // floor(0/2)%2=0
+      [2, 0, 1], // floor(2/2)%2=1
+      [1, 1, 1], // floor(2/2)%2=1
+      [3, 1, 0], // floor(4/2)%2=0
+      [0, 2, 1], // floor(2/2)%2=1
+    ]
+    for (const [cx, cy, expectedRole] of cases) {
+      const u = (cx + 0.5) / 4
+      const v = (cy + 0.5) / 4
+      const r = shapeRegion('herringbone', u, v, 4)
+      expect(r.role).toBe(expectedRole)
+    }
+  })
+  it('seamless wrap at cells=8 (multiple of 4): u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('herringbone', 0, t, cells).role)
+        .toBe(shapeRegion('herringbone', 1, t, cells).role)
+      expect(shapeRegion('herringbone', t, 0, cells).role)
+        .toBe(shapeRegion('herringbone', t, 1, cells).role)
+    }
+  })
+  it('seamless wrap at cells=6 (quantized to 8): u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 6
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('herringbone', 0, t, cells).role)
+        .toBe(shapeRegion('herringbone', 1, t, cells).role)
+      expect(shapeRegion('herringbone', t, 0, cells).role)
+        .toBe(shapeRegion('herringbone', t, 1, cells).role)
+    }
+  })
+})
+
+describe('rolesFor basketweave and herringbone', () => {
+  it('basketweave resolves to [a, b]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'basketweave' } as any)).toEqual(['a', 'b'])
+  })
+  it('herringbone resolves to [brickA, brickB]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'herringbone' } as any)).toEqual(['brickA', 'brickB'])
+  })
+})
