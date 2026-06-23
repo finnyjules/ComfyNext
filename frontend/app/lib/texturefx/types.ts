@@ -46,4 +46,5 @@ export type Fill =
   | { type: 'gradient'; frame: Frame; kind: 'linear' | 'radial'; angle: number; stops: GradientStop[]; opacity?: number }
   | { type: 'image'; frame: Frame; src: string; seam: string; scale: number; opacity?: number }
   | { type: 'pattern'; frame: Frame; scale: number; sub: Record<string, unknown>; opacity?: number }
+  | { type: 'link'; to: string }
 export type FillsByRole = Record<string, Fill>

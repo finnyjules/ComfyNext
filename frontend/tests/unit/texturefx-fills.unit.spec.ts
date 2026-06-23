@@ -67,6 +67,24 @@ describe('gradColorAt', () => {
   })
 })
 
+describe('link resolution', () => {
+  const base = { mode: 'truchet', tileFamily: 'weave' } as any // roles warp/weft/gap
+  it('resolves a single hop to the target fill', () => {
+    const p = { ...base, fills: { warp: { type: 'solid', color: '#abcdef' }, weft: { type: 'link', to: 'warp' } } } as any
+    expect(fillForRole(p, 'weft', 1)).toEqual({ type: 'solid', color: '#abcdef' })
+  })
+  it('cycle falls back to legacy solid', () => {
+    const p = { ...base, colorA: '#111111', colorB: '#222222',
+      fills: { warp: { type: 'link', to: 'weft' }, weft: { type: 'link', to: 'warp' } } } as any
+    expect(fillForRole(p, 'warp', 0).type).toBe('solid') // legacy, not a link
+  })
+  it('self-link and missing target fall back to legacy', () => {
+    const p = { ...base, fills: { warp: { type: 'link', to: 'warp' }, weft: { type: 'link', to: 'nope' } } } as any
+    expect(fillForRole(p, 'warp', 0).type).toBe('solid')
+    expect(fillForRole(p, 'weft', 1).type).toBe('solid')
+  })
+})
+
 describe('gradientRampCoord seamlessness', () => {
   it('tile-global ramp matches opposite edges (mirrored)', () => {
     for (let i=0;i<=10;i++){ const t=i/10

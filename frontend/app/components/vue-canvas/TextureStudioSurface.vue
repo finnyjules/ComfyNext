@@ -222,7 +222,7 @@ function openFillImport(rk: string, i: number) {
   fillInputRefs.get(`${rk}_${i}`)?.click()
 }
 
-function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image' | 'pattern') {
+function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image' | 'pattern' | 'link') {
   const cur = roleFill(rk, i)
   if (type === 'solid')
     setFill(rk, { type: 'solid', color: cur.type === 'solid' ? cur.color : ((cur as any).stops?.[0]?.c ?? '#7aa2f7') })
@@ -230,8 +230,12 @@ function setFillType(rk: string, i: number, type: 'solid' | 'gradient' | 'image'
     setFill(rk, { type: 'gradient', frame: 'cell', kind: 'linear', angle: 0, stops: [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }] })
   else if (type === 'pattern')
     setFill(rk, { type: 'pattern', frame: 'tile', scale: 1, sub: { mode: 'procedural', motif: 'checker', cells: 4, colorA: '#e8eef5', colorB: '#7aa2f7', background: '#0e1116' } })
-  else
+  else if (type === 'link') {
+    const otherRole = rolesFor(params).find((r) => r !== rk) ?? rk
+    setFill(rk, { type: 'link', to: otherRole } as any)
+  } else {
     setFill(rk, { type: 'image', frame: 'tile', src: '', seam: 'mirror', scale: 1 } as any)
+  }
 }
 
 function setSub(rk: string, i: number, patch: Record<string, unknown>) {
@@ -463,12 +467,12 @@ onBeforeUnmount(() => {
         <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
           <label class="mb-1 block text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</label>
 
-          <!-- Fill-type picker: Solid / Gradient / Image / Pattern -->
+          <!-- Fill-type picker: Solid / Gradient / Image / Pattern / Link -->
           <label class="mb-1 block text-[11px] text-white/55">Type</label>
           <StudioSelect
-            :options="['solid', 'gradient', 'image', 'pattern']"
-            :model-value="roleFill(rk, i).type === 'gradient' ? 'gradient' : roleFill(rk, i).type === 'image' ? 'image' : roleFill(rk, i).type === 'pattern' ? 'pattern' : 'solid'"
-            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern')"
+            :options="['solid', 'gradient', 'image', 'pattern', 'link']"
+            :model-value="(roleFill(rk, i) as any).type ?? 'solid'"
+            @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern' | 'link')"
           />
 
           <!-- Solid: single color picker + opacity -->
@@ -616,6 +620,18 @@ onBeforeUnmount(() => {
                 :default="1"
                 :model-value="(roleFill(rk, i) as any).opacity ?? 1"
                 @update:model-value="(v: number) => setFillOpacity(rk, i, v)"
+              />
+            </div>
+          </template>
+
+          <!-- Link: mirrors another role's fill (cycle-guarded in fillForRole) -->
+          <template v-else-if="(roleFill(rk, i) as any).type === 'link'">
+            <div class="mt-1 flex flex-col gap-1">
+              <label class="text-[11px] text-white/55">Link to role</label>
+              <StudioSelect
+                :options="rolesFor(params).filter((r) => r !== rk)"
+                :model-value="(roleFill(rk, i) as any).to ?? rolesFor(params).find((r) => r !== rk) ?? rk"
+                @update:model-value="(to: string) => setFill(rk, { type: 'link', to } as any)"
               />
             </div>
           </template>

@@ -1,14 +1,24 @@
 import type { Params } from '~/lib/spacetype/effect'
 import type { Fill, FillsByRole } from '~/lib/texturefx/types'
-import { activeFamily, legacyFill } from '~/lib/texturefx/roles'
+import { activeFamily, legacyFill, rolesFor } from '~/lib/texturefx/roles'
 
 export function defaultFill(color = '#7aa2f7'): Fill { return { type: 'solid', color } }
 
 // Resolve a role's fill: explicit params.fills entry, else the legacy-color solid.
-export function fillForRole(p: Params, roleKey: string, roleIndex: number): Fill {
+// Link fills are resolved recursively with cycle detection via _seen.
+export function fillForRole(p: Params, roleKey: string, roleIndex: number, _seen: Set<string> = new Set()): Fill {
   const fills = (p as any).fills as FillsByRole | undefined
   const f = fills?.[roleKey]
-  return f ?? legacyFill(p, activeFamily(p), roleIndex)
+  if (!f) return legacyFill(p, activeFamily(p), roleIndex)
+  if (f.type === 'link') {
+    const to = (f as any).to as string
+    const roles = rolesFor(p)
+    const ti = roles.indexOf(to)
+    if (to === roleKey || ti < 0 || _seen.has(roleKey)) return legacyFill(p, activeFamily(p), roleIndex)
+    _seen.add(roleKey)
+    return fillForRole(p, to, ti, _seen)
+  }
+  return f
 }
 
 // Interpolate a multi-stop gradient at ramp position g in [0,1]. stops sorted by p.
