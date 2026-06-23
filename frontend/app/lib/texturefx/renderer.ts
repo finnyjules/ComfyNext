@@ -26,6 +26,9 @@ uniform float u_shapeFamily;
 uniform float u_pinwheel;
 uniform float u_hexFlat;
 uniform float u_fsRadius, u_fsRowSpacing, u_fsWidth;
+uniform float u_strokeMode, u_strokeW;   // 0 off, 1 uniform, 2 per-role; width as fraction of a cell
+uniform vec3 u_strokeColor;              // uniform-mode stroke
+uniform vec3 u_strokeRole[3];            // per-role stroke colors
 uniform float u_placement;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
@@ -178,14 +181,15 @@ bool arcCov(vec2 f, float st, float tw) {
   return abs(distance(f,a)-0.5) < tw*0.5 || abs(distance(f,b)-0.5) < tw*0.5;
 }
 
-void main(){
-  // shapes mode (MODES index 3) -- geometric tiling families. Mirrors shapes.ts.
-  if (u_mode > 2.5) {
-    vec2 g = v_uv * u_cells;
-    vec2 f = fract(g);
-    int role = 0;
-    vec2 cf = f;
-    if (u_shapeFamily < 0.5) {
+// Geometric shapes role+cell-coord at a UV. Factored out so the stroke pass can
+// re-sample role at neighbor UVs for boundary detection. Mirrors shapes.ts.
+int shapeRole(vec2 uv, out vec2 cf) {
+  vec2 v_uv = uv;                 // local alias so the per-family bodies read unchanged
+  vec2 g = v_uv * u_cells;
+  vec2 f = fract(g);
+  int role = 0;
+  cf = f;
+  if (u_shapeFamily < 0.5) {
       // octagon: 4 corner triangles (chamfer c) are joint(role1), rest tile(role0)
       float c = 0.29;
       bool corner = (f.x + f.y < c) || ((1.0 - f.x) + f.y < c) || (f.x + (1.0 - f.y) < c) || ((1.0 - f.x) + (1.0 - f.y) < c);
@@ -339,7 +343,29 @@ void main(){
       role = int(mod(floor(ang / 120.0), 3.0));
       cf = vec2((uw - bcx) / sx + 0.5, (vw - bcy) / sy + 0.5);
     }
-    frag = vec4(evalFill(role, cf, v_uv), 1.0);
+  return role;
+}
+
+void main(){
+  // shapes mode (MODES index 3) -- geometric tiling families. Mirrors shapes.ts.
+  if (u_mode > 2.5) {
+    vec2 cf;
+    int role = shapeRole(v_uv, cf);
+    vec3 col = evalFill(role, cf, v_uv);
+    // Stroke: paint pixels near a role boundary. Re-sample role at 4 axis neighbors
+    // (offset = stroke width as a fraction of a cell); if any differs, we're on an edge.
+    // fract()-based wrapping inside shapeRole keeps the stroke seamless at tile edges.
+    if (u_strokeMode > 0.5) {
+      float w = u_strokeW / max(u_cells, 1.0);
+      vec2 dummy;
+      bool edge =
+        shapeRole(v_uv + vec2(w, 0.0), dummy) != role ||
+        shapeRole(v_uv - vec2(w, 0.0), dummy) != role ||
+        shapeRole(v_uv + vec2(0.0, w), dummy) != role ||
+        shapeRole(v_uv - vec2(0.0, w), dummy) != role;
+      if (edge) col = (u_strokeMode > 1.5) ? u_strokeRole[role] : u_strokeColor;
+    }
+    frag = vec4(col, 1.0);
     return;
   }
   // raster branch -- catches index 2 only (shapes returned above)
@@ -559,6 +585,13 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_fsRadius'),     Number.isFinite(Number(p.fsRadius))     ? Number(p.fsRadius)     : 0.78)
     gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
     gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
+    const strokeMode = String(p.shapeStroke) === 'per-role' ? 2 : String(p.shapeStroke) === 'uniform' ? 1 : 0
+    gl.uniform1f(u('u_strokeMode'), strokeMode)
+    gl.uniform1f(u('u_strokeW'), Number.isFinite(Number(p.shapeStrokeWidth)) ? Number(p.shapeStrokeWidth) : 0.08)
+    gl.uniform3fv(u('u_strokeColor'), hexToRgb(String(p.shapeStrokeColor ?? '#0e1116')))
+    gl.uniform3fv(u('u_strokeRole[0]'), hexToRgb(String(p.shapeStrokeA ?? '#0e1116')))
+    gl.uniform3fv(u('u_strokeRole[1]'), hexToRgb(String(p.shapeStrokeB ?? '#0e1116')))
+    gl.uniform3fv(u('u_strokeRole[2]'), hexToRgb(String(p.shapeStrokeC ?? '#0e1116')))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))

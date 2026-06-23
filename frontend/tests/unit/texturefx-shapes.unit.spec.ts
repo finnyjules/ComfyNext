@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shapeRegion } from '~/lib/texturefx/shapes'
+import { shapeRegion, isStrokeEdge } from '~/lib/texturefx/shapes'
 import { rolesFor } from '~/lib/texturefx/roles'
 
 describe('shapeRegion octagon', () => {
@@ -648,6 +648,52 @@ describe('shapeRegion cubes', () => {
       const t = (i + 0.3) / 16
       expect(shapeRegion('cubes', 0, t, lc).role).toBe(shapeRegion('cubes', 1, t, lc).role)
       expect(shapeRegion('cubes', t, 0, lc).role).toBe(shapeRegion('cubes', t, 1, lc).role)
+    }
+  })
+})
+
+describe('isStrokeEdge (shape outline detection)', () => {
+  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes']
+
+  it('flags region boundaries and not deep interiors, for every family', () => {
+    // Each family must produce SOME edge pixels and SOME non-edge (interior) pixels
+    // over a dense grid — i.e. the stroke is neither everywhere nor nowhere.
+    const cells = 8
+    const w = 0.12
+    for (const fam of families) {
+      let edges = 0, interior = 0
+      for (let i = 0; i < 48; i++) {
+        for (let j = 0; j < 48; j++) {
+          const u = (i + 0.5) / 48, v = (j + 0.5) / 48
+          if (isStrokeEdge(fam, u, v, cells, w)) edges++
+          else interior++
+        }
+      }
+      expect(edges, `${fam} should have edge pixels`).toBeGreaterThan(0)
+      expect(interior, `${fam} should have interior pixels`).toBeGreaterThan(0)
+    }
+  })
+
+  it('wider stroke width flags at least as many edge pixels as a narrow one', () => {
+    const cells = 8
+    const count = (w: number) => {
+      let n = 0
+      for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) {
+        if (isStrokeEdge('octagon', (i + 0.5) / 40, (j + 0.5) / 40, cells, w)) n++
+      }
+      return n
+    }
+    expect(count(0.2)).toBeGreaterThanOrEqual(count(0.05))
+  })
+
+  it('is seamless: edge classification at u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 8, w = 0.1
+    for (const fam of ['octagon', 'hex', 'fishscale', 'cubes']) {
+      for (let i = 1; i <= 15; i++) {
+        const t = (i + 0.3) / 16
+        expect(isStrokeEdge(fam, 0, t, cells, w), `${fam} u-seam`).toBe(isStrokeEdge(fam, 1, t, cells, w))
+        expect(isStrokeEdge(fam, t, 0, cells, w), `${fam} v-seam`).toBe(isStrokeEdge(fam, t, 1, cells, w))
+      }
     }
   })
 })

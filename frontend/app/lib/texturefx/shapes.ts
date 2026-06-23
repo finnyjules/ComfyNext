@@ -5,6 +5,20 @@ export type ShapeRegion = { role: number; fx: number; fy: number }
 // Pure, seamless tiling-family sampler. u,v in [0,1]; integer `cells`.
 // Returns the role index a pixel belongs to + its cell-local coords (fx,fy).
 // Mirrored by the GLSL shapeRegion branch in renderer.ts.
+// Stroke edge test — mirrors the GLSL stroke pass in renderer.ts. A pixel is on a
+// region boundary if any of its 4 axis-neighbors (offset = wCellFrac/cells in UV)
+// resolves to a different role. fract-based wrapping keeps it seamless at tile edges.
+export function isStrokeEdge(family: string, u: number, v: number, cells: number, wCellFrac: number, p?: Params): boolean {
+  const role = shapeRegion(family, u, v, cells, p).role
+  const w = wCellFrac / Math.max(cells, 1)
+  return (
+    shapeRegion(family, u + w, v, cells, p).role !== role
+    || shapeRegion(family, u - w, v, cells, p).role !== role
+    || shapeRegion(family, u, v + w, cells, p).role !== role
+    || shapeRegion(family, u, v - w, cells, p).role !== role
+  )
+}
+
 export function shapeRegion(family: string, u: number, v: number, cells: number, _p?: Params): ShapeRegion {
   const gx = u * cells, gy = v * cells
   const fx = gx - Math.floor(gx), fy = gy - Math.floor(gy)

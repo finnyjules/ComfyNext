@@ -44,6 +44,16 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   // Hidden for diagonal (a solid two-tone split has no stroke to size).
   { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'diagonal' },
 
+  // Stroke controls — outline the boundaries between regions in shapes mode.
+  // 'uniform' = one stroke color on all edges; 'per-role' = each region's edge
+  // takes its own stroke color (Stroke A/B/C → role 0/1/2).
+  { key: 'shapeStroke', label: 'Stroke', kind: 'select', options: ['off', 'uniform', 'per-role'], default: 'off', group: 'Stroke', when: isShapes },
+  { key: 'shapeStrokeWidth', label: 'Stroke width', kind: 'slider', min: 0.01, max: 0.4, step: 0.01, default: 0.08, group: 'Stroke', when: (p) => isShapes(p) && String(p.shapeStroke) !== 'off' },
+  { key: 'shapeStrokeColor', label: 'Stroke color', kind: 'color', default: '#0e1116', group: 'Stroke', when: (p) => isShapes(p) && String(p.shapeStroke) === 'uniform' },
+  { key: 'shapeStrokeA', label: 'Stroke A', kind: 'color', default: '#0e1116', group: 'Stroke', when: (p) => isShapes(p) && String(p.shapeStroke) === 'per-role' },
+  { key: 'shapeStrokeB', label: 'Stroke B', kind: 'color', default: '#0e1116', group: 'Stroke', when: (p) => isShapes(p) && String(p.shapeStroke) === 'per-role' },
+  { key: 'shapeStrokeC', label: 'Stroke C', kind: 'color', default: '#0e1116', group: 'Stroke', when: (p) => isShapes(p) && String(p.shapeStroke) === 'per-role' },
+
   { key: 'colorA', label: 'Color A', kind: 'color', default: '#e8eef5', group: 'Fills', when: () => false },
   { key: 'colorB', label: 'Color B', kind: 'color', default: '#7aa2f7', group: 'Fills', when: () => false },
   { key: 'background', label: 'Background', kind: 'color', default: '#0e1116', group: 'Fills', when: () => false },
