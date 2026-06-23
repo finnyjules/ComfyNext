@@ -641,8 +641,8 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
     gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
     gl.uniform1f(u('u_weaveWidth'),   Number.isFinite(Number(p.weaveWidth))   ? Number(p.weaveWidth)   : 0.36)
-    gl.uniform1f(u('u_armLen'),    Number.isFinite(Number(p.armLength)) ? Number(p.armLength) : 0.6)
-    gl.uniform1f(u('u_armWidth'),  Number.isFinite(Number(p.armWidth))  ? Number(p.armWidth)  : 0.3)
+    gl.uniform1f(u('u_armLen'),    Number.isFinite(Number(p.armLength)) ? Number(p.armLength) : 1.0)
+    gl.uniform1f(u('u_armWidth'),  Number.isFinite(Number(p.armWidth))  ? Number(p.armWidth)  : 0.34)
     gl.uniform1f(u('u_bevel'),     Number.isFinite(Number(p.bevel))     ? Number(p.bevel)     : 0.45)
     const strokeMode = String(p.shapeStroke) === 'per-role' ? 2 : String(p.shapeStroke) === 'uniform' ? 1 : 0
     gl.uniform1f(u('u_strokeMode'), strokeMode)

@@ -725,7 +725,7 @@ describe('shapeRegion weave3d (isometric triaxial weave)', () => {
 
 describe('shapeRegion tripods (interlocking 3D Y-blocks)', () => {
   const cells = 6
-  const p = { armLength: 0.6, armWidth: 0.3, bevel: 0.45 } as any
+  const p = { armLength: 1.0, armWidth: 0.34, bevel: 0.45 } as any
 
   it('rolesFor: tripods resolves to [armA, armB, armC]', () => {
     expect(rolesFor({ mode: 'shapes', shapeFamily: 'tripods' } as any)).toEqual(['armA', 'armB', 'armC'])
@@ -752,7 +752,7 @@ describe('shapeRegion tripods (interlocking 3D Y-blocks)', () => {
   })
 
   it('bevel=0 → all arm pixels shade=1 (flat)', () => {
-    const flat = { armLength: 0.6, armWidth: 0.3, bevel: 0 } as any
+    const flat = { armLength: 1.0, armWidth: 0.34, bevel: 0 } as any
     for (let i = 0; i <= 30; i++) for (let j = 0; j <= 30; j++) {
       const r = shapeRegion('tripods', i / 30, j / 30, cells, flat)
       if (r.role <= 2) expect(r.shade ?? 1).toBeCloseTo(1, 5)
@@ -767,7 +767,7 @@ describe('shapeRegion tripods (interlocking 3D Y-blocks)', () => {
       }
       return n
     }
-    expect(countRecess(0.78)).toBeLessThan(countRecess(0.46))
+    expect(countRecess(1.1)).toBeLessThan(countRecess(0.6))
   })
 
   it('interior periodicity: pattern repeats every 1/nx in u and 2/ny in v', () => {

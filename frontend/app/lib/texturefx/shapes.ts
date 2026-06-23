@@ -235,8 +235,8 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       const nx = Math.max(2, Math.round(cells))
       const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
       const sx = 1 / nx, sy = 1 / ny
-      const armLen = Number.isFinite(Number((_p as any)?.armLength)) ? Number((_p as any).armLength) : 0.6
-      const armW = Number.isFinite(Number((_p as any)?.armWidth)) ? Number((_p as any).armWidth) : 0.3
+      const armLen = Number.isFinite(Number((_p as any)?.armLength)) ? Number((_p as any).armLength) : 1.0
+      const armW = Number.isFinite(Number((_p as any)?.armWidth)) ? Number((_p as any).armWidth) : 0.34
       const bevel = Number.isFinite(Number((_p as any)?.bevel)) ? Number((_p as any).bevel) : 0.45
       const r0 = Math.round(vw / sy)
       let bestH = -1e9, bRole = 3, bFx = 0.5, bFy = 0.5, bShade = 1
