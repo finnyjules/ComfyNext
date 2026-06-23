@@ -17,7 +17,7 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from '~/composables/useInpaint'
-import { DEFAULT_CLONER, parseCloner, type Cloner } from '~/composables/useCloner'
+import type { Cloner } from '~/composables/useCloner'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
@@ -101,7 +101,10 @@ const layers = computed<Layer[]>(() => {
       scale: wv[widgetIdx(`layer${i}_scale`)] ?? 1,
       opacity: wv[widgetIdx(`layer${i}_opacity`)] ?? 1,
       blend: wv[widgetIdx(`layer${i}_blend`)] ?? 'normal',
-      cloner: parseCloner(wv[widgetIdx(`layer${i}_cloner`)]),
+      // Wired cloner is editor state on a node property (works without a backend
+      // restart, like hidden/locked); it's stamped into the layer{i}_cloner
+      // widget at submit by injectCompositorCloners.
+      cloner: ((node.data.properties as any)?.comfynext_wiredCloners ?? {})[i] as Cloner | undefined,
     })
   }
   return out
@@ -115,11 +118,16 @@ function setLayerProp(slot: number, prop: string, value: any) {
   if (idx >= 0) node.data.widgetsValues[idx] = value
 }
 
-// Wired layer cloner persists as a JSON string in the `layer{i}_cloner` widget
-// (parsed back by the `layers` computed). The backend reads the same widget to
-// expand clones server-side — see _expand_clones in nodes_compositor.py.
+// Wired layer cloner is stored as editor state on a node property (slot → Cloner,
+// 1-based to match layer{i}_cloner), NOT directly on the backend widget — so the
+// toggle + live preview work immediately, without a ComfyUI restart (mirrors how
+// hidden/locked wired flags and motion are kept). It's stamped into the
+// layer{i}_cloner widget at submit by injectCompositorCloners (VueNodeCanvas).
 function setWiredCloner(slot: number, cloner: Cloner) {
-  setLayerProp(slot, 'cloner', JSON.stringify(cloner))
+  const node = compositor.value
+  if (!node) return
+  const p = (node.data.properties ||= {})
+  p.comfynext_wiredCloners = { ...((p as any).comfynext_wiredCloners ?? {}), [slot]: cloner }
 }
 
 // ── Canvas sizing — match the artboard/base aspect so positions are exact ───

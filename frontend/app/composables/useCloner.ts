@@ -111,6 +111,25 @@ export function expandClones(cloner: Cloner | undefined | null, aspect: number):
   return out
 }
 
+/**
+ * Build the per-slot cloner widget assignments to stamp onto a Compositor node
+ * at submit. `map` is the editor's `comfynext_wiredCloners` property (slot →
+ * Cloner, slot 1-based, matching `layer{i}_cloner`). Only ENABLED cloners are
+ * emitted — a disabled/absent cloner leaves the widget at its "" default (a
+ * single instance), so unrelated layers submit byte-identically.
+ */
+export function wiredClonerWidgetEntries(
+  map: Record<string, Cloner> | undefined | null,
+): { name: string; json: string }[] {
+  if (!map) return []
+  const out: { name: string; json: string }[] = []
+  for (const [slot, cloner] of Object.entries(map)) {
+    if (!cloner || !cloner.enabled) continue
+    out.push({ name: `layer${slot}_cloner`, json: JSON.stringify(cloner) })
+  }
+  return out
+}
+
 /** Parse a `layer{i}_cloner` widget JSON value into a Cloner (or undefined). */
 export function parseCloner(raw: unknown): Cloner | undefined {
   if (!raw || typeof raw !== 'string') return undefined

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { expandClones, DEFAULT_CLONER, type Cloner } from '~/composables/useCloner'
+import { expandClones, wiredClonerWidgetEntries, DEFAULT_CLONER, type Cloner } from '~/composables/useCloner'
 
 const make = (patch: Partial<Cloner>): Cloner => ({ ...DEFAULT_CLONER, enabled: true, ...patch })
 
@@ -84,5 +84,30 @@ describe('expandClones', () => {
     // a clone at 90° should carry drot≈90
     const rots = out.map(o => +o.drot.toFixed(2)).sort((a, b) => a - b)
     expect(rots).toEqual([0, 90, 180, 270])
+  })
+})
+
+describe('wiredClonerWidgetEntries', () => {
+  it('returns nothing for empty/undefined maps', () => {
+    expect(wiredClonerWidgetEntries(undefined)).toEqual([])
+    expect(wiredClonerWidgetEntries({})).toEqual([])
+  })
+
+  it('skips disabled cloners (leave widget at default)', () => {
+    const map = { 1: make({ enabled: false, countX: 4 }) }
+    expect(wiredClonerWidgetEntries(map as any)).toEqual([])
+  })
+
+  it('emits enabled cloners keyed by 1-based slot', () => {
+    const map = {
+      1: make({ enabled: true, mode: 'linear', countX: 3 }),
+      3: make({ enabled: false }),
+      5: make({ enabled: true, mode: 'radial', count: 6 }),
+    }
+    const out = wiredClonerWidgetEntries(map as any)
+    expect(out.map(e => e.name).sort()).toEqual(['layer1_cloner', 'layer5_cloner'])
+    // value round-trips as JSON of the enabled cloner
+    const e1 = out.find(e => e.name === 'layer1_cloner')!
+    expect(JSON.parse(e1.json)).toMatchObject({ enabled: true, mode: 'linear', countX: 3 })
   })
 })

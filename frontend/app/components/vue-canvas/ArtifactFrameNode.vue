@@ -8,7 +8,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
-import { parseCloner, type Cloner } from '~/composables/useCloner'
+import type { Cloner } from '~/composables/useCloner'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -163,8 +163,10 @@ function wiredOpacity(slot: number): number {
 }
 interface WiredLayer { slot: number; url: string; x: number; y: number; rotation: number; scale: number; opacity: number; blend: string; cloner?: Cloner }
 function wiredCloner(slot: number): Cloner | undefined {
-  const i = widgetIdx(`layer${slot + 1}_cloner`)
-  return i >= 0 ? parseCloner(props.data.widgetsValues?.[i]) : undefined
+  // Editor state on a node property (1-based slot, like layer{i}_cloner), mirrored
+  // from the Compositor modal — not the widget (which only exists post-restart).
+  const map = (props.data.properties as any)?.comfynext_wiredCloners
+  return map?.[slot + 1] as Cloner | undefined
 }
 const wiredLayers = computed<WiredLayer[]>(() => {
   const edges = injectedEdges?.value ?? []

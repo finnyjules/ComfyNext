@@ -10,6 +10,7 @@ import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/u
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
+import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
@@ -2874,6 +2875,36 @@ async function injectCompositorMotionParams(workflow: any): Promise<void> {
   }
 }
 
+// Push each Compositor node's wired-layer cloners (editor state on the
+// comfynext_wiredCloners property — see CompositorModal.vue) into their
+// layer{i}_cloner widgets so the backend stamps the same clones the editor
+// previews. Only ENABLED cloners are written; absent ⇒ widgets stay at "" (a
+// single instance). Same stale-schema self-heal as injectCompositorMotionParams:
+// if the widget is still missing after a forced /object_info refetch, ComfyUI
+// wasn't restarted with the new node definition → throw a clear remedy.
+async function injectCompositorCloners(workflow: any): Promise<void> {
+  if (!workflow?.nodes?.length) return
+  const comps = (workflow.nodes as any[]).filter(n => n.type === 'Compositor')
+  let schemaRefetched = false
+  for (const comp of comps) {
+    if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
+    const map = liveNode?.data?.properties?.comfynext_wiredCloners
+      ?? comp.properties?.comfynext_wiredCloners
+    const entries = wiredClonerWidgetEntries(map)
+    for (const { name, json } of entries) {
+      if (setNamedWidget(comp, name, json, objectInfo.value)) continue
+      if (!schemaRefetched) {
+        schemaRefetched = true
+        console.warn('[Compositor] layer_cloner missing from cached schema — forcing /object_info refetch')
+        await refreshSchema(true)
+        if (setNamedWidget(comp, name, json, objectInfo.value)) continue
+      }
+      throw new Error('Frame schema is out of date — restart ComfyUI (and reload) to render layer cloners')
+    }
+  }
+}
+
 /** Fold the project's active brand kit into every SmartLayout node at submit.
  *  `kitKv` is the kit serialized as key=value lines (brandKitToKv); empty ⇒
  *  no active kit ⇒ leave every widget untouched (byte-identical submit).
@@ -4398,6 +4429,7 @@ defineExpose({
   injectProtectMaskWiring,
   injectTimelineEditState,
   injectCompositorMotionParams,
+  injectCompositorCloners,
   injectSmartLayoutBrand,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,

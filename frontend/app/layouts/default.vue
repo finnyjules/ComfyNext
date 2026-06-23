@@ -522,6 +522,15 @@ async function runVueWorkflow(
     toast.error('Frame motion state failed', { description: String((err as any)?.message || err).slice(0, 160) })
   }
 
+  // Push each Compositor node's wired-layer cloners into their layer{i}_cloner
+  // widgets so the rendered output matches the editor's cloned preview.
+  try {
+    await vueCanvasRef.value.injectCompositorCloners?.(plainWorkflow)
+  } catch (err) {
+    console.error('[Run] compositor cloner injection failed', err)
+    toast.error('Frame cloner state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+  }
+
   // Fold the project's active brand kit under every SmartLayout node's wired
   // brand, so Run output matches the kit-themed editor preview. No active
   // kit ⇒ no-op (widgets untouched, byte-identical submit).
