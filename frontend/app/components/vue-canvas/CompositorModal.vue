@@ -2862,9 +2862,13 @@ input[type="number"] {
    the gradient clipped to the border box (origin border-box). Follows the radius
    exactly. Uses the same --gen-pastel source as the button/stroke. */
 .gen-border {
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;          /* hairline at rest */
   background-image: linear-gradient(#16161b, #16161b), var(--gen-pastel);
   background-origin: border-box;
   background-clip: padding-box, border-box;
+  transition: border-width 0.12s ease;
+}
+.gen-border:focus {
+  border-width: 1px;                          /* thicken when active */
 }
 </style>
