@@ -505,6 +505,36 @@ describe('shapeRegion cubes', () => {
     expect(rolesFor({ mode: 'shapes', shapeFamily: 'cubes' } as any)).toEqual(['top', 'left', 'right'])
   })
 
+  it('cubes: all three face roles appear within a single interior hex (non-tautological geometry check)', () => {
+    // The column-period test is tautological here because the cubes role is constant
+    // across ALL u for any given v (horizontal bands). Instead, verify the rhombille
+    // face split by sampling the three angular sectors of one interior hex center.
+    //
+    // Hex geometry: nx=12, ny=14, sx=1/12, sy=1/14.
+    // Row=3 (odd row) → off=0.5; col=4 → bcx=(4+0.5)/12=0.375, bcy=3/14≈0.214.
+    // Sectors (angle from center, aspect-corrected):
+    //   Role 0 (top):   dx=0,  dy>0  (+v direction from center)
+    //   Role 1 (left):  dx<0, dy<0   (upper-left quadrant)
+    //   Role 2 (right): dx>0, dy<0   (upper-right quadrant)
+    // All sample points are strictly interior to (0,1) — no boundary wrap is involved.
+    const K = 1.1547005
+    const nx = Math.max(9, Math.round(cells / 3) * 3)   // 12
+    const ny = 2 * Math.round((nx * K) / 2)              // 14
+    const sx = 1 / nx, sy = 1 / ny
+    const row = 3, col = 4
+    const off = (((row % 2) + 2) % 2) * 0.5             // 0.5 (odd row)
+    const bcx = (col + off) * sx                         // 0.375
+    const bcy = row * sy                                 // 3/14 ≈ 0.214
+    const eps = sy * 0.25
+    const rTop   = shapeRegion('cubes', bcx,       bcy + eps,       cells).role
+    const rLeft  = shapeRegion('cubes', bcx - eps, bcy - eps * 0.5, cells).role
+    const rRight = shapeRegion('cubes', bcx + eps, bcy - eps * 0.5, cells).role
+    expect(rTop).toBe(0)
+    expect(rLeft).toBe(1)
+    expect(rRight).toBe(2)
+    expect(new Set([rTop, rLeft, rRight])).toEqual(new Set([0, 1, 2]))
+  })
+
   it('seamless wrap at cells=12: u=0 edge matches u=1 edge', () => {
     // Sample interior v values to avoid measure-zero boundary ties at exact centers
     for (let i = 1; i <= 15; i++) {
