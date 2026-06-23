@@ -24,7 +24,7 @@ import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette } from 'lucide-vue-next'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
@@ -1287,6 +1287,12 @@ const currentModel = computed(() => GEN_MODELS.find(m => m.id === genModel.value
 // The trained-style picker only applies to Flux object generation.
 const showStylePicker = computed(() => genModel.value === 'flux' && genMode.value === 'style')
 
+// After a new-object generation, a mini toolbar (cancel / re-roll / confirm)
+// anchors to the result. We keep the region snapshot + bounds so re-roll can
+// regenerate with the exact same area and settings.
+type GenBounds = { minX: number; minY: number; maxX: number; maxY: number }
+const genResult = ref<{ layerId: string; mask: HTMLCanvasElement; bnd: GenBounds } | null>(null)
+
 type GenTool = 'box' | 'brush' | 'shape'
 const GEN_TOOLS: GenTool[] = ['box', 'brush', 'shape']
 const genActive = ref(false)
@@ -1342,7 +1348,7 @@ function enterGenMode() {
   styleList.refresh()
   clearGenMask()
 }
-function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask() }
+function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask(); genResult.value = null }
 function toggleGenMode() { genActive.value ? exitGenMode() : enterGenMode() }
 
 // ── Region painting (all tools write into the one artboard-space mask) ───────
@@ -1584,6 +1590,95 @@ function genMaskBounds(): { minX: number; minY: number; maxX: number; maxY: numb
 //    artboard region through the inverse of its draw transform) and replace it.
 //  • nothing selected → TEXT-TO-IMAGE: generate a brand-new image from the
 //    prompt, sized to the region's bbox, dropped in as a new layer.
+// Clone the live region mask so a generation result can be re-rolled later.
+function cloneGenMask(): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  if (genMaskCanvas) {
+    c.width = genMaskCanvas.width; c.height = genMaskCanvas.height
+    c.getContext('2d')!.drawImage(genMaskCanvas, 0, 0)
+  }
+  return c
+}
+
+// Generate a new transparent object from `maskCanvas`/`bnd` with the current
+// mode/model/style, place it contained in the box, and return its layer id.
+async function generateObjectInto(maskCanvas: HTMLCanvasElement, bnd: GenBounds): Promise<string | null> {
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const cx = (bnd.minX + bnd.maxX) / 2, cy = (bnd.minY + bnd.maxY) / 2
+  const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
+  const prompt = genPrompt.value.trim() || 'subject'
+  const aspect = pickAspectRatio(boxW / boxH)
+  // Style: bias toward a whole, uncropped object centered with margin on a plain
+  // background (reads as a complete object, cuts out cleanly). Scene keeps the
+  // bare prompt — it fills the region to fit the frame.
+  const objectPrompt = `${prompt}, the entire subject fully visible and not cropped, complete object centered with empty margin around it, isolated on a plain solid white background`
+
+  let raw: string | undefined
+  if (genMode.value === 'scene') {
+    const compBlob = await renderStaticComposite(W, H); if (!compBlob) return null
+    const compUrl = URL.createObjectURL(compBlob)
+    const compImg = await loadImage(compUrl)
+    URL.revokeObjectURL(compUrl)
+    if (genModel.value === 'nano') {
+      const cw = Math.max(1, Math.round(boxW)), ch = Math.max(1, Math.round(boxH))
+      const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch
+      crop.getContext('2d')!.drawImage(compImg, bnd.minX, bnd.minY, boxW, boxH, 0, 0, cw, ch)
+      const instr = `Add ${prompt} into this image, integrated naturally and matching the existing lighting, perspective, colour and style. The object should sit within the frame; keep the rest of the scene unchanged.`
+      const r = await inpaint.nanoGen(instr, crop.toDataURL('image/png'))
+      raw = r[0]
+    } else {
+      const { w: capW, h: capH } = capDims(W, H)
+      const imageData = imageToDataUrl(compImg, capW, capH)
+      const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
+      const mctx = mc.getContext('2d')!
+      mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)          // BLACK = keep
+      mctx.drawImage(maskCanvas, 0, 0, capW, capH)                      // WHITE region = generate
+      const filled = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), prompt)
+      if (!filled.length) return null
+      const r0 = await loadImage(filled[0])
+      const sx = (bnd.minX / W) * capW, sy = (bnd.minY / H) * capH
+      const sw = (boxW / W) * capW, sh = (boxH / H) * capH
+      const crop = document.createElement('canvas')
+      crop.width = Math.max(1, Math.round(sw)); crop.height = Math.max(1, Math.round(sh))
+      crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
+      raw = crop.toDataURL('image/png')
+    }
+  } else if (genModel.value === 'nano') {
+    const r = await inpaint.nanoGen(objectPrompt); raw = r[0]
+  } else if (genStyle.value) {
+    const r = await inpaint.loraGen(genStyle.value.filename, objectPrompt, aspect); raw = r[0]
+  } else {
+    const r = await inpaint.text2img(objectPrompt, aspect); raw = r[0]
+  }
+  if (!raw) return null
+
+  // Cut out → clean haze → crop tight → place contained in the box.
+  const cutoutRaw = await inpaint.removeBackground(raw)
+  const { url: cutout, aspect: genAspect } = await cleanCutoutAlpha(cutoutRaw)
+  const name = await inpaint.uploadDataUrl(cutout, 'compobj')
+  const bwN = boxW / W, bhN = boxH / W
+  let w = bwN, h = bwN / genAspect
+  if (h > bhN) { h = bhN; w = bhN * genAspect }
+  addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w, h })
+  return selectedLocalId.value
+}
+
+// Mini-toolbar actions on the last generated object.
+async function rerollObject() {
+  const r = genResult.value
+  if (!r || inpaint.busy.value) return
+  try {
+    const newId = await generateObjectInto(r.mask, r.bnd)
+    if (newId) { deleteLocal(r.layerId); genResult.value = { ...r, layerId: newId } }
+  } catch (err) { console.error('[compositor reroll]', err) }
+}
+function cancelObject() {
+  const r = genResult.value; if (!r) return
+  deleteLocal(r.layerId)
+  genResult.value = null
+}
+function confirmObject() { genResult.value = null }
+
 async function runRegionFill() {
   if (!genHasMask.value || inpaint.busy.value || !genMaskCanvas) return
   const layer = genTarget.value
@@ -1613,81 +1708,12 @@ async function runRegionFill() {
       const newName = await inpaint.uploadDataUrl(results[0], 'compinpaint')
       setLocal(layer.id, { filename: newName })
     } else {
-      // No target image → generate a BRAND-NEW object, sized to the painted
-      // region's bbox, and drop it in as a new transparent cutout layer.
-      const W = canvasDisplay.w, H = canvasDisplay.h
+      // No target image → generate a brand-new object, then keep the region
+      // snapshot + bounds so the mini toolbar can re-roll / cancel / confirm it.
       const bnd = genMaskBounds(); if (!bnd) return
-      const cx = (bnd.minX + bnd.maxX) / 2, cy = (bnd.minY + bnd.maxY) / 2
-      const boxW = Math.max(1, bnd.maxX - bnd.minX), boxH = Math.max(1, bnd.maxY - bnd.minY)
-      const prompt = genPrompt.value.trim() || 'subject'
-      const aspect = pickAspectRatio(boxW / boxH)
-      // Style mode generates a free-standing OBJECT: bias toward the whole
-      // subject visible (not a cropped close-up), centered with margin, on a
-      // plain background so it reads as a complete object and cuts out cleanly.
-      // Scene mode intentionally fills the region to fit the frame, so it keeps
-      // the bare prompt.
-      const objectPrompt = `${prompt}, the entire subject fully visible and not cropped, complete object centered with empty margin around it, isolated on a plain solid white background`
-
-      // 1) Generate the raw image for the object.
-      let raw: string | undefined
-      if (genMode.value === 'scene') {
-        // Render the composite so the result can match the scene.
-        const compBlob = await renderStaticComposite(W, H); if (!compBlob) return
-        const compUrl = URL.createObjectURL(compBlob)
-        const compImg = await loadImage(compUrl)
-        URL.revokeObjectURL(compUrl)
-        if (genModel.value === 'nano') {
-          // Nano Banana: crop the box region and let it paint the object into
-          // it, matched to the surrounding scene.
-          const cw = Math.max(1, Math.round(boxW)), ch = Math.max(1, Math.round(boxH))
-          const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch
-          crop.getContext('2d')!.drawImage(compImg, bnd.minX, bnd.minY, boxW, boxH, 0, 0, cw, ch)
-          const instr = `Add ${prompt} into this image, integrated naturally and matching the existing lighting, perspective, colour and style. The object should sit within the frame; keep the rest of the scene unchanged.`
-          const r = await inpaint.nanoGen(instr, crop.toDataURL('image/png'))
-          raw = r[0]
-        } else {
-          // Flux Fill: inpaint the masked box region, then crop it out.
-          const { w: capW, h: capH } = capDims(W, H)
-          const imageData = imageToDataUrl(compImg, capW, capH)
-          const mc = document.createElement('canvas'); mc.width = capW; mc.height = capH
-          const mctx = mc.getContext('2d')!
-          mctx.fillStyle = '#000'; mctx.fillRect(0, 0, capW, capH)        // BLACK = keep
-          if (genMaskCanvas) mctx.drawImage(genMaskCanvas, 0, 0, capW, capH) // WHITE region = generate
-          const filled = await inpaint.fluxFill(imageData, mc.toDataURL('image/png'), prompt)
-          if (!filled.length) return
-          const r0 = await loadImage(filled[0])
-          const sx = (bnd.minX / W) * capW, sy = (bnd.minY / H) * capH
-          const sw = (boxW / W) * capW, sh = (boxH / H) * capH
-          const crop = document.createElement('canvas')
-          crop.width = Math.max(1, Math.round(sw)); crop.height = Math.max(1, Math.round(sh))
-          crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
-          raw = crop.toDataURL('image/png')
-        }
-      } else if (genModel.value === 'nano') {
-        const r = await inpaint.nanoGen(objectPrompt)
-        raw = r[0]
-      } else if (genStyle.value) {
-        const r = await inpaint.loraGen(genStyle.value.filename, objectPrompt, aspect)
-        raw = r[0]
-      } else {
-        const r = await inpaint.text2img(objectPrompt, aspect)
-        raw = r[0]
-      }
-      if (!raw) return
-
-      // 2) Cut out → transparent object. Clean the bg-removal haze (stray
-      //    low-alpha residue, e.g. a corner blob) and crop tight to the subject
-      //    so nothing spills past the object.
-      const cutoutRaw = await inpaint.removeBackground(raw)
-      const { url: cutout, aspect: genAspect } = await cleanCutoutAlpha(cutoutRaw)
-      const name = await inpaint.uploadDataUrl(cutout, 'compobj')
-      // Contain the cutout fully within the drawn box (no overflow), preserving
-      // its aspect and centering on the box. Layer w/h are both normalized to
-      // canvas width, so the box height in those units is boxH / W.
-      const bwN = boxW / W, bhN = boxH / W
-      let w = bwN, h = bwN / genAspect
-      if (h > bhN) { h = bhN; w = bhN * genAspect }
-      addImageFromName(name, genAspect, { x: cx / W, y: cy / H, w, h })
+      const mask = cloneGenMask()
+      const layerId = await generateObjectInto(mask, bnd)
+      if (layerId) genResult.value = { layerId, mask, bnd }
     }
     clearGenMask()
   } catch (err) {
@@ -1933,6 +1959,18 @@ onUnmounted(() => {
           class="absolute pointer-events-none rounded-full border border-white/90 bg-white/10"
           :style="{ left: (genCursor.x - genBrush / 2) + 'px', top: (genCursor.y - genBrush / 2) + 'px', width: genBrush + 'px', height: genBrush + 'px', zIndex: 30 }"
         />
+
+        <!-- Generated-object mini toolbar: cancel / re-roll / confirm -->
+        <div
+          v-if="genResult"
+          class="absolute z-40 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+          :style="{ left: Math.min(Math.max((genResult.bnd.minX + genResult.bnd.maxX) / 2, 64), canvasDisplay.w - 64) + 'px', top: Math.min(genResult.bnd.maxY + 12, canvasDisplay.h - 44) + 'px' }"
+          @pointerdown.stop @click.stop
+        >
+          <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Cancel" :disabled="inpaint.busy.value" @click="cancelObject"><X class="size-4" /></button>
+          <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Re-roll" :disabled="inpaint.busy.value" @click="rerollObject"><Dices class="size-4" :class="inpaint.busy.value ? 'animate-spin' : ''" /></button>
+          <button class="flex items-center justify-center size-8 rounded-[8px] bg-white text-neutral-900 hover:bg-white/90 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Confirm" :disabled="inpaint.busy.value" @click="confirmObject"><Check class="size-4" /></button>
+        </div>
 
         <!-- Multi-select outlines (when 2+ layers selected) -->
         <template v-if="selectedCount > 1 && !nodeEdit.active.value && !genActive">
