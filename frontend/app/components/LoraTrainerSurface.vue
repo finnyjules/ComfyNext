@@ -482,6 +482,13 @@ async function addFiles(fileList: FileList | File[] | null | undefined) {
         captionState: 'idle',
       })
     }
+    // First own upload with no aesthetic yet → reveal the field blank+editable.
+    // Krea import sets importedAesthetic to a non-empty string, so this guard
+    // (=== null) leaves Krea imports untouched, and won't re-blank on re-uploads.
+    if (importedAesthetic.value === null) {
+      importedAesthetic.value = ''
+      aestheticSource.value = 'images'
+    }
     status.value = 'idle'
   } catch (e: any) {
     errorMessage.value = e?.message ?? 'Upload failed.'
@@ -502,6 +509,7 @@ function clearDataset() {
   lossGraphUrl.value = null
   errorMessage.value = null
   importedAesthetic.value = null
+  aestheticSource.value = null
   status.value = 'idle'
 }
 
@@ -531,6 +539,9 @@ const kreaBoards = ref<KreaBoardMeta[]>([])
 // When set (from a Krea import), used as the LoRA's aesthetic instead of
 // generating one with Qwen — Krea's is higher quality and free.
 const importedAesthetic = ref<string | null>(null)
+// Where the current aesthetic came from — drives the auto-fill button (images
+// only) and the helper copy under the field. null when there's no dataset.
+const aestheticSource = ref<'krea' | 'images' | null>(null)
 
 // Turn a board title into a trigger token, e.g. "Echo Flux Vortex" → "echo_flux_vortex".
 function slugifyTrigger(title: string): string {
@@ -659,7 +670,10 @@ async function importKreaBoard(board: KreaBoardMeta) {
       const tail = shuffleArray(keywords).join(', ')
       aesthetic = aesthetic ? `${aesthetic}\n\n${tail}` : tail
     }
-    if (aesthetic) importedAesthetic.value = aesthetic
+    if (aesthetic) {
+      importedAesthetic.value = aesthetic
+      aestheticSource.value = 'krea'
+    }
     // Prefill the LoRA name + trigger word from the (reworded) board name,
     // unless the user already set their own.
     const nameIsUntouched = !form.outputName.trim() || form.outputName.trim() === 'my_style'
