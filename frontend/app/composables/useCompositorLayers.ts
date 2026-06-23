@@ -25,6 +25,7 @@ export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
 import type { LayerMotionState } from '~/lib/motion/evaluate'
 import type { FrameMotion } from '~/lib/motion/types'
 import { axesToVariationSettings } from '~/lib/motion/axes'
+import { expandClones, type Cloner } from '~/composables/useCloner'
 
 interface MotionPainter {
   motionStateFor: (layer: LocalLayer, t: number, motion: FrameMotion) => LayerMotionState | null
@@ -115,6 +116,9 @@ interface LayerCommon {
   maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()
   maskedByKey?: string     // clipped by another layer's silhouette; a StackKey ('w:<slot>'|'l:<id>')
   maskShowSource?: boolean // when true, the mask source also renders normally at its z-position
+  /** Linked cloner: stamp this layer N times (linear/grid/radial) with falloff.
+   *  Absent/disabled ⇒ a single instance, i.e. today's behavior. */
+  cloner?: Cloner
   /** Motion (Kinetic Slates): timing + presets evaluated by app/lib/motion.
    *  Absent ⇒ the layer is static and always visible. */
   animation?: import('~/lib/motion/types').LayerAnimation
@@ -672,7 +676,7 @@ function paintLayer(
   W: number,
   H: number,
 ) {
-  const opacity = Math.max(0, Math.min(1, layer.opacity))
+  const baseOpacity = Math.max(0, Math.min(1, layer.opacity))
   const blendOp = localBlendOp(layer)
   const fx = (layer.effects ?? []).filter(e => e.visible)
   const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
@@ -681,44 +685,58 @@ function paintLayer(
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 
-  // Effected path: render the layer to an offscreen at canvas size, then
-  // composite it with inner shadow / drop shadow / blur. Works identically for
-  // text, shapes, vectors and images, and because bakeOverlay() renders through
-  // here the effects are baked into generation exactly as previewed.
-  if (shadow || blur || inner) {
-    const off = document.createElement('canvas')
-    off.width = Math.max(1, Math.round(W))
-    off.height = Math.max(1, Math.round(H))
-    const octx = off.getContext('2d')
-    if (octx) {
-      octx.translate(layer.x * W, layer.y * H)
-      if (layer.rotation) octx.rotate((layer.rotation * Math.PI) / 180)
-      drawLayerContent(octx, layer, W)
-      if (inner) compositeInnerShadow(off, inner, W)
-      ctx.save()
-      ctx.globalAlpha = opacity
-      ctx.globalCompositeOperation = blendOp
-      if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W)}px)`
-      if (shadow) {
-        ctx.shadowColor = shadow.color
-        ctx.shadowBlur = Math.max(0, shadow.blur * W)
-        ctx.shadowOffsetX = shadow.x * W
-        ctx.shadowOffsetY = shadow.y * W
-      }
-      ctx.drawImage(off, 0, 0)
-      ctx.restore()
-      return
-    }
-  }
+  // Linked cloner: paint once per clone (back-to-front; original last). No
+  // cloner ⇒ a single identity transform ⇒ one paint exactly as before. Falloff
+  // offset/rotation/scale fold into the layer's own translate/rotate/scale so
+  // the rotation+scale pivot stays the layer center.
+  for (const c of expandClones(layer.cloner, W / H)) {
+    const lx = layer.x + c.dx
+    const ly = layer.y + c.dy
+    const lrot = layer.rotation + c.drot
+    const lop = baseOpacity * c.dopacity
+    const ls = c.dscale
 
-  // Fast path (no effects): draw inline, identical to before.
-  ctx.save()
-  ctx.globalAlpha = opacity
-  ctx.globalCompositeOperation = blendOp
-  ctx.translate(layer.x * W, layer.y * H)
-  if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
-  drawLayerContent(ctx, layer, W)
-  ctx.restore()
+    // Effected path: render the layer to an offscreen at canvas size, then
+    // composite it with inner shadow / drop shadow / blur. Works identically for
+    // text, shapes, vectors and images, and because bakeOverlay() renders through
+    // here the effects are baked into generation exactly as previewed.
+    if (shadow || blur || inner) {
+      const off = document.createElement('canvas')
+      off.width = Math.max(1, Math.round(W))
+      off.height = Math.max(1, Math.round(H))
+      const octx = off.getContext('2d')
+      if (octx) {
+        octx.translate(lx * W, ly * H)
+        if (lrot) octx.rotate((lrot * Math.PI) / 180)
+        if (ls !== 1) octx.scale(ls, ls)
+        drawLayerContent(octx, layer, W)
+        if (inner) compositeInnerShadow(off, inner, W)
+        ctx.save()
+        ctx.globalAlpha = lop
+        ctx.globalCompositeOperation = blendOp
+        if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W)}px)`
+        if (shadow) {
+          ctx.shadowColor = shadow.color
+          ctx.shadowBlur = Math.max(0, shadow.blur * W)
+          ctx.shadowOffsetX = shadow.x * W
+          ctx.shadowOffsetY = shadow.y * W
+        }
+        ctx.drawImage(off, 0, 0)
+        ctx.restore()
+        continue
+      }
+    }
+
+    // Fast path (no effects): draw inline, identical to before.
+    ctx.save()
+    ctx.globalAlpha = lop
+    ctx.globalCompositeOperation = blendOp
+    ctx.translate(lx * W, ly * H)
+    if (lrot) ctx.rotate((lrot * Math.PI) / 180)
+    if (ls !== 1) ctx.scale(ls, ls)
+    drawLayerContent(ctx, layer, W)
+    ctx.restore()
+  }
 }
 
 // Per-kind shape rendering. Caller has already applied opacity + the layer's
@@ -1054,6 +1072,7 @@ export const WIRED_BLEND_OP: Record<string, GlobalCompositeOperation> = {
 /** Transform of a wired image layer (normalized x/y, scale, rotation, blend). */
 export interface WiredTransform {
   x: number; y: number; scale: number; rotation: number; opacity: number; blend: string
+  cloner?: Cloner // linked cloner — stamp the layer N times (see useCloner)
 }
 
 /**
@@ -1075,14 +1094,20 @@ export function drawWiredImageLayer(
   const cAspect = W / H, iAspect = img.naturalWidth / img.naturalHeight
   let fitW: number, fitH: number
   if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
-  ctx.save()
-  ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
-  ctx.globalCompositeOperation = WIRED_BLEND_OP[layer.blend] ?? 'source-over'
-  ctx.translate(W / 2 + layer.x * W, H / 2 + layer.y * H)
-  if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180)
-  ctx.scale(layer.scale, layer.scale)
-  ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
-  ctx.restore()
+  const op = WIRED_BLEND_OP[layer.blend] ?? 'source-over'
+  // Linked cloner: stamp the layer once per clone (back-to-front; original last).
+  // No cloner ⇒ a single identity transform ⇒ exactly one draw as before.
+  for (const c of expandClones(layer.cloner, W / H)) {
+    ctx.save()
+    ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity * c.dopacity))
+    ctx.globalCompositeOperation = op
+    ctx.translate(W / 2 + (layer.x + c.dx) * W, H / 2 + (layer.y + c.dy) * H)
+    const rot = layer.rotation + c.drot
+    if (rot) ctx.rotate((rot * Math.PI) / 180)
+    ctx.scale(layer.scale * c.dscale, layer.scale * c.dscale)
+    ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
+    ctx.restore()
+  }
 }
 
 /**

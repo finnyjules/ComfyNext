@@ -146,6 +146,77 @@ def _prep_layer(layer: dict, canvas_h: int, canvas_w: int):
     return rgb, a
 
 
+def _parse_cloner(raw) -> dict | None:
+    """Parse a `layer{i}_cloner` widget value (JSON string) into a config dict.
+
+    Returns None when absent/blank/invalid so the layer renders as a single
+    instance (today's behavior).
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _expand_clones(layer: dict, cloner: dict | None, aspect: float) -> list[dict]:
+    """Expand a layer into clone instances per its cloner config.
+
+    Mirror of expandClones() in frontend/app/composables/useCloner.ts — keep the
+    two in sync. Returns layer dicts (shallow copies) in BACK-TO-FRONT order
+    (the original, k=0, LAST) so the full-opacity original composites on top
+    within its z slot, exactly like the client preview. Offsets add to x/y;
+    falloff steps rotation/scale/opacity by clone index k. `aspect = W/H` keeps
+    the radial ring circular on screen (x maps to W, y maps to H).
+    """
+    if not cloner or not cloner.get("enabled"):
+        return [layer]
+
+    step_rot = float(cloner.get("stepRotation", 0.0) or 0.0)
+    step_scl = float(cloner.get("stepScale", 1.0) or 1.0)
+    step_op = float(cloner.get("stepOpacity", 1.0) or 1.0)
+
+    # (k, dx, dy, extra_rot) per clone, built k-ascending.
+    specs: list[tuple[int, float, float, float]] = []
+    if cloner.get("mode") == "radial":
+        n = max(1, int(cloner.get("count", 1)))
+        sweep = float(cloner.get("sweepAngle", 360.0))
+        radius = float(cloner.get("radius", 0.0))
+        start = float(cloner.get("startAngle", 0.0))
+        face = bool(cloner.get("faceCenter", False))
+        full = abs(sweep) >= 359.999
+        denom = n if full else max(1, n - 1)
+        for i in range(n):
+            ang_deg = start + sweep * (i / denom)
+            ang = math.radians(ang_deg)
+            dx = radius * math.cos(ang)
+            dy = radius * aspect * math.sin(ang)
+            specs.append((i, dx, dy, ang_deg if face else 0.0))
+    else:
+        nx = max(1, int(cloner.get("countX", 1)))
+        ny = max(1, int(cloner.get("countY", 1)))
+        sx = float(cloner.get("spacingX", 0.0))
+        sy = float(cloner.get("spacingY", 0.0))
+        for iy in range(ny):
+            for ix in range(nx):
+                k = iy * nx + ix
+                specs.append((k, ix * sx, iy * sy, 0.0))
+
+    out = []
+    for (k, dx, dy, extra_rot) in specs:
+        c = dict(layer)
+        c["x"] = layer["x"] + dx
+        c["y"] = layer["y"] + dy
+        c["rot"] = layer["rot"] + k * step_rot + extra_rot
+        c["scl"] = layer["scl"] * (step_scl ** k)
+        c["op"] = layer["op"] * (step_op ** k)
+        out.append(c)
+    out.reverse()  # original (k=0) last → composites on top
+    return out
+
+
 def _composite_layers(layers: list[dict], canvas_h: int, canvas_w: int) -> torch.Tensor:
     """Composite gathered layers onto a canvas, ordered by ascending z.
 
@@ -286,6 +357,14 @@ class CompositorNode(IO.ComfyNode):
         inputs.append(IO.String.Input("motion_params", optional=True, default="",
                                       multiline=True,
                                       tooltip="Baked motion frames (managed by the Frame editor)."))
+        # Per-layer linked cloner (JSON, managed by the Frame editor). When
+        # enabled the layer is stamped N times (linear/grid/radial) with falloff;
+        # see _expand_clones. Appended last so existing widget positions don't
+        # shift. Default "" = a single instance (today's behavior).
+        for i in range(1, _MAX_LAYERS + 1):
+            inputs.append(IO.String.Input(f"layer{i}_cloner", optional=True, default="",
+                                          multiline=True,
+                                          tooltip="Linked cloner config (managed by the Frame editor)."))
         return IO.Schema(
             node_id="Compositor",
             display_name="Compositor",
@@ -368,6 +447,7 @@ class CompositorNode(IO.ComfyNode):
                 "z":   float(kwargs.get(f"layer{i}_z", float(i))),
                 "mask": kwargs.get(f"layer{i}_mask"),
                 "protect": bool(kwargs.get(f"layer{i}_protect", False)),
+                "cloner": _parse_cloner(kwargs.get(f"layer{i}_cloner")),
             })
 
         width = int(kwargs.get("width", 0) or 0)
@@ -386,6 +466,16 @@ class CompositorNode(IO.ComfyNode):
         else:
             _, ch, cw, _ = layers[0]["image"].shape
             canvas_h, canvas_w = ch, cw
+
+        # Linked cloner: expand each layer into its clone instances now that the
+        # canvas size (hence aspect) is known. Disabled/absent ⇒ the layer passes
+        # through unchanged. Done before compositing AND protect-coverage so both
+        # see every clone.
+        aspect = (canvas_w / canvas_h) if canvas_h else 1.0
+        expanded = []
+        for layer in layers:
+            expanded.extend(_expand_clones(layer, layer.get("cloner"), aspect))
+        layers = expanded
 
         # Composite by ascending z. Canvas size still follows the lowest *slot*
         # (layers[0]) above, so reordering depth never resizes the artboard.

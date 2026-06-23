@@ -1,0 +1,124 @@
+/**
+ * Layer cloner — a linked, non-destructive "array modifier" for Frame-modal
+ * layers. A layer carrying a `Cloner` config is stamped N times by the renderer
+ * (linear/grid or radial) with optional per-clone falloff. Clones do NOT count
+ * against the 16-layer cap; the layer stays a single selectable object.
+ *
+ * `expandClones` is the SINGLE SOURCE OF TRUTH, mirrored byte-for-byte by
+ * `_expand_clones` in comfy_extras/nodes_compositor.py so the live client
+ * preview and the server-side wired composite never drift. Keep the two in sync.
+ */
+
+export interface Cloner {
+  enabled: boolean
+  mode: 'linear' | 'radial'
+  // linear / grid
+  countX: number
+  countY: number
+  spacingX: number   // canvas-fraction (same units as layer x)
+  spacingY: number   // canvas-fraction (same units as layer y)
+  // radial
+  count: number
+  radius: number     // canvas-WIDTH fraction
+  startAngle: number // degrees
+  sweepAngle: number // degrees; 360 = full ring (no overlap at start/end)
+  faceCenter: boolean
+  // falloff — cumulative per clone index k (k=0 is the original)
+  stepRotation: number // +deg per clone
+  stepScale: number    // × per clone (1 = none)
+  stepOpacity: number  // × per clone (1 = none)
+}
+
+export interface CloneTransform {
+  dx: number        // add to layer x
+  dy: number        // add to layer y
+  drot: number      // add to layer rotation (deg)
+  dscale: number    // multiply layer scale
+  dopacity: number  // multiply layer opacity
+}
+
+const IDENTITY: CloneTransform = { dx: 0, dy: 0, drot: 0, dscale: 1, dopacity: 1 }
+
+export const DEFAULT_CLONER: Cloner = {
+  enabled: false,
+  mode: 'linear',
+  countX: 3,
+  countY: 1,
+  spacingX: 0.25,
+  spacingY: 0.25,
+  count: 6,
+  radius: 0.3,
+  startAngle: 0,
+  sweepAngle: 360,
+  faceCenter: false,
+  stepRotation: 0,
+  stepScale: 1,
+  stepOpacity: 1,
+}
+
+const DEG = Math.PI / 180
+
+/**
+ * Expand a cloner config into per-clone transforms.
+ *
+ * @param cloner config (or undefined/disabled → a single identity transform)
+ * @param aspect canvas W/H, used only by radial so the ring is circular on
+ *               screen (x maps to W, y maps to H).
+ * @returns transforms in BACK-TO-FRONT draw order — the original (k=0, identity)
+ *          is LAST so it lands on top and falloff reads as a trail behind it.
+ */
+export function expandClones(cloner: Cloner | undefined | null, aspect: number): CloneTransform[] {
+  if (!cloner || !cloner.enabled) return [{ ...IDENTITY }]
+
+  const stepRot = cloner.stepRotation || 0
+  const stepScl = cloner.stepScale ?? 1
+  const stepOp = cloner.stepOpacity ?? 1
+  const out: CloneTransform[] = []
+  const push = (k: number, dx: number, dy: number, extraRot: number) => {
+    out.push({
+      dx, dy,
+      drot: k * stepRot + extraRot,
+      dscale: Math.pow(stepScl, k),
+      dopacity: Math.pow(stepOp, k),
+    })
+  }
+
+  if (cloner.mode === 'radial') {
+    const n = Math.max(1, Math.floor(cloner.count))
+    const sweep = cloner.sweepAngle
+    const full = Math.abs(sweep) >= 359.999
+    const denom = full ? n : Math.max(1, n - 1)
+    for (let i = 0; i < n; i++) {
+      const angDeg = cloner.startAngle + sweep * (i / denom)
+      const ang = angDeg * DEG
+      const dx = cloner.radius * Math.cos(ang)
+      const dy = cloner.radius * aspect * Math.sin(ang)
+      push(i, dx, dy, cloner.faceCenter ? angDeg : 0)
+    }
+  } else {
+    const nx = Math.max(1, Math.floor(cloner.countX))
+    const ny = Math.max(1, Math.floor(cloner.countY))
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        const k = iy * nx + ix
+        push(k, ix * cloner.spacingX, iy * cloner.spacingY, 0)
+      }
+    }
+  }
+
+  // Built k-ascending; reverse → original (k=0) ends last = drawn on top.
+  out.reverse()
+  return out
+}
+
+/** Parse a `layer{i}_cloner` widget JSON value into a Cloner (or undefined). */
+export function parseCloner(raw: unknown): Cloner | undefined {
+  if (!raw || typeof raw !== 'string') return undefined
+  try {
+    const obj = JSON.parse(raw)
+    if (!obj || typeof obj !== 'object') return undefined
+    return { ...DEFAULT_CLONER, ...obj, enabled: !!obj.enabled }
+  } catch {
+    return undefined
+  }
+}

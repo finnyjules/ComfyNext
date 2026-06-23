@@ -17,12 +17,14 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from '~/composables/useInpaint'
+import { DEFAULT_CLONER, parseCloner, type Cloner } from '~/composables/useCloner'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
+import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
@@ -71,6 +73,7 @@ interface Layer {
   x: number; y: number
   rotation: number; scale: number
   opacity: number; blend: string
+  cloner?: Cloner
 }
 
 const layers = computed<Layer[]>(() => {
@@ -98,6 +101,7 @@ const layers = computed<Layer[]>(() => {
       scale: wv[widgetIdx(`layer${i}_scale`)] ?? 1,
       opacity: wv[widgetIdx(`layer${i}_opacity`)] ?? 1,
       blend: wv[widgetIdx(`layer${i}_blend`)] ?? 'normal',
+      cloner: parseCloner(wv[widgetIdx(`layer${i}_cloner`)]),
     })
   }
   return out
@@ -109,6 +113,13 @@ function setLayerProp(slot: number, prop: string, value: any) {
   const defs = node.data.widgetDefs as any[]
   const idx = defs.findIndex((d: any) => d.name === `layer${slot}_${prop}`)
   if (idx >= 0) node.data.widgetsValues[idx] = value
+}
+
+// Wired layer cloner persists as a JSON string in the `layer{i}_cloner` widget
+// (parsed back by the `layers` computed). The backend reads the same widget to
+// expand clones server-side — see _expand_clones in nodes_compositor.py.
+function setWiredCloner(slot: number, cloner: Cloner) {
+  setLayerProp(slot, 'cloner', JSON.stringify(cloner))
 }
 
 // ── Canvas sizing — match the artboard/base aspect so positions are exact ───
@@ -2837,6 +2848,13 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Cloner: repeat this layer (linear/grid/radial) with falloff -->
+          <CompositorClonerPanel
+            class="mt-1"
+            :cloner="(selectedLocal as any).cloner"
+            @update="(cl) => setLocal(selectedLocal!.id, { cloner: cl } as any)"
+          />
+
           <!-- Animation (kinetic motion presets, previewed via the Motion toolbar button) -->
           <LayerMotionPanel
             v-if="KINETIC_ENABLED"
@@ -2941,6 +2959,9 @@ onUnmounted(() => {
               Show mask layer
             </label>
           </div>
+
+          <!-- Cloner: repeat this layer (linear/grid/radial) with falloff -->
+          <CompositorClonerPanel :cloner="selected.cloner" @update="(cl) => setWiredCloner(selected!.slot, cl)" />
         </div>
         <div v-else class="p-4 text-xs text-white/40 italic">
           Select a layer to edit its properties, or use the toolbar to add text and shapes.
