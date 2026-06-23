@@ -1279,7 +1279,7 @@ const stylePickerOpen = ref(false)
 type GenModel = 'flux' | 'nano'
 const GEN_MODELS: { id: GenModel; name: string; hint: string }[] = [
   { id: 'flux', name: 'Flux Schnell', hint: 'Fast and cheap' },
-  { id: 'nano', name: 'Nano Banana 2', hint: 'Higher quality, scene-aware — pricier' },
+  { id: 'nano', name: 'Nano Banana Pro', hint: 'Top quality, scene-aware — slower & pricier' },
 ]
 const genModel = ref<GenModel>('flux')
 const modelPickerOpen = ref(false)

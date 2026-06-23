@@ -1,8 +1,8 @@
 /**
  * POST /api/inpaint/nano-gen   Body: { prompt, image? }
  *
- * High-quality object generation via Google Nano Banana 2 (Gemini image) on
- * Replicate — the "High quality" option for the frame modal's Generate Object.
+ * High-quality object generation via Google Nano Banana Pro (Gemini 3 Pro
+ * Image) on Replicate — the premium model option for Generate Object.
  *  - No image → text→image (a clean, complete, isolated object).
  *  - With image (a cropped scene region) → instruction edit that paints the
  *    object into that region, matched to the surrounding scene.
@@ -11,7 +11,7 @@
  * shape as /api/inpaint/text2img. Under /api/inpaint → already proxy-allowlisted.
  * Helpers auto-imported from server/utils/replicate.ts.
  */
-const MODEL = 'google/nano-banana-2'
+const MODEL = 'google/nano-banana-pro'
 
 interface Body { prompt?: string; image?: string }
 
