@@ -197,6 +197,31 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       const role = Math.floor(ang / 120) % 3
       return { role, fx: (uw - bcx) / sx + 0.5, fy: (vw - bcy) / sy + 0.5 }
     }
+    case 'weave3d': {
+      // Isometric triaxial over-under weave. Three strand families run along the three
+      // triangular-lattice directions; finite-width bars cross over/under by a cyclic
+      // ("impossible weave") rule, leaving the Background as recess (role 3).
+      // Seamless: the three phase coords shift by an integer when wrapping the tile
+      // (nx integer, ny even), so role/cover are identical across the seam.
+      const uw = ((u % 1) + 1) % 1, vw = ((v % 1) + 1) % 1
+      const K = 1.1547005
+      const nx = Math.max(2, Math.round(cells))
+      const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
+      const bw = Math.min(0.49, Math.max(0.1, Number.isFinite(Number((_p as any)?.weaveWidth)) ? Number((_p as any).weaveWidth) : 0.36))
+      const t = [vw * ny, uw * nx - 0.5 * vw * ny, uw * nx + 0.5 * vw * ny]
+      const cov: { k: number; s: number }[] = []
+      for (let k = 0; k < 3; k++) { const c = Math.round(t[k]!); const s = t[k]! - c; if (Math.abs(s) < bw) cov.push({ k, s }) }
+      if (cov.length === 0) return { role: 3, fx: 0.5, fy: 0.5 } // recess → background
+      let vis = cov[0]!
+      for (const b of cov) {
+        if (b === vis) continue
+        if (b.k === (vis.k + 1) % 3) { /* vis passes over b → keep vis */ }
+        else if (vis.k === (b.k + 1) % 3) { vis = b } // b passes over vis
+        else if (Math.abs(b.s) < Math.abs(vis.s)) { vis = b } // tie → nearest centerline
+      }
+      const along = ((t[(vis.k + 2) % 3]! % 1) + 1) % 1
+      return { role: vis.k, fx: along, fy: vis.s / bw * 0.5 + 0.5 }
+    }
     default:
       return { role: 0, fx, fy }
   }

@@ -24,6 +24,7 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'fsWidth', label: 'Scale width', kind: 'slider', min: 0.4, max: 2.0, step: 0.05, default: 1.0, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
   { key: 'fsRowSpacing', label: 'Row spacing', kind: 'slider', min: 0.2, max: 0.9, step: 0.02, default: 0.5, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
   { key: 'fsRadius', label: 'Arc radius', kind: 'slider', min: 0.55, max: 1.0, step: 0.01, default: 0.78, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
+  { key: 'weaveWidth', label: 'Strand width', kind: 'slider', min: 0.14, max: 0.42, step: 0.01, default: 0.34, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'weave3d' },
 
   // Procedural motif controls — shown only in procedural mode.
   { key: 'motif', label: 'Motif', kind: 'select', options: [...MOTIFS], default: 'checker', group: 'Content', when: isProcedural },

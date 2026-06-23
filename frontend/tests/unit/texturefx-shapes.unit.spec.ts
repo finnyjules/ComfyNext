@@ -652,8 +652,79 @@ describe('shapeRegion cubes', () => {
   })
 })
 
+describe('shapeRegion weave3d (isometric triaxial weave)', () => {
+  const cells = 8
+
+  it('rolesFor: weave3d resolves to [strandA, strandB, strandC]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'weave3d' } as any)).toEqual(['strandA', 'strandB', 'strandC'])
+  })
+
+  it('produces all three strand roles AND recess (role 3) when strands are thin', () => {
+    // Thin strands (bw < ~1/3) leave triangular recesses → role 3 appears.
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 48; i++) for (let j = 0; j <= 48; j++) {
+      const r = shapeRegion('weave3d', i / 48, j / 48, cells, { weaveWidth: 0.24 } as any)
+      expect(r.role >= 0 && r.role <= 3).toBe(true)
+      roleSet.add(r.role)
+    }
+    expect(roleSet).toEqual(new Set([0, 1, 2, 3]))
+  })
+
+  it('all three strand roles appear at the default width (0.36)', () => {
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 48; i++) for (let j = 0; j <= 48; j++) roleSet.add(shapeRegion('weave3d', i / 48, j / 48, cells, { weaveWidth: 0.36 } as any).role)
+    expect([0, 1, 2].every(r => roleSet.has(r))).toBe(true)
+  })
+
+  it('wider strands shrink the recess (fewer role-3 pixels)', () => {
+    const countRecess = (w: number) => {
+      let n = 0
+      for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) {
+        if (shapeRegion('weave3d', (i + 0.5) / 40, (j + 0.5) / 40, cells, { weaveWidth: w } as any).role === 3) n++
+      }
+      return n
+    }
+    expect(countRecess(0.48)).toBeLessThan(countRecess(0.2))
+  })
+
+  it('interior periodicity: pattern repeats every 1/nx in u and 2/ny in v', () => {
+    // nx integer, ny even → the lattice phase coords shift by an integer over these
+    // steps, so role is unchanged. Confirms the seamless construction directly
+    // (the u=0/u=1 seam is tautological under fract, so this guards the real math).
+    const K = 1.1547005
+    const nx = Math.max(2, Math.round(cells))
+    const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
+    const pts = [[0.13, 0.27], [0.4, 0.55], [0.72, 0.81], [0.9, 0.1]]
+    for (const [u, v] of pts) {
+      const base = shapeRegion('weave3d', u, v, cells, { weaveWidth: 0.36 } as any).role
+      expect(shapeRegion('weave3d', u + 1 / nx, v, cells, { weaveWidth: 0.36 } as any).role).toBe(base)
+      expect(shapeRegion('weave3d', u, v + 2 / ny, cells, { weaveWidth: 0.36 } as any).role).toBe(base)
+    }
+  })
+
+  it('seamless wrap at cells=8: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 1; i <= 15; i++) {
+      const t = (i + 0.3) / 16
+      expect(shapeRegion('weave3d', 0, t, cells, { weaveWidth: 0.36 } as any).role)
+        .toBe(shapeRegion('weave3d', 1, t, cells, { weaveWidth: 0.36 } as any).role)
+      expect(shapeRegion('weave3d', t, 0, cells, { weaveWidth: 0.36 } as any).role)
+        .toBe(shapeRegion('weave3d', t, 1, cells, { weaveWidth: 0.36 } as any).role)
+    }
+  })
+
+  it('fx/fy stay in [0,1] for strand pixels', () => {
+    for (let i = 0; i <= 24; i++) for (let j = 0; j <= 24; j++) {
+      const r = shapeRegion('weave3d', i / 24, j / 24, cells, { weaveWidth: 0.36 } as any)
+      if (r.role <= 2) {
+        expect(r.fx).toBeGreaterThanOrEqual(0); expect(r.fx).toBeLessThanOrEqual(1)
+        expect(r.fy).toBeGreaterThanOrEqual(0); expect(r.fy).toBeLessThanOrEqual(1)
+      }
+    }
+  })
+})
+
 describe('isStrokeEdge (shape outline detection)', () => {
-  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes']
+  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d']
 
   it('flags region boundaries and not deep interiors, for every family', () => {
     // Each family must produce SOME edge pixels and SOME non-edge (interior) pixels

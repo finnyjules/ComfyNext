@@ -26,6 +26,7 @@ uniform float u_shapeFamily;
 uniform float u_pinwheel;
 uniform float u_hexFlat;
 uniform float u_fsRadius, u_fsRowSpacing, u_fsWidth;
+uniform float u_weaveWidth;              // weave3d strand half-width (lattice units)
 uniform float u_strokeMode, u_strokeW;   // 0 off, 1 uniform, 2 per-role; width as fraction of a cell
 uniform vec3 u_strokeColor;              // uniform-mode stroke
 uniform vec3 u_strokeRole[3];            // per-role stroke colors
@@ -318,7 +319,7 @@ int shapeRole(vec2 uv, out vec2 cf) {
           }
         }
       }
-    } else {                              // 3D cubes / tumbling blocks (rhombille, 3-color)
+    } else if (u_shapeFamily < 9.5) {     // 3D cubes / tumbling blocks (rhombille, 3-color)
       float uw = fract(v_uv.x); float vw = fract(v_uv.y);
       float K = 1.1547005;
       // cubes map cells directly to cube count (no mult-3/>=9 clamp; role is per-hex
@@ -342,6 +343,30 @@ int shapeRole(vec2 uv, out vec2 cf) {
       float ang = mod(degrees(atan(dy, dx)) - 30.0, 360.0);
       role = int(mod(floor(ang / 120.0), 3.0));
       cf = vec2((uw - bcx) / sx + 0.5, (vw - bcy) / sy + 0.5);
+    } else {                              // weave3d — isometric triaxial over-under weave (role 3 = recess/bg)
+      float uw = fract(v_uv.x); float vw = fract(v_uv.y);
+      float K = 1.1547005;
+      float nx = max(2.0, floor(u_cells + 0.5));
+      float ny = 2.0 * max(1.0, floor(nx * K / 2.0 + 0.5));
+      float bw = clamp(u_weaveWidth, 0.1, 0.49);
+      float tt[3];
+      tt[0] = vw * ny; tt[1] = uw * nx - 0.5 * vw * ny; tt[2] = uw * nx + 0.5 * vw * ny;
+      int vis = -1; float vs = 0.0;
+      for (int k = 0; k < 3; k++) {
+        float c = floor(tt[k] + 0.5); float s = tt[k] - c;
+        if (abs(s) < bw) {
+          if (vis < 0) { vis = k; vs = s; }
+          else if (k == int(mod(float(vis) + 1.0, 3.0))) { /* vis over k */ }
+          else if (vis == int(mod(float(k) + 1.0, 3.0))) { vis = k; vs = s; }
+          else if (abs(s) < abs(vs)) { vis = k; vs = s; }
+        }
+      }
+      if (vis < 0) { role = 3; cf = vec2(0.5); }
+      else {
+        role = vis;
+        float along = fract(tt[int(mod(float(vis) + 2.0, 3.0))]);
+        cf = vec2(along, vs / bw * 0.5 + 0.5);
+      }
     }
   return role;
 }
@@ -351,11 +376,13 @@ void main(){
   if (u_mode > 2.5) {
     vec2 cf;
     int role = shapeRole(v_uv, cf);
-    vec3 col = evalFill(role, cf, v_uv);
+    // role 3 is the weave3d recess → tile background; real regions use their fill.
+    vec3 col = (role > 2) ? u_bg : evalFill(role, cf, v_uv);
     // Stroke: paint pixels near a role boundary. Re-sample role at 4 axis neighbors
     // (offset = stroke width as a fraction of a cell); if any differs, we're on an edge.
     // fract()-based wrapping inside shapeRole keeps the stroke seamless at tile edges.
-    if (u_strokeMode > 0.5) {
+    // Recess pixels (role 3) are left unstroked so holes read cleanly.
+    if (u_strokeMode > 0.5 && role <= 2) {
       float w = u_strokeW / max(u_cells, 1.0);
       vec2 dummy;
       bool edge =
@@ -585,6 +612,7 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_fsRadius'),     Number.isFinite(Number(p.fsRadius))     ? Number(p.fsRadius)     : 0.78)
     gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
     gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
+    gl.uniform1f(u('u_weaveWidth'),   Number.isFinite(Number(p.weaveWidth))   ? Number(p.weaveWidth)   : 0.36)
     const strokeMode = String(p.shapeStroke) === 'per-role' ? 2 : String(p.shapeStroke) === 'uniform' ? 1 : 0
     gl.uniform1f(u('u_strokeMode'), strokeMode)
     gl.uniform1f(u('u_strokeW'), Number.isFinite(Number(p.shapeStrokeWidth)) ? Number(p.shapeStrokeWidth) : 0.08)
