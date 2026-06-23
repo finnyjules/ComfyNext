@@ -206,6 +206,9 @@ function onParam() {
 }
 
 // ── Fills panel helpers ───────────────────────────────────────────────────────
+// rawFill: the stored fill for this role (un-resolved — may be type:'link').
+// Use for the type picker and v-else-if guard so 'link' shows correctly.
+function rawFill(rk: string): any { return (params as any).fills?.[rk] }
 function roleFill(rk: string, i: number): Fill { return fillForRole(params, rk, i) }
 function setFill(rk: string, fill: Fill) {
   if (!(params as any).fills) (params as any).fills = {}
@@ -471,12 +474,12 @@ onBeforeUnmount(() => {
           <label class="mb-1 block text-[11px] text-white/55">Type</label>
           <StudioSelect
             :options="['solid', 'gradient', 'image', 'pattern', 'link']"
-            :model-value="(roleFill(rk, i) as any).type ?? 'solid'"
+            :model-value="rawFill(rk)?.type ?? 'solid'"
             @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern' | 'link')"
           />
 
           <!-- Solid: single color picker + opacity -->
-          <template v-if="roleFill(rk, i).type === 'solid'">
+          <template v-if="rawFill(rk)?.type === 'solid' || !rawFill(rk)">
             <div class="mt-1 flex items-center gap-2">
               <label class="text-[11px] text-white/55">Color</label>
               <StudioColor
@@ -496,7 +499,7 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- Gradient: kind, angle, two stops, frame -->
-          <template v-else-if="roleFill(rk, i).type === 'gradient'">
+          <template v-else-if="rawFill(rk)?.type === 'gradient'">
             <div class="mt-1 flex flex-col gap-1">
               <label class="text-[11px] text-white/55">Kind</label>
               <StudioSelect
@@ -572,7 +575,7 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- Image: source import, seam, scale, frame -->
-          <template v-else-if="roleFill(rk, i).type === 'image'">
+          <template v-else-if="rawFill(rk)?.type === 'image'">
             <div class="mt-1 flex flex-col gap-1">
               <!-- Source row -->
               <label class="text-[11px] text-white/55">Source</label>
@@ -625,19 +628,19 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- Link: mirrors another role's fill (cycle-guarded in fillForRole) -->
-          <template v-else-if="(roleFill(rk, i) as any).type === 'link'">
+          <template v-else-if="rawFill(rk)?.type === 'link'">
             <div class="mt-1 flex flex-col gap-1">
               <label class="text-[11px] text-white/55">Link to role</label>
               <StudioSelect
                 :options="rolesFor(params).filter((r) => r !== rk)"
-                :model-value="(roleFill(rk, i) as any).to ?? rolesFor(params).find((r) => r !== rk) ?? rk"
+                :model-value="rawFill(rk)?.to ?? rolesFor(params).find((r) => r !== rk) ?? rk"
                 @update:model-value="(to: string) => setFill(rk, { type: 'link', to } as any)"
               />
             </div>
           </template>
 
           <!-- Pattern: nested motif sub-picker -->
-          <template v-else-if="roleFill(rk, i).type === 'pattern'">
+          <template v-else-if="rawFill(rk)?.type === 'pattern'">
             <div class="mt-1 flex flex-col gap-1">
               <label class="text-[11px] text-white/55">Motif</label>
               <StudioSelect
