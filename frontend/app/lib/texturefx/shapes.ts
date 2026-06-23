@@ -50,6 +50,38 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       if (role === 0) return { role: 0, fx: (par + lfx) / 2, fy: lfy }         // horizontal brick
       return { role: 1, fx: lfx, fy: (par + lfy) / 2 }                         // vertical brick
     }
+    case 'fishscale': {
+      const gxx = u * cells, gyy = v * cells
+      const R = 0.55
+      const jc = Math.round(gyy)
+      let best = 1e9, bcx = 0, bcy = 0
+      for (let dj = -1; dj <= 1; dj++) {
+        const j = jc + dj
+        const off = (((j % 2) + 2) % 2) * 0.5
+        const ic = Math.round(gxx - off)
+        for (let di = -1; di <= 1; di++) {
+          const cxp = ic + di + off, cyp = j
+          const d = Math.hypot(gxx - cxp, gyy - cyp)
+          if (d < best) { best = d; bcx = cxp; bcy = cyp }
+        }
+      }
+      return { role: best < R ? 0 : 1, fx: (gxx - bcx) / (2 * R) + 0.5, fy: (gyy - bcy) / (2 * R) + 0.5 }
+    }
+    case 'pythagorean': {
+      const a = 2, b = 1, s2 = 5
+      const chP = Math.max(5, Math.round(cells / 5) * 5)
+      const x = u * chP, y = v * chP
+      const al = (a * x + b * y) / s2, be = (-b * x + a * y) / s2
+      const m0 = Math.floor(al), n0 = Math.floor(be)
+      for (let dm = -1; dm <= 1; dm++) for (let dn = -1; dn <= 1; dn++) {
+        const m = m0 + dm, n = n0 + dn
+        const Lx = a * m - b * n, Ly = b * m + a * n
+        if (x >= Lx && x < Lx + a && y >= Ly && y < Ly + a) return { role: 0, fx: (x - Lx) / a, fy: (y - Ly) / a }
+        const sx = Lx + a, sy = Ly
+        if (x >= sx && x < sx + b && y >= sy && y < sy + b) return { role: 1, fx: (x - sx) / b, fy: (y - sy) / b }
+      }
+      return { role: 1, fx: 0, fy: 0 }
+    }
     default:
       return { role: 0, fx, fy }
   }

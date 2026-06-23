@@ -187,7 +187,7 @@ void main(){
       float P = mod(floor(cx * 0.5) + floor(cy * 0.5), 2.0);
       if (P < 0.5) { role = 0; cf = vec2((mod(cx, 2.0) + bf.x) * 0.5, bf.y); }
       else { role = 1; cf = vec2(bf.x, (mod(cy, 2.0) + bf.y) * 0.5); }
-    } else {                              // herringbone
+    } else if (u_shapeFamily < 4.5) {    // herringbone
       float ch = max(4.0, floor(u_cells / 4.0 + 0.5) * 4.0);
       vec2 bg = v_uv * ch; vec2 bf = fract(bg);
       float cx = floor(bg.x); float cy = floor(bg.y);
@@ -195,6 +195,36 @@ void main(){
       float par = mod(cx + cy, 2.0);
       if (rr < 0.5) { role = 0; cf = vec2((par + bf.x) * 0.5, bf.y); }
       else { role = 1; cf = vec2(bf.x, (par + bf.y) * 0.5); }
+    } else if (u_shapeFamily < 5.5) {     // fish-scale / clamshell
+      float gx = v_uv.x * u_cells; float gy = v_uv.y * u_cells;
+      float R = 0.55;
+      float jc = floor(gy + 0.5);
+      float best = 1e9; float bcx = 0.0; float bcy = 0.0;
+      for (int dj = -1; dj <= 1; dj++) {
+        float j = jc + float(dj);
+        float off = mod(j, 2.0) * 0.5;
+        float ic = floor(gx - off + 0.5);
+        for (int di = -1; di <= 1; di++) {
+          float cxp = ic + float(di) + off; float cyp = j;
+          float d = distance(vec2(gx, gy), vec2(cxp, cyp));
+          if (d < best) { best = d; bcx = cxp; bcy = cyp; }
+        }
+      }
+      role = (best < R) ? 0 : 1;
+      cf = vec2((gx - bcx) / (2.0 * R) + 0.5, (gy - bcy) / (2.0 * R) + 0.5);
+    } else {                              // Pythagorean / two-square
+      float a = 2.0; float b = 1.0; float s2 = 5.0;
+      float chP = max(5.0, floor(u_cells / 5.0 + 0.5) * 5.0);
+      float x = v_uv.x * chP; float y = v_uv.y * chP;
+      float al = (a * x + b * y) / s2; float be = (-b * x + a * y) / s2;
+      float m0 = floor(al); float n0 = floor(be);
+      role = 1; cf = vec2(0.0);
+      for (int dm = -1; dm <= 1; dm++) for (int dn = -1; dn <= 1; dn++) {
+        float m = m0 + float(dm); float n = n0 + float(dn);
+        float Lx = a * m - b * n; float Ly = b * m + a * n;
+        if (x >= Lx && x < Lx + a && y >= Ly && y < Ly + a) { role = 0; cf = vec2((x - Lx) / a, (y - Ly) / a); }
+        else if (x >= Lx + a && x < Lx + a + b && y >= Ly && y < Ly + b) { role = 1; cf = vec2((x - (Lx + a)) / b, (y - Ly) / b); }
+      }
     }
     frag = vec4(evalFill(role, cf, v_uv), 1.0);
     return;

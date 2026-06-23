@@ -200,3 +200,88 @@ describe('rolesFor basketweave and herringbone', () => {
     expect(rolesFor({ mode: 'shapes', shapeFamily: 'herringbone' } as any)).toEqual(['brickA', 'brickB'])
   })
 })
+
+describe('shapeRegion fishscale', () => {
+  it('scale center (u=0,v=0) maps to role 0 with fx≈0.5, fy≈0.5', () => {
+    const r = shapeRegion('fishscale', 0, 0, 4)
+    expect(r.role).toBe(0)
+    expect(r.fx).toBeCloseTo(0.5, 5)
+    expect(r.fy).toBeCloseTo(0.5, 5)
+  })
+  it('roles are only 0 or 1 over a sampled grid', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      for (let j = 0; j <= 16; j++) {
+        const r = shapeRegion('fishscale', i / 16, j / 16, cells)
+        expect(r.role === 0 || r.role === 1).toBe(true)
+      }
+    }
+  })
+  it('seamless wrap at cells=8: u=0 edge matches u=1 edge', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      const v = i / 16
+      expect(shapeRegion('fishscale', 0, v, cells).role)
+        .toBe(shapeRegion('fishscale', 1, v, cells).role)
+    }
+  })
+  it('seamless wrap at cells=8: v=0 edge matches v=1 edge', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      const u = i / 16
+      expect(shapeRegion('fishscale', u, 0, cells).role)
+        .toBe(shapeRegion('fishscale', u, 1, cells).role)
+    }
+  })
+})
+
+describe('shapeRegion pythagorean', () => {
+  it('world origin maps to role 0 with fx=0, fy=0 at cells=10', () => {
+    const r = shapeRegion('pythagorean', 0, 0, 10)
+    expect(r.role).toBe(0)
+    expect(r.fx).toBeCloseTo(0, 5)
+    expect(r.fy).toBeCloseTo(0, 5)
+  })
+  it('small-square interior (world 2.5,0.5 → u=0.25,v=0.05 at cells=10) maps to role 1', () => {
+    const r = shapeRegion('pythagorean', 0.25, 0.05, 10)
+    expect(r.role).toBe(1)
+  })
+  it('roles are only 0 or 1 over a sampled grid', () => {
+    const cells = 10
+    for (let i = 0; i <= 16; i++) {
+      for (let j = 0; j <= 16; j++) {
+        const r = shapeRegion('pythagorean', i / 16, j / 16, cells)
+        expect(r.role === 0 || r.role === 1).toBe(true)
+      }
+    }
+  })
+  it('seamless wrap at cells=10: u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 10
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('pythagorean', 0, t, cells).role)
+        .toBe(shapeRegion('pythagorean', 1, t, cells).role)
+      expect(shapeRegion('pythagorean', t, 0, cells).role)
+        .toBe(shapeRegion('pythagorean', t, 1, cells).role)
+    }
+  })
+  it('seamless wrap at cells=8 (quantized to chP=10): u=0 matches u=1 and v=0 matches v=1', () => {
+    const cells = 8
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('pythagorean', 0, t, cells).role)
+        .toBe(shapeRegion('pythagorean', 1, t, cells).role)
+      expect(shapeRegion('pythagorean', t, 0, cells).role)
+        .toBe(shapeRegion('pythagorean', t, 1, cells).role)
+    }
+  })
+})
+
+describe('rolesFor fishscale and pythagorean', () => {
+  it('fishscale resolves to [scale, ground]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'fishscale' } as any)).toEqual(['scale', 'ground'])
+  })
+  it('pythagorean resolves to [big, small]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'pythagorean' } as any)).toEqual(['big', 'small'])
+  })
+})
