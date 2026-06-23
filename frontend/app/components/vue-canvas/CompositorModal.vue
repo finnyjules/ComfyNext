@@ -2326,61 +2326,65 @@ onUnmounted(() => {
             <!-- Model picker -->
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Model</div>
-              <button
-                class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
-                @click="modelPickerOpen = !modelPickerOpen">
-                <span class="truncate text-left">{{ currentModel.name }}</span>
-                <ChevronDown class="size-3.5 text-white/40 shrink-0 transition-transform" :class="modelPickerOpen ? 'rotate-180' : ''" />
-              </button>
-              <Transition
-                enter-active-class="transition-all duration-150 ease-out"
-                leave-active-class="transition-all duration-100 ease-in"
-                enter-from-class="opacity-0 -translate-y-1"
-                leave-to-class="opacity-0 -translate-y-1"
-              >
-              <div v-if="modelPickerOpen" class="mt-1.5 rounded-md bg-neutral-900 border border-white/10 overflow-hidden">
-                <button v-for="m in GEN_MODELS" :key="m.id"
-                  class="w-full px-3 py-2.5 text-left hover:bg-white/10 cursor-pointer flex flex-col gap-0.5"
-                  :class="m.id === genModel ? 'bg-white/[0.06]' : ''"
-                  @click="genModel = m.id; modelPickerOpen = false">
-                  <span class="text-[12px]">{{ m.name }}</span>
-                  <span class="text-[10px] text-white/40 leading-relaxed">{{ m.hint }}</span>
+              <div class="relative">
+                <button
+                  class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
+                  @click="modelPickerOpen = !modelPickerOpen">
+                  <span class="truncate text-left">{{ currentModel.name }}</span>
+                  <ChevronDown class="size-3.5 text-white/40 shrink-0 transition-transform" :class="modelPickerOpen ? 'rotate-180' : ''" />
                 </button>
+                <Transition
+                  enter-active-class="transition-all duration-150 ease-out"
+                  leave-active-class="transition-all duration-100 ease-in"
+                  enter-from-class="opacity-0 -translate-y-1"
+                  leave-to-class="opacity-0 -translate-y-1"
+                >
+                <div v-if="modelPickerOpen" class="absolute top-full left-0 right-0 mt-1.5 z-30 rounded-md bg-neutral-900 border border-white/10 overflow-hidden shadow-xl">
+                  <button v-for="m in GEN_MODELS" :key="m.id"
+                    class="w-full px-3 py-2.5 text-left hover:bg-white/10 cursor-pointer flex flex-col gap-0.5"
+                    :class="m.id === genModel ? 'bg-white/[0.06]' : ''"
+                    @click="genModel = m.id; modelPickerOpen = false">
+                    <span class="text-[12px]">{{ m.name }}</span>
+                    <span class="text-[10px] text-white/40 leading-relaxed">{{ m.hint }}</span>
+                  </button>
+                </div>
+                </Transition>
               </div>
-              </Transition>
             </div>
 
             <!-- Style picker (Flux + Style mode only) -->
             <div v-if="showStylePicker">
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Style</div>
-              <button
-                class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
-                @click="stylePickerOpen = !stylePickerOpen">
-                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
-                <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None' }}</span>
-                <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
-                <ChevronDown v-else class="size-3.5 text-white/40 shrink-0 transition-transform" :class="stylePickerOpen ? 'rotate-180' : ''" />
-              </button>
-              <Transition
-                enter-active-class="transition-all duration-150 ease-out"
-                leave-active-class="transition-all duration-100 ease-in"
-                enter-from-class="opacity-0 -translate-y-1"
-                leave-to-class="opacity-0 -translate-y-1"
-              >
-              <div v-if="stylePickerOpen" class="mt-1.5 max-h-48 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
-                <button class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer"
-                  @click="genStyle = null; stylePickerOpen = false">None</button>
-                <button v-for="s in styleList.styles.value" :key="s.filename"
-                  class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2.5"
-                  @click="genStyle = s; stylePickerOpen = false">
-                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-6 rounded object-cover ring-1 ring-white/10" />
-                  <span class="truncate">{{ s.name }}</span>
+              <div class="relative">
+                <button
+                  class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
+                  @click="stylePickerOpen = !stylePickerOpen">
+                  <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
+                  <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None' }}</span>
+                  <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
+                  <ChevronDown v-else class="size-3.5 text-white/40 shrink-0 transition-transform" :class="stylePickerOpen ? 'rotate-180' : ''" />
                 </button>
-                <p v-if="!styleList.styles.value.length" class="px-3 py-2.5 text-[11px] text-white/30">
-                  {{ styleList.loading.value ? 'Loading…' : 'No trained styles yet.' }}
-                </p>
+                <Transition
+                  enter-active-class="transition-all duration-150 ease-out"
+                  leave-active-class="transition-all duration-100 ease-in"
+                  enter-from-class="opacity-0 -translate-y-1"
+                  leave-to-class="opacity-0 -translate-y-1"
+                >
+                <div v-if="stylePickerOpen" class="absolute top-full left-0 right-0 mt-1.5 z-30 max-h-48 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 shadow-xl flex flex-col">
+                  <button class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer"
+                    @click="genStyle = null; stylePickerOpen = false">None</button>
+                  <button v-for="s in styleList.styles.value" :key="s.filename"
+                    class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2.5"
+                    @click="genStyle = s; stylePickerOpen = false">
+                    <img v-if="s.coverUrl" :src="s.coverUrl" class="size-6 rounded object-cover ring-1 ring-white/10" />
+                    <span class="truncate">{{ s.name }}</span>
+                  </button>
+                  <p v-if="!styleList.styles.value.length" class="px-3 py-2.5 text-[11px] text-white/30">
+                    {{ styleList.loading.value ? 'Loading…' : 'No trained styles yet.' }}
+                  </p>
+                </div>
+                </Transition>
               </div>
-              </Transition>
             </div>
           </template>
 
