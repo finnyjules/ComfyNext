@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
-import { loadRaster, getRaster, buildSeamlessInputs } from '~/lib/texturefx/raster'
+import { loadRaster, getRaster, buildSeamlessInputs, rasterViewUrl } from '~/lib/texturefx/raster'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
@@ -267,6 +267,52 @@ function setFillOpacity(rk: string, i: number, v: number) {
   setFill(rk, { ...(roleFill(rk, i) as any), opacity: v })
 }
 
+// ── Fills panel UX helpers ────────────────────────────────────────────────────
+// Collapsible roles: default all expanded (not in set = expanded).
+const collapsedRoles = reactive(new Set<string>())
+function isExpanded(rk: string): boolean { return !collapsedRoles.has(rk) }
+function toggleRole(rk: string) {
+  if (collapsedRoles.has(rk)) collapsedRoles.delete(rk)
+  else collapsedRoles.add(rk)
+}
+
+// Live swatch: returns a CSS style object for solid/gradient; null signals 'use img/glyph'.
+// Always reads from the RESOLVED fill (roleFill follows links to the target).
+function roleSwatchStyle(rk: string, i: number): Record<string, string> | null {
+  const f = roleFill(rk, i) as any
+  if (!f) return { background: '#7aa2f7' }
+  if (f.type === 'solid') return { background: f.color ?? '#7aa2f7' }
+  if (f.type === 'gradient') {
+    const stops: { c: string; p: number }[] = f.stops ?? [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }]
+    const angle = f.angle ?? 0
+    const stopsStr = stops.map((s) => `${s.c} ${Math.round(s.p * 100)}%`).join(', ')
+    return { background: `linear-gradient(${angle}deg, ${stopsStr})` }
+  }
+  if (f.type === 'image') return null          // use <img> thumbnail in the template
+  if (f.type === 'pattern') return null        // use glyph in the template
+  // fallback (link resolved to something unexpected, or unknown type)
+  return { background: '#444' }
+}
+function roleSwatchIsImage(rk: string, i: number): boolean {
+  return (roleFill(rk, i) as any)?.type === 'image'
+}
+function roleSwatchIsPattern(rk: string, i: number): boolean {
+  return (roleFill(rk, i) as any)?.type === 'pattern'
+}
+function roleSwatchImageSrc(rk: string, i: number): string {
+  const src = (roleFill(rk, i) as any)?.src ?? ''
+  return src ? rasterViewUrl(src) : ''
+}
+
+// Reset fill: remove the explicit entry so the role falls back to legacy color.
+function resetFill(rk: string) {
+  const f = (params as any).fills
+  if (f && f[rk] !== undefined) {
+    delete f[rk]
+    onParam()
+  }
+}
+
 function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'radial'; angle: number; frame: 'cell' | 'tile'; stops: { c: string; p: number }[] }>) {
   const f = roleFill(rk, i) as any
   const cur = f?.type === 'gradient' ? f : {}
@@ -468,8 +514,47 @@ onBeforeUnmount(() => {
       <!-- Hidden in raster mode (raster has no ink/ground roles). -->
       <StudioSection v-if="params.mode !== 'raster'" title="Fills">
         <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
-          <label class="mb-1 block text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</label>
+          <!-- Role header: swatch + label + caret + reset -->
+          <div
+            class="mb-1 flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-white/5"
+            role="button"
+            :tabindex="0"
+            @click="toggleRole(rk)"
+            @keydown.enter.prevent="toggleRole(rk)"
+            @keydown.space.prevent="toggleRole(rk)"
+          >
+            <!-- Swatch -->
+            <span class="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-sm border border-white/20">
+              <img
+                v-if="roleSwatchIsImage(rk, i) && roleSwatchImageSrc(rk, i)"
+                :src="roleSwatchImageSrc(rk, i)"
+                class="h-full w-full object-cover"
+                alt=""
+              >
+              <span v-else-if="roleSwatchIsPattern(rk, i)" class="text-[9px] text-white/60">▦</span>
+              <span
+                v-else
+                class="block h-full w-full"
+                :style="roleSwatchStyle(rk, i) ?? { background: '#444' }"
+              />
+            </span>
+            <span class="flex-1 text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</span>
+            <!-- Reset button -->
+            <button
+              class="shrink-0 rounded px-1 py-0.5 text-[10px] text-white/35 hover:bg-white/10 hover:text-white/70"
+              title="Reset fill to default"
+              @click.stop="resetFill(rk)"
+            >
+              ↺
+            </button>
+            <!-- Caret -->
+            <span
+              class="shrink-0 text-[10px] text-white/35 transition-transform"
+              :style="{ transform: isExpanded(rk) ? 'rotate(0deg)' : 'rotate(-90deg)' }"
+            >&#9660;</span>
+          </div>
 
+          <div v-show="isExpanded(rk)">
           <!-- Fill-type picker: Solid / Gradient / Image / Pattern / Link -->
           <label class="mb-1 block text-[11px] text-white/55">Type</label>
           <StudioSelect
@@ -701,6 +786,7 @@ onBeforeUnmount(() => {
               />
             </div>
           </template>
+          </div><!-- /v-show isExpanded -->
         </div>
       </StudioSection>
     </template>

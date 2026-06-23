@@ -2,8 +2,6 @@ import type { Params } from '~/lib/spacetype/effect'
 import type { Fill, FillsByRole } from '~/lib/texturefx/types'
 import { activeFamily, legacyFill, rolesFor } from '~/lib/texturefx/roles'
 
-export function defaultFill(color = '#7aa2f7'): Fill { return { type: 'solid', color } }
-
 // Resolve a role's fill: explicit params.fills entry, else the legacy-color solid.
 // Link fills are resolved recursively with cycle detection via _seen.
 export function fillForRole(p: Params, roleKey: string, roleIndex: number, _seen: Set<string> = new Set()): Fill {
