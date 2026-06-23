@@ -235,8 +235,11 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       const nx = Math.max(2, Math.round(cells))
       const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
       const sx = 1 / nx, sy = 1 / ny
-      const armLen = Number.isFinite(Number((_p as any)?.armLength)) ? Number((_p as any).armLength) : 1.0
-      const armW = Number.isFinite(Number((_p as any)?.armWidth)) ? Number((_p as any).armWidth) : 0.34
+      // reach = radial arm extent (caps each arm at a hexagon-corner radius so the
+      // tripods fill cleanly and leave crisp hexagonal holes — a flat along-cap left
+      // gaps). The hexagon circumradius is ~0.577; reach near it = small holes, less = big holes.
+      const reach = Number.isFinite(Number((_p as any)?.armLength)) ? Number((_p as any).armLength) : 0.6
+      const armW = Number.isFinite(Number((_p as any)?.armWidth)) ? Number((_p as any).armWidth) : 0.4
       const bevel = Number.isFinite(Number((_p as any)?.bevel)) ? Number((_p as any).bevel) : 0.45
       const r0 = Math.round(vw / sy)
       let bestH = -1e9, bRole = 3, bFx = 0.5, bFy = 0.5, bShade = 1
@@ -251,9 +254,9 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
           const bis = (90 + 120 * sect) * Math.PI / 180
           const aRel = aa - bis
           const along = r * Math.cos(aRel), across = r * Math.sin(aRel)
-          if (along > 0 && along < armLen && Math.abs(across) < armW) {
+          if (along > 0 && r < reach && Math.abs(across) < armW) {
             const h = -r // nearest node on top
-            if (h > bestH) { bestH = h; bRole = sect; bFx = Math.min(1, along / armLen); bFy = across / armW * 0.5 + 0.5; bShade = across > 0 ? (1 - bevel) : 1 }
+            if (h > bestH) { bestH = h; bRole = sect; bFx = Math.min(1, along / reach); bFy = across / armW * 0.5 + 0.5; bShade = across > 0 ? (1 - bevel) : 1 }
           }
         }
       }

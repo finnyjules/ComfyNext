@@ -388,7 +388,7 @@ int shapeRole(vec2 uv, out vec2 cf, out float shade) {
           float sect = floor(mod(degrees(aa) - 30.0, 360.0) / 120.0);
           float aRel = aa - radians(90.0 + 120.0 * sect);
           float along = r * cos(aRel); float across = r * sin(aRel);
-          if (along > 0.0 && along < armLen && abs(across) < armW) {
+          if (along > 0.0 && r < armLen && abs(across) < armW) {
             float h = -r;
             if (h > bestH) { bestH = h; role = int(sect); cf = vec2(min(1.0, along / armLen), across / armW * 0.5 + 0.5); shade = (across > 0.0) ? (1.0 - bevel) : 1.0; }
           }
@@ -641,8 +641,8 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
     gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
     gl.uniform1f(u('u_weaveWidth'),   Number.isFinite(Number(p.weaveWidth))   ? Number(p.weaveWidth)   : 0.36)
-    gl.uniform1f(u('u_armLen'),    Number.isFinite(Number(p.armLength)) ? Number(p.armLength) : 1.0)
-    gl.uniform1f(u('u_armWidth'),  Number.isFinite(Number(p.armWidth))  ? Number(p.armWidth)  : 0.34)
+    gl.uniform1f(u('u_armLen'),    Number.isFinite(Number(p.armLength)) ? Number(p.armLength) : 0.6)
+    gl.uniform1f(u('u_armWidth'),  Number.isFinite(Number(p.armWidth))  ? Number(p.armWidth)  : 0.4)
     gl.uniform1f(u('u_bevel'),     Number.isFinite(Number(p.bevel))     ? Number(p.bevel)     : 0.45)
     const strokeMode = String(p.shapeStroke) === 'per-role' ? 2 : String(p.shapeStroke) === 'uniform' ? 1 : 0
     gl.uniform1f(u('u_strokeMode'), strokeMode)

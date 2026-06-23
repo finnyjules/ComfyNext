@@ -25,10 +25,10 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'fsRowSpacing', label: 'Row spacing', kind: 'slider', min: 0.2, max: 0.9, step: 0.02, default: 0.5, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
   { key: 'fsRadius', label: 'Arc radius', kind: 'slider', min: 0.55, max: 1.0, step: 0.01, default: 0.78, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
   { key: 'weaveWidth', label: 'Strand width', kind: 'slider', min: 0.14, max: 0.42, step: 0.01, default: 0.34, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'weave3d' },
-  // Arms must reach ~1 lattice step to interlock with neighbours (shorter = isolated
-  // hexagons that just butt together; longer = tripods that mesh, leaving hex recesses).
-  { key: 'armLength', label: 'Arm length', kind: 'slider', min: 0.6, max: 1.15, step: 0.01, default: 1.0, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'tripods' },
-  { key: 'armWidth', label: 'Arm width', kind: 'slider', min: 0.2, max: 0.42, step: 0.01, default: 0.34, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'tripods' },
+  // Arm reach (radial) sets hole size: ~0.577 = hexagon corner (tiny holes / near-solid
+  // cubes); lower = bigger hexagonal recesses. Arm width sets how fat the arms are.
+  { key: 'armLength', label: 'Arm reach', kind: 'slider', min: 0.48, max: 0.72, step: 0.01, default: 0.6, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'tripods' },
+  { key: 'armWidth', label: 'Arm width', kind: 'slider', min: 0.25, max: 0.5, step: 0.01, default: 0.4, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'tripods' },
   { key: 'bevel', label: 'Bevel', kind: 'slider', min: 0, max: 0.7, step: 0.01, default: 0.45, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'tripods' },
 
   // Procedural motif controls — shown only in procedural mode.
