@@ -1475,7 +1475,7 @@ function renderGenOverlay(now?: number) {
   const t = ((now ?? nowMs()) - genT0) / 1000
 
   // Subtle region fill — a faint white that pulses slowly to show the area is live.
-  const pulse = 0.05 + 0.09 * (0.5 + 0.5 * Math.sin(t * 1.4))
+  const pulse = 0.12 + 0.22 * (0.5 + 0.5 * Math.sin(t * 1.4))
   ctx.save()
   ctx.globalAlpha = pulse
   ctx.drawImage(genMaskCanvas, 0, 0, W, H)
