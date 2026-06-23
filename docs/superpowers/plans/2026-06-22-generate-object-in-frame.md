@@ -184,7 +184,7 @@ A small composable that fetches the user's trained styles and exposes the ones t
 
 **Files:**
 - Create: `frontend/app/composables/useStyleList.ts`
-- Test: `frontend/app/composables/useStyleList.test.ts`
+- Test: `frontend/tests/unit/style-list.unit.spec.ts` (project convention: `tests/unit/**/*.unit.spec.ts`)
 
 **Interfaces:**
 - Consumes: `GET /api/loras-local` → `{ loras: LoraRecord[] }` where each record has `{ filename, name, kind, coverUrl, canGenerateCover, trigger, aesthetic }` (see `server/api/loras-local.get.ts`).
@@ -194,11 +194,11 @@ A small composable that fetches the user's trained styles and exposes the ones t
 
 - [ ] **Step 1: Write the failing test**
 
-`frontend/app/composables/useStyleList.test.ts`:
+`frontend/tests/unit/style-list.unit.spec.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { selectGeneratableStyles } from './useStyleList'
+import { selectGeneratableStyles } from '../../app/composables/useStyleList'
 
 const rec = (p: any) => ({
   filename: 'x.safetensors', name: 'X', kind: 'style', coverUrl: null,
@@ -224,8 +224,8 @@ describe('selectGeneratableStyles', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd frontend && npx vitest run app/composables/useStyleList.test.ts`
-Expected: FAIL — cannot find module `./useStyleList`.
+Run: `cd frontend && npx vitest run tests/unit/style-list.unit.spec.ts`
+Expected: FAIL — cannot find module `../../app/composables/useStyleList`.
 
 - [ ] **Step 3: Write the composable**
 
@@ -269,13 +269,13 @@ export function useStyleList() {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd frontend && npx vitest run app/composables/useStyleList.test.ts`
+Run: `cd frontend && npx vitest run tests/unit/style-list.unit.spec.ts`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/app/composables/useStyleList.ts frontend/app/composables/useStyleList.test.ts
+git add frontend/app/composables/useStyleList.ts frontend/tests/unit/style-list.unit.spec.ts
 git commit -m "feat(compositor): useStyleList — runnable trained styles for Generate Object"
 ```
 
