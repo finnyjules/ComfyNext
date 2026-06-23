@@ -445,9 +445,8 @@ describe('shapeRegion cairo', () => {
     }
   })
 
-  it('seamless wrap at cells=8 (quantized to chC=12): u=0 matches u=1 and v=0 matches v=1', () => {
-    // cells=8 -> chC = 6 * max(1, round(8/6)) = 6 * 1 = 6... wait: round(8/6)=round(1.33)=1, so chC=6
-    // Actually: round(8/6) = round(1.333) = 1, so chC = 6*1 = 6. Test seamlessness.
+  it('seamless wrap at cells=8 (quantized to chC=6): u=0 matches u=1 and v=0 matches v=1', () => {
+    // cells=8 -> chC = 6 * max(1, round(8/6)) = 6 * round(1.33)=6*1 = 6 (proves the period-6 quantize)
     const c = 8
     for (let i = 0; i <= 16; i++) {
       const t = i / 16
