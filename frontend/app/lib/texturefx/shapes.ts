@@ -51,9 +51,16 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       return { role: 1, fx: lfx, fy: (par + lfy) / 2 }                         // vertical brick
     }
     case 'fishscale': {
-      const fs_dy = Number.isFinite(Number((_p as any)?.fsRowSpacing)) ? Number((_p as any).fsRowSpacing) : 0.5
-      const fs_R  = Number.isFinite(Number((_p as any)?.fsRadius))     ? Number((_p as any).fsRadius)     : 0.78
-      const fs_w  = Number.isFinite(Number((_p as any)?.fsWidth))      ? Number((_p as any).fsWidth)      : 1.0
+      const fs_dyReq = Number.isFinite(Number((_p as any)?.fsRowSpacing)) ? Number((_p as any).fsRowSpacing) : 0.5
+      const fs_R     = Number.isFinite(Number((_p as any)?.fsRadius))     ? Number((_p as any).fsRadius)     : 0.78
+      const fs_wReq  = Number.isFinite(Number((_p as any)?.fsWidth))      ? Number((_p as any).fsWidth)      : 1.0
+      // Quantize column spacing + row spacing so a whole number of lattice periods
+      // spans the tile (else the slider continuously rescales the grid and breaks the
+      // seam). ncols is forced even so the (col+row)%2 two-tone parity also wraps.
+      const ncols = 2 * Math.max(1, Math.round(cells / fs_wReq / 2))
+      const fs_w = cells / ncols
+      const npairs = Math.max(1, Math.round(cells / (2 * fs_dyReq)))
+      const fs_dy = cells / (2 * npairs)
       const fs_g = 0.03
       const gxx = u * cells, gyy = v * cells
       // Lowest-row owner: pixel belongs to the lowest-row circle that contains it.

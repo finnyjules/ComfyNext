@@ -223,7 +223,14 @@ void main(){
       if (rr < 0.5) { role = 0; cf = vec2((par + bf.x) * 0.5, bf.y); }
       else { role = 1; cf = vec2(bf.x, (par + bf.y) * 0.5); }
     } else if (u_shapeFamily < 5.5) {     // fish-scale / scallop fan (3-role: scaleA, scaleB, grout)
-      float fs_dy = u_fsRowSpacing; float fs_R = u_fsRadius; float fs_w = u_fsWidth;
+      float fs_R = u_fsRadius;
+      // Quantize column + row spacing so a whole number of lattice periods spans the
+      // tile (keeps the seam intact as the sliders move). ncols forced even so the
+      // (col+row)%2 two-tone parity also wraps. Mirrors shapes.ts.
+      float ncols = 2.0 * max(1.0, floor(u_cells / u_fsWidth / 2.0 + 0.5));
+      float fs_w = u_cells / ncols;
+      float npairs = max(1.0, floor(u_cells / (2.0 * u_fsRowSpacing) + 0.5));
+      float fs_dy = u_cells / (2.0 * npairs);
       float fs_g = 0.03;
       float gx = v_uv.x * u_cells; float gy = v_uv.y * u_cells;
       float bi, bj;

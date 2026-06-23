@@ -272,6 +272,27 @@ describe('shapeRegion fishscale (scallop fan)', () => {
         .toBe(shapeRegion('fishscale', u, 1, cells).role)
     }
   })
+  it('seamless wrap is preserved across slider values (width, row spacing, radius)', () => {
+    // The shape sliders must not break the seam: column/row spacing is quantized so a
+    // whole number of lattice periods always spans the tile. Sweep non-default values.
+    const cells = 8
+    const configs = [
+      { fsWidth: 1.6, fsRowSpacing: 0.5, fsRadius: 0.78 },
+      { fsWidth: 0.5, fsRowSpacing: 0.5, fsRadius: 0.9 },
+      { fsWidth: 1.0, fsRowSpacing: 0.3, fsRadius: 0.78 },
+      { fsWidth: 1.0, fsRowSpacing: 0.7, fsRadius: 0.6 },
+      { fsWidth: 1.3, fsRowSpacing: 0.35, fsRadius: 0.85 },
+    ]
+    for (const cfg of configs) {
+      for (let i = 0; i <= 16; i++) {
+        const t = i / 16
+        expect(shapeRegion('fishscale', 0, t, cells, cfg as any).role)
+          .toBe(shapeRegion('fishscale', 1, t, cells, cfg as any).role)
+        expect(shapeRegion('fishscale', t, 0, cells, cfg as any).role)
+          .toBe(shapeRegion('fishscale', t, 1, cells, cfg as any).role)
+      }
+    }
+  })
   it('interior periodicity: same grid position one full tile apart has same role (cells=8)', () => {
     // The lattice period in y is 2*dy*1 = 1.0 grid unit per even+odd row pair.
     // At cells=8, tile period = 8 grid units = 1.0 UV. Sample at interior u=0.3 and compare
