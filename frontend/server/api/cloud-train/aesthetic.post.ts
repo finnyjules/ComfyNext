@@ -20,6 +20,8 @@
  * Must be allowlisted in server/middleware/comfyui-proxy.ts (NITRO_API_PATHS).
  */
 
+import { parseAestheticOutput } from './aesthetic-parse'
+
 const QWEN_MODEL = 'lucataco/qwen2-vl-7b-instruct'
 
 const PROFILE_PROMPT = [
@@ -28,16 +30,10 @@ const PROFILE_PROMPT = [
   'contrast, mood, texture, focus/blur, and composition treatment.',
   'Do NOT name or describe the specific subjects, people, animals, or objects —',
   'only the visual style and treatment, as if writing reusable gallery wall text.',
-  'Write 2–4 sentences, about 60 words, as one flowing evocative paragraph.',
+  'First write 2–4 sentences, about 60 words, as one flowing evocative paragraph.',
+  'Then, on a new line, write "Keywords:" followed by 6–10 short style descriptors',
+  '(palette, texture, lighting, and mood terms — never subjects), comma-separated.',
 ].join(' ')
-
-function cleanProfile(text: string): string {
-  return text
-    .replace(/\s+/g, ' ')        // collapse newlines/whitespace
-    .replace(/^["'\s]+|["'\s]+$/g, '')
-    .trim()
-    .slice(0, 600)               // hard cap — it's a prompt prefix, not an essay
-}
 
 export default defineEventHandler(async (event) => {
   const token = requireReplicateToken()
@@ -95,10 +91,10 @@ export default defineEventHandler(async (event) => {
 
   // Qwen returns the text as an array of token strings (or occasionally a string).
   const raw = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
-  const aesthetic = cleanProfile(raw)
+  const { aesthetic, keywords } = parseAestheticOutput(raw)
   if (!aesthetic) {
     throw createError({ statusCode: 502, message: 'Aesthetic generation returned empty text' })
   }
 
-  return { aesthetic }
+  return { aesthetic, keywords }
 })
