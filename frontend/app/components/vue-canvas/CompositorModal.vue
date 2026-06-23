@@ -1745,7 +1745,7 @@ onUnmounted(() => {
     :style="{ '--gen-pastel': pastelGradientCss }"
     @click.self="emit('close')"
   >
-    <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative text-white/85 overflow-hidden">
+    <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
     <!-- Modal title (top-left, studio-style) -->
     <div class="absolute top-4 left-6 z-30 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
 
@@ -1893,15 +1893,6 @@ onUnmounted(() => {
           v-if="previewT != null && bakeError"
           class="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 px-2 py-1 rounded bg-[#111111]/95 border border-rose-500/30 text-[11px] text-rose-400"
         >{{ bakeError }}</div>
-
-        <!-- Brand kit library (project-level active kit, same source as the project menu) -->
-        <BrandLibraryPopover
-          v-if="brandOpen"
-          class="absolute top-12 right-4 z-30"
-          :active-kit-id="projectBrand?.activeKitId.value ?? null"
-          @set-active="(id) => projectBrand?.setBrandKit(id)"
-          @click.stop @pointerdown.stop @pointerup.stop @dblclick.stop
-        />
 
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
@@ -2090,6 +2081,12 @@ onUnmounted(() => {
       </div>
 
       <!-- AI vector panel (floats above the toolbar) -->
+      <Transition
+        enter-active-class="transition-all duration-150 ease-out"
+        leave-active-class="transition-all duration-100 ease-in"
+        enter-from-class="opacity-0 translate-y-1"
+        leave-to-class="opacity-0 translate-y-1"
+      >
       <div
         v-if="aiOpen"
         class="absolute bottom-[68px] w-[340px] bg-[#1a1a1a]/97 rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
@@ -2140,50 +2137,51 @@ onUnmounted(() => {
 
         <div v-if="aiError" class="mt-2 text-[11px] text-rose-400">{{ aiError }}</div>
       </div>
+      </Transition>
 
       <!-- Bottom toolbar -->
       <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
-          :class="isSelectTool ? 'bg-yellow-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          :class="isSelectTool ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Select (V)" @click="selectTool">
           <MousePointer2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+        <button class="flex items-center justify-center size-8 rounded-md cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
           title="Undo (⌘Z)" :disabled="!canUndo" @click="undo">
           <Undo2 class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+        <button class="flex items-center justify-center size-8 rounded-md cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
           title="Redo (⌘⇧Z)" :disabled="!canRedo" @click="redo">
           <Redo2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
           <Type class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
           <Square class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
           <Circle class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
           <Minus class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="pen.active.value ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Pen — click to add points, drag for curves, click the first point or Enter to finish, Esc to cancel"
           @click="togglePen"
         >
           <PenTool class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
           <FileUp class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="aiOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="AI vector — generate from text or vectorize a selected image"
           @click="aiOpen = !aiOpen"
@@ -2191,19 +2189,19 @@ onUnmounted(() => {
           <Sparkles class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="genActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Generate in region — mark an area (box, brush, or shape) and regenerate just that part of an image"
           @click="toggleGenMode"
         >
           <Wand2 class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
         </button>
         <button
           v-if="KINETIC_ENABLED"
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="previewT != null ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
           title="Motion — preview layer animations on the kinetic timeline"
           @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
@@ -2211,7 +2209,7 @@ onUnmounted(() => {
           <Play class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-[8px] cursor-pointer"
+          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="brandOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Brand — pick the project's active brand kit"
           @click="brandOpen = !brandOpen"
@@ -2219,7 +2217,7 @@ onUnmounted(() => {
           <Palette class="size-4" />
         </button>
         <button v-if="isDev && KINETIC_ENABLED"
-          class="flex items-center justify-center h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
+          class="flex items-center justify-center h-8 px-2 rounded-md hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
           title="Dev: load the LIV-style slate acceptance fixture"
           @click="loadSlateFixture"
         >
@@ -2250,8 +2248,24 @@ onUnmounted(() => {
 
     <!-- Right sidebar: floating glass properties panel -->
     <div class="absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <!-- Brand kits (opening the palette takes over the inspector) -->
+      <template v-if="brandOpen">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Palette class="size-3.5 text-white/70" />
+          <span class="text-sm font-medium">Brand kits</span>
+          <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Close" @click="brandOpen = false"><X class="size-3.5" /></button>
+        </div>
+        <div class="p-4 flex-1 min-h-0 overflow-y-auto">
+          <BrandLibraryPopover
+            embedded
+            :active-kit-id="projectBrand?.activeKitId.value ?? null"
+            @set-active="(id) => projectBrand?.setBrandKit(id)"
+          />
+        </div>
+      </template>
+
       <!-- Generate-in-region controls (mode owns the inspector) -->
-      <template v-if="genActive">
+      <template v-else-if="genActive">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <Wand2 class="size-3.5 text-white/70" />
           <span class="text-sm font-medium">Generate in region</span>
@@ -2278,7 +2292,7 @@ onUnmounted(() => {
                   :class="genMode === 'scene' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
                   @click="genMode = 'scene'">Scene</button>
               </div>
-              <p class="text-[10px] text-white/35 mt-1.5">
+              <p class="text-[10px] text-white/35 mt-1.5 text-pretty">
                 {{ genMode === 'style' ? 'Generate from your prompt (optionally a trained style).' : 'Fit the new object to the existing frame.' }}
               </p>
             </div>
@@ -2289,23 +2303,30 @@ onUnmounted(() => {
               <button
                 class="w-full h-8 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
                 @click="stylePickerOpen = !stylePickerOpen">
-                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover" />
+                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
                 <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None (flux-schnell)' }}</span>
                 <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
               </button>
+              <Transition
+                enter-active-class="transition-all duration-150 ease-out"
+                leave-active-class="transition-all duration-100 ease-in"
+                enter-from-class="opacity-0 -translate-y-1"
+                leave-to-class="opacity-0 -translate-y-1"
+              >
               <div v-if="stylePickerOpen" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
                 <button class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer"
                   @click="genStyle = null; stylePickerOpen = false">None (flux-schnell)</button>
                 <button v-for="s in styleList.styles.value" :key="s.filename"
                   class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2"
                   @click="genStyle = s; stylePickerOpen = false">
-                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-5 rounded object-cover" />
+                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
                   <span class="truncate">{{ s.name }}</span>
                 </button>
                 <p v-if="!styleList.styles.value.length" class="px-2 py-2 text-[11px] text-white/30">
                   {{ styleList.loading.value ? 'Loading…' : 'No trained styles yet.' }}
                 </p>
               </div>
+              </Transition>
             </div>
           </template>
 
@@ -2840,6 +2861,21 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
+}
+
+/* Dynamically-updating values shouldn't jitter the field width as digits change. */
+input[type="number"],
+input[type="text"] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle tactile press feedback. Transform-only so it never overrides the
+   colour transitions on the segmented/tool buttons. */
+button {
+  transition: transform 0.12s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 /* Generate-in-region button: same flowing pastel palette as the drag-area
