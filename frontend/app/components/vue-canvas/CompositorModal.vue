@@ -2342,7 +2342,7 @@ onUnmounted(() => {
               :disabled="!genHasMask" title="Clear region" @click="clearGenMask"
             >Clear</button>
             <button
-              class="flex-1 h-8 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              class="gen-pastel flex-1 h-8 rounded-md text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default"
               :disabled="inpaint.busy.value || !genHasMask"
               @click="runRegionFill"
             >{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
@@ -2834,5 +2834,20 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
+}
+
+/* Generate-in-region button: same flowing pastel palette as the drag-area
+   stroke (PASTEL in the script). Animates with a gentle alternate pan so there
+   is no seam jump. */
+.gen-pastel {
+  background-image: linear-gradient(90deg, #ffd6e7, #cfe8ff, #d6ffe0, #fff4cc, #e7d6ff, #ffd6e7);
+  background-size: 200% 100%;
+  animation: gen-pastel-flow 6s ease-in-out infinite alternate;
+}
+.gen-pastel:hover { filter: brightness(1.06); }
+.gen-pastel:disabled { animation: none; }
+@keyframes gen-pastel-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
 }
 </style>
