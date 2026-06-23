@@ -1740,13 +1740,12 @@ onUnmounted(() => {
     @click.self="emit('close')"
   >
     <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative text-white/85 overflow-hidden">
+    <!-- Modal title (top-left, studio-style) -->
+    <div class="absolute top-4 left-6 z-30 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
+
     <!-- Left sidebar: floating glass layer panel -->
-    <div class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
-      <div class="px-4 pt-3 pb-1.5">
-        <h2 class="text-sm font-semibold tracking-tight truncate" :title="frameName">{{ frameName }}</h2>
-        <div class="text-[10px] uppercase tracking-[0.12em] text-white/30">Compositor</div>
-      </div>
-      <div class="px-3 pb-3 flex-1 min-h-0 overflow-y-auto">
+    <div class="absolute top-14 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <div class="px-3 pt-3 pb-3 flex-1 min-h-0 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
 
         <!-- Unified z-order stack (top-first). Grouped layers indent; grip to reorder. -->
