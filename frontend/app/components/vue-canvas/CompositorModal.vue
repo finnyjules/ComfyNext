@@ -2233,7 +2233,7 @@ onUnmounted(() => {
       <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
       <button
         class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-        :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+        :class="renderStale ? 'bg-white hover:bg-white/90 text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
         :disabled="rendering || baking"
         :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
         @click="renderFrame">
