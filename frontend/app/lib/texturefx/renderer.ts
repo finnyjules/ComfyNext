@@ -280,8 +280,10 @@ void main(){
     } else {                              // 3D cubes / tumbling blocks (rhombille, 3-color)
       float uw = fract(v_uv.x); float vw = fract(v_uv.y);
       float K = 1.1547005;
-      float nx = max(9.0, floor(u_cells / 3.0 + 0.5) * 3.0);
-      float ny = 2.0 * floor(nx * K / 2.0 + 0.5);
+      // cubes map cells directly to cube count (no mult-3/>=9 clamp; role is per-hex
+      // angular) so the slider scales cube SIZE. ny stays even (row-offset wrap).
+      float nx = max(2.0, floor(u_cells + 0.5));
+      float ny = 2.0 * max(1.0, floor(nx * K / 2.0 + 0.5));
       float sx = 1.0 / nx; float sy = 1.0 / ny;
       float r0 = floor(vw / sy + 0.5);
       float best = 1e9; float bcx = 0.0; float bcy = 0.0;

@@ -479,8 +479,8 @@ describe('shapeRegion cubes', () => {
     // Compute hex center for row=2, col=2 (even row, off=0) with cells=12
     // K=1.1547005, nx=12, ny=2*round(12*K/2)=2*7=14, sx=1/12, sy=1/14
     const K = 1.1547005
-    const nx = Math.max(9, Math.round(cells / 3) * 3) // 12
-    const ny = 2 * Math.round((nx * K) / 2) // 14
+    const nx = Math.max(2, Math.round(cells)) // 12
+    const ny = 2 * Math.max(1, Math.round((nx * K) / 2)) // 14
     const sx = 1 / nx, sy = 1 / ny
     const bcx = 2 * sx  // col=2, off=0 → cx=(2+0)*sx
     const bcy = 2 * sy  // row=2 → cy=2*sy
@@ -506,9 +506,9 @@ describe('shapeRegion cubes', () => {
   })
 
   it('cubes: all three face roles appear within a single interior hex (non-tautological geometry check)', () => {
-    // The column-period test is tautological here because the cubes role is constant
-    // across ALL u for any given v (horizontal bands). Instead, verify the rhombille
-    // face split by sampling the three angular sectors of one interior hex center.
+    // Verify the rhombille face split directly: a single hex contains all 3 rhombus
+    // faces, sampled via the three angular sectors around its center. Seam tests are
+    // tautological under the input wrap, so this guards the angular geometry instead.
     //
     // Hex geometry: nx=12, ny=14, sx=1/12, sy=1/14.
     // Row=3 (odd row) → off=0.5; col=4 → bcx=(4+0.5)/12=0.375, bcy=3/14≈0.214.
@@ -518,8 +518,8 @@ describe('shapeRegion cubes', () => {
     //   Role 2 (right): dx>0, dy<0   (upper-right quadrant)
     // All sample points are strictly interior to (0,1) — no boundary wrap is involved.
     const K = 1.1547005
-    const nx = Math.max(9, Math.round(cells / 3) * 3)   // 12
-    const ny = 2 * Math.round((nx * K) / 2)              // 14
+    const nx = Math.max(2, Math.round(cells))            // 12
+    const ny = 2 * Math.max(1, Math.round((nx * K) / 2)) // 14
     const sx = 1 / nx, sy = 1 / ny
     const row = 3, col = 4
     const off = (((row % 2) + 2) % 2) * 0.5             // 0.5 (odd row)
@@ -559,6 +559,22 @@ describe('shapeRegion cubes', () => {
         .toBe(shapeRegion('cubes', 1, t, 9).role)
       expect(shapeRegion('cubes', t, 0, 9).role)
         .toBe(shapeRegion('cubes', t, 1, 9).role)
+    }
+  })
+
+  it('big cubes: low Cells gives a small cube count (cells=4 -> nx=4) and still tiles + 3 faces', () => {
+    // cells maps directly to cube count now (no >=9 clamp), so the slider scales cube
+    // SIZE. At cells=4: nx = max(2, round(4)) = 4 (far fewer/bigger cubes than the old
+    // clamped 9). All three faces still appear and the tile is still seamless.
+    const lc = 4
+    expect(Math.max(2, Math.round(lc))).toBe(4) // documents the mapping
+    const roleSet = new Set<number>()
+    for (let i = 0; i <= 32; i++) for (let j = 0; j <= 32; j++) roleSet.add(shapeRegion('cubes', i / 32, j / 32, lc).role)
+    expect(roleSet).toEqual(new Set([0, 1, 2]))
+    for (let i = 1; i <= 15; i++) {
+      const t = (i + 0.3) / 16
+      expect(shapeRegion('cubes', 0, t, lc).role).toBe(shapeRegion('cubes', 1, t, lc).role)
+      expect(shapeRegion('cubes', t, 0, lc).role).toBe(shapeRegion('cubes', t, 1, lc).role)
     }
   })
 })

@@ -132,8 +132,12 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
     case 'cubes': {
       const uw = ((u % 1) + 1) % 1, vw = ((v % 1) + 1) % 1
       const K = 1.1547005
-      const nx = Math.max(9, Math.round(cells / 3) * 3)
-      const ny = 2 * Math.round((nx * K) / 2)
+      // cubes need no mult-3 / >=9 clamp (the role is per-hex angular, not a global
+      // color period) -> map cells directly to cube count so the slider scales cube
+      // SIZE: cells=2 = a few huge cubes, cells=40 = many small ones. ny stays even
+      // (row-offset wrap). Low counts have mild anisotropy but still read as cubes.
+      const nx = Math.max(2, Math.round(cells))
+      const ny = 2 * Math.max(1, Math.round((nx * K) / 2))
       const sx = 1 / nx, sy = 1 / ny
       const r0 = Math.round(vw / sy)
       let best = 1e9, bcx = 0, bcy = 0
