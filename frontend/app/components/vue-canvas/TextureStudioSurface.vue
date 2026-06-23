@@ -256,6 +256,10 @@ async function onFillImport(rk: string, i: number, file: File) {
     renderPreview()
   } catch (err) { console.error('[texture] fill import failed', err) }
 }
+function setFillOpacity(rk: string, i: number, v: number) {
+  setFill(rk, { ...(roleFill(rk, i) as any), opacity: v })
+}
+
 function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'radial'; angle: number; frame: 'cell' | 'tile'; stops: { c: string; p: number }[] }>) {
   const f = roleFill(rk, i) as any
   const cur = f?.type === 'gradient' ? f : {}
@@ -434,15 +438,24 @@ onBeforeUnmount(() => {
             @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern')"
           />
 
-          <!-- Solid: single color picker -->
+          <!-- Solid: single color picker + opacity -->
           <template v-if="roleFill(rk, i).type === 'solid'">
             <div class="mt-1 flex items-center gap-2">
               <label class="text-[11px] text-white/55">Color</label>
               <StudioColor
                 :model-value="(roleFill(rk, i) as any).color ?? '#7aa2f7'"
-                @update:model-value="(c: string) => setFill(rk, { type: 'solid', color: c })"
+                @update:model-value="(c: string) => setFill(rk, { ...(roleFill(rk, i) as any), type: 'solid', color: c })"
               />
             </div>
+            <StudioSlider
+              label="Opacity"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              :default="1"
+              :model-value="(roleFill(rk, i) as any).opacity ?? 1"
+              @update:model-value="(v: number) => setFillOpacity(rk, i, v)"
+            />
           </template>
 
           <!-- Gradient: kind, angle, two stops, frame -->
@@ -487,6 +500,16 @@ onBeforeUnmount(() => {
                 :model-value="(roleFill(rk, i) as any).frame ?? 'cell'"
                 @update:model-value="(fr: string) => setGradient(rk, i, { frame: fr as any })"
               />
+
+              <StudioSlider
+                label="Opacity"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                :default="1"
+                :model-value="(roleFill(rk, i) as any).opacity ?? 1"
+                @update:model-value="(v: number) => setFillOpacity(rk, i, v)"
+              />
             </div>
           </template>
 
@@ -529,6 +552,16 @@ onBeforeUnmount(() => {
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
                 @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
+              />
+
+              <StudioSlider
+                label="Opacity"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                :default="1"
+                :model-value="(roleFill(rk, i) as any).opacity ?? 1"
+                @update:model-value="(v: number) => setFillOpacity(rk, i, v)"
               />
             </div>
           </template>
@@ -582,6 +615,16 @@ onBeforeUnmount(() => {
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
                 @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
+              />
+
+              <StudioSlider
+                label="Opacity"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                :default="1"
+                :model-value="(roleFill(rk, i) as any).opacity ?? 1"
+                @update:model-value="(v: number) => setFillOpacity(rk, i, v)"
               />
             </div>
           </template>

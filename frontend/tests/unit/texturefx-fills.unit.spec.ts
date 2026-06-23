@@ -31,6 +31,25 @@ describe('fillForRole back-compat', () => {
   })
 })
 
+describe('fill opacity', () => {
+  it('fillForRole preserves opacity when explicitly set', () => {
+    const p = {
+      mode: 'truchet', tileFamily: 'arcs',
+      fills: { stroke: { type: 'solid', color: '#abcdef', opacity: 0.4 } }
+    } as any
+    const f = fillForRole(p, 'stroke', 0) as any
+    expect(f.opacity).toBe(0.4)
+  })
+  it('fillForRole leaves opacity undefined when not set (renderer defaults to 1)', () => {
+    const p = {
+      mode: 'truchet', tileFamily: 'arcs',
+      fills: { stroke: { type: 'solid', color: '#abcdef' } }
+    } as any
+    const f = fillForRole(p, 'stroke', 0) as any
+    expect(f.opacity).toBeUndefined()
+  })
+})
+
 describe('gradientRampCoord seamlessness', () => {
   it('tile-global ramp matches opposite edges (mirrored)', () => {
     for (let i=0;i<=10;i++){ const t=i/10

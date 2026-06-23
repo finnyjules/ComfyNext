@@ -37,6 +37,7 @@ uniform vec3 u_fillC1[3];
 uniform sampler2D u_fillTex0, u_fillTex1, u_fillTex2;
 uniform int u_fillSeam[3];   // 0 mirror, 1 feather, 2 direct
 uniform float u_fillScale[3];
+uniform float u_fillOpacity[3];
 
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
 float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
@@ -63,37 +64,44 @@ vec3 sampleFillSeam(int r, vec2 uv){
 
 // Evaluate role r fill at cell-local fc and tile coord tc. Solid + image + 2-stop gradient.
 // Tile-global linear uses mirrored ramp for seamless tiling.
+// All branches assign col, then a single final mix blends toward u_bg by u_fillOpacity[r].
 vec3 evalFill(int r, vec2 fc, vec2 tc){
-  if (u_fillType[r] == 0) return u_fillC0[r];
-  if (u_fillType[r] == 2) {
+  vec3 col;
+  if (u_fillType[r] == 0) {
+    col = u_fillC0[r];
+  } else if (u_fillType[r] == 2) {
+    // Image fill: choose cell-local or tile-global UV by frame setting.
     vec2 uv = (u_fillFrame[r]==1) ? tc : fc;
-    return sampleFillSeam(r, uv);
-  }
-  // Pattern fill (type 3): sub-pattern already tiles, so direct wrap (seam=2).
-  // Scale and frame are honoured via sampleFillSeam like image fills.
-  if (u_fillType[r] == 3) {
+    col = sampleFillSeam(r, uv);
+  } else if (u_fillType[r] == 3) {
+    // Pattern fill (type 3): sub-pattern already tiles, so direct wrap (seam=2).
+    // Scale and frame are honoured via sampleFillSeam like image fills.
     vec2 uv = (u_fillFrame[r]==1) ? tc : fc;
-    return sampleFillSeam(r, uv);
-  }
-  float g;
-  if (u_fillKind[r] == 1) {
-    vec2 p = (u_fillFrame[r]==1) ? tc : fc;
-    g = clamp(length(p - vec2(0.5)) * 2.0, 0.0, 1.0);
+    col = sampleFillSeam(r, uv);
   } else {
-    float a = radians(u_fillAngle[r]);
-    vec2 d = vec2(cos(a), sin(a));
-    if (u_fillFrame[r]==1) {
-      // Snap direction to integer wave numbers so the ramp completes whole
-      // cycles per tile in each axis -- seamless at any angle (8 directions).
-      float m = max(abs(d.x), abs(d.y));
-      vec2 k = (m > 0.0) ? vec2(floor(d.x/m + 0.5), floor(d.y/m + 0.5)) : vec2(1.0, 0.0);
-      float t = dot(tc, k);
-      g = 1.0 - abs(2.0*fract(t) - 1.0);
+    // Gradient (type 1): compute ramp g, then 2-stop mix.
+    float g;
+    if (u_fillKind[r] == 1) {
+      vec2 p = (u_fillFrame[r]==1) ? tc : fc;
+      g = clamp(length(p - vec2(0.5)) * 2.0, 0.0, 1.0);
     } else {
-      g = clamp(dot(fc, d), 0.0, 1.0);
+      float a = radians(u_fillAngle[r]);
+      vec2 d = vec2(cos(a), sin(a));
+      if (u_fillFrame[r]==1) {
+        // Snap direction to integer wave numbers so the ramp completes whole
+        // cycles per tile in each axis -- seamless at any angle (8 directions).
+        float m = max(abs(d.x), abs(d.y));
+        vec2 k = (m > 0.0) ? vec2(floor(d.x/m + 0.5), floor(d.y/m + 0.5)) : vec2(1.0, 0.0);
+        float t = dot(tc, k);
+        g = 1.0 - abs(2.0*fract(t) - 1.0);
+      } else {
+        g = clamp(dot(fc, d), 0.0, 1.0);
+      }
     }
+    col = mix(u_fillC0[r], u_fillC1[r], g);
   }
-  return mix(u_fillC0[r], u_fillC1[r], g);
+  // Blend fill toward the tile background by per-role opacity (default 1 = fully opaque).
+  return mix(u_bg, col, clamp(u_fillOpacity[r], 0.0, 1.0));
 }
 
 // Precision-safe per-cell hash to 0..1, well-distributed. Takes the SMALL modded
@@ -343,6 +351,7 @@ class TextureFxRenderer {
       // The image branch below overrides these when an image is actually present.
       gl.uniform1i(loc('u_fillSeam'), 0)
       gl.uniform1f(loc('u_fillScale'), 1)
+      gl.uniform1f(loc('u_fillOpacity'), Number((fill as any).opacity ?? 1))
       if (fill.type === 'image') {
         const fimg = getRaster(String(fill.src ?? ''))
         if (fimg) {

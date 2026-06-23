@@ -42,8 +42,8 @@ export type FillType = typeof FILL_TYPES[number]
 export type Frame = typeof FILL_FRAMES[number]
 export type GradientStop = { c: string; p: number }
 export type Fill =
-  | { type: 'solid'; color: string }
-  | { type: 'gradient'; frame: Frame; kind: 'linear' | 'radial'; angle: number; stops: GradientStop[] }
-  | { type: 'image'; frame: Frame; src: string; seam: string; scale: number }
-  | { type: 'pattern'; frame: Frame; scale: number; sub: Record<string, unknown> }
+  | { type: 'solid'; color: string; opacity?: number }
+  | { type: 'gradient'; frame: Frame; kind: 'linear' | 'radial'; angle: number; stops: GradientStop[]; opacity?: number }
+  | { type: 'image'; frame: Frame; src: string; seam: string; scale: number; opacity?: number }
+  | { type: 'pattern'; frame: Frame; scale: number; sub: Record<string, unknown>; opacity?: number }
 export type FillsByRole = Record<string, Fill>
