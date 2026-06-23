@@ -51,21 +51,36 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       return { role: 1, fx: lfx, fy: (par + lfy) / 2 }                         // vertical brick
     }
     case 'fishscale': {
+      const fs_dy = 0.5, fs_R = 0.78, fs_g = 0.03
       const gxx = u * cells, gyy = v * cells
-      const R = 0.55
-      const jc = Math.round(gyy)
-      let best = 1e9, bcx = 0, bcy = 0
-      for (let dj = -1; dj <= 1; dj++) {
-        const j = jc + dj
-        const off = (((j % 2) + 2) % 2) * 0.5
-        const ic = Math.round(gxx - off)
-        for (let di = -1; di <= 1; di++) {
-          const cxp = ic + di + off, cyp = j
-          const d = Math.hypot(gxx - cxp, gyy - cyp)
-          if (d < best) { best = d; bcx = cxp; bcy = cyp }
+      // Lowest-row owner: pixel belongs to the lowest-row circle that contains it.
+      // Creates interlocking scallop fan shapes with grout lines.
+      const fsOwner = (px: number, py: number): [number, number] | null => {
+        const jc = Math.round(py / fs_dy)
+        let bj: number | null = null, bi = 0, bd = 1e9
+        for (let dj = -3; dj <= 3; dj++) {
+          const j = jc + dj
+          const off = (((j % 2) + 2) % 2) * 0.5
+          const ic = Math.round(px - off)
+          for (let di = -2; di <= 2; di++) {
+            const i = ic + di, cx = i + off, cy = j * fs_dy
+            const d = Math.hypot(px - cx, py - cy)
+            if (d < fs_R) {
+              if (bj === null || j < bj || (j === bj && d < bd)) { bj = j; bi = i; bd = d }
+            }
+          }
         }
+        return bj === null ? null : [bi, bj]
       }
-      return { role: best < R ? 0 : 1, fx: (gxx - bcx) / (2 * R) + 0.5, fy: (gyy - bcy) / (2 * R) + 0.5 }
+      const o = fsOwner(gxx, gyy)
+      if (!o) return { role: 2, fx: 0.5, fy: 0.5 }
+      for (const [ax, ay] of [[fs_g, 0], [-fs_g, 0], [0, fs_g], [0, -fs_g]] as [number, number][]) {
+        const n = fsOwner(gxx + ax, gyy + ay)
+        if (!n || n[0] !== o[0] || n[1] !== o[1]) return { role: 2, fx: 0.5, fy: 0.5 }
+      }
+      const off = (((o[1] % 2) + 2) % 2) * 0.5
+      const cx = o[0] + off, cy = o[1] * fs_dy
+      return { role: (((o[0] + o[1]) % 2) + 2) % 2, fx: (gxx - cx) / (2 * fs_R) + 0.5, fy: (gyy - cy) / (2 * fs_R) + 0.5 }
     }
     case 'pythagorean': {
       const a = 2, b = 1, s2 = 5

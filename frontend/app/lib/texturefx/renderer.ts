@@ -47,6 +47,31 @@ uniform float u_fillOpacity[3];
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
 float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
 
+// Fish-scale: lowest-row circle owner. Returns true if any circle (R=0.78, dy=0.5)
+// at the offset-row hex lattice contains (px,py); sets bi/bj to its column/row index.
+bool fsOwner(float px, float py, out float bi, out float bj) {
+  float dy = 0.5; float R = 0.78;
+  float jc = floor(py / dy + 0.5);
+  bi = 0.0; bj = 0.0;
+  bool found = false; float bd = 1e9; float bjBest = 1000.0;
+  for (int dj = -3; dj <= 3; dj++) {
+    float j = jc + float(dj);
+    float off = mod(j, 2.0) * 0.5;
+    float ic = floor(px - off + 0.5);
+    for (int di = -2; di <= 2; di++) {
+      float i = ic + float(di);
+      float cx = i + off; float cy = j * dy;
+      float d = distance(vec2(px, py), vec2(cx, cy));
+      if (d < R) {
+        if (!found || j < bjBest || (j == bjBest && d < bd)) {
+          found = true; bjBest = j; bd = d; bi = i; bj = j;
+        }
+      }
+    }
+  }
+  return found;
+}
+
 // Dispatch to a constant sampler per branch - dynamic array indexing is illegal in GLSL ES 3.00.
 vec3 sampleFillTex(int r, vec2 uv){
   if (r == 0) return texture(u_fillTex0, uv).rgb;
@@ -196,23 +221,26 @@ void main(){
       float par = mod(cx + cy, 2.0);
       if (rr < 0.5) { role = 0; cf = vec2((par + bf.x) * 0.5, bf.y); }
       else { role = 1; cf = vec2(bf.x, (par + bf.y) * 0.5); }
-    } else if (u_shapeFamily < 5.5) {     // fish-scale / clamshell
+    } else if (u_shapeFamily < 5.5) {     // fish-scale / scallop fan (3-role: scaleA, scaleB, grout)
+      float fs_g = 0.03;
       float gx = v_uv.x * u_cells; float gy = v_uv.y * u_cells;
-      float R = 0.55;
-      float jc = floor(gy + 0.5);
-      float best = 1e9; float bcx = 0.0; float bcy = 0.0;
-      for (int dj = -1; dj <= 1; dj++) {
-        float j = jc + float(dj);
-        float off = mod(j, 2.0) * 0.5;
-        float ic = floor(gx - off + 0.5);
-        for (int di = -1; di <= 1; di++) {
-          float cxp = ic + float(di) + off; float cyp = j;
-          float d = distance(vec2(gx, gy), vec2(cxp, cyp));
-          if (d < best) { best = d; bcx = cxp; bcy = cyp; }
+      float bi, bj;
+      bool found = fsOwner(gx, gy, bi, bj);
+      if (!found) { role = 2; cf = vec2(0.5); }
+      else {
+        float ni, nj; bool isGrout = false;
+        if (!fsOwner(gx + fs_g, gy,       ni, nj) || ni != bi || nj != bj) isGrout = true;
+        if (!isGrout && (!fsOwner(gx - fs_g, gy,       ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (!isGrout && (!fsOwner(gx,       gy + fs_g, ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (!isGrout && (!fsOwner(gx,       gy - fs_g, ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (isGrout) { role = 2; cf = vec2(0.5); }
+        else {
+          role = int(mod(bi + bj, 2.0));
+          float off = mod(bj, 2.0) * 0.5;
+          float cx = bi + off; float cy = bj * 0.5;
+          cf = vec2((gx - cx) / (2.0 * 0.78) + 0.5, (gy - cy) / (2.0 * 0.78) + 0.5);
         }
       }
-      role = (best < R) ? 0 : 1;
-      cf = vec2((gx - bcx) / (2.0 * R) + 0.5, (gy - bcy) / (2.0 * R) + 0.5);
     } else if (u_shapeFamily < 6.5) {    // Pythagorean / two-square
       float a = 2.0; float b = 1.0; float s2 = 5.0;
       float chP = max(5.0, floor(u_cells / 5.0 + 0.5) * 5.0);

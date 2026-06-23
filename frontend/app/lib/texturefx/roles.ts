@@ -12,7 +12,7 @@ export const ROLES_BY_FAMILY: Record<string, string[]> = {
   chevron: ['a', 'b'],
   basketweave: ['a', 'b'],
   herringbone: ['brickA', 'brickB'],
-  fishscale: ['scale', 'ground'],
+  fishscale: ['scaleA', 'scaleB', 'grout'],
   pythagorean: ['big', 'small'],
   hex: ['a', 'b', 'c'],
   cairo: ['a', 'b', 'c'],
