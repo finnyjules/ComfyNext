@@ -1474,13 +1474,13 @@ function renderGenOverlay(now?: number) {
   if (!genMaskCanvas || !genHasMask.value) return
   const t = ((now ?? nowMs()) - genT0) / 1000
 
-  // Subtle region fill — a faint white that pulses slowly to show the area is live.
-  const pulse = 0.12 + 0.22 * (0.5 + 0.5 * Math.sin(t * 1.4))
+  // Region fill — pulse a translucent white. The mask is already white, so draw
+  // it directly at the pulse alpha. (Drawing it then re-filling with `source-in`
+  // would SQUARE the alpha — pulse·pulse — making the pulse nearly invisible.)
+  const pulse = 0.16 + 0.30 * (0.5 + 0.5 * Math.sin(t * 1.4))
   ctx.save()
   ctx.globalAlpha = pulse
   ctx.drawImage(genMaskCanvas, 0, 0, W, H)
-  ctx.globalCompositeOperation = 'source-in'
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H)
   ctx.restore()
 
   // Pastel gradient stroke — tint the cached ring with a colour-flowing gradient
