@@ -416,7 +416,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <StudioModalShell title="Texture Studio" @close="closeEditor">
+  <StudioModalShell title="Pattern Studio" @close="closeEditor">
     <template #preview>
       <div class="flex h-full flex-col items-center justify-center gap-3 p-4">
         <canvas ref="canvas" class="max-h-[60vh] max-w-full rounded-lg border border-white/10" />

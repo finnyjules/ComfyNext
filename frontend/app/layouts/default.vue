@@ -115,7 +115,7 @@ const loadOptions = [
   ...(SPACE_TYPE_ENABLED ? [{ label: 'Type Studio', icon: Clapperboard, special: 'space-type' }] : []),
   { label: 'Gradient', icon: Sparkles, nodeType: 'GradientStudio' },
   { label: 'Shader', icon: Sparkles, nodeType: 'ShaderStudio' },
-  { label: 'Texture', icon: Sparkles, nodeType: 'TextureStudio' },
+  { label: 'Pattern', icon: Sparkles, nodeType: 'TextureStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },

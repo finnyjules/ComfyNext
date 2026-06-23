@@ -95,7 +95,7 @@ function openEditor() {
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Layers class="h-3.5 w-3.5 text-white/70" />
-      <span class="text-xs font-medium text-white/80">Texture Studio</span>
+      <span class="text-xs font-medium text-white/80">Pattern Studio</span>
     </div>
 
     <!-- Live seamless preview -->
