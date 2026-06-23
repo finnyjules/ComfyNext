@@ -25,6 +25,7 @@ uniform float u_mode, u_family, u_rotBias, u_tw;
 uniform float u_shapeFamily;
 uniform float u_pinwheel;
 uniform float u_hexFlat;
+uniform float u_fsRadius, u_fsRowSpacing, u_fsWidth;
 uniform float u_placement;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
@@ -47,22 +48,22 @@ uniform float u_fillOpacity[3];
 float posmod(float a, float n){ return mod(mod(a,n)+n, n); }
 float r_tri(float x){ return abs(2.0*fract(x)-1.0); }
 
-// Fish-scale: lowest-row circle owner. Returns true if any circle (R=0.78, dy=0.5)
-// at the offset-row hex lattice contains (px,py); sets bi/bj to its column/row index.
-bool fsOwner(float px, float py, out float bi, out float bj) {
-  float dy = 0.5; float R = 0.78;
-  float jc = floor(py / dy + 0.5);
+// Fish-scale owner: find lowest-row ellipse center containing (px, py).
+// Normalizes px by fs_w so distance is elliptic (semi-axes fs_R*fs_w, fs_R).
+bool fsOwner(float px, float py, float fs_dy, float fs_R, float fs_w, out float bi, out float bj) {
+  float pxn = px / fs_w;
+  float jc = floor(py / fs_dy + 0.5);
   bi = 0.0; bj = 0.0;
   bool found = false; float bd = 1e9; float bjBest = 1000.0;
   for (int dj = -3; dj <= 3; dj++) {
     float j = jc + float(dj);
     float off = mod(j, 2.0) * 0.5;
-    float ic = floor(px - off + 0.5);
+    float ic = floor(pxn - off + 0.5);
     for (int di = -2; di <= 2; di++) {
       float i = ic + float(di);
-      float cx = i + off; float cy = j * dy;
-      float d = distance(vec2(px, py), vec2(cx, cy));
-      if (d < R) {
+      float cxn = i + off; float cy = j * fs_dy;
+      float d = distance(vec2(pxn, py), vec2(cxn, cy));
+      if (d < fs_R) {
         if (!found || j < bjBest || (j == bjBest && d < bd)) {
           found = true; bjBest = j; bd = d; bi = i; bj = j;
         }
@@ -222,23 +223,24 @@ void main(){
       if (rr < 0.5) { role = 0; cf = vec2((par + bf.x) * 0.5, bf.y); }
       else { role = 1; cf = vec2(bf.x, (par + bf.y) * 0.5); }
     } else if (u_shapeFamily < 5.5) {     // fish-scale / scallop fan (3-role: scaleA, scaleB, grout)
+      float fs_dy = u_fsRowSpacing; float fs_R = u_fsRadius; float fs_w = u_fsWidth;
       float fs_g = 0.03;
       float gx = v_uv.x * u_cells; float gy = v_uv.y * u_cells;
       float bi, bj;
-      bool found = fsOwner(gx, gy, bi, bj);
+      bool found = fsOwner(gx, gy, fs_dy, fs_R, fs_w, bi, bj);
       if (!found) { role = 2; cf = vec2(0.5); }
       else {
         float ni, nj; bool isGrout = false;
-        if (!fsOwner(gx + fs_g, gy,       ni, nj) || ni != bi || nj != bj) isGrout = true;
-        if (!isGrout && (!fsOwner(gx - fs_g, gy,       ni, nj) || ni != bi || nj != bj)) isGrout = true;
-        if (!isGrout && (!fsOwner(gx,       gy + fs_g, ni, nj) || ni != bi || nj != bj)) isGrout = true;
-        if (!isGrout && (!fsOwner(gx,       gy - fs_g, ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (!fsOwner(gx + fs_g, gy,       fs_dy, fs_R, fs_w, ni, nj) || ni != bi || nj != bj) isGrout = true;
+        if (!isGrout && (!fsOwner(gx - fs_g, gy,       fs_dy, fs_R, fs_w, ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (!isGrout && (!fsOwner(gx,       gy + fs_g, fs_dy, fs_R, fs_w, ni, nj) || ni != bi || nj != bj)) isGrout = true;
+        if (!isGrout && (!fsOwner(gx,       gy - fs_g, fs_dy, fs_R, fs_w, ni, nj) || ni != bi || nj != bj)) isGrout = true;
         if (isGrout) { role = 2; cf = vec2(0.5); }
         else {
           role = int(mod(bi + bj, 2.0));
           float off = mod(bj, 2.0) * 0.5;
-          float cx = bi + off; float cy = bj * 0.5;
-          cf = vec2((gx - cx) / (2.0 * 0.78) + 0.5, (gy - cy) / (2.0 * 0.78) + 0.5);
+          float cxn = bi + off; float cy = bj * fs_dy;
+          cf = vec2((gx / fs_w - cxn) / (2.0 * fs_R) + 0.5, (gy - cy) / (2.0 * fs_R) + 0.5);
         }
       }
     } else if (u_shapeFamily < 6.5) {    // Pythagorean / two-square
@@ -547,6 +549,9 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_shapeFamily'), Math.max(0, SHAPE_FAMILIES.indexOf(String(p.shapeFamily) as any)))
     gl.uniform1f(u('u_pinwheel'), String(p.pinwheel) !== 'off' ? 1 : 0)
     gl.uniform1f(u('u_hexFlat'), String(p.hexOrient) === 'flat' ? 1 : 0)
+    gl.uniform1f(u('u_fsRadius'),     Number.isFinite(Number(p.fsRadius))     ? Number(p.fsRadius)     : 0.78)
+    gl.uniform1f(u('u_fsRowSpacing'), Number.isFinite(Number(p.fsRowSpacing)) ? Number(p.fsRowSpacing) : 0.5)
+    gl.uniform1f(u('u_fsWidth'),      Number.isFinite(Number(p.fsWidth))      ? Number(p.fsWidth)      : 1.0)
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))

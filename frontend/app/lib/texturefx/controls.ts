@@ -21,6 +21,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'shapeFamily', label: 'Shape', kind: 'select', options: [...SHAPE_FAMILIES], default: 'octagon', group: 'Cell', when: isShapes },
   { key: 'pinwheel', label: 'Pinwheel', kind: 'select', options: ['off', 'on'], default: 'on', group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'pinwheel' },
   { key: 'hexOrient', label: 'Orientation', kind: 'select', options: ['pointy', 'flat'], default: 'pointy', group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'hex' },
+  { key: 'fsWidth', label: 'Scale width', kind: 'slider', min: 0.4, max: 2.0, step: 0.05, default: 1.0, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
+  { key: 'fsRowSpacing', label: 'Row spacing', kind: 'slider', min: 0.2, max: 0.9, step: 0.02, default: 0.5, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
+  { key: 'fsRadius', label: 'Arc radius', kind: 'slider', min: 0.55, max: 1.0, step: 0.01, default: 0.78, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
 
   // Procedural motif controls — shown only in procedural mode.
   { key: 'motif', label: 'Motif', kind: 'select', options: [...MOTIFS], default: 'checker', group: 'Content', when: isProcedural },
