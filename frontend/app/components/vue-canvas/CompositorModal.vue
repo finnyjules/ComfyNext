@@ -1734,13 +1734,13 @@ onUnmounted(() => {
     class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6"
     @click.self="emit('close')"
   >
-    <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl flex text-white/85 overflow-hidden">
-    <!-- Left sidebar -->
-    <div class="w-64 border-r border-white/10 flex flex-col shrink-0">
-      <div class="px-4 py-3 border-b border-white/10">
+    <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative text-white/85 overflow-hidden">
+    <!-- Left sidebar: floating glass layer panel -->
+    <div class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <div class="px-4 pt-3 pb-1.5">
         <h2 class="text-sm font-semibold tracking-tight">Compositor</h2>
       </div>
-      <div class="p-3 flex-1 overflow-y-auto">
+      <div class="px-3 pb-3 flex-1 min-h-0 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
 
         <!-- Unified z-order stack (top-first). Grouped layers indent; grip to reorder. -->
@@ -1828,28 +1828,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Center canvas -->
-    <div class="flex-1 relative flex items-center justify-center overflow-hidden">
-      <div class="absolute top-4 right-4 z-10 flex items-center gap-2">
-        <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
-        <button
-          class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-          :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
-          :disabled="rendering || baking"
-          :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
-          @click="renderFrame">
-          <Play class="size-3" />
-          {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
-        </button>
-        <button
-          class="flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
-          title="Close (Esc)"
-          @click="emit('close')"
-        >
-          <X class="size-4" />
-        </button>
-      </div>
-
+    <!-- Center canvas (full-bleed; the layer + properties panels float over it) -->
+    <div class="absolute inset-0 flex items-center justify-center overflow-hidden">
       <div
         ref="canvasRef"
         class="relative bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5"
@@ -2239,8 +2219,26 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Right sidebar: properties -->
-    <div class="w-72 border-l border-white/10 shrink-0 flex flex-col">
+    <!-- Floating top-right: Render + esc/close (studio chrome) -->
+    <div class="absolute top-4 right-4 z-30 flex items-center gap-2">
+      <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
+      <button
+        class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+        :class="renderStale ? 'bg-emerald-500/90 hover:bg-emerald-500 text-black' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+        :disabled="rendering || baking"
+        :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
+        @click="renderFrame">
+        <Play class="size-3" />
+        {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
+      </button>
+      <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30 select-none">esc</span>
+      <button type="button" aria-label="Close" title="Close (Esc)"
+        class="text-white/45 transition-colors hover:text-white/80 text-base leading-none px-1 cursor-pointer"
+        @click="emit('close')">✕</button>
+    </div>
+
+    <!-- Right sidebar: floating glass properties panel -->
+    <div class="absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <!-- Generate-in-region controls (mode owns the inspector) -->
       <template v-if="genActive">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
@@ -2248,7 +2246,7 @@ onUnmounted(() => {
           <span class="text-sm font-medium">Generate in region</span>
           <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitGenMode"><X class="size-3.5" /></button>
         </div>
-        <div class="p-4 flex flex-col gap-3 overflow-y-auto">
+        <div class="p-4 flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
           <!-- Target -->
           <div class="flex items-center justify-between text-[11px]">
             <span class="text-white/40">Target</span>
@@ -2360,7 +2358,7 @@ onUnmounted(() => {
             <button class="text-white/40 hover:text-red-400 p-1" title="Delete" @click="deleteLocal(selectedLocal.id)"><Trash2 class="size-3.5" /></button>
           </div>
         </div>
-        <div class="p-4 flex flex-col gap-4 overflow-y-auto">
+        <div class="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <!-- Text controls -->
           <template v-if="selectedLocal.kind === 'text'">
             <div>
@@ -2743,7 +2741,7 @@ onUnmounted(() => {
             <button class="text-white/40 hover:text-white/80 p-1" title="Send backward" @click="moveStackZ(wiredKey(selected.slot), -1)"><ArrowDown class="size-3.5" /></button>
           </div>
         </div>
-        <div v-if="selected" class="p-4 flex flex-col gap-4 overflow-y-auto">
+        <div v-if="selected" class="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <div>
             <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Position</div>
             <div class="flex gap-2">
