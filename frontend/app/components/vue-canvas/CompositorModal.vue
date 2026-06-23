@@ -693,6 +693,9 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
 }
 
 function onCanvasPointerDownCapture(e: PointerEvent) {
+  // The generated-object mini toolbar lives inside the canvas — let its buttons
+  // receive the click instead of starting a region draw / deselecting.
+  if ((e.target as HTMLElement)?.closest?.('[data-gen-bar]')) return
   // Generate mode: brush/box paint the region; shape mode falls through so a
   // shape can still be selected (then promoted via "Use shape").
   if (genActive.value && (genTool.value === 'brush' || genTool.value === 'box')) { onGenPointerDown(e); return }
@@ -1963,6 +1966,7 @@ onUnmounted(() => {
         <!-- Generated-object mini toolbar: cancel / re-roll / confirm -->
         <div
           v-if="genResult"
+          data-gen-bar
           class="absolute z-40 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
           :style="{ left: Math.min(Math.max((genResult.bnd.minX + genResult.bnd.maxX) / 2, 64), canvasDisplay.w - 64) + 'px', top: Math.min(genResult.bnd.maxY + 12, canvasDisplay.h - 44) + 'px' }"
           @pointerdown.stop @click.stop
