@@ -267,8 +267,12 @@ function finishPen() {
   if (layer) addPathLayers([layer])
 }
 function togglePen() { pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit() } }
-// Return to the default Select tool: leave pen/node-edit modes.
-function selectTool() { if (pen.active.value) pen.setActive(false); if (nodeEdit.active.value) exitNodeEdit() }
+// Return to the default Select tool: leave pen/node-edit/generate modes.
+function selectTool() {
+  if (pen.active.value) pen.setActive(false)
+  if (nodeEdit.active.value) exitNodeEdit()
+  if (genActive.value) exitGenMode()
+}
 const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value && !genActive.value)
 
 const svgInputRef = ref<HTMLInputElement | null>(null)
