@@ -273,6 +273,39 @@ function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'r
   } as Fill)
 }
 
+// Write gradient stops: always sorts by position before saving so the shader walk is correct.
+function setStops(rk: string, i: number, stops: { c: string; p: number }[]) {
+  const sorted = [...stops].sort((a, b) => a.p - b.p)
+  setGradient(rk, i, { stops: sorted })
+}
+
+// Add a stop at the midpoint between the last two stops (or 0.5 if only 2 stops).
+function addStop(rk: string, i: number) {
+  const stops: { c: string; p: number }[] = [...((roleFill(rk, i) as any).stops ?? [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }])]
+  if (stops.length >= 4) return
+  const sorted = [...stops].sort((a, b) => a.p - b.p)
+  const last = sorted[sorted.length - 1]!
+  const prev = sorted[sorted.length - 2]!
+  const mp = (prev.p + last.p) / 2
+  stops.push({ c: '#aabbcc', p: mp })
+  setStops(rk, i, stops)
+}
+
+// Remove a stop at a given index (only allowed when stops.length > 2).
+function removeStop(rk: string, i: number, si: number) {
+  const stops: { c: string; p: number }[] = [...((roleFill(rk, i) as any).stops ?? [])]
+  if (stops.length <= 2) return
+  stops.splice(si, 1)
+  setStops(rk, i, stops)
+}
+
+// Update a single stop's color or position.
+function patchStop(rk: string, i: number, si: number, patch: Partial<{ c: string; p: number }>) {
+  const stops: { c: string; p: number }[] = [...((roleFill(rk, i) as any).stops ?? [])]
+  stops[si] = { ...stops[si]!, ...patch }
+  setStops(rk, i, stops)
+}
+
 // Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
 // 64 so dither stays seamless.
 async function exportBlob(): Promise<Blob> {
@@ -478,21 +511,42 @@ onBeforeUnmount(() => {
                 @update:model-value="(a: number) => setGradient(rk, i, { angle: a })"
               />
 
-              <div class="flex items-center gap-2">
-                <label class="text-[11px] text-white/55">Start</label>
+              <!-- Multi-stop list: 2-4 stops, each with color + position + optional remove -->
+              <div
+                v-for="(st, si) in ((roleFill(rk, i) as any).stops ?? [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }])"
+                :key="si"
+                class="flex items-center gap-2"
+              >
+                <label class="w-8 shrink-0 text-[11px] text-white/55">{{ si === 0 ? 'Start' : si === ((roleFill(rk, i) as any).stops?.length ?? 2) - 1 ? 'End' : 'Mid' }}</label>
                 <StudioColor
-                  :model-value="(roleFill(rk, i) as any).stops?.[0]?.c ?? '#e8eef5'"
-                  @update:model-value="(c: string) => { const s = (roleFill(rk, i) as any).stops; setGradient(rk, i, { stops: [{ c, p: 0 }, s?.[1] ?? { c: '#7aa2f7', p: 1 }] }) }"
+                  :model-value="st.c"
+                  @update:model-value="(c: string) => patchStop(rk, i, Number(si), { c })"
                 />
-              </div>
-
-              <div class="flex items-center gap-2">
-                <label class="text-[11px] text-white/55">End</label>
-                <StudioColor
-                  :model-value="(roleFill(rk, i) as any).stops?.[1]?.c ?? '#7aa2f7'"
-                  @update:model-value="(c: string) => { const s = (roleFill(rk, i) as any).stops; setGradient(rk, i, { stops: [s?.[0] ?? { c: '#e8eef5', p: 0 }, { c, p: 1 }] }) }"
+                <StudioSlider
+                  label=""
+                  :min="0"
+                  :max="1"
+                  :step="0.01"
+                  :default="Number(si) === 0 ? 0 : 1"
+                  :model-value="st.p"
+                  @update:model-value="(p: number) => patchStop(rk, i, Number(si), { p })"
                 />
+                <button
+                  v-if="((roleFill(rk, i) as any).stops?.length ?? 2) > 2"
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white/40 hover:bg-white/10 hover:text-white/70"
+                  @click="removeStop(rk, i, Number(si))"
+                >
+                  &times;
+                </button>
               </div>
+              <!-- Add stop button (max 4) -->
+              <button
+                v-if="((roleFill(rk, i) as any).stops?.length ?? 2) < 4"
+                class="mt-0.5 self-start rounded px-2 py-0.5 text-[10px] text-white/50 hover:bg-white/10 hover:text-white/80"
+                @click="addStop(rk, i)"
+              >
+                + Add stop
+              </button>
 
               <label class="text-[11px] text-white/55">Frame</label>
               <StudioSelect

@@ -34,6 +34,9 @@ uniform int u_fillKind[3];
 uniform float u_fillAngle[3];
 uniform vec3 u_fillC0[3];
 uniform vec3 u_fillC1[3];
+uniform int u_fillStopCount[3];
+uniform vec3 u_fillStops[12];
+uniform float u_fillStopPos[12];
 uniform sampler2D u_fillTex0, u_fillTex1, u_fillTex2;
 uniform int u_fillSeam[3];   // 0 mirror, 1 feather, 2 direct
 uniform float u_fillScale[3];
@@ -62,7 +65,30 @@ vec3 sampleFillSeam(int r, vec2 uv){
   return sampleFillTex(r, vec2(r_tri(cu), r_tri(cv)));
 }
 
-// Evaluate role r fill at cell-local fc and tile coord tc. Solid + image + 2-stop gradient.
+// Walk the multi-stop gradient for role r at ramp position g.
+// Stops are stored flat: role r occupies indices [r*4 .. r*4+n-1] where n = u_fillStopCount[r].
+// Loop bound is constant 3 (max segments for 4 stops) -- GLSL ES requires a literal bound.
+// Mirrors gradColorAt() in fills.ts -- both must stay in sync.
+vec3 gradColor(int r, float g){
+  int base = r * 4;
+  int n = u_fillStopCount[r];
+  if (n < 2) return u_fillStops[base];
+  float lo = u_fillStopPos[base];
+  float hi = u_fillStopPos[base + n - 1];
+  float gg = clamp(g, lo, hi);
+  for (int k = 0; k < 3; k++){
+    if (k >= n - 1) break;
+    float pa = u_fillStopPos[base + k];
+    float pb = u_fillStopPos[base + k + 1];
+    if (gg >= pa && gg <= pb){
+      float t = (pb > pa) ? (gg - pa) / (pb - pa) : 0.0;
+      return mix(u_fillStops[base + k], u_fillStops[base + k + 1], t);
+    }
+  }
+  return u_fillStops[base + n - 1];
+}
+
+// Evaluate role r fill at cell-local fc and tile coord tc. Solid + image + multi-stop gradient.
 // Tile-global linear uses mirrored ramp for seamless tiling.
 // All branches assign col, then a single final mix blends toward u_bg by u_fillOpacity[r].
 vec3 evalFill(int r, vec2 fc, vec2 tc){
@@ -98,7 +124,7 @@ vec3 evalFill(int r, vec2 fc, vec2 tc){
         g = clamp(dot(fc, d), 0.0, 1.0);
       }
     }
-    col = mix(u_fillC0[r], u_fillC1[r], g);
+    col = gradColor(r, g);
   }
   // Blend fill toward the tile background by per-role opacity (default 1 = fully opaque).
   return mix(u_bg, col, clamp(u_fillOpacity[r], 0.0, 1.0));
@@ -346,6 +372,7 @@ class TextureFxRenderer {
       const roleKey = roles[r]
       const fill = roleKey !== undefined ? fillForRole(p, roleKey, r) : { type: 'solid' as const, color: '#000000' }
       const loc = (n: string) => gl.getUniformLocation(this.prog!, `${n}[${r}]`)
+      const loc2 = (n: string, idx: number) => gl.getUniformLocation(this.prog!, `${n}[${idx}]`)
       // Unconditionally reset image-only uniforms to sane defaults so a role that
       // previously held an image and is now solid/gradient does not keep stale values.
       // The image branch below overrides these when an image is actually present.
@@ -354,6 +381,7 @@ class TextureFxRenderer {
       gl.uniform1f(loc('u_fillOpacity'), Number((fill as any).opacity ?? 1))
       if (fill.type === 'image') {
         const fimg = getRaster(String(fill.src ?? ''))
+        gl.uniform1i(loc('u_fillStopCount'), 0)
         if (fimg) {
           gl.activeTexture(gl.TEXTURE0 + 2 + r)
           gl.bindTexture(gl.TEXTURE_2D, this.fillTex[r]!)
@@ -376,6 +404,7 @@ class TextureFxRenderer {
         }
       } else if (fill.type === 'pattern') {
         const pc = getPatternFillCanvas(fill.sub as Record<string, unknown>)
+        gl.uniform1i(loc('u_fillStopCount'), 0)
         if (pc) {
           gl.activeTexture(gl.TEXTURE0 + 2 + r)
           gl.bindTexture(gl.TEXTURE_2D, this.fillTex[r]!)
@@ -401,11 +430,19 @@ class TextureFxRenderer {
         gl.uniform1i(loc('u_fillFrame'), fill.frame === 'tile' ? 1 : 0)
         gl.uniform1i(loc('u_fillKind'), fill.kind === 'radial' ? 1 : 0)
         gl.uniform1f(loc('u_fillAngle'), Number(fill.angle) || 0)
-        gl.uniform3fv(loc('u_fillC0'), hexToRgb(String(fill.stops?.[0]?.c ?? '#ffffff')))
-        gl.uniform3fv(loc('u_fillC1'), hexToRgb(String(fill.stops?.[fill.stops.length - 1]?.c ?? '#000000')))
+        // Upload multi-stop arrays -- up to 4 stops, stored at flat index r*4+k.
+        const stops = fill.stops ?? [{ c: '#ffffff', p: 0 }, { c: '#000000', p: 1 }]
+        const count = Math.min(4, Math.max(2, stops.length))
+        gl.uniform1i(loc('u_fillStopCount'), count)
+        for (let k = 0; k < count; k++) {
+          const st = stops[k]!
+          gl.uniform3fv(loc2('u_fillStops', r * 4 + k), hexToRgb(String(st.c)))
+          gl.uniform1f(loc2('u_fillStopPos', r * 4 + k), Number(st.p))
+        }
       } else {
         this._lastFillSrc[r] = null
         gl.uniform1i(loc('u_fillType'), 0)
+        gl.uniform1i(loc('u_fillStopCount'), 0)
         gl.uniform3fv(loc('u_fillC0'), hexToRgb(String((fill as any).color ?? '#000000')))
       }
     }

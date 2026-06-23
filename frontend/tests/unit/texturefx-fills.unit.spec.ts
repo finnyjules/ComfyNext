@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fillForRole, gradientRampCoord, hexToRgb } from '~/lib/texturefx/fills'
+import { fillForRole, gradColorAt, gradientRampCoord, hexToRgb } from '~/lib/texturefx/fills'
 import { rolesFor, ROLES_BY_FAMILY, legacyColor } from '~/lib/texturefx/roles'
 
 describe('roles', () => {
@@ -47,6 +47,23 @@ describe('fill opacity', () => {
     } as any
     const f = fillForRole(p, 'stroke', 0) as any
     expect(f.opacity).toBeUndefined()
+  })
+})
+
+describe('gradColorAt', () => {
+  it('2-stop linear matches endpoints + midpoint', () => {
+    const s = [{ c: '#000000', p: 0 }, { c: '#ffffff', p: 1 }]
+    expect(gradColorAt(s, 0)).toEqual([0, 0, 0])
+    expect(gradColorAt(s, 1)).toEqual([1, 1, 1])
+    const m = gradColorAt(s, 0.5); expect(m[0]).toBeCloseTo(0.5, 5)
+  })
+  it('4-stop picks the right segment', () => {
+    const s = [{ c: '#000000', p: 0 }, { c: '#ff0000', p: 0.33 }, { c: '#00ff00', p: 0.66 }, { c: '#ffffff', p: 1 }]
+    const r = gradColorAt(s, 0.33); expect(r[0]).toBeCloseTo(1, 5); expect(r[1]).toBeCloseTo(0, 5)
+  })
+  it('clamps g outside the stop range', () => {
+    const s = [{ c: '#112233', p: 0.2 }, { c: '#445566', p: 0.8 }]
+    expect(gradColorAt(s, 0)).toEqual(gradColorAt(s, 0.2))
   })
 })
 

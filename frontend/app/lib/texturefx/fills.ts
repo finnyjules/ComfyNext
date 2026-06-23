@@ -11,6 +11,24 @@ export function fillForRole(p: Params, roleKey: string, roleIndex: number): Fill
   return f ?? legacyFill(p, activeFamily(p), roleIndex)
 }
 
+// Interpolate a multi-stop gradient at ramp position g in [0,1]. stops sorted by p.
+// Mirrors the GLSL gradColor() function in renderer.ts -- both must stay in sync.
+export function gradColorAt(stops: { c: string; p: number }[], g: number): [number, number, number] {
+  if (!stops.length) return [0, 0, 0]
+  if (stops.length === 1) return hexToRgb(stops[0]!.c)
+  const s = [...stops].sort((a, b) => a.p - b.p)
+  const gg = Math.min(s[s.length - 1]!.p, Math.max(s[0]!.p, g))
+  for (let k = 0; k < s.length - 1; k++) {
+    const a = s[k]!, b = s[k + 1]!
+    if (gg >= a.p && gg <= b.p) {
+      const t = b.p === a.p ? 0 : (gg - a.p) / (b.p - a.p)
+      const ca = hexToRgb(a.c), cb = hexToRgb(b.c)
+      return [ca[0] + (cb[0] - ca[0]) * t, ca[1] + (cb[1] - ca[1]) * t, ca[2] + (cb[2] - ca[2]) * t]
+    }
+  }
+  return hexToRgb(s[s.length - 1]!.c)
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16)
