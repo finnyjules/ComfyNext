@@ -1274,10 +1274,18 @@ const genMode = ref<GenMode>('style')
 const styleList = useStyleList()
 const genStyle = ref<import('~/composables/useStyleList').StyleItem | null>(null)
 const stylePickerOpen = ref(false)
-// "High quality" path → Google Nano Banana 2 (slower/pricier, sharper & more
-// scene-aware). Doesn't apply when a trained style is picked (those need Flux).
-const genHQ = ref(false)
-const genHQApplies = computed(() => !(genMode.value === 'style' && genStyle.value))
+// Generation model: Flux Schnell (fast/cheap, supports trained styles) vs Nano
+// Banana 2 (higher quality, scene-aware; pricier, no trained styles).
+type GenModel = 'flux' | 'nano'
+const GEN_MODELS: { id: GenModel; name: string; hint: string }[] = [
+  { id: 'flux', name: 'Flux Schnell', hint: 'Fast and cheap' },
+  { id: 'nano', name: 'Nano Banana 2', hint: 'Higher quality, scene-aware — pricier' },
+]
+const genModel = ref<GenModel>('flux')
+const modelPickerOpen = ref(false)
+const currentModel = computed(() => GEN_MODELS.find(m => m.id === genModel.value) ?? GEN_MODELS[0]!)
+// The trained-style picker only applies to Flux object generation.
+const showStylePicker = computed(() => genModel.value === 'flux' && genMode.value === 'style')
 
 type GenTool = 'box' | 'brush' | 'shape'
 const GEN_TOOLS: GenTool[] = ['box', 'brush', 'shape']
@@ -1628,9 +1636,9 @@ async function runRegionFill() {
         const compUrl = URL.createObjectURL(compBlob)
         const compImg = await loadImage(compUrl)
         URL.revokeObjectURL(compUrl)
-        if (genHQ.value) {
-          // High quality: crop the box region and let Nano Banana paint the
-          // object into it, matched to the surrounding scene.
+        if (genModel.value === 'nano') {
+          // Nano Banana: crop the box region and let it paint the object into
+          // it, matched to the surrounding scene.
           const cw = Math.max(1, Math.round(boxW)), ch = Math.max(1, Math.round(boxH))
           const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch
           crop.getContext('2d')!.drawImage(compImg, bnd.minX, bnd.minY, boxW, boxH, 0, 0, cw, ch)
@@ -1655,11 +1663,11 @@ async function runRegionFill() {
           crop.getContext('2d')!.drawImage(r0, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
           raw = crop.toDataURL('image/png')
         }
+      } else if (genModel.value === 'nano') {
+        const r = await inpaint.nanoGen(objectPrompt)
+        raw = r[0]
       } else if (genStyle.value) {
         const r = await inpaint.loraGen(genStyle.value.filename, objectPrompt, aspect)
-        raw = r[0]
-      } else if (genHQ.value) {
-        const r = await inpaint.nanoGen(objectPrompt)
         raw = r[0]
       } else {
         const r = await inpaint.text2img(objectPrompt, aspect)
@@ -2289,41 +2297,40 @@ onUnmounted(() => {
           <span class="text-sm font-medium">Generate in region</span>
           <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitGenMode"><X class="size-3.5" /></button>
         </div>
-        <div class="p-4 flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
+        <div class="p-5 flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto">
           <!-- Target -->
           <div class="flex items-center justify-between text-[11px]">
             <span class="text-white/40">Target</span>
             <span class="text-white/70">{{ genTargetLabel }}</span>
           </div>
 
-          <!-- Mode + style (new-object generation only) -->
+          <!-- Mode + model + style (new-object generation only) -->
           <template v-if="!genTarget">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mode</div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Mode</div>
               <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
                 <button
-                  class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+                  class="flex-1 h-8 rounded text-[11px] cursor-pointer transition-colors"
                   :class="genMode === 'style' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
                   @click="genMode = 'style'">Style</button>
                 <button
-                  class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+                  class="flex-1 h-8 rounded text-[11px] cursor-pointer transition-colors"
                   :class="genMode === 'scene' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
                   @click="genMode = 'scene'">Scene</button>
               </div>
-              <p class="text-[10px] text-white/35 mt-1.5 text-pretty">
+              <p class="text-[10px] text-white/35 mt-2 text-pretty leading-relaxed">
                 {{ genMode === 'style' ? 'Generate from your prompt (optionally a trained style).' : 'Fit the new object to the existing frame.' }}
               </p>
             </div>
 
-            <!-- Style picker (Style mode) -->
-            <div v-if="genMode === 'style'">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Style</div>
+            <!-- Model picker -->
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Model</div>
               <button
-                class="w-full h-8 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
-                @click="stylePickerOpen = !stylePickerOpen">
-                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
-                <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None (flux-schnell)' }}</span>
-                <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
+                class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
+                @click="modelPickerOpen = !modelPickerOpen">
+                <span class="truncate text-left">{{ currentModel.name }}</span>
+                <ChevronDown class="size-3.5 text-white/40 shrink-0 transition-transform" :class="modelPickerOpen ? 'rotate-180' : ''" />
               </button>
               <Transition
                 enter-active-class="transition-all duration-150 ease-out"
@@ -2331,28 +2338,50 @@ onUnmounted(() => {
                 enter-from-class="opacity-0 -translate-y-1"
                 leave-to-class="opacity-0 -translate-y-1"
               >
-              <div v-if="stylePickerOpen" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
-                <button class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer"
-                  @click="genStyle = null; stylePickerOpen = false">None (flux-schnell)</button>
+              <div v-if="modelPickerOpen" class="mt-1.5 rounded-md bg-neutral-900 border border-white/10 overflow-hidden">
+                <button v-for="m in GEN_MODELS" :key="m.id"
+                  class="w-full px-3 py-2.5 text-left hover:bg-white/10 cursor-pointer flex flex-col gap-0.5"
+                  :class="m.id === genModel ? 'bg-white/[0.06]' : ''"
+                  @click="genModel = m.id; modelPickerOpen = false">
+                  <span class="text-[12px]">{{ m.name }}</span>
+                  <span class="text-[10px] text-white/40 leading-relaxed">{{ m.hint }}</span>
+                </button>
+              </div>
+              </Transition>
+            </div>
+
+            <!-- Style picker (Flux + Style mode only) -->
+            <div v-if="showStylePicker">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Style</div>
+              <button
+                class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
+                @click="stylePickerOpen = !stylePickerOpen">
+                <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
+                <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None' }}</span>
+                <span v-if="genStyle" role="button" tabindex="0" class="text-white/40 hover:text-white/80" title="Clear" @click.stop="genStyle = null"><X class="size-3" /></span>
+                <ChevronDown v-else class="size-3.5 text-white/40 shrink-0 transition-transform" :class="stylePickerOpen ? 'rotate-180' : ''" />
+              </button>
+              <Transition
+                enter-active-class="transition-all duration-150 ease-out"
+                leave-active-class="transition-all duration-100 ease-in"
+                enter-from-class="opacity-0 -translate-y-1"
+                leave-to-class="opacity-0 -translate-y-1"
+              >
+              <div v-if="stylePickerOpen" class="mt-1.5 max-h-48 overflow-y-auto rounded-md bg-neutral-900 border border-white/10 flex flex-col">
+                <button class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer"
+                  @click="genStyle = null; stylePickerOpen = false">None</button>
                 <button v-for="s in styleList.styles.value" :key="s.filename"
-                  class="h-8 px-2 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                  class="px-3 py-2.5 text-left text-[12px] hover:bg-white/10 cursor-pointer flex items-center gap-2.5"
                   @click="genStyle = s; stylePickerOpen = false">
-                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
+                  <img v-if="s.coverUrl" :src="s.coverUrl" class="size-6 rounded object-cover ring-1 ring-white/10" />
                   <span class="truncate">{{ s.name }}</span>
                 </button>
-                <p v-if="!styleList.styles.value.length" class="px-2 py-2 text-[11px] text-white/30">
+                <p v-if="!styleList.styles.value.length" class="px-3 py-2.5 text-[11px] text-white/30">
                   {{ styleList.loading.value ? 'Loading…' : 'No trained styles yet.' }}
                 </p>
               </div>
               </Transition>
             </div>
-
-            <!-- High quality (Nano Banana 2) -->
-            <label class="flex items-center justify-between gap-2" :class="genHQApplies ? 'cursor-pointer' : 'opacity-40 cursor-default'">
-              <span class="text-[11px] text-white/70">High quality <span class="text-white/35">· nano-banana 2</span></span>
-              <input type="checkbox" v-model="genHQ" :disabled="!genHQApplies" class="accent-white cursor-pointer" />
-            </label>
-            <p class="text-[10px] text-white/30 -mt-1">{{ genHQApplies ? 'Sharper, scene-aware — slower and pricier.' : 'Trained styles always use Flux.' }}</p>
           </template>
 
           <!-- Region tool -->
