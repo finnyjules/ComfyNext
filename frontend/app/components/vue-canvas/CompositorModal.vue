@@ -1416,7 +1416,11 @@ let genRingCanvas: HTMLCanvasElement | null = null   // cached ring silhouette (
 let genScratch: HTMLCanvasElement | null = null      // per-frame compositing scratch
 let genRaf = 0
 let genT0 = 0
+// Single source of truth for the pastel accent. Drives the canvas region stroke
+// (this array), and — via the `--gen-pastel` CSS var bound on the modal root —
+// the Generate button fill and the prompt-box hairline border. Edit here only.
 const PASTEL = ['#ffd6e7', '#cfe8ff', '#d6ffe0', '#fff4cc', '#e7d6ff', '#ffd6e7'] // [5]===[0] (cyclic)
+const pastelGradientCss = computed(() => `linear-gradient(90deg, ${PASTEL.join(', ')})`)
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
 function lerpHex(a: string, b: string, u: number): string {
@@ -1738,6 +1742,7 @@ onUnmounted(() => {
 <template>
   <div
     class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6"
+    :style="{ '--gen-pastel': pastelGradientCss }"
     @click.self="emit('close')"
   >
     <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative text-white/85 overflow-hidden">
@@ -2328,13 +2333,15 @@ onUnmounted(() => {
           <!-- Prompt -->
           <div>
             <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Prompt</div>
-            <textarea
-              v-model="genPrompt"
-              rows="3"
-              placeholder="what object to generate…"
-              class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
-              @keydown.enter.exact.prevent="runRegionFill"
-            />
+            <div class="gen-border rounded-md p-px">
+              <textarea
+                v-model="genPrompt"
+                rows="3"
+                placeholder="what object to generate…"
+                class="block w-full bg-[#16161b] rounded-[5px] text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+                @keydown.enter.exact.prevent="runRegionFill"
+              />
+            </div>
           </div>
 
           <div class="flex items-center gap-1.5">
@@ -2841,7 +2848,7 @@ input[type="number"] {
    stroke (PASTEL in the script). Animates with a gentle alternate pan so there
    is no seam jump. */
 .gen-pastel {
-  background-image: linear-gradient(90deg, #ffd6e7, #cfe8ff, #d6ffe0, #fff4cc, #e7d6ff, #ffd6e7);
+  background-image: var(--gen-pastel);
   background-size: 200% 100%;
   animation: gen-pastel-flow 6s ease-in-out infinite alternate;
 }
@@ -2850,5 +2857,12 @@ input[type="number"] {
 @keyframes gen-pastel-flow {
   from { background-position: 0% 50%; }
   to { background-position: 100% 50%; }
+}
+
+/* Hairline pastel-gradient border: the 1px wrapper shows the gradient; the inner
+   element's own (slightly smaller-radius) background covers everything but the
+   1px ring. Uses the same --gen-pastel source as the button/stroke. */
+.gen-border {
+  background-image: var(--gen-pastel);
 }
 </style>
