@@ -319,6 +319,28 @@ describe('shapeRegion hex', () => {
     expect(rolesFor({ mode: 'shapes', shapeFamily: 'hex' } as any)).toEqual(['a', 'b', 'c'])
   })
 
+  it('mod-3 periodicity (cells=12): three consecutive interior column centers produce all three distinct roles', () => {
+    // Verify nx≡0 mod 3 actually cycles through all three roles.
+    // Use interior points only — the boundary wrap (((x%1)+1)%1) makes u=0/u=1 identical,
+    // so seam tests above are tautological; this test exercises the underlying math directly.
+    const K = 1.1547005
+    const nx = Math.max(9, Math.round(cells / 3) * 3) // 12
+    const ny = 2 * Math.round((nx * K) / 2)
+    const sx = 1 / nx, sy = 1 / ny
+    // Even row 2 (no column offset), cols 3,4,5 — all strictly inside (0,1)
+    const roleSet = new Set([3, 4, 5].map(col => shapeRegion('hex', col * sx, 2 * sy, cells).role))
+    expect(roleSet).toEqual(new Set([0, 1, 2]))
+  })
+
+  it('mod-3 periodicity (cells=9): three consecutive interior column centers produce all three distinct roles', () => {
+    const K = 1.1547005
+    const nx = Math.max(9, Math.round(9 / 3) * 3) // 9
+    const ny = 2 * Math.round((nx * K) / 2)
+    const sx = 1 / nx, sy = 1 / ny
+    const roleSet = new Set([3, 4, 5].map(col => shapeRegion('hex', col * sx, 2 * sy, 9).role))
+    expect(roleSet).toEqual(new Set([0, 1, 2]))
+  })
+
   it('seamless wrap at cells=12: u=0 matches u=1', () => {
     for (let i = 0; i <= 16; i++) {
       const v = i / 16
