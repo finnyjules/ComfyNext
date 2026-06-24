@@ -68,6 +68,10 @@ export default defineEventHandler(async (event) => {
   if (has('aesthetic')) {
     const a = String(body.aesthetic ?? '').trim()
     meta.aesthetic = a || null
+    // `aesthetic` is the canonical editable key. Newer sidecars hold the style
+    // under `taste_profile`; if we left it, a reader preferring it could resurface
+    // the old text (and clearing the field wouldn't stick). Drop it on edit.
+    if ('taste_profile' in meta) delete meta.taste_profile
   }
   if (has('kind')) {
     // Only 'character' or 'style' are meaningful; anything else clears the tag.
@@ -80,7 +84,7 @@ export default defineEventHandler(async (event) => {
     ok: true,
     name: meta.name || base,
     trigger: meta.trigger ?? null,
-    aesthetic: meta.aesthetic ?? null,
+    aesthetic: sidecarAesthetic(meta) || null,
     kind: meta.kind ?? null,
   }
 })

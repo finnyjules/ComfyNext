@@ -80,7 +80,7 @@ export default defineEventHandler(async () => {
       baseModel: meta.base_model ?? null,
       provider: meta.provider || (meta.replicate_url ? 'replicate' : 'local'),
       trigger: meta.trigger ?? null,
-      aesthetic: meta.aesthetic ?? meta.taste_profile ?? null,
+      aesthetic: sidecarAesthetic(meta) || null,
       // 'character' = usable as an identity LoRA in the Characters panel;
       // anything else (incl. legacy untagged) is treated as a style.
       kind: meta.kind === 'character' ? 'character' : (meta.kind === 'style' ? 'style' : null),

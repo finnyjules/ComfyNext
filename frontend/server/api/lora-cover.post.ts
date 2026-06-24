@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'This LoRA has no trained Replicate model to run.' })
   }
 
-  const profile = String(meta.aesthetic ?? meta.taste_profile ?? '').trim()
+  const profile = sidecarAesthetic(meta)
   const trigger = String(meta.trigger ?? '').trim()
   // Character covers are headshots: a clean studio portrait reads as "this is
   // the person", so the aesthetic (the training set's vibe) is left out — it
