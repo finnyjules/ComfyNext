@@ -4,7 +4,7 @@ import { cloneConfig, DEFAULT_FLOW, ensureConfigDefaults, flowConfig, LAYOUTS } 
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
-import { buildConfig, defaultConfig, reroll } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, liquidConfig, reroll } from '~/lib/gradientfx/randomize'
 import { applyMotion, trackValue } from '~/lib/gradientfx/motion'
 import type { MotionTrack, ShapeConfig } from '~/lib/gradientfx/types'
 
@@ -148,6 +148,26 @@ describe('gradientfx motion', () => {
     const framed = applyMotion(cfg, 4)
     expect(framed.layers[0]!.shape.phase).toBeCloseTo(1, 1)
     expect(cfg.layers[0]!.shape.phase).toBe(0) // original untouched
+  })
+})
+
+describe('gradientfx liquid randomize', () => {
+  it('liquidConfig produces a liquid layout with visible warp', () => {
+    const c = liquidConfig('#lq')
+    expect(c.canvas.layout).toBe('liquid')
+    expect(c.flow!.intensity).toBeGreaterThan(0)
+  })
+  it('defaultConfig carries a no-op flow block', () => {
+    expect(defaultConfig('#d').flow!.intensity).toBe(0)
+  })
+  it('reroll structure rolls flow; the flow lock pins it', () => {
+    const base = buildConfig('#fl')
+    const rolled = reroll(base, 'structure', '#fl2')
+    expect(rolled.flow).not.toEqual(base.flow)
+
+    const locked = { ...buildConfig('#fl3'), locks: { flow: true } }
+    const r = reroll(locked, 'all', '#fl4')
+    expect(r.flow).toEqual(locked.flow)
   })
 })
 

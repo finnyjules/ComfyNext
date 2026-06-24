@@ -4,9 +4,9 @@
 import { hslToRgb, rgbToHex } from './ramp'
 import { makeRng, randomSeed, type Rng } from './rng'
 import {
-  BLEND_MODES, DEFAULT_CENTER, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
-  type CenterOffset, type ColorConfig, type ColorStop, type GradientConfig, type LayerConfig,
-  type LightConfig, type ShapeConfig,
+  BLEND_MODES, DEFAULT_CENTER, DEFAULT_FLOW, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
+  type CenterOffset, type ColorConfig, type ColorStop, type FlowConfig, type GradientConfig, type LayerConfig,
+  type LayoutKind, type LightConfig, type ShapeConfig,
 } from './types'
 
 export type RerollScope = 'all' | 'colors' | 'structure'
@@ -109,6 +109,22 @@ function randLight(rng: Rng): LightConfig {
   return { azimuth: rng.range(0, 360), elevation: rng.range(25, 65) }
 }
 
+/** Random flow/warp params. Liquid layouts get a strong warp; geometric layouts get a subtle one (often none). */
+function randFlow(rng: Rng, layout: LayoutKind): FlowConfig {
+  const liquid = layout === 'liquid'
+  return {
+    angle: rng.range(0, 360),
+    noiseScale: rng.range(1.5, 5),
+    intensity: liquid ? rng.range(45, 85) : (rng.chance(0.4) ? rng.range(10, 45) : 0),
+    distortion: rng.range(40, 90),
+    detail: rng.int(1, 3),
+    depth: rng.range(40, 75),
+    highlights: rng.range(35, 65),
+    shadows: rng.range(40, 70),
+    foldScale: rng.range(40, 80),
+  }
+}
+
 /** Random origin offset for radial/orbit — small so the disc stays roughly framed. */
 function randCenter(rng: Rng): CenterOffset {
   return { x: rng.range(-0.18, 0.18), y: rng.range(-0.18, 0.18) }
@@ -176,12 +192,36 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
   }
 }
 
+/**
+ * The "Liquid" preset — a domain-warped marble flow (neato.fun look): the ramp smeared
+ * through fbm noise, warm orange→peach→pink melting into deep indigo, with fold shading.
+ */
+export function liquidConfig(seed = randomSeed()): GradientConfig {
+  return {
+    seed,
+    canvas: { aspect: '1:1', layout: 'liquid', margin: 0, innerRadius: 0, background: '#0e0a1e', center: { ...DEFAULT_CENTER } },
+    relief: { grain: 0.18, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { angle: 45, noiseScale: 3.5, intensity: 72, distortion: 80, detail: 2, depth: 60, highlights: 50, shadows: 55, foldScale: 60 },
+    layers: [
+      {
+        blend: 'normal', opacity: 1,
+        // Shape is unused by the liquid layout but kept so the layer schema stays complete.
+        shape: { type: 'bands', count: 12, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
+        color: { stops: [{ color: '#ff7a3d', pos: 0 }, { color: '#f6c39b', pos: 0.25 }, { color: '#f5a6cd', pos: 0.5 }, { color: '#2b3a55', pos: 0.75 }, { color: '#171327', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+      },
+    ],
+    motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
+    locks: {},
+  }
+}
+
 /** A sensible default config (used for a brand-new node before any randomize). */
 export function defaultConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
     canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.22, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { ...DEFAULT_FLOW },
     layers: [
       {
         blend: 'normal', opacity: 1,
@@ -201,17 +241,19 @@ export function buildConfig(seed: string): GradientConfig {
   const twoLayers = rng.chance(0.55)
   const layers: LayerConfig[] = [randLayer(rng, true)]
   if (twoLayers) layers.push(randLayer(rng, false))
+  const layout = rng.pick(LAYOUTS)
   return {
     seed,
     canvas: {
       aspect: rng.pick(['14:9', '16:9', '1:1', '4:5', '9:16']),
-      layout: rng.pick(LAYOUTS),
+      layout,
       margin: rng.range(0, 0.18),
       innerRadius: rng.range(0.2, 0.6),
       background: rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25)),
       center: rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER },
     },
     relief: { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) },
+    flow: randFlow(rng, layout),
     layers,
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
     locks: {},
@@ -244,6 +286,8 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
   // Always guarantee the optional fields exist after any re-roll (back-compat).
   if (!next.relief.light) next.relief.light = { ...DEFAULT_LIGHT }
   if (!next.canvas.center) next.canvas.center = { ...DEFAULT_CENTER }
+  if (doStructure && !locks.flow) next.flow = randFlow(makeRng(seed, 'flow'), next.canvas.layout)
+  if (!next.flow) next.flow = { ...DEFAULT_FLOW }
 
   // Optionally flip the layer count on a full roll.
   if (scope === 'all' && !locks.structure) {
