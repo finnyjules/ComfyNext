@@ -241,11 +241,12 @@ export function buildConfig(seed: string): GradientConfig {
   const twoLayers = rng.chance(0.55)
   const layers: LayerConfig[] = [randLayer(rng, true)]
   if (twoLayers) layers.push(randLayer(rng, false))
+  const aspect = rng.pick(['14:9', '16:9', '1:1', '4:5', '9:16'] as const)
   const layout = rng.pick(LAYOUTS)
   return {
     seed,
     canvas: {
-      aspect: rng.pick(['14:9', '16:9', '1:1', '4:5', '9:16']),
+      aspect,
       layout,
       margin: rng.range(0, 0.18),
       innerRadius: rng.range(0.2, 0.6),
