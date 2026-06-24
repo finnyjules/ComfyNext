@@ -211,6 +211,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Disable the macOS/Chrome two-finger horizontal swipe that navigates the
+     browser back/forward — it interferes with panning the canvas. Setting
+     this on the root scroller suppresses the gesture page-wide. */
+  html,
+  body {
+    overscroll-behavior-x: none;
+  }
 }
 
 /* ComfyUI canvas dot grid */
@@ -225,4 +232,34 @@
 }
 [data-slot="comfy-node-field"] [data-slot="input"] {
   @apply px-1.5 bg-transparent;
+}
+
+/* ── Shared pastel gradient hairline ──────────────────────────────────────────
+   Single source of truth for the gradient-hairline border used on prompt inputs
+   across apps — the Frame inpaint / generative-fill prompt and the canvas-node
+   prompt. Technique: a transparent border with two stacked backgrounds — a solid
+   interior clipped to the padding box (hides the gradient everywhere but the
+   border ring) and the pastel gradient clipped to the border box. Follows the
+   element's radius exactly. The interior fill is parameterized via
+   --pastel-hairline-bg so any surface can host it; the ring thickens on focus.
+   Edit the gradient HERE only. */
+:root {
+  --pastel-gradient: linear-gradient(90deg, #ffd6e7, #cfe8ff, #d6ffe0, #fff4cc, #e7d6ff, #ffd6e7);
+}
+.pastel-hairline {
+  border: 0.5px solid transparent;
+  background-image: linear-gradient(var(--pastel-hairline-bg, #16161b), var(--pastel-hairline-bg, #16161b)), var(--pastel-gradient);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  /* Idle: the pastel ring sits muted/quiet (saturate only touches the colored
+     gradient — the neutral interior fill and text are unaffected). On focus it
+     blooms to full pastel and the ring thickens — both eased so the field
+     "comes alive" smoothly. */
+  filter: saturate(0.45);
+  transition: filter 0.15s ease-out;
+}
+.pastel-hairline:focus,
+.pastel-hairline:focus-visible {
+  border-width: 1px;
+  filter: saturate(1);
 }

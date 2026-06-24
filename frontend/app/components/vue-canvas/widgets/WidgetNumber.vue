@@ -59,7 +59,7 @@ function onNumber(e: Event) { clampEmit(Number((e.target as HTMLInputElement).va
       />
       <input
         type="number"
-        class="nodrag nopan w-12 shrink-0 bg-white/5 border border-white/10 rounded px-1 h-6 text-[10px] text-foreground text-center outline-none focus-visible:border-ring [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        class="nodrag nopan w-12 shrink-0 bg-white/5 border border-white/10 rounded px-1 h-6 text-[10px] text-foreground text-center tabular-nums outline-none focus-visible:border-ring [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         :value="modelValue"
         :min="min"
         :max="max"
@@ -77,7 +77,7 @@ function onNumber(e: Event) { clampEmit(Number((e.target as HTMLInputElement).va
   <input
     v-else
     type="number"
-    class="nodrag nopan w-full bg-white/5 border border-white/10 rounded px-2 h-7 text-[11px] text-foreground text-center outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] [&::-webkit-inner-spin-button]:appearance-none"
+    class="nodrag nopan w-full bg-white/5 border border-white/10 rounded px-2 h-7 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] [&::-webkit-inner-spin-button]:appearance-none"
     :value="modelValue"
     :min="min"
     :max="max"
@@ -105,6 +105,10 @@ function onNumber(e: Event) { clampEmit(Number((e.target as HTMLInputElement).va
   background: rgba(255, 255, 255, 0.88);
   border: 2px solid rgba(0, 0, 0, 0.35);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+.cn-slider:active::-webkit-slider-thumb {
+  transform: scale(1.15);
 }
 .cn-slider::-moz-range-thumb {
   width: 12px;

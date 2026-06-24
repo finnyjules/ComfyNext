@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, Play, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -140,22 +140,47 @@ const showRunButton = computed(() => {
   return (props.data.category || '').startsWith('api node/')
 })
 
-function runThisNode() {
-  if (isMuted.value || isBypassed.value || props.data.running) return
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }))
-}
+// --- Per-node run control (footer split button) ---------------------------
+// One primary action — run THIS node, upstream cached — that reads as "Play"
+// before the first run and "Re-roll" after. A caret opens the two scope
+// variants. All three dispatch the same `comfynext:runFiltered` event the old
+// two buttons did; only the `detail` differs.
+const runMenuOpen = ref(false)
+const runMenuRoot = ref<HTMLElement | null>(null)
+// Optimistic "has been played": flips on the first run click so the label
+// switches to Re-roll immediately, OR derives from an existing result so a
+// reloaded graph that already produced output reads correctly.
+const playedOnce = ref(false)
+const hasRun = computed(() =>
+  playedOnce.value
+  || !!(props.data.images?.length || props.data.audios?.length
+        || (props.data as any).text || props.data.takes?.length),
+)
 
-// "Re-roll this node": run ONLY this node, leaving everything upstream exactly
-// as it was on the last run. We scope seed randomization to this node so all
-// upstream inputs stay identical → ComfyUI cache-hits them (no regen, no
-// re-billing) and recomputes just this node + its preview. Great for re-rolling
-// a generator or iterating on one node's settings without paying for the chain.
-function rerollThisNode() {
+function dispatchRun(detail: Record<string, any>) {
   if (isMuted.value || isBypassed.value || props.data.running) return
+  playedOnce.value = true
+  runMenuOpen.value = false
   window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
-    detail: { targetIds: [props.id], rerollScope: 'self' },
+    detail: { targetIds: [props.id], ...detail },
   }))
 }
+// Primary: re-roll ONLY this node — upstream stays cached (ComfyUI cache-hits
+// it, no regen/re-billing), just this node + its preview recompute.
+function playThisNode() { dispatchRun({ rerollScope: 'self' }) }
+// Variant: fresh run of everything before this node, new seeds throughout.
+function runFromStart() { dispatchRun({}) }
+// Variant: push this node's current result through everything downstream.
+function runDownstream() { dispatchRun({ direction: 'downstream' }) }
+
+function onRunMenuDocPointer(e: MouseEvent) {
+  if (runMenuRoot.value && !runMenuRoot.value.contains(e.target as Node)) runMenuOpen.value = false
+}
+watch(runMenuOpen, (open) => {
+  if (open) document.addEventListener('mousedown', onRunMenuDocPointer)
+  else document.removeEventListener('mousedown', onRunMenuDocPointer)
+})
+onUnmounted(() => document.removeEventListener('mousedown', onRunMenuDocPointer))
 
 // --- Takes (non-destructive variation loop) -------------------------------
 // The strip renders once there's at least one take. Actions mutate props.data
@@ -576,6 +601,21 @@ function setSeedFixed(widget: any, i: number, fixed: boolean) {
   locks[widget.name] = fixed
 }
 
+// Node-level seed lock: a title-bar toggle that fixes every seed on the node so
+// re-runs keep the same options (the pre-Run randomizer skips fixed seeds). Reads
+// and writes the same per-seed state the inspector's seed widget toggles.
+const seedWidgets = computed(() =>
+  ((props.data.widgetDefs || []) as any[])
+    .map((widget, index) => ({ widget, index }))
+    .filter(({ widget }) => isSeedWidgetDef(widget)))
+const hasSeed = computed(() => seedWidgets.value.length > 0)
+const seedLocked = computed(() =>
+  hasSeed.value && seedWidgets.value.every(({ widget, index }) => isSeedFixed(widget, index)))
+function toggleSeedLock() {
+  const next = !seedLocked.value
+  for (const { widget, index } of seedWidgets.value) setSeedFixed(widget, index, next)
+}
+
 function widgetsInGroup(title: string): any[] {
   const groups = WIDGET_GROUPS[props.data.nodeType]
   if (!groups) return []
@@ -585,26 +625,72 @@ function widgetsInGroup(title: string): any[] {
   return g.widgets.map(n => byName.get(n)).filter(Boolean)
 }
 
-// FluxLoRARemoteNode "Style" field — the aesthetic, stored as a node
-// PROPERTY (not a ComfyUI input, so the schema stays stable) and folded into the
-// prompt at submit time. Collapsed by default to keep the prompt area clean.
-const styleOpen = ref(false)
-const loraStyleProp = computed<string>({
-  // `tasteProfile` fallback keeps workflows saved before the rename working.
-  get: () => String((props.data.properties as any)?.aesthetic ?? (props.data.properties as any)?.tasteProfile ?? ''),
-  set: (v: string) => {
-    if (!props.data.properties) (props.data as any).properties = {}
-    ;(props.data.properties as any).aesthetic = v
-  },
-})
+// FluxLoRARemoteNode/FluxMultiLoRARemoteNode carry a schema-free "Style"/aesthetic
+// field (a node PROPERTY folded into the prompt at submit, not a ComfyUI input).
+// It now lives in the NodeInspector; this flag gates the per-node settings button.
+const isLoraStyleNode = computed(() =>
+  props.data.nodeType === 'FluxLoRARemoteNode' || props.data.nodeType === 'FluxMultiLoRARemoteNode')
 // Inputs flagged `advanced` in the node schema collapse into an "Advanced"
 // section (closed by default) so a node shows only its core controls. Honors
 // the same hidden/internal/grouped exclusions as the main widget loop.
 const advancedOpen = ref(false)
+// Advanced widgets that still render on the node. Inspector-bound widgets
+// (which includes everything `advanced`) are relocated to the NodeInspector, so
+// in practice this is empty and the node's "Advanced" disclosure auto-hides —
+// kept as a filter (not a hard `[]`) so the predicate stays the single source.
 const advancedWidgets = computed(() =>
   (props.data.widgetDefs || []).filter((w: any) =>
     w.advanced && !w.hidden && w.comfynext_widget !== 'internal'
-    && isWidgetVisible(w) && !groupedWidgetNames.value.has(w.name)))
+    && isWidgetVisible(w) && !groupedWidgetNames.value.has(w.name)
+    && !isInspectorWidgetDef(w)))
+
+// Fold each LoRA strength slider INTO its picker card. A `lora_picker` widget
+// pairs with a scale widget by name: lora_a→scale_a, lora_b→scale_b,
+// lora_name→lora_scale. We render the slider inside the card (see WidgetLoraPicker)
+// and skip the standalone scale widget in the loops below so it doesn't render twice.
+function scaleNameForPicker(name: string): string {
+  return name === 'lora_name' ? 'lora_scale' : name.replace(/^lora_/, 'scale_')
+}
+const loraScaleByPicker = computed(() => {
+  const defs = (props.data.widgetDefs || []) as any[]
+  const map = new Map<string, { name: string; index: number; def: any }>()
+  for (const w of defs) {
+    if (w?.comfynext_widget !== 'lora_picker') continue
+    const sn = scaleNameForPicker(w.name)
+    const idx = defs.findIndex((d: any) => d?.name === sn)
+    if (idx >= 0) map.set(w.name, { name: sn, index: idx, def: defs[idx] })
+  }
+  return map
+})
+const foldedScaleNames = computed(() =>
+  new Set([...loraScaleByPicker.value.values()].map((v) => v.name)))
+function loraScaleDef(pickerName: string): any {
+  return loraScaleByPicker.value.get(pickerName)?.def
+}
+function loraScaleValue(pickerName: string): number | undefined {
+  const idx = loraScaleByPicker.value.get(pickerName)?.index ?? -1
+  return idx >= 0 ? (props.data.widgetsValues?.[idx] as number) : undefined
+}
+function setLoraScale(pickerName: string, val: number) {
+  const idx = loraScaleByPicker.value.get(pickerName)?.index ?? -1
+  if (idx >= 0) props.data.widgetsValues[idx] = val
+}
+
+// "Mechanical" widgets that live in the NodeInspector (seed / aspect_ratio /
+// advanced). The title-bar settings button shows only when the node has some,
+// and opens the inspector for this node. Mirror NodeInspector.isInspectorWidget.
+function isInspectorWidgetDef(w: any): boolean {
+  if (!w || w.hidden || w.comfynext_widget === 'internal' || w.comfynext_widget === 'lora_picker') return false
+  if (w.advanced) return true
+  if (w.type === 'INT' && (w.control_after_generate || /seed/i.test(String(w.name || '')))) return true
+  if (w.name === 'aspect_ratio') return true
+  return false
+}
+const hasInspectorSettings = computed(() =>
+  isLoraStyleNode.value || ((props.data.widgetDefs || []) as any[]).some(isInspectorWidgetDef))
+function openInspector() {
+  window.dispatchEvent(new CustomEvent('comfynext:openInspector', { detail: { nodeId: props.id } }))
+}
 
 const isLivePreview = computed(() => LIVE_PREVIEW_NODES.has(props.data.nodeType))
 
@@ -1034,6 +1120,9 @@ const previewImages = computed(() => {
 // This eliminates the white flicker that live-preview cache-busting would
 // otherwise cause on every slider tweak.
 const displayedImages = ref<string[]>([])
+// Collapse the inline result preview to declutter the canvas (per-node, local).
+// Collapsed by default — the result shows as a dims hint until expanded.
+const previewCollapsed = ref(true)
 let preloadBatch = 0
 
 // Carousel state — used by nodes that produce a set of related images
@@ -1159,48 +1248,30 @@ watch(previewImages, (urls) => {
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || displayTitle }}</span>
-      <!-- Re-roll this node: runs ONLY this node, re-rolling its seed and reusing
-           cached upstream (no regen / re-billing of the chain). See rerollThisNode. -->
+      <!-- Seed lock: fix the seed so every run keeps the same options. Shares
+           state with the inspector's seed widget. -->
       <button
-        v-if="showRunButton"
+        v-if="hasSeed"
         class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
-        :class="(isMuted || isBypassed)
-          ? 'text-white/25 cursor-not-allowed'
-          : data.running
-            ? 'text-emerald-300 bg-emerald-400/15'
-            : 'bg-white/[0.09] ring-1 ring-white/10 text-white/90 hover:bg-white/[0.15]'"
-        :disabled="isMuted || isBypassed || data.running"
-        :title="isMuted ? 'Node is muted'
-          : isBypassed ? 'Node is bypassed'
-          : data.running ? 'Running…'
-          : 'Re-run only this node — new seed, everything upstream stays as-is'"
-        @click.stop="rerollThisNode"
+        :class="seedLocked
+          ? 'text-amber-300 bg-amber-400/15'
+          : 'text-white/40 hover:text-white/80 hover:bg-white/[0.08]'"
+        :title="seedLocked
+          ? 'Seed locked — same options every run. Click to unlock.'
+          : 'Lock the seed so every run keeps the same options.'"
+        @click.stop="toggleSeedLock"
       >
-        <Loader2 v-if="data.running" class="size-3 animate-spin" />
-        <Dices v-else class="size-3" />
+        <component :is="seedLocked ? Lock : LockOpen" class="size-3.5" />
       </button>
-      <!-- Per-node Run: runs this node + its upstream deps via filtered queue.
-           Shows on generators, output sinks (OUTPUT_NODE=True), and heavy
-           local compute — see showRunButton above. -->
+      <!-- Node settings: opens the right-hand inspector for this node's
+           mechanical params (seed / aspect / advanced). Only when it has some. -->
       <button
-        v-if="showRunButton"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
-        :class="(isMuted || isBypassed || data.running)
-          ? 'text-white/25 cursor-not-allowed'
-          : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]'"
-        :disabled="isMuted || isBypassed || data.running"
-        :title="isMuted ? 'Node is muted'
-          : isBypassed ? 'Node is bypassed'
-          : data.running ? 'Running…'
-          : 'Run this node and everything before it'"
-        @click.stop="runThisNode"
+        v-if="hasInspectorSettings"
+        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        title="Node settings"
+        @click.stop="openInspector"
       >
-        <!-- "play-from-start" (bar + triangle): run this node and everything
-             before it. Bar = from the start, triangle = run forward. -->
-        <svg viewBox="0 0 24 24" fill="currentColor" class="size-3" aria-hidden="true">
-          <rect x="3" y="4" width="3.5" height="16" rx="1.5" />
-          <path d="M10 4l11 8-11 8z" />
-        </svg>
+        <SlidersHorizontal class="size-3.5" />
       </button>
       <!-- Subgraph node count badge -->
       <span
@@ -1209,7 +1280,7 @@ watch(previewImages, (urls) => {
       >{{ data.innerNodeCount }} nodes</span>
       <span
         v-else-if="priceLabel"
-        class="shrink-0 text-[8px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/20"
+        class="shrink-0 text-[8px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/20 tabular-nums"
       >{{ priceLabel }}</span>
     </div>
 
@@ -1307,14 +1378,17 @@ watch(previewImages, (urls) => {
            custom nodes) get the same toggle. -->
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
-          v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name)"
+          v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name) && !foldedScaleNames.has(widget.name) && !isInspectorWidgetDef(widget)"
           :widget-def="effectiveWidgetDef(widget)"
           :node-type="data.nodeType"
           :node-id="id"
           :model-value="data.widgetsValues?.[i]"
           :is-fixed="isSeedFixed(widget, i)"
+          :scale-def="loraScaleDef(widget.name)"
+          :scale-value="loraScaleValue(widget.name)"
           @update:model-value="data.widgetsValues[i] = $event"
           @update:is-fixed="setSeedFixed(widget, i, $event)"
+          @update:scale="setLoraScale(widget.name, $event)"
         />
       </template>
       <!-- Grouped widgets render under collapsible headers. For Compositor we
@@ -1372,29 +1446,7 @@ watch(previewImages, (urls) => {
         </template>
       </template>
 
-      <!-- FluxLoRARemoteNode / FluxMultiLoRARemoteNode: schema-free "Style"
-           field. Stored as a node property and prepended to the prompt at run
-           time, so the prompt area stays clean for the user's scene. -->
-      <template v-if="data.nodeType === 'FluxLoRARemoteNode' || data.nodeType === 'FluxMultiLoRARemoteNode'">
-        <div class="px-2 nopan nodrag">
-          <button
-            class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
-            @click="styleOpen = !styleOpen"
-          >
-            <ChevronRight class="size-3 transition-transform" :class="styleOpen ? 'rotate-90' : ''" />
-            <span>Style</span>
-            <span v-if="loraStyleProp.trim()" class="ml-1 normal-case text-[8.5px] text-white/60 bg-white/10 px-1 py-px rounded">added to prompt</span>
-          </button>
-          <div v-if="styleOpen" class="pb-1">
-            <textarea
-              v-model="loraStyleProp"
-              rows="4"
-              placeholder="Style / aesthetic — automatically added to the front of your prompt at run time. Keeps the prompt box clean for your scene."
-              class="nodrag nopan nowheel w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-[11px] leading-relaxed text-foreground placeholder:text-white/25 outline-none focus-visible:border-ring resize-y"
-            />
-          </div>
-        </div>
-      </template>
+      <!-- The schema-free "Style"/aesthetic field moved to the NodeInspector. -->
     </div>
 
     <!-- Lens · 3D Reframe: focal-length strips + live FOV / compression diagram.
@@ -1548,7 +1600,7 @@ watch(previewImages, (urls) => {
       <div class="relative">
         <img
           :src="displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]"
-          class="w-full rounded-lg object-contain max-h-[300px] bg-black/30"
+          class="w-full rounded-lg object-contain max-h-[200px] bg-black/30"
           loading="lazy"
           @load="onPreviewImgLoad"
         />
@@ -1614,23 +1666,33 @@ watch(previewImages, (urls) => {
 
     <!-- Media previews (images or video) -->
     <div v-else-if="displayedImages.length && !NODES_WITHOUT_INLINE_PREVIEW.has(data.nodeType)" class="border-t border-[#2a2a2a] p-2">
-      <template v-if="isVideo">
+      <!-- Collapse toggle: hide the result to declutter; dims stay as a hint. -->
+      <button
+        class="nopan nodrag w-full flex items-center gap-1 mb-1.5 text-[10px] uppercase tracking-[0.08em] text-white/45 hover:text-white/75 cursor-pointer transition-colors"
+        :title="previewCollapsed ? 'Show result' : 'Hide result'"
+        @click.stop="previewCollapsed = !previewCollapsed"
+      >
+        <ChevronRight class="size-3 transition-transform" :class="previewCollapsed ? '' : 'rotate-90'" />
+        <span>{{ isVideo ? 'Video' : 'Result' }}</span>
+        <span v-if="previewCollapsed && previewNaturalDims" class="ml-1 normal-case text-white/30 tabular-nums">{{ previewNaturalDims.w }}×{{ previewNaturalDims.h }}</span>
+      </button>
+      <template v-if="!previewCollapsed && isVideo">
         <video
           v-for="(src, i) in displayedImages"
           :key="i"
           :src="src"
-          class="w-full rounded-lg object-contain max-h-[300px]"
+          class="w-full rounded-lg object-contain max-h-[200px] ring-1 ring-inset ring-white/10"
           controls
           autoplay
           muted
           playsinline
         />
       </template>
-      <template v-else>
+      <template v-else-if="!previewCollapsed">
         <div v-for="(src, i) in displayedImages" :key="i" class="relative">
           <img
             :src="src"
-            class="w-full rounded-lg object-contain max-h-[300px]"
+            class="w-full rounded-lg object-contain max-h-[200px] ring-1 ring-inset ring-white/10"
             :class="{ 'cursor-crosshair': data.nodeType === 'MaskExtractor' || data.nodeType === 'LensBlur' }"
             loading="lazy"
             @load="onPreviewImgLoad"
@@ -1639,7 +1701,7 @@ watch(previewImages, (urls) => {
           <!-- SAM click markers: green = positive, red = negative -->
           <svg
             v-if="data.nodeType === 'MaskExtractor' && previewNaturalDims && maskExtractorPoints.length"
-            class="absolute inset-0 w-full h-full max-h-[300px] pointer-events-none rounded-lg"
+            class="absolute inset-0 w-full h-full max-h-[200px] pointer-events-none rounded-lg"
             :viewBox="`0 0 ${previewNaturalDims.w} ${previewNaturalDims.h}`"
             preserveAspectRatio="xMidYMid meet"
           >
@@ -1657,7 +1719,7 @@ watch(previewImages, (urls) => {
           </svg>
           <svg
             v-if="data.nodeType === 'LensBlur' && previewNaturalDims && lensFocusPoint"
-            class="absolute inset-0 w-full h-full max-h-[300px] pointer-events-none rounded-lg"
+            class="absolute inset-0 w-full h-full max-h-[200px] pointer-events-none rounded-lg"
             :viewBox="`0 0 ${previewNaturalDims.w} ${previewNaturalDims.h}`"
             preserveAspectRatio="xMidYMid meet"
           >
@@ -1684,6 +1746,74 @@ watch(previewImages, (urls) => {
       @pin="pinTake"
       @discard="discardTake"
     />
+
+    <!-- Per-node run control (footer): one split button. The main face runs
+         THIS node with upstream cached (Play → Re-roll after first run); the
+         caret opens the two scope variants. See playThisNode / runFromStart /
+         runDownstream. -->
+    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2.5 pb-2.5 pt-1">
+      <div class="flex items-stretch gap-px">
+        <button
+          class="nopan nodrag flex-1 h-8 rounded-l-lg flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          :class="(isMuted || isBypassed)
+            ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
+            : data.running
+              ? 'bg-white/15 text-white active:scale-100'
+              : 'bg-white/90 text-neutral-900 hover:bg-white'"
+          :disabled="isMuted || isBypassed || data.running"
+          :title="isMuted ? 'Node is muted'
+            : isBypassed ? 'Node is bypassed'
+            : data.running ? 'Running…'
+            : hasRun ? 'Re-run this node — new seed, everything upstream stays cached'
+            : 'Run this node — upstream stays cached'"
+          @click.stop="playThisNode"
+        >
+          <Loader2 v-if="data.running" class="size-3 animate-spin" />
+          <Dices v-else-if="hasRun" class="size-3" />
+          <Play v-else class="size-3" />
+          <span>{{ data.running ? 'Running…' : hasRun ? 'Re-roll' : 'Play' }}</span>
+        </button>
+        <button
+          aria-label="Run scope options"
+          class="nopan nodrag w-8 h-8 rounded-r-lg flex items-center justify-center transition-colors cursor-pointer"
+          :class="(isMuted || isBypassed || data.running)
+            ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
+            : 'bg-white/90 text-neutral-900 hover:bg-white'"
+          :disabled="isMuted || isBypassed || data.running"
+          @click.stop="runMenuOpen = !runMenuOpen"
+        >
+          <ChevronDown class="size-3 transition-transform" :class="runMenuOpen ? 'rotate-180' : ''" />
+        </button>
+      </div>
+
+      <!-- Scope menu — opens upward so it isn't clipped at the node's bottom. -->
+      <div
+        v-if="runMenuOpen"
+        class="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 rounded-lg border border-white/10 bg-neutral-900/95 backdrop-blur-md p-1 shadow-xl"
+      >
+        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="playThisNode">
+          <Dices class="size-3.5 mt-0.5 text-white/80 shrink-0" />
+          <span class="min-w-0">
+            <span class="block text-[11px] font-medium text-white/90">Run this node</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Re-roll this node, upstream stays cached</span>
+          </span>
+        </button>
+        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runFromStart">
+          <SkipBack class="size-3.5 mt-0.5 text-white/60 shrink-0" />
+          <span class="min-w-0">
+            <span class="block text-[11px] font-medium text-white/90">Rebuild from start → here</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Fresh run of everything before, new seeds</span>
+          </span>
+        </button>
+        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runDownstream">
+          <SkipForward class="size-3.5 mt-0.5 text-white/60 shrink-0" />
+          <span class="min-w-0">
+            <span class="block text-[11px] font-medium text-white/90">Run here → end</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Push this result through everything after</span>
+          </span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 

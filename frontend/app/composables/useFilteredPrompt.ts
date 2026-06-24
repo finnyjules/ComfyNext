@@ -279,17 +279,90 @@ export function collectKeepSet(
 }
 
 /**
+ * Build the keep set for a "run from here → end" request: the target node(s),
+ * everything they feed (transitive consumers, walking forward), PLUS the
+ * upstream dependencies of every node in that downstream cone.
+ *
+ * The upstream backfill is load-bearing — a downstream node usually pulls a
+ * second input from outside the target's subtree (a Save node fed by both the
+ * target image and a filename string; a compositor layer fed by the target and
+ * a separate background). Keeping only the forward cone would leave those slots
+ * dangling and Comfy would abort the run. So after the forward walk we run the
+ * same upstream sweep `collectKeepSet` does, seeded from the whole cone.
+ */
+export function collectKeepSetDownstream(
+  workflow: LiteGraphWorkflow,
+  targetNodeIds: number[],
+): Set<number> {
+  // Index links both ways. Tuple: [linkId, originId, originSlot, targetId, …]
+  const upstreamByNode = new Map<number, number[]>()
+  const downstreamByNode = new Map<number, number[]>()
+  for (const link of workflow.links || []) {
+    if (!Array.isArray(link) || link.length < 4) continue
+    const originId = Number(link[1])
+    const targetId = Number(link[3])
+    if (!Number.isFinite(originId) || !Number.isFinite(targetId)) continue
+    const ups = upstreamByNode.get(targetId)
+    if (ups) ups.push(originId)
+    else upstreamByNode.set(targetId, [originId])
+    const downs = downstreamByNode.get(originId)
+    if (downs) downs.push(targetId)
+    else downstreamByNode.set(originId, [targetId])
+  }
+
+  const keep = new Set<number>()
+
+  // Forward BFS: targets + everything they transitively feed.
+  const fwd: number[] = []
+  for (const id of targetNodeIds) {
+    if (!keep.has(id)) {
+      keep.add(id)
+      fwd.push(id)
+    }
+  }
+  while (fwd.length) {
+    const id = fwd.shift()!
+    for (const d of downstreamByNode.get(id) || []) {
+      if (keep.has(d)) continue
+      keep.add(d)
+      fwd.push(d)
+    }
+  }
+
+  // Backfill: pull in the upstream deps of every node now in the cone so each
+  // kept node has all of its inputs satisfied.
+  const up = [...keep]
+  while (up.length) {
+    const id = up.shift()!
+    for (const u of upstreamByNode.get(id) || []) {
+      if (keep.has(u)) continue
+      keep.add(u)
+      up.push(u)
+    }
+  }
+  return keep
+}
+
+/**
  * Returns a deep-cloned workflow with nodes outside the keep set removed
  * entirely, along with any links that touch them. Pre-existing mode=4
  * (bypass) on kept nodes is preserved so a user's explicit bypass still
  * applies inside the run.
+ *
+ * `direction` selects how the keep set is grown from the targets: `'upstream'`
+ * (default) = the target + everything it depends on (run up to here);
+ * `'downstream'` = the target + everything it feeds + those nodes' other inputs
+ * (push this node's result through the rest of the graph).
  */
 export function buildFilteredWorkflow(
   workflow: LiteGraphWorkflow,
   targetNodeIds: (string | number)[],
+  direction: 'upstream' | 'downstream' = 'upstream',
 ): LiteGraphWorkflow {
   const targetIds = targetNodeIds.map(Number).filter(Number.isFinite)
-  const keep = collectKeepSet(workflow, targetIds)
+  const keep = direction === 'downstream'
+    ? collectKeepSetDownstream(workflow, targetIds)
+    : collectKeepSet(workflow, targetIds)
 
   const cloned: LiteGraphWorkflow = JSON.parse(JSON.stringify(workflow))
   cloned.nodes = ((cloned.nodes as LiteGraphNode[]) || []).filter(

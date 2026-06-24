@@ -189,6 +189,15 @@ const {
 function getSelectedNodeIds(): string[] {
   return (nodes.value as any[]).filter(n => n.selected).map(n => n.id)
 }
+// Reactive "first selected node" for the right-hand NodeInspector to bind to.
+// Exposed so the layout can render the inspector against the live node object;
+// edits to node.data.widgetsValues flow straight back into the graph.
+const selectedNode = computed(() => (nodes.value as any[]).find(n => n.selected) || null)
+// Make a single node the selection (used by the per-node inspector button so the
+// inspector binds to it). Vue Flow renders `selected` straight from the node.
+function selectNode(id: string) {
+  for (const n of nodes.value as any[]) n.selected = String(n.id) === String(id)
+}
 function getSelectedEdgeIds(): string[] {
   return (edges.value as any[]).filter(e => e.selected).map(e => e.id)
 }
@@ -4022,10 +4031,23 @@ function randomizeSeedsOnLiveState(onlyNodeIds?: Set<string>) {
 
 // Build a filtered workflow snapshot from current canvas + target ids. Used
 // by the layout when it receives the runFiltered event.
-function getFilteredWorkflow(targetIds: string[], opts: { rerollScope?: 'self' } = {}) {
-  // 'self' = re-roll only the target node's seed (keep upstream cached); default
-  // = re-roll every seed in the graph (the classic full-run behavior).
-  randomizeSeedsOnLiveState(opts.rerollScope === 'self' ? new Set(targetIds) : undefined)
+function getFilteredWorkflow(
+  targetIds: string[],
+  opts: { rerollScope?: 'self'; direction?: 'downstream' } = {},
+) {
+  // Seed policy:
+  //  • 'downstream' (run here → end) = randomize NOTHING. The point is to push
+  //    this node's CURRENT result through the rest of the graph, so neither it
+  //    nor anything else should regenerate.
+  //  • 'self' (re-roll this node) = randomize only the target's seed; upstream
+  //    stays cached.
+  //  • default (rebuild from start → here) = randomize every seed in the graph.
+  const seedScope = opts.direction === 'downstream'
+    ? new Set<string>()
+    : opts.rerollScope === 'self'
+      ? new Set(targetIds)
+      : undefined
+  randomizeSeedsOnLiveState(seedScope)
   captureActiveRunFromTargets(targetIds)
   const wf = getWorkflowWithSubgraphs()
   if (!wf) return wf
@@ -4037,7 +4059,9 @@ function getFilteredWorkflow(targetIds: string[], opts: { rerollScope?: 'self' }
   // Then locks drop upstream links so collectKeepSet walks a graph where
   // locked artifacts look like leaves.
   const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
-  const filtered = targetIds.length ? buildFilteredWorkflow(unlocked, targetIds) : unlocked
+  const filtered = targetIds.length
+    ? buildFilteredWorkflow(unlocked, targetIds, opts.direction === 'downstream' ? 'downstream' : 'upstream')
+    : unlocked
   // A standalone artifact card that's *showing* a result (but has nothing wired
   // in) feeds the shown image instead of a black placeholder.
   const backfilled = backfillStandaloneArtifactImages(filtered, nodes.value as any[], objectInfo.value)
@@ -4433,6 +4457,8 @@ defineExpose({
   injectSmartLayoutBrand,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
+  selectedNode,
+  selectNode,
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
   isApplyingWorkflow: () => applyingWorkflow.value,
@@ -4910,6 +4936,15 @@ defineExpose({
 
 .vue-node-canvas {
   background-color: transparent;
+}
+
+/* Keep the trackpad's horizontal swipe-to-navigate gesture from leaking out
+   of the canvas pane and triggering browser back/forward while panning. */
+.vue-node-canvas-root,
+.vue-node-canvas,
+.vue-node-canvas .vue-flow__pane,
+.vue-node-canvas .vue-flow__viewport {
+  overscroll-behavior: none;
 }
 
 /* Connection line while dragging */

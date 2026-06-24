@@ -251,6 +251,23 @@ const activeSidebarItem = ref<string | null>(null)
 const vueSidebarOpen = ref(false) // tracks whether ComfyUI left sidebar panel is visible in Vue mode
 const vueNodesSidebarOpen = ref(false) // tracks whether the native Nodes sidebar is open in Vue mode
 const vueRightPanelOpen = ref(false) // tracks whether Vue right panel (Workflow Overview) is visible
+// Node inspector right panel — edits the selected node's mechanical settings.
+// Mutually exclusive with the Workflow Overview (both dock right, same slot).
+const nodeInspectorOpen = ref(false)
+const inspectorNode = computed(() => vueCanvasRef.value?.selectedNode ?? null)
+// Opened from a per-node "settings" button (comfynext:openInspector). Select the
+// node so the inspector binds to it, open the panel, and close the overview
+// (they share the right dock).
+function handleOpenInspector(e: Event) {
+  const id = (e as CustomEvent).detail?.nodeId
+  if (id != null) vueCanvasRef.value?.selectNode?.(String(id))
+  nodeInspectorOpen.value = true
+  vueRightPanelOpen.value = false
+}
+function toggleWorkflowOverview() {
+  vueRightPanelOpen.value = !vueRightPanelOpen.value
+  if (vueRightPanelOpen.value) nodeInspectorOpen.value = false
+}
 const toolboxPanelOpen = ref(false) // tracks whether the Toolbox right panel is visible
 const generatorsPanelOpen = ref(false) // tracks whether the Generators panel is visible
 const loraLibraryPanelOpen = ref(false) // tracks whether the LoRA Library panel is visible
@@ -405,7 +422,7 @@ function injectLoraStyleIntoPrompt(workflow: any) {
 
 async function runVueWorkflow(
   targetIds?: string[],
-  opts: { rerollScope?: 'self', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
+  opts: { rerollScope?: 'self', direction?: 'downstream', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
 ): Promise<boolean> {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
@@ -608,13 +625,16 @@ async function handleRunFiltered(e: Event) {
   const targetIds = detail?.targetIds as string[] | undefined
   if (!targetIds?.length) return
   const rerollScope = detail?.rerollScope as 'self' | undefined
+  // 'downstream' = run this node + everything it feeds (push its current result
+  // through the rest of the graph). Default/undefined = the upstream walk.
+  const direction = detail?.direction as 'downstream' | undefined
   // `live` runs are auto-previews (e.g. saving a Smart Layout): scope the run to
   // just these nodes (+ cached upstream), and skip the cost confirm / watchdog /
   // text-autofill dance that an explicit Run does.
   const live = detail?.live === true
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
-  if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope })) return
-  runVueWorkflow(expanded, { rerollScope, live })
+  if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope, direction })) return
+  runVueWorkflow(expanded, { rerollScope, live, direction })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
@@ -649,7 +669,7 @@ function awaitExecutionComplete(timeoutMs = 120_000): Promise<void> {
 // value flows through, then we capture the executed text into entries[i].
 // Returns true if it handled the run (caller should skip its normal path).
 let textAutofillRunning = false
-async function maybeRunWithTextAutofill(targetIds?: string[], opts: { rerollScope?: 'self' } = {}): Promise<boolean> {
+async function maybeRunWithTextAutofill(targetIds?: string[], opts: { rerollScope?: 'self', direction?: 'downstream' } = {}): Promise<boolean> {
   if (textAutofillRunning) return false
   const canvas = vueCanvasRef.value
   if (!canvas?.getNodes || !canvas?.getEdges) return false
@@ -833,6 +853,7 @@ async function handleRunTextIterator(e: Event) {
 onMounted(() => {
   window.addEventListener('comfynext:runFiltered', handleRunFiltered)
   window.addEventListener('comfynext:runAll', handleRunAll)
+  window.addEventListener('comfynext:openInspector', handleOpenInspector)
   window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
@@ -844,6 +865,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
   window.removeEventListener('comfynext:runAll', handleRunAll)
+  window.removeEventListener('comfynext:openInspector', handleOpenInspector)
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
@@ -2713,6 +2735,22 @@ function dismissRunResult() {
             />
           </div>
         </Transition>
+        <!-- Node inspector right panel (overlays canvas, same slot as overview) -->
+        <Transition
+          enter-active-class="transition-transform duration-300 ease-out"
+          enter-from-class="translate-x-full"
+          enter-to-class="translate-x-0"
+          leave-active-class="transition-transform duration-300 ease-in"
+          leave-from-class="translate-x-0"
+          leave-to-class="translate-x-full"
+        >
+          <div v-if="nodeInspectorOpen" class="absolute top-0 right-0 bottom-0 w-[350px] z-50">
+            <VueCanvasNodeInspector
+              :node="inspectorNode"
+              @close="nodeInspectorOpen = false"
+            />
+          </div>
+        </Transition>
         <!-- Toolbox left panel (overlays canvas) -->
         <Transition
           enter-active-class="transition-transform duration-300 ease-out"
@@ -2854,7 +2892,7 @@ function dismissRunResult() {
             class="flex items-center justify-center size-9 bg-[#1a1a1a]/90 rounded-lg border border-[#2a2a2a] cursor-pointer hover:bg-[#2a2a2a] transition-colors shadow-lg"
             :class="{ '!bg-[#2a2a2a] border-white/20': vueRightPanelOpen }"
             title="Toggle workflow overview"
-            @click="vueRightPanelOpen = !vueRightPanelOpen"
+            @click="toggleWorkflowOverview"
           >
             <PanelRight class="size-4 text-white/70" />
           </button>

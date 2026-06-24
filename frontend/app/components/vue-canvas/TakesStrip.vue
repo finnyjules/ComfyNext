@@ -32,7 +32,7 @@ function thumb(t: Take): string | null {
       <div
         v-for="t in takes"
         :key="t.id"
-        class="group relative shrink-0 size-12 rounded-md overflow-hidden cursor-pointer ring-1 transition-all"
+        class="group relative shrink-0 size-12 rounded-md overflow-hidden cursor-pointer ring-1 transition-shadow"
         :class="t.id === activeTakeId
           ? 'ring-2 ring-[#96b4ff]'
           : 'ring-white/10 hover:ring-white/30'"

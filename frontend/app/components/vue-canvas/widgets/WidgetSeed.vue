@@ -25,12 +25,12 @@ function toggleMode() {
   <div class="flex items-center gap-1">
     <input
       type="number"
-      class="flex-1 bg-white/5 border border-white/10 rounded px-2 h-7 text-[11px] text-foreground text-center outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] transition-[color,box-shadow] [&::-webkit-inner-spin-button]:appearance-none"
+      class="flex-1 bg-white/5 border border-white/10 rounded px-2 h-7 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] transition-[color,box-shadow] [&::-webkit-inner-spin-button]:appearance-none"
       :value="modelValue"
       @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
     />
     <button
-      class="shrink-0 size-7 flex items-center justify-center rounded border cursor-pointer transition-colors"
+      class="shrink-0 size-7 flex items-center justify-center rounded border cursor-pointer transition-[transform,background-color,color,border-color] active:scale-[0.96]"
       :class="props.isFixed
         ? 'bg-amber-500/15 border-amber-400/30 text-amber-200 hover:bg-amber-500/25'
         : 'bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-accent'"

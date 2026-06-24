@@ -2547,7 +2547,8 @@ onUnmounted(() => {
               v-model="genPrompt"
               rows="3"
               placeholder="what object to generate…"
-              class="gen-border block w-full rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+              class="pastel-hairline block w-full rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+              style="--pastel-hairline-bg: #16161b;"
               @keydown.enter.exact.prevent="runRegionFill"
             />
           </div>
@@ -3092,18 +3093,7 @@ button:active:not(:disabled) {
   to { background-position: 100% 50%; }
 }
 
-/* Hairline pastel-gradient border with clean rounded corners: a transparent 1px
-   border, then two backgrounds — a solid interior clipped to the padding box and
-   the gradient clipped to the border box (origin border-box). Follows the radius
-   exactly. Uses the same --gen-pastel source as the button/stroke. */
-.gen-border {
-  border: 0.5px solid transparent;          /* hairline at rest */
-  background-image: linear-gradient(#16161b, #16161b), var(--gen-pastel);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  transition: border-width 0.12s ease;
-}
-.gen-border:focus {
-  border-width: 1px;                          /* thicken when active */
-}
+/* Inpaint/generative-fill prompt hairline now uses the shared `.pastel-hairline`
+   utility (app/assets/css/main.css) so it stays cohesive with the canvas-node
+   prompt. Interior bg is set inline via --pastel-hairline-bg on the textarea. */
 </style>
