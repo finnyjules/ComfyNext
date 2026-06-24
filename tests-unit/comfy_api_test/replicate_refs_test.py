@@ -536,6 +536,27 @@ def test_aesthetic_empty_returns_empty():
     assert rr.aesthetic_to_keywords("") == ""
     assert rr.aesthetic_to_keywords(None) == ""
 
+def test_sidecar_aesthetic_reads_aesthetic_key():
+    assert rr.sidecar_aesthetic({"aesthetic": "warm florals"}) == "warm florals"
+
+def test_sidecar_aesthetic_falls_back_to_taste_profile():
+    # Newer cloud-trained sidecars store the style prose under taste_profile.
+    assert rr.sidecar_aesthetic({"taste_profile": "high-contrast linocut"}) == "high-contrast linocut"
+
+def test_sidecar_aesthetic_prefers_aesthetic_over_taste_profile():
+    out = rr.sidecar_aesthetic({"aesthetic": "A", "taste_profile": "B"})
+    assert out == "A"
+
+def test_sidecar_aesthetic_skips_blank_aesthetic_for_taste_profile():
+    out = rr.sidecar_aesthetic({"aesthetic": "   ", "taste_profile": "linocut"})
+    assert out == "linocut"
+
+def test_sidecar_aesthetic_handles_missing_and_none():
+    assert rr.sidecar_aesthetic({}) == ""
+    assert rr.sidecar_aesthetic(None) == ""
+    assert rr.sidecar_aesthetic({"trigger": "x"}) == ""
+
+
 def test_build_flux_style_prompt_joins_all_parts():
     out = rr.build_flux_style_prompt(
         "azure_bloom",

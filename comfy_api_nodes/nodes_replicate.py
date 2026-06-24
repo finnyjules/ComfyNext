@@ -87,6 +87,7 @@ from comfy_api_nodes.replicate_refs import (
     resolve_flux_lora_plan,
     restyle_style_strength_to_knobs,
     RESTYLE_ANTIPHOTO_RETRY,
+    sidecar_aesthetic,
 )
 
 
@@ -2467,6 +2468,14 @@ class RestyleWithLoRANode(IO.ComfyNode):
             style_strength, flux_prompt_strength
         )
 
+        # Auto-migrate nodes saved with the OLD generic describe default. It
+        # produced long photographic captions ("clear blue sky, looking at the
+        # camera") that drown the LoRA style — fatal for strong styles. Existing
+        # graphs keep their saved widget value, so upgrade it here. Anyone who
+        # deliberately customised the field keeps their text.
+        if describe_prompt.strip() == "Describe this image in detail.":
+            describe_prompt = _RESTYLE_DESCRIBE_PROMPT
+
         # --- Stage 1: describe the content image (Moondream 2) ---------------
         try:
             pred = await _run_prediction(
@@ -2486,7 +2495,7 @@ class RestyleWithLoRANode(IO.ComfyNode):
         # --- Stage 2: restyle with the LoRA (Flux-Dev-LoRA img2img) ----------
         sidecar = _read_lora_sidecar(lora_name) or {}
         flux_prompt = build_flux_style_prompt(
-            sidecar.get("trigger", ""), sidecar.get("aesthetic", ""), caption
+            sidecar.get("trigger", ""), sidecar_aesthetic(sidecar), caption
         )
         try:
             plan = resolve_flux_lora_plan(lora_name, lora_url)

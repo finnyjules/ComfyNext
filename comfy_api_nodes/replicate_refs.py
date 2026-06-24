@@ -457,6 +457,22 @@ def build_enhance_input(
 # Flux style prompt — LoRA sidecar aesthetic → keyword extraction + prompt join
 # --------------------------------------------------------------------------- #
 
+def sidecar_aesthetic(sidecar: dict | None) -> str:
+    """Pull the style description out of a LoRA sidecar, tolerating both schema
+    versions. Older sidecars store it under ``aesthetic``; the cloud trainer now
+    writes ``taste_profile``. Reading only ``aesthetic`` silently dropped the
+    ENTIRE style prose for newer LoRAs (e.g. Rough Cut Revival), so their restyle
+    came back unstyled — only the bare trigger word reached Flux. Check both.
+    """
+    if not sidecar:
+        return ""
+    for key in ("aesthetic", "taste_profile"):
+        v = sidecar.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
 def aesthetic_to_keywords(aesthetic: str) -> str:
     """A LoRA sidecar's ``aesthetic`` field is prose followed by a
     comma-separated keyword tail, split by a blank line. Prefer the keyword
