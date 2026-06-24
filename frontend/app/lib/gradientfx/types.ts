@@ -3,7 +3,7 @@
 // data.properties.comfynext_gradientStudio blob, drives the renderer, and (given
 // the same seed + locks) reproduces an identical image.
 
-export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack'
+export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type RingShape = 'circle' | 'diamond' | 'square'
 export type MappingKind = 'across' | 'perbar' | 'field'
@@ -116,6 +116,27 @@ export interface ReliefConfig {
   light?: LightConfig
 }
 
+export interface FlowConfig {
+  /** Base gradient direction (liquid) + warp bias, degrees 0..360. */
+  angle: number
+  /** Warp noise frequency, ~0.5..8. */
+  noiseScale: number
+  /** Displacement amount, 0..100. 0 = off (no distortion). */
+  intensity: number
+  /** Iterative curl / "Curve Distortion", 0..100. */
+  distortion: number
+  /** fbm octaves, 1..6. */
+  detail: number
+  /** Liquid fold-shading emboss amplitude, 0..100. */
+  depth: number
+  /** Liquid fold-shading bright-side gain, 0..100. */
+  highlights: number
+  /** Liquid fold-shading dark-side gain, 0..100. */
+  shadows: number
+  /** Liquid fold frequency, 0..100. */
+  foldScale: number
+}
+
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 
 export interface MotionTrack {
@@ -154,12 +175,14 @@ export interface GradientConfig {
   motion: MotionConfig
   /** Field lock flags (lock keys: 'aspect','layout','colors','structure',…). */
   locks: Record<string, boolean>
+  /** Domain-warp / liquid flow (optional for back-compat; defaults to DEFAULT_FLOW). */
+  flow?: FlowConfig
 }
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
 export const BLEND_MODES: BlendKind[] = ['normal', 'lighten', 'screen', 'add', 'multiply', 'darken', 'overlay']
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
-export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack']
+export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack', 'liquid']
 export const RING_SHAPES: RingShape[] = ['circle', 'diamond', 'square']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
@@ -175,6 +198,16 @@ export function aspectRatio(a: string): number {
 export const DEFAULT_LIGHT: LightConfig = { azimuth: 135, elevation: 45 }
 /** Default origin: centered. */
 export const DEFAULT_CENTER: CenterOffset = { x: 0, y: 0 }
+/** Default flow: no distortion (intensity 0) so existing gradients are unchanged. */
+export const DEFAULT_FLOW: FlowConfig = {
+  angle: 45, noiseScale: 3.5, intensity: 0, distortion: 50, detail: 2,
+  depth: 60, highlights: 50, shadows: 55, foldScale: 60,
+}
+
+/** Flow block with the default applied when a config omits it. */
+export function flowConfig(cfg: GradientConfig): FlowConfig {
+  return cfg.flow ?? DEFAULT_FLOW
+}
 
 /**
  * Convert azimuth/elevation (degrees) to a normalized 3D light direction.
@@ -205,6 +238,7 @@ export function canvasCenter(canvas: CanvasConfig): CenterOffset {
 export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   if (!cfg.canvas.center) cfg.canvas.center = { ...DEFAULT_CENTER }
   if (!cfg.relief.light) cfg.relief.light = { ...DEFAULT_LIGHT }
+  if (!cfg.flow) cfg.flow = { ...DEFAULT_FLOW }
   return cfg
 }
 

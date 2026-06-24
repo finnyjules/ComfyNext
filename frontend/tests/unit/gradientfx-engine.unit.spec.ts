@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { reactive, ref } from 'vue'
-import { cloneConfig } from '~/lib/gradientfx/types'
+import { cloneConfig, DEFAULT_FLOW, ensureConfigDefaults, flowConfig, LAYOUTS } from '~/lib/gradientfx/types'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
@@ -148,5 +148,26 @@ describe('gradientfx motion', () => {
     const framed = applyMotion(cfg, 4)
     expect(framed.layers[0]!.shape.phase).toBeCloseTo(1, 1)
     expect(cfg.layers[0]!.shape.phase).toBe(0) // original untouched
+  })
+})
+
+describe('gradientfx flow config', () => {
+  it('LAYOUTS includes liquid', () => {
+    expect(LAYOUTS).toContain('liquid')
+  })
+  it('DEFAULT_FLOW has zero intensity (no-op for existing gradients)', () => {
+    expect(DEFAULT_FLOW.intensity).toBe(0)
+  })
+  it('ensureConfigDefaults backfills flow on a config that lacks it', () => {
+    const c = defaultConfig('#bc') as any
+    delete c.flow
+    ensureConfigDefaults(c)
+    expect(c.flow).toBeDefined()
+    expect(c.flow.intensity).toBe(0)
+  })
+  it('flowConfig returns DEFAULT_FLOW when the config omits flow', () => {
+    const c = defaultConfig('#bc2') as any
+    delete c.flow
+    expect(flowConfig(c)).toEqual(DEFAULT_FLOW)
   })
 })
