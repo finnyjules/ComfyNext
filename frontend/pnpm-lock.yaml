@@ -59,6 +59,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      glimm:
+        specifier: ^0.1.4
+        version: 0.1.4
       gsap:
         specifier: ^3.14.2
         version: 3.14.2
@@ -2631,6 +2634,18 @@ packages:
   giget@3.1.2:
     resolution: {integrity: sha512-T2qUpKBHeUTwHcIhydgnJzhL0Hj785ms+JkxaaWQH9SDM/llXeewnOkfJcFShAHjWI+26hOChwUfCoupaXLm8g==}
     hasBin: true
+
+  glimm@0.1.4:
+    resolution: {integrity: sha512-OIfoxkEnayr2oQNG8MzAotjq1ZhND2PwQT/M2a16Z+vxQisxHXKWX1FihgAqQaRt2oWfFFZuBktoVHkho2w2jw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      next: '>=14'
+      react: '>=18'
+    peerDependenciesMeta:
+      next:
+        optional: true
+      react:
+        optional: true
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -6786,6 +6801,8 @@ snapshots:
       pathe: 2.0.3
 
   giget@3.1.2: {}
+
+  glimm@0.1.4: {}
 
   glob-parent@5.1.2:
     dependencies:

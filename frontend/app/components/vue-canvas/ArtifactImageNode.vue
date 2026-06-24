@@ -70,6 +70,65 @@ const hasUpstream = computed(() => {
   return edges.some((e: any) => e.target === props.id && e.targetHandle === `input-${idx}`)
 })
 
+// "Is my upstream generator running right now?" VueNodeCanvas lights
+// `edge.data.running` on every edge leaving the executing node, so an incoming
+// edge with running=true means the node feeding us is mid-generation. Also true
+// if this node itself is executing (output sinks that run).
+const upstreamRunning = computed(() => {
+  if (props.data.running) return true
+  const edges = injectedEdges?.value ?? []
+  return edges.some((e: any) => e.target === props.id && e.data?.running)
+})
+
+// Glimm "prism" sweep overlay while generating — same effect the Frame modal
+// shows during a generative fill. Created lazily on the overlay canvas, driven
+// by a rAF loop only while upstreamRunning, and torn down when it stops.
+const sweepCanvas = ref<HTMLCanvasElement | null>(null)
+let sweepCtrl: any = null
+let sweepCreating = false
+let sweepRaf = 0
+let sweepStart = 0
+const SWEEP_PERIOD = 1.6   // seconds per prism cycle
+const SWEEP_ALPHA = 0.6    // peak band opacity
+function ensureSweepCtrl() {
+  if (sweepCtrl || sweepCreating) return
+  const cv = sweepCanvas.value
+  if (!cv || cv.clientWidth < 1 || cv.clientHeight < 1) return
+  sweepCreating = true
+  import('glimm').then(({ createShader, resolvePalette }) => {
+    sweepCreating = false
+    if (sweepCtrl || !sweepCanvas.value) return
+    sweepCtrl = createShader({ canvas: sweepCanvas.value, palette: resolvePalette('citrus'), brightness: 0.85, swellAmount: 0.7 })
+  }).catch(() => { sweepCreating = false })
+}
+function destroySweepCtrl() {
+  sweepCtrl?.destroy?.()
+  sweepCtrl = null
+  sweepCreating = false
+}
+function tickSweep() {
+  sweepRaf = requestAnimationFrame(tickSweep)
+  if (!upstreamRunning.value) return
+  ensureSweepCtrl()
+  if (!sweepCtrl) return
+  const tt = (performance.now() - sweepStart) / 1000
+  sweepCtrl.setProgress((tt % SWEEP_PERIOD) / SWEEP_PERIOD)
+  sweepCtrl.setAlpha(SWEEP_ALPHA)
+}
+watch(upstreamRunning, (on) => {
+  if (on) {
+    sweepStart = performance.now()
+    if (!sweepRaf) sweepRaf = requestAnimationFrame(tickSweep)
+  } else {
+    if (sweepRaf) { cancelAnimationFrame(sweepRaf); sweepRaf = 0 }
+    destroySweepCtrl()
+  }
+}, { immediate: true })
+onUnmounted(() => {
+  if (sweepRaf) cancelAnimationFrame(sweepRaf)
+  destroySweepCtrl()
+})
+
 // Image URL — execution output wins, falling back to the file widget. When
 // upstream is connected but the node hasn't run yet, this returns null (we
 // show a "render to see preview" state).
@@ -331,6 +390,12 @@ function discardTake(id: string) {
       class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
+      <!-- Glimm prism sweep — runs while the upstream generator is active. -->
+      <canvas
+        ref="sweepCanvas"
+        class="absolute inset-0 w-full h-full pointer-events-none z-20 rounded-lg"
+        :style="{ opacity: upstreamRunning ? 1 : 0, transition: 'opacity 240ms ease' }"
+      />
       <!-- File picker — always mounted so Replace works in any state. -->
       <input
         ref="fileInputRef"

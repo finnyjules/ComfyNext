@@ -31,6 +31,7 @@
     "@vueuse/core": "^14.2.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "glimm": "^0.1.4",
     "gsap": "^3.14.2",
     "iconoir-vue": "^7.11.0",
     "jszip": "^3.10.1",

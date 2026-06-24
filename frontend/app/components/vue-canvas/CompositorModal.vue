@@ -1456,6 +1456,49 @@ let genRingCanvas: HTMLCanvasElement | null = null   // cached ring silhouette (
 let genScratch: HTMLCanvasElement | null = null      // per-frame compositing scratch
 let genRaf = 0
 let genT0 = 0
+
+// glimm prism "generation running" sweep — a WebGL band (createShader, palette
+// "prism") rendered on its own canvas, CSS-masked to the region silhouette. glimm
+// runs its own render loop; we just loop its progress while a generation is in
+// flight (replacing the old white linear-gradient swipe).
+const genSweepCanvas = ref<HTMLCanvasElement | null>(null)
+const genSweepMaskUrl = ref('')                      // data-URL of the silhouette, for CSS mask
+type GlimmController = import('glimm').ShaderController
+let genSweepCtrl: GlimmController | null = null
+let genSweepCreating = false
+const GEN_SWEEP_PERIOD = 1.6                          // s per sweep cycle (matches the prior swipe)
+const GEN_SWEEP_ALPHA = 0.6                           // peak band opacity while GENERATING — softened so artwork shows through
+
+// Lazily create the glimm controller once its canvas is laid out (glimm sizes
+// itself from getBoundingClientRect, so the canvas must be in the DOM first).
+function ensureSweepCtrl() {
+  if (genSweepCtrl || genSweepCreating) return
+  const cv = genSweepCanvas.value
+  if (!cv || cv.clientWidth < 1 || cv.clientHeight < 1) return
+  genSweepCreating = true
+  import('glimm').then(({ createShader, resolvePalette }) => {
+    genSweepCreating = false
+    if (genSweepCtrl || !genSweepCanvas.value) return
+    genSweepCtrl = createShader({
+      canvas: genSweepCanvas.value,
+      palette: resolvePalette('citrus'),
+      brightness: 0.85,   // ease the iridescence so it doesn't blow out over artwork
+      swellAmount: 0.7,   // a little depth/crest on the band
+    })
+  }).catch(() => { genSweepCreating = false })
+}
+
+// Refresh the CSS mask from the region silhouette (white mask canvas → data URL).
+function updateSweepMask() {
+  if (genMaskCanvas && genHasMask.value) genSweepMaskUrl.value = genMaskCanvas.toDataURL()
+  else genSweepMaskUrl.value = ''
+}
+
+function destroySweepCtrl() {
+  genSweepCtrl?.destroy()
+  genSweepCtrl = null
+  genSweepCreating = false
+}
 // Single source of truth for the pastel accent. Drives the canvas region stroke
 // (this array), and — via the `--gen-pastel` CSS var bound on the modal root —
 // the Generate button fill and the prompt-box hairline border. Edit here only.
@@ -1543,26 +1586,28 @@ function renderGenOverlay(now?: number) {
     ctx.drawImage(genScratch!, 0, 0, W, H)
   }
 
-  // Generate swipe — a bright band sweeping across the region while busy.
+  // The "generation running" sweep is now the glimm prism band on `genSweepCanvas`
+  // (driven by driveGenSweep / gated by inpaint.busy), no longer drawn here.
+}
+
+// Drive the glimm prism band: loop its progress while a generation is in flight,
+// fade its alpha out when idle. glimm renders on its own RAF; we only set state.
+function driveGenSweep() {
+  ensureSweepCtrl()
+  if (!genSweepCtrl) return
   if (inpaint.busy.value) {
-    const sctx = genScratchCtx(W, H)
-    const band = Math.max(160, W * 0.45)
-    const sweep = ((t % 1.6) / 1.6) * (W + band * 2) - band
-    const g = sctx.createLinearGradient(sweep - band, 0, sweep + band, 0)
-    g.addColorStop(0, 'rgba(255,255,255,0)')
-    g.addColorStop(0.5, 'rgba(255,255,255,0.38)')
-    g.addColorStop(1, 'rgba(255,255,255,0)')
-    sctx.fillStyle = g; sctx.fillRect(0, 0, W, H)
-    sctx.globalCompositeOperation = 'source-in'
-    sctx.drawImage(genMaskCanvas, 0, 0, W, H)
-    sctx.globalCompositeOperation = 'source-over'
-    ctx.drawImage(genScratch!, 0, 0, W, H)
+    const tt = (nowMs() - genT0) / 1000
+    genSweepCtrl.setProgress((tt % GEN_SWEEP_PERIOD) / GEN_SWEEP_PERIOD)
+    genSweepCtrl.setAlpha(GEN_SWEEP_ALPHA)
+  } else {
+    genSweepCtrl.setAlpha(0)
   }
 }
 
 function genLoop() {
   if (!genActive.value) { genRaf = 0; return }
   renderGenOverlay(nowMs())
+  driveGenSweep()
   genRaf = requestAnimationFrame(genLoop)
 }
 function startGenLoop() {
@@ -1576,14 +1621,15 @@ function stopGenLoop() {
 }
 
 watch(genActive, (on) => {
-  if (on) { rebuildGenRing(); startGenLoop() }
-  else stopGenLoop()
+  if (on) { rebuildGenRing(); updateSweepMask(); startGenLoop() }
+  else { stopGenLoop(); destroySweepCtrl() }
 })
 watch([genVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => {
   rebuildGenRing()
+  updateSweepMask()
   if (genActive.value && !genRaf) startGenLoop()
 })
-onBeforeUnmount(stopGenLoop)
+onBeforeUnmount(() => { stopGenLoop(); destroySweepCtrl() })
 
 // flux-dev's supported aspect ratios → nearest match for a region's bbox.
 const FLUX_ASPECTS: [string, number][] = [
@@ -1698,8 +1744,12 @@ function cancelObject() {
   const r = genResult.value; if (!r) return
   deleteLocal(r.layerId)
   genResult.value = null
+  clearGenMask()                 // discarded → drop the drawn area too
 }
-function confirmObject() { genResult.value = null }
+function confirmObject() {
+  genResult.value = null
+  clearGenMask()                 // validated → the drawn area has served its purpose
+}
 
 async function runRegionFill() {
   if (!genHasMask.value || inpaint.busy.value || !genMaskCanvas) return
@@ -1737,7 +1787,10 @@ async function runRegionFill() {
       const layerId = await generateObjectInto(mask, bnd)
       if (layerId) genResult.value = { layerId, mask, bnd }
     }
-    clearGenMask()
+    // Keep the drawn region visible while a result awaits validation (genResult set,
+    // confirm/cancel pending). Otherwise (direct layer inpaint, nothing to validate)
+    // clear it now. confirmObject / cancelObject clear it once the user decides.
+    if (!genResult.value) clearGenMask()
   } catch (err) {
     console.error('[compositor inpaint]', err)
   }
@@ -1974,6 +2027,23 @@ onUnmounted(() => {
           ref="genOverlayCanvas"
           class="absolute inset-0 pointer-events-none"
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px', opacity: 0.9 }"
+        />
+        <!-- glimm prism sweep while a generation is running, clipped to the region
+             silhouette via a CSS mask (the mask updates only when the region changes). -->
+        <canvas
+          v-show="genActive"
+          ref="genSweepCanvas"
+          class="absolute inset-0 pointer-events-none"
+          :style="{
+            width: canvasDisplay.w + 'px',
+            height: canvasDisplay.h + 'px',
+            opacity: inpaint.busy.value ? 1 : 0,
+            transition: 'opacity 240ms ease',
+            maskImage: genSweepMaskUrl ? `url(${genSweepMaskUrl})` : 'none',
+            WebkitMaskImage: genSweepMaskUrl ? `url(${genSweepMaskUrl})` : 'none',
+            maskSize: '100% 100%', WebkitMaskSize: '100% 100%',
+            maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
+          }"
         />
         <!-- Brush cursor ring -->
         <div
