@@ -82,9 +82,11 @@ from comfy_api_nodes.replicate_refs import (
     build_enhance_input,
     build_restyle_instruction,
     build_flux_style_prompt,
+    classify_style_answer,
     ENHANCE_ENGINES,
     resolve_flux_lora_plan,
     restyle_style_strength_to_knobs,
+    RESTYLE_ANTIPHOTO_RETRY,
 )
 
 
@@ -243,6 +245,48 @@ async def _run_prediction(
     raise RuntimeError(
         f"Replicate prediction timed out after {poll_deadline_sec}s (id={prediction_id})"
     )
+
+
+# Max number of EXTRA Nano Banana attempts when an illustration restyle washes
+# out to a photo (so 1 initial + 2 re-rolls = 3 tries max). See RestyleWithLoRANode.
+_RESTYLE_MAX_NB_RETRIES = 2
+
+# Subject-ONLY caption prompt for the Moondream describe stage. The old "Describe
+# this image in detail." produced long photographic prose (sky, lighting, "looking
+# at the camera") that drowned the LoRA trigger in the Flux stage, so restyles came
+# back near-photoreal (proven by calibration 2026-06-23). Asking for just the
+# subject/clothing/pose/setting keeps the caption short so the style stays dominant.
+_RESTYLE_DESCRIBE_PROMPT = (
+    "In one short sentence, describe only the main subject, their clothing, pose "
+    "and setting. Do not mention photography, the camera, lighting, colours, image "
+    "quality, the sky or the weather."
+)
+
+
+async def _classify_image_style(image_url: str) -> str:
+    """Ask Moondream whether ``image_url`` is a photo or an illustration.
+
+    Cheap (~$0.001) and used to gate the restyle re-roll loop. Any failure
+    degrades to ``"photo"`` so a flaky classifier never blocks a result or
+    triggers needless re-rolls.
+    """
+    try:
+        pred = await _run_prediction(
+            "lucataco/moondream2",
+            {
+                "image": image_url,
+                "prompt": (
+                    "Answer with one word, 'photograph' or 'illustration': is "
+                    "this a real photograph, or a non-photographic illustration, "
+                    "drawing, painting or 3D render?"
+                ),
+            },
+        )
+        out = pred.get("output")
+        ans = "".join(str(x) for x in out) if isinstance(out, list) else str(out or "")
+    except Exception:
+        ans = ""
+    return classify_style_answer(ans)
 
 
 # ---------- Audio (Comfy AUDIO dict ↔ WAV data URL) ------------------------
@@ -2350,7 +2394,10 @@ class RestyleWithLoRANode(IO.ComfyNode):
                 "Restyle an image with a trained style LoRA, keeping its "
                 "structure. Captions the image (Moondream), restyles it with "
                 "your LoRA (Flux Dev), then transfers that look back with Nano "
-                "Banana 2. ~$0.09/run at 1K; higher resolutions cost more."
+                "Banana 2. Works for photo and illustration LoRAs: illustration "
+                "results are auto-verified and re-rolled up to 2x if Nano Banana "
+                "washes the style back to a photo. ~$0.09/run at 1K; illustration "
+                "re-rolls and higher resolutions cost more."
             ),
             inputs=[
                 IO.Image.Input("content_image",
@@ -2368,7 +2415,9 @@ class RestyleWithLoRANode(IO.ComfyNode):
                 IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K",
                                tooltip="Nano Banana 2 output resolution — higher costs more."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
-                             tooltip="0 = random. Applied to the Flux and Nano Banana stages."),
+                             tooltip="Reproducible: same seed + same settings = same result. "
+                                     "Change the seed to get a different variation. Applied to "
+                                     "the Flux and Nano Banana stages."),
                 IO.String.Input("lora_url", default="", multiline=False, advanced=True,
                                 tooltip="Override LoRA source (HF / CivitAI / Replicate ref / "
                                         ".safetensors URL). Wins over lora_name."),
@@ -2383,8 +2432,11 @@ class RestyleWithLoRANode(IO.ComfyNode):
                 IO.Float.Input("flux_guidance", default=3.5, min=0.0, max=20.0, step=0.1,
                                advanced=True, tooltip="Flux prompt adherence."),
                 IO.String.Input("describe_prompt", multiline=True,
-                                default="Describe this image in detail.",
-                                advanced=True, tooltip="What to ask Moondream about the content image."),
+                                default=_RESTYLE_DESCRIBE_PROMPT,
+                                advanced=True,
+                                tooltip="What to ask Moondream about the content image. Keep it "
+                                        "SUBJECT-only — photographic/lighting words here drown the "
+                                        "LoRA style and the restyle comes back near-photoreal."),
                 IO.String.Input("extra_style_direction", multiline=True, default="",
                                 advanced=True,
                                 tooltip="Extra guidance appended to the Nano Banana instruction "
@@ -2401,7 +2453,7 @@ class RestyleWithLoRANode(IO.ComfyNode):
     async def execute(cls, content_image, lora_name, style_strength=0.5,
                       resolution="1K", seed=0, lora_url="", lora_scale=1.0,
                       flux_prompt_strength=0.0, flux_steps=28, flux_guidance=3.5,
-                      describe_prompt="Describe this image in detail.",
+                      describe_prompt=_RESTYLE_DESCRIBE_PROMPT,
                       extra_style_direction="", output_format="png"):
         content_url = _image_tensor_to_data_url(content_image)
         structure_strength, prompt_strength = restyle_style_strength_to_knobs(
@@ -2439,9 +2491,11 @@ class RestyleWithLoRANode(IO.ComfyNode):
                 "num_outputs": 1,
                 "output_format": "png",
                 "disable_safety_checker": False,
+                # Always pin the seed so identical settings reproduce. Sending an
+                # explicit integer (0 included) makes the Flux stage deterministic;
+                # the user re-rolls by changing the seed, not by re-running.
+                "seed": int(seed),
             }
-            if seed and seed > 0:
-                flux_input["seed"] = seed
             if plan["trained_model"]:
                 flux_model = plan["trained_model"]
                 flux_input["guidance_scale"] = flux_guidance
@@ -2463,18 +2517,47 @@ class RestyleWithLoRANode(IO.ComfyNode):
             raise RuntimeError(f"Restyle stage failed (stylize): {err}") from err
 
         # --- Stage 3: transfer the style back onto the content (Nano Banana 2)
+        # NB2 keeps identity beautifully but has a photoreal prior: handed an
+        # illustration reference it intermittently "re-photographs" the result,
+        # the coin-flip that made restyles land only ~half the time. So: classify
+        # the Flux reference once; if it's an illustration, verify each NB2 output
+        # and re-roll (new seed + a harder anti-photo instruction) until the style
+        # holds. Photo targets are trusted on the first try (no extra cost). If
+        # every attempt washes out, fall back to the Flux image, which is the
+        # guaranteed-style result (at the cost of NB2's identity lock).
         try:
-            instruction = build_restyle_instruction(structure_strength, extra_style_direction)
-            nb_input = {
-                "prompt": instruction,
-                "image_input": [content_url, style_url],
-                "output_format": output_format,
-                "resolution": resolution,
-            }
-            if seed and seed > 0:
-                nb_input["seed"] = seed
-            nb_pred = await _run_prediction("google/nano-banana-2", nb_input)
-            final = await download_url_to_image_tensor(_first_output_url(nb_pred), cls=cls)
+            ref_style = await _classify_image_style(style_url)
+            base_instruction = build_restyle_instruction(structure_strength, extra_style_direction)
+            best_url = None
+            matched = False
+            for attempt in range(1 + _RESTYLE_MAX_NB_RETRIES):
+                instruction = base_instruction
+                if attempt > 0:
+                    instruction = base_instruction + RESTYLE_ANTIPHOTO_RETRY
+                nb_input = {
+                    "prompt": instruction,
+                    "image_input": [content_url, style_url],
+                    "output_format": output_format,
+                    "resolution": resolution,
+                    # Deterministic per-attempt variation: same base seed always
+                    # replays the same sequence of re-rolls (and same result).
+                    # Masked to uint32 so a near-max seed can't overflow the range.
+                    "seed": (int(seed) + attempt) & 0xFFFFFFFF,
+                }
+                nb_pred = await _run_prediction("google/nano-banana-2", nb_input)
+                best_url = _first_output_url(nb_pred)
+                # Photo target → NB2's first answer is what we want. Illustration
+                # target → only accept once the output is still illustrated.
+                if ref_style != "illustration":
+                    matched = True
+                    break
+                if await _classify_image_style(best_url) == "illustration":
+                    matched = True
+                    break
+            # All illustration attempts washed out → the Flux image is the
+            # guaranteed-style safety net.
+            final_url = best_url if matched else style_url
+            final = await download_url_to_image_tensor(final_url, cls=cls)
             if final.dim() == 4 and final.shape[-1] == 4:
                 final = final[..., :3].contiguous()
         except Exception as err:

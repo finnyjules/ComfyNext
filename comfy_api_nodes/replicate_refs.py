@@ -277,6 +277,19 @@ RESTYLE_DEFAULT_PROMPT = (
     "change only the rendering style, colors, texture, lighting and finish."
 )
 
+# Always appended (at every strength). Nano Banana is a two-image instruct-edit
+# model: given only the one-line prompt above it frequently returns the first
+# image barely touched, or confuses which image is the style source — the
+# coin-flip that made restyles land only ~half the time. This clause pins the
+# roles explicitly and insists the stylistic change be unmistakable.
+RESTYLE_STYLE_EMPHASIS = (
+    " The second image is ONLY a style reference: apply its art style —"
+    " its colors, texture, brushwork, lighting and finish — to the first image"
+    " strongly and unmistakably, so the restyling is clearly visible. Take none"
+    " of the second image's subject or content. Do not return the first image"
+    " unchanged or only lightly altered."
+)
+
 
 def restyle_style_strength_to_knobs(
     style_strength: float, flux_prompt_strength_override: float = 0.0
@@ -296,12 +309,51 @@ def restyle_style_strength_to_knobs(
     return structure_strength, prompt_strength
 
 
+# Appended only on a RE-ROLL after a wash-out. Nano Banana sometimes returns a
+# photograph when an illustration was wanted; this tells the next attempt, in no
+# uncertain terms, that the previous output was wrong because it was photoreal.
+RESTYLE_ANTIPHOTO_RETRY = (
+    " IMPORTANT: a previous attempt failed by returning a realistic photograph."
+    " The output MUST be a non-photographic illustration in the second image's"
+    " medium — illustrated, drawn, painted or 3D-rendered — and must NOT look"
+    " like a photo."
+)
+
+# Words in a one-word VLM answer that mark a non-photographic render. Kept here
+# (no torch) so the photo-vs-illustration routing stays unit-testable.
+_ILLUSTRATION_HINTS = (
+    "illustr", "drawn", "drawing", "cartoon", "anime", "paint", "render", "3d",
+    "cgi", "cel", "comic", "sketch", "graphic", "artwork", "styliz", "stylis",
+)
+_PHOTO_HINTS = ("photo", "photograph", "realistic", "real life", "real-life")
+
+
+def classify_style_answer(answer: str, default: str = "photo") -> str:
+    """Map a VLM's free-text answer to ``"photo"`` or ``"illustration"``.
+
+    Used to decide whether the restyle target is non-photographic (and so needs
+    the wash-out check + re-roll) or photoreal (where Nano Banana is trusted on
+    the first try). Illustration hints win ties, because the failure we guard
+    against is an illustration target slipping back to a photo — a false
+    "illustration" only costs a verification call, a false "photo" reintroduces
+    the bug. Empty/unknown answers fall back to ``default`` (photo: no retries).
+    """
+    text = (answer or "").strip().lower()
+    if not text:
+        return default
+    if any(h in text for h in _ILLUSTRATION_HINTS):
+        return "illustration"
+    if any(h in text for h in _PHOTO_HINTS):
+        return "photo"
+    return default
+
+
 def build_restyle_instruction(structure_strength: float, extra_direction: str = "") -> str:
     """Build the Nano Banana edit instruction from a structure-preservation
     dial. Nano Banana has no numeric structure knob, so the slider is folded
     into explicit language: high = lock the subject, low = free reinterpretation.
     """
-    instruction = RESTYLE_DEFAULT_PROMPT
+    instruction = RESTYLE_DEFAULT_PROMPT + RESTYLE_STYLE_EMPHASIS
     if structure_strength >= 0.66:
         instruction += (
             " Keep the subject's identity, clothing, pose, framing and"
@@ -421,13 +473,24 @@ def aesthetic_to_keywords(aesthetic: str) -> str:
 
 def build_flux_style_prompt(trigger: str, aesthetic: str, caption: str) -> str:
     """Compose the Flux img2img prompt: LoRA trigger word + the LoRA's aesthetic
-    keywords + the Moondream caption of the content image. Blank parts are
-    skipped so an external LoRA (no sidecar) still gets a clean caption-only
-    prompt.
+    keywords + a SHORT subject caption, then re-anchor the style by bookending
+    with "in the style of <trigger>". Blank parts are skipped so an external LoRA
+    (no sidecar) still gets a clean caption-only prompt.
+
+    Why the bookend: img2img starts from a photoreal content image, and a long
+    photographic caption used to drown the trigger, so Flux ignored the LoRA and
+    returned a near-photo (the "restyle does nothing ~half the time" bug — proven
+    by calibration 2026-06-23). Leading AND trailing with the style keeps it
+    dominant. Pair this with the subject-only ``describe_prompt`` so the caption
+    stays short.
     """
+    trig = (trigger or "").strip()
     parts = [
-        (trigger or "").strip(),
+        trig,
         aesthetic_to_keywords(aesthetic),
         (caption or "").strip(),
     ]
-    return ", ".join(p for p in parts if p)
+    prompt = ", ".join(p for p in parts if p)
+    if trig:
+        prompt = f"{prompt}, in the style of {trig}"
+    return prompt

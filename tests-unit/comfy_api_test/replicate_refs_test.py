@@ -406,6 +406,15 @@ def test_flux_plan_no_lora_resolves_nothing():
 # build_restyle_instruction — Nano Banana instruction builder (pure)
 # --------------------------------------------------------------------------- #
 
+# The style-emphasis clause is appended at EVERY strength so the restyle lands
+# reliably; "plain" now means base prompt + emphasis, with no structure band.
+_RESTYLE_BASE = rr.RESTYLE_DEFAULT_PROMPT + rr.RESTYLE_STYLE_EMPHASIS
+
+def test_restyle_instruction_always_emphasizes_style():
+    # The coin-flip fix: every strength must insist the style is applied.
+    for s in (0.0, 0.2, 0.5, 0.8, 1.0):
+        assert rr.RESTYLE_STYLE_EMPHASIS in rr.build_restyle_instruction(s)
+
 def test_restyle_instruction_high_structure_locks_subject():
     out = rr.build_restyle_instruction(0.8)
     assert out.startswith(rr.RESTYLE_DEFAULT_PROMPT)
@@ -417,7 +426,7 @@ def test_restyle_instruction_low_structure_allows_reinterpret():
 
 def test_restyle_instruction_mid_structure_is_plain():
     out = rr.build_restyle_instruction(0.5)
-    assert out == rr.RESTYLE_DEFAULT_PROMPT
+    assert out == _RESTYLE_BASE
 
 def test_restyle_instruction_appends_extra_direction():
     out = rr.build_restyle_instruction(0.5, "watercolor")
@@ -425,7 +434,7 @@ def test_restyle_instruction_appends_extra_direction():
 
 def test_restyle_instruction_blank_extra_is_ignored():
     out = rr.build_restyle_instruction(0.5, "   ")
-    assert out == rr.RESTYLE_DEFAULT_PROMPT
+    assert out == _RESTYLE_BASE
 
 def test_restyle_instruction_high_boundary_locks_subject():
     # 0.66 is the inclusive high threshold — guards against off-by-one drift in
@@ -433,19 +442,47 @@ def test_restyle_instruction_high_boundary_locks_subject():
     assert "exactly as in the first image" in rr.build_restyle_instruction(0.66)
 
 def test_restyle_instruction_just_below_high_boundary_is_plain():
-    assert rr.build_restyle_instruction(0.65) == rr.RESTYLE_DEFAULT_PROMPT
+    assert rr.build_restyle_instruction(0.65) == _RESTYLE_BASE
 
 def test_restyle_instruction_low_boundary_allows_reinterpret():
     # 0.33 is the inclusive low threshold.
     assert "loosely reinterpret" in rr.build_restyle_instruction(0.33)
 
 def test_restyle_instruction_just_above_low_boundary_is_plain():
-    assert rr.build_restyle_instruction(0.34) == rr.RESTYLE_DEFAULT_PROMPT
+    assert rr.build_restyle_instruction(0.34) == _RESTYLE_BASE
 
 def test_restyle_instruction_combines_structure_clause_and_extra():
     out = rr.build_restyle_instruction(0.8, "watercolor")
     assert "exactly as in the first image" in out
     assert out.endswith("Additional style direction: watercolor.")
+
+
+# --------------------------------------------------------------------------- #
+# classify_style_answer — photo vs illustration routing (pure)
+# --------------------------------------------------------------------------- #
+
+def test_classify_photo_answers():
+    for ans in ("photograph", "a real photograph", "Photo.", "realistic"):
+        assert rr.classify_style_answer(ans) == "photo"
+
+def test_classify_illustration_answers():
+    for ans in ("illustration", "an illustration", "a 3D render", "digital painting",
+                "cartoon drawing", "stylized artwork"):
+        assert rr.classify_style_answer(ans) == "illustration"
+
+def test_classify_empty_falls_back_to_default():
+    assert rr.classify_style_answer("") == "photo"
+    assert rr.classify_style_answer("   ") == "photo"
+    assert rr.classify_style_answer("", default="illustration") == "illustration"
+
+def test_classify_unknown_uses_default():
+    # No photo/illustration hint at all → conservative default (no re-rolls).
+    assert rr.classify_style_answer("blue") == "photo"
+
+def test_classify_illustration_wins_ties():
+    # The failure we guard against is an illustration washing to a photo, so when
+    # both signals appear the answer must lean illustration.
+    assert rr.classify_style_answer("a photorealistic illustration") == "illustration"
 
 
 # --------------------------------------------------------------------------- #
@@ -505,13 +542,21 @@ def test_build_flux_style_prompt_joins_all_parts():
         "prose.\n\nwarm florals, cobalt blue",
         "A photo of a woman in a garden.",
     )
-    assert out == "azure_bloom, warm florals, cobalt blue, A photo of a woman in a garden."
+    # Trigger leads AND bookends so the style stays dominant over the caption.
+    assert out == ("azure_bloom, warm florals, cobalt blue, A photo of a woman "
+                   "in a garden., in the style of azure_bloom")
+
+def test_build_flux_style_prompt_bookends_with_trigger():
+    out = rr.build_flux_style_prompt("gta", "", "A woman on a mountain.")
+    assert out.startswith("gta,")
+    assert out.endswith("in the style of gta")
 
 def test_build_flux_style_prompt_skips_blank_parts():
+    # No trigger → no style anchor, just the caption.
     out = rr.build_flux_style_prompt("", "", "A cat on a sofa.")
     assert out == "A cat on a sofa."
 
 def test_build_flux_style_prompt_trigger_with_empty_aesthetic():
     # External LoRA path: a trigger but no sidecar aesthetic.
     out = rr.build_flux_style_prompt("my_lora", "", "A cat on a sofa.")
-    assert out == "my_lora, A cat on a sofa."
+    assert out == "my_lora, A cat on a sofa., in the style of my_lora"
