@@ -395,7 +395,12 @@ vec3 blendLayers(vec3 base, vec3 src, float mode) {
 
 void main() {
   vec2 p = v_texCoord;
-  vec2 pw = applyFlow(p);              // domain-warped coord (identity when intensity 0)
+  // Domain-warped coord (identity when intensity 0). Clamp to the frame so a strong
+  // warp on a bounded layout (linear/radial/stack) smears the edge colour inward
+  // instead of pushing samples off-frame into background voids. At intensity 0 the
+  // warp returns p (already in [0,1]) so the clamp is a no-op — existing gradients
+  // stay byte-identical.
+  vec2 pw = clamp(applyFlow(p), 0.0, 1.0);
   vec3 col = u_bg;
 
   vec4 l0 = computeLayer(0, pw);

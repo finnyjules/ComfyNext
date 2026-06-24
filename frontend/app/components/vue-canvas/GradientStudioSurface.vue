@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Dices, Disc3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
+import { Dices, Disc3, Droplets, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { buildConfig, defaultConfig, liquidConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { randomSeed } from '~/lib/gradientfx/rng'
@@ -350,7 +350,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
             <Disc3 class="h-3.5 w-3.5" /> Stack
           </button>
           <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the warm marble liquid flow preset" @click="applyLiquid">
-            <Sparkles class="h-3.5 w-3.5" /> Liquid
+            <Droplets class="h-3.5 w-3.5" /> Liquid
           </button>
         </div>
       </div>
