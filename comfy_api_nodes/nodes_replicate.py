@@ -275,10 +275,17 @@ async def _classify_image_style(image_url: str) -> str:
             "lucataco/moondream2",
             {
                 "image": image_url,
+                # Enumerating the illustration media explicitly is what makes
+                # Moondream tag semi-realistic art (e.g. GTA-style) as an
+                # illustration rather than a photo — the bare "photo or
+                # illustration?" question called GTA a photograph, which disabled
+                # the wash-out check. Validated GTA→illustration, real→photograph
+                # (3/3 each) 2026-06-23.
                 "prompt": (
-                    "Answer with one word, 'photograph' or 'illustration': is "
-                    "this a real photograph, or a non-photographic illustration, "
-                    "drawing, painting or 3D render?"
+                    "Classify the medium. If it is a real-life photo answer "
+                    "'photograph'. If it is any kind of drawn, painted, cartoon, "
+                    "comic, anime, cel-shaded or CGI/3D artwork answer "
+                    "'illustration'. One word."
                 ),
             },
         )
