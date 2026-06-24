@@ -118,6 +118,34 @@ async function fetchHistory() {
       }
     } catch { /* listing optional — fall through */ }
 
+    // 3) Durable per-project generations — frontend-tool exports (Shader / Type /
+    //    Gradient / Pattern Studio) are saved to input/ and recorded in the durable
+    //    projects store, NOT /history. This pass is the only way they reach the global
+    //    gallery. Also recovers graph runs after a Comfy restart (history is volatile).
+    try {
+      const seen = new Set<string>()
+      for (const it of byPrompt.values())
+        for (const f of it.images) seen.add(`${f.type}:${f.subfolder || ''}:${f.filename}`)
+
+      const { fetchGenerations, generationsByProject } = useProjectGenerations()
+      await fetchGenerations(true)
+      for (const proj of generationsByProject.value) {
+        for (const g of proj.generations) {
+          if (skipLivePreview(g)) continue
+          const key = `${g.type}:${g.subfolder || ''}:${g.filename}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          byPrompt.set(`gen:${key}`, {
+            promptId: g.promptId,
+            status: 'completed',
+            images: [{ filename: g.filename, subfolder: g.subfolder || '', type: g.type }],
+            executionTime: null,
+            timestamp: g.timestamp,
+          })
+        }
+      }
+    } catch { /* durable store optional — fall through */ }
+
     const parsed = [...byPrompt.values()].sort((a, b) => b.timestamp - a.timestamp)
     items.value = parsed
     loadAssetMeta()
