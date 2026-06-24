@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Dices, Disc3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
-import { buildConfig, defaultConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, liquidConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
@@ -30,6 +30,7 @@ const activeLayer = ref(0)
 const layer = computed(() => config.value.layers[activeLayer.value] ?? config.value.layers[0]!)
 const isRadial = computed(() => config.value.canvas.layout === 'radial' || config.value.canvas.layout === 'orbit')
 const isStack = computed(() => config.value.canvas.layout === 'stack')
+const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 
 // Proxies for the optional center/light fields so v-model stays simple and type-safe
 // (the fields are backfilled by ensureConfigDefaults, but typed optional).
@@ -136,6 +137,13 @@ function applyRipple() {
 // Preset: stacked rotated-gradient circles (the reference's real construction).
 function applyStack() {
   config.value = stackConfig(randomSeed())
+  activeLayer.value = 0
+  pushRoll(config.value)
+}
+
+// Preset: warm marble liquid flow.
+function applyLiquid() {
+  config.value = liquidConfig(randomSeed())
   activeLayer.value = 0
   pushRoll(config.value)
 }
@@ -341,6 +349,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the stacked rotated-circles preset" @click="applyStack">
             <Disc3 class="h-3.5 w-3.5" /> Stack
           </button>
+          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the warm marble liquid flow preset" @click="applyLiquid">
+            <Sparkles class="h-3.5 w-3.5" /> Liquid
+          </button>
         </div>
       </div>
     </template>
@@ -369,7 +380,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <span>Layout</span>
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('layout')"><component :is="locked('layout') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
-        <div class="mb-2 grid grid-cols-4 gap-1">
+        <div class="mb-2 grid grid-cols-5 gap-1">
           <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ l }}</button>
@@ -386,6 +397,33 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
         <StudioColor v-model="config.canvas.background" />
+      </StudioSection>
+
+      <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
+      <StudioSection title="Flow" badge="all layouts" :open="isLiquid">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Warps the gradient into liquid swirls. At 0 intensity the gradient is undistorted.</p>
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(config.flow!.angle) }}°</span></label>
+        <input v-model.number="config.flow!.angle" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Noise scale</span><span class="text-white/40">{{ config.flow!.noiseScale.toFixed(1) }}</span></label>
+        <input v-model.number="config.flow!.noiseScale" type="range" min="0.5" max="8" step="0.1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Noise intensity</span><span class="text-white/40">{{ Math.round(config.flow!.intensity) }}</span></label>
+        <input v-model.number="config.flow!.intensity" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve distortion</span><span class="text-white/40">{{ Math.round(config.flow!.distortion) }}</span></label>
+        <input v-model.number="config.flow!.distortion" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Detail</span><span class="text-white/40">{{ Math.round(config.flow!.detail) }}</span></label>
+        <input v-model.number="config.flow!.detail" type="range" min="1" max="6" step="1" v-studio-reset class="studio-range w-full" />
+      </StudioSection>
+
+      <!-- Depth & Light (liquid fold shading only) -->
+      <StudioSection v-if="isLiquid" title="Depth & light" badge="liquid">
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Depth</span><span class="text-white/40">{{ Math.round(config.flow!.depth) }}</span></label>
+        <input v-model.number="config.flow!.depth" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Highlights</span><span class="text-white/40">{{ Math.round(config.flow!.highlights) }}</span></label>
+        <input v-model.number="config.flow!.highlights" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Shadows</span><span class="text-white/40">{{ Math.round(config.flow!.shadows) }}</span></label>
+        <input v-model.number="config.flow!.shadows" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Fold scale</span><span class="text-white/40">{{ Math.round(config.flow!.foldScale) }}</span></label>
+        <input v-model.number="config.flow!.foldScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
       </StudioSection>
 
       <!-- Relief & grain -->
@@ -420,7 +458,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Shape -->
-      <StudioSection title="Shape" :badge="`Layer ${activeLayer + 1}`">
+      <StudioSection v-if="!isLiquid" title="Shape" :badge="`Layer ${activeLayer + 1}`">
         <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
