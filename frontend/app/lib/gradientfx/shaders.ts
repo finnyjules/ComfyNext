@@ -54,6 +54,16 @@ uniform float u_pivot[2];      // stack: per-ring center orbit, 0..1
 uniform float u_ringScale[2];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
 uniform float u_ringShape[2];  // stack: 0 circle, 1 diamond, 2 square
 
+uniform float u_flowAngle;       // degrees — liquid base gradient dir
+uniform float u_flowScale;       // warp noise frequency
+uniform float u_flowIntensity;   // displacement (0 = no warp); pre-scaled in JS
+uniform float u_flowDistortion;  // iterative curl strength; pre-scaled in JS
+uniform float u_flowDetail;      // fbm octaves 1..6
+uniform float u_flowDepth;       // liquid fold emboss amount 0..1
+uniform float u_flowHighlights;  // liquid bright-side gain 0..1
+uniform float u_flowShadows;     // liquid dark-side gain 0..1
+uniform float u_flowFoldScale;   // liquid fold frequency
+
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
 uniform sampler2D u_ramp0;
@@ -69,6 +79,39 @@ float hashGrain(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
+}
+
+// Value noise + fbm for the domain warp (liquid flow). Independent of the grain hash.
+float vhash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  float a = vhash(i), b = vhash(i + vec2(1.0, 0.0)), c = vhash(i + vec2(0.0, 1.0)), d = vhash(i + vec2(1.0, 1.0));
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 p, float oct) {
+  float sum = 0.0, amp = 0.5, tot = 0.0;
+  for (int k = 0; k < 6; k++) {
+    if (float(k) >= oct) break;
+    sum += amp * vnoise(p); tot += amp; p *= 2.0; amp *= 0.5;
+  }
+  return tot > 0.0 ? sum / tot : 0.0;
+}
+// Domain-warp the sample coord (Inigo-Quilez fbm-of-fbm). No-op when intensity is 0.
+vec2 applyFlow(vec2 p) {
+  if (u_flowIntensity <= 0.0) return p;
+  vec2 sp = p * u_flowScale; sp.x *= u_aspect;
+  vec2 q = vec2(fbm(sp, u_flowDetail), fbm(sp + vec2(5.2, 1.3), u_flowDetail));
+  vec2 r = vec2(fbm(sp + u_flowDistortion * q + vec2(1.7, 9.2), u_flowDetail),
+                fbm(sp + u_flowDistortion * q + vec2(8.3, 2.8), u_flowDetail));
+  vec2 disp = (r - 0.5) * u_flowIntensity;
+  disp.x /= u_aspect;
+  return p + disp;
+}
+// Scalar fold height for the liquid Depth & Light shading.
+float flowHeight(vec2 p) {
+  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect;
+  return fbm(sp, u_flowDetail);
 }
 
 vec3 rgb2hsl(vec3 c) {
@@ -131,6 +174,16 @@ vec4 computeLayer(int i, vec2 p) {
   bool mirrorH = u_mirrorH[i] > 0.5;
   bool mirrorV = u_mirrorV[i] > 0.5;
   bool gradHoriz = u_gradHoriz[i] > 0.5;
+
+  // ---- Liquid: no bars; sample the ramp along the (already-warped) angle gradient.
+  if (u_layout > 3.5) {
+    float a = u_flowAngle * PI / 180.0;
+    vec2 dir = vec2(cos(a), sin(a));
+    vec2 pc = p - 0.5; pc.x *= u_aspect;
+    float t = clamp(dot(pc, dir) + 0.5, 0.0, 1.0);
+    t = quantize(t, u_steps[i]);
+    return vec4(rotateHue(sampleRamp(i, t), u_hueRotate[i]), 1.0);
+  }
 
   // ---- Stack: N concentric circles of shrinking radius, each filled with the same ramp
   // gradient rotated by ring*rotStep. The visible pixel takes the SMALLEST circle that
@@ -342,14 +395,15 @@ vec3 blendLayers(vec3 base, vec3 src, float mode) {
 
 void main() {
   vec2 p = v_texCoord;
+  vec2 pw = applyFlow(p);              // domain-warped coord (identity when intensity 0)
   vec3 col = u_bg;
 
-  vec4 l0 = computeLayer(0, p);
+  vec4 l0 = computeLayer(0, pw);
   col = mix(col, l0.rgb, l0.a);
-  float cover = l0.a;                       // shape coverage (0 = background)
+  float cover = l0.a;
 
   if (u_layerCount > 1.5) {
-    vec4 l1 = computeLayer(1, p);
+    vec4 l1 = computeLayer(1, pw);
     vec3 blended = blendLayers(col, l1.rgb, u_blend[1]);
     float a = l1.a * u_opacity[1];
     col = mix(col, blended, a);
@@ -359,7 +413,7 @@ void main() {
   // 3D relief: light the band/ring height-field of layer 0 (the primary structure).
   // Finite-difference normal from bandHeight, Lambert-shaded against u_light. Sidesteps
   // dFdx, which is undefined here because bandHeight early-returns at the mask edges.
-  if (u_relief > 0.001) {
+  if (u_relief > 0.001 && u_layout < 3.5) {
     float e = 1.5 / u_resolution.y;            // ~1.5px step in normalized units
     float h  = bandHeight(0, p);
     float hx = bandHeight(0, p + vec2(e, 0.0));
@@ -369,6 +423,19 @@ void main() {
     float diff = clamp(dot(n, normalize(u_light)), 0.0, 1.0);
     float shade = mix(0.48, 1.12, diff);       // ambient floor .. slight key overbright
     col *= mix(1.0, shade, u_relief);
+  }
+
+  // Liquid Depth & Light: emboss from the flow fold field (its own light, not u_light).
+  if (u_layout > 3.5 && u_flowDepth > 0.001) {
+    float e = 1.5 / u_resolution.y;
+    float h  = flowHeight(p);
+    float hx = flowHeight(p + vec2(e, 0.0));
+    float hy = flowHeight(p + vec2(0.0, e));
+    vec3 n = normalize(vec3(-(hx - h) / e, -(hy - h) / e, 1.0 / max(u_flowDepth, 0.05)));
+    float d = clamp(dot(n, normalize(vec3(0.4, 0.5, 0.8))), 0.0, 1.0);
+    float gain = d > 0.5 ? u_flowHighlights : u_flowShadows;
+    float shade = 1.0 + (d - 0.5) * 2.0 * gain;
+    col *= clamp(shade, 0.0, 2.0);
   }
 
   // Film grain. Sampled PER DEVICE PIXEL (gl_FragCoord) — a coarser texCoord grid fell

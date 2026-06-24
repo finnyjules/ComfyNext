@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { reactive, ref } from 'vue'
 import { cloneConfig, DEFAULT_FLOW, ensureConfigDefaults, flowConfig, LAYOUTS } from '~/lib/gradientfx/types'
+import { GRADIENT_FS } from '~/lib/gradientfx/shaders'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
@@ -168,6 +169,14 @@ describe('gradientfx liquid randomize', () => {
     const locked = { ...buildConfig('#fl3'), locks: { flow: true } }
     const r = reroll(locked, 'all', '#fl4')
     expect(r.flow).toEqual(locked.flow)
+  })
+})
+
+describe('gradientfx shader has flow stage', () => {
+  it('declares the flow uniforms and warp function', () => {
+    expect(GRADIENT_FS).toContain('u_flowIntensity')
+    expect(GRADIENT_FS).toContain('vec2 applyFlow')
+    expect(GRADIENT_FS).toContain('u_layout > 3.5')
   })
 })
 

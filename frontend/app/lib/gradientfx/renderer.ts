@@ -7,16 +7,14 @@ import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { GRADIENT_FS, GRADIENT_VS } from './shaders'
-import {
-  aspectRatio, canvasCenter, lightVector, reliefLight,
+import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight,
   type BlendKind, type Direction, type GradientConfig,
-  type LayoutKind, type MappingKind,
-} from './types'
+  type LayoutKind, type MappingKind } from './types'
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const BLEND_IDX: Record<BlendKind, number> = { normal: 0, lighten: 1, screen: 2, add: 3, multiply: 4, darken: 5, overlay: 6 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
-const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3 }
+const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4 }
 
 class GradientFxRenderer {
   private canvas: HTMLCanvasElement | null = null
@@ -148,6 +146,17 @@ class GradientFxRenderer {
     const ctr = canvasCenter(c.canvas)
     gl.uniform2f(u('u_center'), ctr.x, ctr.y)
     gl.uniform1f(u('u_layerCount'), layers.length)
+
+    const fl = flowConfig(c)
+    gl.uniform1f(u('u_flowAngle'), fl.angle)
+    gl.uniform1f(u('u_flowScale'), Math.max(0.2, fl.noiseScale))
+    gl.uniform1f(u('u_flowIntensity'), (fl.intensity / 100) * 0.6)   // 0..0.6 displacement
+    gl.uniform1f(u('u_flowDistortion'), (fl.distortion / 100) * 3.0) // 0..3 iterative curl
+    gl.uniform1f(u('u_flowDetail'), Math.max(1, Math.min(6, Math.round(fl.detail))))
+    gl.uniform1f(u('u_flowDepth'), fl.depth / 100)
+    gl.uniform1f(u('u_flowHighlights'), fl.highlights / 100)
+    gl.uniform1f(u('u_flowShadows'), fl.shadows / 100)
+    gl.uniform1f(u('u_flowFoldScale'), 1.0 + (fl.foldScale / 100) * 6.0) // freq 1..7
 
     gl.uniform1fv(u('u_count'), arr(counts))
     gl.uniform1fv(u('u_dir'), arr(dir))
