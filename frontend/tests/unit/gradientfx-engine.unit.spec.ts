@@ -5,7 +5,7 @@ import { GRADIENT_FS } from '~/lib/gradientfx/shaders'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
-import { buildConfig, defaultConfig, liquidConfig, reroll } from '~/lib/gradientfx/randomize'
+import { buildConfig, defaultConfig, liquidConfig, reroll, rippleConfig, stackConfig } from '~/lib/gradientfx/randomize'
 import { applyMotion, trackValue } from '~/lib/gradientfx/motion'
 import type { MotionTrack, ShapeConfig } from '~/lib/gradientfx/types'
 
@@ -169,6 +169,17 @@ describe('gradientfx liquid randomize', () => {
     const locked = { ...buildConfig('#fl3'), locks: { flow: true } }
     const r = reroll(locked, 'all', '#fl4')
     expect(r.flow).toEqual(locked.flow)
+  })
+  it('reroll colors scope leaves flow untouched', () => {
+    const base = buildConfig('#fc')
+    const rolled = reroll(base, 'colors', '#fc2')
+    expect(rolled.flow).toEqual(base.flow)
+  })
+  it('every preset carries a flow block (Flow UI binds config.flow! unconditionally)', () => {
+    for (const c of [defaultConfig('#p1'), rippleConfig('#p2'), stackConfig('#p3'), liquidConfig('#p4'), buildConfig('#p5')]) {
+      expect(c.flow).toBeDefined()
+      expect(typeof c.flow!.angle).toBe('number')
+    }
   })
 })
 

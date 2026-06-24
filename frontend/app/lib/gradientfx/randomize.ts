@@ -154,6 +154,7 @@ export function rippleConfig(seed = randomSeed()): GradientConfig {
     seed,
     canvas: { aspect: '1:1', layout: 'orbit', margin: 0.06, innerRadius: 0, background: '#000000', center: { x: 0, y: 0.08 } },
     relief: { grain: 0.12, relief: 0.85, light: { azimuth: 135, elevation: 42 } },
+    flow: { ...DEFAULT_FLOW },
     layers: [
       {
         blend: 'normal', opacity: 1,
@@ -178,6 +179,7 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
     seed,
     canvas: { aspect: '1:1', layout: 'stack', margin: 0.06, innerRadius: 0, background: '#000000', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.1, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { ...DEFAULT_FLOW },
     layers: [
       {
         blend: 'normal', opacity: 1,
