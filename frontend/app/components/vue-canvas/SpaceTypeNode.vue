@@ -52,6 +52,18 @@ let previewStart = 0
 const renderError = ref<string | null>(null)
 const webglOk = ref(true)
 
+let io: IntersectionObserver | null = null
+let onVisibility: (() => void) | null = null
+let onOpen: ((e: Event) => void) | null = null
+let onClose: (() => void) | null = null
+const gate = { visible: true, tabActive: true, editing: false }
+
+function applyGate() {
+  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !!engine && webglOk.value
+  if (shouldRun && !raf) startPreview()
+  else if (!shouldRun && raf) stopPreview()
+}
+
 function rebuild() {
   if (!engine) return
   const s = state.value
@@ -95,8 +107,16 @@ onMounted(async () => {
   })
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
-  startPreview()
   registerStudioBaker(props.id, bakeOutput)
+  io = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
+  if (canvasEl.value?.parentElement) io.observe(canvasEl.value.parentElement)
+  onVisibility = () => { gate.tabActive = !document.hidden; applyGate() }
+  document.addEventListener('visibilitychange', onVisibility)
+  onOpen = (e: Event) => { if ((e as CustomEvent).detail?.nodeId === props.id) { gate.editing = true; applyGate() } }
+  onClose = () => { gate.editing = false; applyGate() }
+  window.addEventListener('comfynext:openSpaceType', onOpen as EventListener)
+  window.addEventListener('comfynext:closeSpaceType', onClose as EventListener)
+  applyGate()
 })
 
 // Headless full-res frame for the render cascade (generative — no input). Renders
@@ -119,12 +139,16 @@ async function bakeOutput(): Promise<Blob | null> {
   } finally {
     previewH.value = previewHeight(s)
     rebuild()
-    startPreview()
+    applyGate()
   }
 }
 
 onBeforeUnmount(() => {
   stopPreview()
+  io?.disconnect(); io = null
+  if (onVisibility) document.removeEventListener('visibilitychange', onVisibility)
+  if (onOpen) window.removeEventListener('comfynext:openSpaceType', onOpen as EventListener)
+  if (onClose) window.removeEventListener('comfynext:closeSpaceType', onClose as EventListener)
   unregisterStudioBaker(props.id)
   engine?.dispose()
   engine = null

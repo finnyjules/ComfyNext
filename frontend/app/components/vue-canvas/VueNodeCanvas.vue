@@ -37,6 +37,7 @@ import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
 import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
 import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
+import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -1756,6 +1757,55 @@ function handleSpaceTypeOutput(e: Event) {
   }
 }
 
+// Studio render cascade: a studio node's footer "Render" button re-bakes it and
+// (for the downstream scope) every chained studio, updating the image node between
+// each, then hands any real backend tail to the existing filtered run.
+async function handleStudioRender(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string; scope?: 'self' | 'upstream' | 'downstream' }>).detail
+  if (!detail?.sourceNodeId) return
+  const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+  await runStudioCascade(detail.sourceNodeId, detail.scope ?? 'self', {
+    getNodes: () => nodes.value as any[],
+    getEdges: () => edges.value as any[],
+    upload: async (blob, prefix) => { const [f] = await uploadFrameBatch([blob], prefix); return f ?? null },
+    publish: (studioId, filename) => publishStudioOutput(studioId, filename),
+    runBackendDownstream: (startId) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [startId], direction: 'downstream' } })),
+    setBusy: (nodeId, busy) => {
+      const n = (nodes.value as any[]).find(x => String(x.id) === String(nodeId))
+      if (n) { if (!n.data) n.data = {}; (n.data as any).studioBusy = busy }
+    },
+  })
+}
+
+/** Write a studio's fresh output to its downstream image node(s) (create one if none).
+ *  The Frame holds its own composite, so it updates its OWN data.images instead. */
+function publishStudioOutput(studioId: string, filename: string) {
+  const url = `/view?${new URLSearchParams({ filename, type: 'input' })}`
+  const self = (nodes.value as any[]).find(n => String(n.id) === String(studioId))
+  if (self && self.type === 'artifact-frame') {
+    if (!self.data) self.data = {}
+    self.data.images = [url]
+    return
+  }
+  // Every image node fed by this studio's output (usually one).
+  const targets = (edges.value as any[])
+    .filter(e => String(e.source) === String(studioId) && (e.sourceHandle === 'output-0' || !e.sourceHandle))
+    .map(e => (nodes.value as any[]).find(n => String(n.id) === String(e.target)))
+    .filter((n): n is any => !!n && (n.data?.nodeType === 'Image' || String(n.type).startsWith('artifact-')))
+  if (!targets.length) {
+    // No artifact yet — reuse the studio-output handler to create + wire one.
+    window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', { detail: { sourceNodeId: studioId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
+    return
+  }
+  for (const art of targets) {
+    if (!art.data) art.data = {}
+    art.data.images = [url]
+    // Also stamp the `image` widget so a card with an upstream link still shows the new file.
+    const wi = art.data.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
+    if (wi >= 0) { if (!Array.isArray(art.data.widgetsValues)) art.data.widgetsValues = []; art.data.widgetsValues[wi] = filename }
+  }
+}
+
 // Inpaint modal state (dedicated editor for an Image artifact).
 const inpaintOpenForId = ref<string | null>(null)
 function handleOpenInpaint(e: Event) {
@@ -2179,6 +2229,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
   // Shader Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('comfynext:studioRender', handleStudioRender)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -2215,6 +2266,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
   window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
+  window.removeEventListener('comfynext:studioRender', handleStudioRender)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
   window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
@@ -4719,7 +4771,7 @@ defineExpose({
         v-if="spaceTypeOpenForId"
         :node-id="spaceTypeOpenForId"
         :nodes="nodes as any[]"
-        @close="spaceTypeOpenForId = null"
+        @close="spaceTypeOpenForId = null; window.dispatchEvent(new CustomEvent('comfynext:closeSpaceType'))"
       />
     </Teleport>
 
