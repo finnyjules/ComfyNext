@@ -139,7 +139,7 @@ export const echoEffect: SpaceTypeEffect = {
   id: 'echo',
   label: 'Echo',
   controls,
-  liveKeys: ['driftSpeed'],
+  liveKeys: ['driftSpeed', 'perspective'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
