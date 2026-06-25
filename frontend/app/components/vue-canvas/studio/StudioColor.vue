@@ -79,14 +79,17 @@ function openPicker() {
   window.addEventListener('scroll', reposition, true)
   window.addEventListener('resize', reposition)
   window.addEventListener('pointerdown', onOutside, true)
-  window.addEventListener('keydown', onKey)
+  // Capture phase: the shared StudioModalShell registers its own Escape→close keydown
+  // on window (bubble) in onMounted, BEFORE this popover opens — so a bubble listener
+  // here fires too late to stop it. Capturing lets us intercept Escape first.
+  window.addEventListener('keydown', onKey, true)
 }
 function close() {
   open.value = false
   window.removeEventListener('scroll', reposition, true)
   window.removeEventListener('resize', reposition)
   window.removeEventListener('pointerdown', onOutside, true)
-  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keydown', onKey, true)
 }
 function onOutside(e: PointerEvent) {
   const t = e.target as Node
@@ -94,7 +97,9 @@ function onOutside(e: PointerEvent) {
   if ((e.target as HTMLElement).closest?.('[data-studio-color-pop]')) return
   close()
 }
-function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { e.stopPropagation(); close() } }
+// stopImmediatePropagation + preventDefault so the modal shell's Escape→close (a separate
+// window keydown listener) does NOT also fire — Escape over an open popover closes only it.
+function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); close() } }
 onBeforeUnmount(close)
 
 function dragSv(e: PointerEvent) {
