@@ -45,7 +45,7 @@ export class SpaceTypeEngine {
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
     this.effect = opts.effect
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true })
+    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: false })
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.setSize(opts.width, opts.height, false)
@@ -217,8 +217,11 @@ export class SpaceTypeEngine {
     }
   }
 
-  /** Read the current canvas back as a PNG blob (after renderFrame). */
+  /** Read the current canvas back as a PNG blob. Forces a fresh render first so this
+   *  works without preserveDrawingBuffer (the preview renderer disables it for perf). */
   async frameToBlob(): Promise<Blob> {
+    if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
+    else this.renderer.render(this.scene, this.activeCam)
     const canvas = this.renderer.domElement
     const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
     if (!blob) throw new Error('space type: frame produced no blob')
