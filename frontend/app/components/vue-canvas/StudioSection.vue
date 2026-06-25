@@ -2,10 +2,13 @@
 // Shared collapsible section for the studio editors' controls column. Bordered card,
 // muted title with a rotating chevron, optional badge (prop or #badge slot, e.g. a
 // StudioSwitch) on the right. No standalone dividers — the card border is the structure.
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{ title: string; badge?: string; open?: boolean }>(), { open: true })
 const isOpen = ref(props.open)
+// Re-apply the open prop when it changes (e.g. switching effects in Type Studio
+// re-targets the same section instances at a new effect's default open-state).
+watch(() => props.open, v => { isOpen.value = !!v })
 </script>
 
 <template>
