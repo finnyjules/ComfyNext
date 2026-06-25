@@ -211,6 +211,9 @@ export class SpaceTypeEngine {
   dispose(): void {
     this.disposeRoot()
     this.postChain?.dispose()
+    // Free the underlying WebGL context promptly (renderer.dispose alone leaves it
+    // alive until GC — with one context per node that hits the browser's ~16 cap).
+    this.renderer.forceContextLoss()
     this.renderer.dispose()
   }
 }
