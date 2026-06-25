@@ -37,6 +37,10 @@ export class SpaceTypeEngine {
   private opts: EngineOptions
   private post: PostSettings = DEFAULT_POST
   private postChain: PostChain | null = null
+  private _lastError: string | null = null
+  /** Last build/render error (null when the most recent frame succeeded). */
+  get lastError(): string | null { return this._lastError }
+  private _loggedError = false
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
@@ -170,11 +174,18 @@ export class SpaceTypeEngine {
 
   /** (Re)build the scene from params; call when structural params change. */
   build(params: Params, texOpts: TextTextureOptions): void {
-    this.disposeRoot()
-    const tex = makeTextTexture(texOpts)
-    this.textTex = tex
-    this.root = this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes })
-    this.scene.add(this.root)
+    try {
+      this.disposeRoot()
+      const tex = makeTextTexture(texOpts)
+      this.textTex = tex
+      this.root = this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes })
+      this.scene.add(this.root)
+      this._lastError = null
+      this._loggedError = false
+    } catch (e) {
+      this._lastError = e instanceof Error ? e.message : String(e)
+      console.error('[space-type] build failed', e)
+    }
   }
 
   /** Total frames in one loop. */
@@ -182,22 +193,28 @@ export class SpaceTypeEngine {
 
   /** Render the scene at integer frame index. t01 = index / frameCount (no wall clock). */
   renderFrame(index: number, params: Params): void {
-    const t01 = (index % this.frameCount) / this.frameCount
-    const scale = Number(params.scale ?? 1) || 1
-    // Both projections use the SAME scene tilt (rotate X/Y/Z = the iso/view angle); only the
-    // lens differs — perspective (converging) vs isometric (orthographic, parallel lines).
-    this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
-    if (this.opts.projection === 'isometric') {
-      this.orthoCam.zoom = scale
-      this.orthoCam.updateProjectionMatrix()
-      this.applyPan(this.orthoCam)
-    } else {
-      this.perspCam.position.z = 14 / scale
-      this.applyPan(this.perspCam)
+    try {
+      const t01 = (index % this.frameCount) / this.frameCount
+      const scale = Number(params.scale ?? 1) || 1
+      this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
+      if (this.opts.projection === 'isometric') {
+        this.orthoCam.zoom = scale
+        this.orthoCam.updateProjectionMatrix()
+        this.applyPan(this.orthoCam)
+      } else {
+        this.perspCam.position.z = 14 / scale
+        this.applyPan(this.perspCam)
+      }
+      this.effect.update(t01, params)
+      if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
+      else this.renderer.render(this.scene, this.activeCam)
+      this._lastError = null
+      this._loggedError = false
+    } catch (e) {
+      this._lastError = e instanceof Error ? e.message : String(e)
+      // Log once per error transition, not every frame.
+      if (!this._loggedError) { console.error('[space-type] render failed', e); this._loggedError = true }
     }
-    this.effect.update(t01, params)
-    if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
-    else this.renderer.render(this.scene, this.activeCam)
   }
 
   /** Read the current canvas back as a PNG blob (after renderFrame). */

@@ -174,6 +174,7 @@ let raf = 0
 let previewFrame = 0
 let previewStart = 0
 const baking = ref(false)
+const renderError = ref<string | null>(null)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
@@ -345,6 +346,7 @@ function startPreview() {
     const total = Math.max(1, Math.round(fps.value * loopDuration.value))
     previewFrame = Math.floor(((ts - previewStart) / 1000) * fps.value) % total
     engine?.renderFrame(previewFrame, params)
+    renderError.value = engine?.lastError ?? null
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)
@@ -617,6 +619,10 @@ async function generateVideo() {
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
+        <div v-if="renderError"
+             class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          Effect failed to render — adjust a parameter to recover.
+        </div>
         <StringPathEditor
           v-if="frontLocked"
           :model-value="String(params.path ?? '')"

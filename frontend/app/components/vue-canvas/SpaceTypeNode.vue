@@ -8,6 +8,8 @@ import {
   defaultSpaceTypeState, dimsFromKey, ensureSpaceTypeFont, texOptsFromState,
   type SpaceTypeState,
 } from '~/lib/spacetype/state'
+import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Space Type — a frontend-only config node for the client-side Three.js ribbon
 // typography editor. No inputs/outputs (no backend class_type), so it never
@@ -21,6 +23,7 @@ const props = defineProps<{
     title?: string
     mode?: number
     properties?: Record<string, any>
+    studioBusy?: boolean
   }
 }>()
 
@@ -45,6 +48,7 @@ const previewH = ref(previewHeight(state.value))
 let engine: SpaceTypeEngine | null = null
 let raf = 0
 let previewStart = 0
+const renderError = ref<string | null>(null)
 
 function rebuild() {
   if (!engine) return
@@ -67,6 +71,7 @@ function startPreview() {
     const total = Math.max(1, Math.round(s.fps * s.loopDuration))
     const frame = Math.floor(((ts - previewStart) / 1000) * s.fps) % total
     engine.renderFrame(frame, s.params)
+    renderError.value = engine.lastError
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)
@@ -88,10 +93,36 @@ onMounted(async () => {
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
   startPreview()
+  registerStudioBaker(props.id, bakeOutput)
 })
+
+// Headless full-res frame for the render cascade (generative — no input). Renders
+// frame 0 at the configured output dims, then restores the live preview.
+async function bakeOutput(): Promise<Blob | null> {
+  if (!engine) return null
+  const s = state.value
+  const [cw, ch] = dimsFromKey(s.dimsKey)
+  stopPreview()
+  try {
+    await ensureSpaceTypeFont(String(s.params.font))
+    engine.setSize(cw, ch)
+    engine.setBackground(s.transparent, s.bgColor)
+    engine.setEffect(getEffect(s.effectId))
+    engine.build(s.params, texOptsFromState(s))
+    engine.renderFrame(0, s.params)
+    return await engine.frameToBlob()
+  } catch (e) {
+    console.error('[space-type] bake failed', e); return null
+  } finally {
+    previewH.value = previewHeight(s)
+    rebuild()
+    startPreview()
+  }
+}
 
 onBeforeUnmount(() => {
   stopPreview()
+  unregisterStudioBaker(props.id)
   engine?.dispose()
   engine = null
 })
@@ -138,22 +169,27 @@ function openEditor() {
     </div>
 
     <!-- Live animated preview -->
-    <div class="flex items-center justify-center bg-neutral-950">
+    <div class="relative flex items-center justify-center bg-neutral-950">
       <canvas
         ref="canvasEl"
         class="block w-full"
         :style="{ height: previewH + 'px' }"
       />
+      <div v-if="renderError"
+           class="absolute inset-x-2 bottom-2 rounded border border-amber-400/30 bg-black/70 px-2 py-1 text-[9px] text-amber-200/90">
+        Render error
+      </div>
     </div>
 
-    <!-- Edit (bottom) -->
-    <div class="border-t border-white/10 p-2">
+    <!-- Render + Edit (bottom) -->
+    <div class="border-t border-white/10 p-2 flex items-center gap-1.5">
       <button
-        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
         <Pencil class="h-3 w-3" /> Edit
       </button>
+      <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
   </div>
 </template>
