@@ -268,7 +268,7 @@ onMounted(() => { if (!state.value.rendered) scheduleBake() })
 .top__slider { display: flex; flex-direction: column; gap: 1px; }
 .top__slider-head { display: flex; justify-content: space-between; font-size: 10px; color: rgba(255,255,255,0.55); }
 .top__slider-val { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.8); }
-.top__range { width: 100%; height: 4px; cursor: pointer; accent-color: #818cf8; }
+.top__range { width: 100%; } /* slider visual unified globally in main.css (input[type=range]) */
 
 .top__colors { display: flex; align-items: center; gap: 8px; }
 .top__color { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: rgba(255,255,255,0.6); cursor: pointer; }

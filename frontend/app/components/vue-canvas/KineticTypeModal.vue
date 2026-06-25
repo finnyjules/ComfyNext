@@ -561,7 +561,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 .ktm__slider { display: flex; flex-direction: column; gap: 2px; }
 .ktm__slider-head { display: flex; justify-content: space-between; font-size: 11px; color: rgba(255,255,255,0.55); }
 .ktm__slider-val { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.8); }
-.ktm__range { width: 100%; height: 5px; cursor: pointer; accent-color: #818cf8; }
+.ktm__range { width: 100%; } /* slider visual unified globally in main.css (input[type=range]) */
 
 /* ── Colors ──────────────────────────────────────────────────────────────── */
 .ktm__colors { display: flex; align-items: center; gap: 10px; }

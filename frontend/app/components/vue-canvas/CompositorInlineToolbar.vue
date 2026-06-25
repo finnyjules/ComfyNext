@@ -146,9 +146,16 @@ const pathFillColor = computed(() =>
 .ll-btn {
   display: flex; align-items: center; justify-content: center;
   width: 1.5rem; height: 1.5rem; border-radius: 0.375rem;
-  color: rgba(255, 255, 255, 0.6); cursor: pointer; transition: all 0.12s;
+  color: rgba(255, 255, 255, 0.6); cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease, transform 0.12s ease;
 }
 .ll-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.ll-btn:active { transform: scale(0.96); }
+
+/* Strip native spinners + keep changing numbers from jittering the field width. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { appearance: textfield; -moz-appearance: textfield; font-variant-numeric: tabular-nums; }
 .ll-btn.is-on { color: #22d3ee; background: rgba(34, 211, 238, 0.12); }
 .ll-btn--danger:hover { color: #fb7185; background: rgba(244, 63, 94, 0.12); }
 .ll-sep { width: 1px; height: 1rem; background: rgba(255, 255, 255, 0.12); margin: 0 0.125rem; }

@@ -681,9 +681,7 @@ onMounted(() => {
   font-size: 10px; color: rgba(255,255,255,0.55);
 }
 .font-pg__axis-val { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.8); }
-.font-pg__range {
-  width: 100%; height: 4px; cursor: pointer; accent-color: #818cf8;
-}
+.font-pg__range { width: 100%; } /* slider visual unified globally in main.css (input[type=range]) */
 
 .font-pg__transform { display: flex; flex-direction: column; gap: 5px; }
 .font-pg__section-head {

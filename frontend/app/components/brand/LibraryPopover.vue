@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import type { BrandKit, BrandKitEntry } from '~~/shared/brand/types'
 import { useBrandLibrary, slugifyKitName } from '~/composables/useBrandLibrary'
 
-const props = defineProps<{ activeKitId: string | null | undefined }>()
+const props = defineProps<{ activeKitId: string | null | undefined; embedded?: boolean }>()
 const emit = defineEmits<{ 'set-active': [id: string | null] }>()
 
 const activeIdRef = computed(() => props.activeKitId)
@@ -48,7 +48,7 @@ const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
 </script>
 
 <template>
-  <div class="w-80 rounded-xl bg-[#111113] border border-white/10 p-3 space-y-3 text-xs shadow-2xl">
+  <div :class="embedded ? 'space-y-3 text-xs' : 'w-80 rounded-xl bg-[#111113] border border-white/10 p-3 space-y-3 text-xs shadow-2xl'">
     <div class="flex items-center justify-between">
       <span class="font-medium text-white/80">Brand kits</span>
       <span class="flex gap-1">

@@ -52,9 +52,17 @@ export interface StudioChromatic {
   amount: number // [0,1]
 }
 
+export interface StudioBloom {
+  enabled: boolean
+  threshold: number // [0,1] brightness cutoff that glows
+  intensity: number // [0,3] glow strength added back
+  radius: number    // px spread of the glow
+}
+
 export interface StudioPost {
   blur: StudioBlur
   chromatic: StudioChromatic
+  bloom: StudioBloom
 }
 
 export interface MotionTrack {
@@ -101,6 +109,7 @@ export function defaultConfig(): ShaderStudioConfig {
     post: {
       blur: { enabled: false, focusX: 0.5, focusY: 0.5, range: 0.2, aperture: 0.25, maxBlur: 8 },
       chromatic: { enabled: false, amount: 0.3 },
+      bloom: { enabled: false, threshold: 0.75, intensity: 0.8, radius: 64 },
     },
     motion: { duration: 4, fps: 30, tracks: [] },
   }
@@ -108,6 +117,19 @@ export function defaultConfig(): ShaderStudioConfig {
 
 export function cloneConfig(c: ShaderStudioConfig): ShaderStudioConfig {
   return JSON.parse(JSON.stringify(c))
+}
+
+/** Recursively fill any keys missing from a (possibly older) saved config. */
+function deepMerge<T>(base: T, over: any): T {
+  if (over == null || typeof over !== 'object' || Array.isArray(over)) return (over ?? base) as T
+  const out: any = { ...(base as any) }
+  for (const k of Object.keys(over)) out[k] = deepMerge((base as any)?.[k], over[k])
+  return out
+}
+
+/** Merge a saved config over current defaults so new fields (e.g. post.bloom) exist. */
+export function hydrateConfig(raw: any): ShaderStudioConfig {
+  return deepMerge(defaultConfig(), raw)
 }
 
 /** Fit (w,h) inside a long-edge cap, preserving aspect, returning even integers. */

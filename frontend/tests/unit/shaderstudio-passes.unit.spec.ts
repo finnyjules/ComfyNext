@@ -41,6 +41,18 @@ describe('composePasses', () => {
     expect(duo.uniforms.u_paper_r).toBe(1)
   })
 
+  it('appends bloom last with its uniforms when enabled', () => {
+    const c = defaultConfig()
+    c.post.chromatic.enabled = true
+    c.post.bloom = { enabled: true, threshold: 0.6, intensity: 1.2, radius: 80 }
+    const passes = composePasses(c, null, 0)
+    expect(passes.map(p => p.id)).toEqual(['studio:chromatic', 'studio:bloom'])
+    const bloom = passes[passes.length - 1]!
+    expect(bloom.uniforms.u_threshold).toBe(0.6)
+    expect(bloom.uniforms.u_intensity).toBe(1.2)
+    expect(bloom.uniforms.u_radius).toBe(80)
+  })
+
   it('expands a multi-pass effect into N passes', () => {
     const c = defaultConfig()
     c.effect = { id: 'bloom', params: {}, enabled: true }

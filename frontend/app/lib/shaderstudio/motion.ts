@@ -18,6 +18,7 @@ export const ANIMATABLE: { path: string; label: string; min: number; max: number
   { path: 'post.blur.focusY', label: 'Focus Y', min: 0, max: 1 },
   { path: 'post.blur.maxBlur', label: 'Max blur', min: 0, max: 40 },
   { path: 'post.chromatic.amount', label: 'Chromatic', min: 0, max: 1 },
+  { path: 'post.bloom.intensity', label: 'Bloom', min: 0, max: 3 },
 ]
 
 export function getByPath(obj: any, path: string): number {

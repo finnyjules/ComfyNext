@@ -4,23 +4,35 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Shared slim white slider for the media studios (StudioSlider + auto-built controls).
-   The hit area is tall enough to CONTAIN the 12px thumb (so it never overflows into the
-   labels above/below), with the visible track drawn thin via the track pseudo-element.
-   Margin: snug under its own label, clear gap before the next control — so each
-   label+slider reads as one group. */
-.studio-range { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; margin: 0 0 0.85rem; background: transparent; cursor: pointer; }
-/* Inline variant for sliders that sit IN a row (e.g. fillList angle/density) rather than
-   full-width under a label. Two classes → beats `.studio-range`'s width:100% (and the Tailwind
-   width utility, which is in @layer utilities and so loses to non-layered rules). */
+/* ── Unified app slider ──────────────────────────────────────────────────────
+   EVERY <input type="range"> gets the slim white "studio" look: a 2px white/12%
+   track and a 12px solid-white thumb, inside a 14px hit area (so the thumb never
+   overflows into the labels above/below). Width + margin stay per-usage (Tailwind
+   w-full / flex-1 / etc.); the `.studio-range` helper below adds the full-width +
+   grouping margin the media studios rely on. Edit the slider's identity HERE only.
+   Components that want a different slider must out-specify this base (e.g. a scoped
+   class) — but prefer this so the whole app stays consistent. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+input[type="range"]::-moz-range-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -5px; width: 12px; height: 12px; border-radius: 9999px; background: #fff; cursor: pointer; }
+input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 9999px; background: #fff; cursor: pointer; }
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
+input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
+
+/* Full-width labeled variant for the media studios (StudioSlider + auto-built
+   controls): width + a grouping margin so each label+slider reads as one block. */
+.studio-range { width: 100%; margin: 0 0 0.85rem; }
+/* Inline variant for sliders that sit IN a row (e.g. fillList angle/density). Two
+   classes → beats `.studio-range`'s width:100% and the Tailwind width utility. */
 .studio-range.studio-range-inline { width: 3.5rem; margin: 0; flex: none; }
-.studio-range::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
-.studio-range::-moz-range-track { height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
-.studio-range::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -5px; width: 12px; height: 12px; border-radius: 9999px; background: #fff; cursor: pointer; }
-.studio-range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 9999px; background: #fff; cursor: pointer; }
-.studio-range:focus-visible { outline: none; }
-.studio-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
-.studio-range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
 
 @theme inline {
   --font-sans: 'PP Neue Montreal', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -262,4 +274,20 @@
 .pastel-hairline:focus-visible {
   border-width: 1px;
   filter: saturate(1);
+}
+
+/* Generate-in-region / inpaint button: the same flowing pastel palette as the
+   region stroke, animated with a gentle alternate pan so there's no seam jump.
+   Shared by the Compositor's gen panel and the Image-artifact Inpaint modal.
+   Falls back to the global --pastel-gradient when no --gen-pastel is bound. */
+.gen-pastel {
+  background-image: var(--gen-pastel, var(--pastel-gradient));
+  background-size: 200% 100%;
+  animation: gen-pastel-flow 6s ease-in-out infinite alternate;
+}
+.gen-pastel:hover { filter: brightness(1.06); }
+.gen-pastel:disabled { animation: none; }
+@keyframes gen-pastel-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
 }

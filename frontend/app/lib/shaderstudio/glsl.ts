@@ -66,6 +66,30 @@ void main() {
 }
 `
 
+export const BLOOM_FS = HEAD + `
+uniform float u_threshold, u_intensity, u_radius;
+void main() {
+  vec3 base = texture(u_image0, v_texCoord).rgb;
+  vec2 px = u_radius / u_resolution;            // glow radius (px) → uv
+  vec3 bloom = vec3(0.0);
+  float wsum = 0.0;
+  const int N = 64;
+  for (int i = 0; i < N; i++) {
+    float t = (float(i) + 0.5) / float(N);
+    float ang = float(i) * 2.39996323;          // golden-angle sunflower disc
+    vec2 off = vec2(cos(ang), sin(ang)) * sqrt(t) * px;
+    vec3 c = texture(u_image0, v_texCoord + off).rgb;
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    vec3 bright = c * smoothstep(u_threshold, u_threshold + 0.2, l);  // bright-pass
+    float w = 1.0 - sqrt(t);                     // soft center-weighted kernel
+    bloom += bright * w;
+    wsum += w;
+  }
+  bloom /= max(wsum, 1e-4);
+  fragColor0 = vec4(clamp(base + bloom * u_intensity, 0.0, 1.0), 1.0);
+}
+`
+
 export const CHROMATIC_FS = HEAD + `
 uniform float u_amount;
 void main() {

@@ -110,33 +110,6 @@ function openGallery() {
 </template>
 
 <style scoped>
-.lora-strength {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 3px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.14);
-  outline: none;
-  cursor: pointer;
-}
-.lora-strength::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 11px;
-  height: 11px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 2px solid rgba(0, 0, 0, 0.35);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  transition: transform 0.1s ease;
-}
-.lora-strength:active::-webkit-slider-thumb { transform: scale(1.15); }
-.lora-strength::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 2px solid rgba(0, 0, 0, 0.35);
-  cursor: pointer;
-}
+/* Slider visual is unified globally in main.css (input[type=range], the studio look);
+   width comes from `flex-1 min-w-0` in the template. */
 </style>

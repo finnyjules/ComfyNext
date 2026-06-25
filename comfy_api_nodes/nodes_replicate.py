@@ -504,7 +504,6 @@ class FluxLoRARemoteNode(IO.ComfyNode):
             ],
             outputs=[
                 IO.Image.Output(),
-                IO.String.Output(display_name="info"),
             ],
             price_badge=IO.PriceBadge(
                 expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}',
@@ -586,21 +585,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
         if tensor.dim() == 4 and tensor.shape[-1] == 4:
             tensor = tensor[..., :3].contiguous()
 
-        # Surface what was actually sent so the user can sanity-check via a
-        # Preview as Text node. Confirms whether a LoRA was applied and which.
-        actual_seed = pred.get("input", {}).get("seed", "random")
-        logs_tail = (pred.get("logs") or "").strip().split("\n")[-3:]
-        info_lines = [
-            f"mode: {'image-to-image' if img2img else 'text-to-image'}",
-            f"model: {model}",
-            f"lora: {resolved_lora or '(none — vanilla Flux Dev)'}"
-            + (" [baked-in]" if trained_model else ""),
-            f"scale: {lora_scale if resolved_lora else 'n/a'}",
-            (f"prompt_strength: {prompt_strength}" if img2img else f"aspect: {aspect_ratio} @ {megapixels}MP"),
-            f"seed: {actual_seed}",
-            "logs: " + " | ".join(logs_tail) if logs_tail else "",
-        ]
-        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line), ui=save_generation_output(tensor, "flux_lora"))
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "flux_lora"))
 
 
 # =============================================================================
@@ -723,7 +708,6 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
             ],
             outputs=[
                 IO.Image.Output(),
-                IO.String.Output(display_name="info"),
             ],
             price_badge=IO.PriceBadge(
                 expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}',
@@ -813,18 +797,15 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
             return "Downloading LoRA weights" in (p.get("logs") or "")
 
         pred = await _run_prediction("lucataco/flux-dev-multi-lora", input_dict)
-        retried = False
         if loras and len(loras) >= 2 and not _loaded(pred):
             # Skipped on a warm container. Flip the order — now guaranteed to
             # differ from whatever it cached — and retry once to force a reload.
-            retried = True
             loras = list(reversed(loras))
             scales = list(reversed(scales))
             input_dict["hf_loras"] = loras
             input_dict["lora_scales"] = scales
             pred = await _run_prediction("lucataco/flux-dev-multi-lora", input_dict)
 
-        loras_loaded = _loaded(pred)
         tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
 
         # Drop any alpha channel — a spurious alpha routes the downstream Image
@@ -832,20 +813,7 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
         if tensor.dim() == 4 and tensor.shape[-1] == 4:
             tensor = tensor[..., :3].contiguous()
 
-        actual_seed = pred.get("input", {}).get("seed", "random")
-        logs_tail = (pred.get("logs") or "").strip().split("\n")[-3:]
-        info_lines = [
-            f"mode: {'image-to-image' if img2img else 'text-to-image'}",
-            "model: lucataco/flux-dev-multi-lora",
-            "loras: " + ", ".join(f"{lref} @ {s}" for lref, s in zip(loras, scales)),
-            f"loras_loaded: {'yes' if loras_loaded else 'NO — stacking may not have applied'}"
-            + (" (after retry)" if retried else ""),
-            (f"prompt_strength: {prompt_strength}" if img2img else f"aspect: {aspect_ratio}"),
-            f"steps: {num_inference_steps}, guidance: {guidance}",
-            f"seed: {actual_seed}",
-            "logs: " + " | ".join(logs_tail) if logs_tail else "",
-        ]
-        return IO.NodeOutput(tensor, "\n".join(line for line in info_lines if line), ui=save_generation_output(tensor, "flux_multilora"))
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "flux_multilora"))
 
 
 # =============================================================================

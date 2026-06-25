@@ -6,7 +6,7 @@
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/renderer'
 import type { EffectDef } from '~/lib/shaderfx/types'
-import { ADJUST_FS, CHROMATIC_FS, DUOTONE_FS, LENS_BLUR_FS } from './glsl'
+import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, LENS_BLUR_FS } from './glsl'
 import type { ShaderStudioConfig } from './types'
 
 /** Hex (#rrggbb) → {r,g,b} in 0..1. */
@@ -73,6 +73,14 @@ export function composePasses(
   // 5. Chromatic aberration
   if (cfg.post.chromatic.enabled) {
     out.push({ id: 'studio:chromatic', source: CHROMATIC_FS, uniforms: { u_amount: cfg.post.chromatic.amount } })
+  }
+
+  // 6. Bloom (glows the final composited image)
+  if (cfg.post.bloom?.enabled) {
+    const bl = cfg.post.bloom
+    out.push({ id: 'studio:bloom', source: BLOOM_FS, uniforms: {
+      u_threshold: bl.threshold, u_intensity: bl.intensity, u_radius: bl.radius,
+    } })
   }
 
   return out

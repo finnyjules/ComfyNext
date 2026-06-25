@@ -16,7 +16,7 @@ import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/pass
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, DUOTONE_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
 import { loadImage } from '~/lib/shaderstudio/source'
-import { cloneConfig, defaultConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; wiredUrl?: string | null }>()
@@ -107,7 +107,23 @@ const pickerFilter = ref('all')
 const thumbs = ref<Record<string, string>>({})
 const thumbCache: Record<string, string> = ((globalThis as any).__shaderStudioThumbs ??= {})
 function titleCase(s: string): string { return s.replace(/(^|[_\s])(\w)/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase()).trim() }
+// Base image every gallery thumbnail is rendered over. Starts as a gradient and
+// is replaced with the finn_shader sample once it loads (see below).
 const placeholder = (() => { const c = document.createElement('canvas'); c.width = 192; c.height = 108; const g = c.getContext('2d')!; const lg = g.createLinearGradient(0, 0, 192, 108); lg.addColorStop(0, '#444'); lg.addColorStop(1, '#999'); g.fillStyle = lg; g.fillRect(0, 0, 192, 108); return c })()
+;(() => {
+  const img = new Image()
+  img.onload = () => {
+    const g = placeholder.getContext('2d')!
+    const s = Math.min(img.width / 192, img.height / 108)  // cover-fit square → 16:9
+    const sw = 192 * s, sh = 108 * s
+    g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, 192, 108)
+    for (const k of Object.keys(thumbCache)) delete thumbCache[k]  // bust stale gradient thumbs
+    thumbs.value = {}
+    if (pickerOpen.value) for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def)
+    if (effectDef.value) ensureThumb(effectDef.value)
+  }
+  img.src = '/finn_shader.png'
+})()
 const pickerFilters = computed(() => {
   const counts = new Map<string, number>()
   for (const e of catalog.value?.effects ?? []) if (!e.generative) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
@@ -162,7 +178,7 @@ function addTrack() {
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
 
 // ── persistence ────────────────────────────────────────────────────────────────
-function loadConfig() { const c = currentNode()?.data?.properties?.comfynext_shaderStudio; if (c && typeof c === 'object') config.value = cloneConfig(c) }
+function loadConfig() { const c = currentNode()?.data?.properties?.comfynext_shaderStudio; if (c && typeof c === 'object') config.value = hydrateConfig(c) }
 function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.comfynext_shaderStudio = cloneConfig(config.value) }
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
@@ -332,6 +348,16 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
         <template v-if="config.post.chromatic.enabled">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Amount</span><span class="text-white/40">{{ config.post.chromatic.amount.toFixed(2) }}</span></label>
           <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+        </template>
+
+        <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Bloom</span><StudioSwitch v-model="config.post.bloom.enabled" /></div>
+        <template v-if="config.post.bloom.enabled">
+          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Threshold</span><span class="text-white/40">{{ config.post.bloom.threshold.toFixed(2) }}</span></label>
+          <input v-model.number="config.post.bloom.threshold" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Intensity</span><span class="text-white/40">{{ config.post.bloom.intensity.toFixed(2) }}</span></label>
+          <input v-model.number="config.post.bloom.intensity" type="range" min="0" max="3" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Radius</span><span class="text-white/40">{{ config.post.bloom.radius.toFixed(0) }}</span></label>
+          <input v-model.number="config.post.bloom.radius" type="range" min="4" max="200" step="2" v-studio-reset class="studio-range w-full" />
         </template>
       </StudioSection>
 

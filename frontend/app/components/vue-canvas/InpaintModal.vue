@@ -11,10 +11,11 @@
  * Image artifact. Generation runs in-modal via /api/inpaint/* (your Replicate
  * token) for instant variations/compare — not at graph-execution time.
  */
-import { X, Brush, Eraser, Eye, EyeOff, Wand2, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2, ZoomIn, ZoomOut, Maximize } from 'lucide-vue-next'
+import { X, Brush, Eraser, Eye, EyeOff, Wand2, BoxSelect, ImagePlus, Loader2, FlipHorizontal2, Undo2, Redo2, ZoomIn, ZoomOut, Maximize } from 'lucide-vue-next'
 import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
 import { useStageView } from '~/composables/useStageView'
+import { useRegionFx } from '~/composables/useRegionFx'
 
 const props = defineProps<{
   nodeId: string
@@ -73,7 +74,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); brush.resetHistory(); clearSamMask(); history.value = []; previewResult.value = null; maskOnly.value = false
+  brush.clear(); brush.resetHistory(); clearSamMask(); boxRect.value = null; history.value = []; previewResult.value = null; maskOnly.value = false
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -107,22 +108,88 @@ const feather = ref(3)
 const expand = ref(0)
 const mode = ref<'mask' | 'describe'>('mask')
 const maskOnly = ref(false) // hide the photo, show only the painted region (inspection)
+
+// ── Region tool (mirrors the Frame modal's Box/Brush row) ────────────────────
+// 'paint'/'erase' drive the brush; 'select' is SAM click-to-select; 'box' drags
+// a rectangular region that composites with the brush mask.
+type Tool = 'paint' | 'erase' | 'select' | 'box'
+const tool = ref<Tool>('paint')
+watch(tool, (t) => {
+  if (t === 'paint') brush.mode.value = 'add'
+  else if (t === 'erase') brush.mode.value = 'erase'
+})
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+const boxRect = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+const boxDragging = ref(false)
+function boxNorm(b: { x0: number; y0: number; x1: number; y1: number }) {
+  return { l: Math.min(b.x0, b.x1), t: Math.min(b.y0, b.y1), r: Math.max(b.x0, b.x1), bo: Math.max(b.y0, b.y1) }
+}
+const hasBox = computed(() => {
+  const b = boxRect.value; if (!b) return false
+  const n = boxNorm(b); return (n.r - n.l) > 0.005 && (n.bo - n.t) > 0.005
+})
+
+// ── Shared "generate in region" overlay + glimm prism sweep (same as Frame) ──
+const fxOverlay = ref<HTMLCanvasElement | null>(null)
+const fxSweep = ref<HTMLCanvasElement | null>(null)
+const regionSilhouette = ref<HTMLCanvasElement | null>(null) // white-on-transparent, display px
+const regionFx = useRegionFx({
+  overlay: fxOverlay,
+  sweep: fxSweep,
+  getMask: () => regionSilhouette.value,
+  getDims: () => ({ w: disp.w, h: disp.h }),
+  busy: () => inpaint.busy.value,
+})
+const { sweepMaskUrl: fxSweepMaskUrl } = regionFx
+// Show the animated region FX while actively defining/generating a mask — not in
+// mask-only inspection (overlay draws a crisp silhouette there) or while hovering
+// a candidate result (the preview replaces the stage).
+const showFx = computed(() => mode.value === 'mask' && !maskOnly.value && !previewImgEl.value)
 interface HistoryItem { id: string; url: string; prompt: string; mode: 'mask' | 'describe' }
 const history = ref<HistoryItem[]>([])
 const inpaintError = ref('')
 const comparing = ref(false)
 
-const samSelect = ref(false)
+const samSelect = computed(() => tool.value === 'select')
 const samMask = ref<string | null>(null)
 const samMaskImgEl = ref<HTMLImageElement | null>(null)
 watch(samMask, async (url) => {
-  if (!url) { samMaskImgEl.value = null; renderOverlay(); return }
+  if (!url) { samMaskImgEl.value = null; rebuildSilhouette(); renderOverlay(); return }
   try { samMaskImgEl.value = await loadImage(url) } catch { samMaskImgEl.value = null }
-  renderOverlay()
+  rebuildSilhouette(); renderOverlay()
 })
 function clearSamMask() { samMask.value = null }
-function clearMask() { brush.clear(); clearSamMask() }
-watch(mode, (m) => { if (m === 'describe') { clearMask(); samSelect.value = false; maskOnly.value = false } })
+function clearMask() { brush.clear(); clearSamMask(); boxRect.value = null }
+watch(mode, (m) => { if (m === 'describe') { clearMask(); tool.value = 'paint'; maskOnly.value = false } })
+
+// Rebuild the white-on-transparent region silhouette from brush + box + SAM, then
+// refresh the FX ring/sweep mask. This drives the Frame's pulsing fill + flowing
+// pastel stroke around whatever the user has marked.
+function rebuildSilhouette() {
+  if (!hasRegion.value) { regionSilhouette.value = null; regionFx.rebuild(); return }
+  const W = Math.max(1, Math.round(disp.w)), H = Math.max(1, Math.round(disp.h))
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+  const ctx = cv.getContext('2d'); if (!ctx) { regionSilhouette.value = null; regionFx.rebuild(); return }
+  if (brush.strokes.value.length) brush.stampMask(ctx, x => x * W, y => y * H, r => r * W)
+  if (hasBox.value && boxRect.value) {
+    const n = boxNorm(boxRect.value)
+    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#fff'
+    ctx.fillRect(n.l * W, n.t * H, (n.r - n.l) * W, (n.bo - n.t) * H)
+  }
+  if (samMaskImgEl.value) {
+    // SAM masks are white-region on opaque black → convert luminance to alpha.
+    const mw = samMaskImgEl.value.naturalWidth || W, mh = samMaskImgEl.value.naturalHeight || H
+    const t = document.createElement('canvas'); t.width = mw; t.height = mh
+    const tc = t.getContext('2d')!; tc.drawImage(samMaskImgEl.value, 0, 0)
+    const img = tc.getImageData(0, 0, mw, mh), d = img.data
+    for (let i = 0; i < d.length; i += 4) { const a = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; d[i + 3] = a }
+    tc.putImageData(img, 0, 0)
+    ctx.globalCompositeOperation = 'source-over'; ctx.drawImage(t, 0, 0, W, H)
+  }
+  regionSilhouette.value = cv
+  regionFx.rebuild()
+}
+watch([() => disp.w, () => disp.h, () => brush.strokes.value, () => brush.inverted.value, boxRect], rebuildSilhouette, { deep: true })
 // Mask-only is a pre-generation inspection aid; drop it once a result lands so
 // the stage doesn't sit on a blank black backdrop (renderOverlay shows results,
 // not the mask, once history exists).
@@ -144,9 +211,15 @@ function onPointerDown(e: PointerEvent) {
   }
   const p = clientToNorm(e); if (!p) return
   e.preventDefault()
-  if (samSelect.value) { doSamSelect(p.nx, p.ny); return }
-  clearSamMask()
+  if (tool.value === 'select') { doSamSelect(p.nx, p.ny); return }
   ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+  if (tool.value === 'box') {
+    clearSamMask()
+    boxDragging.value = true
+    boxRect.value = { x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny }
+    return
+  }
+  clearSamMask()
   brush.down(p.nx, p.ny, disp.w)
 }
 function onPointerMove(e: PointerEvent) {
@@ -155,9 +228,18 @@ function onPointerMove(e: PointerEvent) {
     panLast = { x: e.clientX, y: e.clientY }
     return
   }
-  const p = clientToNorm(e); if (p) brush.move(p.nx, p.ny)
+  const p = clientToNorm(e); if (!p) return
+  if (boxDragging.value && boxRect.value) {
+    boxRect.value = { ...boxRect.value, x1: clamp01(p.nx), y1: clamp01(p.ny) }
+    return
+  }
+  if (tool.value === 'paint' || tool.value === 'erase') brush.move(p.nx, p.ny)
 }
-function onPointerUp() { if (panning.value) { panning.value = false; panLast = null } else brush.up() }
+function onPointerUp() {
+  if (panning.value) { panning.value = false; panLast = null }
+  else if (boxDragging.value) { boxDragging.value = false; if (!hasBox.value) boxRect.value = null; rebuildSilhouette() }
+  else brush.up()
+}
 function onWheel(e: WheelEvent) {
   const r = stageRef.value?.getBoundingClientRect(); if (!r) return
   e.preventDefault()
@@ -179,20 +261,14 @@ function renderOverlay() {
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
-  // Candidate result preview (hidden while holding compare).
-  if (previewImgEl.value && !comparing.value) ctx.drawImage(previewImgEl.value, 0, 0, W, H)
-  if (history.value.length && !maskOnly.value) return // once results exist show the preview, unless inspecting the mask
-  // SAM selection wash.
-  if (samMaskImgEl.value) {
-    const mw = samMaskImgEl.value.naturalWidth || 1, mh = samMaskImgEl.value.naturalHeight || 1
-    const tmp = document.createElement('canvas'); tmp.width = mw; tmp.height = mh
-    const tx = tmp.getContext('2d')!
-    tx.drawImage(samMaskImgEl.value, 0, 0)
-    tx.globalCompositeOperation = 'source-in'; tx.fillStyle = 'rgba(56,189,248,0.45)'; tx.fillRect(0, 0, mw, mh)
-    ctx.drawImage(tmp, 0, 0, W, H)
+  // Mask-only inspection: draw a crisp solid silhouette over the blacked-out photo.
+  if (maskOnly.value) {
+    if (regionSilhouette.value) ctx.drawImage(regionSilhouette.value, 0, 0, W, H)
+    return
   }
-  // Brush wash.
-  brush.render(ctx, W, H)
+  // Candidate result preview (hidden while holding compare). The painted region
+  // itself is drawn by the animated FX overlay (pulse + pastel ring), not here.
+  if (previewImgEl.value && !comparing.value) ctx.drawImage(previewImgEl.value, 0, 0, W, H)
 }
 watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted.value, comparing.value, history.value.length, maskOnly.value] as const,
   () => renderOverlay())
@@ -207,7 +283,32 @@ watch(previewResult, async (url) => {
 })
 
 // ── Generate / accept ────────────────────────────────────────────────────────
-const hasRegion = computed(() => brush.hasMask.value || !!samMask.value)
+const hasRegion = computed(() => brush.hasMask.value || !!samMask.value || hasBox.value)
+
+// Bake the brush mask and composite the box rect into it (output px, black bg +
+// white region) → data URL. Returns null when neither brush nor box is set.
+function bakeRegionMask(): string | null {
+  const target: MaskTarget = {
+    artW: disp.w, artH: disp.h, cxPx: disp.w / 2, cyPx: disp.h / 2,
+    dwPx: disp.w, dhPx: disp.h, rotationDeg: 0, outW: out.value.w, outH: out.value.h,
+  }
+  const brushCv = brush.hasMask.value ? brush.bakeMask(target, { featherPx: feather.value, expandPx: expand.value }) : null
+  if (!brushCv && !hasBox.value) return null
+  const W = Math.max(1, Math.round(out.value.w)), H = Math.max(1, Math.round(out.value.h))
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+  const ctx = cv.getContext('2d')!
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H)
+  if (brushCv) ctx.drawImage(brushCv, 0, 0, W, H)
+  if (hasBox.value && boxRect.value) {
+    const n = boxNorm(boxRect.value)
+    ctx.save()
+    if (feather.value > 0) ctx.filter = `blur(${feather.value}px)`
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(n.l * W, n.t * H, (n.r - n.l) * W, (n.bo - n.t) * H)
+    ctx.restore()
+  }
+  return cv.toDataURL('image/png')
+}
 
 async function runInpaint(removeMode = false) {
   inpaintError.value = ''
@@ -224,14 +325,7 @@ async function runInpaint(removeMode = false) {
       images = await inpaint.kontext(source, p, { count: count.value })
     } else {
       let maskUrl = samMask.value
-      if (!maskUrl) {
-        const target: MaskTarget = {
-          artW: disp.w, artH: disp.h, cxPx: disp.w / 2, cyPx: disp.h / 2,
-          dwPx: disp.w, dhPx: disp.h, rotationDeg: 0, outW: out.value.w, outH: out.value.h,
-        }
-        const cv = brush.bakeMask(target, { featherPx: feather.value, expandPx: expand.value })
-        maskUrl = cv ? cv.toDataURL('image/png') : null
-      }
+      if (!maskUrl) maskUrl = bakeRegionMask()
       if (!maskUrl) { inpaintError.value = 'Paint or click-select a region first.'; return }
       images = await inpaint.fluxFill(source, maskUrl, p, { tier: tier.value, count: count.value })
     }
@@ -275,7 +369,7 @@ async function doSamSelect(nx: number, ny: number) {
     brush.clear()
   } catch {
     inpaintError.value = 'Click-select unavailable (check SAM model); paint the area instead.'
-    samSelect.value = false
+    tool.value = 'paint'
   }
 }
 
@@ -302,7 +396,7 @@ function onKeydown(e: KeyboardEvent) {
   if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) brush.redo(); else brush.undo(); return }
   if (meta && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); brush.redo(); return }
   if (e.key === '[' || e.key === ']') { e.preventDefault(); brush.sizePx.value = Math.max(4, Math.min(400, brush.sizePx.value + (e.key === ']' ? 8 : -8))) }
-  else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); brush.mode.value = brush.mode.value === 'add' ? 'erase' : 'add' }
+  else if ((e.key === 'x' || e.key === 'X') && (tool.value === 'paint' || tool.value === 'erase')) { e.preventDefault(); tool.value = tool.value === 'paint' ? 'erase' : 'paint' }
 }
 function onKeyup(e: KeyboardEvent) { if (e.code === 'Space') spaceDown.value = false }
 // Releasing focus (alt-tab, Spotlight, system dialog) can swallow the Space keyup
@@ -314,6 +408,7 @@ onMounted(() => {
   window.addEventListener('blur', onBlur)
   applySource(sourceUrl.value) // initial load (watches above are non-immediate)
   renderOverlay()
+  regionFx.start() // animate the region overlay + prism sweep while the modal is open
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown, true)
@@ -346,7 +441,7 @@ onBeforeUnmount(() => {
           v-else
           ref="stageRef"
           class="relative rounded-md overflow-hidden ring-1 ring-white/10"
-          :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : samSelect ? 'cursor-crosshair' : 'cursor-none'"
+          :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : (samSelect || tool === 'box') ? 'cursor-crosshair' : 'cursor-none'"
           :style="{ width: disp.w + 'px', height: disp.h + 'px' }"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
@@ -357,10 +452,44 @@ onBeforeUnmount(() => {
             <img v-if="sourceImg" :src="sourceImg.src" class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity" :class="maskOnly ? 'opacity-0' : 'opacity-100'" draggable="false" />
             <div v-if="maskOnly" class="absolute inset-0 bg-black pointer-events-none" />
             <canvas ref="overlay" class="absolute inset-0 pointer-events-none" :style="{ width: disp.w + 'px', height: disp.h + 'px' }" />
+            <!-- Region FX: pulsing fill + flowing pastel stroke (same as the Frame modal). -->
+            <canvas
+              v-show="showFx"
+              ref="fxOverlay"
+              class="absolute inset-0 pointer-events-none"
+              :style="{ width: disp.w + 'px', height: disp.h + 'px', opacity: 0.9 }"
+            />
+            <!-- glimm prism sweep while generating, clipped to the region silhouette. -->
+            <canvas
+              v-show="showFx"
+              ref="fxSweep"
+              class="absolute inset-0 pointer-events-none"
+              :style="{
+                width: disp.w + 'px',
+                height: disp.h + 'px',
+                opacity: inpaint.busy.value ? 1 : 0,
+                transition: 'opacity 240ms ease',
+                maskImage: fxSweepMaskUrl ? `url(${fxSweepMaskUrl})` : 'none',
+                WebkitMaskImage: fxSweepMaskUrl ? `url(${fxSweepMaskUrl})` : 'none',
+                maskSize: '100% 100%', WebkitMaskSize: '100% 100%',
+                maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
+              }"
+            />
+            <!-- Live box-drag outline (crisp dashed rect while dragging the Box tool). -->
+            <div
+              v-if="tool === 'box' && boxRect"
+              class="absolute pointer-events-none border border-white/90 bg-white/5"
+              :style="{
+                left: boxNorm(boxRect).l * disp.w + 'px',
+                top: boxNorm(boxRect).t * disp.h + 'px',
+                width: (boxNorm(boxRect).r - boxNorm(boxRect).l) * disp.w + 'px',
+                height: (boxNorm(boxRect).bo - boxNorm(boxRect).t) * disp.h + 'px',
+              }"
+            />
           </div>
           <!-- brush cursor ring (screen space; scales with zoom) -->
           <div
-            v-if="!samSelect && !spaceDown && !panning && cursorScreen"
+            v-if="(tool === 'paint' || tool === 'erase') && !spaceDown && !panning && cursorScreen"
             class="absolute pointer-events-none rounded-full border-2"
             :class="brush.mode.value === 'erase' ? 'border-rose-400/90' : 'border-white/90'"
             :style="{ left: cursorScreen.sx + 'px', top: cursorScreen.sy + 'px', width: brush.sizePx.value * view.scale.value + 'px', height: brush.sizePx.value * view.scale.value + 'px', transform: 'translate(-50%, -50%)', boxShadow: '0 0 0 1px rgba(0,0,0,0.55)' }"
@@ -380,71 +509,96 @@ onBeforeUnmount(() => {
       <!-- Controls -->
       <div class="w-80 border-l border-white/10 shrink-0 flex flex-col">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-          <Brush class="size-4 text-white/70" />
+          <Wand2 class="size-3.5 text-white/70" />
           <span class="text-sm font-semibold tracking-tight">Inpaint</span>
         </div>
 
-        <div class="p-4 flex flex-col gap-3 overflow-y-auto">
-          <!-- Mode -->
-          <div class="flex gap-1 bg-white/[0.04] rounded-md p-0.5">
-            <button class="flex-1 h-7 rounded text-[11px] cursor-pointer" :class="mode === 'mask' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'" @click="mode = 'mask'">Paint mask</button>
-            <button class="flex-1 h-7 rounded text-[11px] cursor-pointer" :class="mode === 'describe' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'" @click="mode = 'describe'">Describe (no mask)</button>
+        <div class="p-5 flex flex-col gap-7 flex-1 min-h-0 overflow-y-auto">
+          <!-- Method -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2.5">Method</div>
+            <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
+              <button class="flex-1 h-8 rounded text-[11px] cursor-pointer transition-colors" :class="mode === 'mask' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'" @click="mode = 'mask'">Paint mask</button>
+              <button class="flex-1 h-8 rounded text-[11px] cursor-pointer transition-colors" :class="mode === 'describe' ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'" @click="mode = 'describe'">Describe</button>
+            </div>
           </div>
 
-          <!-- Brush controls -->
-          <template v-if="mode === 'mask'">
-            <div class="flex items-center gap-1.5">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'add' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'" title="Paint (X)" @click="brush.mode.value = 'add'"><Brush class="size-3.5" /> Paint</button>
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.mode.value === 'erase' ? 'bg-rose-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Erase (X)" @click="brush.mode.value = 'erase'"><Eraser class="size-3.5" /> Erase</button>
-              <button class="ml-auto size-7 rounded-md flex items-center justify-center cursor-pointer" :class="samSelect ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" aria-label="Click-select an object" :title="samSelect ? 'Click an object to auto-select it' : 'Click-select an object (SAM · beta, falls back to brushing)'" @click="samSelect = !samSelect"><Wand2 class="size-3.5" /></button>
+          <!-- Region tool -->
+          <div v-if="mode === 'mask'">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2.5">Tool</div>
+            <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
+              <button class="flex-1 h-8 rounded flex items-center justify-center cursor-pointer transition-colors" :class="tool === 'paint' ? 'bg-white text-neutral-900' : 'text-white/70 hover:bg-white/10'" title="Paint (X)" @click="tool = 'paint'"><Brush class="size-3.5" /></button>
+              <button class="flex-1 h-8 rounded flex items-center justify-center cursor-pointer transition-colors" :class="tool === 'erase' ? 'bg-rose-400/90 text-neutral-900' : 'text-white/70 hover:bg-white/10'" title="Erase (X)" @click="tool = 'erase'"><Eraser class="size-3.5" /></button>
+              <button class="flex-1 h-8 rounded flex items-center justify-center cursor-pointer transition-colors" :class="tool === 'box' ? 'bg-white text-neutral-900' : 'text-white/70 hover:bg-white/10'" title="Box — drag a rectangular region" @click="tool = 'box'"><BoxSelect class="size-3.5" /></button>
+              <button class="flex-1 h-8 rounded flex items-center justify-center cursor-pointer transition-colors" :class="tool === 'select' ? 'bg-white text-neutral-900' : 'text-white/70 hover:bg-white/10'" title="Click-select an object (SAM · beta, falls back to brushing)" @click="tool = 'select'"><Wand2 class="size-3.5" /></button>
             </div>
-            <label class="flex items-center gap-2 text-[11px] text-white/50">Size
+
+            <div v-if="tool === 'paint' || tool === 'erase'" class="flex items-center gap-2 mt-3.5">
+              <span class="text-[10px] text-white/40 w-12 shrink-0">Size</span>
               <input type="range" min="4" max="200" :value="brush.sizePx.value" class="flex-1 accent-white cursor-pointer" title="Brush size ([ / ])" @input="brush.sizePx.value = +($event.target as HTMLInputElement).value" />
-            </label>
-            <div class="flex items-center gap-1.5">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="brush.inverted.value ? 'bg-amber-400/90 text-black' : 'bg-white/[0.06] text-white/70'" title="Invert: paint what to keep, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask only</button>
-              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 text-[11px] cursor-pointer" title="Clear mask" @click="clearMask()">Clear</button>
+              <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ brush.sizePx.value }}</span>
             </div>
-          </template>
+            <p v-else-if="tool === 'box'" class="text-[10px] text-white/35 mt-3.5">Drag a box over the image.</p>
+            <p v-else class="text-[10px] text-white/35 mt-3.5">Click an object to auto-select it.</p>
+
+            <div class="flex items-center gap-1.5 mt-3.5">
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="brush.inverted.value ? 'bg-amber-400/90 text-neutral-900' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Invert: keep the painted area, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask</button>
+              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 hover:bg-white/12 text-[11px] cursor-pointer transition-colors" title="Clear region" @click="clearMask()">Clear</button>
+            </div>
+          </div>
 
           <!-- Prompt -->
-          <textarea
-            v-model="prompt" rows="3"
-            :placeholder="mode === 'describe' ? 'describe the edit, e.g. make the sky a sunset' : 'what goes in the painted area, e.g. a red brick wall with ivy'"
-            class="w-full bg-white/[0.06] rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
-            @keydown.enter.exact.prevent="runInpaint(false)"
-          />
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2.5">Prompt</div>
+            <textarea
+              v-model="prompt" rows="3"
+              :placeholder="mode === 'describe' ? 'describe the edit, e.g. make the sky a sunset' : 'what goes in the marked area…'"
+              class="pastel-hairline block w-full rounded-md text-[12px] px-2 py-1.5 outline-none resize-none placeholder:text-white/25"
+              style="--pastel-hairline-bg: #141416;"
+              @keydown.enter.exact.prevent="runInpaint(false)"
+            />
+          </div>
 
           <!-- Options -->
-          <div class="grid grid-cols-2 gap-2">
-            <label class="flex items-center gap-1.5 text-[11px] text-white/50">Model
-              <select v-model="tier" class="flex-1 h-7 bg-white/[0.06] rounded text-[11px] px-1 outline-none cursor-pointer">
-                <option value="dev">Dev · cheap</option>
-                <option value="pro">Pro · best</option>
-              </select>
-            </label>
-            <label class="flex items-center gap-1.5 text-[11px] text-white/50">Variations
-              <select v-model.number="count" class="flex-1 h-7 bg-white/[0.06] rounded text-[11px] px-1 outline-none cursor-pointer">
-                <option :value="1">1</option><option :value="2">2</option><option :value="3">3</option><option :value="4">4</option>
-              </select>
-            </label>
-          </div>
-          <div v-if="mode === 'mask'" class="grid grid-cols-2 gap-2">
-            <label class="flex items-center gap-1.5 text-[11px] text-white/50">Feather
-              <input type="range" min="0" max="40" v-model.number="feather" class="flex-1 accent-white cursor-pointer" />
-            </label>
-            <label class="flex items-center gap-1.5 text-[11px] text-white/50">Expand
-              <input type="range" min="0" max="40" v-model.number="expand" class="flex-1 accent-white cursor-pointer" />
-            </label>
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2.5">Options</div>
+            <div class="grid grid-cols-2 gap-2.5">
+              <label class="flex items-center gap-1.5 text-[11px] text-white/50">Model
+                <select v-model="tier" class="flex-1 h-8 bg-white/[0.06] rounded text-[11px] px-1 outline-none cursor-pointer">
+                  <option value="dev">Dev · cheap</option>
+                  <option value="pro">Pro · best</option>
+                </select>
+              </label>
+              <label class="flex items-center gap-1.5 text-[11px] text-white/50">Variations
+                <select v-model.number="count" class="flex-1 h-8 bg-white/[0.06] rounded text-[11px] px-1 outline-none cursor-pointer">
+                  <option :value="1">1</option><option :value="2">2</option><option :value="3">3</option><option :value="4">4</option>
+                </select>
+              </label>
+            </div>
+            <div v-if="mode === 'mask'" class="mt-3.5 flex flex-col gap-3">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] text-white/40 w-12 shrink-0">Feather</span>
+                <input type="range" min="0" max="40" v-model.number="feather" class="flex-1 accent-white cursor-pointer" />
+                <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ feather }}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] text-white/40 w-12 shrink-0">Expand</span>
+                <input type="range" min="0" max="40" v-model.number="expand" class="flex-1 accent-white cursor-pointer" />
+                <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ expand }}</span>
+              </div>
+            </div>
           </div>
 
           <!-- Actions -->
-          <div class="flex items-center gap-1.5">
-            <button class="flex-1 h-9 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-black text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg" @click="runInpaint(false)">
-              {{ inpaint.busy.value ? 'Generating…' : (history.length ? 'Regenerate' : 'Generate') }}
-            </button>
-            <button v-if="mode === 'mask'" class="h-9 px-3 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40" :disabled="inpaint.busy.value || !sourceImg" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
+          <div>
+            <div class="flex items-center gap-1.5">
+              <button v-if="mode === 'mask'" class="h-8 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || !hasRegion" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
+              <button class="gen-pastel flex-1 h-8 rounded-md text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || (mode === 'mask' && !hasRegion)" @click="runInpaint(false)">
+                {{ inpaint.busy.value ? 'Generating…' : (history.length ? 'Regenerate' : 'Generate') }}
+              </button>
+            </div>
+            <p v-if="mode === 'mask' && !hasRegion" class="text-[10px] text-white/30 mt-1.5">Mark a region on the image to enable Generate.</p>
           </div>
 
           <!-- History -->

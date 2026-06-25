@@ -87,35 +87,6 @@ function onNumber(e: Event) { clampEmit(Number((e.target as HTMLInputElement).va
 </template>
 
 <style scoped>
-.cn-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.12);
-  outline: none;
-  cursor: pointer;
-}
-.cn-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 2px solid rgba(0, 0, 0, 0.35);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-  transition: transform 0.1s ease;
-}
-.cn-slider:active::-webkit-slider-thumb {
-  transform: scale(1.15);
-}
-.cn-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 2px solid rgba(0, 0, 0, 0.35);
-  cursor: pointer;
-}
+/* Slider visual is unified globally in main.css (input[type=range], the studio look);
+   width comes from `flex-1 min-w-0` in the template. */
 </style>

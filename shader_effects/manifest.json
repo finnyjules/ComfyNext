@@ -311,6 +311,149 @@
       ]
     },
     {
+      "id": "crystal_prism",
+      "name": "Crystal Prism",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": ["u_centerX", "u_centerY"],
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_mode",
+          "label": "Mode",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Glass", "value": 0 },
+            { "label": "Faceted", "value": 1 },
+            { "label": "Prism", "value": 2 }
+          ]
+        },
+        {
+          "uniform": "u_facetStyle",
+          "label": "Facet style",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Voronoi", "value": 0 },
+            { "label": "Radial", "value": 1 },
+            { "label": "Shards", "value": 2 },
+            { "label": "Triangles", "value": 3 }
+          ]
+        },
+        {
+          "uniform": "u_facetJitter",
+          "label": "Triangle jitter",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.35,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_multiScale",
+          "label": "Multi-scale shatter",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_facetRefract",
+          "label": "Per-facet refraction",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_shading",
+          "label": "Facet shading",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.35,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_refraction",
+          "label": "Refraction",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.3,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_dispersion",
+          "label": "Dispersion",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.1,
+          "default": 0.03,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_facets",
+          "label": "Facets / scale",
+          "type": "float",
+          "min": 1.0,
+          "max": 24.0,
+          "default": 8.0,
+          "step": 0.5
+        },
+        {
+          "uniform": "u_glint",
+          "label": "Edge glint",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.25,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_shimmer",
+          "label": "Shimmer",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.2,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_rotation",
+          "label": "Rotation",
+          "type": "float",
+          "min": 0.0,
+          "max": 360.0,
+          "default": 0.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_centerX",
+          "label": "Center X",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_centerY",
+          "label": "Center Y",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ]
+    },
+    {
       "id": "liquify",
       "name": "Liquify",
       "category": "distortion",
@@ -1606,12 +1749,108 @@
       "params": [
         {
           "uniform": "u_radius",
-          "label": "Radius",
+          "label": "Brush size",
           "type": "float",
           "min": 0.004,
-          "max": 0.04,
-          "default": 0.014,
+          "max": 0.05,
+          "default": 0.016,
           "step": 0.002
+        },
+        {
+          "uniform": "u_sharpness",
+          "label": "Stroke crispness",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_richness",
+          "label": "Richness",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.25,
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "id": "holographic",
+      "name": "Holographic Foil",
+      "category": "stylize",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        {
+          "uniform": "u_pattern",
+          "label": "Pattern",
+          "type": "enum",
+          "default": 0,
+          "options": [
+            { "label": "Luminance", "value": 0 },
+            { "label": "Brushed", "value": 1 },
+            { "label": "Crinkle", "value": 2 },
+            { "label": "Ripple", "value": 3 }
+          ]
+        },
+        {
+          "uniform": "u_iridescence",
+          "label": "Iridescence",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.7,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_bands",
+          "label": "Bands",
+          "type": "float",
+          "min": 0.5,
+          "max": 8.0,
+          "default": 3.0,
+          "step": 0.1
+        },
+        {
+          "uniform": "u_angle",
+          "label": "View angle",
+          "type": "float",
+          "min": 0.0,
+          "max": 360.0,
+          "default": 0.0,
+          "step": 1.0
+        },
+        {
+          "uniform": "u_shimmer",
+          "label": "Shimmer",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.25,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_metallic",
+          "label": "Metallic",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.4,
+          "step": 0.01
+        },
+        {
+          "uniform": "u_sheen",
+          "label": "Sheen",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
         }
       ]
     },

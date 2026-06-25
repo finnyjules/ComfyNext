@@ -364,7 +364,7 @@ onMounted(() => { if (!state.value.rendered) scheduleBake() })
 .tm__axis { display: flex; flex-direction: column; gap: 1px; }
 .tm__axis-head { display: flex; justify-content: space-between; font-size: 10px; color: rgba(255,255,255,0.55); }
 .tm__axis-val { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.8); }
-.tm__range { width: 100%; height: 4px; cursor: pointer; accent-color: #818cf8; }
+.tm__range { width: 100%; } /* slider visual unified globally in main.css (input[type=range]) */
 .tm__controls { display: flex; gap: 8px; }
 .tm__toggle {
   font-size: 10px; padding: 3px 8px; border-radius: 5px;

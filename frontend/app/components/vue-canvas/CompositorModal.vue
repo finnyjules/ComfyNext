@@ -17,6 +17,7 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from '~/composables/useInpaint'
+import { useRegionFx } from '~/composables/useRegionFx'
 import type { Cloner } from '~/composables/useCloner'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
@@ -1447,189 +1448,21 @@ function genUseShape() {
   genHasMask.value = true; genVersion.value++
 }
 
-// Animated region overlay: a subtle fill, a slowly-sliding PASTEL GRADIENT
-// STROKE around the marked region (derived from the mask silhouette, so it works
-// for box / brush / shape alike), and a gradient SWIPE that sweeps through the
-// region while a generation is running.
+// Animated "generate in region" overlay (pulse fill + flowing pastel stroke) plus
+// the glimm prism "generating" sweep — now shared with the Image-artifact Inpaint
+// modal via the useRegionFx composable so both read as one design.
 const genOverlayCanvas = ref<HTMLCanvasElement | null>(null)
-let genRingCanvas: HTMLCanvasElement | null = null   // cached ring silhouette (logical px)
-let genScratch: HTMLCanvasElement | null = null      // per-frame compositing scratch
-let genRaf = 0
-let genT0 = 0
-
-// glimm prism "generation running" sweep — a WebGL band (createShader, palette
-// "prism") rendered on its own canvas, CSS-masked to the region silhouette. glimm
-// runs its own render loop; we just loop its progress while a generation is in
-// flight (replacing the old white linear-gradient swipe).
 const genSweepCanvas = ref<HTMLCanvasElement | null>(null)
-const genSweepMaskUrl = ref('')                      // data-URL of the silhouette, for CSS mask
-type GlimmController = import('glimm').ShaderController
-let genSweepCtrl: GlimmController | null = null
-let genSweepCreating = false
-const GEN_SWEEP_PERIOD = 1.6                          // s per sweep cycle (matches the prior swipe)
-const GEN_SWEEP_ALPHA = 0.6                           // peak band opacity while GENERATING — softened so artwork shows through
-
-// Lazily create the glimm controller once its canvas is laid out (glimm sizes
-// itself from getBoundingClientRect, so the canvas must be in the DOM first).
-function ensureSweepCtrl() {
-  if (genSweepCtrl || genSweepCreating) return
-  const cv = genSweepCanvas.value
-  if (!cv || cv.clientWidth < 1 || cv.clientHeight < 1) return
-  genSweepCreating = true
-  import('glimm').then(({ createShader, resolvePalette }) => {
-    genSweepCreating = false
-    if (genSweepCtrl || !genSweepCanvas.value) return
-    genSweepCtrl = createShader({
-      canvas: genSweepCanvas.value,
-      palette: resolvePalette('citrus'),
-      brightness: 0.85,   // ease the iridescence so it doesn't blow out over artwork
-      swellAmount: 0.7,   // a little depth/crest on the band
-    })
-  }).catch(() => { genSweepCreating = false })
-}
-
-// Refresh the CSS mask from the region silhouette (white mask canvas → data URL).
-function updateSweepMask() {
-  if (genMaskCanvas && genHasMask.value) genSweepMaskUrl.value = genMaskCanvas.toDataURL()
-  else genSweepMaskUrl.value = ''
-}
-
-function destroySweepCtrl() {
-  genSweepCtrl?.destroy()
-  genSweepCtrl = null
-  genSweepCreating = false
-}
-// Single source of truth for the pastel accent. Drives the canvas region stroke
-// (this array), and — via the `--gen-pastel` CSS var bound on the modal root —
-// the Generate button fill and the prompt-box hairline border. Edit here only.
-const PASTEL = ['#ffd6e7', '#cfe8ff', '#d6ffe0', '#fff4cc', '#e7d6ff', '#ffd6e7'] // [5]===[0] (cyclic)
-const pastelGradientCss = computed(() => `linear-gradient(90deg, ${PASTEL.join(', ')})`)
-const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
-
-function lerpHex(a: string, b: string, u: number): string {
-  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16)
-  const ar = (pa >> 16) & 255, ag = (pa >> 8) & 255, ab = pa & 255
-  const br = (pb >> 16) & 255, bg = (pb >> 8) & 255, bb = pb & 255
-  return `rgb(${Math.round(ar + (br - ar) * u)},${Math.round(ag + (bg - ag) * u)},${Math.round(ab + (bb - ab) * u)})`
-}
-// Sample the cyclic pastel palette at fractional position `u` (wraps).
-function pastelAt(u: number): string {
-  u = ((u % 1) + 1) % 1
-  const n = PASTEL.length - 1 // 5 cyclic segments
-  const x = u * n, i = Math.floor(x) % n
-  return lerpHex(PASTEL[i], PASTEL[(i + 1) % PASTEL.length], x - Math.floor(x))
-}
-
-// Build a ring (outline) from the mask: dilate it by offset-drawing in a circle,
-// then punch out the original → an outer stroke band of ~`sw` px.
-function rebuildGenRing() {
-  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
-  if (!genRingCanvas) genRingCanvas = document.createElement('canvas')
-  if (genRingCanvas.width !== W || genRingCanvas.height !== H) { genRingCanvas.width = W; genRingCanvas.height = H }
-  const rctx = genRingCanvas.getContext('2d'); if (!rctx) return
-  rctx.setTransform(1, 0, 0, 1, 0, 0)
-  rctx.clearRect(0, 0, W, H)
-  if (!genMaskCanvas || !genHasMask.value) return
-  const sw = 3.5, steps = 16
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * Math.PI * 2
-    rctx.drawImage(genMaskCanvas, Math.cos(a) * sw, Math.sin(a) * sw, W, H)
-  }
-  rctx.globalCompositeOperation = 'destination-out'
-  rctx.drawImage(genMaskCanvas, 0, 0, W, H)
-  rctx.globalCompositeOperation = 'source-over'
-}
-
-function genScratchCtx(W: number, H: number): CanvasRenderingContext2D {
-  if (!genScratch) genScratch = document.createElement('canvas')
-  if (genScratch.width !== W || genScratch.height !== H) { genScratch.width = W; genScratch.height = H }
-  const c = genScratch.getContext('2d')!
-  c.setTransform(1, 0, 0, 1, 0, 0)
-  c.clearRect(0, 0, W, H)
-  return c
-}
-
-function renderGenOverlay(now?: number) {
-  const cv = genOverlayCanvas.value; if (!cv) return
-  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
-  const pw = Math.round(W * dpr), ph = Math.round(H * dpr)
-  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph }
-  const ctx = cv.getContext('2d'); if (!ctx) return
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.clearRect(0, 0, W, H)
-  if (!genMaskCanvas || !genHasMask.value) return
-  const t = ((now ?? nowMs()) - genT0) / 1000
-
-  // Region fill — pulse a translucent white. The mask is already white, so draw
-  // it directly at the pulse alpha. (Drawing it then re-filling with `source-in`
-  // would SQUARE the alpha — pulse·pulse — making the pulse nearly invisible.)
-  const pulse = 0.16 + 0.30 * (0.5 + 0.5 * Math.sin(t * 1.4))
-  ctx.save()
-  ctx.globalAlpha = pulse
-  ctx.drawImage(genMaskCanvas, 0, 0, W, H)
-  ctx.restore()
-
-  // Pastel gradient stroke — tint the cached ring with a colour-flowing gradient
-  // (stops at fixed positions, colours sampled at a slowly-advancing offset, so
-  // the palette visibly flows along the stroke).
-  if (genRingCanvas) {
-    const sctx = genScratchCtx(W, H)
-    sctx.drawImage(genRingCanvas, 0, 0)
-    sctx.globalCompositeOperation = 'source-in'
-    const shift = t * 0.16
-    const g = sctx.createLinearGradient(0, 0, W, H)
-    for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, pastelAt(i / 6 + shift))
-    sctx.fillStyle = g
-    sctx.fillRect(0, 0, W, H)
-    sctx.globalCompositeOperation = 'source-over'
-    ctx.drawImage(genScratch!, 0, 0, W, H)
-  }
-
-  // The "generation running" sweep is now the glimm prism band on `genSweepCanvas`
-  // (driven by driveGenSweep / gated by inpaint.busy), no longer drawn here.
-}
-
-// Drive the glimm prism band: loop its progress while a generation is in flight,
-// fade its alpha out when idle. glimm renders on its own RAF; we only set state.
-function driveGenSweep() {
-  ensureSweepCtrl()
-  if (!genSweepCtrl) return
-  if (inpaint.busy.value) {
-    const tt = (nowMs() - genT0) / 1000
-    genSweepCtrl.setProgress((tt % GEN_SWEEP_PERIOD) / GEN_SWEEP_PERIOD)
-    genSweepCtrl.setAlpha(GEN_SWEEP_ALPHA)
-  } else {
-    genSweepCtrl.setAlpha(0)
-  }
-}
-
-function genLoop() {
-  if (!genActive.value) { genRaf = 0; return }
-  renderGenOverlay(nowMs())
-  driveGenSweep()
-  genRaf = requestAnimationFrame(genLoop)
-}
-function startGenLoop() {
-  if (genRaf) return
-  genT0 = nowMs()
-  genRaf = requestAnimationFrame(genLoop)
-}
-function stopGenLoop() {
-  if (genRaf) cancelAnimationFrame(genRaf)
-  genRaf = 0
-}
-
-watch(genActive, (on) => {
-  if (on) { rebuildGenRing(); updateSweepMask(); startGenLoop() }
-  else { stopGenLoop(); destroySweepCtrl() }
+const regionFx = useRegionFx({
+  overlay: genOverlayCanvas,
+  sweep: genSweepCanvas,
+  getMask: () => (genHasMask.value && genMaskCanvas) ? genMaskCanvas : null,
+  getDims: () => canvasDisplay,
+  busy: () => inpaint.busy.value,
 })
-watch([genVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => {
-  rebuildGenRing()
-  updateSweepMask()
-  if (genActive.value && !genRaf) startGenLoop()
-})
-onBeforeUnmount(() => { stopGenLoop(); destroySweepCtrl() })
+const { sweepMaskUrl: genSweepMaskUrl } = regionFx
+watch(genActive, (on) => { on ? regionFx.start() : regionFx.stop() })
+watch([genVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => regionFx.rebuild())
 
 // flux-dev's supported aspect ratios → nearest match for a region's bbox.
 const FLUX_ASPECTS: [string, number][] = [
@@ -1869,7 +1702,6 @@ onUnmounted(() => {
 <template>
   <div
     class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6"
-    :style="{ '--gen-pastel': pastelGradientCss }"
     @click.self="emit('close')"
   >
     <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
@@ -3078,22 +2910,8 @@ button:active:not(:disabled) {
   transform: scale(0.96);
 }
 
-/* Generate-in-region button: same flowing pastel palette as the drag-area
-   stroke (PASTEL in the script). Animates with a gentle alternate pan so there
-   is no seam jump. */
-.gen-pastel {
-  background-image: var(--gen-pastel);
-  background-size: 200% 100%;
-  animation: gen-pastel-flow 6s ease-in-out infinite alternate;
-}
-.gen-pastel:hover { filter: brightness(1.06); }
-.gen-pastel:disabled { animation: none; }
-@keyframes gen-pastel-flow {
-  from { background-position: 0% 50%; }
-  to { background-position: 100% 50%; }
-}
-
-/* Inpaint/generative-fill prompt hairline now uses the shared `.pastel-hairline`
-   utility (app/assets/css/main.css) so it stays cohesive with the canvas-node
-   prompt. Interior bg is set inline via --pastel-hairline-bg on the textarea. */
+/* The Generate-in-region button uses the shared `.gen-pastel` utility and the
+   prompt hairline the shared `.pastel-hairline` utility — both in
+   app/assets/css/main.css — so the canvas-node Inpaint modal stays cohesive.
+   Interior bg is set inline via --pastel-hairline-bg on the textarea. */
 </style>

@@ -9,7 +9,7 @@ import type { ShaderFxCatalog, EffectDef } from '~/lib/shaderfx/types'
 import { composePasses } from '~/lib/shaderstudio/passes'
 import { applyMotion } from '~/lib/shaderstudio/motion'
 import { loadImage, resolveWiredInput } from '~/lib/shaderstudio/source'
-import { defaultConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { hydrateConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 
 const props = defineProps<{
   id: string
@@ -21,7 +21,7 @@ const injectedEdges = inject<any>('vueFlowEdges', null)
 const injectedNodes = inject<any>('vueFlowNodes', null)
 
 const config = computed<ShaderStudioConfig>(
-  () => (props.data?.properties?.comfynext_shaderStudio as ShaderStudioConfig) ?? defaultConfig(),
+  () => hydrateConfig(props.data?.properties?.comfynext_shaderStudio),
 )
 const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
 
