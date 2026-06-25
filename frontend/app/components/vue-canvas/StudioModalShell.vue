@@ -6,11 +6,12 @@
 //
 // The controls column publishes its scroll offset as the `--studio-scroll` CSS var so the
 // frosted-glass StudioSection cards can drift their specular/refraction as you scroll.
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 defineProps<{ title?: string; breadcrumb?: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const rootEl = ref<HTMLElement | null>(null)
 const controlsEl = ref<HTMLElement | null>(null)
 let raf = 0
 function onControlsScroll() {
@@ -21,11 +22,22 @@ function onControlsScroll() {
     if (el) el.style.setProperty('--studio-scroll', String(el.scrollTop))
   })
 }
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.defaultPrevented) return
+  if (e.key === 'Escape') { e.stopPropagation(); emit('close') }
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  rootEl.value?.focus()
+})
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-    <div class="flex h-[640px] max-h-[92vh] w-[1080px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white">
+    <div ref="rootEl" tabindex="-1" role="dialog" aria-modal="true"
+         class="flex h-[640px] max-h-[92vh] w-[1080px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none">
       <div class="flex shrink-0 items-center gap-2 px-4 pt-3 pb-1">
         <span class="text-[13px] font-medium tracking-[-0.01em] text-white/90">{{ title }}</span>
         <template v-if="breadcrumb">
