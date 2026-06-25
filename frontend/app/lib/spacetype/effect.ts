@@ -53,4 +53,7 @@ export interface SpaceTypeEffect {
   buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture, env?: BuildEnv): THREE.Object3D
   /** Advance the existing scene to normalized loop time t01. Pure in t01. */
   update(t01: number, params: Params): void
+  /** Keys read live in update() each frame (vertex/uniform/transform params). Changing one
+   *  should NOT trigger a structural rebuild. Omit → every key is treated as structural. */
+  liveKeys?: string[]
 }

@@ -92,6 +92,7 @@ export const tearEffect: SpaceTypeEffect = {
   id: 'tear',
   label: 'Tear',
   controls,
+  liveKeys: ['tearAmount', 'tearFreq', 'tearPhase', 'tearStyle', 'tearDir', 'tearEdge', 'tearOverlap', 'tearSlant'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()

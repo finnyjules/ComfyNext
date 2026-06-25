@@ -72,6 +72,7 @@ export const stringEffect: SpaceTypeEffect = {
   id: 'string',
   label: 'String',
   controls,
+  liveKeys: ['speedVary'],
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture

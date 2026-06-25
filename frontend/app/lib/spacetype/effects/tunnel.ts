@@ -138,6 +138,8 @@ export const tunnelEffect: SpaceTypeEffect = {
   id: 'tunnel',
   label: 'Tunnel',
   controls,
+  liveKeys: ['rotate', 'innerWidth', 'innerHeight', 'view', 'direction',
+    'strokeWidth', 'strokeColor', 'perspective', 'shadow'],
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture

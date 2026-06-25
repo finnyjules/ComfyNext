@@ -366,6 +366,8 @@ export const boostEffect: SpaceTypeEffect = {
   id: 'boost',          // internal id kept as 'boost' so saved nodes/configs still resolve
   label: 'Extrude',
   controls,
+  liveKeys: ['depth', 'tumble', 'holdFraction', 'extrudeMode', 'punchDistance', 'cubeFlip',
+    'cubeAlternate', 'extrudeAngle', 'extrudeLean'],
 
   buildScene(three, params, _textTexture) {
     void _textTexture

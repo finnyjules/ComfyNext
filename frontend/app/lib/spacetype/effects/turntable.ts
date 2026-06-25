@@ -82,6 +82,7 @@ export const turntableEffect: SpaceTypeEffect = {
   id: 'turntable',
   label: 'Turntable',
   controls,
+  liveKeys: ['ttCols', 'ttRows', 'ttGradient', 'ttTwist'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()

@@ -149,6 +149,7 @@ export const fieldEffect: SpaceTypeEffect = {
   id: 'field',
   label: 'Field',
   controls,
+  liveKeys: ['ampZ', 'ampX', 'ampY', 'waveSizeX', 'waveSizeY', 'zOffset', 'xOffset', 'yOffset'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()

@@ -150,6 +150,8 @@ export const slitScanEffect: SpaceTypeEffect = {
   id: 'slitscan',
   label: 'Slit Scan',
   controls,
+  liveKeys: ['ssDelay', 'ssMapDir', 'ssBump', 'ssBumpFreq', 'ssBands', 'ssBandSpeed', 'ssSpeedMode',
+    'ssEase', 'ssTextCycle', 'ssMotion', 'ssPhase'],
 
   buildScene(three, params, textTexture, env) {
     const root = new three.Group()

@@ -129,6 +129,8 @@ export const contourEffect: SpaceTypeEffect = {
   id: 'contour',
   label: 'Contour',
   controls,
+  liveKeys: ['rotate', 'innerWidth', 'innerHeight', 'view', 'direction', 'flowSpeed', 'flowDir',
+    'strokeWidth', 'strokeColor', 'perspective', 'shadow'],
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture

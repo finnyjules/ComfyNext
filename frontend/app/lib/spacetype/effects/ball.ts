@@ -86,6 +86,7 @@ export const ballEffect: SpaceTypeEffect = {
   id: 'ball',
   label: 'Ball',
   controls,
+  liveKeys: ['axisTilt', 'spinSpeed'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()

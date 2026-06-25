@@ -455,48 +455,15 @@ onMounted(async () => {
 
 onBeforeUnmount(() => { saveConfig(); if (rebuildTimer) clearTimeout(rebuildTimer); stopPreview(); engine?.dispose(); engine = null })
 
-// Most v2 params change geometry/material/texture and need a rebuild; the params
-// below are live (read per-frame in update()) so we zero them out of the structural
-// signature to avoid a rebuild on every drag. ribbon* and cylinder wave/tweak params
-// are all live; the cylinder reads its wave uniforms each frame.
-watch(
-  () => JSON.stringify({
-    ...params,
-    speed: 0, scale: 0, rotateX: 0, rotateY: 0, rotateZ: 0,
-    // string: scroll variation read live in update()
-    speedVary: 0,
-    ribbonRotateX: 0, ribbonRotateY: 0, ribbonRotateZ: 0,
-    // cylinder live params (vertex-wave deformation + per-cylinder rotation + motion)
-    waveSpeed: 0, waveCount: 0, waveLatitude: 0, waveLongitude: 0, waveRipple: 0,
-    waveRotate: 0, waveXScale: 0, waveYScale: 0, tweakX: 0, tweakY: 0, tweakZ: 0,
-    cylRotate: 0, cylOffset: 0, spinSpeed: 0, spinRingOffset: 0, spinAlternate: 0,
-    // field live params (wave uniforms updated per-frame)
-    ampZ: 0, ampX: 0, ampY: 0, waveSizeX: 0, waveSizeY: 0,
-    zOffset: 0, xOffset: 0, yOffset: 0,
-    // cascade live params (read per-frame in update)
-    rowHeight: 0, fontHeight: 0, waveLength: 0,
-    // boost live params (read per-frame in update)
-    depth: 0, tumble: 0, holdFraction: 0, extrudeMode: 0, punchDistance: 0, cubeFlip: 0, cubeAlternate: 0,
-    extrudeAngle: 0, extrudeLean: 0,
-    // echo live param (drift advances per-frame in update)
-    driftSpeed: 0,
-    // ball live param (axis tilt read per-frame in update; spinSpeed already excluded above)
-    axisTilt: 0,
-    // turntable live params (band rotation read per-frame in update; speed/direction excluded above).
-    // ttRings is STRUCTURAL (changes the ring-mesh count) → intentionally NOT excluded.
-    ttCols: 0, ttRows: 0, ttGradient: 0, ttTwist: 0,
-    // tear live params (displacement uniforms read per-frame in update; speed excluded above)
-    tearAmount: 0, tearFreq: 0, tearPhase: 0, tearStyle: '', tearDir: '', tearEdge: 0, tearOverlap: 0, tearSlant: 0,
-    // slit-scan live params (time-displacement uniforms read per-frame; speed excluded above)
-    ssDelay: 0, ssMapDir: '', ssBump: 0, ssBumpFreq: 0, ssBands: 0, ssBandSpeed: 0, ssSpeedMode: '', ssEase: 0, ssTextCycle: 0, ssMotion: '', ssPhase: 0,
-    // ssTileX/ssTileY are STRUCTURAL (the plane aspect is fit to the grid) → intentionally NOT excluded.
-    // tunnel + contour live params (tunnel transform / text flow / stroke / depth read per-frame)
-    rotate: 0, innerWidth: 0, innerHeight: 0, view: '', direction: '',
-    flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
-    perspective: 0, shadow: 0,
-  }) + JSON.stringify(gradientStops),
-  () => { rebuildDebounced() },
-)
+// Global view keys are live for every effect (camera/scene transform read per frame).
+const GLOBAL_LIVE_KEYS = ['speed', 'scale', 'rotateX', 'rotateY', 'rotateZ']
+function structuralSignature(): string {
+  const live = new Set([...GLOBAL_LIVE_KEYS, ...(effect.value.liveKeys ?? [])])
+  const sig: Record<string, unknown> = {}
+  for (const k of Object.keys(params)) sig[k] = live.has(k) ? 0 : params[k]
+  return JSON.stringify(sig) + JSON.stringify(gradientStops)
+}
+watch(structuralSignature, () => { rebuildDebounced() })
 // Switching effect: reset params to the new effect's defaults, but carry over any
 // param values the two effects share (text/font/typeColor/etc.) so they persist
 // across the switch. Then point the engine at the new effect and rebuild.

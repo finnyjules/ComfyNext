@@ -100,6 +100,7 @@ export const cascadeEffect: SpaceTypeEffect = {
   id: 'cascade',
   label: 'Cascade',
   controls,
+  liveKeys: ['rowHeight', 'fontHeight', 'waveLength'],
 
   // Cascade builds its own per-glyph texture via layoutChars; the shared one is ignored.
   buildScene(three, params, _textTexture, env) {

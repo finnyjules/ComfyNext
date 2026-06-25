@@ -97,6 +97,7 @@ export const ribbonEffect: SpaceTypeEffect = {
   id: 'ribbon',
   label: 'Ribbon',
   controls,
+  liveKeys: ['ribbonRotateX', 'ribbonRotateY', 'ribbonRotateZ'],
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
