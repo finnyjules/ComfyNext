@@ -19,6 +19,8 @@ export interface StudioEffect {
   /** non-default uniform overrides for the effect. */
   params: Record<string, number>
   enabled: boolean
+  /** ASCII effect, "Custom" shape: characters the user rasterizes into glyphs. */
+  customChars?: string
 }
 
 export interface StudioDuotone {
@@ -100,7 +102,7 @@ export function defaultConfig(): ShaderStudioConfig {
     version: 1,
     source: { kind: 'none' },
     resolution: 1536,
-    effect: { id: '', params: {}, enabled: true },
+    effect: { id: '', params: {}, enabled: true, customChars: '' },
     duotone: { enabled: false, ink: '#1a1a2e', paper: '#f5f5f5' },
     adjust: {
       enabled: false, exposure: 0, brightness: 0, contrast: 0,

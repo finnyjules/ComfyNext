@@ -1,7 +1,7 @@
 {
   "count": 10,
-  "cellWidth": 32,
-  "cellHeight": 48,
+  "cellWidth": 192,
+  "cellHeight": 288,
   "rows": 7,
   "rowLabels": [
     "hash",

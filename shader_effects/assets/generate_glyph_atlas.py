@@ -1,11 +1,12 @@
 """Generate the 7-row glyph atlas for the ASCII effect.
 
-Row 0 = the original ' .:-=+*#%@' ramp (PIL default font), rendered with the exact
-original code path so the row-0 pixels are byte-identical to the pre-shape atlas
-(back-compat: the default ASCII shape is unchanged). Rows 1-6 are character sets
-(Matrix/Binary/Braille/Morse/Dots/Slashes) from Unicode fonts, each a COLS-glyph
-ramp ordered dark->bright by measured ink coverage. The bake raises if a required
-glyph renders as a .notdef box.
+Each glyph is rendered CRISP at the full cell resolution from a vector font (no
+render-tiny-then-upscale), so characters stay sharp when drawn into large ASCII
+cells. Row 0 = the classic ' .:-=+*#%@' ramp in a monospace face; rows 1-6 are
+character sets (Matrix/Binary/Braille/Morse/Dots/Slashes) from Unicode fonts, each
+a COLS-glyph ramp ordered dark->bright by measured ink coverage. The bake raises
+if a required glyph renders as a .notdef box. The shader samples this atlas
+bilinearly, so the antialiased grayscale edges give clean characters at any size.
 
 Usage: .venv/bin/python shader_effects/assets/generate_glyph_atlas.py
 """
@@ -15,12 +16,22 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CELL_W, CELL_H = 32, 48
-SCALE = 4
+# High-res cells so glyphs stay crisp when a cell is rendered large. 2:3 aspect
+# (kept from the original 32x48) — the shader's CW/CH consts must match these.
+CELL_W, CELL_H = 192, 288
 COLS = 10
-SMALL_W, SMALL_H = CELL_W // SCALE, CELL_H // SCALE
+GLYPH_PX = int(CELL_H * 0.9)  # font size; leaves a small margin inside the cell
 
-ROW0_RAMP = " .:-=+*#%@"  # original ramp — DO NOT change (back-compat)
+ROW0_RAMP = " .:-=+*#%@"  # classic luminance ramp (dark -> dense)
+
+# Monospace face for the default Hash ramp (row 0) — crisp, even glyph weight.
+MONO_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Monaco.ttf",
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Supplemental/Courier New.ttf",
+    "/Library/Fonts/Courier New.ttf",
+]
 
 UNICODE_FONT_CANDIDATES = [
     "/Library/Fonts/Arial Unicode.ttf",
@@ -56,26 +67,28 @@ def load_font(px: int, candidates: list) -> ImageFont.FreeTypeFont:
     raise SystemExit(f"ASCII atlas: no font found in candidates: {candidates}")
 
 
-def render_glyph(ch: str, font) -> Image.Image:
-    img = Image.new("L", (SMALL_W, SMALL_H), 0)
-    d = ImageDraw.Draw(img)
-    bbox = d.textbbox((0, 0), ch, font=font)
+def draw_centered(draw: ImageDraw.ImageDraw, x0: int, ch: str, font) -> None:
+    """Draw `ch` centered (by ink bbox) within the CELL_W cell starting at x0."""
+    bbox = draw.textbbox((0, 0), ch, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    d.text((SMALL_W // 2 - w // 2 - bbox[0], SMALL_H // 2 - h // 2 - bbox[1]), ch, fill=255, font=font)
+    draw.text((x0 + (CELL_W - w) // 2 - bbox[0], (CELL_H - h) // 2 - bbox[1]), ch, fill=255, font=font)
+
+
+def render_glyph(ch: str, font) -> Image.Image:
+    img = Image.new("L", (CELL_W, CELL_H), 0)
+    draw_centered(ImageDraw.Draw(img), 0, ch, font)
     return img
 
 
 def build_row0() -> Image.Image:
-    """Exact original rendering of ROW0_RAMP so row 0 stays byte-identical."""
+    """Classic ramp rendered crisp in a monospace face."""
     n = len(ROW0_RAMP)
-    small = Image.new("L", (n * SMALL_W, SMALL_H), 0)
-    draw = ImageDraw.Draw(small)
-    font = ImageFont.load_default()
+    font = load_font(GLYPH_PX, MONO_FONT_CANDIDATES)
+    strip = Image.new("L", (n * CELL_W, CELL_H), 0)
+    draw = ImageDraw.Draw(strip)
     for i, ch in enumerate(ROW0_RAMP):
-        bbox = draw.textbbox((0, 0), ch, font=font)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.text((i * SMALL_W + (SMALL_W - w) // 2 - bbox[0], (SMALL_H - h) // 2 - bbox[1]), ch, fill=255, font=font)
-    return small.resize((n * CELL_W, CELL_H), Image.NEAREST)
+        draw_centered(draw, i * CELL_W, ch, font)
+    return strip
 
 
 def ramp_row(pool: str, font) -> Image.Image:
@@ -88,27 +101,23 @@ def ramp_row(pool: str, font) -> Image.Image:
             raise SystemExit(f"ASCII atlas: glyph {ch!r} renders as .notdef in the Unicode font")
         scored.append((sum(data) / len(data), g))
     scored.sort(key=lambda t: t[0])
-    strip = Image.new("L", (COLS * SMALL_W, SMALL_H), 0)
+    strip = Image.new("L", (COLS * CELL_W, CELL_H), 0)
     for i in range(COLS):
         idx = round(i * (len(scored) - 1) / (COLS - 1)) if len(scored) > 1 else 0
-        strip.paste(scored[idx][1], (i * SMALL_W, 0))
-    return strip.resize((COLS * CELL_W, CELL_H), Image.NEAREST)
+        strip.paste(scored[idx][1], (i * CELL_W, 0))
+    return strip
 
 
 def main() -> None:
     rows = [build_row0()]
     labels = ["hash"]
-    default_font = load_font(SMALL_H, UNICODE_FONT_CANDIDATES)
-    font_used = None
-    for p in UNICODE_FONT_CANDIDATES:
-        if os.path.exists(p):
-            font_used = p
-            break
+    default_font = load_font(GLYPH_PX, UNICODE_FONT_CANDIDATES)
+    font_used = next((p for p in UNICODE_FONT_CANDIDATES if os.path.exists(p)), None)
     print(f"Unicode font: {font_used}")
 
     for label, pool, font_candidates in SETS:
         if font_candidates is not None:
-            font = load_font(SMALL_H, font_candidates)
+            font = load_font(GLYPH_PX, font_candidates)
             used = next(p for p in font_candidates if os.path.exists(p))
             print(f"  row '{label}': using {used}")
         else:
