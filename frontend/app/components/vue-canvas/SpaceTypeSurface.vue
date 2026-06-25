@@ -472,10 +472,9 @@ watch(structuralSignature, () => { rebuildDebounced() })
 // defaults: those are tuned per effect, so carrying e.g. another effect's rotation flattens the
 // new one edge-on (Ribbon wants its −0.5 tilt; Coil sits at 0).
 const CARRY_ON_SWITCH = new Set(['text', 'font'])
-watch(effectId, async () => {
-  // Restoring a saved scene — keep the hydrated params instead of resetting to
-  // this effect's defaults. Self-clears so the next real user switch resets.
-  if (hydrating) { hydrating = false; return }
+// Reset params to the current effect's defaults, carrying over the content keys
+// (text/font). Shared by the effect-switch reset and the manual "Reset to defaults".
+async function applyEffectDefaults() {
   const next = defaultsFromControls(effect.value.controls)
   for (const k of Object.keys(next)) if (CARRY_ON_SWITCH.has(k) && k in params) next[k] = (params as any)[k]
   for (const k of Object.keys(params)) delete (params as any)[k]
@@ -483,8 +482,14 @@ watch(effectId, async () => {
   pullTextLines()
   pullFills()
   await ensureEffectFonts()
-  engine?.setEffect(effect.value)
   rebuild()
+}
+watch(effectId, async () => {
+  // Restoring a saved scene — keep the hydrated params instead of resetting to
+  // this effect's defaults. Self-clears so the next real user switch resets.
+  if (hydrating) { hydrating = false; return }
+  engine?.setEffect(effect.value)
+  await applyEffectDefaults()
 })
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
@@ -638,6 +643,13 @@ async function generateVideo() {
           <select v-model="effectId" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
             <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id" class="bg-neutral-900">{{ e.label }}</option>
           </select>
+          <div class="mt-2 flex items-center justify-between">
+            <button type="button" @click="applyEffectDefaults"
+                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
+              Reset to defaults
+            </button>
+            <span class="text-[10px] text-white/30">Double-click a slider to reset it</span>
+          </div>
           <template v-if="!frontLocked">
             <label class="mb-1 mt-2.5 block text-[11px] text-white/50">Projection</label>
             <select v-model="projection" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
