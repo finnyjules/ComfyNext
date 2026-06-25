@@ -27,3 +27,11 @@ describe('every effect control group is renderable by SpaceTypeSurface', () => {
     })
   }
 })
+
+it('every control on every effect declares a non-empty group', () => {
+  for (const e of SPACE_TYPE_EFFECTS) {
+    for (const c of e.controls) {
+      expect(c.group, `${e.id}.${c.key}`).toBeTruthy()
+    }
+  }
+})

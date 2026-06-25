@@ -178,11 +178,16 @@ const baking = ref(false)
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
 const SECTION_ORDER = SPACE_TYPE_SECTIONS
-const openSections = reactive<Record<string, boolean>>({
-  Path: true, Type: true, Stack: true, Occlusion: true, Look: true, Blend: true, Style: true, Layout: false, Stretch: true, Skew: false, Warp: false, Ribbon: true, Spiral: true, Layers: true, Color: true, Glitch: true, Doodles: false, Shadow: false, Wave: false, Motion: false, Transform: false, Post: false, Output: false,
-})
+// Sections that should start collapsed; everything else starts open. 'Post' is a
+// surface-injected section (not in SPACE_TYPE_SECTIONS) rendered as a standalone card.
+const DEFAULT_COLLAPSED = new Set([
+  'Layout', 'Skew', 'Warp', 'Stroke', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Post', 'Output',
+])
+const openSections = reactive<Record<string, boolean>>(
+  Object.fromEntries([...SPACE_TYPE_SECTIONS, 'Post'].map(name => [name, !DEFAULT_COLLAPSED.has(name)])),
+)
 const sections = computed(() =>
-  SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => (c.group ?? 'Other') === name) })),
+  SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => c.group === name) })),
 )
 
 const gradientStops = reactive<GradientStop[]>([
