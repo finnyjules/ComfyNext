@@ -140,5 +140,7 @@ export class PostChain {
   dispose(): void {
     this.composer.dispose()
     this.bloomPass.dispose()
+    this.gradePass.material.dispose()
+    ;(this.gradePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
   }
 }

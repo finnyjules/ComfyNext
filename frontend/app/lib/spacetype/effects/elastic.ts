@@ -159,6 +159,7 @@ interface State {
   }
   W: number
   H: number
+  lastKey: string
 }
 
 let state: State | null = null
@@ -201,7 +202,7 @@ export const elasticEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { ctx, tex, uniforms, W, H }
+    state = { ctx, tex, uniforms, W, H, lastKey: '' }
 
     // Best-effort: ensure the chosen font is loaded, then re-rasterise once.
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
@@ -217,11 +218,16 @@ export const elasticEffect: SpaceTypeEffect = {
 
   update(t01, params) {
     if (!state) return
-    // Whole cycles keep the loop seamless; 0 cycles freezes the motion entirely.
     const cycles = Math.max(0, Math.round(n(params, 'speed')))
     const time = cycles === 0 ? 0 : t01 * cycles * TAU
-    drawMatte(state.ctx, state.W, state.H, params, time)
-    state.tex.needsUpdate = true
+    // drawMatte is a full 2D-canvas raster + GPU re-upload — skip it when the inputs are
+    // unchanged (notably when frozen at cycles=0, time stays 0 and params don't move).
+    const key = time + '|' + JSON.stringify(params)
+    if (key !== state.lastKey) {
+      drawMatte(state.ctx, state.W, state.H, params, time)
+      state.tex.needsUpdate = true
+      state.lastKey = key
+    }
     state.uniforms.uTime.value = time
     state.uniforms.uWarp.value = n(params, 'warp')
     state.uniforms.uPoly.value = n(params, 'polygonal')
