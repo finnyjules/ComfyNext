@@ -7,6 +7,7 @@ import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
+import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
@@ -175,6 +176,7 @@ let previewFrame = 0
 let previewStart = 0
 const baking = ref(false)
 const renderError = ref<string | null>(null)
+const webglOk = ref(true)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
@@ -427,6 +429,7 @@ onMounted(async () => {
   loadConfig()
   pullTextLines()
   pullFills()
+  if (!detectWebGL()) { webglOk.value = false; return }
   engine = new SpaceTypeEngine(canvas.value, {
     effect: effect.value, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
     alpha: transparent.value, bgColor: bgColor.value, projection: projection.value,
@@ -622,6 +625,9 @@ async function generateVideo() {
         <div v-if="renderError"
              class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
           Effect failed to render — adjust a parameter to recover.
+        </div>
+        <div v-if="!webglOk" class="absolute inset-0 flex items-center justify-center text-xs text-white/50">
+          3D preview unavailable on this device.
         </div>
         <StringPathEditor
           v-if="frontLocked"

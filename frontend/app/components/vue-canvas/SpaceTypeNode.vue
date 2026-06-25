@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Pencil, Sparkles } from 'lucide-vue-next'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
+import { detectWebGL } from '~/lib/spacetype/webgl'
 import { getEffect } from '~/lib/spacetype/effects'
 import {
   defaultSpaceTypeState, dimsFromKey, ensureSpaceTypeFont, texOptsFromState,
@@ -49,6 +50,7 @@ let engine: SpaceTypeEngine | null = null
 let raf = 0
 let previewStart = 0
 const renderError = ref<string | null>(null)
+const webglOk = ref(true)
 
 function rebuild() {
   if (!engine) return
@@ -84,6 +86,7 @@ function stopPreview() {
 
 onMounted(async () => {
   if (!canvasEl.value) return
+  if (!detectWebGL()) { webglOk.value = false; return }
   const s = state.value
   previewH.value = previewHeight(s)
   engine = new SpaceTypeEngine(canvasEl.value, {
@@ -170,11 +173,9 @@ function openEditor() {
 
     <!-- Live animated preview -->
     <div class="relative flex items-center justify-center bg-neutral-950">
-      <canvas
-        ref="canvasEl"
-        class="block w-full"
-        :style="{ height: previewH + 'px' }"
-      />
+      <canvas v-if="webglOk" ref="canvasEl" class="block w-full" :style="{ height: previewH + 'px' }" />
+      <div v-else class="flex w-full items-center justify-center px-3 text-center text-[10px] text-white/40"
+           :style="{ height: previewH + 'px' }">3D preview unavailable</div>
       <div v-if="renderError"
            class="absolute inset-x-2 bottom-2 rounded border border-amber-400/30 bg-black/70 px-2 py-1 text-[9px] text-amber-200/90">
         Render error
