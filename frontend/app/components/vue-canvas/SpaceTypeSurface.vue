@@ -337,6 +337,18 @@ function rebuild() {
   engine?.build(params, texOpts())
 }
 
+// Structural edits (geometry/material/texture) are expensive (dispose + rebuild +
+// text raster). Coalesce a burst of slider drags into one rebuild, matching the node.
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null
+function rebuildDebounced() {
+  if (rebuildTimer) clearTimeout(rebuildTimer)
+  rebuildTimer = setTimeout(async () => {
+    rebuildTimer = null
+    await ensureEffectFonts()
+    rebuild()
+  }, 80)
+}
+
 function startPreview() {
   // Drive the preview by REAL elapsed time at the intended FPS, not one frame
   // per repaint — otherwise playback runs at the display refresh rate (~2x on
@@ -441,7 +453,7 @@ onMounted(async () => {
   startPreview()
 })
 
-onBeforeUnmount(() => { saveConfig(); stopPreview(); engine?.dispose(); engine = null })
+onBeforeUnmount(() => { saveConfig(); if (rebuildTimer) clearTimeout(rebuildTimer); stopPreview(); engine?.dispose(); engine = null })
 
 // Most v2 params change geometry/material/texture and need a rebuild; the params
 // below are live (read per-frame in update()) so we zero them out of the structural
@@ -483,7 +495,7 @@ watch(
     flowSpeed: 0, flowDir: '', strokeWidth: 0, strokeColor: '',
     perspective: 0, shadow: 0,
   }) + JSON.stringify(gradientStops),
-  async () => { await ensureEffectFonts(); rebuild() },
+  () => { rebuildDebounced() },
 )
 // Switching effect: reset params to the new effect's defaults, but carry over any
 // param values the two effects share (text/font/typeColor/etc.) so they persist
