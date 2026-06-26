@@ -36,6 +36,10 @@ def _scene_defaults_dir() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_defaults"))
 
+def _scene_thumbnails_dir() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_thumbnails"))
+
 
 # Maximum clip ports preallocated on the Timeline node. The frontend's
 # dynamic-grow logic only renders "connected + 1 trailing empty" so the user
@@ -1289,6 +1293,43 @@ try:
         with open(os.path.join(d, f"{effect_id}.json"), "w", encoding="utf-8") as f:
             json.dump(scene, f, indent=2)
         return web.json_response({"ok": True})
+
+    @PromptServer.instance.routes.get("/comfynext/space_thumbnails")
+    async def _space_thumbnails_list(request):
+        out = {}
+        d = _scene_thumbnails_dir()
+        if os.path.isdir(d):
+            for fn in os.listdir(d):
+                if fn.endswith(".png") and _valid_effect_id(fn[:-4]):
+                    eid = fn[:-4]
+                    mtime = int(os.path.getmtime(os.path.join(d, fn)))
+                    out[eid] = f"/comfynext/space_thumbnail/{eid}?v={mtime}"
+        return web.json_response(out)
+
+    @PromptServer.instance.routes.post("/comfynext/space_thumbnail/{effect_id}")
+    async def _space_thumbnail_save(request):
+        effect_id = request.match_info.get("effect_id", "")
+        if not _valid_effect_id(effect_id):
+            return web.json_response({"error": "invalid effect id"}, status=400)
+        data = await request.read()
+        if not data:
+            return web.json_response({"error": "empty body"}, status=400)
+        d = _scene_thumbnails_dir()
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{effect_id}.png"), "wb") as f:
+            f.write(data)
+        return web.json_response({"ok": True})
+
+    @PromptServer.instance.routes.get("/comfynext/space_thumbnail/{effect_id}")
+    async def _space_thumbnail_get(request):
+        effect_id = request.match_info.get("effect_id", "")
+        if not _valid_effect_id(effect_id):
+            return web.json_response({"error": "invalid effect id"}, status=400)
+        p = os.path.join(_scene_thumbnails_dir(), f"{effect_id}.png")
+        if not os.path.isfile(p):
+            return web.json_response({"error": "not found"}, status=404)
+        with open(p, "rb") as f:
+            return web.Response(body=f.read(), content_type="image/png")
 
     @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
     async def _render_frame_route(request):
