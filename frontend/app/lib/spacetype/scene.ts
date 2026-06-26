@@ -13,17 +13,6 @@ export interface Scene {
   gradientStops?: GradientStop[]
 }
 
-const CAMERA_ZERO = ['rotateX', 'rotateY', 'rotateZ'] as const
-
-/** A copy of params with the camera/framing neutralized: rotate→0, scale→1 — but only for keys
- *  the effect actually declares (so we never inject controls it doesn't have). */
-export function neutralizeCamera(params: Params): Params {
-  const out: Params = { ...params }
-  for (const k of CAMERA_ZERO) if (k in out) out[k] = 0
-  if ('scale' in out) out.scale = 1
-  return out
-}
-
 /** Content keys the user owns — a scene captures the LOOK, not the words/typeface, so applying a
  *  scene never overrides these (switching to a defaulted effect keeps your current text). */
 export const SCENE_CONTENT_KEYS = ['text', 'font'] as const

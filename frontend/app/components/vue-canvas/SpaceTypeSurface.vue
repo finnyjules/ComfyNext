@@ -24,7 +24,7 @@ import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
 import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
-import { neutralizeCamera, SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
+import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -530,10 +530,12 @@ async function makeAsDefault() {
   savingDefault.value = true
   try {
     const scene: Scene = {
-      params: neutralizeCamera(params), // camera neutralized for the saved default (returns a copy)
+      // Save the look AND the authored camera as-is — the framing you set becomes the effect's
+      // new default (zeroing the camera made tilt-dependent effects render edge-on/black).
+      params: { ...params },
       post: { ...post },
       projection: projection.value,
-      panX: 0, panY: 0,
+      panX: panX.value, panY: panY.value,
       bgColor: bgColor.value,
       gradientStops: gradientStops.map(g => ({ ...g })),
     }

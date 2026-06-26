@@ -1,23 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { neutralizeCamera, applySceneToState, type Scene } from '~/lib/spacetype/scene'
+import { applySceneToState, type Scene } from '~/lib/spacetype/scene'
 import { defaultSpaceTypeState } from '~/lib/spacetype/state'
-
-describe('neutralizeCamera', () => {
-  it('zeros rotate + sets scale 1 only for keys present', () => {
-    const out = neutralizeCamera({ rotateX: 0.5, rotateY: -0.3, rotateZ: 0.2, scale: 1.7, depth: 4 })
-    expect(out).toMatchObject({ rotateX: 0, rotateY: 0, rotateZ: 0, scale: 1, depth: 4 })
-  })
-  it('does not add keys the effect lacks', () => {
-    const out = neutralizeCamera({ depth: 4 })
-    expect('rotateX' in out).toBe(false)
-    expect('scale' in out).toBe(false)
-  })
-  it('does not mutate the input', () => {
-    const input = { rotateX: 0.5 }
-    neutralizeCamera(input)
-    expect(input.rotateX).toBe(0.5)
-  })
-})
 
 describe('applySceneToState', () => {
   it('applies look params but preserves base text/font', () => {
