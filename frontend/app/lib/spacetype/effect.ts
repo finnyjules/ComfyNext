@@ -56,7 +56,9 @@ export interface SpaceTypeEffect {
   /** Keys read live in update() each frame (vertex/uniform/transform params). Changing one
    *  should NOT trigger a structural rebuild. Omit → every key is treated as structural. */
   liveKeys?: string[]
-  /** Params that are "cycles/turns per loop" — the seamless-loop export renders enough loops that
-   *  each completes whole cycles. Omit → the effect exports as a single loop. */
-  loopKeys?: string[]
+  /** The distinct per-frame motion RATES (coefficients of t01, in whole cycles) this effect
+   *  advances at — the seamless-loop export renders enough loops that ALL complete whole cycles.
+   *  Must include every motion that multiplies t01, including per-ring/per-instance variations.
+   *  Omit → exports as a single loop. */
+  loopRates?(params: Params): number[]
 }

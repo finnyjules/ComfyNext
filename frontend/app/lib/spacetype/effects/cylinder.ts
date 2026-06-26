@@ -107,7 +107,16 @@ export const cylinderEffect: SpaceTypeEffect = {
   liveKeys: ['waveSpeed', 'waveCount', 'waveLatitude', 'waveLongitude', 'waveRipple', 'waveRotate',
     'waveXScale', 'waveYScale', 'tweakX', 'tweakY', 'tweakZ', 'cylRotate', 'cylOffset',
     'spinSpeed', 'spinRingOffset', 'spinAlternate'],
-  loopKeys: ['waveSpeed', 'spinSpeed', 'spinRingOffset'],
+  loopRates(params) {
+    const waveSpeed = Math.max(0, Number(params.waveSpeed) || 0)
+    const spinSpeed = Number(params.spinSpeed) || 0
+    const spinRingOffset = Number(params.spinRingOffset) || 0
+    const count = Math.max(1, Math.floor(Number(params.count) || 1))
+    const center = (count - 1) / 2
+    const rates = [waveSpeed]
+    for (let ring = 0; ring < count; ring++) rates.push(spinSpeed + (ring - center) * spinRingOffset)
+    return rates
+  },
 
   // We build our own per-glyph texture via layoutChars; the passed surface
   // textTexture (a tiled ribbon line) is ignored.

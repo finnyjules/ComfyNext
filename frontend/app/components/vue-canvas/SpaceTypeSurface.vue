@@ -636,7 +636,8 @@ async function generateVideo() {
     engine.setFps(fps.value)
     engine.setLoopDuration(loopDuration.value)
     rebuild()
-    const k = seamlessLoop.value ? loopMultiplier(params, effect.value.loopKeys) : 1
+    const rates = seamlessLoop.value ? (effect.value.loopRates?.(params) ?? []) : []
+    const k = loopMultiplier(rates)
     const origFrames = Math.max(1, Math.round(fps.value * loopDuration.value))
     const loopCfg = k > 1 ? { ...cfg.value, loopDuration: loopDuration.value * k } : cfg.value
     const bake = await ensureSpaceTypeBake(loopCfg, undefined, {
