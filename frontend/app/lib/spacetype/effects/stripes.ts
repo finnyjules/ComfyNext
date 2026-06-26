@@ -143,10 +143,11 @@ export const stripesEffect: SpaceTypeEffect = {
       const tex = textTexture.clone()
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
-      // Alternate texts: show row i%N of the atlas by compressing V to that row.
+      // Alternate texts across stripes. Band i=0 sits at the BOTTOM, so assign texts top-down
+      // ((count-1-i)) → the FIRST string lands on the TOP stripe and they read first→last going down.
       if (numTexts > 1) {
         tex.repeat.y = 1 / numTexts
-        tex.offset.y = (i % numTexts) / numTexts
+        tex.offset.y = ((count - 1 - i) % numTexts) / numTexts
       }
 
       const fill = fills[i % fills.length]!
