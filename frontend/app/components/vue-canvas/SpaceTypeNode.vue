@@ -9,6 +9,9 @@ import {
   defaultSpaceTypeState, dimsFromKey, ensureSpaceTypeFont, texOptsFromState,
   type SpaceTypeState,
 } from '~/lib/spacetype/state'
+import { DEFAULT_POST } from '~/lib/spacetype/post'
+import { loadSpaceDefaults, spaceDefaultFor } from '~/composables/useSpaceDefaults'
+import { applySceneToState } from '~/lib/spacetype/scene'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
@@ -38,6 +41,9 @@ const BAKE_SS = 2
 const state = computed<SpaceTypeState>(
   () => (props.data?.properties?.comfynext_spaceType as SpaceTypeState) ?? defaultSpaceTypeState(),
 )
+
+// True if the node already had a saved config at mount time; false = fresh node → apply default scene.
+const hadSavedConfig = !!props.data?.properties?.comfynext_spaceType
 
 function previewHeight(s: SpaceTypeState): number {
   const [cw, ch] = dimsFromKey(s.dimsKey)
@@ -73,6 +79,9 @@ function rebuild() {
   engine.setFps(s.fps)
   engine.setLoopDuration(s.loopDuration)
   engine.setBackground(s.transparent, s.bgColor)
+  engine.setProjection(s.projection ?? 'perspective')
+  engine.setPost({ ...(s.post ?? DEFAULT_POST) })
+  engine.setPan(s.panX ?? 0, s.panY ?? 0)
   // Honor a config effectId change (the deep watch on `state` calls rebuild()).
   engine.setEffect(getEffect(s.effectId))
   engine.build(s.params, texOptsFromState(s))
@@ -100,15 +109,31 @@ function stopPreview() {
 
 onMounted(async () => {
   if (!canvasEl.value) return
+
+  // Apply a default scene to a fresh node (no saved config) BEFORE building the engine,
+  // so state.value already reflects the scene when the engine constructor runs.
+  if (!hadSavedConfig) {
+    await loadSpaceDefaults()
+    const scene = spaceDefaultFor(defaultSpaceTypeState().effectId)
+    if (scene) {
+      const merged = applySceneToState(defaultSpaceTypeState(), scene)
+      const n = props.data
+      if (n) { (n.properties ||= {}).comfynext_spaceType = merged }
+    }
+  }
+
   if (!detectWebGL()) { webglOk.value = false; return }
   const s = state.value
   previewH.value = previewHeight(s)
   engine = new SpaceTypeEngine(canvasEl.value, {
     effect: getEffect(s.effectId), width: PREVIEW_W, height: previewH.value,
     fps: s.fps, loopDuration: s.loopDuration, alpha: s.transparent, bgColor: s.bgColor,
+    projection: s.projection ?? 'perspective',
   })
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
+  engine.setPost({ ...(s.post ?? DEFAULT_POST) })
+  engine.setPan(s.panX ?? 0, s.panY ?? 0)
   registerStudioBaker(props.id, bakeOutput)
   io = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
   if (canvasEl.value?.parentElement) io.observe(canvasEl.value.parentElement)

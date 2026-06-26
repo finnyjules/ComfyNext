@@ -1,6 +1,7 @@
 import { ribbonEffect, buildRibbonLabel } from './effects/ribbon'
 import { defaultsFromControls, type Params } from './effect'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
+import type { PostSettings } from './post'
 
 // Shared Space Type editor/node state. The modal (SpaceTypeSurface) keeps its
 // own inline copy of this logic; this module exists so the node card preview
@@ -14,6 +15,10 @@ export interface SpaceTypeState {
   dimsKey: string
   transparent: boolean
   bgColor: string
+  post?: PostSettings
+  projection?: 'perspective' | 'isometric'
+  panX?: number
+  panY?: number
 }
 
 export const DIMS: Record<string, [number, number]> = {
