@@ -19,4 +19,15 @@ describe('cylinder loopRates', () => {
     expect(rates).toContain(1)
     expect(rates.some(r => Math.abs(Math.abs(r) - 0.025) < 1e-9)).toBe(true)
   })
+
+  // The live preview now spans k = loopMultiplier(loopRates) loops and drives an unwrapped
+  // t01 = frame / base (0..k). This seams ONLY if every rate × k is integral — verify the
+  // contract holds for a fractional spin config, and that a single loop (k=1) would NOT seam.
+  it('k makes every cylinder rate land on a whole cycle (preview seam contract)', () => {
+    const cyl = getEffect('cylinder')
+    const rates = cyl.loopRates!({ waveSpeed: 0.5, spinSpeed: 0.3, spinRingOffset: 0, count: 3 })
+    const k = loopMultiplier(rates)
+    expect(k).toBeGreaterThan(1)                                   // single-loop preview would jump
+    for (const r of rates) expect(Math.abs(r * k - Math.round(r * k))).toBeLessThan(1e-3)
+  })
 })

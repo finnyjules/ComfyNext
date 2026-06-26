@@ -184,7 +184,10 @@ function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }
 const canvas = ref<HTMLCanvasElement | null>(null)
 let engine: SpaceTypeEngine | null = null
 let raf = 0
-let previewFrame = 0
+// Unwrapped normalized loop-time (0..k). Spans k loops so fractional motion rates land on whole
+// cycles before the wrap → the live preview seams just like the seamless export. k=1 (integer/no
+// rates) keeps it in [0,1), identical to the old single-loop behavior.
+let previewT01 = 0
 let previewStart = 0
 const baking = ref(false)
 const renderError = ref<string | null>(null)
@@ -347,7 +350,7 @@ function texOpts() {
 }
 
 function rebuild() {
-  previewFrame = 0
+  previewT01 = 0
   engine?.build(params, texOpts())
 }
 
@@ -374,9 +377,14 @@ function startPreview() {
   previewStart = 0
   const tick = (ts: number) => {
     if (!previewStart) previewStart = ts
-    const total = Math.max(1, Math.round(fps.value * loopDuration.value))
-    previewFrame = Math.floor(((ts - previewStart) / 1000) * fps.value) % total
-    engine?.renderFrame(previewFrame, params)
+    // Extend the loop to k loops so fractional spin/wave rates seam at the wrap (same logic the
+    // seamless export uses). Unwrapped t01 = frame / base runs 0..k; renderFrameAt keeps motions
+    // at their per-loop rate across loops instead of re-wrapping each loop (which caused the jump).
+    const base = Math.max(1, Math.round(fps.value * loopDuration.value))
+    const k = loopMultiplier(effect.value.loopRates?.(params) ?? [])
+    const frame = Math.floor(((ts - previewStart) / 1000) * fps.value) % (base * k)
+    previewT01 = frame / base
+    engine?.renderFrameAt(previewT01, params)
     renderError.value = engine?.lastError ?? null
     raf = requestAnimationFrame(tick)
   }
@@ -543,7 +551,7 @@ async function captureThumbnail() {
   try {
     const tw = 480
     const th = Math.max(1, Math.round(tw * H.value / W.value))
-    engine.renderFrame(previewFrame, params)   // capture the frame currently on screen
+    engine.renderFrameAt(previewT01, params)   // capture the frame currently on screen
     const blob = await engine.frameToBlob(tw, th)
     const ok = await saveEffectThumbnail(effectId.value, blob)
     if (!ok) console.error('[space-type] failed to save thumbnail')
@@ -576,12 +584,12 @@ async function makeAsDefault() {
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
 // Projection (perspective ↔ isometric) applies live; also re-render the held preview frame.
-watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrame(previewFrame, params) })
+watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrameAt(previewT01, params) })
 // Pan re-frames live (no rebuild) — read by the engine per frame as a camera view-offset.
-watch([panX, panY], () => { engine?.setPan(panX.value, panY.value); engine?.renderFrame(previewFrame, params) })
+watch([panX, panY], () => { engine?.setPan(panX.value, panY.value); engine?.renderFrameAt(previewT01, params) })
 // Post-processing applies live (composer uniforms; no scene rebuild). Re-render the held frame so a
 // paused preview updates immediately too.
-watch(post, () => { engine?.setPost({ ...post }); engine?.renderFrame(previewFrame, params) }, { deep: true })
+watch(post, () => { engine?.setPost({ ...post }); engine?.renderFrameAt(previewT01, params) }, { deep: true })
 // Loop length affects the engine's frameCount used during bake.
 watch(loopDuration, d => engine?.setLoopDuration(d))
 // fps affects the engine's frameCount used during bake/preview.
