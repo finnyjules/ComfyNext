@@ -26,4 +26,14 @@ describe('useEffectThumbnails', () => {
     expect(ok).toBe(true)
     expect(effectThumbUrl('coil')).toContain('/comfynext/space_thumbnail/coil')
   })
+  it('re-awaiting loadEffectThumbnails after a save returns the updated map (gallery refresh)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })           // initial load
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) }) // save
+    vi.stubGlobal('fetch', fetchMock)
+    await loadEffectThumbnails()
+    await saveEffectThumbnail('ribbon', new Blob([new Uint8Array([1])], { type: 'image/png' }))
+    const map = await loadEffectThumbnails()
+    expect(map['ribbon']).toContain('/comfynext/space_thumbnail/ribbon')
+  })
 })

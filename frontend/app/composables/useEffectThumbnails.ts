@@ -20,7 +20,9 @@ export async function saveEffectThumbnail(id: string, blob: Blob): Promise<boole
   try {
     const r = await fetch(`/comfynext/space_thumbnail/${id}`, { method: 'POST', body: blob })
     if (!r.ok) return false
-    _resolved = { ..._resolved, [id]: `/comfynext/space_thumbnail/${id}?v=${Date.now()}` }
+    // Mutate IN PLACE — the memoized loadEffectThumbnails() promise resolved to this same object,
+    // so the gallery (which re-awaits it on open) sees the new capture without a reload.
+    _resolved[id] = `/comfynext/space_thumbnail/${id}?v=${Date.now()}`
     return true
   } catch { return false }
 }
