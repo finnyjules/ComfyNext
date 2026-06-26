@@ -26,6 +26,7 @@ import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
 import SpaceTypeEffectGalleryModal from '~/components/vue-canvas/SpaceTypeEffectGalleryModal.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
 import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
+import { saveEffectThumbnail } from '~/composables/useEffectThumbnails'
 import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -65,6 +66,9 @@ function onCustomDims() {
 const effectId = ref('ribbon')
 const effect = computed(() => getEffect(effectId.value))
 const params = reactive<Params>(defaultsFromControls(effect.value.controls))
+
+// Authoring tool: flip to false (or remove the button) once all effect thumbnails are captured.
+const SHOW_THUMB_CAPTURE = true
 
 const showEffectGallery = ref(false)
 function onPickEffect(id: string) { effectId.value = id; showEffectGallery.value = false }
@@ -531,6 +535,24 @@ watch(effectId, async () => {
   await applyEffectDefaults()
 })
 
+const capturingThumb = ref(false)
+async function captureThumbnail() {
+  if (!engine) return
+  capturingThumb.value = true
+  stopPreview()
+  try {
+    const tw = 480
+    const th = Math.max(1, Math.round(tw * H.value / W.value))
+    engine.renderFrame(previewFrame, params)   // capture the frame currently on screen
+    const blob = await engine.frameToBlob(tw, th)
+    const ok = await saveEffectThumbnail(effectId.value, blob)
+    if (!ok) console.error('[space-type] failed to save thumbnail')
+  } finally {
+    capturingThumb.value = false
+    startPreview()
+  }
+}
+
 const savingDefault = ref(false)
 async function makeAsDefault() {
   savingDefault.value = true
@@ -725,6 +747,12 @@ async function generateVideo() {
             <button type="button" @click="makeAsDefault" :disabled="savingDefault"
                     class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
               {{ savingDefault ? 'Saving…' : 'Make as default' }}
+            </button>
+          </div>
+          <div v-if="SHOW_THUMB_CAPTURE" class="mt-2 flex justify-end">
+            <button v-if="SHOW_THUMB_CAPTURE" type="button" @click="captureThumbnail" :disabled="capturingThumb"
+                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+              {{ capturingThumb ? 'Capturing…' : 'Capture thumbnail' }}
             </button>
           </div>
           <template v-if="!frontLocked">
