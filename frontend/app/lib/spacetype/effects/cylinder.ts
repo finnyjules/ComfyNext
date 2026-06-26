@@ -178,7 +178,9 @@ export const cylinderEffect: SpaceTypeEffect = {
     // index (gi/nGlyphs · 2π), NOT proportional to glyph width (matches STG). Each ring's
     // nGlyphs is its OWN text's length, so different-length texts each wrap once cleanly.
     for (let i = 0; i < count; i++) {
-      const variant = i % texts.length
+      // Ring i=0 sits at the BOTTOM (ringY negative); assign texts top-down so the FIRST string
+      // lands on the TOP ring and they read first→last going down.
+      const variant = (count - 1 - i) % texts.length
       const layout = getLayout(variant)
       const baseN = Math.max(1, layout.glyphs.length)
       const ringNGlyphs = baseN * ringRepeat
