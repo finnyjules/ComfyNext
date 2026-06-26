@@ -191,10 +191,16 @@ export class SpaceTypeEngine {
   /** Total frames in one loop. */
   get frameCount(): number { return Math.max(1, Math.round(this.opts.fps * this.opts.loopDuration)) }
 
-  /** Render the scene at integer frame index. t01 = index / frameCount (no wall clock). */
+  /** Render the scene at integer frame index (wraps to one loop). */
   renderFrame(index: number, params: Params): void {
+    this.renderFrameAt((index % this.frameCount) / this.frameCount, params)
+  }
+
+  /** Render at a normalized loop-time t01 (may exceed 1 — used by the multi-loop seamless export,
+   *  where motions must keep their per-loop rate across k loops). At an integer t01 this equals
+   *  renderFrame. */
+  renderFrameAt(t01: number, params: Params): void {
     try {
-      const t01 = (index % this.frameCount) / this.frameCount
       const scale = Number(params.scale ?? 1) || 1
       this.scene.rotation.set(Number(params.rotateX ?? 0), Number(params.rotateY ?? 0), Number(params.rotateZ ?? 0))
       if (this.opts.projection === 'isometric') {
