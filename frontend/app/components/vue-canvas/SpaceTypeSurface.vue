@@ -486,7 +486,7 @@ const CARRY_ON_SWITCH = new Set(['text', 'font'])
 function applyDefaultScene(scene: Scene) {
   for (const k of Object.keys(params)) delete (params as any)[k]
   Object.assign(params, scene.params)
-  if (scene.post) Object.assign(post, scene.post)
+  if (scene.post) Object.assign(post, DEFAULT_POST, scene.post)
   if (scene.projection) projection.value = scene.projection
   if (scene.panX !== undefined) panX.value = scene.panX
   if (scene.panY !== undefined) panY.value = scene.panY

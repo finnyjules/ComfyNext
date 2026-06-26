@@ -1282,6 +1282,8 @@ try:
             scene = await request.json()
         except Exception as e:
             return web.json_response({"error": f"bad json: {e}"}, status=400)
+        if not isinstance(scene, dict):
+            return web.json_response({"error": "scene must be an object"}, status=400)
         d = _scene_defaults_dir()
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, f"{effect_id}.json"), "w", encoding="utf-8") as f:
