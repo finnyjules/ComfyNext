@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { ombreSideTexture } from '../fills'
+import { vessellColorsFor } from '../palette'
 // Typeface fonts ship with three and import synchronously (no runtime TTF parsing).
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json'
@@ -110,6 +111,10 @@ async function loadFontkitFont(family: string): Promise<BoostFont> {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// Extrude's side palette (colors only — its grid/noise patterns are separate controls) is
+// seeded from the shared Vessell palette so it matches the other effects' defaults.
+const BOOST_SIDE_COLORS = vessellColorsFor(6, 'boost')
+
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'A\nSAD\nWILD\nTHING', group: 'Type' },
   // Full Google picker; the outline is loaded via fontkit (bold weight), falling back to a
@@ -161,12 +166,13 @@ const controls: ControlSpec[] = [
   { key: 'gridLine', label: 'Grid line', kind: 'color', default: '#111111', group: 'Color', hint: 'line color of the grid pattern on sides' },
   { key: 'noiseColor1', label: 'Noise dark', kind: 'color', default: '#000000', group: 'Color', hint: 'dark end of the noise grain on sides' },
   { key: 'noiseColor2', label: 'Noise light', kind: 'color', default: '#ffffff', group: 'Color', hint: 'light end of the noise grain on sides' },
-  { key: 'paletteCount', label: 'Palette colors', kind: 'slider', min: 1, max: 5, step: 1, default: 5, group: 'Color', hint: 'how many palette colors to use (1–5)' },
-  { key: 'boostColor1', label: 'Color 1', kind: 'color', default: '#ffffff', group: 'Color', hint: 'first palette color used on sides' },
-  { key: 'boostColor2', label: 'Color 2', kind: 'color', default: '#4e7cd9', group: 'Color', hint: 'second palette color used on sides' },
-  { key: 'boostColor3', label: 'Color 3', kind: 'color', default: '#02733e', group: 'Color', hint: 'third palette color used on sides' },
-  { key: 'boostColor4', label: 'Color 4', kind: 'color', default: '#f23030', group: 'Color', hint: 'fourth palette color used on sides' },
-  { key: 'boostColor5', label: 'Color 5', kind: 'color', default: '#f26666', group: 'Color', hint: 'fifth palette color used on sides' },
+  { key: 'paletteCount', label: 'Palette colors', kind: 'slider', min: 1, max: 6, step: 1, default: 6, group: 'Color', hint: 'how many palette colors to use (1–6)' },
+  { key: 'boostColor1', label: 'Color 1', kind: 'color', default: BOOST_SIDE_COLORS[0]!, group: 'Color', hint: 'first palette color used on sides' },
+  { key: 'boostColor2', label: 'Color 2', kind: 'color', default: BOOST_SIDE_COLORS[1]!, group: 'Color', hint: 'second palette color used on sides' },
+  { key: 'boostColor3', label: 'Color 3', kind: 'color', default: BOOST_SIDE_COLORS[2]!, group: 'Color', hint: 'third palette color used on sides' },
+  { key: 'boostColor4', label: 'Color 4', kind: 'color', default: BOOST_SIDE_COLORS[3]!, group: 'Color', hint: 'fourth palette color used on sides' },
+  { key: 'boostColor5', label: 'Color 5', kind: 'color', default: BOOST_SIDE_COLORS[4]!, group: 'Color', hint: 'fifth palette color used on sides' },
+  { key: 'boostColor6', label: 'Color 6', kind: 'color', default: BOOST_SIDE_COLORS[5]!, group: 'Color', hint: 'sixth palette color used on sides' },
   // Stroke (glyph outline along the extrude).
   { key: 'stroke', label: 'Stroke', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color', hint: 'toggle outline stroke along the letter edges' },
   { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Color', hint: 'color of the stroke outline' },
@@ -392,9 +398,9 @@ export const boostEffect: SpaceTypeEffect = {
     const lines = String(params.text ?? '').split('\n')
     const usable = lines.length ? lines : ['']
 
-    const paletteCount = Math.max(1, Math.min(5, Math.floor(n(params, 'paletteCount'))))
+    const paletteCount = Math.max(1, Math.min(6, Math.floor(n(params, 'paletteCount'))))
     const palette = [
-      params.boostColor1, params.boostColor2, params.boostColor3, params.boostColor4, params.boostColor5,
+      params.boostColor1, params.boostColor2, params.boostColor3, params.boostColor4, params.boostColor5, params.boostColor6,
     ].slice(0, paletteCount).map(c => new three.Color(String(c)))
     const faceColor = new three.Color(String(params.faceColor))
     const sideSolid = new three.Color(String(params.sideColor))

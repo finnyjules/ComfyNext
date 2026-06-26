@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { VESSELL_FILLS, defaultFillsFor, vessellColorsFor } from '~/lib/spacetype/palette'
-import { SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects'
+import { SPACE_TYPE_EFFECTS, getEffect } from '~/lib/spacetype/effects'
 
 describe('vessell palette', () => {
   it('has 6 canonical slots, each a well-formed Fill', () => {
@@ -41,4 +41,16 @@ describe('effect fill defaults all come from the palette', () => {
       expect((fillControl as any).default).toBe(defaultFillsFor(n, e.id))
     })
   }
+})
+
+describe('Extrude side palette', () => {
+  it('boostColor1..6 come from the Vessell palette (seeded for boost)', () => {
+    const boost = getEffect('boost')
+    const cols = vessellColorsFor(6, 'boost')
+    for (let i = 0; i < 6; i++) {
+      const ctrl = boost.controls.find(c => c.key === `boostColor${i + 1}`) as any
+      expect(ctrl, `boostColor${i + 1}`).toBeTruthy()
+      expect(ctrl.default).toBe(cols[i])
+    }
+  })
 })
