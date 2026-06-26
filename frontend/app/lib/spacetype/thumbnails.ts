@@ -10,7 +10,9 @@ let _cache: Promise<Record<string, string>> | null = null
 /** Render each effect's default look once (one shared offscreen engine) → cached {id: objectURL}.
  *  Memoized for the session. No WebGL → {} (cards fall back to label-only). */
 export function effectThumbnails(): Promise<Record<string, string>> {
-  if (!_cache) _cache = generate()
+  // .catch so a (currently unreachable) generate() failure can't poison the memoized cache with a
+  // rejected promise — callers always get a usable map (empty → label-only cards).
+  if (!_cache) _cache = generate().catch(() => ({}))
   return _cache
 }
 
