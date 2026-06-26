@@ -1,0 +1,32 @@
+import { describe, it, expect } from 'vitest'
+import { VESSELL_FILLS, defaultFillsFor, vessellColorsFor } from '~/lib/spacetype/palette'
+
+describe('vessell palette', () => {
+  it('has 6 canonical slots, each a well-formed Fill', () => {
+    expect(VESSELL_FILLS).toHaveLength(6)
+    for (const f of VESSELL_FILLS) {
+      expect(typeof f.type).toBe('string')
+      expect(f.a).toMatch(/^#/); expect(f.b).toMatch(/^#/); expect(f.textColor).toMatch(/^#/)
+    }
+  })
+  it('defaultFillsFor is deterministic for a given (count, seed)', () => {
+    expect(defaultFillsFor(4, 'ball')).toBe(defaultFillsFor(4, 'ball'))
+  })
+  it('returns exactly count fills', () => {
+    expect(JSON.parse(defaultFillsFor(3, 'coil'))).toHaveLength(3)
+    expect(JSON.parse(defaultFillsFor(1, 'field'))).toHaveLength(1)
+  })
+  it('cycles when count exceeds the palette length', () => {
+    expect(JSON.parse(defaultFillsFor(8, 'x'))).toHaveLength(8)
+  })
+  it('different seeds generally produce different orderings', () => {
+    const a = defaultFillsFor(6, 'ball'), b = defaultFillsFor(6, 'coil'), c = defaultFillsFor(6, 'blend')
+    expect(new Set([a, b, c]).size).toBeGreaterThan(1)
+  })
+  it('vessellColorsFor returns count primary colors matching the shuffled fills', () => {
+    const cols = vessellColorsFor(6, 'boost')
+    const fills = JSON.parse(defaultFillsFor(6, 'boost'))
+    expect(cols).toHaveLength(6)
+    expect(cols).toEqual(fills.map((f: any) => f.a))
+  })
+})
