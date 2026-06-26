@@ -535,16 +535,21 @@ const cfg = computed(() => ({
   panX: panX.value, panY: panY.value,
 }))
 
+// Supersample factor for bakes/exports: render at N× the output size then downscale, so
+// texture/text edges come out clean (MSAA only smooths polygon silhouettes). Offline only.
+const BAKE_SS = 2
+
 async function generateImage() {
   if (!engine) return
   baking.value = true
   stopPreview()
   try {
     await ensureEffectFonts()
-    engine.setSize(W.value, H.value)
+    engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
     rebuild()
     engine.renderFrame(0, params)
-    const blob = await engine.frameToBlob()
+    const blob = await engine.frameToBlob(W.value, H.value)
+    engine.setSize(W.value, H.value)
     const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
     const [filename] = await uploadFrameBatch([blob], 'spacetype_img')
     if (filename) {
@@ -574,13 +579,14 @@ async function generateVideo() {
   stopPreview()
   try {
     await ensureEffectFonts()
-    engine.setSize(W.value, H.value)
+    engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
     engine.setFps(fps.value)
     engine.setLoopDuration(loopDuration.value)
     rebuild()
     const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
-      renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob() },
+      renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob(W.value, H.value) },
     })
+    engine.setSize(W.value, H.value)
     const res = await fetch('/comfynext/spacetype_encode', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

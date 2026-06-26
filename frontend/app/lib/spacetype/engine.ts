@@ -218,12 +218,25 @@ export class SpaceTypeEngine {
   }
 
   /** Read the current canvas back as a PNG blob. Forces a fresh render first so this
-   *  works without preserveDrawingBuffer (the preview renderer disables it for perf). */
-  async frameToBlob(): Promise<Blob> {
+   *  works without preserveDrawingBuffer (the preview renderer disables it for perf).
+   *  If targetW/targetH are smaller than the render size, the caller rendered at a higher
+   *  resolution (supersampling/SSAA) — downscale to the target with high-quality smoothing,
+   *  which removes the edge aliasing that MSAA alone leaves on texture/text interiors. */
+  async frameToBlob(targetW?: number, targetH?: number): Promise<Blob> {
     if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
     else this.renderer.render(this.scene, this.activeCam)
-    const canvas = this.renderer.domElement
-    const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
+    const src = this.renderer.domElement
+    if (targetW && targetH && (targetW < src.width || targetH < src.height)) {
+      const out = document.createElement('canvas')
+      out.width = targetW; out.height = targetH
+      const ctx = out.getContext('2d')!
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(src, 0, 0, targetW, targetH)
+      const blob = await new Promise<Blob | null>(r => out.toBlob(r, 'image/png'))
+      if (!blob) throw new Error('space type: frame produced no blob')
+      return blob
+    }
+    const blob = await new Promise<Blob | null>(r => src.toBlob(r, 'image/png'))
     if (!blob) throw new Error('space type: frame produced no blob')
     return blob
   }

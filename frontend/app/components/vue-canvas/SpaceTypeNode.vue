@@ -31,6 +31,8 @@ const props = defineProps<{
 const PREVIEW_W = 204
 const MIN_H = 80
 const MAX_H = 160
+// Supersample factor for the headless bake (render N× then downscale → clean edges).
+const BAKE_SS = 2
 
 // Live view of the node's saved config (falls back to defaults for a fresh node).
 const state = computed<SpaceTypeState>(
@@ -128,12 +130,12 @@ async function bakeOutput(): Promise<Blob | null> {
   stopPreview()
   try {
     await ensureSpaceTypeFont(String(s.params.font))
-    engine.setSize(cw, ch)
+    engine.setSize(cw * BAKE_SS, ch * BAKE_SS)
     engine.setBackground(s.transparent, s.bgColor)
     engine.setEffect(getEffect(s.effectId))
     engine.build(s.params, texOptsFromState(s))
     engine.renderFrame(0, s.params)
-    return await engine.frameToBlob()
+    return await engine.frameToBlob(cw, ch)
   } catch (e) {
     console.error('[space-type] bake failed', e); return null
   } finally {
