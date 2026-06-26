@@ -337,16 +337,19 @@ function rebuild() {
   engine?.build(params, texOpts())
 }
 
-// Structural edits (geometry/material/texture) are expensive (dispose + rebuild +
-// text raster). Coalesce a burst of slider drags into one rebuild, matching the node.
-let rebuildTimer: ReturnType<typeof setTimeout> | null = null
-function rebuildDebounced() {
-  if (rebuildTimer) clearTimeout(rebuildTimer)
-  rebuildTimer = setTimeout(async () => {
-    rebuildTimer = null
+// Structural edits (geometry/material/texture) are expensive (dispose + rebuild + text
+// raster), so coalesce multiple param changes in the same tick into ONE rebuild — but on the
+// NEXT ANIMATION FRAME, not a trailing setTimeout. A trailing debounce only fired after the
+// drag paused, so the preview stopped tracking a slider mid-drag (stutter); rAF coalescing
+// rebuilds once per frame while dragging, so the preview follows the slider continuously.
+let rebuildRaf = 0
+function scheduleRebuild() {
+  if (rebuildRaf) return
+  rebuildRaf = requestAnimationFrame(async () => {
+    rebuildRaf = 0
     await ensureEffectFonts()
     rebuild()
-  }, 80)
+  })
 }
 
 function startPreview() {
@@ -453,7 +456,7 @@ onMounted(async () => {
   startPreview()
 })
 
-onBeforeUnmount(() => { saveConfig(); if (rebuildTimer) clearTimeout(rebuildTimer); stopPreview(); engine?.dispose(); engine = null })
+onBeforeUnmount(() => { saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null })
 
 // Global view keys are live for every effect (camera/scene transform read per frame).
 const GLOBAL_LIVE_KEYS = ['speed', 'scale', 'rotateX', 'rotateY', 'rotateZ']
@@ -463,7 +466,7 @@ function structuralSignature(): string {
   for (const k of Object.keys(params)) sig[k] = live.has(k) ? 0 : params[k]
   return JSON.stringify(sig) + JSON.stringify(gradientStops)
 }
-watch(structuralSignature, () => { rebuildDebounced() })
+watch(structuralSignature, () => { scheduleRebuild() })
 // Switching effect: reset params to the new effect's defaults, but carry over any
 // param values the two effects share (text/font/typeColor/etc.) so they persist
 // across the switch. Then point the engine at the new effect and rebuild.
