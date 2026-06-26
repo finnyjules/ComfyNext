@@ -42,6 +42,7 @@ const controls: ControlSpec[] = [
   { key: 'radius', label: 'Radius', kind: 'slider', min: 2, max: 14, step: 0.1, default: 4, group: 'Ribbon' },
   { key: 'count', label: 'Count', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'ringRepeat', label: 'Repeats per ring', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
+  { key: 'ringSpacing', label: 'Ring spacing', kind: 'slider', min: 0.5, max: 4, step: 0.05, default: 1.6, group: 'Ribbon' },
   { key: 'cylRotate', label: 'Cyl rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
   { key: 'cylOffset', label: 'Cyl offset', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
   // SNAKE group (per-glyph WAVE — DISPLACES each letter along a wave wrapping the ring).
@@ -83,7 +84,11 @@ const controls: ControlSpec[] = [
 // Base world height of a glyph quad; width = CHAR_SIZE * glyph.aspect.
 const CHAR_SIZE = 1.15
 // Vertical spacing between stacked rings (multiples of glyph height).
-const RING_SPACING = CHAR_SIZE * 1.6
+// Vertical gap between rings = glyph size × the `ringSpacing` control (default 1.6 = the old fixed
+// value; absent on legacy configs falls back to 1.6). Used for ring placement + adjacent-ring tilt.
+function ringSpacingOf(params: Params): number {
+  return CHAR_SIZE * Math.max(0.1, Number(params.ringSpacing ?? 1.6))
+}
 
 // v2 assumes a single active engine/surface instance: buildScene populates this
 // module-level array and update() reads it. Two concurrent engines would clash —
@@ -174,6 +179,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     const center = (count - 1) / 2
     const registered = new Set<number>()
     const ringRepeat = Math.max(1, Math.floor(n(params, 'ringRepeat')))
+    const ringSpacing = ringSpacingOf(params)
 
     // Even angular distribution: glyphs are spread UNIFORMLY around the full ring by
     // index (gi/nGlyphs · 2π), NOT proportional to glyph width (matches STG). Each ring's
@@ -185,7 +191,7 @@ export const cylinderEffect: SpaceTypeEffect = {
       const layout = getLayout(variant)
       const baseN = Math.max(1, layout.glyphs.length)
       const ringNGlyphs = baseN * ringRepeat
-      const ringY = (i - center) * RING_SPACING
+      const ringY = (i - center) * ringSpacing
       for (let rep = 0; rep < ringRepeat; rep++) {
         for (let gi = 0; gi < layout.glyphs.length; gi++) {
           const g = layout.glyphs[gi]!
@@ -318,7 +324,7 @@ export const cylinderEffect: SpaceTypeEffect = {
       if (ALo) {
         const pre = Math.sin((g.ring - 1) * waveOffset + t) * ALo
         const post = Math.sin((g.ring + 1) * waveOffset + t) * ALo
-        _qRot.setFromAxisAngle(_AXIS_X, Math.atan2(RING_SPACING * 2, pre - post) - Math.PI / 2)
+        _qRot.setFromAxisAngle(_AXIS_X, Math.atan2(ringSpacingOf(params) * 2, pre - post) - Math.PI / 2)
         g.mesh.quaternion.multiply(_qRot)
       }
       if (tweakZ) {
