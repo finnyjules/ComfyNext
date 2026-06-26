@@ -46,14 +46,5 @@ const items = computed(() => {
         <span class="text-[13px] font-medium text-white/90">{{ (item as any).label }}</span>
       </div>
     </template>
-    <template #detail="{ item }">
-      <div class="space-y-3 p-4">
-        <div class="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-lg bg-neutral-950">
-          <img v-if="thumbs[(item as any).id]" :src="thumbs[(item as any).id]" :alt="(item as any).label" class="max-h-full max-w-full" />
-          <span v-else class="text-xs text-white/30">{{ (item as any).label }}</span>
-        </div>
-        <span class="text-sm font-semibold text-white/95">{{ (item as any).label }}</span>
-      </div>
-    </template>
   </CatalogModal>
 </template>
