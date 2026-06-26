@@ -31,3 +31,21 @@ describe('cylinder loopRates', () => {
     for (const r of rates) expect(Math.abs(r * k - Math.round(r * k))).toBeLessThan(1e-3)
   })
 })
+
+describe('streamer loopRates', () => {
+  it('speed 100 → already seamless (k=1)', () => {
+    const s = getEffect('streamer')
+    expect(loopMultiplier(s.loopRates!({ speed: 100 }))).toBe(1)
+  })
+  it('fractional speed → k>1 that lands the flow on a whole period', () => {
+    const s = getEffect('streamer')
+    const rates = s.loopRates!({ speed: 12 })   // pct 0.12
+    const k = loopMultiplier(rates)
+    expect(k).toBeGreaterThan(1)
+    for (const r of rates) expect(Math.abs(r * k - Math.round(r * k))).toBeLessThan(1e-3)
+  })
+  it('speed 0 → no motion, no rates', () => {
+    const s = getEffect('streamer')
+    expect(s.loopRates!({ speed: 0 })).toEqual([])
+  })
+})

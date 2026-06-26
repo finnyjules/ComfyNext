@@ -361,6 +361,16 @@ export const streamerEffect: SpaceTypeEffect = {
     return root
   },
 
+  // Seamless-loop rate: the flow advances `pct` minimal shape-periods per loop (pct = speed/100).
+  // The text scroll advances pct·m units where m = periodArc/textPeriodArc is an integer by
+  // construction (textPeriodArc = periodArc/m), so pct·k ∈ ℤ seams BOTH the shape and the text.
+  // speed 100 → pct 1 → k=1 (already seamless, as the export's 100%-is-seamless contract); slower
+  // speeds need k loops to land on a whole period. State-free: depends only on `speed`.
+  loopRates(params) {
+    const pct = Math.max(0, n(params, 'speed')) / 100
+    return pct > 0 ? [pct] : []
+  },
+
   update(t01, params) {
     if (!state) return
     // The SHAPE flows: slide the path window by whole minimal-periods (seamless), re-centered each
