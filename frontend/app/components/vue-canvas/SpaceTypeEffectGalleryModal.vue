@@ -1,16 +1,16 @@
 <script setup lang="ts">
 // Effect picker for Type Studio — wraps the shared CatalogModal. Cards show a cached
-// default-look thumbnail per effect (generated once by effectThumbnails). Picking an
+// saved thumbnail per effect (captured via the capture button). Picking an
 // effect emits `select`; the editor sets effectId and the existing watcher switches.
 import { ref, computed, onMounted } from 'vue'
 import { SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects'
-import { effectThumbnails } from '~/lib/spacetype/thumbnails'
+import { loadEffectThumbnails } from '~/composables/useEffectThumbnails'
 
 const props = defineProps<{ selectedId: string }>()
 const emit = defineEmits<{ close: []; select: [id: string] }>()
 
 const thumbs = ref<Record<string, string>>({})
-onMounted(async () => { thumbs.value = await effectThumbnails() })
+onMounted(async () => { thumbs.value = await loadEffectThumbnails() })
 
 const searchQuery = ref('')
 const draftId = ref(props.selectedId)
