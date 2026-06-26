@@ -73,6 +73,7 @@ const controls: ControlSpec[] = [
   { key: 'tweakZ', label: 'Tweak Z rot', kind: 'slider', min: 0, max: 0.78, step: 0.01, default: 0, group: 'Transform' },
   // COLOR — the glyphs are painted by the fill (solid/gradient/grid/noise); uses the first fill.
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'cylinder'), group: 'Color' },
+  { key: 'backColor', label: 'Back face', kind: 'color', default: '#101014', group: 'Color' },
   // SHADOW (copied from ribbon — directional light + ShadowMaterial catcher).
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
@@ -181,6 +182,12 @@ export const cylinderEffect: SpaceTypeEffect = {
     const ringRepeat = Math.max(1, Math.floor(n(params, 'ringRepeat')))
     const ringSpacing = ringSpacingOf(params)
 
+    // Back-face colour. Each glyph's front quad renders FrontSide (its fill/text); a sibling
+    // BackSide quad (same geometry + glyph alphaMap, tinted `backColor`) fills the faces seen
+    // from behind through the cylinder. Parented to the front mesh, so update()'s transform is
+    // inherited for free — no extra per-frame work, one extra draw per glyph.
+    const backColor = new three.Color(String(params.backColor ?? '#101014'))
+
     // Even angular distribution: glyphs are spread UNIFORMLY around the full ring by
     // index (gi/nGlyphs · 2π), NOT proportional to glyph width (matches STG). Each ring's
     // nGlyphs is its OWN text's length, so different-length texts each wrap once cleanly.
@@ -213,11 +220,16 @@ export const cylinderEffect: SpaceTypeEffect = {
           // Solid → glyph atlas as `map`, tinted by the fill colour. Textured → atlas as
           // `alphaMap` (shape) with the fill texture as `map` (tiled per glyph).
           const mat = (fillTextured && fillMap)
-            ? new three.MeshBasicMaterial({ map: fillMap, alphaMap: layout.texture, transparent: true, alphaTest: 0.5, side: three.DoubleSide })
-            : new three.MeshBasicMaterial({ map: layout.texture, color: new three.Color(fill.a), transparent: true, alphaTest: 0.5, side: three.DoubleSide })
+            ? new three.MeshBasicMaterial({ map: fillMap, alphaMap: layout.texture, transparent: true, alphaTest: 0.5, side: three.FrontSide })
+            : new three.MeshBasicMaterial({ map: layout.texture, color: new three.Color(fill.a), transparent: true, alphaTest: 0.5, side: three.FrontSide })
           const mesh = new three.Mesh(geo, mat)
           mesh.castShadow = true
           mesh.receiveShadow = true
+          // Behind-face: same glyph shape (alphaMap) tinted `backColor`, only the back side.
+          const backMat = new three.MeshBasicMaterial({ alphaMap: layout.texture, color: backColor, transparent: true, alphaTest: 0.5, side: three.BackSide })
+          const backMesh = new three.Mesh(geo, backMat)
+          backMesh.receiveShadow = true
+          mesh.add(backMesh)
           // Register each text's texture ONCE so disposeRoot() frees it on rebuild.
           if (!registered.has(variant)) { mesh.userData.tex = layout.texture; registered.add(variant) }
 
