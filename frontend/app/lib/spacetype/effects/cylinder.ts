@@ -40,6 +40,7 @@ const controls: ControlSpec[] = [
   // RIBBON group (CYLINDER ring placement).
   { key: 'radius', label: 'Radius', kind: 'slider', min: 2, max: 14, step: 0.1, default: 4, group: 'Ribbon' },
   { key: 'count', label: 'Count', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
+  { key: 'ringRepeat', label: 'Repeats per ring', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'cylRotate', label: 'Cyl rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
   { key: 'cylOffset', label: 'Cyl offset', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Ribbon' },
   // SNAKE group (per-glyph WAVE — DISPLACES each letter along a wave wrapping the ring).
@@ -55,7 +56,7 @@ const controls: ControlSpec[] = [
   // MOTION.
   { key: 'waveSpeed', label: 'Wave speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1, group: 'Motion' },
   // Spin: animate the cylinder's rotation over the loop. Whole-number speeds loop cleanly.
-  { key: 'spinSpeed', label: 'Spin speed', kind: 'slider', min: -4, max: 4, step: 0.25, default: 0, group: 'Motion' },
+  { key: 'spinSpeed', label: 'Spin speed', kind: 'slider', min: -4, max: 4, step: 0.05, default: 0, group: 'Motion' },
   // Per-ring spin offset: rings rotate at DIFFERENT speeds (staggered by ring index).
   { key: 'spinRingOffset', label: 'Spin ring offset', kind: 'slider', min: -2, max: 2, step: 0.05, default: 0, group: 'Motion' },
   // Alternate: odd-indexed rings spin the OPPOSITE direction (counter-rotating rings).
@@ -161,6 +162,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     const count = Math.max(1, Math.floor(n(params, 'count')))
     const center = (count - 1) / 2
     const registered = new Set<number>()
+    const ringRepeat = Math.max(1, Math.floor(n(params, 'ringRepeat')))
 
     // Even angular distribution: glyphs are spread UNIFORMLY around the full ring by
     // index (gi/nGlyphs · 2π), NOT proportional to glyph width (matches STG). Each ring's
@@ -168,41 +170,44 @@ export const cylinderEffect: SpaceTypeEffect = {
     for (let i = 0; i < count; i++) {
       const variant = i % texts.length
       const layout = getLayout(variant)
-      const ringNGlyphs = Math.max(1, layout.glyphs.length)
+      const baseN = Math.max(1, layout.glyphs.length)
+      const ringNGlyphs = baseN * ringRepeat
       const ringY = (i - center) * RING_SPACING
-      for (let gi = 0; gi < layout.glyphs.length; gi++) {
-        const g = layout.glyphs[gi]!
-        const charH = CHAR_SIZE
-        const charW = CHAR_SIZE * g.aspect
-        const geo = new three.PlaneGeometry(charW, charH)
+      for (let rep = 0; rep < ringRepeat; rep++) {
+        for (let gi = 0; gi < layout.glyphs.length; gi++) {
+          const g = layout.glyphs[gi]!
+          const charH = CHAR_SIZE
+          const charW = CHAR_SIZE * g.aspect
+          const geo = new three.PlaneGeometry(charW, charH)
 
-        // uv channel 0 stays 0…1 (fill map tiles per glyph); uv channel 1 holds the glyph's
-        // region of the atlas (alphaMap/shape). PlaneGeometry verts are TL,TR,BL,BR with uvs
-        // (0,1),(1,1),(0,0),(1,0). Map x∈{0,1}→{u0,u1} into uv1, keep v.
-        const uv0 = geo.attributes.uv as THREE.BufferAttribute
-        const uv1 = new Float32Array(uv0.count * 2)
-        for (let k = 0; k < uv0.count; k++) {
-          uv1[k * 2] = uv0.getX(k) < 0.5 ? g.u0 : g.u1
-          uv1[k * 2 + 1] = uv0.getY(k)
+          // uv channel 0 stays 0…1 (fill map tiles per glyph); uv channel 1 holds the glyph's
+          // region of the atlas (alphaMap/shape). PlaneGeometry verts are TL,TR,BL,BR with uvs
+          // (0,1),(1,1),(0,0),(1,0). Map x∈{0,1}→{u0,u1} into uv1, keep v.
+          const uv0 = geo.attributes.uv as THREE.BufferAttribute
+          const uv1 = new Float32Array(uv0.count * 2)
+          for (let k = 0; k < uv0.count; k++) {
+            uv1[k * 2] = uv0.getX(k) < 0.5 ? g.u0 : g.u1
+            uv1[k * 2 + 1] = uv0.getY(k)
+          }
+          geo.setAttribute('uv1', new three.BufferAttribute(uv1, 2))
+
+          // Solid → glyph atlas as `map`, tinted by the fill colour. Textured → atlas as
+          // `alphaMap` (shape) with the fill texture as `map` (tiled per glyph).
+          const mat = (fillTextured && fillMap)
+            ? new three.MeshBasicMaterial({ map: fillMap, alphaMap: layout.texture, transparent: true, alphaTest: 0.5, side: three.DoubleSide })
+            : new three.MeshBasicMaterial({ map: layout.texture, color: new three.Color(fill.a), transparent: true, alphaTest: 0.5, side: three.DoubleSide })
+          const mesh = new three.Mesh(geo, mat)
+          mesh.castShadow = true
+          mesh.receiveShadow = true
+          // Register each text's texture ONCE so disposeRoot() frees it on rebuild.
+          if (!registered.has(variant)) { mesh.userData.tex = layout.texture; registered.add(variant) }
+
+          // Base angle: even spread by index around the full ring (glyph 0 at the front).
+          // update() adds Cyl rotate / Cyl offset and computes displaced position + orientation.
+          const a0 = ((rep * baseN + gi) / ringNGlyphs) * Math.PI * 2
+          root.add(mesh)
+          glyphs.push({ mesh, a0, ringY, ring: i, gi, nGlyphs: ringNGlyphs })
         }
-        geo.setAttribute('uv1', new three.BufferAttribute(uv1, 2))
-
-        // Solid → glyph atlas as `map`, tinted by the fill colour. Textured → atlas as
-        // `alphaMap` (shape) with the fill texture as `map` (tiled per glyph).
-        const mat = (fillTextured && fillMap)
-          ? new three.MeshBasicMaterial({ map: fillMap, alphaMap: layout.texture, transparent: true, alphaTest: 0.5, side: three.DoubleSide })
-          : new three.MeshBasicMaterial({ map: layout.texture, color: new three.Color(fill.a), transparent: true, alphaTest: 0.5, side: three.DoubleSide })
-        const mesh = new three.Mesh(geo, mat)
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-        // Register each text's texture ONCE so disposeRoot() frees it on rebuild.
-        if (!registered.has(variant)) { mesh.userData.tex = layout.texture; registered.add(variant) }
-
-        // Base angle: even spread by index around the full ring (glyph 0 at the front).
-        // update() adds Cyl rotate / Cyl offset and computes displaced position + orientation.
-        const a0 = (gi / ringNGlyphs) * Math.PI * 2
-        root.add(mesh)
-        glyphs.push({ mesh, a0, ringY, ring: i, gi, nGlyphs: ringNGlyphs })
       }
     }
 
@@ -260,7 +265,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     const nRings = Math.max(1, Math.floor(n(params, 'count')))
     const center = (nRings - 1) / 2
     const twoPi = Math.PI * 2
-    const t = t01 * Math.max(0, Math.round(n(params, 'waveSpeed'))) * twoPi
+    const t = t01 * Math.max(0, n(params, 'waveSpeed')) * twoPi
 
     for (const g of glyphs) {
       // STG: rWaveOffset = 2π / textLength × rWaveCount — per-ring (each ring's own length).
