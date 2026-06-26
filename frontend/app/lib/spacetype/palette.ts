@@ -2,17 +2,43 @@ import { mulberry32, hashSeed } from './rng'
 import { type Fill, serializeFills } from './fillTile'
 
 /**
+ * The Vessell brand palette — hex equivalents of the `--palette-*` CSS variables defined in
+ * `app/assets/css/main.css` (those are authored in oklch "exact values from Figma"; THREE/canvas
+ * need hex, so we mirror them here). Keep in sync with main.css if the brand palette changes.
+ */
+export const PALETTE = {
+  yellow: '#F2FF5A',
+  darkIndigo: '#23123C',
+  darkNavy: '#040541',
+  darkTeal: '#15221F',
+  darkBrown: '#4A1F1C',
+  purple: '#52367B',
+  blue: '#0E6BFF',
+  teal: '#209D80',
+  coral: '#FF6259',
+  pink: '#FF99F7',
+  periwinkle: '#96B4FF',
+  mint: '#54F4CF',
+  peach: '#FFB984',
+  gray: '#C2BFB9',
+  beige: '#D2D3C1',
+  lavender: '#DDE3EF',
+  charcoal: '#232323',
+} as const
+
+/**
  * The canonical "Vessell" fill palette — one ordered source of truth for every Type Studio
- * effect's default fills. Each effect takes a per-effect seeded shuffle of these (see
- * defaultFillsFor), so effects look varied but each effect's default is stable + reproducible.
+ * effect's default fills, built from the brand PALETTE. Each effect takes a per-effect seeded
+ * shuffle of these (see defaultFillsFor), so effects look varied but each effect's default is
+ * stable + reproducible.
  */
 export const VESSELL_FILLS: Fill[] = [
-  { type: 'solid',        a: '#2563ff', b: '#0a0a2e', textColor: '#0a0a2e', angle: 45, density: 8 },
-  { type: 'stripes',      a: '#ef8fcb', b: '#e3685a', textColor: '#101014', angle: 45, density: 8 },
-  { type: 'grid',         a: '#e3685a', b: '#edb07f', textColor: '#ffffff', angle: 45, density: 8 },
-  { type: 'ombre',        a: '#86e8c0', b: '#eef07f', textColor: '#2a1838', angle: 45, density: 8 },
-  { type: 'qr',           a: '#edb07f', b: '#e98fcf', textColor: '#ffffff', angle: 45, density: 8 },
-  { type: 'checkerboard', a: '#eef07f', b: '#e98fcf', textColor: '#0a0a0a', angle: 45, density: 8 },
+  { type: 'solid',        a: PALETTE.blue,  b: PALETTE.darkNavy, textColor: PALETTE.darkNavy,   angle: 45, density: 8 },
+  { type: 'stripes',      a: PALETTE.pink,  b: PALETTE.coral,    textColor: PALETTE.darkIndigo, angle: 45, density: 8 },
+  { type: 'grid',         a: PALETTE.coral, b: PALETTE.peach,    textColor: PALETTE.lavender,   angle: 45, density: 8 },
+  { type: 'ombre',        a: PALETTE.mint,  b: PALETTE.yellow,   textColor: PALETTE.darkIndigo, angle: 45, density: 8 },
+  { type: 'qr',           a: PALETTE.peach, b: PALETTE.pink,     textColor: PALETTE.lavender,   angle: 45, density: 8 },
+  { type: 'checkerboard', a: PALETTE.yellow, b: PALETTE.pink,    textColor: PALETTE.charcoal,   angle: 45, density: 8 },
 ]
 
 /** A deterministic Fisher-Yates shuffle of a COPY of VESSELL_FILLS, seeded by seedKey. */
