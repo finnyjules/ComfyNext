@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * Turntable — flat repeated text displaced by concentric rotating bands (a vinyl/record swirl).
@@ -38,7 +39,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateY', label: 'Camera rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateZ', label: 'Disc rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   // COLOR — one fill PER CONCENTRIC BAND (cycled): band background (a/b/type) + text colour.
-  { key: 'fills', label: 'Bands', kind: 'fillList', default: '[{"type":"solid","a":"#000000","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
+  { key: 'fills', label: 'Bands', kind: 'fillList', default: defaultFillsFor(1, 'turntable'), group: 'Color' },
 ]
 
 interface TurntableState { materials: THREE.ShaderMaterial[] }

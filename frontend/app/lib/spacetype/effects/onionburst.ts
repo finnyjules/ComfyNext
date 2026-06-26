@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { parseFills, fillShaderTexture, fillTiling, hexBytes, type Fill } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * ONIONBURST — source-inspired by spacetypegenerator.com/onionburst. Each CHARACTER is mapped
@@ -16,7 +17,6 @@ import { parseFills, fillShaderTexture, fillTiling, hexBytes, type Fill } from '
  */
 
 const CHAR_SIZE = 1.3                 // world letter height
-const DEFAULT_FILLS = '[{"type":"solid","a":"#f25c9c","b":"#ffd23b","textColor":"#ffffff"},{"type":"grid","a":"#ffd23b","b":"#f25c9c","textColor":"#101014"},{"type":"gradient","a":"#ff5a1f","b":"#ffd23b","textColor":"#ffffff"},{"type":"solid","a":"#3b5bff","b":"#ffffff","textColor":"#ffffff"},{"type":"noise","a":"#101014","b":"#ffffff","textColor":"#ff5a1f"}]'
 
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'ALL IN\nTILL\nTHE\nEND', group: 'Type' },
@@ -44,7 +44,7 @@ const controls: ControlSpec[] = [
   // Scatter each cylinder's position + vary its size randomly (0 = neat grid, uniform size).
   { key: 'posOffset', label: 'Position offset', kind: 'slider', min: 0, max: 5, step: 0.1, default: 0, group: 'Ribbon' },
   { key: 'sizeVary', label: 'Size variation', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0, group: 'Ribbon' },
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: DEFAULT_FILLS, group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(5, 'onionburst'), group: 'Color' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 0.9, group: 'Transform' },
   { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0.2, group: 'Transform' },
   { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0.6, group: 'Transform' },

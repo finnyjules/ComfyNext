@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import type { Fill, FillType } from '../fills'
 import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint, minimalRowPeriod } from '../streamerLayout'
 
@@ -33,12 +34,7 @@ const controls: ControlSpec[] = [
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
   // Color — front face
   { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'gradient', group: 'Color' },
-  { key: 'fills', label: 'Front colors', kind: 'fillList', default: JSON.stringify([
-      { type: 'solid', a: '#3B2BFF', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#E01B6A', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#FF7A1A', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#FFE600', b: '#000', textColor: '#fff' },
-    ]), group: 'Color' },
+  { key: 'fills', label: 'Front colors', kind: 'fillList', default: defaultFillsFor(4, 'streamer'), group: 'Color' },
   { key: 'textColor', label: 'Text color', kind: 'color', default: '#111111', group: 'Color' },
   { key: 'noStripes', label: 'Text only', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
   // Color — back face

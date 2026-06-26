@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { VESSELL_FILLS, defaultFillsFor, vessellColorsFor } from '~/lib/spacetype/palette'
+import { SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects'
 
 describe('vessell palette', () => {
   it('has 6 canonical slots, each a well-formed Fill', () => {
@@ -29,4 +30,15 @@ describe('vessell palette', () => {
     expect(cols).toHaveLength(6)
     expect(cols).toEqual(fills.map((f: any) => f.a))
   })
+})
+
+describe('effect fill defaults all come from the palette', () => {
+  for (const e of SPACE_TYPE_EFFECTS) {
+    const fillControl = e.controls.find(c => c.kind === 'fillList')
+    if (!fillControl) continue
+    it(`${e.id} fillList default is a seeded palette prefix`, () => {
+      const n = JSON.parse((fillControl as any).default).length
+      expect((fillControl as any).default).toBe(defaultFillsFor(n, e.id))
+    })
+  }
 })

@@ -4,6 +4,7 @@ import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { layoutChars } from '../charLayout'
 import { shapedSin } from '../ribbonGeometry'
 import { parseFills, fillPrimary, fillTexture, fillIsTextured } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * CASCADE — source-matched to spacetypegenerator.com/cascade.
@@ -25,7 +26,6 @@ import { parseFills, fillPrimary, fillTexture, fillIsTextured } from '../fills'
  * instance. Per-row colours/textures bake once; only cell matrices update per frame.
  */
 
-const DEFAULT_FILLS = '[{"type":"solid","a":"#000000","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#000000"}]'
 
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'text', default: 'CASCADE', group: 'Type' },
@@ -51,7 +51,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // Colour — per-row fills (stripe solid/gradient/grid/noise + text colour), cycled like STG.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: DEFAULT_FILLS, group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(2, 'cascade'), group: 'Color' },
   { key: 'gradientMode', label: 'Gradient (across rows)', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
 ]
 

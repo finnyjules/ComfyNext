@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { layoutChars } from '../charLayout'
 import { parseFills, fillPrimary } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * BLEND — the Illustrator "blend tool meets 3D rotation" look. One word is replicated into
@@ -17,7 +18,6 @@ import { parseFills, fillPrimary } from '../fills'
  * work when Spin > 0 — it turntable-rotates the whole stack seamlessly across the loop.
  */
 
-const DEFAULT_FILLS = '[{"type":"solid","a":"#2b5cff","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#28e0ff","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ff8a1f","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ffd23b","b":"#000000","textColor":"#ffffff"}]'
 
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'text', default: '6', group: 'Type' },
@@ -37,7 +37,7 @@ const controls: ControlSpec[] = [
   { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.5, max: 10, step: 0.5, default: 3, group: 'Style' },
   { key: 'blendMode', label: 'Blend mode', kind: 'select', options: ['additive', 'over'], default: 'additive', group: 'Style' },
   // Colour — primaries of the fills list, cycled or lerped across the steps.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: DEFAULT_FILLS, group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(4, 'blend'), group: 'Color' },
   { key: 'gradientMode', label: 'Gradient (across steps)', kind: 'select', options: ['off', 'on'], default: 'on', group: 'Color' },
   // Motion — turntable spin of the whole stack (0 = static poster).
   { key: 'spin', label: 'Spin', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },

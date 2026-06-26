@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { parseFills, fillShaderTexture, fillIsTextured, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * CYLINDER — per-character ring (source-matched to spacetypegenerator.com/cylinder).
@@ -68,7 +69,7 @@ const controls: ControlSpec[] = [
   { key: 'tweakY', label: 'Tweak Y rot', kind: 'slider', min: 0, max: 0.78, step: 0.01, default: 0, group: 'Transform' },
   { key: 'tweakZ', label: 'Tweak Z rot', kind: 'slider', min: 0, max: 0.78, step: 0.01, default: 0, group: 'Transform' },
   // COLOR — the glyphs are painted by the fill (solid/gradient/grid/noise); uses the first fill.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#101014","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'cylinder'), group: 'Color' },
   // SHADOW (copied from ribbon — directional light + ShadowMaterial catcher).
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },

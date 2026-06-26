@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillTileCanvas, type Fill } from '../fills'
+import { defaultFillsFor } from '../palette'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { mulberry32, hashSeed } from '../rng'
 import {
@@ -41,14 +42,7 @@ const controls: ControlSpec[] = [
   { key: 'textStroke', label: 'Text stroke', kind: 'slider', min: 0, max: 16, step: 0.5, default: 0, group: 'Type' },
   { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Type' },
   // Color
-  { key: 'palette', label: 'Palette', kind: 'fillList', default: JSON.stringify([
-      { type: 'solid', a: '#33dd33', b: '#000000', textColor: '#ffffff' },
-      { type: 'solid', a: '#7a3cff', b: '#000000', textColor: '#ffffff' },
-      { type: 'solid', a: '#ff5ad1', b: '#000000', textColor: '#ffffff' },
-      { type: 'solid', a: '#ff5a1f', b: '#000000', textColor: '#ffffff' },
-      { type: 'solid', a: '#eaff00', b: '#000000', textColor: '#ffffff' },
-      { type: 'solid', a: '#3b5bff', b: '#000000', textColor: '#ffffff' },
-    ]), group: 'Color' },
+  { key: 'palette', label: 'Palette', kind: 'fillList', default: defaultFillsFor(6, 'sliceglitch'), group: 'Color' },
   { key: 'blockUnit', label: 'Block unit', kind: 'select', options: ['random', 'line', 'word', 'character'], default: 'random', group: 'Color' },
   { key: 'blockDensity', label: 'Blocks / band (random)', kind: 'slider', min: 1, max: 8, step: 1, default: 3, group: 'Color' },
   { key: 'blockHeight', label: 'Block height', kind: 'slider', min: 0.1, max: 1, step: 0.02, default: 1, group: 'Color' },

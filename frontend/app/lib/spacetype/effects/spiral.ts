@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import type { Fill, FillType } from '../fills'
 import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildSpiralGeometry } from '../spiralGeometry'
 
@@ -43,13 +44,7 @@ const controls: ControlSpec[] = [
   { key: 'bandColor', label: 'Band color', kind: 'color', default: '#000000', group: 'Color' },
   // Iridescent underside ramp (multi-stop). Violet intentionally left out per house style — add a
   // stop in the control if you want the exact reference ramp.
-  { key: 'fills', label: 'Underside gradient', kind: 'fillList', default: JSON.stringify([
-      { type: 'solid', a: '#FF7A1A', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#FFE600', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#3BE0A0', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#2AC7E0', b: '#000', textColor: '#fff' },
-      { type: 'solid', a: '#3B5BFF', b: '#000', textColor: '#fff' },
-    ]), group: 'Color' },
+  { key: 'fills', label: 'Underside gradient', kind: 'fillList', default: defaultFillsFor(5, 'spiral'), group: 'Color' },
   { key: 'gradRepeats', label: 'Gradient repeats', kind: 'slider', min: 1, max: 12, step: 1, default: 1, group: 'Color' },
   // Motion — whole turns/loop keep the spin seamless; direction flips the apparent vertical flow.
   { key: 'speed', label: 'Rotations / loop', kind: 'slider', min: 0, max: 8, step: 1, default: 1, group: 'Motion' },

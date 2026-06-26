@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { frameEdgeSpecs } from '../contourFrame'
 
@@ -28,7 +29,7 @@ const controls: ControlSpec[] = [
   { key: 'rotate', label: 'Twist', kind: 'slider', min: -0.5, max: 0.5, step: 0.005, default: 0, group: 'Layers' },
   { key: 'view', label: 'View', kind: 'select', options: ['Front', 'Quarter', 'Upward'], default: 'Front', group: 'Layers' },
   // Color — per-layer palette cycled across the frames
-  { key: 'colors', label: 'Colors', kind: 'fillList', default: JSON.stringify([{ type: 'solid', a: '#111111', b: '#000', textColor: '#fff' }]), group: 'Color' },
+  { key: 'colors', label: 'Colors', kind: 'fillList', default: defaultFillsFor(1, 'contour'), group: 'Color' },
   { key: 'shadow', label: 'Shadow', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Color' },
   // Stroke — an outline along each frame's inner + outer band edges (0 = off)
   { key: 'strokeWidth', label: 'Stroke', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0, group: 'Stroke' },

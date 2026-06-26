@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * Ball — the text atlas wrapped around a spinning globe (a sibling of Cylinder/Coil).
@@ -37,7 +38,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateZ', label: 'Camera rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // COLOR — one fill PER PANEL (cycled). Each fill: panel colour/pattern (a/b/type) + text colour.
   // Default = a 6-colour beach ball; add/remove fills or change types (gradient/ombre/…) freely.
-  { key: 'fills', label: 'Panels', kind: 'fillList', default: '[{"type":"solid","a":"#e23b3b","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#f5c542","b":"#000000","textColor":"#1a1a1a"},{"type":"solid","a":"#3b78e2","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#36b37e","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#1a1a1a"},{"type":"solid","a":"#e2843b","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
+  { key: 'fills', label: 'Panels', kind: 'fillList', default: defaultFillsFor(6, 'ball'), group: 'Color' },
   // SHADING — flat = uniform panels; lit = directional shading for a round, ball-like read.
   { key: 'shading', label: 'Shading', kind: 'select', options: ['flat', 'lit'], default: 'lit', group: 'Shadow' },
   { key: 'shadeStrength', label: 'Shade depth', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },

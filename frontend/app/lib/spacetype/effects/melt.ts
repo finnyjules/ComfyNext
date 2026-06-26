@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * MELT — a readable word at the TOP and BOTTOM, with the letters between stretched into wavy
@@ -33,7 +34,7 @@ const controls: ControlSpec[] = [
   { key: 'steps', label: 'Geometric steps', kind: 'slider', min: 3, max: 40, step: 1, default: 12, group: 'Wave' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
   // Colour — the word's fill (solid/gradient/grid/noise).
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#ffffff"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'melt'), group: 'Color' },
   // Grit: roughen the edges with noise for a dirty / photocopied finish. 0 = clean.
   { key: 'grit', label: 'Grit', kind: 'slider', min: 0, max: 0.06, step: 0.002, default: 0.018, group: 'Color' },
   { key: 'gritScale', label: 'Grit scale', kind: 'slider', min: 10, max: 320, step: 5, default: 90, group: 'Color' },

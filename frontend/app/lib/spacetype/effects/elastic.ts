@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills } from '../fills'
+import { defaultFillsFor } from '../palette'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { charDeform, TAU, type DeformParams } from '../elasticDeform'
 
@@ -37,7 +38,7 @@ const controls: ControlSpec[] = [
   { key: 'warpScale', label: 'Warp scale', kind: 'slider', min: 0.3, max: 3, step: 0.1, default: 1, group: 'Warp' },
   { key: 'polygonal', label: 'Polygonal', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0, group: 'Warp' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#000000"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'elastic'), group: 'Color' },
 ]
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'

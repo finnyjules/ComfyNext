@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
@@ -32,7 +33,7 @@ const controls: ControlSpec[] = [
   { key: 'ribbonRotateY', label: 'Ribbon rotate Y', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   { key: 'ribbonRotateZ', label: 'Ribbon rotate Z', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   // Per-ribbon fills (solid/gradient/grid/noise) cycled across ribbons + per-fill text colour.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"gradient","a":"#3b5bff","b":"#ff3b3b","textColor":"#101014"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'ribbon'), group: 'Color' },
   { key: 'bSideColor', label: 'B-side', kind: 'color', default: '#101014', group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },

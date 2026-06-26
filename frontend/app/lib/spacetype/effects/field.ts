@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * FIELD — tiled text grid on a waved plane (source-matched to spacetypegenerator.com/field).
@@ -42,7 +43,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // Field fill (solid/gradient/grid/noise) + text colour. (Uses the first fill in the list.)
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#f5f5f7","b":"#000000","textColor":"#101014"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'field'), group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
   { key: 'shadowSoftness', label: 'Shadow softness', kind: 'slider', min: 0, max: 40, step: 0.5, default: 10, group: 'Shadow' },

@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { shapedSin } from '../ribbonGeometry'
 import { parseFills, fillAtlasTexture, type Fill } from '../fills'
+import { defaultFillsFor } from '../palette'
 
 /**
  * COIL — source-matched to spacetypegenerator.com/coil.
@@ -60,7 +61,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // Palette (cycled per ribbon, like STG's colour checkboxes).
   // Per-segment fills (solid/gradient/grid/noise) cycled around the spiral + per-fill text colour.
-  { key: 'fills', label: 'Fills', kind: 'fillList', default: '[{"type":"solid","a":"#ff3b3b","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#ffd23b","b":"#000000","textColor":"#101014"},{"type":"solid","a":"#3b5bff","b":"#000000","textColor":"#ffffff"},{"type":"solid","a":"#f5f5f7","b":"#000000","textColor":"#101014"}]', group: 'Color' },
+  { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(4, 'coil'), group: 'Color' },
   { key: 'shadows', label: 'Shadows', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Shadow' },
   { key: 'shadowStrength', label: 'Shadow strength', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
   { key: 'shadowSoftness', label: 'Shadow softness', kind: 'slider', min: 0, max: 40, step: 0.5, default: 10, group: 'Shadow' },
