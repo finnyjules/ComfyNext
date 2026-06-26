@@ -114,9 +114,10 @@ onMounted(async () => {
   // so state.value already reflects the scene when the engine constructor runs.
   if (!hadSavedConfig) {
     await loadSpaceDefaults()
-    const scene = spaceDefaultFor(defaultSpaceTypeState().effectId)
+    const base = defaultSpaceTypeState()
+    const scene = spaceDefaultFor(base.effectId)
     if (scene) {
-      const merged = applySceneToState(defaultSpaceTypeState(), scene)
+      const merged = applySceneToState(base, scene)
       const n = props.data
       if (n) { (n.properties ||= {}).comfynext_spaceType = merged }
     }
@@ -132,8 +133,6 @@ onMounted(async () => {
   })
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
-  engine.setPost({ ...(s.post ?? DEFAULT_POST) })
-  engine.setPan(s.panX ?? 0, s.panY ?? 0)
   registerStudioBaker(props.id, bakeOutput)
   io = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
   if (canvasEl.value?.parentElement) io.observe(canvasEl.value.parentElement)
