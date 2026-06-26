@@ -310,7 +310,9 @@ function texOpts() {
   // magnifies the text far beyond the default ~256px atlas → blur. Supersample its atlas (scale the
   // glyph AND the row together so the ink proportions — and thus the look — are unchanged, just
   // higher-res). Other effects keep the default resolution.
-  const atlasSS = effectId.value === 'slitscan' ? 3 : 1
+  // Supersample the text atlas 2× so glyph edges stay crisp in the authoring preview when
+  // magnified onto large bands (slit-scan needs even more — it fills the frame with one quad).
+  const atlasSS = effectId.value === 'slitscan' ? 3 : 2
   return {
     label: labels[0]!,
     labels,

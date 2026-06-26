@@ -82,7 +82,7 @@ export function fillAtlasTexture(three: typeof THREE, fills: Fill[]): THREE.Text
   const key = fills.map(f => `${f.type}:${f.a}:${f.b}:${f.angle}:${f.density}`).join('|')
   const hit = _atlasCache.get(key)
   if (hit) return hit
-  const BAND = 64, W = 64, nb = Math.max(1, fills.length)
+  const BAND = 256, W = 256, nb = Math.max(1, fills.length)
   const c = document.createElement('canvas'); c.width = W; c.height = BAND * nb
   const ctx = c.getContext('2d')!
   fills.forEach((fill, i) => {
