@@ -20,11 +20,13 @@ describe('neutralizeCamera', () => {
 })
 
 describe('applySceneToState', () => {
-  it('replaces params and overrides present look fields', () => {
-    const base = defaultSpaceTypeState()
-    const scene: Scene = { params: { text: 'HI' }, projection: 'isometric', panX: 0.2, bgColor: '#123456' }
+  it('applies look params but preserves base text/font', () => {
+    const base = { ...defaultSpaceTypeState(), params: { text: 'KEEP', font: 'BaseFont', look: 1 } }
+    const scene: Scene = { params: { text: 'HI', font: 'SceneFont', look: 9 }, projection: 'isometric', panX: 0.2, bgColor: '#123456' }
     const out = applySceneToState(base, scene)
-    expect(out.params).toEqual({ text: 'HI' })
+    expect(out.params.text).toBe('KEEP')   // content preserved from base
+    expect(out.params.font).toBe('BaseFont')
+    expect(out.params.look).toBe(9)        // look replaced by the scene
     expect(out.projection).toBe('isometric')
     expect(out.panX).toBe(0.2)
     expect(out.bgColor).toBe('#123456')

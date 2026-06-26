@@ -24,7 +24,7 @@ import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
 import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
-import { neutralizeCamera, type Scene } from '~/lib/spacetype/scene'
+import { neutralizeCamera, SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -484,8 +484,16 @@ watch(structuralSignature, () => { scheduleRebuild() })
 const CARRY_ON_SWITCH = new Set(['text', 'font'])
 // Apply a saved default scene onto the live editor refs (used on fresh open / effect switch / reset).
 function applyDefaultScene(scene: Scene) {
+  // A scene captures the LOOK, not the content — keep the current text/font (so switching to a
+  // defaulted effect doesn't replace the words you're working on).
+  const keep: Record<string, any> = {}
+  for (const k of SCENE_CONTENT_KEYS) if (k in params) keep[k] = (params as any)[k]
   for (const k of Object.keys(params)) delete (params as any)[k]
   Object.assign(params, scene.params)
+  for (const k of SCENE_CONTENT_KEYS) {
+    if (k in keep) (params as any)[k] = keep[k]
+    else delete (params as any)[k]
+  }
   if (scene.post) Object.assign(post, DEFAULT_POST, scene.post)
   if (scene.projection) projection.value = scene.projection
   if (scene.panX !== undefined) panX.value = scene.panX

@@ -24,12 +24,22 @@ export function neutralizeCamera(params: Params): Params {
   return out
 }
 
-/** Merge a saved scene over a base state: params replace; post/projection/pan/bg/gradientStops
- *  override only when the scene provides them. Pure — returns a new state. */
+/** Content keys the user owns — a scene captures the LOOK, not the words/typeface, so applying a
+ *  scene never overrides these (switching to a defaulted effect keeps your current text). */
+export const SCENE_CONTENT_KEYS = ['text', 'font'] as const
+
+/** Merge a saved scene over a base state: look params replace, but text/font are preserved from
+ *  the base; post/projection/pan/bg/gradientStops override only when the scene provides them.
+ *  Pure — returns a new state. */
 export function applySceneToState(base: SpaceTypeState, scene: Scene): SpaceTypeState {
+  const params: Params = { ...scene.params }
+  for (const k of SCENE_CONTENT_KEYS) {
+    if (k in base.params) params[k] = base.params[k]!
+    else delete params[k]
+  }
   return {
     ...base,
-    params: { ...scene.params },
+    params,
     ...(scene.post ? { post: { ...scene.post } } : {}),
     ...(scene.projection ? { projection: scene.projection } : {}),
     ...(scene.panX !== undefined ? { panX: scene.panX } : {}),
