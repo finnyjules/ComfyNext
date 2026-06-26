@@ -23,6 +23,7 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
+import SpaceTypeEffectGalleryModal from '~/components/vue-canvas/SpaceTypeEffectGalleryModal.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
 import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
 import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
@@ -64,6 +65,9 @@ function onCustomDims() {
 const effectId = ref('ribbon')
 const effect = computed(() => getEffect(effectId.value))
 const params = reactive<Params>(defaultsFromControls(effect.value.controls))
+
+const showEffectGallery = ref(false)
+function onPickEffect(id: string) { effectId.value = id; showEffectGallery.value = false }
 
 const { requestPatch } = useVibeControl()
 const vibeBusy = ref(false)
@@ -708,9 +712,11 @@ async function generateVideo() {
       />
       <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
           <label class="mb-1 block text-[11px] text-white/50">Effect</label>
-          <select v-model="effectId" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
-            <option v-for="e in SPACE_TYPE_EFFECTS" :key="e.id" :value="e.id" class="bg-neutral-900">{{ e.label }}</option>
-          </select>
+          <button type="button" @click="showEffectGallery = true"
+                  class="flex w-full items-center justify-between rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
+            <span class="truncate">{{ effect.label }}</span>
+            <span class="ml-2 shrink-0 text-white/40">▾</span>
+          </button>
           <div class="mt-2 flex items-center justify-between">
             <button type="button" @click="applyEffectDefaults"
                     class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
@@ -947,4 +953,10 @@ async function generateVideo() {
         </StudioSection>
     </template>
   </StudioModalShell>
+  <SpaceTypeEffectGalleryModal
+    v-if="showEffectGallery"
+    :selected-id="effectId"
+    @select="onPickEffect"
+    @close="showEffectGallery = false"
+  />
 </template>
