@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from fractions import Fraction
@@ -25,6 +26,15 @@ import folder_paths
 from comfy_api.latest import ComfyExtension, Input, IO, InputImpl, Types
 from comfy_extras._live_preview import save_live_preview
 from comfy_extras.nodes_compositor import _BLEND_MODES, _blend, _fit_to_canvas, _transform
+
+
+def _valid_effect_id(s: str) -> bool:
+    return isinstance(s, str) and re.fullmatch(r"[a-z0-9]+", s) is not None
+
+def _scene_defaults_dir() -> str:
+    # comfy_extras/ -> repo root -> custom_nodes/comfynext_bridge/scene_defaults
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_defaults"))
 
 
 # Maximum clip ports preallocated on the Timeline node. The frontend's
@@ -1248,6 +1258,35 @@ try:
             return web.json_response({"error": str(e)}, status=500)
 
         return web.json_response({"filename": out_name})
+
+    @PromptServer.instance.routes.get("/comfynext/space_defaults")
+    async def _space_defaults_list(request):
+        out = {}
+        d = _scene_defaults_dir()
+        if os.path.isdir(d):
+            for fn in os.listdir(d):
+                if fn.endswith(".json") and _valid_effect_id(fn[:-5]):
+                    try:
+                        with open(os.path.join(d, fn), "r", encoding="utf-8") as f:
+                            out[fn[:-5]] = json.load(f)
+                    except Exception:
+                        pass
+        return web.json_response(out)
+
+    @PromptServer.instance.routes.post("/comfynext/space_default/{effect_id}")
+    async def _space_default_save(request):
+        effect_id = request.match_info.get("effect_id", "")
+        if not _valid_effect_id(effect_id):
+            return web.json_response({"error": "invalid effect id"}, status=400)
+        try:
+            scene = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+        d = _scene_defaults_dir()
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{effect_id}.json"), "w", encoding="utf-8") as f:
+            json.dump(scene, f, indent=2)
+        return web.json_response({"ok": True})
 
     @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
     async def _render_frame_route(request):
