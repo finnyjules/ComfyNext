@@ -90,6 +90,7 @@ function frontMaterial(
   const uFillTiling = { value: tiling }
   const uTextColor = { value: textColor }
   const uNumTexts = { value: Math.max(1, Math.round(numTexts)) }
+  const uRows = { value: Math.max(1, Math.floor(n(params, 'rows'))) }
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = uFillTex
@@ -97,6 +98,7 @@ function frontMaterial(
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uNumTexts = uNumTexts
     shader.uniforms.uShadowStrength = uShadowStrength
+    shader.uniforms.uRows = uRows
     shader.uniforms.uAmpZ = waveUniforms.uAmpZ
     shader.uniforms.uAmpX = waveUniforms.uAmpX
     shader.uniforms.uAmpY = waveUniforms.uAmpY
@@ -129,13 +131,14 @@ function frontMaterial(
         'transformed.y += sin(px + py + t + uYOffset) * uAmpY;',
       ].join('\n'))
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uNumTexts;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uNumTexts;\nuniform float uRows;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
-      // Alternate texts: each grid tile (col+row) shows row variant%N of the N-row atlas. The
-      // field fill (solid/gradient/grid/noise) is sampled at the plane uv; text colour is flat.
+      // Alternate texts: each grid tile shows one of the N atlas rows. Count rows from the TOP
+      // ((uRows-1-ftRow)) so the FIRST string lands on the top row — matches the band effects'
+      // textVariantForBand convention. The field fill is sampled at the plane uv; text colour flat.
       .replace('#include <map_fragment>', [
         'float ftCol = floor(vMapUv.x); float ftRow = floor(vMapUv.y);',
-        'float ftVariant = mod(ftCol + ftRow, uNumTexts);',
+        'float ftVariant = mod(ftCol + (uRows - 1.0 - ftRow), uNumTexts);',
         'vec2 ftUv = vec2(fract(vMapUv.x), (ftVariant + fract(vMapUv.y)) / uNumTexts);',
         'vec4 ftTex = texture2D(map, ftUv);',
         'vec3 fill = texture2D(uFillTex, vRawUv * uFillTiling).rgb;',

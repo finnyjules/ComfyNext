@@ -4,6 +4,7 @@ import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { parseFills, fillShaderTexture, fillIsTextured, fillTiling } from '../fills'
 import { defaultFillsFor } from '../palette'
+import { textVariantForBand } from '../ribbonGeometry'
 
 /**
  * CYLINDER — per-character ring (source-matched to spacetypegenerator.com/cylinder).
@@ -180,7 +181,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     for (let i = 0; i < count; i++) {
       // Ring i=0 sits at the BOTTOM (ringY negative); assign texts top-down so the FIRST string
       // lands on the TOP ring and they read first→last going down.
-      const variant = (count - 1 - i) % texts.length
+      const variant = textVariantForBand(i, count, texts.length)
       const layout = getLayout(variant)
       const baseN = Math.max(1, layout.glyphs.length)
       const ringNGlyphs = baseN * ringRepeat

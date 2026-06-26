@@ -77,6 +77,16 @@ export function ribbonInstance(i: number, p: RibbonInstanceParams): RibbonInstan
   return { y: (i - center) * p.spacing, phase: i * p.offset * TAU, dir }
 }
 
+/** Which text (atlas row) band `i` of `count` shows, over `numTexts` texts — ordered so the FIRST
+ *  text lands on the TOP band. The vertically-stacked multi-text effects (ribbon, stripes, cylinder)
+ *  put band i=0 at the BOTTOM (see ribbonInstance: y = (i−center)·spacing), so we count from the top:
+ *  band count−1 (top) → text 0, reading first→last going down. Field applies the same convention in
+ *  its shader (flipping the row term). */
+export function textVariantForBand(i: number, count: number, numTexts: number): number {
+  const n = Math.max(1, Math.floor(numTexts))
+  return (((count - 1 - i) % n) + n) % n
+}
+
 /** Whole number of texture tiles scrolled per loop — quantized so the loop is seamless. */
 export function loopTiles(speed: number, uRepeat: number): number {
   return Math.max(0, Math.round(speed * uRepeat))

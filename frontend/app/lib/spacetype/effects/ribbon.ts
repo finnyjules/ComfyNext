@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { buildRibbonGeometryData, ribbonInstance, scrollOffset } from '../ribbonGeometry'
+import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBand } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
 import { parseFills, fillShaderTexture, fillTiling } from '../fills'
 import { defaultFillsFor } from '../palette'
@@ -140,11 +140,10 @@ export const ribbonEffect: SpaceTypeEffect = {
       const tex = textTexture.clone()
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
-      // Alternate texts across ribbons. Band i=0 sits at the BOTTOM, so assign texts top-down
-      // ((count-1-i)) → the FIRST string lands on the TOP ribbon and they read first→last going down.
+      // Alternate texts across ribbons — first string on the TOP ribbon (shared convention).
       if (numTexts > 1) {
         tex.repeat.y = 1 / numTexts
-        tex.offset.y = ((count - 1 - i) % numTexts) / numTexts
+        tex.offset.y = textVariantForBand(i, count, numTexts) / numTexts
       }
 
       const fill = fills[i % fills.length]!
