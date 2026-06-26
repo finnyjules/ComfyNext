@@ -23,6 +23,8 @@ import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
+import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
+import { neutralizeCamera, type Scene } from '~/lib/spacetype/scene'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -443,9 +445,12 @@ onMounted(async () => {
   if (!canvas.value) return
   // Restore saved config BEFORE building the engine so the first render is
   // already the user's authored state (not the defaults).
+  const hadConfig = !!currentNode()?.data?.properties?.comfynext_spaceType
   loadConfig()
   pullTextLines()
   pullFills()
+  await loadSpaceDefaults()
+  if (!hadConfig) { const sc = spaceDefaultFor(effectId.value); if (sc) applyDefaultScene(sc) }
   if (!detectWebGL()) { webglOk.value = false; return }
   engine = new SpaceTypeEngine(canvas.value, {
     effect: effect.value, width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
@@ -477,6 +482,19 @@ watch(structuralSignature, () => { scheduleRebuild() })
 // defaults: those are tuned per effect, so carrying e.g. another effect's rotation flattens the
 // new one edge-on (Ribbon wants its −0.5 tilt; Coil sits at 0).
 const CARRY_ON_SWITCH = new Set(['text', 'font'])
+// Apply a saved default scene onto the live editor refs (used on fresh open / effect switch / reset).
+function applyDefaultScene(scene: Scene) {
+  for (const k of Object.keys(params)) delete (params as any)[k]
+  Object.assign(params, scene.params)
+  if (scene.post) Object.assign(post, scene.post)
+  if (scene.projection) projection.value = scene.projection
+  if (scene.panX !== undefined) panX.value = scene.panX
+  if (scene.panY !== undefined) panY.value = scene.panY
+  if (scene.bgColor) bgColor.value = scene.bgColor
+  if (scene.gradientStops) gradientStops.splice(0, gradientStops.length, ...scene.gradientStops.map(g => ({ ...g })))
+  pullTextLines(); pullFills()
+}
+
 // Reset params to the current effect's defaults, carrying over the content keys
 // (text/font). Shared by the effect-switch reset and the manual "Reset to defaults".
 async function applyEffectDefaults() {
@@ -486,6 +504,8 @@ async function applyEffectDefaults() {
   Object.assign(params, next)
   pullTextLines()
   pullFills()
+  const sc = spaceDefaultFor(effect.value.id)
+  if (sc) applyDefaultScene(sc)
   await ensureEffectFonts()
   rebuild()
 }
@@ -496,6 +516,25 @@ watch(effectId, async () => {
   engine?.setEffect(effect.value)
   await applyEffectDefaults()
 })
+
+const savingDefault = ref(false)
+async function makeAsDefault() {
+  savingDefault.value = true
+  try {
+    const scene: Scene = {
+      params: neutralizeCamera(params), // camera neutralized for the saved default (returns a copy)
+      post: { ...post },
+      projection: projection.value,
+      panX: 0, panY: 0,
+      bgColor: bgColor.value,
+      gradientStops: gradientStops.map(g => ({ ...g })),
+    }
+    const ok = await saveSpaceDefault(effectId.value, scene)
+    if (!ok) console.error('[space-type] failed to save default scene')
+  } finally {
+    savingDefault.value = false
+  }
+}
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
 // Projection (perspective ↔ isometric) applies live; also re-render the held preview frame.
@@ -659,7 +698,10 @@ async function generateVideo() {
                     class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
               Reset to defaults
             </button>
-            <span class="text-[10px] text-white/30">Double-click a slider to reset it</span>
+            <button type="button" @click="makeAsDefault" :disabled="savingDefault"
+                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+              {{ savingDefault ? 'Saving…' : 'Make as default' }}
+            </button>
           </div>
           <template v-if="!frontLocked">
             <label class="mb-1 mt-2.5 block text-[11px] text-white/50">Projection</label>
