@@ -10,6 +10,7 @@ import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -40,6 +41,7 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 
 const fps = ref(30)
 const FPS_OPTIONS = ['24', '30', '60']
+const seamlessLoop = ref(false)
 const DIMS: Record<string, [number, number]> = {
   '1920 × 1080 (16:9)': [1920, 1080],
   '1080 × 1920 (9:16)': [1080, 1920],
@@ -634,8 +636,13 @@ async function generateVideo() {
     engine.setFps(fps.value)
     engine.setLoopDuration(loopDuration.value)
     rebuild()
-    const bake = await ensureSpaceTypeBake(cfg.value, undefined, {
-      renderFrame: async (i) => { engine!.renderFrame(i, params); return engine!.frameToBlob(W.value, H.value) },
+    const k = seamlessLoop.value ? loopMultiplier(params, effect.value.loopKeys) : 1
+    const origFrames = Math.max(1, Math.round(fps.value * loopDuration.value))
+    const loopCfg = k > 1 ? { ...cfg.value, loopDuration: loopDuration.value * k } : cfg.value
+    const bake = await ensureSpaceTypeBake(loopCfg, undefined, {
+      // Unwrapped t01 = i / origFrames runs 0..k so motions keep their per-loop rate across k loops
+      // and land on whole cycles → seamless. k=1 is identical to the previous behavior.
+      renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
     })
     engine.setSize(W.value, H.value)
     const res = await fetch('/comfynext/spacetype_encode', {
@@ -881,6 +888,9 @@ async function generateVideo() {
                 </label>
                 <input type="range" min="1" max="15" step="0.5" v-studio-reset v-model.number="loopDuration" class="studio-range w-full" />
               </div>
+              <label data-control class="flex items-center justify-between text-xs text-white/60">
+                <span>Seamless loop</span><StudioSwitch v-model="seamlessLoop" />
+              </label>
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background
               </label>

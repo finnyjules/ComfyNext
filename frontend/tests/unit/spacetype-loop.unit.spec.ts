@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { loopMultiplier } from '~/lib/spacetype/loop'
+import { getEffect } from '~/lib/spacetype/effects'
 
 describe('loopMultiplier', () => {
   it('returns 1 when loopKeys is empty/absent', () => {
@@ -22,4 +23,10 @@ describe('loopMultiplier', () => {
   it('zero speed contributes nothing', () => {
     expect(loopMultiplier({ a: 0, b: 1.5 }, ['a', 'b'])).toBe(2)
   })
+})
+
+it('cylinder loopKeys are all real control keys', () => {
+  const cyl = getEffect('cylinder')
+  const keys = new Set(cyl.controls.map(c => c.key))
+  for (const lk of cyl.loopKeys ?? []) expect(keys.has(lk), lk).toBe(true)
 })
