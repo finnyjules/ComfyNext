@@ -416,6 +416,24 @@ describe('useGridEditor', () => {
     expect(t.sections[0].region).toEqual({ col: 4, colSpan: 40, row: 40, rowSpan: 20 })   // base untouched
   })
 
+  it('addSection creates a populated section (converts to v3) and selects it', () => {
+    const ed = useGridEditor(fixture())   // v2
+    const id = ed.addSection()
+    expect(isV3(ed.template.value)).toBe(true)
+    expect(ed.sections.value).toHaveLength(1)
+    const sec = ed.sections.value[0]!
+    expect(sec.id).toBe(id)
+    expect(sec.children).toHaveLength(1)            // a starter text child
+    expect(sec.children[0]!.type).toBe('text')
+    expect(ed.selectedSectionId.value).toBe(id)
+    // the child sits within the section box (same region by default)
+    expect(sec.children[0]!.region).toEqual(sec.region)
+    // box is inside the fine grid
+    const m = ed.metrics.value
+    expect(sec.region.col + sec.region.colSpan - 1).toBeLessThanOrEqual(m.cols)
+    expect(sec.region.row + sec.region.rowSpan - 1).toBeLessThanOrEqual(m.rows)
+  })
+
   it('convertToV3 lifts a v2 template, group/ungroup move elements in and out', () => {
     const ed = useGridEditor(fixture())     // v2: headline + subhead
     ed.convertToV3()

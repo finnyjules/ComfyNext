@@ -13,7 +13,7 @@ import { computed, ref, watch, type Ref } from 'vue'
 
 import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
 import type { BrandKit } from '~~/shared/brand/types'
-import { applyArchetype, classifyFormat, formatDims, gridMetrics, regionToRect, resolveFormat } from '~~/shared/template-grid'
+import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridMetrics, regionToRect, resolveFormat } from '~~/shared/template-grid'
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
@@ -500,6 +500,32 @@ export function useGridEditor(
     dirty.value = true
   }
 
+  /** Create a fresh section (converting to v3 first if needed) with a default
+   * box on the fine grid and one starter text child filling it, then select
+   * it. The first-class "add a section" entry point. Returns the section id. */
+  function addSection(name = 'Section'): string {
+    if (!isV3(template.value)) template.value = toV3(template.value as TemplateV2)
+    const t = template.value as TemplateV3
+    const mf = fineGridDims(t, t.formats[t.master])
+    const col = Math.max(1, Math.round(mf.cols * 0.12))
+    const colSpan = Math.max(1, Math.min(mf.cols - col + 1, Math.round(mf.cols * 0.76)))
+    const row = Math.max(1, Math.round(mf.rows * 0.55))
+    const rowSpan = Math.max(1, Math.min(mf.rows - row + 1, Math.round(mf.rows * 0.28)))
+    const region: Region = { col, colSpan, row, rowSpan }
+    const id = uid('section')
+    const child: TextElementV2 = {
+      id: uid('text'), type: 'text', priority: nextPriority(),
+      level: 'display', content: 'New section',
+      region: { ...region },
+      style: { color: '#ffffff' },
+    }
+    t.sections.push({ id, name, region, children: [child] })
+    selectedSectionId.value = id
+    selectedId.value = null
+    dirty.value = true
+    return id
+  }
+
   /** Ungroup the selected section (or a given id): its children return to
    * ungrouped elements and the section is removed. */
   function ungroupSelectedSection(id?: string) {
@@ -589,7 +615,7 @@ export function useGridEditor(
     toggleHidden, toggleLocked, isHidden, isLocked,
     duplicateElement, nudgeSelected,
     isV3Mode, sections, selectedSectionId, selectedSection, resolvedSections,
-    setSectionRegion, convertToV3, groupSelectedInto, ungroupSelectedSection,
+    setSectionRegion, convertToV3, addSection, groupSelectedInto, ungroupSelectedSection,
     commitNow, undo, redo, canUndo, canRedo,
   }
 }
