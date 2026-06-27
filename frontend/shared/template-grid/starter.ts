@@ -2,7 +2,7 @@
  * _STARTER_LAYOUT / _FORMAT_PRESETS (comfy_extras/nodes_smart_layout.py) so
  * the editor and execution agree on defaults — keep both in sync. */
 
-import type { FormatSpec, TemplateV2 } from './types'
+import type { FormatSpec, TemplateV2, TemplateV3 } from './types'
 
 export const FORMAT_PRESETS: Record<string, FormatSpec> = {
   '1x1':     { w: 1080, h: 1080, label: 'Square' },
@@ -28,5 +28,47 @@ export function makeStarterTemplate(id: string): TemplateV2 {
     typeScale: { base: 28, ratio: 1.414 },
     background: { fill: '#0a0a0a' },
     elements: [],
+  }
+}
+
+/** A v3 demo: a "headline lockup" section (headline + subhead) on the fine
+ * grid plus an ungrouped badge. Used to verify sectioned cross-format render.
+ * Regions are in master fine-grid units (1x1 master → ~78×78). */
+export function v3Demo(): TemplateV3 {
+  return {
+    version: 3,
+    id: 'v3-demo',
+    name: 'Sectioned Demo',
+    master: '1x1',
+    formats: {
+      '1x1':  { w: 1080, h: 1080, label: 'Square' },
+      '9x16': { w: 1080, h: 1920, label: 'Story' },
+      '16x9': { w: 1920, h: 1080, label: 'Wide' },
+    },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    background: { fill: '#0E1116' },
+    elements: [
+      // Ungrouped badge, top-right.
+      { id: 'demo-badge', type: 'shape', shape: 'circle', priority: 2,
+        region: { col: 62, colSpan: 12, row: 4, rowSpan: 12 },
+        style: { fill: '#34D399' } },
+    ],
+    sections: [
+      {
+        id: 'demo-lockup', name: 'headline lockup',
+        region: { col: 4, colSpan: 70, row: 40, rowSpan: 32 },
+        children: [
+          { id: 'demo-headline', type: 'text', content: '{{ props.headline }}',
+            level: 'display', priority: 1, overflow: 'shrink',
+            region: { col: 4, colSpan: 70, row: 40, rowSpan: 16 },
+            style: { color: '#F4F4F5', fontFamily: 'Anton', transform: 'uppercase', valign: 'bottom' } },
+          { id: 'demo-subhead', type: 'text', content: '{{ props.subhead }}',
+            level: 'subhead', priority: 2,
+            region: { col: 4, colSpan: 70, row: 58, rowSpan: 10 },
+            style: { color: '#34D399', fontFamily: 'Inter' } },
+        ],
+      },
+    ],
   }
 }

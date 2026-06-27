@@ -3,7 +3,7 @@
  * this output; neither does grid math of its own. */
 
 import {
-  FONT_FLOOR, MIN_VISIBLE, bleedToEdges, classifyFormat, fineGridDims, formatDims, gridMetrics,
+  FONT_FLOOR, MIN_VISIBLE, bleedToEdges, classifyFormat, fineGridDims, gridMetrics,
   regionToRect, remapRegion,
 } from './grid'
 import type { GridMetrics, Rect } from './grid'
@@ -114,7 +114,9 @@ export function resolveFormat(
   if (!format) throw new Error(`Unknown format '${formatKey}' on template '${template.id}'`)
   const cls = classifyFormat(format)
   const m = gridMetrics(template, formatKey)
-  const masterDims = formatDims(template.formats[template.master])
+  // Master grid dims for proportional remap — fine for v3, class cells for v2
+  // (fineGridDims returns formatDims for v2, so the v2 path is unchanged).
+  const masterDims = fineGridDims(template, template.formats[template.master])
   const ctx = { template, formatKey, format, m }
   // Per-output overrides key. Falls back to the format key so single-output
   // (pre-outputs) templates keep resolving their overrides[formatKey].
