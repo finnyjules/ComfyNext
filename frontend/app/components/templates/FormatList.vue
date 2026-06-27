@@ -207,8 +207,8 @@ function commitRename() {
     <!-- Add format -->
     <button
       ref="addBtnRef"
-      class="mt-1 w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-dashed transition-colors cursor-pointer"
-      :class="addOpen ? 'border-[#96b4ff]/60 bg-[#96b4ff]/10 text-[#c9d6ff]' : 'border-white/12 text-white/45 hover:text-white hover:border-white/30 hover:bg-white/[0.03]'"
+      class="mt-1 w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors cursor-pointer"
+      :class="addOpen ? 'bg-[#96b4ff]/10 text-[#c9d6ff]' : 'text-white/45 hover:text-white hover:bg-white/[0.04]'"
       title="Add a format"
       @click="toggleAdd"
     >
