@@ -23,8 +23,8 @@ const controls: ControlSpec[] = [
   { key: 'slices', label: 'Slices', kind: 'slider', min: 4, max: 160, step: 1, default: 48, group: 'Slice' },
   { key: 'groupSize', label: 'Group size', kind: 'slider', min: 1, max: 16, step: 1, default: 4, group: 'Slice' },
   { key: 'pattern', label: 'Pattern', kind: 'select', options: ['diagonal', 'random', 'sine', 'alternating'], default: 'diagonal', group: 'Slice' },
-  { key: 'offset', label: 'Offset amount', kind: 'slider', min: 0, max: 0.7, step: 0.005, default: 0.22, group: 'Slice' },
-  { key: 'gap', label: 'Gap', kind: 'slider', min: 0, max: 0.6, step: 0.01, default: 0.08, group: 'Slice' },
+  { key: 'offset', label: 'Offset amount', kind: 'slider', min: 0, max: 0.7, step: 0.005, default: 0.16, group: 'Slice' },
+  { key: 'gap', label: 'Gap', kind: 'slider', min: 0, max: 0.6, step: 0.01, default: 0.06, group: 'Slice' },
   { key: 'seed', label: 'Seed', kind: 'slider', min: 1, max: 60, step: 1, default: 1, group: 'Slice' },
   { key: 'progress', label: 'Progress', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1, group: 'Slice' },
   // MOTION.
