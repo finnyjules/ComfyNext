@@ -3,6 +3,7 @@
 // fragment shader synthesizes the whole image from a GradientConfig.
 
 import { buildField } from './field'
+import { MESH_MAX_POINTS, buildMeshPoints, driftedMeshPositions, meshColorRgb } from './mesh'
 import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
@@ -14,7 +15,7 @@ import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight,
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const BLEND_IDX: Record<BlendKind, number> = { normal: 0, lighten: 1, screen: 2, add: 3, multiply: 4, darken: 5, overlay: 6 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
-const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4 }
+const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
 
 class GradientFxRenderer {
   private canvas: HTMLCanvasElement | null = null
@@ -157,6 +158,56 @@ class GradientFxRenderer {
     gl.uniform1f(u('u_flowHighlights'), fl.highlights / 100)
     gl.uniform1f(u('u_flowShadows'), fl.shadows / 100)
     gl.uniform1f(u('u_flowFoldScale'), 1.0 + (fl.foldScale / 100) * 6.0) // freq 1..7
+    gl.uniform1f(u('u_flowGloss'), (fl.gloss ?? 0) / 100)
+    gl.uniform1f(u('u_flowVeins'), (fl.veins ?? 0) / 100)
+    gl.uniform1f(u('u_flowVeinScale'), 2.0 + ((fl.veinScale ?? 35) / 100) * 10.0) // freq 2..12
+    gl.uniform1f(u('u_flowRipple'), (fl.ripple ?? 0) / 100)
+    gl.uniform1f(u('u_flowRefract'), (fl.refract ?? 0) / 100)
+    gl.uniform1f(u('u_flowViscosity'), (fl.viscosity ?? 0) / 100)
+    gl.uniform1f(u('u_flowSwirl'), ((fl.swirl ?? 0) / 100) * 1.5)
+
+    // Living drift: a normalized 0..1 loop phase from the clip time. The warp field
+    // orbits a circle over the loop (seamless: phase 0 == phase 1); the orbit's
+    // frequency rises with speed so it reads faster without breaking the loop.
+    const dur = Math.max(0.1, c.motion?.duration ?? 4)
+    const loopPhase = (((time % dur) + dur) % dur) / dur
+    const speed = fl.speed ?? 0
+    let offX = 0, offY = 0
+    if (speed > 0) {
+      const cycles = Math.max(1, Math.round(speed / 20))     // 1..5 loops per clip
+      const ang = loopPhase * Math.PI * 2 * cycles
+      const rad = 0.15 + (speed / 100) * 0.5                 // noise-space orbit radius
+      offX = Math.cos(ang) * rad; offY = Math.sin(ang) * rad
+    }
+    gl.uniform2f(u('u_flowOffset'), offX, offY)
+
+    // Mesh points (layout 'mesh', layer 0). Fall back to derived points so a mesh
+    // config that somehow lacks them still renders. Drift orbits each point per loop.
+    const meshPos = new Float32Array(MESH_MAX_POINTS * 2)
+    const meshCol = new Float32Array(MESH_MAX_POINTS * 3)
+    let meshCount = 0, meshRadius = 0.4, meshContrast = 0, meshBlur = 0
+    if (c.canvas.layout === 'mesh') {
+      const L0 = layers[0]!
+      const m = L0.mesh
+      const pts = (m?.points && m.points.length >= 2) ? m.points : buildMeshPoints(6, L0.color.stops, c.seed)
+      meshRadius = 0.18 + ((m?.softness ?? 55) / 100) * 0.55
+      meshContrast = (m?.contrast ?? 0) / 100
+      meshBlur = ((m?.blur ?? 0) / 100) * 0.09
+      const drift = (m?.drift ?? 0) / 100
+      const xy = driftedMeshPositions(pts, drift, loopPhase, c.seed)
+      meshCount = Math.min(MESH_MAX_POINTS, pts.length)
+      for (let k = 0; k < meshCount; k++) {
+        meshPos[k * 2] = xy[k]!.x; meshPos[k * 2 + 1] = xy[k]!.y
+        const rgb = meshColorRgb(pts[k]!)
+        meshCol[k * 3] = rgb[0]; meshCol[k * 3 + 1] = rgb[1]; meshCol[k * 3 + 2] = rgb[2]
+      }
+    }
+    gl.uniform1f(u('u_meshCount'), meshCount)
+    gl.uniform2fv(u('u_meshPos'), meshPos)
+    gl.uniform3fv(u('u_meshCol'), meshCol)
+    gl.uniform1f(u('u_meshRadius'), meshRadius)
+    gl.uniform1f(u('u_meshContrast'), meshContrast)
+    gl.uniform1f(u('u_meshBlur'), meshBlur)
 
     gl.uniform1fv(u('u_count'), arr(counts))
     gl.uniform1fv(u('u_dir'), arr(dir))

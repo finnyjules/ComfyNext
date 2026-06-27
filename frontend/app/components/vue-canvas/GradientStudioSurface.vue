@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Dices, Disc3, Droplets, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
+import { Dices, Disc3, Droplets, Grid3x3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
-import { buildConfig, defaultConfig, liquidConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
+import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
+import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { ANIMATABLE } from '~/lib/gradientfx/motion'
@@ -12,7 +13,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
-  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type ShapeKind,
+  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -31,6 +32,58 @@ const layer = computed(() => config.value.layers[activeLayer.value] ?? config.va
 const isRadial = computed(() => config.value.canvas.layout === 'radial' || config.value.canvas.layout === 'orbit')
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
+const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+
+// Flow speed/gloss are optional on the schema; proxy them so v-model stays simple.
+const flowSpeed = computed({
+  get: () => config.value.flow?.speed ?? 0,
+  set: (v: number) => { if (config.value.flow) config.value.flow.speed = v },
+})
+const flowGloss = computed({
+  get: () => config.value.flow?.gloss ?? 0,
+  set: (v: number) => { if (config.value.flow) config.value.flow.gloss = v },
+})
+// Liquid-surface params (all optional on the schema) → simple v-model proxies.
+function flowProxy(key: 'veins' | 'veinScale' | 'ripple' | 'refract' | 'viscosity' | 'swirl', dflt = 0) {
+  return computed({
+    get: () => config.value.flow?.[key] ?? dflt,
+    set: (v: number) => { if (config.value.flow) config.value.flow[key] = v },
+  })
+}
+const flowVeins = flowProxy('veins')
+const flowVeinScale = flowProxy('veinScale', 35)
+const flowRipple = flowProxy('ripple')
+const flowRefract = flowProxy('refract')
+const flowViscosity = flowProxy('viscosity')
+const flowSwirl = flowProxy('swirl')
+
+// Layer-0 mesh block, guaranteed to exist (created on demand). The mesh layout only
+// ever reads layer 0, so all mesh editing targets it.
+function ensureMesh(): MeshConfig {
+  const L0 = config.value.layers[0]!
+  if (!L0.mesh) L0.mesh = defaultMesh(L0.color.stops, config.value.seed)
+  return L0.mesh
+}
+const mesh = computed(() => (isMesh.value ? ensureMesh() : (config.value.layers[0]?.mesh ?? defaultMesh([], '#x'))))
+// blur is optional on the schema; proxy it so v-model + reset stay simple.
+const meshBlur = computed({
+  get: () => mesh.value.blur ?? 0,
+  set: (v: number) => { ensureMesh().blur = v },
+})
+
+function addMeshPoint() {
+  const m = ensureMesh()
+  if (m.points.length >= MESH_MAX_POINTS) return
+  m.points.push({ x: 0.5, y: 0.5, color: '#ffffff' })
+}
+function removeMeshPoint(i: number) {
+  const m = ensureMesh()
+  if (m.points.length > 2) m.points.splice(i, 1)
+}
+function scatterMesh() {
+  const m = ensureMesh()
+  m.points = buildMeshPoints(m.points.length, config.value.layers[0]!.color.stops, randomSeed())
+}
 
 // Proxies for the optional center/light fields so v-model stays simple and type-safe
 // (the fields are backfilled by ensureConfigDefaults, but typed optional).
@@ -83,6 +136,15 @@ function previewDims() {
   return { cssW, cssH, w: Math.max(1, Math.round(cssW * dpr)), h: Math.max(1, Math.round(cssH * dpr)) }
 }
 
+// Screen box of the canvas (relative to the preview container), so the mesh drag
+// handles overlay exactly on top of it.
+const meshOverlay = ref({ left: 0, top: 0, w: 0, h: 0 })
+function syncOverlay() {
+  const el = canvas.value
+  if (!el) return
+  meshOverlay.value = { left: el.offsetLeft, top: el.offsetTop, w: el.clientWidth, h: el.clientHeight }
+}
+
 function renderFrame(t: number) {
   const el = canvas.value
   if (!el) return
@@ -92,9 +154,42 @@ function renderFrame(t: number) {
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try { el.getContext('2d')!.drawImage(gradientFx.render(config.value, w, h, t), 0, 0); glError.value = null }
   catch (e: any) { glError.value = String(e?.message ?? e) }
+  syncOverlay()
 }
 
-const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
+// ── mesh point dragging (handles overlaid on the preview) ──────────────────────
+const dragPoint = ref<number | null>(null)
+function onHandleDown(i: number, e: PointerEvent) {
+  e.preventDefault(); e.stopPropagation()
+  dragPoint.value = i
+  window.addEventListener('pointermove', onHandleMove)
+  window.addEventListener('pointerup', onHandleUp)
+}
+function onHandleMove(e: PointerEvent) {
+  const i = dragPoint.value
+  const el = canvas.value
+  if (i == null || !el) return
+  const r = el.getBoundingClientRect()
+  const x = Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width)))
+  const y = Math.max(0, Math.min(1, (e.clientY - r.top) / Math.max(1, r.height)))
+  const pt = config.value.layers[0]?.mesh?.points[i]
+  if (pt) { pt.x = x; pt.y = y }
+}
+function onHandleUp() {
+  dragPoint.value = null
+  window.removeEventListener('pointermove', onHandleMove)
+  window.removeEventListener('pointerup', onHandleUp)
+}
+
+// Animate when there are motion tracks OR a living drift is active (mesh point drift,
+// or a flow speed that has a warp to move).
+const animated = computed(() => {
+  if ((config.value.motion?.tracks?.length ?? 0) > 0) return true
+  const fl = config.value.flow
+  const flowAnim = (fl?.speed ?? 0) > 0 && (fl?.intensity ?? 0) > 0
+  const meshAnim = isMesh.value && (config.value.layers[0]?.mesh?.drift ?? 0) > 0
+  return flowAnim || meshAnim
+})
 function loop(ts: number) {
   if (!start) start = ts
   const dur = Math.max(0.1, config.value.motion?.duration ?? 4)
@@ -144,6 +239,20 @@ function applyStack() {
 // Preset: warm marble liquid flow.
 function applyLiquid() {
   config.value = liquidConfig(randomSeed())
+  activeLayer.value = 0
+  pushRoll(config.value)
+}
+
+// Preset: soft Stripe-style point mesh.
+function applyMesh() {
+  config.value = meshConfig(randomSeed())
+  activeLayer.value = 0
+  pushRoll(config.value)
+}
+
+// Preset: one of the named liquid looks (marble/oil/ink/lava/satin).
+function applyLiquidPreset(name: (typeof LIQUID_PRESETS)[number]) {
+  config.value = liquidPresetConfig(name, randomSeed())
   activeLayer.value = 0
   pushRoll(config.value)
 }
@@ -310,6 +419,8 @@ onBeforeUnmount(() => {
   saveConfig(); stopPreview()
   resizeObs?.disconnect(); resizeObs = null
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('pointermove', onHandleMove)
+  window.removeEventListener('pointerup', onHandleUp)
 })
 
 function setLayout(l: LayoutKind) {
@@ -322,6 +433,8 @@ function setLayout(l: LayoutKind) {
     if (s.ringScale == null) s.ringScale = 1
     if (s.ringShape == null) s.ringShape = 'circle'
   }
+  // Mesh reads layer-0 points; create them (from the current palette) on first switch.
+  if (l === 'mesh') { activeLayer.value = 0; ensureMesh() }
 }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
 </script>
@@ -331,6 +444,18 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
+        <!-- Mesh drag handles: one per color point, overlaid exactly on the canvas.
+             z-30 lifts the handles above the floating randomize toolbar so points near
+             the top stay grabbable; the container is pointer-events-none so the toolbar
+             buttons still receive clicks everywhere a handle isn't. -->
+        <div v-if="isMesh" class="pointer-events-none absolute z-30"
+             :style="{ left: meshOverlay.left + 'px', top: meshOverlay.top + 'px', width: meshOverlay.w + 'px', height: meshOverlay.h + 'px' }">
+          <button v-for="(pt, i) in (config.layers[0]?.mesh?.points ?? [])" :key="i"
+                  class="pointer-events-auto absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-white shadow-md ring-1 ring-black/40 transition active:cursor-grabbing"
+                  :class="dragPoint === i ? 'scale-125' : 'hover:scale-110'"
+                  :style="{ left: pt.x * 100 + '%', top: pt.y * 100 + '%', background: pt.color }"
+                  :title="`Point ${i + 1} — drag to move`"
+                  @pointerdown="onHandleDown(i, $event)" /></div>
         <!-- Floating randomize toolbar -->
         <div class="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-white/10 bg-neutral-900/80 p-1 shadow-lg backdrop-blur">
           <button class="flex items-center gap-1.5 rounded-md bg-white/90 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-white" @click="randomize('all')">
@@ -351,6 +476,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           </button>
           <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the warm marble liquid flow preset" @click="applyLiquid">
             <Droplets class="h-3.5 w-3.5" /> Liquid
+          </button>
+          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the soft point-mesh preset" @click="applyMesh">
+            <Grid3x3 class="h-3.5 w-3.5" /> Mesh
           </button>
         </div>
       </div>
@@ -380,7 +508,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <span>Layout</span>
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('layout')"><component :is="locked('layout') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
-        <div class="mb-2 grid grid-cols-5 gap-1">
+        <div class="mb-2 grid grid-cols-3 gap-1">
           <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ l }}</button>
@@ -400,7 +528,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
-      <StudioSection title="Flow" badge="all layouts" :open="isLiquid">
+      <StudioSection title="Flow" badge="all layouts" :open="isLiquid || isMesh">
         <p class="mb-2 text-[11px] leading-snug text-white/40">Warps the gradient into liquid swirls. At 0 intensity the gradient is undistorted.</p>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(config.flow!.angle) }}°</span></label>
         <input v-model.number="config.flow!.angle" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" />
@@ -411,11 +539,21 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve distortion</span><span class="text-white/40">{{ Math.round(config.flow!.distortion) }}</span></label>
         <input v-model.number="config.flow!.distortion" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Detail</span><span class="text-white/40">{{ Math.round(config.flow!.detail) }}</span></label>
-        <input v-model.number="config.flow!.detail" type="range" min="1" max="6" step="1" v-studio-reset class="studio-range w-full" />
+        <input v-model.number="config.flow!.detail" type="range" min="1" max="6" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Swirl</span><span class="text-white/40">{{ Math.round(flowSwirl) || 'off' }}</span></label>
+        <input v-model.number="flowSwirl" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Flow speed</span><span class="text-white/40">{{ Math.round(flowSpeed) || 'off' }}</span></label>
+        <input v-model.number="flowSpeed" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
+        <p class="mt-1 text-[10px] leading-snug text-white/30">Living drift — the warp flows over the loop. Export as video to capture the motion.</p>
       </StudioSection>
 
       <!-- Depth & Light (liquid fold shading only) -->
       <StudioSection v-if="isLiquid" title="Depth & light" badge="liquid">
+        <label class="mb-1 block text-xs text-white/60">Presets</label>
+        <div class="mb-3 grid grid-cols-3 gap-1">
+          <button v-for="p in LIQUID_PRESETS" :key="p" class="rounded bg-white/[0.04] px-1 py-1 text-[11px] capitalize text-white/60 transition hover:bg-white/10 hover:text-white"
+                  @click="applyLiquidPreset(p)">{{ p }}</button>
+        </div>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Depth</span><span class="text-white/40">{{ Math.round(config.flow!.depth) }}</span></label>
         <input v-model.number="config.flow!.depth" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Highlights</span><span class="text-white/40">{{ Math.round(config.flow!.highlights) }}</span></label>
@@ -423,7 +561,48 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Shadows</span><span class="text-white/40">{{ Math.round(config.flow!.shadows) }}</span></label>
         <input v-model.number="config.flow!.shadows" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Fold scale</span><span class="text-white/40">{{ Math.round(config.flow!.foldScale) }}</span></label>
-        <input v-model.number="config.flow!.foldScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
+        <input v-model.number="config.flow!.foldScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gloss</span><span class="text-white/40">{{ Math.round(flowGloss) || 'matte' }}</span></label>
+        <input v-model.number="flowGloss" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
+      </StudioSection>
+
+      <!-- Liquid surface (turns the smoky warp into flowing fluid) -->
+      <StudioSection v-if="isLiquid" title="Liquid surface" badge="liquid" :open="true">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Push the smoky warp toward real fluid — marbled veins, a wet rippling skin, glassy refraction, and viscosity.</p>
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Veins</span><span class="text-white/40">{{ Math.round(flowVeins) || 'smooth' }}</span></label>
+        <input v-model.number="flowVeins" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Vein scale</span><span class="text-white/40">{{ Math.round(flowVeinScale) }}</span></label>
+        <input v-model.number="flowVeinScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Ripple</span><span class="text-white/40">{{ Math.round(flowRipple) || 'off' }}</span></label>
+        <input v-model.number="flowRipple" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Refraction</span><span class="text-white/40">{{ Math.round(flowRefract) || 'off' }}</span></label>
+        <input v-model.number="flowRefract" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Viscosity</span><span class="text-white/40">{{ Math.round(flowViscosity) || 'thin' }}</span></label>
+        <input v-model.number="flowViscosity" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
+      </StudioSection>
+
+      <!-- Mesh (soft point-mesh gradient) -->
+      <StudioSection v-if="isMesh" title="Mesh" badge="layer 1" :open="true">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Drag the dots on the preview to move points. Colours come from the palette below — scatter re-samples them.</p>
+        <div class="mb-2 space-y-1">
+          <div v-for="(pt, i) in mesh.points" :key="i" class="flex items-center gap-1.5">
+            <StudioColor v-model="pt.color" />
+            <span class="min-w-0 flex-1 truncate text-[11px] text-white/40">Point {{ i + 1 }} · {{ Math.round(pt.x * 100) }},{{ Math.round(pt.y * 100) }}</span>
+            <button v-if="mesh.points.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeMeshPoint(i)"><Trash2 class="h-3 w-3" /></button>
+          </div>
+          <div class="mt-1 flex gap-1.5">
+            <button v-if="mesh.points.length < MESH_MAX_POINTS" class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addMeshPoint"><Plus class="h-3 w-3" /> Add point</button>
+            <button class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="scatterMesh"><Dices class="h-3 w-3" /> Scatter</button>
+          </div>
+        </div>
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Softness</span><span class="text-white/40">{{ Math.round(mesh.softness) }}</span></label>
+        <input v-model.number="mesh.softness" type="range" min="10" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Contrast</span><span class="text-white/40">{{ Math.round(mesh.contrast) || 'smooth' }}</span></label>
+        <input v-model.number="mesh.contrast" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Blur</span><span class="text-white/40">{{ Math.round(meshBlur) || 'off' }}</span></label>
+        <input v-model.number="meshBlur" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Drift</span><span class="text-white/40">{{ Math.round(mesh.drift) || 'still' }}</span></label>
+        <input v-model.number="mesh.drift" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
       </StudioSection>
 
       <!-- Relief & grain -->
@@ -458,7 +637,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Shape -->
-      <StudioSection v-if="!isLiquid" title="Shape" :badge="`Layer ${activeLayer + 1}`">
+      <StudioSection v-if="!isLiquid && !isMesh" title="Shape" :badge="`Layer ${activeLayer + 1}`">
         <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
@@ -531,7 +710,8 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Color -->
-      <StudioSection title="Color" :badge="`Layer ${activeLayer + 1}`">
+      <StudioSection title="Color" :badge="isMesh ? 'mesh palette' : `Layer ${activeLayer + 1}`">
+        <p v-if="isMesh" class="mb-2 text-[11px] leading-snug text-white/40">The palette mesh points are sampled from when you scatter or randomize colours.</p>
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
             <StudioColor v-model="stop.color" />
@@ -541,22 +721,24 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           </div>
           <button class="mt-1 flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addStop"><Plus class="h-3 w-3" /> Add stop</button>
         </div>
-        <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
-        <div class="mb-2 grid grid-cols-2 gap-1">
-          <button v-for="gd in GRADIENT_DIRS" :key="gd" class="rounded px-1 py-1 text-[11px] capitalize transition"
-                  :class="layer.color.gradientDir === gd ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="layer.color.gradientDir = gd">{{ gd }}</button>
-        </div>
-        <label class="mb-1 block text-xs text-white/60">Mapping</label>
-        <div class="mb-2 grid grid-cols-3 gap-1">
-          <button v-for="mp in MAPPINGS" :key="mp" class="rounded px-1 py-1 text-[11px] capitalize transition"
-                  :class="layer.color.mapping === mp ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="layer.color.mapping = mp">{{ mp }}</button>
-        </div>
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
-        <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue drift</span><span class="text-white/40">{{ Math.round(layer.color.hueDrift) }}°</span></label>
-        <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <template v-if="!isMesh">
+          <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
+          <div class="mb-2 grid grid-cols-2 gap-1">
+            <button v-for="gd in GRADIENT_DIRS" :key="gd" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                    :class="layer.color.gradientDir === gd ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                    @click="layer.color.gradientDir = gd">{{ gd }}</button>
+          </div>
+          <label class="mb-1 block text-xs text-white/60">Mapping</label>
+          <div class="mb-2 grid grid-cols-3 gap-1">
+            <button v-for="mp in MAPPINGS" :key="mp" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                    :class="layer.color.mapping === mp ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                    @click="layer.color.mapping = mp">{{ mp }}</button>
+          </div>
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
+          <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue drift</span><span class="text-white/40">{{ Math.round(layer.color.hueDrift) }}°</span></label>
+          <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        </template>
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
         <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range w-full" />
       </StudioSection>

@@ -77,7 +77,7 @@ function getIconMarkup(iconName) {
     <div class="mx-auto max-w-7xl px-4">
       <div class="flex items-center justify-between mb-8">
         <h2 class="text-xl font-semibold text-foreground">Browse by Category</h2>
-        <a href="/workflows" class="inline-flex items-center gap-1 text-sm font-medium text-comfy-yellow/80 transition-colors duration-150 hover:text-comfy-yellow">
+        <a href="/workflows" class="inline-flex items-center gap-1 text-sm font-medium text-palette-yellow/80 transition-colors duration-150 hover:text-palette-yellow">
           View all
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 12h14" /><path d="M12 5l7 7-7 7" />
@@ -92,7 +92,7 @@ function getIconMarkup(iconName) {
           :href="`/workflows/${cat.id}`"
           class="category-nav__tile bg-card rounded-xl border border-border transition-all focus-visible:ring-2 focus-visible:ring-ring flex flex-col items-center justify-center gap-2 py-6 px-4 text-center cursor-pointer duration-250 hover:border-border/80 hover:bg-muted max-md:min-w-[160px] max-md:shrink-0 max-md:snap-start"
         >
-          <div class="category-nav__icon flex items-center justify-center size-12 rounded-lg bg-comfy-yellow/10 text-comfy-yellow/80 mb-1 transition-all duration-250">
+          <div class="category-nav__icon flex items-center justify-center size-12 rounded-lg bg-palette-yellow/10 text-palette-yellow/80 mb-1 transition-all duration-250">
             <svg
               width="24"
               height="24"
@@ -117,7 +117,7 @@ function getIconMarkup(iconName) {
 /* Tile icon hover color shift */
 .category-nav__tile:hover .category-nav__icon {
   background: rgb(240 255 65 / 0.2);
-  color: rgb(var(--color-comfy-yellow);
+  color: rgb(var(--color-palette-yellow);
 }
 
 /* Horizontal scroll on small screens */

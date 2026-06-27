@@ -12,9 +12,11 @@ function resolveSrcUrl(src: any): string | null {
 }
 
 export function resolveWiredInput(nodeId: string, nodes: any[], edges: any[]): string | null {
-  const e = edges.find((e: any) => e.target === nodeId && e.targetHandle === 'input-0')
+  // Coerce ids — edges/nodes carry numeric ids from a saved/litegraph graph but
+  // string ids when freshly created, so strict === could miss the match.
+  const e = edges.find((e: any) => String(e.target) === String(nodeId) && e.targetHandle === 'input-0')
   if (!e) return null
-  const src = nodes.find((n: any) => n.id === e.source)
+  const src = nodes.find((n: any) => String(n.id) === String(e.source))
   return src ? resolveSrcUrl(src) : null
 }
 

@@ -156,7 +156,7 @@ function goBack() {
               :key="tab.id"
               class="px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all duration-150"
               :class="sort === tab.id
-                ? 'text-foreground border-b-comfy-yellow'
+                ? 'text-foreground border-b-palette-yellow'
                 : 'text-muted-foreground/70 border-b-transparent hover:text-muted-foreground'"
               @click="setSort(tab.id)"
             >

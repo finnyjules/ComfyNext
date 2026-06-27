@@ -27,7 +27,12 @@ const cfg = (p) => ({
 
 const cases = [
   ['Linear row (3×, spacingX 0.25)', cfg({ countX: 3, spacingX: 0.25 })],
+  ['Mirror X (count 3 → 5 across)', cfg({ countX: 3, spacingX: 0.22, mirrorX: true })],
+  ['Mirror X+Y (3×3 → centered block)', cfg({ countX: 3, countY: 3, spacingX: 0.18, spacingY: 0.18, mirrorX: true, mirrorY: true })],
+  ['Mirror X + scale falloff (symmetric)', cfg({ countX: 4, spacingX: 0.16, mirrorX: true, stepScale: 0.8, stepOpacity: 0.85 })],
   ['Grid 3×3', cfg({ countX: 3, countY: 3, spacingX: 0.22, spacingY: 0.22 })],
+  ['Nudge Y (row → diagonal)', cfg({ countX: 6, spacingX: 0.14, nudgeY: 0.05 })],
+  ['Stagger X 0.5 (brick grid)', cfg({ countX: 3, countY: 4, spacingX: 0.22, spacingY: 0.18, staggerX: 0.5 })],
   ['Linear + scale/opacity falloff', cfg({ countX: 5, spacingX: 0.16, stepScale: 0.82, stepOpacity: 0.82 })],
   ['Radial ring (8, faceCenter)', cfg({ mode: 'radial', count: 8, radius: 0.3, sweepAngle: 360, faceCenter: true })],
   ['Radial fan (6, sweep 180, rot falloff)', cfg({ mode: 'radial', count: 6, radius: 0.28, startAngle: -90, sweepAngle: 180, stepRotation: 12 })],
@@ -81,10 +86,10 @@ for(const cse of cases){
 </script></body></html>`
 
 const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width: CELL * 3 + 8, height: CELL * 2 + 8 } })
+const page = await browser.newPage({ viewport: { width: CELL * 3 + 8, height: CELL * 3 + 8 } })
 await page.setContent(html)
 await page.waitForTimeout(200)
 const out = new URL('./cloner-verify.png', import.meta.url).pathname
-await page.screenshot({ path: out })
+await page.screenshot({ path: out, fullPage: true })
 await browser.close()
 console.log('wrote', out)

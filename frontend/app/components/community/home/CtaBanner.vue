@@ -103,6 +103,6 @@ onMounted(() => {
 <style scoped>
 /* Gradient background with GSAP-animated angle */
 .cta-banner {
-  background: linear-gradient(var(--gradient-angle, 135deg), rgb(var(--color-comfy-yellow) 0%, rgb(var(--color-comfy-yellow-dark, 180 190 30)) 100%);
+  background: linear-gradient(var(--gradient-angle, 135deg), rgb(var(--color-palette-yellow) 0%, rgb(var(--color-palette-yellow-dark, 180 190 30)) 100%);
 }
 </style>

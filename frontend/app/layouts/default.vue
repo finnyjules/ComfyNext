@@ -2366,7 +2366,7 @@ function dismissRunResult() {
             @click="resolveCostConfirm(false)"
           >Cancel</button>
           <button
-            class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-action hover:bg-comfy-blue/80 transition-colors cursor-pointer"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-action hover:bg-palette-blue/80 transition-colors cursor-pointer"
             @click="resolveCostConfirm(true)"
           >Run anyway</button>
         </div>
@@ -2871,7 +2871,7 @@ function dismissRunResult() {
           class="absolute top-3 right-3 flex items-center gap-1.5 z-40"
         >
           <button
-            class="flex items-center gap-1.5 bg-action hover:bg-comfy-blue/80 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
+            class="flex items-center gap-1.5 bg-action hover:bg-palette-blue/80 rounded-lg px-4 py-2 cursor-pointer transition-colors shadow-lg"
             @click="() => runVueWorkflow()"
           >
             <Play class="size-3.5 text-white fill-white" />
@@ -2885,7 +2885,7 @@ function dismissRunResult() {
             title="Stop"
             @click="stopVueWorkflow"
           >
-            <Square class="size-3.5 text-comfy-coral fill-comfy-coral" />
+            <Square class="size-3.5 text-palette-coral fill-palette-coral" />
           </button>
           <div class="w-px h-5 bg-white/10" />
           <button

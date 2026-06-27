@@ -15,9 +15,10 @@ const num = (e: Event) => Number((e.target as HTMLInputElement).value)
 const total = computed(() => {
   const v = c.value
   if (!v.enabled) return 1
-  return v.mode === 'radial'
-    ? Math.max(1, Math.floor(v.count))
-    : Math.max(1, Math.floor(v.countX)) * Math.max(1, Math.floor(v.countY))
+  if (v.mode === 'radial') return Math.max(1, Math.floor(v.count))
+  const nx = Math.max(1, Math.floor(v.countX))
+  const ny = Math.max(1, Math.floor(v.countY))
+  return (v.mirrorX ? 2 * nx - 1 : nx) * (v.mirrorY ? 2 * ny - 1 : ny)
 })
 </script>
 
@@ -74,12 +75,48 @@ const total = computed(() => {
           <input type="range" min="-1" max="1" step="0.01" :value="c.spacingX"
             class="w-full accent-white cursor-pointer" @input="up({ spacingX: num($event) })" />
         </div>
-        <div class="mb-1">
+        <div class="mb-3">
           <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
             <span>Spacing Y</span><span class="tabular-nums normal-case">{{ c.spacingY.toFixed(2) }}</span>
           </div>
           <input type="range" min="-1" max="1" step="0.01" :value="c.spacingY"
             class="w-full accent-white cursor-pointer" @input="up({ spacingY: num($event) })" />
+        </div>
+        <!-- Mirror: also clone in the opposite direction (original stays centered) -->
+        <div class="mb-1">
+          <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Mirror</div>
+          <div class="flex items-center gap-1">
+            <button
+              class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+              :class="c.mirrorX ? 'bg-white text-neutral-900 font-medium' : 'bg-white/[0.05] text-white/70 hover:bg-white/10'"
+              :title="c.mirrorX ? 'Stop mirroring on X' : 'Also clone in the -X direction'"
+              @click="up({ mirrorX: !c.mirrorX })"
+            >X</button>
+            <button
+              class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors"
+              :class="c.mirrorY ? 'bg-white text-neutral-900 font-medium' : 'bg-white/[0.05] text-white/70 hover:bg-white/10'"
+              :title="c.mirrorY ? 'Stop mirroring on Y' : 'Also clone in the -Y direction'"
+              @click="up({ mirrorY: !c.mirrorY })"
+            >Y</button>
+          </div>
+        </div>
+        <!-- Stagger: brick-style offset of alternating rows/cols (fraction of spacing) -->
+        <div class="mt-3">
+          <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-2">Stagger</div>
+          <div class="mb-3">
+            <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
+              <span>X (rows)</span><span class="tabular-nums normal-case">{{ c.staggerX.toFixed(2) }}</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.01" :value="c.staggerX"
+              class="w-full accent-white cursor-pointer" @input="up({ staggerX: num($event) })" />
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
+              <span>Y (cols)</span><span class="tabular-nums normal-case">{{ c.staggerY.toFixed(2) }}</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.01" :value="c.staggerY"
+              class="w-full accent-white cursor-pointer" @input="up({ staggerY: num($event) })" />
+          </div>
         </div>
       </template>
 
@@ -129,6 +166,23 @@ const total = computed(() => {
           <input type="range" min="-90" max="90" step="1" :value="c.stepRotation"
             class="w-full accent-white cursor-pointer" @input="up({ stepRotation: num($event) })" />
         </div>
+        <!-- Nudge: progressive drift per clone (linear/grid only) -->
+        <template v-if="c.mode === 'linear'">
+          <div class="mb-3">
+            <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
+              <span>Nudge X</span><span class="tabular-nums normal-case">{{ c.nudgeX.toFixed(2) }}</span>
+            </div>
+            <input type="range" min="-0.5" max="0.5" step="0.01" :value="c.nudgeX"
+              class="w-full accent-white cursor-pointer" @input="up({ nudgeX: num($event) })" />
+          </div>
+          <div class="mb-3">
+            <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
+              <span>Nudge Y</span><span class="tabular-nums normal-case">{{ c.nudgeY.toFixed(2) }}</span>
+            </div>
+            <input type="range" min="-0.5" max="0.5" step="0.01" :value="c.nudgeY"
+              class="w-full accent-white cursor-pointer" @input="up({ nudgeY: num($event) })" />
+          </div>
+        </template>
         <div class="mb-3">
           <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
             <span>Scale</span><span class="tabular-nums normal-case">{{ c.stepScale.toFixed(2) }}×</span>

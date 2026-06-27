@@ -7,6 +7,7 @@
  */
 import type { TextLayer } from '~/composables/useCompositorLayers'
 import { wrappedTextLines, applyFont, localBlendOp } from '~/composables/useCompositorLayers'
+import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import type { UnitState } from './evaluate'
 
 export interface CharCell {
@@ -88,7 +89,7 @@ export function drawAnimatedTextLayer(
   if (strokeOn) {
     ctx.lineJoin = 'round'
     ctx.lineWidth = layer.strokeWidth * W
-    ctx.strokeStyle = layer.strokeColor
+    ctx.strokeStyle = paintPrimaryColor(layer.strokeColor, '#000000')
   }
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i]
@@ -113,7 +114,7 @@ export function drawAnimatedTextLayer(
     ctx.translate(cell.x + st.dx * cell.h, cell.y + st.dy * cell.h)
     if (st.rotation) ctx.rotate((st.rotation * Math.PI) / 180)
     if (st.scale !== 1) ctx.scale(Math.max(0.001, st.scale), Math.max(0.001, st.scale))
-    ctx.fillStyle = layer.color
+    ctx.fillStyle = paintPrimaryColor(layer.color, '#ffffff')
     if (strokeOn) ctx.strokeText(cell.char, 0, 0)
     ctx.fillText(cell.char, 0, 0)
     ctx.restore()

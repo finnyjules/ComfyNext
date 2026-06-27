@@ -26,6 +26,16 @@ import type { LayerMotionState } from '~/lib/motion/evaluate'
 import type { FrameMotion } from '~/lib/motion/types'
 import { axesToVariationSettings } from '~/lib/motion/axes'
 import { expandClones, type Cloner } from '~/composables/useCloner'
+import { type Fill, fillTileBox } from '~/lib/spacetype/fillTile'
+import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
+
+// Throwaway 2D context used only for text measurement (localLayerBox mutates the
+// ctx font), so it never touches a real render target.
+let _measureCtx: CanvasRenderingContext2D | null = null
+function measureCtx(): CanvasRenderingContext2D | null {
+  if (!_measureCtx && typeof document !== 'undefined') _measureCtx = document.createElement('canvas').getContext('2d')
+  return _measureCtx
+}
 
 interface MotionPainter {
   motionStateFor: (layer: LocalLayer, t: number, motion: FrameMotion) => LayerMotionState | null
@@ -46,10 +56,16 @@ export interface GradientStop { offset: number; color: string } // offset 0..1
 export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
 export interface RadialGradient { type: 'radial'; stops: GradientStop[] }
 export type Gradient = LinearGradient | RadialGradient
-export type Paint = string | Gradient
+// A Paint can also be a Type-Studio `Fill` (ombre/grid/noise/checkerboard/stripes/qr/…),
+// rendered via a tileable 2D-canvas pattern scaled to span the shape's box.
+export type Paint = string | Gradient | Fill
 
 export function isGradient(p: Paint | undefined): p is Gradient {
-  return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
+  return !!p && typeof p === 'object' && ((p as Gradient).type === 'linear' || (p as Gradient).type === 'radial')
+}
+// A Fill is distinguished from a Gradient by its `a`/`density` fields (Gradient has `stops`).
+export function isFill(p: Paint | undefined): p is Fill {
+  return !!p && typeof p === 'object' && 'a' in p && 'density' in p
 }
 
 // Layer effects (Figma-style). All distances normalized to canvas width, like
@@ -99,12 +115,32 @@ export interface LayerMask {
   h: number          // normalized to canvas width
 }
 
+/** 4-corner projective (corner-pin / perspective) warp. Each corner is an OFFSET
+ *  from the layer box's natural corner, normalized to the box half-extent
+ *  (0 ⇒ no offset = the un-warped rectangle). Applied in the layer's local space. */
+export interface CornerPin {
+  tl: { x: number; y: number }
+  tr: { x: number; y: number }
+  br: { x: number; y: number }
+  bl: { x: number; y: number }
+}
+export const IDENTITY_CORNER_PIN: CornerPin = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } }
+/** True when a corner-pin actually distorts (any corner offset is non-trivial). */
+export function cornerPinActive(c: CornerPin | undefined | null): c is CornerPin {
+  if (!c) return false
+  const e = 1e-4
+  return [c.tl, c.tr, c.br, c.bl].some(p => Math.abs(p.x) > e || Math.abs(p.y) > e)
+}
+
 interface LayerCommon {
   id: string
   kind: LocalLayerKind
   x: number          // normalized center X (0..1 of width)
   y: number          // normalized center Y (0..1 of height)
   rotation: number   // degrees
+  skewX?: number     // horizontal slant in degrees (affine shear); default 0
+  skewY?: number     // vertical slant in degrees; default 0
+  cornerPin?: CornerPin // 4-corner projective warp; absent/identity ⇒ no distortion
   opacity: number    // 0..1
   visible?: boolean  // false = hidden everywhere (render, bake, export); undefined = visible
   locked?: boolean   // true = not selectable/editable from the canvas (panel still can)
@@ -148,10 +184,10 @@ export interface TextLayer extends LayerCommon {
   fontFamily: string
   fontWeight: number     // 100..900 (was 400 | 700 — old values stay valid)
   fontSize: number       // normalized to canvas width
-  color: string
+  color: Paint           // text fill — solid, gradient, or a patterned Fill
   align: 'left' | 'center' | 'right'
   lineHeight: number     // multiplier
-  strokeColor: string
+  strokeColor: Paint
   strokeWidth: number    // normalized to canvas width (0 = no outline)
   boxW?: number          // optional text-box width (normalized to canvas width);
                          // set => words auto-wrap to fit, unset => explicit \n only
@@ -165,8 +201,8 @@ export interface TextLayer extends LayerCommon {
 export interface RectLayer extends LayerCommon {
   kind: 'rect'
   w: number; h: number    // normalized to canvas width
-  fill: Paint             // '' / 'none' = no fill; or a gradient
-  stroke: string
+  fill: Paint             // '' / 'none' = no fill; or a gradient / patterned Fill
+  stroke: Paint
   strokeWidth: number     // normalized to canvas width
   radius: number          // normalized to canvas width
 }
@@ -175,7 +211,7 @@ export interface EllipseLayer extends LayerCommon {
   kind: 'ellipse'
   w: number; h: number
   fill: Paint
-  stroke: string
+  stroke: Paint
   strokeWidth: number
 }
 
@@ -192,16 +228,16 @@ export interface PathLayer extends LayerCommon {
   d: string               // SVG path data, local units, centered on (0,0)
   bbox: { w: number; h: number } // un-scaled local extent (width-fraction units)
   scale: number           // uniform size multiplier
-  fill: Paint             // '' / 'none' = no fill; or a gradient
+  fill: Paint             // '' / 'none' = no fill; or a gradient / patterned Fill
   fillRule: 'nonzero' | 'evenodd'
-  stroke: string
+  stroke: Paint
   strokeWidth: number     // local units at scale=1 (scales with the shape)
 }
 
 export interface LineLayer extends LayerCommon {
   kind: 'line'
   w: number               // length, normalized to canvas width
-  stroke: string
+  stroke: Paint
   strokeWidth: number
 }
 
@@ -407,6 +443,7 @@ export async function ensureLayerImages(layers: LocalLayer[]): Promise<void> {
 // ── Rendering ─────────────────────────────────────────────────────────────--
 
 function hasPaint(paint: Paint | undefined): boolean {
+  if (isFill(paint)) return true                        // a fill always paints (solid → fill.a)
   if (isGradient(paint)) return paint.stops.length > 0
   return !!paint && paint !== 'none' && paint !== 'transparent'
 }
@@ -421,7 +458,8 @@ function resolvePaint(
   ctx: CanvasRenderingContext2D,
   paint: Paint,
   box: { w: number; h: number },
-): string | CanvasGradient {
+): string | CanvasGradient | CanvasPattern {
+  if (isFill(paint)) return resolveFill(ctx, paint, box)
   if (!isGradient(paint)) return paint
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
   let g: CanvasGradient
@@ -436,6 +474,44 @@ function resolvePaint(
   }
   for (const s of stops) g.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
   return g
+}
+
+// A Type-Studio Fill → a 2D pattern that spans the shape's box ONCE (drawing is
+// centered, so the tile maps onto [-w/2..w/2] × [-h/2..h/2]). The tile is built at
+// the box's ACTUAL on-screen pixel size (read from the ctx transform, capped) so it
+// stays crisp, and patterns use square cells so they never stretch on a non-square
+// shape. `solid` short-circuits to the flat colour.
+const FILL_TILE_CAP = 1024
+const _fillTileCache = new Map<string, HTMLCanvasElement>()
+function fillTileCached(fill: Fill, tw: number, th: number): HTMLCanvasElement {
+  const key = `${fill.type}|${fill.a}|${fill.b}|${fill.angle}|${fill.density}|${tw}x${th}`
+  let t = _fillTileCache.get(key)
+  if (!t) {
+    t = fillTileBox(fill, tw, th)
+    if (_fillTileCache.size > 64) _fillTileCache.clear()
+    _fillTileCache.set(key, t)
+  }
+  return t
+}
+function resolveFill(
+  ctx: CanvasRenderingContext2D,
+  fill: Fill,
+  box: { w: number; h: number },
+): string | CanvasPattern {
+  if (fill.type === 'solid') return fill.a
+  const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
+  // Effective on-screen pixel extent of the box under the current transform.
+  const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
+  const sx = m ? (Math.hypot(m.a, m.b) || 1) : 1, sy = m ? (Math.hypot(m.c, m.d) || 1) : 1
+  const k = Math.min(1, FILL_TILE_CAP / Math.max(bw * sx, bh * sy, 1))
+  const tw = Math.max(1, Math.round(bw * sx * k)), th = Math.max(1, Math.round(bh * sy * k))
+  const tile = fillTileCached(fill, tw, th)
+  const pat = ctx.createPattern(tile, 'no-repeat')
+  if (!pat) return fill.a
+  if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
+    pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / tw, bh / th))
+  }
+  return pat
 }
 
 /** Split text into explicit-newline lines. */
@@ -685,6 +761,41 @@ function paintLayer(
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 
+  // Slant (affine shear) + corner-pin (projective warp). Both fold into the per-clone
+  // local transform / content draw, so absent ⇒ byte-identical to before.
+  const skx = layer.skewX || 0, sky = layer.skewY || 0
+  const hasSkew = skx !== 0 || sky !== 0
+  const shearA = hasSkew ? Math.tan((sky * Math.PI) / 180) : 0
+  const shearC = hasSkew ? Math.tan((skx * Math.PI) / 180) : 0
+  const cp = cornerPinActive(layer.cornerPin) ? layer.cornerPin : null
+  const applyXform = (c: CanvasRenderingContext2D, lx2: number, ly2: number, lrot2: number, ls2: number) => {
+    c.translate(lx2 * W, ly2 * H)
+    if (lrot2) c.rotate((lrot2 * Math.PI) / 180)
+    if (hasSkew) c.transform(1, shearA, shearC, 1, 0, 0)
+    if (ls2 !== 1) c.scale(ls2, ls2)
+  }
+  // No corner-pin ⇒ draw content directly. With it: render content to a box-sized
+  // offscreen (centered, like the normal draw), then projectively warp that box onto
+  // the corner-pin quad in local space.
+  const drawContent = (c: CanvasRenderingContext2D) => {
+    if (!cp) { drawLayerContent(c, layer, W); return }
+    const box = localLayerBox(measureCtx(), layer, W, H)
+    const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
+    const cc = document.createElement('canvas'); cc.width = bw; cc.height = bh
+    const cctx = cc.getContext('2d')
+    if (!cctx) { drawLayerContent(c, layer, W); return }
+    cctx.translate(bw / 2, bh / 2)
+    drawLayerContent(cctx, layer, W)
+    const hw = box.w / 2, hh = box.h / 2
+    const quad: Quad = [
+      { x: -hw + cp.tl.x * hw, y: -hh + cp.tl.y * hh },
+      { x:  hw + cp.tr.x * hw, y: -hh + cp.tr.y * hh },
+      { x:  hw + cp.br.x * hw, y:  hh + cp.br.y * hh },
+      { x: -hw + cp.bl.x * hw, y:  hh + cp.bl.y * hh },
+    ]
+    drawQuadWarp(c, cc, quad, 16)
+  }
+
   // Linked cloner: paint once per clone (back-to-front; original last). No
   // cloner ⇒ a single identity transform ⇒ one paint exactly as before. Falloff
   // offset/rotation/scale fold into the layer's own translate/rotate/scale so
@@ -706,10 +817,8 @@ function paintLayer(
       off.height = Math.max(1, Math.round(H))
       const octx = off.getContext('2d')
       if (octx) {
-        octx.translate(lx * W, ly * H)
-        if (lrot) octx.rotate((lrot * Math.PI) / 180)
-        if (ls !== 1) octx.scale(ls, ls)
-        drawLayerContent(octx, layer, W)
+        applyXform(octx, lx, ly, lrot, ls)
+        drawContent(octx)
         if (inner) compositeInnerShadow(off, inner, W)
         ctx.save()
         ctx.globalAlpha = lop
@@ -727,14 +836,12 @@ function paintLayer(
       }
     }
 
-    // Fast path (no effects): draw inline, identical to before.
+    // Fast path (no effects): draw inline. No skew/cornerPin ⇒ identical to before.
     ctx.save()
     ctx.globalAlpha = lop
     ctx.globalCompositeOperation = blendOp
-    ctx.translate(lx * W, ly * H)
-    if (lrot) ctx.rotate((lrot * Math.PI) / 180)
-    if (ls !== 1) ctx.scale(ls, ls)
-    drawLayerContent(ctx, layer, W)
+    applyXform(ctx, lx, ly, lrot, ls)
+    drawContent(ctx)
     ctx.restore()
   }
 }
@@ -751,7 +858,7 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     ctx.roundRect(-w / 2, -h / 2, w, h, r)
     if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
-      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = layer.stroke; ctx.stroke()
+      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = resolvePaint(ctx, layer.stroke, { w, h }); ctx.stroke()
     }
   } else if (layer.kind === 'ellipse') {
     const w = layer.w * W, h = layer.h * W
@@ -759,7 +866,7 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
     if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
-      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = layer.stroke; ctx.stroke()
+      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = resolvePaint(ctx, layer.stroke, { w, h }); ctx.stroke()
     }
   } else if (layer.kind === 'path') {
     drawPath(ctx, layer, W)
@@ -770,7 +877,7 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     ctx.lineTo(w / 2, 0)
     ctx.lineCap = 'round'
     ctx.lineWidth = Math.max(1, layer.strokeWidth * W)
-    ctx.strokeStyle = hasPaint(layer.stroke) ? layer.stroke : '#ffffff'
+    ctx.strokeStyle = hasPaint(layer.stroke) ? resolvePaint(ctx, layer.stroke, { w, h: Math.max(layer.strokeWidth * W, 1) }) : '#ffffff'
     ctx.stroke()
   } else if (layer.kind === 'image') {
     const w = layer.w * W, h = layer.h * W
@@ -802,13 +909,14 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   const anchorX = layer.align === 'left' ? -blockW / 2 : layer.align === 'right' ? blockW / 2 : 0
   const totalH = lines.length * lineH
   const startY = -totalH / 2 + lineH / 2
+  const textBox = { w: Math.max(blockW, 1), h: Math.max(totalH, 1) }
   const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
   if (stroke) {
     ctx.lineJoin = 'round'
     ctx.lineWidth = layer.strokeWidth * W
-    ctx.strokeStyle = layer.strokeColor
+    ctx.strokeStyle = resolvePaint(ctx, layer.strokeColor, textBox)
   }
-  ctx.fillStyle = layer.color
+  ctx.fillStyle = resolvePaint(ctx, layer.color, textBox)
   for (let i = 0; i < lines.length; i++) {
     const y = startY + i * lineH
     if (stroke) ctx.strokeText(lines[i], anchorX, y)
@@ -850,7 +958,7 @@ function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
   }
   if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
     ctx.lineWidth = layer.strokeWidth
-    ctx.strokeStyle = layer.stroke
+    ctx.strokeStyle = resolvePaint(ctx, layer.stroke, layer.bbox)
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
     ctx.stroke(p)

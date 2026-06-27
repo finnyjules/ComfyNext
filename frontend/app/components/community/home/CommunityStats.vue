@@ -104,7 +104,7 @@ onMounted(() => {
         <!-- Workflows -->
         <div class="flex flex-col items-center gap-2 text-center">
           <svg
-            class="community-stats__icon text-comfy-yellow mb-1 shrink-0"
+            class="community-stats__icon text-palette-yellow mb-1 shrink-0"
             width="24"
             height="24"
             viewBox="0 0 24 24"
@@ -124,7 +124,7 @@ onMounted(() => {
         <!-- Total Runs -->
         <div class="flex flex-col items-center gap-2 text-center">
           <svg
-            class="community-stats__icon text-comfy-yellow mb-1 shrink-0"
+            class="community-stats__icon text-palette-yellow mb-1 shrink-0"
             width="24"
             height="24"
             viewBox="0 0 24 24"
@@ -144,7 +144,7 @@ onMounted(() => {
         <!-- Creators -->
         <div class="flex flex-col items-center gap-2 text-center">
           <svg
-            class="community-stats__icon text-comfy-yellow mb-1 shrink-0"
+            class="community-stats__icon text-palette-yellow mb-1 shrink-0"
             width="24"
             height="24"
             viewBox="0 0 24 24"
@@ -176,7 +176,7 @@ onMounted(() => {
         <!-- Favorites -->
         <div class="flex flex-col items-center gap-2 text-center">
           <svg
-            class="community-stats__icon text-comfy-yellow mb-1 shrink-0"
+            class="community-stats__icon text-palette-yellow mb-1 shrink-0"
             width="24"
             height="24"
             viewBox="0 0 24 24"
@@ -205,7 +205,7 @@ onMounted(() => {
 
 /* Glow element for GSAP animation */
 .community-stats__glow {
-  background: radial-gradient(circle, rgb(var(--color-comfy-yellow) 0%, transparent 70%);
+  background: radial-gradient(circle, rgb(var(--color-palette-yellow) 0%, transparent 70%);
 }
 
 /* tabular-nums utility */

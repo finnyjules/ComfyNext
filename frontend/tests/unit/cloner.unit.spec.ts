@@ -36,6 +36,60 @@ describe('expandClones', () => {
     ].sort())
   })
 
+  it('mirrorX reflects clones to -X, original centered', () => {
+    const out = expandClones(make({ mode: 'linear', countX: 3, countY: 1, spacingX: 0.2, mirrorX: true }), 1)
+    expect(out).toHaveLength(5) // 2*3-1
+    const dxs = out.map(o => +o.dx.toFixed(4)).sort((a, b) => a - b)
+    expect(dxs).toEqual([-0.4, -0.2, 0, 0.2, 0.4])
+    expect(out[out.length - 1]).toMatchObject({ dx: 0, dy: 0 }) // original still on top
+  })
+
+  it('mirror both axes makes a centered block', () => {
+    const out = expandClones(make({ mode: 'linear', countX: 2, countY: 2, spacingX: 0.1, spacingY: 0.3, mirrorX: true, mirrorY: true }), 1)
+    expect(out).toHaveLength(9) // (2*2-1)^2
+    const pts = out.map(o => `${o.dx.toFixed(2)},${o.dy.toFixed(2)}`).sort()
+    expect(pts).toEqual([
+      '-0.10,-0.30', '-0.10,0.00', '-0.10,0.30',
+      '0.00,-0.30', '0.00,0.00', '0.00,0.30',
+      '0.10,-0.30', '0.10,0.00', '0.10,0.30',
+    ].sort())
+  })
+
+  it('mirrored clone gets the same falloff as its positive twin', () => {
+    const out = expandClones(make({ mode: 'linear', countX: 3, countY: 1, spacingX: 0.1, mirrorX: true, stepRotation: 10, stepScale: 0.5 }), 1)
+    const byDx = (dx: number) => out.find(o => Math.abs(o.dx - dx) < 1e-9)!
+    // +0.2 (ix=2) and -0.2 (ix=-2) both sit at distance k=2 → identical falloff
+    expect(byDx(0.2).drot).toBeCloseTo(20)
+    expect(byDx(-0.2).drot).toBeCloseTo(20)
+    expect(byDx(-0.2).dscale).toBeCloseTo(0.25)
+  })
+
+  it('nudge drifts each clone progressively by k', () => {
+    // single row, k = ix; nudgeY makes it diagonal, nudgeX compounds spacing
+    const out = expandClones(make({ mode: 'linear', countX: 3, countY: 1, spacingX: 0.1, nudgeX: 0.02, nudgeY: 0.05 }), 1)
+    const byK = (k: number) => out.find(o => Math.abs(o.dx - (k * 0.1 + k * 0.02)) < 1e-9)!
+    expect(byK(0)).toMatchObject({ dx: 0, dy: 0 })
+    expect(byK(1).dx).toBeCloseTo(0.12)  // 1*0.1 + 1*0.02
+    expect(byK(1).dy).toBeCloseTo(0.05)  // 1*0.05
+    expect(byK(2).dx).toBeCloseTo(0.24)  // 2*0.1 + 2*0.02
+    expect(byK(2).dy).toBeCloseTo(0.10)
+  })
+
+  it('staggerX offsets alternating rows by a fraction of spacingX', () => {
+    const out = expandClones(make({ mode: 'linear', countX: 2, countY: 2, spacingX: 0.2, spacingY: 0.3, staggerX: 0.5 }), 1)
+    // row 0 (iy=0, even) not shifted; row 1 (iy=1, odd) shifted +0.5*0.2 = 0.1 in x
+    const row0 = out.filter(o => Math.abs(o.dy - 0) < 1e-9).map(o => +o.dx.toFixed(4)).sort((a, b) => a - b)
+    const row1 = out.filter(o => Math.abs(o.dy - 0.3) < 1e-9).map(o => +o.dx.toFixed(4)).sort((a, b) => a - b)
+    expect(row0).toEqual([0, 0.2])
+    expect(row1).toEqual([0.1, 0.3]) // each shifted by +0.1
+  })
+
+  it('nudge/stagger default to no-op (byte-identical grid)', () => {
+    const plain = expandClones(make({ mode: 'linear', countX: 2, countY: 2, spacingX: 0.1, spacingY: 0.2 }), 1)
+    const explicit = expandClones(make({ mode: 'linear', countX: 2, countY: 2, spacingX: 0.1, spacingY: 0.2, nudgeX: 0, nudgeY: 0, staggerX: 0, staggerY: 0 }), 1)
+    expect(explicit).toEqual(plain)
+  })
+
   it('falloff accumulates by clone index k', () => {
     const out = expandClones(make({
       mode: 'linear', countX: 3, countY: 1, spacingX: 0.1,

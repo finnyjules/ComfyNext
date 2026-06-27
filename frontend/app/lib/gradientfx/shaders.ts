@@ -63,6 +63,22 @@ uniform float u_flowDepth;       // liquid fold emboss amount 0..1
 uniform float u_flowHighlights;  // liquid bright-side gain 0..1
 uniform float u_flowShadows;     // liquid dark-side gain 0..1
 uniform float u_flowFoldScale;   // liquid fold frequency
+uniform vec2  u_flowOffset;      // animated warp drift (orbits the noise field over the loop)
+uniform float u_flowGloss;       // liquid specular gloss 0..~1 (0 = matte)
+uniform float u_flowVeins;       // liquid marbled veins 0..1 (0 = smooth)
+uniform float u_flowVeinScale;   // vein frequency
+uniform float u_flowRipple;      // wet-surface caustic shimmer 0..1
+uniform float u_flowRefract;     // glassy chromatic refraction 0..1
+uniform float u_flowViscosity;   // 0 = turbulent billow, 1 = laminar streaks
+uniform float u_flowSwirl;       // extra recursive warp + amplitude (0 = base warp)
+
+// Mesh gradient — up to 16 soft color points, Gaussian-blended per pixel.
+uniform float u_meshCount;
+uniform vec2  u_meshPos[16];     // point positions, 0..1
+uniform vec3  u_meshCol[16];     // point colors, 0..1 rgb
+uniform float u_meshRadius;      // Gaussian bleed radius
+uniform float u_meshContrast;    // 0 = smooth blend, 1 = crisp Voronoi cells
+uniform float u_meshBlur;        // post-blur radius (screen-space); 0 = sharp
 
 uniform sampler2D u_field0;
 uniform sampler2D u_field1;
@@ -100,17 +116,33 @@ float fbm(vec2 p, float oct) {
 // Domain-warp the sample coord (Inigo-Quilez fbm-of-fbm). No-op when intensity is 0.
 vec2 applyFlow(vec2 p) {
   if (u_flowIntensity <= 0.0) return p;
-  vec2 sp = p * u_flowScale; sp.x *= u_aspect;
+  vec2 sp = p * u_flowScale; sp.x *= u_aspect; sp += u_flowOffset;
+  // Viscosity: compress the noise lattice ALONG the flow direction so features
+  // stretch into long laminar streaks (honey/syrup) instead of round turbulent puffs.
+  if (u_flowViscosity > 0.0) {
+    float a = u_flowAngle * PI / 180.0;
+    vec2 dir = vec2(cos(a), sin(a));
+    float along = dot(sp, dir);
+    vec2 perp = sp - dir * along;
+    sp = dir * (along * (1.0 - u_flowViscosity * 0.78)) + perp;
+  }
   vec2 q = vec2(fbm(sp, u_flowDetail), fbm(sp + vec2(5.2, 1.3), u_flowDetail));
   vec2 r = vec2(fbm(sp + u_flowDistortion * q + vec2(1.7, 9.2), u_flowDetail),
                 fbm(sp + u_flowDistortion * q + vec2(8.3, 2.8), u_flowDetail));
-  vec2 disp = (r - 0.5) * u_flowIntensity;
+  // Swirl: fold the field into itself with an extra warp pass for gnarlier curls,
+  // then boost the displacement — "more warp" without just smearing to mush.
+  if (u_flowSwirl > 0.0) {
+    vec2 s = vec2(fbm(sp + u_flowDistortion * r * 2.0 + vec2(2.3, 7.4), u_flowDetail),
+                  fbm(sp + u_flowDistortion * r * 2.0 + vec2(9.1, 3.6), u_flowDetail));
+    r = mix(r, s, clamp(u_flowSwirl, 0.0, 1.0));
+  }
+  vec2 disp = (r - 0.5) * u_flowIntensity * (1.0 + u_flowSwirl * 1.5);
   disp.x /= u_aspect;
   return p + disp;
 }
 // Scalar fold height for the liquid Depth & Light shading.
 float flowHeight(vec2 p) {
-  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect;
+  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect; sp += u_flowOffset;
   return fbm(sp, u_flowDetail);
 }
 
@@ -166,6 +198,24 @@ float quantize(float t, float steps) {
   return floor(clamp(t, 0.0, 1.0) * steps) / max(steps - 1.0, 1.0);
 }
 
+// Mesh field color at a point: Gaussian-weight every color point by distance, then
+// pull toward the nearest point's color by contrast. Uniforms are global so this can
+// be sampled multiple times (for the post-blur).
+vec3 meshColorAt(vec2 p) {
+  int mc = int(u_meshCount + 0.5);
+  float r2 = max(u_meshRadius * u_meshRadius, 1e-4);
+  vec3 acc = vec3(0.0); float wsum = 0.0; float maxW = -1.0; vec3 nearCol = u_bg;
+  for (int k = 0; k < 16; k++) {
+    if (k >= mc) break;
+    vec2 d = p - u_meshPos[k]; d.x *= u_aspect;
+    float w = exp(-dot(d, d) / r2);
+    acc += u_meshCol[k] * w; wsum += w;
+    if (w > maxW) { maxW = w; nearCol = u_meshCol[k]; }
+  }
+  vec3 mcol = wsum > 0.0 ? acc / wsum : u_bg;
+  return mix(mcol, nearCol, clamp(u_meshContrast, 0.0, 1.0));
+}
+
 // Returns layer color in .rgb and coverage alpha in .a.
 vec4 computeLayer(int i, vec2 p) {
   float count = max(1.0, u_count[i]);
@@ -175,13 +225,55 @@ vec4 computeLayer(int i, vec2 p) {
   bool mirrorV = u_mirrorV[i] > 0.5;
   bool gradHoriz = u_gradHoriz[i] > 0.5;
 
+  // ---- Mesh: soft point mesh (see meshColorAt). p is already domain-warped, so the
+  // warp ripples the blobs for free. The optional post-blur averages the field over a
+  // two-ring tap pattern for a dreamy wash.
+  if (u_layout > 4.5) {
+    vec3 mcol;
+    if (u_meshBlur > 0.0001) {
+      vec3 sum = meshColorAt(p); float wsum = 1.0;
+      for (int t = 0; t < 8; t++) {
+        float a = float(t) / 8.0 * TAU;
+        vec2 dir = vec2(cos(a), sin(a)); dir.x /= u_aspect;
+        sum += meshColorAt(p + dir * u_meshBlur);        wsum += 1.0;
+        sum += meshColorAt(p + dir * u_meshBlur * 0.5);  wsum += 1.0;
+      }
+      mcol = sum / wsum;
+    } else {
+      mcol = meshColorAt(p);
+    }
+    return vec4(rotateHue(mcol, u_hueRotate[i]), 1.0);
+  }
+
   // ---- Liquid: no bars; sample the ramp along the (already-warped) angle gradient.
   if (u_layout > 3.5) {
     float a = u_flowAngle * PI / 180.0;
     vec2 dir = vec2(cos(a), sin(a));
     vec2 pc = p - 0.5; pc.x *= u_aspect;
     float t = clamp(dot(pc, dir) + 0.5, 0.0, 1.0);
+
+    // Marbled veins: displace the coordinate by turbulence, then fold it through a
+    // triangle wave so the ramp repeats into ink/oil tendrils (seamless: ramp 0→1→0).
+    if (u_flowVeins > 0.0) {
+      float turb = flowHeight(p);
+      float m = t + (turb - 0.5) * 1.6;
+      float tri = abs(fract(m * u_flowVeinScale) * 2.0 - 1.0);
+      t = mix(t, tri, u_flowVeins);
+    }
     t = quantize(t, u_steps[i]);
+
+    // Refraction: split the ramp coordinate per channel by the local surface slope —
+    // a glassy chromatic edge along the veins, as if seen through thick liquid.
+    if (u_flowRefract > 0.0) {
+      float e = 1.5 / u_resolution.y;
+      float h = flowHeight(p);
+      vec2 g = vec2(flowHeight(p + vec2(e, 0.0)) - h, flowHeight(p + vec2(0.0, e)) - h) / e;
+      float disp = u_flowRefract * 0.045 * length(g);
+      vec3 cr = sampleRamp(i, clamp(t + disp, 0.0, 1.0));
+      vec3 cg = sampleRamp(i, t);
+      vec3 cb = sampleRamp(i, clamp(t - disp, 0.0, 1.0));
+      return vec4(rotateHue(vec3(cr.r, cg.g, cb.b), u_hueRotate[i]), 1.0);
+    }
     return vec4(rotateHue(sampleRamp(i, t), u_hueRotate[i]), 1.0);
   }
 
@@ -431,16 +523,37 @@ void main() {
   }
 
   // Liquid Depth & Light: emboss from the flow fold field (its own light, not u_light).
-  if (u_layout > 3.5 && u_flowDepth > 0.001) {
+  // Gated to the liquid layout (4) so it never touches mesh (5). Gloss adds a wet
+  // Blinn-Phong sheen on the fold normal for an oily/glossy liquid look.
+  if (u_layout > 3.5 && u_layout < 4.5 && (u_flowDepth > 0.001 || u_flowGloss > 0.001)) {
     float e = 1.5 / u_resolution.y;
     float h  = flowHeight(p);
     float hx = flowHeight(p + vec2(e, 0.0));
     float hy = flowHeight(p + vec2(0.0, e));
     vec3 n = normalize(vec3(-(hx - h) / e, -(hy - h) / e, 1.0 / max(u_flowDepth, 0.05)));
-    float d = clamp(dot(n, normalize(vec3(0.4, 0.5, 0.8))), 0.0, 1.0);
-    float gain = d > 0.5 ? u_flowHighlights : u_flowShadows;
-    float shade = 1.0 + (d - 0.5) * 2.0 * gain;
-    col *= clamp(shade, 0.0, 2.0);
+    vec3 L = normalize(vec3(0.4, 0.5, 0.8));
+    float d = clamp(dot(n, L), 0.0, 1.0);
+    if (u_flowDepth > 0.001) {
+      float gain = d > 0.5 ? u_flowHighlights : u_flowShadows;
+      float shade = 1.0 + (d - 0.5) * 2.0 * gain;
+      col *= clamp(shade, 0.0, 2.0);
+    }
+    if (u_flowGloss > 0.001) {
+      vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));   // half-vector (viewer on +Z)
+      float spec = pow(clamp(dot(n, H), 0.0, 1.0), 48.0);
+      col += spec * u_flowGloss;                     // white wet sheen
+    }
+  }
+
+  // Wet ripples: a thin interference/caustic pattern phase-shifted by the fold field,
+  // reading as light dancing on a liquid surface. Liquid-only; animated via flowOffset.
+  if (u_layout > 3.5 && u_layout < 4.5 && u_flowRipple > 0.001) {
+    vec2 rp = p; rp.x *= u_aspect;
+    rp *= (6.0 + u_flowRipple * 14.0);
+    float ph = flowHeight(p) * TAU;
+    float c = sin(rp.x + ph) * sin(rp.y * 1.3 - ph);
+    c = pow(max(c, 0.0), 8.0);
+    col += c * u_flowRipple * 0.5;
   }
 
   // Film grain. Sampled PER DEVICE PIXEL (gl_FragCoord) — a coarser texCoord grid fell

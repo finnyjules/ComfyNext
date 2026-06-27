@@ -189,6 +189,11 @@ describe('gradientfx shader has flow stage', () => {
     expect(GRADIENT_FS).toContain('vec2 applyFlow')
     expect(GRADIENT_FS).toContain('u_layout > 3.5')
   })
+  it('declares the liquid-surface uniforms (veins/ripple/refract/viscosity)', () => {
+    for (const u of ['u_flowVeins', 'u_flowVeinScale', 'u_flowRipple', 'u_flowRefract', 'u_flowViscosity', 'u_flowSwirl']) {
+      expect(GRADIENT_FS).toContain(u)
+    }
+  })
 })
 
 describe('gradientfx flow config', () => {

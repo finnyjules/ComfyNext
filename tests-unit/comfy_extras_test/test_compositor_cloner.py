@@ -36,6 +36,8 @@ def _base():
 DEFAULTS = {
     "enabled": True, "mode": "linear",
     "countX": 3, "countY": 1, "spacingX": 0.25, "spacingY": 0.25,
+    "mirrorX": False, "mirrorY": False,
+    "nudgeX": 0.0, "nudgeY": 0.0, "staggerX": 0.0, "staggerY": 0.0,
     "count": 6, "radius": 0.3, "startAngle": 0.0, "sweepAngle": 360.0, "faceCenter": False,
     "stepRotation": 0.0, "stepScale": 1.0, "stepOpacity": 1.0,
 }
@@ -78,6 +80,70 @@ def test_grid_count():
         (0.0, 0.0), (0.0, 0.25), (0.0, 0.5),
         (0.1, 0.0), (0.1, 0.25), (0.1, 0.5),
     ])
+
+
+def test_mirror_x_reflects_centered():
+    m = _mod()
+    out = m._expand_clones(_base(), cloner(mode="linear", countX=3, countY=1, spacingX=0.2, mirrorX=True), 1.0)
+    assert len(out) == 5  # 2*3-1
+    xs = sorted(round(o["x"], 6) for o in out)
+    assert xs == [-0.4, -0.2, 0.0, 0.2, 0.4]
+    assert abs(out[-1]["x"]) < TOL and abs(out[-1]["y"]) < TOL  # original on top
+
+
+def test_mirror_both_axes_centered_block():
+    m = _mod()
+    out = m._expand_clones(_base(), cloner(
+        mode="linear", countX=2, countY=2, spacingX=0.1, spacingY=0.3, mirrorX=True, mirrorY=True), 1.0)
+    assert len(out) == 9  # (2*2-1)^2
+    pts = sorted((round(o["x"], 2), round(o["y"], 2)) for o in out)
+    assert pts == sorted([
+        (-0.1, -0.3), (-0.1, 0.0), (-0.1, 0.3),
+        (0.0, -0.3), (0.0, 0.0), (0.0, 0.3),
+        (0.1, -0.3), (0.1, 0.0), (0.1, 0.3),
+    ])
+
+
+def test_mirror_falloff_matches_positive_twin():
+    m = _mod()
+    out = m._expand_clones(_base(), cloner(
+        mode="linear", countX=3, countY=1, spacingX=0.1, mirrorX=True,
+        stepRotation=10, stepScale=0.5), 1.0)
+    by_x = {round(o["x"], 6): o for o in out}
+    # +0.2 (ix=2) and -0.2 (ix=-2) both at distance k=2 → identical falloff
+    assert abs(by_x[0.2]["rot"] - 20.0) < TOL
+    assert abs(by_x[-0.2]["rot"] - 20.0) < TOL
+    assert abs(by_x[-0.2]["scl"] - 0.25) < TOL
+
+
+def test_nudge_drifts_by_index():
+    m = _mod()
+    out = m._expand_clones(_base(), cloner(
+        mode="linear", countX=3, countY=1, spacingX=0.1, nudgeX=0.02, nudgeY=0.05), 1.0)
+    by_x = {round(o["x"], 6): o for o in out}
+    assert abs(by_x[0.0]["y"] - 0.0) < TOL
+    assert abs(by_x[0.12]["y"] - 0.05) < TOL   # k=1: x=0.12, y=0.05
+    assert abs(by_x[0.24]["y"] - 0.10) < TOL   # k=2: x=0.24, y=0.10
+
+
+def test_stagger_x_offsets_alternating_rows():
+    m = _mod()
+    out = m._expand_clones(_base(), cloner(
+        mode="linear", countX=2, countY=2, spacingX=0.2, spacingY=0.3, staggerX=0.5), 1.0)
+    row0 = sorted(round(o["x"], 4) for o in out if abs(o["y"] - 0.0) < TOL)
+    row1 = sorted(round(o["x"], 4) for o in out if abs(o["y"] - 0.3) < TOL)
+    assert row0 == [0.0, 0.2]
+    assert row1 == [0.1, 0.3]  # odd row shifted by 0.5*0.2 = 0.1
+
+
+def test_nudge_stagger_default_noop():
+    m = _mod()
+    plain = m._expand_clones(_base(), cloner(mode="linear", countX=2, countY=2, spacingX=0.1, spacingY=0.2), 1.0)
+    explicit = m._expand_clones(_base(), cloner(
+        mode="linear", countX=2, countY=2, spacingX=0.1, spacingY=0.2,
+        nudgeX=0.0, nudgeY=0.0, staggerX=0.0, staggerY=0.0), 1.0)
+    assert [(round(o["x"], 6), round(o["y"], 6)) for o in plain] == \
+           [(round(o["x"], 6), round(o["y"], 6)) for o in explicit]
 
 
 def test_falloff_accumulates_by_index():

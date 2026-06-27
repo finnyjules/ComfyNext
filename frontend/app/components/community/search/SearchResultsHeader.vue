@@ -59,7 +59,7 @@ const resultText = computed(() => {
         <button
           class="flex items-center justify-center p-2 bg-transparent border-none cursor-pointer transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
           :class="viewMode === 'grid'
-            ? 'text-comfy-yellow/80 bg-comfy-yellow/15'
+            ? 'text-palette-yellow/80 bg-palette-yellow/15'
             : 'text-muted-foreground/70 hover:text-foreground hover:bg-accent'"
           aria-label="Grid view"
           @click="emit('update:viewMode', 'grid')"
@@ -72,7 +72,7 @@ const resultText = computed(() => {
         <button
           class="flex items-center justify-center p-2 bg-transparent border-none border-l border-border cursor-pointer transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
           :class="viewMode === 'list'
-            ? 'text-comfy-yellow/80 bg-comfy-yellow/15'
+            ? 'text-palette-yellow/80 bg-palette-yellow/15'
             : 'text-muted-foreground/70 hover:text-foreground hover:bg-accent'"
           aria-label="List view"
           @click="emit('update:viewMode', 'list')"

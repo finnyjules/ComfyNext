@@ -35,3 +35,20 @@ it('every control on every effect declares a non-empty group', () => {
     }
   }
 })
+
+// The backend validates effect ids with `[a-z0-9]+` (comfy_extras/nodes_timeline.py:_valid_effect_id)
+// before using them to name scene_defaults/<id>.json and thumbnail <id>.png. A mixed-case id (e.g.
+// 'cornerPin') 400s the "Make as default" + "Capture thumbnail" saves. Keep ids lowercase/digits.
+it('every effect id is backend-valid (lowercase letters + digits only)', () => {
+  for (const e of SPACE_TYPE_EFFECTS) {
+    expect(
+      /^[a-z0-9]+$/.test(e.id),
+      `effect id "${e.id}" must match /^[a-z0-9]+$/ — the backend rejects other ids, breaking thumbnail/default saves`,
+    ).toBe(true)
+  }
+})
+
+it('effect ids are unique', () => {
+  const ids = SPACE_TYPE_EFFECTS.map(e => e.id)
+  expect(new Set(ids).size).toBe(ids.length)
+})

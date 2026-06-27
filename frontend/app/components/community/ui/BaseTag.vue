@@ -16,7 +16,7 @@ defineEmits(['remove'])
     class="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-full whitespace-nowrap transition-all duration-150"
     :class="{
       'bg-accent text-muted-foreground border border-border hover:text-foreground hover:border-ring': variant === 'default',
-      'bg-comfy-yellow/15 text-comfy-yellow border border-comfy-yellow/30': variant === 'primary',
+      'bg-palette-yellow/15 text-palette-yellow border border-palette-yellow/30': variant === 'primary',
       'bg-green-500/15 text-green-500 border border-green-500/30': variant === 'success',
       'bg-orange-500/15 text-orange-500 border border-orange-500/30': variant === 'warning',
     }"

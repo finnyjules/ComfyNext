@@ -5,9 +5,8 @@ import {
   AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
   Eye, EyeOff,
 } from 'lucide-vue-next'
-import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import {
-  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem,
+  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
@@ -26,6 +25,11 @@ import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate
 import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
+import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
+import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
+import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
+import { VARIABLE_FONTS } from '~/data/variable-fonts'
+import type { GoogleFont } from '~/data/google-fonts'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
@@ -49,7 +53,23 @@ const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 const PROPS_PER_LAYER = ['x', 'y', 'rotation', 'scale', 'opacity', 'blend'] as const
 const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light',
                      'hard_light', 'difference', 'lighten', 'darken', 'add']
-const FONT_NAMES = TEMPLATE_FONTS.map(f => f.name)
+// Font picker (shared full-catalog widget): map its pick → a fontFamily string,
+// ensure the Google face loads, then patch the selected text layer.
+const fontPickerKey = computed(() => {
+  const fam = (selectedLocal.value as any)?.fontFamily || ''
+  const v = VARIABLE_FONTS.find(f => f.family === fam)
+  return v ? 'var:' + v.id : 'goog:' + fam
+})
+function onPickFont(payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont }) {
+  const id = selectedLocalId.value
+  if (!id) return
+  const family = payload.source === 'variable'
+    ? (VARIABLE_FONTS.find(f => f.id === payload.id)?.family ?? '')
+    : payload.font.family
+  if (!family) return
+  ensureGoogleFont(family)
+  setLocal(id, { fontFamily: family })
+}
 
 const compositor = computed(() => props.nodes.find((n: any) => n.id === props.nodeId))
 // The Frame's display name (user-renamed node title), shown top-left.
@@ -153,13 +173,38 @@ const baseAspect = computed(() => {
   const d = naturalDims.value[base.slot]
   return d && d.h ? d.w / d.h : 1
 })
-const canvasDisplay = reactive({ w: 720, h: 720 })
-watchEffect(() => {
+const canvasDisplay = reactive({ w: 680, h: 680 })
+const stageBoxRef = ref<HTMLElement | null>(null)
+// Matte reserved around the artboard inside the stage box. The side gutters give
+// selection handles room to spill out; the top reserve clears the rotation handle /
+// multi-select bar, and the larger bottom reserve leaves a clear gap above the
+// floating toolbar at any modal height. The artboard fits whatever space remains
+// (aspect preserved); stagePadBottom biases the centered artboard up so the top and
+// bottom reserves can differ.
+const STAGE_MATTE_X = 48
+const STAGE_MATTE_TOP = 56
+const STAGE_MATTE_BOTTOM = 92
+const stagePadBottom = STAGE_MATTE_BOTTOM - STAGE_MATTE_TOP
+function fitCanvasToStage() {
   const a = baseAspect.value || 1
-  const MAX = 760
-  if (a >= 1) { canvasDisplay.w = MAX; canvasDisplay.h = Math.round(MAX / a) }
-  else { canvasDisplay.h = MAX; canvasDisplay.w = Math.round(MAX * a) }
+  const box = stageBoxRef.value
+  const availW = box ? Math.max(120, box.clientWidth - STAGE_MATTE_X * 2) : 680
+  const availH = box ? Math.max(120, box.clientHeight - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM) : 600
+  let w = availW, h = w / a
+  if (h > availH) { h = availH; w = h * a }
+  canvasDisplay.w = Math.round(w)
+  canvasDisplay.h = Math.round(h)
+}
+watch(baseAspect, fitCanvasToStage)
+let stageRO: ResizeObserver | null = null
+onMounted(() => {
+  fitCanvasToStage()
+  if (typeof ResizeObserver !== 'undefined' && stageBoxRef.value) {
+    stageRO = new ResizeObserver(() => fitCanvasToStage())
+    stageRO.observe(stageBoxRef.value)
+  }
 })
+onBeforeUnmount(() => { stageRO?.disconnect(); stageRO = null })
 
 function fitSize(slot: number) {
   const dims = naturalDims.value[slot]
@@ -300,6 +345,72 @@ function selectTool() {
 }
 const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value && !genActive.value)
 
+// ── Distort: slant (skew) + corner-pin / perspective ─────────────────────────
+const distortTool = ref(false)
+function toggleDistort() {
+  distortTool.value = !distortTool.value
+  if (distortTool.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode() }
+}
+function normCp(cp: unknown): CornerPin {
+  const c = (cp ?? {}) as any
+  const p = (q: any) => ({ x: q?.x || 0, y: q?.y || 0 })
+  return { tl: p(c.tl), tr: p(c.tr), br: p(c.br), bl: p(c.bl) }
+}
+function resetDistort(id: string) { setLocal(id, { cornerPin: undefined, skewX: 0, skewY: 0 } as any) }
+/** Perspective slider → a symmetric trapezoid (positive narrows the TOP edge,
+ *  negative narrows the BOTTOM), written into cornerPin. */
+function setPerspective(id: string, p: number) {
+  const top = Math.max(0, p), bot = Math.max(0, -p)
+  setLocal(id, { cornerPin: { tl: { x: top, y: 0 }, tr: { x: -top, y: 0 }, bl: { x: -bot, y: 0 }, br: { x: bot, y: 0 } } } as any)
+}
+function perspectiveAmount(l: any): number {
+  const cp = l?.cornerPin; if (!cp) return 0
+  const top = ((cp.tl?.x || 0) - (cp.tr?.x || 0)) / 2
+  const bot = ((cp.br?.x || 0) - (cp.bl?.x || 0)) / 2
+  return top - bot
+}
+/** The 4 corner-pin handle positions in canvas-display px (box corner + its offset,
+ *  rotated/positioned with the layer). Shown only while the Distort tool is active. */
+const distortHandlePositions = computed(() => {
+  const l = selectedLocal.value as any
+  if (!l) return null
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const box = boxPx(l)
+  const hw = box.w / 2, hh = box.h / 2
+  const cx = l.x * W, cy = l.y * H
+  const rad = ((l.rotation || 0) * Math.PI) / 180, cosA = Math.cos(rad), sinA = Math.sin(rad)
+  const cp = normCp(l.cornerPin)
+  const C = (sx: number, sy: number, off: { x: number; y: number }) => {
+    const dx = sx * hw + off.x * hw, dy = sy * hh + off.y * hh
+    return { x: cx + dx * cosA - dy * sinA, y: cy + dx * sinA + dy * cosA }
+  }
+  return { tl: C(-1, -1, cp.tl), tr: C(1, -1, cp.tr), br: C(1, 1, cp.br), bl: C(-1, 1, cp.bl) }
+})
+function onDistortPointerDown(cornerKey: 'tl' | 'tr' | 'br' | 'bl', e: PointerEvent) {
+  e.preventDefault(); e.stopPropagation()
+  const l = selectedLocal.value as any; const r = canvasRect()
+  if (!l || !r) return
+  const W = canvasDisplay.w, H = canvasDisplay.h
+  const box = boxPx(l); const hw = box.w / 2, hh = box.h / 2
+  const cx = l.x * W, cy = l.y * H
+  const rad = ((l.rotation || 0) * Math.PI) / 180, cosA = Math.cos(rad), sinA = Math.sin(rad)
+  const baseSx = (cornerKey === 'tl' || cornerKey === 'bl') ? -1 : 1
+  const baseSy = (cornerKey === 'tl' || cornerKey === 'tr') ? -1 : 1
+  const move = (ev: PointerEvent) => {
+    const mx = ((ev.clientX - r.left) / r.width) * W - cx
+    const my = ((ev.clientY - r.top) / r.height) * H - cy
+    const lx = mx * cosA + my * sinA      // un-rotate into the layer's local box space
+    const ly = -mx * sinA + my * cosA
+    const offX = hw ? (lx - baseSx * hw) / hw : 0
+    const offY = hh ? (ly - baseSy * hh) / hh : 0
+    const next = normCp(l.cornerPin)
+    next[cornerKey] = { x: offX, y: offY }
+    setLocal(l.id, { cornerPin: next } as any)
+  }
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+}
+
 const svgInputRef = ref<HTMLInputElement | null>(null)
 function triggerImportSvg() { svgInputRef.value?.click() }
 async function onImportSvgFile(e: Event) {
@@ -308,6 +419,42 @@ async function onImportSvgFile(e: Event) {
   if (!file) return
   try { await addPathFromSvg(await file.text(), { targetWidth: 0.5 }) }
   catch (err) { console.error('[Compositor] SVG import failed:', err) }
+}
+
+// ── Drag a file onto the canvas → drop it in as a layer ─────────────────────
+// SVGs become editable path layers (placed at the drop point); raster images
+// become image layers. Highlight the artboard while a file hovers over it.
+const dropActive = ref(false)
+function isFileDrag(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types || []).includes('Files')
+}
+function onCanvasDragOver(e: DragEvent) {
+  if (!isFileDrag(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  dropActive.value = true
+}
+function onCanvasDragLeave(e: DragEvent) {
+  const ct = e.currentTarget as Node | null
+  if (ct && e.relatedTarget instanceof Node && ct.contains(e.relatedTarget)) return // moved to a child
+  dropActive.value = false
+}
+async function onCanvasDrop(e: DragEvent) {
+  dropActive.value = false
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (!files.length) return
+  e.preventDefault()
+  // Map the drop point onto the artboard (normalized, clamped so it stays visible).
+  const r = canvasRect()
+  const cx = r ? Math.min(0.92, Math.max(0.08, (e.clientX - r.left) / r.width)) : 0.5
+  const cy = r ? Math.min(0.92, Math.max(0.08, (e.clientY - r.top) / r.height)) : 0.5
+  for (const file of files) {
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+    try {
+      if (isSvg) await addPathFromSvg(await file.text(), { targetWidth: 0.5, cx, cy })
+      else if (file.type.startsWith('image/')) await addImageFromFile(file)
+    } catch (err) { console.error('[Compositor] drop import failed:', err) }
+  }
 }
 
 // ── AI vector: text→SVG generate + raster→SVG vectorize ─────────────────────
@@ -676,10 +823,40 @@ function detachPointerListeners() { window.removeEventListener('pointermove', on
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
 // ── Canvas pointer routing ──────────────────────────────────────────────────
-// Unified, z-aware hit test: walk the stack top→bottom and return the key of
-// the first layer (wired image OR local shape) whose rotated box contains the
-// point. Previously local shapes always won over wired images regardless of
-// depth, so clicking an image sitting *on top* would grab a shape beneath it.
+// Pixel/alpha test: render JUST this layer to a reusable offscreen and check
+// whether the click lands on an opaque pixel (sampling a small neighbourhood so
+// thin strokes/lines stay easy to grab). This is what makes the bbox hit accurate:
+// a layer's TRANSPARENT areas (the gaps in/around text glyphs, an unfilled shape)
+// no longer capture clicks meant for a visible layer below. A tainted canvas
+// (cross-origin wired image) can't be read → treat as a hit (falls back to bbox).
+let _hitCanvas: HTMLCanvasElement | null = null
+function layerHitAt(res: { type: 'wired'; layer: Layer } | { type: 'local'; layer: any }, px: number, py: number, W: number, H: number): boolean {
+  const x = Math.round(px), y = Math.round(py)
+  if (x < 0 || y < 0 || x >= W || y >= H) return false
+  if (!_hitCanvas) _hitCanvas = document.createElement('canvas')
+  const c = _hitCanvas
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H }
+  const ctx = c.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return true
+  ctx.clearRect(0, 0, W, H)
+  try {
+    if (res.type === 'wired') drawWiredLayer(ctx, res.layer, W, H)
+    else drawLocalLayer(ctx, res.layer as LocalLayer, W, H)
+  } catch { return true }
+  try {
+    const R = 2
+    const sx = Math.max(0, x - R), sy = Math.max(0, y - R)
+    const sw = Math.min(W - sx, R * 2 + 1), sh = Math.min(H - sy, R * 2 + 1)
+    const data = ctx.getImageData(sx, sy, sw, sh).data
+    for (let i = 3; i < data.length; i += 4) if (data[i]! > 8) return true
+    return false
+  } catch { return true }  // tainted → fall back to the bbox hit
+}
+
+// Unified, z-aware, PIXEL-ACCURATE hit test: walk the stack top→bottom and return
+// the key of the first layer whose rotated box contains the point AND that paints
+// an opaque pixel there. The box is a cheap pre-filter; the alpha test is what stops
+// a big transparent text bbox from grabbing clicks on the image showing through it.
 function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
   const r = canvasRect(); if (!r) return null
   const W = canvasDisplay.w, H = canvasDisplay.h
@@ -694,20 +871,22 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
   }
   const keys = stackKeys.value
   for (let i = keys.length - 1; i >= 0; i--) {        // top → bottom
-    const res = resolveStackKey(keys[i]); if (!res) continue
+    const k = keys[i]; if (!k) continue
+    const res = resolveStackKey(k); if (!res) continue
     // Hidden or locked layers are transparent to canvas hits (Figma behavior:
     // the layers panel can still select a locked layer, the canvas can't).
     if (res.type === 'wired') {
       if (hiddenWired.value.has(res.layer.slot) || lockedWired.value.has(res.layer.slot)) continue
       const { w: fw, h: fh } = fitSize(res.layer.slot)
       const c = layerCenter(res.layer)
-      if (inBox(c.x, c.y, (fw / 2) * res.layer.scale + 4, (fh / 2) * res.layer.scale + 4, res.layer.rotation)) return keys[i]
+      if (!inBox(c.x, c.y, (fw / 2) * res.layer.scale + 4, (fh / 2) * res.layer.scale + 4, res.layer.rotation)) continue
     } else {
       const l = res.layer
       if (l.visible === false || l.locked) continue
       const b = boxPx(l)
-      if (inBox(l.x * W, l.y * H, b.w / 2 + 8, b.h / 2 + 8, l.rotation)) return keys[i]
+      if (!inBox(l.x * W, l.y * H, b.w / 2 + 8, b.h / 2 + 8, l.rotation)) continue
     }
+    if (layerHitAt(res, px, py, W, H)) return k
   }
   return null
 }
@@ -732,7 +911,7 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
     onLayerPointerDown(res.layer.slot, e) // selects slot + starts move (+ stops propagation)
   } else if (res?.type === 'local') {
     lastDownHitLayer = true
-    onCanvasPointerDown(e) // local editor selects + starts move (+ stops propagation)
+    onCanvasPointerDown(e, res.layer.id) // select the EXACT layer the pixel-accurate hit found (not the editor's bbox re-test)
   } else {
     // Empty space → begin a marquee (rubber-band) selection.
     lastDownHitLayer = false
@@ -766,6 +945,8 @@ function onCanvasDblClickCapture(e: MouseEvent) {
     if (res?.type === 'local' && res.layer.kind === 'path') {
       e.preventDefault(); e.stopPropagation(); enterNodeEdit(res.layer.id); return
     }
+    onCanvasDblClick(e, res?.type === 'local' ? res.layer.id : null)
+    return
   }
   onCanvasDblClick(e)
 }
@@ -793,8 +974,8 @@ const editingStyle = computed(() => {
     transform: `translate(-50%, -50%) rotate(${l.rotation}deg)`,
     fontFamily: /\s/.test(l.fontFamily) ? `"${l.fontFamily}", sans-serif` : `${l.fontFamily}, sans-serif`,
     fontWeight: String(l.fontWeight), fontSize: l.fontSize * canvasDisplay.w + 'px',
-    lineHeight: String(l.lineHeight), color: l.color, textAlign: l.align as any,
-    opacity: String(l.opacity), caretColor: l.color,
+    lineHeight: String(l.lineHeight), color: paintPrimaryColor(l.color, '#ffffff'), textAlign: l.align as any,
+    opacity: String(l.opacity), caretColor: paintPrimaryColor(l.color, '#ffffff'),
   }
 })
 
@@ -1659,7 +1840,6 @@ function setDimPx(l: any, key: 'w' | 'h', px: number) {
     setLocal(l.id, { [key]: next })
   }
 }
-function toggleFill(l: RectLayer | EllipseLayer) { setLocal(l.id, { fill: l.fill && l.fill !== 'none' ? 'none' : '#3b82f6' }) }
 function kindIcon(kind: string) {
   return kind === 'text' ? Type : kind === 'rect' ? Square
     : kind === 'ellipse' ? Circle : kind === 'image' ? ImageIcon : Minus
@@ -1703,13 +1883,15 @@ onUnmounted(() => {
   <div
     class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6"
     @click.self="emit('close')"
+    @dragover.prevent
+    @drop.prevent
   >
     <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
     <!-- Modal title (top-left, studio-style) -->
     <div class="absolute top-4 left-6 z-30 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
 
     <!-- Left sidebar: floating glass layer panel -->
-    <div class="absolute top-14 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+    <div class="absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <div class="px-3 pt-3 pb-3 flex-1 min-h-0 overflow-y-auto">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
 
@@ -1798,13 +1980,25 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Center canvas (full-bleed; the layer + properties panels float over it) -->
-    <div class="absolute inset-0 flex items-center justify-center overflow-hidden">
+    <!-- Center canvas (sits in the gap between the layer + properties panels) -->
+    <div
+      ref="stageBoxRef"
+      class="absolute top-16 bottom-4 left-[272px] right-[320px] flex items-center justify-center overflow-hidden"
+      :style="{ paddingBottom: stagePadBottom + 'px' }"
+      @dragover="onCanvasDragOver"
+      @dragleave="onCanvasDragLeave"
+      @drop="onCanvasDrop"
+    >
+      <!-- Stage wrapper (overflow-visible): the artboard clips rendered layers,
+           but selection controls live here so their handles can spill into the gutter. -->
+      <div class="relative" :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }">
       <div
         ref="canvasRef"
-        class="relative bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5"
-        :class="(pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : (genActive && genTool === 'brush') ? 'cursor-none' : ''"
-        :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
+        class="absolute inset-0 bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5 transition-shadow"
+        :class="[
+          (pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : (genActive && genTool === 'brush') ? 'cursor-none' : '',
+          dropActive ? '!ring-2 !ring-white/70' : '',
+        ]"
         @click="onCanvasClick"
         @pointerdown.capture="onCanvasPointerDownCapture"
         @pointermove="onCanvasPointerMoveCapture"
@@ -1969,10 +2163,13 @@ onUnmounted(() => {
           @pointerdown.stop
         />
 
+      </div>
+      <!-- end artboard (clipped) — selection controls below live in the wrapper, unclipped -->
+
         <!-- Image-layer selection / handles -->
         <svg
           v-if="handlePositions"
-          class="absolute inset-0 w-full h-full pointer-events-none"
+          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
           <polygon
@@ -2005,7 +2202,7 @@ onUnmounted(() => {
         <!-- Local-layer selection / handles -->
         <svg
           v-if="localHandlePositions && !editingId && !genActive"
-          class="absolute inset-0 w-full h-full pointer-events-none"
+          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
           <polygon
@@ -2032,6 +2229,28 @@ onUnmounted(() => {
             class="absolute z-20 size-3 rounded-full bg-white cursor-grab border-2 border-[#1a1a1a]"
             :style="{ left: localHandlePositions.rot.x + 'px', top: localHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalRotatePointerDown($event)"
+          />
+        </template>
+
+        <!-- Corner-pin distort handles (Distort tool active) -->
+        <svg
+          v-if="distortTool && distortHandlePositions && !editingId && !genActive"
+          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+          :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
+        >
+          <polygon
+            :points="`${distortHandlePositions.tl.x},${distortHandlePositions.tl.y} ${distortHandlePositions.tr.x},${distortHandlePositions.tr.y} ${distortHandlePositions.br.x},${distortHandlePositions.br.y} ${distortHandlePositions.bl.x},${distortHandlePositions.bl.y}`"
+            fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"
+          />
+        </svg>
+        <template v-if="distortTool && distortHandlePositions && !editingId && !genActive">
+          <div
+            v-for="ck in (['tl', 'tr', 'br', 'bl'] as const)"
+            :key="'d-' + ck"
+            data-handle
+            class="absolute z-20 size-3 rounded-full bg-cyan-400 border-2 border-[#0a0a0a] cursor-move"
+            :style="{ left: distortHandlePositions[ck].x + 'px', top: distortHandlePositions[ck].y + 'px', transform: 'translate(-50%, -50%)' }"
+            @pointerdown="onDistortPointerDown(ck, $event)"
           />
         </template>
       </div>
@@ -2425,11 +2644,12 @@ onUnmounted(() => {
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Font</div>
-              <select :value="(selectedLocal as any).fontFamily"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
-                @change="setLocal(selectedLocal!.id, { fontFamily: ($event.target as HTMLSelectElement).value })">
-                <option v-for="f in FONT_NAMES" :key="f" :value="f">{{ f }}</option>
-              </select>
+              <FontPicker
+                :selected-key="fontPickerKey"
+                :label="(selectedLocal as any).fontFamily || 'Inter'"
+                sublabel=""
+                @pick="onPickFont"
+              />
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
@@ -2467,23 +2687,19 @@ onUnmounted(() => {
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-3">
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
-                <input type="color" :value="(selectedLocal as any).color"
-                  class="w-full h-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
-                  @input="setLocal(selectedLocal!.id, { color: ($event.target as HTMLInputElement).value })" />
+                <FillControl :model-value="(selectedLocal as any).color"
+                  @update:model-value="(v: any) => setLocal(selectedLocal!.id, { color: v })" />
               </div>
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Outline</div>
-                <div class="flex gap-1.5 items-center">
-                  <input type="color" :value="(selectedLocal as any).strokeColor"
-                    class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
-                    @input="setLocal(selectedLocal!.id, { strokeColor: ($event.target as HTMLInputElement).value })" />
-                  <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-                    @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-                </div>
+                <FillControl allow-none :model-value="(selectedLocal as any).strokeColor"
+                  @update:model-value="(v: any) => setLocal(selectedLocal!.id, { strokeColor: v })" />
+                <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Outline width"
+                  class="mt-1.5 w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               </div>
             </div>
           </template>
@@ -2492,27 +2708,16 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse'">
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Fill</div>
-              <div class="flex gap-1.5 items-center">
-                <input type="color" :value="(selectedLocal as any).fill === 'none' ? '#3b82f6' : (selectedLocal as any).fill"
-                  class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
-                  @input="setLocal(selectedLocal!.id, { fill: ($event.target as HTMLInputElement).value })" />
-                <button class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs"
-                  :class="(selectedLocal as any).fill === 'none' ? 'text-yellow-400' : 'text-white/60'"
-                  @click="toggleFill(selectedLocal as any)">
-                  {{ (selectedLocal as any).fill === 'none' ? 'No fill' : 'Filled' }}
-                </button>
-              </div>
+              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Stroke</div>
-              <div class="flex gap-1.5 items-center">
-                <input type="color" :value="(selectedLocal as any).stroke || '#ffffff'"
-                  class="h-8 w-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
-                  @input="setLocal(selectedLocal!.id, { stroke: ($event.target as HTMLInputElement).value })" />
-                <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-                  @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-              </div>
+              <FillControl allow-none :model-value="(selectedLocal as any).stroke"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+                class="mt-1.5 w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
             </div>
             <div v-if="selectedLocal.kind === 'rect'">
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Corner radius</div>
@@ -2526,9 +2731,8 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'line'">
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
-              <input type="color" :value="(selectedLocal as any).stroke"
-                class="w-full h-8 bg-[#1a1a1a] border border-[#2a2a2a] rounded cursor-pointer"
-                @input="setLocal(selectedLocal!.id, { stroke: ($event.target as HTMLInputElement).value })" />
+              <FillControl allow-none :model-value="(selectedLocal as any).stroke"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Thickness</div>
@@ -2586,6 +2790,32 @@ onUnmounted(() => {
               <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
                 class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { opacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) })" />
+            </div>
+          </div>
+
+          <!-- Distort: slant (affine) + perspective + free corner-pin (Distort tool) -->
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Distort</div>
+            <div class="grid grid-cols-2 gap-3 mb-2">
+              <div>
+                <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Slant X</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewX || 0) }}°</span></div>
+                <input type="range" min="-60" max="60" step="1" :value="(selectedLocal as any).skewX || 0" class="w-full accent-white cursor-pointer"
+                  @input="setLocal(selectedLocal!.id, { skewX: parseFloat(($event.target as HTMLInputElement).value) || 0 } as any)" />
+              </div>
+              <div>
+                <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Slant Y</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewY || 0) }}°</span></div>
+                <input type="range" min="-60" max="60" step="1" :value="(selectedLocal as any).skewY || 0" class="w-full accent-white cursor-pointer"
+                  @input="setLocal(selectedLocal!.id, { skewY: parseFloat(($event.target as HTMLInputElement).value) || 0 } as any)" />
+              </div>
+            </div>
+            <div class="mb-2">
+              <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Perspective</span><span class="tabular-nums normal-case">{{ Math.round(perspectiveAmount(selectedLocal) * 100) }}</span></div>
+              <input type="range" min="-80" max="80" step="1" :value="Math.round(perspectiveAmount(selectedLocal) * 100)" class="w-full accent-white cursor-pointer"
+                @input="setPerspective(selectedLocal!.id, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)" />
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button class="flex-1 h-7 rounded text-[11px] cursor-pointer transition-colors" :class="distortTool ? 'bg-white text-neutral-900 font-medium' : 'bg-white/[0.05] text-white/70 hover:bg-white/10'" title="Drag the 4 corners on the canvas" @click="toggleDistort">Corner pin</button>
+              <button class="h-7 px-2.5 rounded text-[11px] bg-white/[0.05] text-white/60 hover:bg-white/10 cursor-pointer" title="Reset slant + perspective" @click="resetDistort(selectedLocal!.id)">Reset</button>
             </div>
           </div>
 

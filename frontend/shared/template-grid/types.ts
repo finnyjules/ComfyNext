@@ -118,3 +118,36 @@ export interface TemplateV2 {
   outputs?: OutputSpec[]
   elements: ElementV2[]
 }
+
+/**
+ * Smart Layout v3 — sectioned, format-aware canvas on a baseline-derived fine
+ * grid. A SectionV3 is a named box with its own region (+ per-class/per-output
+ * overrides); its children are positioned in the master fine grid and ride the
+ * section's box proportionally across formats. See
+ * docs/superpowers/specs/2026-06-26-smart-layout-v3-sectioned-canvas-design.md.
+ */
+export interface SectionV3 {
+  id: string
+  name: string                            // "headline lockup", "logo + cta"
+  region: Region                          // section box on the master fine grid
+  regionByClass?: Partial<Record<FormatClass, Region>>
+  /** Per-output overrides, keyed by output id (falls back to format key) —
+   *  highest precedence, lets one output diverge into a variation. */
+  overrides?: Record<string, { region?: Region; hidden?: boolean }>
+  hidden?: boolean                        // culls the whole section + its children
+  children: ElementV2[]                   // child regions are in the master fine grid
+}
+
+/** v3 is a superset of v2: same top-level shape plus `sections`. Ungrouped
+ *  elements stay in `elements` and resolve exactly as in v2. */
+export interface TemplateV3 extends Omit<TemplateV2, 'version'> {
+  version: 3
+  sections: SectionV3[]
+}
+
+export type AnyGridTemplate = TemplateV2 | TemplateV3
+
+/** Narrow an AnyGridTemplate to v3 on its version discriminant. */
+export function isV3(t: AnyGridTemplate): t is TemplateV3 {
+  return t.version === 3
+}

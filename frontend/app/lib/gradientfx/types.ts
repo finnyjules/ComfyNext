@@ -3,7 +3,9 @@
 // data.properties.comfynext_gradientStudio blob, drives the renderer, and (given
 // the same seed + locks) reproduces an identical image.
 
-export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid'
+import { defaultMesh } from './mesh'
+
+export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type RingShape = 'circle' | 'diamond' | 'square'
 export type MappingKind = 'across' | 'perbar' | 'field'
@@ -86,11 +88,33 @@ export interface ColorConfig {
   hueRotate: number
 }
 
+/** One color control point of a mesh gradient — position in 0..1, hex color. */
+export interface MeshPoint {
+  x: number
+  y: number
+  color: string
+}
+
+export interface MeshConfig {
+  /** Color control points (2..MESH_MAX_POINTS); each bleeds softly into the rest. */
+  points: MeshPoint[]
+  /** Gaussian bleed radius, 0..100 (low = tight blobs, high = washy). */
+  softness: number
+  /** Zone sharpness, 0..100 — blends the smooth mesh toward crisp Voronoi cells (kills mud). */
+  contrast: number
+  /** Post blur, 0..100 — multi-tap gaussian over the mesh field for a dreamy soft wash. */
+  blur?: number
+  /** Living-drift orbit amount, 0..100. 0 = static. */
+  drift: number
+}
+
 export interface LayerConfig {
   blend: BlendKind
   opacity: number
   shape: ShapeConfig
   color: ColorConfig
+  /** Mesh-layout points (only layer 0, only when canvas.layout === 'mesh'). */
+  mesh?: MeshConfig
 }
 
 export interface CanvasConfig {
@@ -135,6 +159,22 @@ export interface FlowConfig {
   shadows: number
   /** Liquid fold frequency, 0..100. */
   foldScale: number
+  /** Living-drift animation speed, 0..100. 0 = static (orbits the warp field over the loop). */
+  speed?: number
+  /** Liquid specular gloss / wet sheen, 0..100. 0 = matte. */
+  gloss?: number
+  /** Liquid marbled veins, 0..100 — bands the flow into ink/oil tendrils (0 = smooth smoke). */
+  veins?: number
+  /** Vein frequency, 0..100 — how tightly packed the marble veins are. */
+  veinScale?: number
+  /** Wet-surface ripple/caustic shimmer, 0..100. 0 = none. */
+  ripple?: number
+  /** Glassy chromatic refraction, 0..100 — bends + splits the gradient like thick liquid. */
+  refract?: number
+  /** Viscosity, 0..100 — compresses the warp along the flow into laminar streaks (vs turbulent billow). */
+  viscosity?: number
+  /** Swirl, 0..100 — extra recursive warp passes + amplitude for gnarlier curls (more warp). 0 = base. */
+  swirl?: number
 }
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
@@ -182,7 +222,7 @@ export interface GradientConfig {
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
 export const BLEND_MODES: BlendKind[] = ['normal', 'lighten', 'screen', 'add', 'multiply', 'darken', 'overlay']
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
-export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack', 'liquid']
+export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
 export const RING_SHAPES: RingShape[] = ['circle', 'diamond', 'square']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
@@ -201,7 +241,8 @@ export const DEFAULT_CENTER: CenterOffset = { x: 0, y: 0 }
 /** Default flow: no distortion (intensity 0) so existing gradients are unchanged. */
 export const DEFAULT_FLOW: FlowConfig = {
   angle: 45, noiseScale: 3.5, intensity: 0, distortion: 50, detail: 2,
-  depth: 60, highlights: 50, shadows: 55, foldScale: 60,
+  depth: 60, highlights: 50, shadows: 55, foldScale: 60, speed: 0, gloss: 0,
+  veins: 0, veinScale: 35, ripple: 0, refract: 0, viscosity: 0, swirl: 0,
 }
 
 /** Flow block with the default applied when a config omits it. */
@@ -239,6 +280,13 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   if (!cfg.canvas.center) cfg.canvas.center = { ...DEFAULT_CENTER }
   if (!cfg.relief.light) cfg.relief.light = { ...DEFAULT_LIGHT }
   if (!cfg.flow) cfg.flow = { ...DEFAULT_FLOW }
+  if (cfg.flow.speed == null) cfg.flow.speed = 0
+  if (cfg.flow.gloss == null) cfg.flow.gloss = 0
+  // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back
+  // too, but backfilling here keeps the editor's bindings non-null).
+  if (cfg.canvas.layout === 'mesh' && cfg.layers[0] && !cfg.layers[0].mesh) {
+    cfg.layers[0].mesh = defaultMesh(cfg.layers[0].color.stops, cfg.seed)
+  }
   return cfg
 }
 

@@ -19,6 +19,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
@@ -178,8 +179,36 @@ watch(fills, () => {
 }, { deep: true })
 function addFill() { fills.push({ type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }) }
 function removeFill(i: number) { fills.splice(i, 1); if (!fills.length) addFill() }
-// Second colour only matters for textured fills; the dropdown reveals it.
-function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }
+// Which controls each fill type actually uses (so the editor only shows relevant ones).
+function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }                                  // second colour
+function fillHasAngle(f: Fill): boolean { return f.type === 'ombre' || f.type === 'stripes' }        // direction
+function fillHasDensity(f: Fill): boolean { return f.type === 'grid' || f.type === 'checkerboard' || f.type === 'stripes' || f.type === 'qr' }
+
+// ── Drag-to-reorder for the text rows and fill cards (native DnD from a grip handle, so the
+// row's inputs stay usable). `kind` keeps the two lists from cross-dropping onto each other.
+const drag = reactive<{ kind: 'text' | 'fill' | null; from: number; over: number }>({ kind: null, from: -1, over: -1 })
+function dragStart(kind: 'text' | 'fill', i: number, e: DragEvent) {
+  drag.kind = kind; drag.from = i; drag.over = i
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(i))   // Firefox needs some data to start a drag
+    const row = (e.target as HTMLElement).closest('[data-row]') as HTMLElement | null
+    if (row) e.dataTransfer.setDragImage(row, 14, 14)
+  }
+}
+function dragOver(kind: 'text' | 'fill', i: number, e: DragEvent) {
+  if (drag.kind !== kind) return
+  e.preventDefault()
+  drag.over = i
+}
+function dropRow(kind: 'text' | 'fill', i: number) {
+  if (drag.kind === kind && drag.from !== i && drag.from >= 0) {
+    if (kind === 'text') { const [m] = textLines.splice(drag.from, 1); textLines.splice(i, 0, m!) }
+    else { const [m] = fills.splice(drag.from, 1); fills.splice(i, 0, m!) }
+  }
+  dragEnd()
+}
+function dragEnd() { drag.kind = null; drag.from = -1; drag.over = -1 }
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let engine: SpaceTypeEngine | null = null
@@ -327,7 +356,12 @@ function texOpts() {
   // higher-res). Other effects keep the default resolution.
   // Supersample the text atlas 2× so glyph edges stay crisp in the authoring preview when
   // magnified onto large bands (slit-scan needs even more — it fills the frame with one quad).
-  const atlasSS = effectId.value === 'slitscan' ? 3 : 2
+  // Corner Pin stretches ONE word across each full-width band (poster scale), so the source atlas
+  // must out-resolve the on-screen glyph or the magnified ends go soft. Push it high for few bands
+  // (each band is huge) and scale down as bands multiply (each band shrinks → less magnification),
+  // keeping the atlas height bounded (256·SS·N ≈ ≤ 3k) so it never blows the GPU texture cap.
+  const cpSS = texts.length <= 2 ? 5 : texts.length === 3 ? 4 : texts.length <= 5 ? 3 : 2
+  const atlasSS = effectId.value === 'cornerpin' ? cpSS : effectId.value === 'slitscan' ? 3 : 2
   return {
     label: labels[0]!,
     labels,
@@ -412,7 +446,9 @@ function loadConfig() {
   hydrating = true
   // Restore effectId BEFORE params so the engine builds with the right effect
   // and the control panel (sections) reflects the saved effect's controls.
-  if (typeof c.effectId === 'string') effectId.value = c.effectId
+  // Normalize to the resolved effect's canonical id so a config saved under an old mixed-case id
+  // (e.g. 'cornerPin') resolves AND the buttons (thumbnail/default save) send a backend-valid id.
+  if (typeof c.effectId === 'string') effectId.value = getEffect(c.effectId).id
   if (c.params && typeof c.params === 'object') Object.assign(params, c.params)
   if (Array.isArray(c.gradientStops)) {
     gradientStops.splice(0, gradientStops.length, ...c.gradientStops.map((s: any) => ({ ...s })))
@@ -802,7 +838,14 @@ async function generateVideo() {
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
                      class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" />
               <template v-else-if="c.kind === 'textList'">
-                <div v-for="(_, i) in textLines" :key="i" class="mb-1 flex items-center gap-1">
+                <div v-for="(_, i) in textLines" :key="i" data-row
+                     class="mb-1 flex items-center gap-1 rounded transition-shadow"
+                     :class="drag.kind === 'text' && drag.over === i && drag.from !== i ? 'ring-1 ring-white/40' : ''"
+                     @dragover="dragOver('text', i, $event)" @drop="dropRow('text', i)">
+                  <span draggable="true" @dragstart="dragStart('text', i, $event)" @dragend="dragEnd"
+                        class="shrink-0 cursor-grab px-0.5 text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+                  </span>
                   <input type="text" v-model="textLines[i]" class="w-full rounded bg-white/10 px-2 py-1" />
                   <button v-if="textLines.length > 1" type="button" @click="removeTextRow(i)"
                           class="shrink-0 rounded px-2 py-1 text-white/40 hover:bg-white/10 hover:text-white">−</button>
@@ -812,30 +855,59 @@ async function generateVideo() {
                 <p class="mt-1 text-[10px] text-white/40">Multiple texts alternate per repeat.</p>
               </template>
               <template v-else-if="c.kind === 'fillList'">
-                <div v-for="(f, i) in fills" :key="i" class="mb-1.5 flex flex-wrap items-center gap-1">
-                  <select v-model="f.type" class="min-w-[5rem] flex-1 rounded bg-white/10 px-1 py-1">
-                    <option v-for="ft in FILL_TYPES" :key="ft" :value="ft">{{ ft }}</option>
-                  </select>
-                  <StudioColor v-model="f.a" />
-                  <StudioColor v-if="fillNeedsB(f)" v-model="f.b" />
-                  <input v-if="f.type === 'stripes' || f.type === 'gradient' || f.type === 'ombre'" type="range" v-model.number="f.angle"
-                         min="0" max="180" step="5" v-studio-reset class="studio-range studio-range-inline shrink-0" :title="f.type === 'stripes' ? 'Stripe angle' : 'Fade angle'" />
-                  <input v-if="f.type === 'checkerboard' || f.type === 'grid' || f.type === 'stripes' || f.type === 'qr'" type="range"
-                         v-model.number="f.density" min="1" max="32" step="1" v-studio-reset class="studio-range studio-range-inline shrink-0" title="Pattern density" />
-                  <span class="shrink-0 pl-0.5 text-[9px] text-white/30">T</span>
-                  <StudioColor v-model="f.textColor" />
-                  <button v-if="fills.length > 1" type="button" @click="removeFill(i)"
-                          class="shrink-0 rounded px-1 py-1 text-white/40 hover:bg-white/10 hover:text-white">−</button>
+                <div class="space-y-2">
+                  <div v-for="(f, i) in fills" :key="i" data-row
+                       class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5 transition-shadow"
+                       :class="drag.kind === 'fill' && drag.over === i && drag.from !== i ? 'ring-1 ring-white/40' : ''"
+                       @dragover="dragOver('fill', i, $event)" @drop="dropRow('fill', i)">
+                    <!-- grip + type + remove -->
+                    <div class="flex items-center gap-1.5">
+                      <span draggable="true" @dragstart="dragStart('fill', i, $event)" @dragend="dragEnd"
+                            class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                        <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+                      </span>
+                      <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
+                      <StudioSelect class="flex-1" :options="FILL_TYPES" :model-value="f.type"
+                                    @update:model-value="(v: string) => f.type = v as FillType" />
+                      <button v-if="fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
+                              class="shrink-0 rounded-md p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                      </button>
+                    </div>
+                    <!-- colours: fill pair grouped left, text colour pushed right -->
+                    <div class="mt-2.5 flex items-end gap-2.5 pl-6">
+                      <div class="flex flex-col items-center gap-1">
+                        <span class="text-[9px] uppercase tracking-wide text-white/35">{{ fillNeedsB(f) ? 'Color 1' : 'Fill' }}</span>
+                        <StudioColor v-model="f.a" />
+                      </div>
+                      <div v-if="fillNeedsB(f)" class="flex flex-col items-center gap-1">
+                        <span class="text-[9px] uppercase tracking-wide text-white/35">Color 2</span>
+                        <StudioColor v-model="f.b" />
+                      </div>
+                      <div class="flex-1"></div>
+                      <div class="flex flex-col items-center gap-1">
+                        <span class="text-[9px] uppercase tracking-wide text-white/35">Text</span>
+                        <StudioColor v-model="f.textColor" />
+                      </div>
+                    </div>
+                    <!-- pattern controls (only the ones this type uses) -->
+                    <div v-if="fillHasAngle(f) || fillHasDensity(f)" class="mt-2.5 space-y-1.5 pl-6">
+                      <StudioSlider v-if="fillHasAngle(f)" v-model="f.angle" :label="f.type === 'stripes' ? 'Angle' : 'Fade angle'" :min="0" :max="180" :step="5" />
+                      <StudioSlider v-if="fillHasDensity(f)" v-model="f.density" label="Density" :min="1" :max="32" :step="1" />
+                    </div>
+                  </div>
+                  <button type="button" @click="addFill"
+                          class="w-full rounded-lg border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
+                  <p class="text-[10px] leading-relaxed text-white/35">Fills apply top-to-bottom and repeat if there are more slots than fills. <span class="text-white/50">Text</span> is the type colour for that fill.</p>
                 </div>
-                <button type="button" @click="addFill"
-                        class="mt-0.5 rounded bg-white/10 px-2 py-1 text-white/60 hover:text-white">+ Add fill</button>
-                <p class="mt-1 text-[10px] text-white/40">Fills cycle per row: stripe color(s) + “T” text color. 2nd swatch sets the gradient/grid/noise pair.</p>
               </template>
               <p v-else-if="c.kind === 'path'" class="text-[10px] leading-relaxed text-white/40">
                 Draw on the preview: click-drag to add a point (drag sets its curve handle),
                 drag points/handles to adjust. <b>Enter</b> = new string, <b>Del</b> = remove,
                 <b>Reset</b> clears.
               </p>
+              <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
+                           @update:model-value="(val: string) => { params[c.key] = val }" />
               <StudioColor v-else-if="c.kind === 'color'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val; rebuild() }" />
               <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"

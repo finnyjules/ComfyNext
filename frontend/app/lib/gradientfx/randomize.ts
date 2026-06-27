@@ -1,12 +1,13 @@
 // Config generation + scoped re-rolls. Everything here is deterministic from the
 // seed string, so a given seed always reproduces the same gradient (modulo locks).
 
+import { buildMeshPoints, defaultMesh, recolorMeshPoints } from './mesh'
 import { hslToRgb, rgbToHex } from './ramp'
 import { makeRng, randomSeed, type Rng } from './rng'
 import {
   BLEND_MODES, DEFAULT_CENTER, DEFAULT_FLOW, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
   type CenterOffset, type ColorConfig, type ColorStop, type FlowConfig, type GradientConfig, type LayerConfig,
-  type LayoutKind, type LightConfig, type ShapeConfig,
+  type LayoutKind, type LightConfig, type MeshConfig, type ShapeConfig,
 } from './types'
 
 export type RerollScope = 'all' | 'colors' | 'structure'
@@ -112,16 +113,40 @@ function randLight(rng: Rng): LightConfig {
 /** Random flow/warp params. Liquid layouts get a strong warp; geometric layouts get a subtle one (often none). */
 function randFlow(rng: Rng, layout: LayoutKind): FlowConfig {
   const liquid = layout === 'liquid'
+  const mesh = layout === 'mesh'
   return {
     angle: rng.range(0, 360),
     noiseScale: rng.range(1.5, 5),
-    intensity: liquid ? rng.range(45, 85) : (rng.chance(0.4) ? rng.range(10, 45) : 0),
+    // Mesh gets a gentle warp so the blobs ripple; liquid gets a strong one.
+    intensity: liquid ? rng.range(45, 85) : mesh ? rng.range(15, 40) : (rng.chance(0.4) ? rng.range(10, 45) : 0),
     distortion: rng.range(40, 90),
     detail: rng.int(1, 3),
     depth: rng.range(40, 75),
     highlights: rng.range(35, 65),
     shadows: rng.range(40, 70),
     foldScale: rng.range(40, 80),
+    // Living drift on by default for liquid/mesh so the result is alive out of the box.
+    speed: liquid ? rng.range(18, 45) : mesh ? rng.range(12, 32) : 0,
+    gloss: liquid ? rng.range(25, 60) : 0,
+    // Liquid surface: marbled veins + a touch of viscosity/refraction so a random
+    // liquid reads as fluid (not smoke). 0 for every other layout.
+    veins: liquid ? rng.range(25, 65) : 0,
+    veinScale: rng.range(20, 55),
+    ripple: liquid ? (rng.chance(0.5) ? rng.range(15, 45) : 0) : 0,
+    refract: liquid ? rng.range(10, 40) : 0,
+    viscosity: liquid ? rng.range(20, 55) : 0,
+    swirl: liquid ? rng.range(15, 50) : 0,
+  }
+}
+
+/** Random mesh config — 5..9 points coloured from the layer palette, soft default look. */
+function randMesh(rng: Rng, stops: ColorStop[], seed: string): MeshConfig {
+  return {
+    points: buildMeshPoints(rng.int(5, 9), stops, seed),
+    softness: rng.range(42, 72),
+    contrast: rng.chance(0.4) ? rng.range(15, 55) : rng.range(0, 18),
+    blur: rng.chance(0.4) ? rng.range(15, 45) : 0,
+    drift: rng.range(20, 55),
   }
 }
 
@@ -217,6 +242,85 @@ export function liquidConfig(seed = randomSeed()): GradientConfig {
   }
 }
 
+/**
+ * The "Mesh" preset — a soft Stripe-style point mesh: a handful of warm pastel
+ * points bleeding into each other over a dark base, with a gentle living drift.
+ */
+export function meshConfig(seed = randomSeed()): GradientConfig {
+  const stops: ColorStop[] = [
+    { color: '#ff8a5b', pos: 0 }, { color: '#ffd2a6', pos: 0.3 },
+    { color: '#f7a8d8', pos: 0.6 }, { color: '#7b6cff', pos: 0.82 }, { color: '#1d1340', pos: 1 },
+  ]
+  return {
+    seed,
+    canvas: { aspect: '1:1', layout: 'mesh', margin: 0, innerRadius: 0, background: '#100a24', center: { ...DEFAULT_CENTER } },
+    relief: { grain: 0.12, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { ...DEFAULT_FLOW, intensity: 24, noiseScale: 2.6, distortion: 60, detail: 2, speed: 22 },
+    layers: [
+      {
+        blend: 'normal', opacity: 1,
+        shape: { type: 'bands', count: 12, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
+        color: { stops, gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+        mesh: { points: buildMeshPoints(7, stops, seed), softness: 58, contrast: 16, blur: 22, drift: 32 },
+      },
+    ],
+    motion: { tracks: [], duration: 6, fps: 30, size: 1080 },
+    locks: {},
+  }
+}
+
+/** Named liquid looks — each a stops palette + flow tweaks over the liquid layout. */
+export type LiquidPreset = 'marble' | 'oil' | 'ink' | 'lava' | 'satin'
+export const LIQUID_PRESETS: LiquidPreset[] = ['marble', 'oil', 'ink', 'lava', 'satin']
+
+const LIQUID_LOOKS: Record<LiquidPreset, { bg: string; stops: ColorStop[]; flow: Partial<FlowConfig> }> = {
+  marble: {
+    bg: '#0c0a14',
+    stops: [{ color: '#f6f1ea', pos: 0 }, { color: '#d7dbe4', pos: 0.45 }, { color: '#8b93a6', pos: 0.78 }, { color: '#3a3f52', pos: 1 }],
+    flow: { angle: 30, noiseScale: 2.4, intensity: 60, distortion: 92, detail: 3, depth: 38, highlights: 55, shadows: 40, foldScale: 34, gloss: 18, speed: 14, veins: 58, veinScale: 30, refract: 18, viscosity: 34 },
+  },
+  oil: {
+    bg: '#0a0a16',
+    stops: [{ color: '#3ee0d0', pos: 0 }, { color: '#7b5bff', pos: 0.3 }, { color: '#ff5bb0', pos: 0.55 }, { color: '#ffd24a', pos: 0.8 }, { color: '#3a2e6b', pos: 1 }],
+    flow: { angle: 60, noiseScale: 3.0, intensity: 74, distortion: 82, detail: 3, depth: 52, highlights: 62, shadows: 40, foldScale: 40, gloss: 55, speed: 28, veins: 34, veinScale: 28, ripple: 40, refract: 40, viscosity: 22 },
+  },
+  ink: {
+    bg: '#070708',
+    stops: [{ color: '#ffffff', pos: 0 }, { color: '#a7adb8', pos: 0.32 }, { color: '#383c46', pos: 0.62 }, { color: '#08080a', pos: 1 }],
+    flow: { angle: 120, noiseScale: 3.0, intensity: 84, distortion: 94, detail: 3, depth: 34, highlights: 48, shadows: 55, foldScale: 38, gloss: 12, speed: 24, veins: 70, veinScale: 42, refract: 22, viscosity: 30 },
+  },
+  lava: {
+    bg: '#0a0402',
+    stops: [{ color: '#fff1a8', pos: 0 }, { color: '#ff8a2b', pos: 0.32 }, { color: '#e2331b', pos: 0.6 }, { color: '#5c0d12', pos: 0.82 }, { color: '#120406', pos: 1 }],
+    flow: { angle: 90, noiseScale: 2.6, intensity: 68, distortion: 78, detail: 3, depth: 62, highlights: 72, shadows: 48, foldScale: 44, gloss: 38, speed: 20, veins: 42, veinScale: 24, ripple: 26, viscosity: 44 },
+  },
+  satin: {
+    bg: '#0c0814',
+    stops: [{ color: '#f7c9e3', pos: 0 }, { color: '#c9a8ff', pos: 0.38 }, { color: '#7ec7ff', pos: 0.68 }, { color: '#3a3170', pos: 1 }],
+    flow: { angle: 45, noiseScale: 2.6, intensity: 56, distortion: 72, detail: 2, depth: 44, highlights: 60, shadows: 42, foldScale: 42, gloss: 44, speed: 18, veins: 22, veinScale: 26, ripple: 30, refract: 24, viscosity: 38 },
+  },
+}
+
+/** Build one of the named liquid looks. */
+export function liquidPresetConfig(name: LiquidPreset, seed = randomSeed()): GradientConfig {
+  const look = LIQUID_LOOKS[name]
+  return {
+    seed,
+    canvas: { aspect: '1:1', layout: 'liquid', margin: 0, innerRadius: 0, background: look.bg, center: { ...DEFAULT_CENTER } },
+    relief: { grain: 0.16, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { ...DEFAULT_FLOW, ...look.flow },
+    layers: [
+      {
+        blend: 'normal', opacity: 1,
+        shape: { type: 'bands', count: 12, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
+        color: { stops: look.stops, gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+      },
+    ],
+    motion: { tracks: [], duration: 6, fps: 30, size: 1080 },
+    locks: {},
+  }
+}
+
 /** A sensible default config (used for a brand-new node before any randomize). */
 export function defaultConfig(seed = randomSeed()): GradientConfig {
   return {
@@ -245,14 +349,17 @@ export function buildConfig(seed: string): GradientConfig {
   if (twoLayers) layers.push(randLayer(rng, false))
   const aspect = rng.pick(['14:9', '16:9', '1:1', '4:5', '9:16'] as const)
   const layout = rng.pick(LAYOUTS)
+  // Mesh reads its points off layer 0; attach a fresh set coloured from its palette.
+  if (layout === 'mesh') layers[0]!.mesh = randMesh(rng, layers[0]!.color.stops, seed)
   return {
     seed,
     canvas: {
       aspect,
+      // Mesh wants a dark base so the soft points read; force a near-black bg.
       layout,
       margin: rng.range(0, 0.18),
       innerRadius: rng.range(0.2, 0.6),
-      background: rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25)),
+      background: layout === 'mesh' ? '#0c0a1a' : (rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25))),
       center: rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER },
     },
     relief: { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) },
@@ -307,5 +414,14 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
       if (i > 0) { layer.blend = rng.pick(BLEND_MODES.filter(b => b !== 'normal')); layer.opacity = rng.range(0.5, 1) }
     }
   })
+
+  // Mesh upkeep on layer 0: a structure roll re-scatters the points; a colors roll
+  // recolours them from the (new) palette while keeping their positions.
+  if (next.canvas.layout === 'mesh') {
+    const L0 = next.layers[0]!
+    if (doStructure && !locks.structure) L0.mesh = randMesh(makeRng(seed, 'mesh'), L0.color.stops, seed)
+    else if (!L0.mesh) L0.mesh = defaultMesh(L0.color.stops, seed)
+    else if (doColors && !locks.colors) L0.mesh = { ...L0.mesh, points: recolorMeshPoints(L0.mesh.points, L0.color.stops, seed) }
+  }
   return next
 }

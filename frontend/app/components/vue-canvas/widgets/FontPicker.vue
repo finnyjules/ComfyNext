@@ -191,7 +191,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
 .fp__trigger-label { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp__trigger-tag {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: rgba(199,210,254,0.85); background: rgba(129,140,248,0.18);
+  color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.1);
   padding: 1px 5px; border-radius: 4px;
 }
 .fp__caret { color: rgba(255,255,255,0.45); transition: transform 0.15s; }
@@ -215,7 +215,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
   color: rgba(255,255,255,0.92);
   outline: none;
 }
-.fp__search:focus { border-color: rgba(129,140,248,0.5); }
+.fp__search:focus { border-color: rgba(255,255,255,0.3); }
 .fp__searchrow { display: flex; align-items: center; gap: 6px; }
 .fp__searchrow .fp__search { flex: 1; }
 .fp__sparkle {
@@ -245,7 +245,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
   background: none; border: none; cursor: pointer; text-align: left;
 }
 .fp__row:hover { background: rgba(255,255,255,0.07); }
-.fp__row--sel { background: rgba(129,140,248,0.2); }
+.fp__row--sel { background: rgba(255,255,255,0.12); }
 .fp__row-name { font-size: 12px; color: rgba(255,255,255,0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp__row-meta { font-size: 9.5px; color: rgba(255,255,255,0.4); flex-shrink: 0; }
 .fp__more { font-size: 10px; color: rgba(255,255,255,0.35); padding: 6px 7px; }

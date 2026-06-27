@@ -363,9 +363,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
 
   // Consumer binds these to the artboard element (capture phase recommended so
   // it wins over node-drag). Returns true if it handled (hit a layer).
-  function onCanvasPointerDown(e: PointerEvent): boolean {
+  // `forcedId` lets the caller supply the hit layer from a more accurate (e.g.
+  // pixel-perfect, z-aware-with-wired) hit test; when omitted we fall back to the
+  // editor's own bbox hit test. Pass `null` to mean "an explicit miss".
+  function onCanvasPointerDown(e: PointerEvent, forcedId?: string | null): boolean {
     if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return true
-    const id = hitTest(e.clientX, e.clientY)
+    const id = forcedId !== undefined ? forcedId : hitTest(e.clientX, e.clientY)
     if (id) {
       e.preventDefault(); e.stopPropagation()
       if (e.shiftKey) { toggleSelect(id); return true } // add/remove from multi-selection
@@ -377,8 +380,8 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedId.value = null; selectedIds.value = new Set()
     return false
   }
-  function onCanvasDblClick(e: MouseEvent): boolean {
-    const id = hitTest(e.clientX, e.clientY)
+  function onCanvasDblClick(e: MouseEvent, forcedId?: string | null): boolean {
+    const id = forcedId !== undefined ? forcedId : hitTest(e.clientX, e.clientY)
     if (!id) return false
     const l = localLayers.value.find(x => x.id === id)
     if (l?.kind === 'text') { e.preventDefault(); e.stopPropagation(); beginEdit(id); return true }

@@ -199,10 +199,26 @@ def _expand_clones(layer: dict, cloner: dict | None, aspect: float) -> list[dict
         ny = max(1, int(cloner.get("countY", 1)))
         sx = float(cloner.get("spacingX", 0.0))
         sy = float(cloner.get("spacingY", 0.0))
-        for iy in range(ny):
-            for ix in range(nx):
-                k = iy * nx + ix
-                specs.append((k, ix * sx, iy * sy, 0.0))
+        # Mirroring reflects the non-original steps to the opposite side so the
+        # original stays centered; falloff step k = distance from the original
+        # (|iy|*nx + |ix|) so a mirrored clone matches its positive twin.
+        xs = list(range(nx)) + ([-ix for ix in range(1, nx)] if cloner.get("mirrorX") else [])
+        ys = list(range(ny)) + ([-iy for iy in range(1, ny)] if cloner.get("mirrorY") else [])
+        nudge_x = float(cloner.get("nudgeX", 0.0) or 0.0)
+        nudge_y = float(cloner.get("nudgeY", 0.0) or 0.0)
+        stag_x = float(cloner.get("staggerX", 0.0) or 0.0)
+        stag_y = float(cloner.get("staggerY", 0.0) or 0.0)
+        for iy in ys:
+            for ix in xs:
+                k = abs(iy) * nx + abs(ix)
+                # base grid + progressive nudge (by k) + brick stagger (alternating rows/cols)
+                dx = ix * sx + k * nudge_x
+                dy = iy * sy + k * nudge_y
+                if stag_x:
+                    dx += (abs(iy) % 2) * stag_x * sx
+                if stag_y:
+                    dy += (abs(ix) % 2) * stag_y * sy
+                specs.append((k, dx, dy, 0.0))
 
     out = []
     for (k, dx, dy, extra_rot) in specs:

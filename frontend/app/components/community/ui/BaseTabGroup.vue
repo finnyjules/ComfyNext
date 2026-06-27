@@ -29,7 +29,7 @@ function selectTab(id) {
       :aria-selected="activeTab === tab.id"
       class="px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
       :class="activeTab === tab.id
-        ? 'text-comfy-yellow border-b-comfy-yellow'
+        ? 'text-palette-yellow border-b-palette-yellow'
         : 'text-muted-foreground/70 border-b-transparent hover:text-muted-foreground'"
       @click="selectTab(tab.id)"
     >

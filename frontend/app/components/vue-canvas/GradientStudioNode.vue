@@ -5,6 +5,8 @@ import { Pencil, Sparkles } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
 import { aspectRatio, type GradientConfig } from '~/lib/gradientfx/types'
+import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Gradient Studio — a frontend-only config node (no backend class_type, never
 // executes). The card shows a live preview from the saved config; "Edit" opens
@@ -17,6 +19,7 @@ const props = defineProps<{
     title?: string
     mode?: number
     properties?: Record<string, any>
+    studioBusy?: boolean
   }
 }>()
 
@@ -29,7 +32,13 @@ const config = computed<GradientConfig>(
 const previewH = computed(() => Math.round(PREVIEW_W / aspectRatio(config.value.canvas.aspect)))
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
-const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
+const animated = computed(() => {
+  if ((config.value.motion?.tracks?.length ?? 0) > 0) return true
+  const fl = config.value.flow
+  const flowAnim = (fl?.speed ?? 0) > 0 && (fl?.intensity ?? 0) > 0
+  const meshAnim = config.value.canvas.layout === 'mesh' && (config.value.layers[0]?.mesh?.drift ?? 0) > 0
+  return flowAnim || meshAnim
+})
 
 let raf = 0
 let start = 0
@@ -63,8 +72,15 @@ function startLoop() {
   else renderFrame(0)
 }
 
-onMounted(startLoop)
-onBeforeUnmount(() => cancelAnimationFrame(raf))
+// Headless full-res bake for the render cascade (generative — no input).
+const BAKE_W = 1536
+async function bakeOutput(): Promise<Blob | null> {
+  const ar = aspectRatio(config.value.canvas.aspect) || 1
+  return await gradientFx.renderToBlob(config.value, BAKE_W, Math.max(1, Math.round(BAKE_W / ar)), 0)
+}
+
+onMounted(() => { startLoop(); registerStudioBaker(props.id, bakeOutput) })
+onBeforeUnmount(() => { cancelAnimationFrame(raf); unregisterStudioBaker(props.id) })
 
 // Re-render when the saved config changes (editor writes back live). Debounced.
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -105,13 +121,14 @@ function openEditor() {
     <div v-if="glError" class="px-3 py-1 text-[10px] text-red-300/90 truncate" :title="glError">{{ glError }}</div>
 
     <!-- Edit -->
-    <div class="border-t border-white/10 p-2">
+    <div class="border-t border-white/10 p-2 flex items-center gap-1.5">
       <button
-        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
         <Pencil class="h-3 w-3" /> Edit
       </button>
+      <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
   </div>
 </template>

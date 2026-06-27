@@ -63,7 +63,7 @@ const { staggerChildren } = useScrollAnimation()
           <div class="flex flex-col gap-1">
             <a
               href="#"
-              class="text-lg font-semibold text-foreground no-underline transition-colors duration-150 tracking-tight hover:text-comfy-yellow/80"
+              class="text-lg font-semibold text-foreground no-underline transition-colors duration-150 tracking-tight hover:text-palette-yellow/80"
               @click.prevent="openCreator(row.creator)"
             >
               {{ row.creator.displayName }}
@@ -73,7 +73,7 @@ const { staggerChildren } = useScrollAnimation()
 
             <a
               href="#"
-              class="inline-flex items-center gap-1 mt-2 text-sm font-medium text-comfy-yellow/80 no-underline transition-all duration-150 hover:text-comfy-yellow hover:gap-2"
+              class="inline-flex items-center gap-1 mt-2 text-sm font-medium text-palette-yellow/80 no-underline transition-all duration-150 hover:text-palette-yellow hover:gap-2"
               @click.prevent="openCreator(row.creator)"
             >
               View profile

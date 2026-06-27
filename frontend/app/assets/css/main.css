@@ -76,23 +76,23 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  --color-comfy-yellow: var(--comfy-yellow);
-  --color-comfy-dark-indigo: var(--comfy-dark-indigo);
-  --color-comfy-dark-navy: var(--comfy-dark-navy);
-  --color-comfy-dark-teal: var(--comfy-dark-teal);
-  --color-comfy-dark-brown: var(--comfy-dark-brown);
-  --color-comfy-purple: var(--comfy-purple);
-  --color-comfy-blue: var(--comfy-blue);
-  --color-comfy-teal: var(--comfy-teal);
-  --color-comfy-coral: var(--comfy-coral);
-  --color-comfy-pink: var(--comfy-pink);
-  --color-comfy-periwinkle: var(--comfy-periwinkle);
-  --color-comfy-mint: var(--comfy-mint);
-  --color-comfy-peach: var(--comfy-peach);
-  --color-comfy-gray: var(--comfy-gray);
-  --color-comfy-beige: var(--comfy-beige);
-  --color-comfy-lavender: var(--comfy-lavender);
-  --color-comfy-charcoal: var(--comfy-charcoal);
+  --color-palette-yellow: var(--palette-yellow);
+  --color-palette-dark-indigo: var(--palette-dark-indigo);
+  --color-palette-dark-navy: var(--palette-dark-navy);
+  --color-palette-dark-teal: var(--palette-dark-teal);
+  --color-palette-dark-brown: var(--palette-dark-brown);
+  --color-palette-purple: var(--palette-purple);
+  --color-palette-blue: var(--palette-blue);
+  --color-palette-teal: var(--palette-teal);
+  --color-palette-coral: var(--palette-coral);
+  --color-palette-pink: var(--palette-pink);
+  --color-palette-periwinkle: var(--palette-periwinkle);
+  --color-palette-mint: var(--palette-mint);
+  --color-palette-peach: var(--palette-peach);
+  --color-palette-gray: var(--palette-gray);
+  --color-palette-beige: var(--palette-beige);
+  --color-palette-lavender: var(--palette-lavender);
+  --color-palette-charcoal: var(--palette-charcoal);
 
   --breakpoint-3xl: 1600px;
   --breakpoint-4xl: 2000px;
@@ -123,24 +123,24 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
 }
 
 :root {
-  /* ComfyUI Palette — exact values from Figma */
-  --comfy-yellow: oklch(0.961 0.183 113.666);
-  --comfy-dark-indigo: oklch(0.232 0.078 298.851);
-  --comfy-dark-navy: oklch(0.184 0.108 268.281);
-  --comfy-dark-teal: oklch(0.239 0.019 178.644);
-  --comfy-dark-brown: oklch(0.301 0.066 25.844);
-  --comfy-purple: oklch(0.4 0.114 300.024);
-  --comfy-blue: oklch(0.574 0.234 260.696);
-  --comfy-teal: oklch(0.624 0.113 172.425);
-  --comfy-coral: oklch(0.697 0.193 26.566);
-  --comfy-pink: oklch(0.818 0.167 329.83);
-  --comfy-periwinkle: oklch(0.777 0.113 267.082);
-  --comfy-mint: oklch(0.874 0.143 174.273);
-  --comfy-peach: oklch(0.839 0.106 57.812);
-  --comfy-gray: oklch(0.805 0.009 84.577);
-  --comfy-beige: oklch(0.861 0.024 109.485);
-  --comfy-lavender: oklch(0.915 0.018 264.481);
-  --comfy-charcoal: oklch(0.256 0 89.876);
+  /* Palette — exact values from Figma */
+  --palette-yellow: oklch(0.961 0.183 113.666);
+  --palette-dark-indigo: oklch(0.232 0.078 298.851);
+  --palette-dark-navy: oklch(0.184 0.108 268.281);
+  --palette-dark-teal: oklch(0.239 0.019 178.644);
+  --palette-dark-brown: oklch(0.301 0.066 25.844);
+  --palette-purple: oklch(0.4 0.114 300.024);
+  --palette-blue: oklch(0.574 0.234 260.696);
+  --palette-teal: oklch(0.624 0.113 172.425);
+  --palette-coral: oklch(0.697 0.193 26.566);
+  --palette-pink: oklch(0.818 0.167 329.83);
+  --palette-periwinkle: oklch(0.777 0.113 267.082);
+  --palette-mint: oklch(0.874 0.143 174.273);
+  --palette-peach: oklch(0.839 0.106 57.812);
+  --palette-gray: oklch(0.805 0.009 84.577);
+  --palette-beige: oklch(0.861 0.024 109.485);
+  --palette-lavender: oklch(0.915 0.018 264.481);
+  --palette-charcoal: oklch(0.256 0 89.876);
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -157,8 +157,8 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: var(--comfy-coral);
-  --action: var(--comfy-blue);
+  --destructive-foreground: var(--palette-coral);
+  --action: var(--palette-blue);
   --action-foreground: oklch(1 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -195,8 +195,8 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: var(--comfy-coral);
-  --action: var(--comfy-blue);
+  --destructive-foreground: var(--palette-coral);
+  --action: var(--palette-blue);
   --action-foreground: oklch(1 0 0);
   --border: oklch(0.269 0 0);
   --input: oklch(0.269 0 0);

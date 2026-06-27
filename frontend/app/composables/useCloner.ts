@@ -17,6 +17,14 @@ export interface Cloner {
   countY: number
   spacingX: number   // canvas-fraction (same units as layer x)
   spacingY: number   // canvas-fraction (same units as layer y)
+  mirrorX: boolean   // also clone in the -X direction (original stays centered)
+  mirrorY: boolean   // also clone in the -Y direction (original stays centered)
+  // nudge — progressive drift, accumulates by clone index k (like rotation falloff)
+  nudgeX: number     // + canvas-fraction per clone step
+  nudgeY: number     // + canvas-fraction per clone step
+  // stagger — brick-style offset of alternating rows/cols, as a fraction of spacing
+  staggerX: number   // odd rows shift by staggerX·spacingX
+  staggerY: number   // odd cols shift by staggerY·spacingY
   // radial
   count: number
   radius: number     // canvas-WIDTH fraction
@@ -46,6 +54,12 @@ export const DEFAULT_CLONER: Cloner = {
   countY: 1,
   spacingX: 0.25,
   spacingY: 0.25,
+  mirrorX: false,
+  mirrorY: false,
+  nudgeX: 0,
+  nudgeY: 0,
+  staggerX: 0,
+  staggerY: 0,
   count: 6,
   radius: 0.3,
   startAngle: 0,
@@ -98,10 +112,30 @@ export function expandClones(cloner: Cloner | undefined | null, aspect: number):
   } else {
     const nx = Math.max(1, Math.floor(cloner.countX))
     const ny = Math.max(1, Math.floor(cloner.countY))
-    for (let iy = 0; iy < ny; iy++) {
-      for (let ix = 0; ix < nx; ix++) {
-        const k = iy * nx + ix
-        push(k, ix * cloner.spacingX, iy * cloner.spacingY, 0)
+    // Column/row step offsets. Mirroring reflects the non-original steps to the
+    // opposite side (1..n-1 → also -(1..n-1)), so the original stays centered and
+    // count keeps meaning "instances in the primary direction". Falloff step k is
+    // the distance from the original (|iy|·nx + |ix|), so a mirrored clone gets
+    // the same falloff as its positive twin.
+    const xs: number[] = []
+    for (let ix = 0; ix < nx; ix++) xs.push(ix)
+    if (cloner.mirrorX) for (let ix = 1; ix < nx; ix++) xs.push(-ix)
+    const ys: number[] = []
+    for (let iy = 0; iy < ny; iy++) ys.push(iy)
+    if (cloner.mirrorY) for (let iy = 1; iy < ny; iy++) ys.push(-iy)
+    const nudgeX = cloner.nudgeX || 0
+    const nudgeY = cloner.nudgeY || 0
+    const stagX = cloner.staggerX || 0
+    const stagY = cloner.staggerY || 0
+    for (const iy of ys) {
+      for (const ix of xs) {
+        const k = Math.abs(iy) * nx + Math.abs(ix)
+        // base grid + progressive nudge (by k) + brick stagger (alternating rows/cols)
+        let dx = ix * cloner.spacingX + k * nudgeX
+        let dy = iy * cloner.spacingY + k * nudgeY
+        if (stagX) dx += (Math.abs(iy) % 2) * stagX * cloner.spacingX
+        if (stagY) dy += (Math.abs(ix) % 2) * stagY * cloner.spacingY
+        push(k, dx, dy, 0)
       }
     }
   }

@@ -395,7 +395,7 @@ onUnmounted(() => {
         <h2 class="text-xl font-semibold text-foreground m-0">
           <a
             href="#"
-            class="text-inherit transition-all duration-150 hover:text-comfy-yellow/80"
+            class="text-inherit transition-all duration-150 hover:text-palette-yellow/80"
             @click="openWorkflowTab(activeItem.slug, activeItem.title, $event)"
           >
             {{ activeItem.title }}
@@ -404,7 +404,7 @@ onUnmounted(() => {
         <p class="mt-1 text-sm text-muted-foreground/70">
           by <a
             href="#"
-            class="text-comfy-yellow/80 transition-all duration-150 hover:text-comfy-yellow"
+            class="text-palette-yellow/80 transition-all duration-150 hover:text-palette-yellow"
             @click.prevent="navigateTo({ view: 'creator', handle: activeItem.creator.handle.replace('@', ''), label: activeItem.creator.displayName })"
           >{{ activeItem.creator.displayName }}</a>
         </p>
@@ -424,7 +424,7 @@ onUnmounted(() => {
           class="featured-carousel__dot h-2 rounded-full border cursor-pointer transition-all duration-300"
           :class="
             i === currentIndex
-              ? 'w-6 bg-comfy-yellow border-comfy-yellow rounded-[4px]'
+              ? 'w-6 bg-palette-yellow border-palette-yellow rounded-[4px]'
               : 'w-2 bg-accent border-border hover:bg-muted-foreground/70 hover:scale-[1.2]'
           "
           @click="goTo(i)"

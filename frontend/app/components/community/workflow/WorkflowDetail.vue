@@ -204,7 +204,7 @@ function handleFavorite() {
                 />
                 <a
                   href="#"
-                  class="text-xs text-foreground hover:text-comfy-yellow transition-colors no-underline"
+                  class="text-xs text-foreground hover:text-palette-yellow transition-colors no-underline"
                   @click.prevent="navigateTo({ view: 'creator', handle: workflow.creator.handle?.replace('@', '') || workflow.creator.id, label: workflow.creator.displayName })"
                 >
                   {{ workflow.creator.displayName }}

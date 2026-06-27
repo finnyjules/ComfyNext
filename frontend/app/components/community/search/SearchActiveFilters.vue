@@ -56,12 +56,12 @@ const hasFilters = computed(() => pills.value.length > 0)
       <button
         v-for="pill in pills"
         :key="`${pill.type}-${pill.value}`"
-        class="inline-flex items-center gap-1 py-1 pl-3 pr-2 bg-comfy-yellow/15 border border-comfy-yellow/30 rounded-full cursor-pointer transition-all duration-150 whitespace-nowrap hover:bg-comfy-yellow/25 hover:border-comfy-yellow/50 focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex items-center gap-1 py-1 pl-3 pr-2 bg-palette-yellow/15 border border-palette-yellow/30 rounded-full cursor-pointer transition-all duration-150 whitespace-nowrap hover:bg-palette-yellow/25 hover:border-palette-yellow/50 focus-visible:ring-2 focus-visible:ring-ring"
         @click="emit('removeFilter', pill.type, pill.value)"
         :aria-label="`Remove ${pill.label} filter`"
       >
         <span class="text-xs text-muted-foreground/70 capitalize">{{ pill.type }}:</span>
-        <span class="text-xs font-medium text-comfy-yellow/80">{{ pill.label }}</span>
+        <span class="text-xs font-medium text-palette-yellow/80">{{ pill.label }}</span>
         <svg
           class="text-muted-foreground/70 shrink-0 transition-all duration-150 group-hover:text-foreground"
           width="14" height="14" viewBox="0 0 24 24"

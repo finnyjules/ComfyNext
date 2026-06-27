@@ -25,6 +25,9 @@ export type ControlSpec = (
   // An interactive bézier path drawn on the preview (String effect). Stored as one JSON
   // string in params (StringPathDoc); the surface renders the StringPathEditor overlay.
   | { key: string; label: string; kind: 'path'; default: string; group: string }
+  // A draggable cubic-bézier easing graph. Stored as a JSON string "[x1,y1,x2,y2]" (the two
+  // control points; P0=(0,0), P3=(1,1)); the surface renders a CurveEditor.
+  | { key: string; label: string; kind: 'curve'; default: string; group: string }
 ) & ControlMeta
 
 /** Build the param object from a control list's declared defaults. */

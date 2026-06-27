@@ -7,6 +7,8 @@ import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { textureDefaults } from '~/lib/texturefx/controls'
 import { loadRaster, getRaster } from '~/lib/texturefx/raster'
 import type { Params } from '~/lib/spacetype/effect'
+import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Texture Studio — a frontend-only config node (no backend class_type, never
 // executes). The card shows a live seamless-tile preview from the saved params;
@@ -19,6 +21,7 @@ const props = defineProps<{
     title?: string
     mode?: number
     properties?: Record<string, any>
+    studioBusy?: boolean
   }
 }>()
 
@@ -71,6 +74,14 @@ watch(params, () => {
   timer = setTimeout(renderFrame, 60)
 }, { deep: true })
 
+// Headless full-res seamless tile for the render cascade (generative — no input).
+const BAKE_TILE = 1024
+async function bakeOutput(): Promise<Blob | null> {
+  await preloadStylize().catch(() => {})
+  const styled = stylizeTile(textureFx.render(params.value, BAKE_TILE, BAKE_TILE, 0), params.value, BAKE_TILE, BAKE_TILE)
+  return await new Promise<Blob | null>(res => styled.toBlob(b => res(b), 'image/png'))
+}
+
 onMounted(() => {
   renderFrame()
   // Stylize effects load async; re-render the thumbnail once they're ready.
@@ -80,8 +91,9 @@ onMounted(() => {
   if (String(p.mode) === 'raster' && p.rasterSrc && !getRaster(String(p.rasterSrc))) {
     loadRaster(String(p.rasterSrc)).then(renderFrame).catch(() => {})
   }
+  registerStudioBaker(props.id, bakeOutput)
 })
-onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
+onBeforeUnmount(() => { if (timer) clearTimeout(timer); unregisterStudioBaker(props.id) })
 
 function openEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openTextureStudio', { detail: { nodeId: props.id } }))
@@ -113,13 +125,14 @@ function openEditor() {
     <div v-if="glError" class="truncate px-3 py-1 text-[10px] text-red-300/90" :title="glError">{{ glError }}</div>
 
     <!-- Edit -->
-    <div class="border-t border-white/10 p-2">
+    <div class="border-t border-white/10 p-2 flex items-center gap-1.5">
       <button
-        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
         <Pencil class="h-3 w-3" /> Edit
       </button>
+      <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
   </div>
 </template>

@@ -134,7 +134,7 @@ function dragHue(e: PointerEvent) {
 
   <Teleport to="body">
     <div v-if="open" data-studio-color-pop :style="popStyle"
-         class="fixed z-[60] rounded-lg border border-white/10 bg-neutral-900 p-2.5 shadow-xl">
+         class="fixed z-[200] rounded-lg border border-white/10 bg-neutral-900 p-2.5 shadow-xl">
       <div class="relative mb-2 h-32 w-full cursor-crosshair rounded-md"
            :style="{ background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), ${hueColor}` }"
            @pointerdown="dragSv">

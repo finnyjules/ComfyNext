@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
 import {
-  Loader2, Download, RefreshCw, Maximize2, Frame as FrameIcon, ImagePlus,
+  Download, Pencil, Frame as FrameIcon, ImagePlus,
   MousePointer2, Check, Type, Square, Circle, Minus, Trash2,
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
+import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import type { Cloner } from '~/composables/useCloner'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
+import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
+import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
 // live composite (wired layers from `data.images` + a live local-layer overlay),
@@ -29,6 +32,7 @@ const props = defineProps<{
     running?: boolean
     error?: boolean
     images?: string[]
+    studioBusy?: boolean
   }
 }>()
 
@@ -246,7 +250,6 @@ const wiredHandlePositions = computed(() => {
 })
 
 const compositeUrl = computed<string | null>(() => props.data.images?.[0] ?? null)
-const sizeLabel = computed(() => (hasExplicitSize.value ? `${frameW.value}×${frameH.value}` : 'auto'))
 
 // ── Inline editing engine (local layers: text / shapes / dropped images) ────
 const artboardRef = ref<HTMLDivElement | null>(null)
@@ -337,8 +340,8 @@ const editingStyle = computed(() => {
     transform: `translate(-50%, -50%) rotate(${l.rotation}deg)`,
     fontFamily: /\s/.test(l.fontFamily) ? `"${l.fontFamily}", sans-serif` : `${l.fontFamily}, sans-serif`,
     fontWeight: String(l.fontWeight), fontSize: l.fontSize * W + 'px',
-    lineHeight: String(l.lineHeight), color: l.color, textAlign: l.align as any,
-    opacity: String(l.opacity), caretColor: l.color,
+    lineHeight: String(l.lineHeight), color: paintPrimaryColor(l.color, '#ffffff'), textAlign: l.align as any,
+    opacity: String(l.opacity), caretColor: paintPrimaryColor(l.color, '#ffffff'),
   }
 })
 
@@ -475,10 +478,6 @@ async function onAddImageFile(e: Event) {
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 function openEditor() { window.dispatchEvent(new CustomEvent('comfynext:openCompositor', { detail: { nodeId: props.id } })) }
-function runThisNode() {
-  if (isMuted.value || isBypassed.value || props.data.running) return
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }))
-}
 // Render the WYSIWYG stack (wired + local layers, in z-order) to an offscreen
 // canvas at full output resolution. This is what the artboard shows — so Save
 // matches the canvas exactly, including local shapes/text, with no dependency
@@ -510,6 +509,17 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
     undefined, undefined, undefined, wiredTreatments.value)
   return cv
 }
+
+// Headless full-res composite for the studio render cascade — reuses the faithful
+// WYSIWYG export (wired + local layers + masks). The Frame is its own output, so the
+// cascade publishes this back onto the Frame's data.images (see publishStudioOutput).
+async function bakeOutput(): Promise<Blob | null> {
+  const cv = exportCompositeCanvas()
+  if (!cv) return null
+  return await new Promise<Blob | null>(res => cv.toBlob(b => res(b), 'image/png'))
+}
+onMounted(() => registerStudioBaker(props.id, bakeOutput))
+onBeforeUnmount(() => unregisterStudioBaker(props.id))
 
 // Record the baked composite as a project asset so saved frames show up in the
 // Assets panel — same treatment as generator outputs. Best-effort: never blocks
@@ -699,18 +709,25 @@ onUnmounted(() => {
             class="nopan nodrag w-14 bg-white/[0.04] rounded px-1.5 py-0.5 text-right text-white/70 outline-none focus:bg-white/[0.08] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             @change="setDim('height', $event)" />
         </div>
+        <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/40 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="!hasAnyLayer && !compositeUrl" title="Download" @click.stop="downloadImage"><Download class="size-3" /></button>
       </div>
 
       <!-- Artboard -->
       <div
         ref="artboardRef"
-        class="artboard relative bg-checker overflow-hidden"
+        class="artboard group relative bg-checker overflow-hidden"
         :class="editMode ? 'nopan nodrag cursor-default' : 'cursor-pointer'"
         :style="{ width: box.w + 'px', height: box.h + 'px' }"
         @dblclick.capture="onArtboardDblClick"
         @pointerdown.capture="onArtboardPointerDown"
       >
         <canvas ref="stackCanvas" class="absolute inset-0 pointer-events-none" :style="{ width: box.w + 'px', height: box.h + 'px' }" />
+
+        <!-- Quick inline edit — appears over the preview on hover -->
+        <button v-if="!editMode" class="nopan nodrag absolute left-2 top-2 z-10 h-6 px-2 rounded-md flex items-center gap-1 text-[10px] bg-black/55 backdrop-blur-sm text-white/85 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/75 cursor-pointer"
+          title="Edit directly on the canvas" @pointerdown.stop @click.stop="toggleEdit">
+          <MousePointer2 class="size-2.5" /> Edit here
+        </button>
 
         <div v-if="!hasAnyLayer" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/35 pointer-events-none">
           <ImagePlus class="size-7" :stroke-width="1.5" />
@@ -774,21 +791,12 @@ onUnmounted(() => {
         <button class="nopan nodrag h-6 px-2 rounded flex items-center gap-1 text-[10px] text-cyan-300 hover:bg-cyan-400/10" title="Done editing" @click="exitEdit"><Check class="size-3" /> Done</button>
       </div>
 
-      <!-- Footer -->
-      <div v-else class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-        <span class="text-[10px] text-white/45 tabular-nums">{{ sizeLabel }}</span>
-        <span class="flex-1" />
-        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Edit directly on the canvas" @click.stop="toggleEdit">
-          <MousePointer2 class="size-2.5" /> Edit here
+      <!-- Footer: Edit (opens the modal) + Render, like the studios -->
+      <div v-else class="flex items-center gap-1.5 px-2 py-2 border-t border-white/5">
+        <button class="nopan nodrag flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20 cursor-pointer" title="Open the full editor" @click.stop="openEditor">
+          <Pencil class="h-3 w-3" /> Edit
         </button>
-        <button class="nopan nodrag h-5 px-1.5 rounded flex items-center gap-1 text-[10px] text-white/55 hover:text-white/90 hover:bg-white/[0.08] cursor-pointer" title="Open the full editor for precise / blend / focused work" @click.stop="openEditor">
-          <Maximize2 class="size-2.5" /> Open editor
-        </button>
-        <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="!hasAnyLayer && !compositeUrl" title="Download" @click.stop="downloadImage"><Download class="size-2.5" /></button>
-        <button class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40" :disabled="data.running || isMuted || isBypassed" :title="data.running ? 'Running…' : 'Render'" @click.stop="runThisNode">
-          <Loader2 v-if="data.running" class="size-3 animate-spin" />
-          <RefreshCw v-else class="size-3" />
-        </button>
+        <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy || !!data?.running" />
       </div>
     </div>
 

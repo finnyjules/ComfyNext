@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
       <span class="leading-[1.4]">{{ displayLabel }}</span>
       <span
         v-if="multiple && selectedCount > 0"
-        class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-[5px] text-[11px] font-bold text-background bg-comfy-yellow rounded-full leading-none"
+        class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-[5px] text-[11px] font-bold text-background bg-palette-yellow rounded-full leading-none"
       >{{ selectedCount }}</span>
       <svg
         class="shrink-0 transition-all duration-150"
@@ -127,8 +127,8 @@ onBeforeUnmount(() => {
             <span
               class="inline-flex items-center justify-center w-4 h-4 shrink-0 border rounded-sm transition-all duration-150"
               :class="isSelected(opt.id)
-                ? 'border-comfy-yellow bg-comfy-yellow/10 text-comfy-yellow'
-                : 'border-border text-comfy-yellow'"
+                ? 'border-palette-yellow bg-palette-yellow/10 text-palette-yellow'
+                : 'border-border text-palette-yellow'"
             >
               <svg v-if="isSelected(opt.id)" width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path d="M3 7L6 10L11 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />

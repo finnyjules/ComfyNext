@@ -21,6 +21,7 @@ import { ballEffect } from './ball'
 import { turntableEffect } from './turntable'
 import { tearEffect } from './tear'
 import { slitScanEffect } from './slitScan'
+import { cornerPinEffect } from './cornerPin'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -46,8 +47,12 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   turntableEffect,
   tearEffect,
   slitScanEffect,
+  cornerPinEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
-  return SPACE_TYPE_EFFECTS.find(e => e.id === id) ?? SPACE_TYPE_EFFECTS[0]!
+  // Case-insensitive so configs saved under an old mixed-case id (e.g. 'cornerPin' → 'cornerpin')
+  // still resolve. Callers should normalize to the resolved effect's canonical `.id`.
+  const lower = String(id).toLowerCase()
+  return SPACE_TYPE_EFFECTS.find(e => e.id.toLowerCase() === lower) ?? SPACE_TYPE_EFFECTS[0]!
 }

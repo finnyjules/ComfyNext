@@ -97,7 +97,7 @@ function handleCardClick(e) {
           class="absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity duration-250"
           :class="isHovered ? 'opacity-100' : 'opacity-0'"
         >
-          <span class="inline-flex items-center gap-1 px-6 py-2 bg-comfy-yellow text-black font-semibold text-sm rounded-md">
+          <span class="inline-flex items-center gap-1 px-6 py-2 bg-palette-yellow text-black font-semibold text-sm rounded-md">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Run
           </span>

@@ -244,7 +244,7 @@ onMounted(() => {
         <span>Filters</span>
         <span
           v-if="filters.category.length || filters.model.length || filters.difficulty || filters.outputType.length"
-          class="inline-flex items-center justify-center min-w-[20px] h-5 px-1 bg-comfy-yellow text-white text-xs font-semibold rounded-full"
+          class="inline-flex items-center justify-center min-w-[20px] h-5 px-1 bg-palette-yellow text-white text-xs font-semibold rounded-full"
         >
           {{ filters.category.length + filters.model.length + (filters.difficulty ? 1 : 0) + filters.outputType.length }}
         </span>
@@ -310,7 +310,7 @@ onMounted(() => {
 
           <!-- Loading state -->
           <div v-if="isLoading" class="flex flex-col items-center justify-center gap-4 py-20 text-muted-foreground/70 text-sm">
-            <div class="search-island-spinner w-9 h-9 border-3 border-border border-t-comfy-yellow rounded-full animate-spin" />
+            <div class="search-island-spinner w-9 h-9 border-3 border-border border-t-palette-yellow rounded-full animate-spin" />
             <p>Searching workflows...</p>
           </div>
 
@@ -350,11 +350,11 @@ onMounted(() => {
             <UiButton
               variant="outline"
               size="lg"
-              class="min-w-[200px] hover:border-comfy-yellow hover:bg-comfy-yellow/10 hover:shadow-[0_0_15px_rgba(240,255,65,0.15)]"
+              class="min-w-[200px] hover:border-palette-yellow hover:bg-palette-yellow/10 hover:shadow-[0_0_15px_rgba(240,255,65,0.15)]"
               :disabled="isLoadingMore"
               @click="loadMore"
             >
-              <span v-if="isLoadingMore" class="search-island-spinner w-[18px] h-[18px] border-2 border-border border-t-comfy-yellow rounded-full animate-spin" />
+              <span v-if="isLoadingMore" class="search-island-spinner w-[18px] h-[18px] border-2 border-border border-t-palette-yellow rounded-full animate-spin" />
               <span v-else>Load more workflows</span>
             </UiButton>
             <p class="text-xs text-muted-foreground/70">

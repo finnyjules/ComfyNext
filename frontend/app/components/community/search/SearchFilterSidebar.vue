@@ -78,7 +78,7 @@ function clearAll() {
       <h3 class="text-lg font-semibold text-foreground">Filters</h3>
       <button
         v-if="hasActiveFilters"
-        class="text-sm text-comfy-yellow/80 hover:text-comfy-yellow hover:underline bg-transparent border-none cursor-pointer p-0 transition-all duration-150"
+        class="text-sm text-palette-yellow/80 hover:text-palette-yellow hover:underline bg-transparent border-none cursor-pointer p-0 transition-all duration-150"
         @click="clearAll"
       >
         Clear all
@@ -88,7 +88,7 @@ function clearAll() {
     <!-- Category filter -->
     <div class="border-b border-border pb-4 mb-4 last:border-b-0 last:mb-0">
       <button
-        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-comfy-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
+        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-palette-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
         @click="toggleGroup('category')"
         :aria-expanded="!collapsed.category"
       >
@@ -124,7 +124,7 @@ function clearAll() {
     <!-- Base Model filter -->
     <div class="border-b border-border pb-4 mb-4 last:border-b-0 last:mb-0">
       <button
-        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-comfy-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
+        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-palette-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
         @click="toggleGroup('model')"
         :aria-expanded="!collapsed.model"
       >
@@ -160,7 +160,7 @@ function clearAll() {
     <!-- Difficulty filter -->
     <div class="border-b border-border pb-4 mb-4 last:border-b-0 last:mb-0">
       <button
-        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-comfy-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
+        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-palette-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
         @click="toggleGroup('difficulty')"
         :aria-expanded="!collapsed.difficulty"
       >
@@ -197,7 +197,7 @@ function clearAll() {
     <!-- Output Type filter -->
     <div class="border-b border-border pb-4 mb-4 last:border-b-0 last:mb-0">
       <button
-        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-comfy-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
+        class="flex items-center justify-between w-full py-2 bg-transparent border-none cursor-pointer text-sm font-semibold text-foreground hover:text-palette-yellow/80 focus-visible:ring-2 focus-visible:ring-ring"
         @click="toggleGroup('outputType')"
         :aria-expanded="!collapsed.outputType"
       >
@@ -264,14 +264,14 @@ function clearAll() {
 }
 
 .filter-input:checked + .filter-checkmark {
-  background-color: var(--comfy-yellow);
-  border-color: var(--comfy-yellow);
+  background-color: var(--palette-yellow);
+  border-color: var(--palette-yellow);
 }
 .filter-input:checked + .filter-checkmark::after {
   transform: rotate(45deg) scale(1);
 }
 .filter-input:focus-visible + .filter-checkmark {
-  outline: 2px solid var(--comfy-yellow);
+  outline: 2px solid var(--palette-yellow);
   outline-offset: 2px;
 }
 
@@ -284,19 +284,19 @@ function clearAll() {
   width: 6px;
   height: 6px;
   border-radius: 9999px;
-  background: var(--comfy-yellow);
+  background: var(--palette-yellow);
   transform: scale(0);
   transition: transform 150ms;
 }
 
 .filter-input:checked + .filter-radio-mark {
-  border-color: var(--comfy-yellow);
+  border-color: var(--palette-yellow);
 }
 .filter-input:checked + .filter-radio-mark::after {
   transform: scale(1);
 }
 .filter-input:focus-visible + .filter-radio-mark {
-  outline: 2px solid var(--comfy-yellow);
+  outline: 2px solid var(--palette-yellow);
   outline-offset: 2px;
 }
 </style>

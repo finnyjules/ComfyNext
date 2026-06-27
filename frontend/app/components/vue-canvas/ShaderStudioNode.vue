@@ -10,10 +10,12 @@ import { composePasses } from '~/lib/shaderstudio/passes'
 import { applyMotion } from '~/lib/shaderstudio/motion'
 import { loadImage, resolveWiredInput } from '~/lib/shaderstudio/source'
 import { hydrateConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 const props = defineProps<{
   id: string
-  data: { nodeType: string; title?: string; mode?: number; properties?: Record<string, any> }
+  data: { nodeType: string; title?: string; mode?: number; properties?: Record<string, any>; studioBusy?: boolean }
 }>()
 
 const PREVIEW_W = 220
@@ -73,11 +75,34 @@ function startLoop() {
   else renderFrame(0)
 }
 
+// Headless full-res bake for the render cascade — same pipeline as the thumbnail,
+// at output resolution, with the input re-resolved fresh (picks up an upstream
+// studio's just-published output during a cascade).
+async function bakeOutput(): Promise<Blob | null> {
+  // Prefer the freshly-resolved wired input (so a cascade picks up an upstream
+  // studio's just-published output); fall back to the already-loaded preview image
+  // (proven valid — it's what the thumbnail renders) so the bake never no-ops.
+  let base: HTMLImageElement | null = null
+  const url = sourceUrl.value
+  if (url) { try { base = await loadImage(url) } catch { /* fall through */ } }
+  if (!base) base = baseImage.value
+  if (!base) { console.warn('[shader-studio] bake: no input image for', props.id); return null }
+  cancelAnimationFrame(raf)   // pause the preview so it can't overwrite the shared output canvas
+  try {
+    const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution || 1536, { upscale: true })
+    const out = shaderFx.render(composePasses(config.value, effectDef(config.value.effect.id), 0), base, w, h)
+    return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png', 0.95))
+  } finally {
+    startLoop()
+  }
+}
+
 onMounted(async () => {
+  registerStudioBaker(props.id, bakeOutput)   // register first, before the async catalog fetch
   catalog.value = await fetchShaderFxCatalog().catch(() => null)
   startLoop()
 })
-onBeforeUnmount(() => cancelAnimationFrame(raf))
+onBeforeUnmount(() => { cancelAnimationFrame(raf); unregisterStudioBaker(props.id) })
 
 let timer: ReturnType<typeof setTimeout> | null = null
 watch(config, () => { if (timer) clearTimeout(timer); timer = setTimeout(startLoop, 60) }, { deep: true })
@@ -112,13 +137,14 @@ function openEditor() {
     </div>
     <div v-if="glError" class="px-3 py-1 text-[10px] text-red-300/90 truncate" :title="glError">{{ glError }}</div>
 
-    <div class="border-t border-white/10 p-2">
+    <div class="border-t border-white/10 p-2 flex items-center gap-1.5">
       <button
-        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
         <Pencil class="h-3 w-3" /> Edit
       </button>
+      <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
   </div>
 </template>

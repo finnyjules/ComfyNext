@@ -40,7 +40,7 @@ onMounted(() => {
       >
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-xl font-semibold text-foreground">{{ col.title }} templates</h3>
-          <a :href="`/collection/${col.id}`" class="inline-flex items-center gap-1 text-sm font-medium text-comfy-yellow/80 no-underline transition-colors duration-150 hover:text-comfy-yellow">
+          <a :href="`/collection/${col.id}`" class="inline-flex items-center gap-1 text-sm font-medium text-palette-yellow/80 no-underline transition-colors duration-150 hover:text-palette-yellow">
             View collection
             <svg
               width="16"

@@ -65,7 +65,7 @@ const newCommentText = ref('')
     <div class="mb-6 pb-6 border-b border-border">
       <textarea
         v-model="newCommentText"
-        class="w-full bg-muted border border-border rounded-md text-foreground text-sm p-3 resize-y min-h-[72px] transition-all duration-150 font-[inherit] placeholder:text-muted-foreground/70 focus:outline-none focus:border-comfy-yellow"
+        class="w-full bg-muted border border-border rounded-md text-foreground text-sm p-3 resize-y min-h-[72px] transition-all duration-150 font-[inherit] placeholder:text-muted-foreground/70 focus:outline-none focus:border-palette-yellow"
         placeholder="Share your thoughts, ask a question, or showcase your results..."
         rows="3"
       />
@@ -73,7 +73,7 @@ const newCommentText = ref('')
         <UiButton
           size="sm"
           :disabled="!newCommentText.trim()"
-          class="bg-comfy-yellow text-white hover:bg-comfy-yellow/80 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="bg-palette-yellow text-white hover:bg-palette-yellow/80 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Post Comment
         </UiButton>
@@ -101,7 +101,7 @@ const newCommentText = ref('')
       <div>
         <select
           v-model="activeSort"
-          class="bg-muted border border-border rounded-md text-muted-foreground text-sm px-3 py-1 cursor-pointer focus:outline-none focus:border-comfy-yellow"
+          class="bg-muted border border-border rounded-md text-muted-foreground text-sm px-3 py-1 cursor-pointer focus:outline-none focus:border-palette-yellow"
           aria-label="Sort comments"
         >
           <option v-for="opt in sortOptions" :key="opt.key" :value="opt.key">
@@ -117,7 +117,7 @@ const newCommentText = ref('')
         v-for="comment in comments.slice(0, 10)"
         :key="comment.id"
         class="flex gap-3 pb-5 border-b border-border"
-        :class="{ 'border-l-[3px] border-l-comfy-yellow pl-3 rounded-sm': comment.isCreatorReply }"
+        :class="{ 'border-l-[3px] border-l-palette-yellow pl-3 rounded-sm': comment.isCreatorReply }"
       >
         <img :src="comment.author.avatarUrl" :alt="comment.author.displayName" class="w-9 h-9 rounded-full object-cover shrink-0" />
         <div class="flex-1 min-w-0">
@@ -126,7 +126,7 @@ const newCommentText = ref('')
               {{ comment.author.displayName }}
               <span
                 v-if="comment.isCreatorReply"
-                class="text-xs font-semibold text-comfy-yellow bg-comfy-yellow/15 px-2 py-px rounded-full tracking-wide"
+                class="text-xs font-semibold text-palette-yellow bg-palette-yellow/15 px-2 py-px rounded-full tracking-wide"
               >Creator</span>
             </span>
             <span class="text-xs text-muted-foreground/70">{{ timeAgo(comment.createdAt) }}</span>
@@ -136,7 +136,7 @@ const newCommentText = ref('')
             <button
               class="flex items-center gap-1 text-xs px-2 py-1 rounded-sm border-none cursor-pointer transition-all duration-150"
               :class="upvoted.has(comment.id)
-                ? 'text-comfy-yellow bg-transparent hover:text-comfy-yellow/80'
+                ? 'text-palette-yellow bg-transparent hover:text-palette-yellow/80'
                 : 'text-muted-foreground/70 bg-transparent hover:bg-accent hover:text-muted-foreground'"
               @click="toggleUpvote(comment.id)"
             >
@@ -153,7 +153,7 @@ const newCommentText = ref('')
               v-for="reply in comment.replies"
               :key="reply.id"
               class="flex gap-3"
-              :class="{ 'border-l-2 border-l-comfy-yellow pl-3 rounded-[1px]': reply.isCreatorReply }"
+              :class="{ 'border-l-2 border-l-palette-yellow pl-3 rounded-[1px]': reply.isCreatorReply }"
             >
               <img :src="reply.author.avatarUrl" :alt="reply.author.displayName" class="w-7 h-7 rounded-full object-cover shrink-0" />
               <div class="flex-1 min-w-0">
@@ -162,7 +162,7 @@ const newCommentText = ref('')
                     {{ reply.author.displayName }}
                     <span
                       v-if="reply.isCreatorReply"
-                      class="text-xs font-semibold text-comfy-yellow bg-comfy-yellow/15 px-2 py-px rounded-full tracking-wide"
+                      class="text-xs font-semibold text-palette-yellow bg-palette-yellow/15 px-2 py-px rounded-full tracking-wide"
                     >Creator</span>
                   </span>
                   <span class="text-xs text-muted-foreground/70">{{ timeAgo(reply.createdAt) }}</span>
@@ -172,7 +172,7 @@ const newCommentText = ref('')
                   <button
                     class="flex items-center gap-1 text-xs px-2 py-1 rounded-sm border-none cursor-pointer transition-all duration-150"
                     :class="upvoted.has(reply.id)
-                      ? 'text-comfy-yellow bg-transparent hover:text-comfy-yellow/80'
+                      ? 'text-palette-yellow bg-transparent hover:text-palette-yellow/80'
                       : 'text-muted-foreground/70 bg-transparent hover:bg-accent hover:text-muted-foreground'"
                     @click="toggleUpvote(reply.id)"
                   >

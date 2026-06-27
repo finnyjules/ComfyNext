@@ -50,7 +50,7 @@ function handleFollow(e) {
           v-for="badge in creator.badges"
           :key="badge.id"
           variant="secondary"
-          class="text-xs bg-accent text-comfy-yellow font-medium"
+          class="text-xs bg-accent text-palette-yellow font-medium"
         >
           {{ badge.label }}
         </UiBadge>
@@ -76,8 +76,8 @@ function handleFollow(e) {
         size="sm"
         class="w-full"
         :class="isFollowing
-          ? 'bg-comfy-yellow text-white border-comfy-yellow hover:bg-comfy-yellow/80 hover:border-comfy-yellow/80'
-          : 'hover:border-comfy-yellow hover:text-comfy-yellow'"
+          ? 'bg-palette-yellow text-white border-palette-yellow hover:bg-palette-yellow/80 hover:border-palette-yellow/80'
+          : 'hover:border-palette-yellow hover:text-palette-yellow'"
         :aria-label="isFollowing ? `Unfollow ${creator.displayName}` : `Follow ${creator.displayName}`"
         @click="handleFollow"
       >

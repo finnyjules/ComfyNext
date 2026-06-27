@@ -49,6 +49,141 @@ float geoShape(int shp, vec2 q, float t, vec2 cell) {
     return aaInside((abs(q.x) + abs(q.y)) * 0.70710678, t);        // Diamond (6)
 }
 
+// Lego: a solid coloured plastic tile with one raised, top-left-lit stud. Unlike the
+// coverage shapes above this returns a finished RGB tile (3D shading on the cell colour,
+// not a 0/1 mask), so studs are CONSTANT size and the whole tile carries the colour.
+// lc = raw in-cell coord [0,1]; tileCol = the plastic colour for this cell.
+vec3 legoTile(vec2 lc, vec3 tileCol) {
+    vec2 ldir = normalize(vec2(-1.0, -1.0)); // light from the top-left of the cell
+    vec2 q = (lc - 0.5) * 2.0;               // centred [-1,1]
+
+    // Plate: dark groove at the cell border + a soft bevel lip (top-left bright,
+    // bottom-right dark) so neighbouring bricks read as separate raised plates.
+    vec2 bd = min(lc, 1.0 - lc);
+    float bmin = min(bd.x, bd.y);
+    float plate = smoothstep(0.0, 0.05, bmin);          // 0 in the groove -> 1 inside
+    float lip = 1.0 - smoothstep(0.05, 0.18, bmin);     // border band only
+    float side = dot(normalize(q + 1e-5), ldir);        // +1 toward top-left, -1 bottom-right
+    vec3 base = tileCol * mix(0.42, 1.0, plate) + lip * side * 0.16;
+
+    // Raised stud: a sphere-cap dome, Lambert-lit from the same direction, with a
+    // contact-shadow ring on its bottom-right edge.
+    float rs = 0.60;
+    float r = length(q);
+    float mask = aaInside(r, rs);
+    float dz = sqrt(max(1.0 - pow(min(r / rs, 1.0), 2.0), 0.0));
+    float diff = clamp(dot(normalize(vec3(q / rs, dz * 1.4)), normalize(vec3(ldir, 1.2))), 0.0, 1.0);
+    vec3 stud = tileCol * (0.5 + 0.85 * diff);
+    float ring = smoothstep(rs - 0.12, rs, r);
+    stud *= mix(1.0, 0.65, ring * clamp(-side, 0.0, 1.0));
+
+    return clamp(mix(base, stud, mask), 0.0, 1.0);
+}
+
+// Cross-stitch: two crossing rounded yarn strands (an X) per cell, each shaded like a
+// round fibre (bright along its spine, dark at the edges) and lit from the top-left.
+// The over/under strand alternates per cell so the field reads as woven thread.
+vec3 stitchTile(vec2 lc, vec3 tileCol, vec2 cell) {
+    vec2 q = (lc - 0.5) * 2.0;
+    float hw = 0.42;                                   // thread half-width
+    float d1 = abs(q.x - q.y) * 0.70710678;            // BL->TR strand
+    float d2 = abs(q.x + q.y) * 0.70710678;            // TL->BR strand
+    float m1 = aaInside(d1, hw), m2 = aaInside(d2, hw);
+    float cyl1 = sqrt(max(1.0 - pow(min(d1 / hw, 1.0), 2.0), 0.0)); // round cross-section
+    float cyl2 = sqrt(max(1.0 - pow(min(d2 / hw, 1.0), 2.0), 0.0));
+    float sheen1 = 0.85 + 0.30 * (-q.x - q.y) * 0.5;   // gentle top-left sheen along length
+    float sheen2 = 0.85 + 0.30 * (-q.x - q.y) * 0.5;
+    vec3 s1 = tileCol * (0.40 + 0.75 * cyl1) * sheen1;
+    vec3 s2 = tileCol * (0.40 + 0.75 * cyl2) * sheen2;
+    vec3 c = vec3(0.0);                                 // fabric gap (dark)
+    bool firstTop = mod(cell.x + cell.y, 2.0) < 1.0;    // weave parity
+    if (firstTop) { c = mix(c, s2, m2); c = mix(c, s1, m1); }
+    else          { c = mix(c, s1, m1); c = mix(c, s2, m2); }
+    return clamp(c, 0.0, 1.0);
+}
+
+// Isometric voxel — "tumbling blocks". A real iso cube is a HEXAGON (rhombus top + two
+// parallelogram sides), which can't fill a square without becoming a chevron, so this
+// tiles cubes on a pointy-top HEX grid (offset rows) where the rhombi tessellate with no
+// gaps. Self-contained: maps the pixel to its hex cell, samples the image at that cell's
+// centre for the cube colour, then shades the three rhombus faces (top bright, sides
+// mid/dark) with thin dark seams along the internal edges. Reads globals for size/colour.
+vec3 voxelTile(vec2 uv) {
+    vec2 res = u_resolution;
+    float s = max(u_cell * res.y, 2.0);                 // square cell px (matches main)
+    float R = s * 0.5;                                  // hex size (centre→corner), height 2R = s
+    vec2 px = uv * res;
+    // pixel → fractional axial (pointy-top), then cube-round to the nearest hex centre.
+    float aq = (0.57735027 * px.x - 0.33333333 * px.y) / R;
+    float ar = (0.66666667 * px.y) / R;
+    float cx = aq, cz = ar, cy = -cx - cz;
+    float rx = floor(cx + 0.5), ry = floor(cy + 0.5), rz = floor(cz + 0.5);
+    float dx = abs(rx - cx), dy = abs(ry - cy), dz = abs(rz - cz);
+    // Reset the coordinate with the LARGEST rounding error from the other two so the
+    // cube coords stay consistent (rx+ry+rz==0). Only rx/rz feed the centre below, so the
+    // dy-largest case (reset ry) needs no action.
+    if (dx > dy && dx > dz) rx = -ry - rz;
+    else if (dz > dy)       rz = -rx - ry;
+    vec2 center = vec2(R * 1.73205081 * (rx + rz * 0.5), R * 1.5 * rz);
+    vec2 p = (px - center) / R;                         // local, y up
+    p.y = -p.y;
+
+    // Cube colour from the hex centre (Size/Brightness/Invert/Colored honoured).
+    vec3 hcol = texture(u_image0, clamp(center / res, 0.0, 1.0)).rgb;
+    float hlum = dot(hcol, vec3(0.299, 0.587, 0.114));
+    float hg = clamp(hlum + u_brightness, 0.0, 1.0);
+    if (u_invert > 0.5) hg = 1.0 - hg;
+    vec3 tileCol = (u_colored > 0.5) ? hcol * (hg / max(hlum, 1e-3)) : vec3(hg);
+
+    // Three rhombus faces. K = 1/sqrt(3) → the proper 30° iso rhombus top.
+    const float K = 0.57735027;
+    float ax = abs(p.x);
+    vec3 shade;
+    if (p.y > K * ax)      shade = tileCol * 1.00;       // top rhombus
+    else if (p.x < 0.0)    shade = tileCol * 0.62;       // left face
+    else                   shade = tileCol * 0.44;       // right face
+    // Seams along the 3 internal edges (centre→upper-left/right, centre→bottom).
+    float dDiag = abs(p.y - K * ax) * 0.86602540;        // perp dist to y = K|x|
+    float dVert = (p.y < 0.0) ? ax : 1e3;
+    float seam = aaInside(min(dDiag, dVert), 0.05);
+    shade *= 1.0 - 0.40 * seam;
+    return clamp(shade, 0.0, 1.0);
+}
+
+// Perler bead: a glossy ring (donut) with a hole, on a dark pegboard. Round tube
+// cross-section shaded by a top-left light, with a small specular glint.
+vec3 beadTile(vec2 lc, vec3 tileCol) {
+    vec2 q = (lc - 0.5) * 2.0;
+    float r = length(q);
+    float outer = 0.84, inner = 0.32;
+    float ring = aaInside(r, outer) * (1.0 - aaInside(r, inner));
+    float rmid = (outer + inner) * 0.5;
+    float prof = 1.0 - clamp(abs(r - rmid) / ((outer - inner) * 0.5), 0.0, 1.0);
+    float tube = sqrt(max(prof, 0.0));                 // round tube
+    float lit = clamp(dot(normalize(q + 1e-4), normalize(vec2(-1.0, -1.0))), 0.0, 1.0);
+    vec3 bead = tileCol * (0.40 + 0.60 * tube) * (0.72 + 0.45 * lit);
+    bead += smoothstep(0.55, 1.0, tube * (0.45 + 0.55 * lit)) * 0.22; // glint
+    return clamp(mix(vec3(0.0), bead, ring), 0.0, 1.0);
+}
+
+// Faceted gem: a round jewel cut into angular facets (per-sector hashed brightness +
+// a bright core), with a top-left sparkle that twinkles on the animation clock.
+vec3 gemTile(vec2 lc, vec3 tileCol, vec2 cell) {
+    vec2 q = (lc - 0.5) * 2.0;
+    float r = length(q), rad = 0.90;
+    float mask = aaInside(r, rad);
+    float ang = atan(q.y, q.x);
+    const float N = 6.0;
+    float seg = floor((ang + 3.14159265) / (6.2831853 / N));
+    float facet = 0.6 + 0.4 * hash2(cell + seg * 7.0, u_seed + 13.0);
+    float core = mix(1.05, 0.5, clamp(r / rad, 0.0, 1.0));
+    vec3 gem = tileCol * facet * core;
+    float spark = smoothstep(0.22, 0.0, length(q - vec2(-0.35, -0.35)));
+    float tw = step(0.5, hash2(cell, u_seed + floor(u_time * u_speed * 4.0)));
+    gem += spark * (0.45 + 0.55 * tw);
+    return clamp(mix(vec3(0.0), gem, mask), 0.0, 1.0);
+}
+
 // Atlas geometry. Glyphs are CW x CH, laid out u_glyphCount across x and
 // TOTAL_ROWS down y; numpy rows are uploaded Y-flipped for GL convention.
 const int CW = 192, CH = 288, TOTAL_ROWS = 7;
@@ -122,7 +257,7 @@ vec3 sampleBase(vec2 uv) {
 void main() {
     int shp = int(u_shape + 0.5);
     vec2 cellPx = vec2(max(u_cell * u_resolution.y, 2.0));
-    if (shp >= 7) cellPx.x *= 2.0 / 3.0; // glyph cells are 2:3; geometric shapes use SQUARE cells
+    if (shp >= 7 && shp <= 14) cellPx.x *= 2.0 / 3.0; // glyph cells are 2:3; geometric + material shapes (15+) use SQUARE cells
     vec2 cell = floor(v_texCoord * u_resolution / cellPx);
     vec2 cuv = (cell + 0.5) * cellPx / u_resolution;
     vec3 col = texture(u_image0, clamp(cuv, 0.0, 1.0)).rgb;
@@ -137,19 +272,32 @@ void main() {
     vec2 inCell = fract(v_texCoord * u_resolution / cellPx);
     if (u_spacing > 0.0) inCell = (inCell - 0.5) / max(1.0 - u_spacing, 1e-3) + 0.5;
 
-    float glyph;
-    if (shp < 7) {
-        // Geometric shapes render in the SQUARE cell above ⇒ circles are round, crosses/blocks
-        // symmetric. (Glyph shapes keep the 2:3 atlas cell.)
-        glyph = geoShape(shp, (inCell - 0.5) * 2.0, g, cell);
+    vec3 fx;
+    if (shp >= 15) {
+        // Material shapes: each returns a finished shaded RGB tile, not a coverage mask.
+        // Use the RAW cell coord (Spacing is a no-op — each brick draws its own gaps).
+        // Brightness/Invert ride in via g; keep the hue when Colored, else value-g grey.
+        vec2 lc = fract(v_texCoord * u_resolution / cellPx);
+        vec3 tileCol = (u_colored > 0.5) ? col * (g / max(lum, 1e-3)) : vec3(g);
+        if (shp == 15)      fx = legoTile(lc, tileCol);          // Lego
+        else if (shp == 16) fx = stitchTile(lc, tileCol, cell);  // Cross-stitch
+        else if (shp == 17) fx = voxelTile(v_texCoord);          // Voxel (own hex tiling)
+        else if (shp == 18) fx = beadTile(lc, tileCol);          // Beads
+        else                fx = gemTile(lc, tileCol, cell);     // Gems (19)
     } else {
-        float gi = min(floor(g * u_glyphCount), u_glyphCount - 1.0);
-        glyph = shp >= 14 ? sampleCustom(int(gi), inCell)        // Custom: user-typed glyphs
-                          : sampleGlyph(int(gi), shp - 7, inCell);
+        float glyph;
+        if (shp < 7) {
+            // Geometric shapes render in the SQUARE cell above ⇒ circles are round, crosses/blocks
+            // symmetric. (Glyph shapes keep the 2:3 atlas cell.)
+            glyph = geoShape(shp, (inCell - 0.5) * 2.0, g, cell);
+        } else {
+            float gi = min(floor(g * u_glyphCount), u_glyphCount - 1.0);
+            glyph = shp >= 14 ? sampleCustom(int(gi), inCell)        // Custom: user-typed glyphs
+                              : sampleGlyph(int(gi), shp - 7, inCell);
+        }
+        vec3 ink = mix(vec3(1.0), col / max(lum, 1e-3), step(0.5, u_colored));
+        fx = clamp(ink * glyph, 0.0, 1.0); // the ASCII layer, on black
     }
-
-    vec3 ink = mix(vec3(1.0), col / max(lum, 1e-3), step(0.5, u_colored));
-    vec3 fx = clamp(ink * glyph, 0.0, 1.0); // the ASCII layer, on black
 
     // Underlay: composite the ASCII layer over the SHARP, full-res source so the
     // original photo shows through and the glyphs light it up. Mode 0 = Replace is

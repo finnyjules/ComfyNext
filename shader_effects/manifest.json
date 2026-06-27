@@ -599,7 +599,12 @@
             { "label": "Morse", "value": 11 },
             { "label": "Dots", "value": 12 },
             { "label": "Slashes", "value": 13 },
-            { "label": "Custom", "value": 14 }
+            { "label": "Custom", "value": 14 },
+            { "label": "Lego", "value": 15 },
+            { "label": "Cross-stitch", "value": 16 },
+            { "label": "Voxel", "value": 17 },
+            { "label": "Beads", "value": 18 },
+            { "label": "Gems", "value": 19 }
           ]
         },
         {

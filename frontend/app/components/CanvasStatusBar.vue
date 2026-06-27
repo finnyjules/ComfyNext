@@ -113,7 +113,7 @@ const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'e
 
       <!-- Running -->
       <template v-else-if="view === 'running'">
-        <Loader2 class="size-3.5 shrink-0 animate-spin text-comfy-blue" />
+        <Loader2 class="size-3.5 shrink-0 animate-spin text-palette-blue" />
         <span class="text-[12px] text-white/85 truncate max-w-[280px]" :title="currentNode">
           {{ currentNode || 'Starting…' }}
         </span>
@@ -127,7 +127,7 @@ const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'e
           {{ fmtSec(elapsedSec) }}
         </span>
         <button
-          class="ml-1 shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-comfy-coral hover:bg-white/[0.08] transition-colors cursor-pointer"
+          class="ml-1 shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-palette-coral hover:bg-white/[0.08] transition-colors cursor-pointer"
           title="Stop"
           @click="emit('stop')"
         >

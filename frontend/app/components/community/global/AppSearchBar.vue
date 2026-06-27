@@ -77,7 +77,7 @@ onUnmounted(() => {
   <div ref="wrapperRef" class="relative w-full">
     <form
       class="relative flex items-center w-full bg-accent border border-border rounded-xl transition-all duration-150"
-      :class="{ 'border-comfy-yellow shadow-[0_0_0_1px_rgba(240,255,65,0.15)]': isFocused }"
+      :class="{ 'border-palette-yellow shadow-[0_0_0_1px_rgba(240,255,65,0.15)]': isFocused }"
       role="search"
       @submit.prevent="handleSubmit"
     >

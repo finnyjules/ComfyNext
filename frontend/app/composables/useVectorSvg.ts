@@ -12,6 +12,7 @@
  * inside its own `d`. No artboard aspect is needed at import time.
  */
 import { createPathLayer, type PathLayer, type Paint } from '~/composables/useCompositorLayers'
+import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import type Paper from 'paper'
 
 // paper.js touches browser globals at import time, so it must NOT load during
@@ -263,8 +264,9 @@ export function pathLayersToSvg(layers: PathLayer[], aspect = 1): string {
     const tx = l.x * W
     const ty = l.y * H
     const fill = paintToSvg(l.fill)
-    const strokeAttr = l.stroke && l.stroke !== 'none' && l.strokeWidth > 0
-      ? ` stroke="${esc(l.stroke)}" stroke-width="${(l.strokeWidth * s).toFixed(3)}"` : ''
+    const strokeCol = paintToSvg(l.stroke).color
+    const strokeAttr = strokeCol !== 'none' && l.strokeWidth > 0
+      ? ` stroke="${strokeCol}" stroke-width="${(l.strokeWidth * s).toFixed(3)}"` : ''
     const transform = `translate(${tx.toFixed(2)} ${ty.toFixed(2)}) rotate(${l.rotation || 0}) scale(${s.toFixed(4)})`
     parts.push(
       `<path d="${esc(l.d)}" transform="${transform}" fill="${fill.color}" fill-rule="${l.fillRule || 'nonzero'}"` +
@@ -277,10 +279,8 @@ export function pathLayersToSvg(layers: PathLayer[], aspect = 1): string {
 
 function paintToSvg(p: Paint | undefined): { color: string; opacityAttr: string } {
   if (!p || p === 'none' || p === 'transparent') return { color: 'none', opacityAttr: '' }
-  if (typeof p === 'string') return { color: esc(p), opacityAttr: '' }
-  // Gradient: fall back to its first stop for v1 export (full gradient defs TBD).
-  const first = p.stops[0]?.color ?? '#000000'
-  return { color: esc(first), opacityAttr: '' }
+  // Gradient/Fill fall back to a representative colour for v1 export (defs/patterns TBD).
+  return { color: esc(paintPrimaryColor(p, '#000000')), opacityAttr: '' }
 }
 
 function esc(s: string): string {
