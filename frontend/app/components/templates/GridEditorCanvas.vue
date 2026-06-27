@@ -15,6 +15,7 @@ const ctx = inject<GridEditorContext>('gridEditor')!
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion, patchElement,
+  isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
 } = ctx
 
 // -- Render-true preview ------------------------------------------------------
@@ -377,7 +378,69 @@ function onHandlePointerUp(e: PointerEvent) {
 }
 
 function onCanvasClick(e: MouseEvent) {
-  if (e.target === e.currentTarget) selectedId.value = null
+  if (e.target === e.currentTarget) { selectedId.value = null; selectedSectionId.value = null }
+}
+
+// -- v3 section boxes (move/resize the section; children ride it) ------------
+type ResolvedSection = (typeof resolvedSections.value)[number]
+
+let sectionDrag: { id: string; startRegion: Region; startClientX: number; startClientY: number } | null = null
+
+function onSectionPointerDown(e: PointerEvent, rs: ResolvedSection) {
+  e.stopPropagation()
+  if (previewMode.value) return
+  selectedSectionId.value = rs.section.id
+  selectedId.value = null
+  sectionDrag = { id: rs.section.id, startRegion: { ...rs.region }, startClientX: e.clientX, startClientY: e.clientY }
+  ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function onSectionPointerMove(e: PointerEvent) {
+  if (!sectionDrag) return
+  const s = scale.value || 1
+  const next = dragRegion(
+    sectionDrag.startRegion,
+    (e.clientX - sectionDrag.startClientX) / s,
+    (e.clientY - sectionDrag.startClientY) / s,
+    metrics.value,
+  )
+  setSectionRegion(sectionDrag.id, next)
+}
+
+function onSectionPointerUp(e: PointerEvent) {
+  if (!sectionDrag) return
+  ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+  sectionDrag = null
+}
+
+let sectionResize: { id: string; dir: HandleDir; startRegion: Region; startClientX: number; startClientY: number } | null = null
+
+function onSectionHandlePointerDown(e: PointerEvent, rs: ResolvedSection, dir: HandleDir) {
+  e.stopPropagation()
+  e.preventDefault()
+  selectedSectionId.value = rs.section.id
+  selectedId.value = null
+  sectionResize = { id: rs.section.id, dir, startRegion: { ...rs.region }, startClientX: e.clientX, startClientY: e.clientY }
+  ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function onSectionHandlePointerMove(e: PointerEvent) {
+  if (!sectionResize) return
+  const s = scale.value || 1
+  const next = resizeRegion(
+    sectionResize.startRegion,
+    sectionResize.dir,
+    (e.clientX - sectionResize.startClientX) / s,
+    (e.clientY - sectionResize.startClientY) / s,
+    metrics.value,
+  )
+  setSectionRegion(sectionResize.id, next)
+}
+
+function onSectionHandlePointerUp(e: PointerEvent) {
+  if (!sectionResize) return
+  ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+  sectionResize = null
 }
 </script>
 
@@ -385,8 +448,8 @@ function onCanvasClick(e: MouseEvent) {
   <div
     ref="containerRef"
     class="absolute inset-0 flex items-center justify-center select-none"
-    @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e) }"
-    @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e) }"
+    @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e); onSectionPointerMove(e); onSectionHandlePointerMove(e) }"
+    @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e); onSectionPointerUp(e); onSectionHandlePointerUp(e) }"
     @wheel="onWheel"
   >
     <!-- Scaled wrapper; inner div is template coordinate space. -->
@@ -495,6 +558,50 @@ function onCanvasClick(e: MouseEvent) {
           class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white/80 text-[10px] pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
         >Double-click to reposition</div>
       </div>
+
+      <!-- v3 section frames (drag/resize the box; children ride it) -->
+      <template v-if="isV3Mode && !previewMode">
+        <div
+          v-for="rs in resolvedSections"
+          :key="rs.section.id"
+          class="absolute"
+          :style="{
+            left: rs.rect.x + 'px', top: rs.rect.y + 'px',
+            width: rs.rect.w + 'px', height: rs.rect.h + 'px',
+            cursor: 'move',
+            outline: selectedSectionId === rs.section.id ? '2px solid #34D399' : '1px dashed rgba(52,211,153,0.5)',
+            outlineOffset: '0px',
+            background: selectedSectionId === rs.section.id ? 'rgba(52,211,153,0.06)' : 'transparent',
+          }"
+          @pointerdown="(e) => onSectionPointerDown(e, rs)"
+        >
+          <!-- Section label tab -->
+          <div
+            class="absolute -top-5 left-0 px-1.5 h-5 flex items-center rounded-t text-[10px] font-medium whitespace-nowrap pointer-events-none"
+            :style="{
+              background: selectedSectionId === rs.section.id ? '#34D399' : 'rgba(52,211,153,0.5)',
+              color: '#06281d',
+            }"
+          >◳ {{ rs.section.name }}</div>
+
+          <!-- Resize handles when selected -->
+          <template v-if="selectedSectionId === rs.section.id">
+            <div
+              v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
+              :key="dir"
+              class="absolute size-3 bg-white border border-[#34D399] rounded-sm"
+              :style="{
+                top:    dir.startsWith('n') ? '-6px' : 'auto',
+                bottom: dir.startsWith('s') ? '-6px' : 'auto',
+                left:   dir.endsWith('w')   ? '-6px' : 'auto',
+                right:  dir.endsWith('e')   ? '-6px' : 'auto',
+                cursor: dir === 'nw' || dir === 'se' ? 'nwse-resize' : 'nesw-resize',
+              }"
+              @pointerdown="(e) => onSectionHandlePointerDown(e, rs, dir)"
+            />
+          </template>
+        </div>
+      </template>
 
       <!-- Render-true preview overlay (actual server render) -->
       <img

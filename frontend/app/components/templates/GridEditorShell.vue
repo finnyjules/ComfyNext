@@ -8,15 +8,16 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Download, Grid3x3, Group, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Ungroup, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
+import { allElements } from '~~/shared/template-grid/sections'
 import { BRAND_COLOR_KEYS } from '~~/shared/template-grid/types'
-import type { BrandKit, TemplateV2 } from '~~/shared/template-grid/types'
+import type { AnyGridTemplate, BrandKit, TemplateV2 } from '~~/shared/template-grid/types'
 
 const props = defineProps<{
-  initial: TemplateV2
+  initial: AnyGridTemplate
   initialProps?: Record<string, string>
   initialBrand?: Record<string, string>
   /** Legacy aspects CSV — migrates a pre-outputs template into an outputs list. */
@@ -26,7 +27,7 @@ const props = defineProps<{
   activeKit?: BrandKit
 }>()
 
-const emit = defineEmits<{ save: [layout: TemplateV2] }>()
+const emit = defineEmits<{ save: [layout: AnyGridTemplate] }>()
 
 const ctx = useGridEditor(props.initial, { activeKit: toRef(props, 'activeKit'), aspects: props.aspects })
 provide('gridEditor', ctx)
@@ -56,7 +57,7 @@ watch(() => props.initialProps, (next) => {
 // curated families are bundled; anything else lazy-loads from Google Fonts.
 const { ensure: ensureFont } = useGoogleFontPreview()
 watch(template, (tpl) => {
-  for (const el of tpl.elements) {
+  for (const el of allElements(tpl)) {
     if (el.type === 'text' && el.style?.fontFamily) ensureFont(el.style.fontFamily)
   }
 }, { immediate: true, deep: true })
@@ -371,6 +372,24 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         <button class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer" @click="ctx.addShape()">
           <Square class="size-3.5" /> Shape
         </button>
+        <span class="w-px h-5 bg-white/10 mx-0.5" />
+        <!-- v3 sections -->
+        <button
+          class="h-8 px-2.5 rounded-md bg-emerald-400/10 hover:bg-emerald-400/20 flex items-center gap-1.5 text-[12px] text-emerald-200/80 transition-colors cursor-pointer disabled:opacity-30"
+          :title="ctx.selectedId.value ? 'Group the selected element into a section' : 'Select an element to group into a section'"
+          :disabled="!ctx.selectedId.value"
+          @click="ctx.groupSelectedInto('Section')"
+        >
+          <Group class="size-3.5" /> Group
+        </button>
+        <button
+          v-if="ctx.selectedSectionId.value"
+          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer"
+          title="Ungroup the selected section"
+          @click="ctx.ungroupSelectedSection()"
+        >
+          <Ungroup class="size-3.5" /> Ungroup
+        </button>
       </div>
 
       <div class="flex items-center gap-2">
@@ -378,7 +397,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         <button
           class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/65 hover:text-white transition-colors cursor-pointer disabled:opacity-30"
           title="Export the ad set (PNG/JPEG/WebP, ZIP)"
-          :disabled="template.elements.length === 0"
+          :disabled="allElements(template).length === 0"
           @click="exportOpen = true"
         >
           <Download class="size-4" /> Export
