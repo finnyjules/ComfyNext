@@ -131,25 +131,25 @@ function commitRename() {
       <div
         v-for="row in rows"
         :key="row.id"
-        class="group relative flex items-center gap-2.5 pl-2 pr-1.5 py-1.5 rounded-md border-l-2 cursor-pointer transition-colors"
-        :class="currentOutputId === row.id
-          ? 'border-l-[#96b4ff] bg-[#96b4ff]/10'
-          : 'border-l-transparent hover:bg-white/[0.04]'"
+        class="group relative flex items-center gap-2.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors"
+        :class="currentOutputId === row.id ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'"
         :title="`${row.label} · ${row.w}×${row.h}`"
         @click="selectOutput(row.id)"
       >
-        <!-- wireframe thumbnail -->
-        <div
-          class="shrink-0 relative bg-black/60 border border-white/10 rounded-[2px]"
-          :style="{ width: row.thumbW + 'px', height: THUMB_H + 'px' }"
-        >
+        <!-- wireframe thumbnail (fixed-width column so labels left-align) -->
+        <div class="w-11 shrink-0 flex items-center">
           <div
-            v-for="b in row.blocks"
-            :key="b.id"
-            class="absolute rounded-[1px]"
-            :class="b.selected ? 'bg-[#96b4ff]/80' : 'bg-white/25'"
-            :style="{ left: b.left, top: b.top, width: b.width, height: b.height }"
-          />
+            class="relative bg-black/60 border border-white/10 rounded-[2px]"
+            :style="{ width: row.thumbW + 'px', height: THUMB_H + 'px' }"
+          >
+            <div
+              v-for="b in row.blocks"
+              :key="b.id"
+              class="absolute rounded-[1px]"
+              :class="b.selected ? 'bg-white/70' : 'bg-white/25'"
+              :style="{ left: b.left, top: b.top, width: b.width, height: b.height }"
+            />
+          </div>
         </div>
 
         <!-- label + dims -->
@@ -158,7 +158,7 @@ function commitRename() {
             v-if="renamingId === row.id"
             v-model="renameDraft"
             data-format-rename
-            class="w-full h-5 px-1 bg-black/60 border border-[#96b4ff]/50 rounded text-[12px] text-white focus:outline-none"
+            class="w-full h-5 px-1 bg-black/60 border border-white/30 rounded text-[12px] text-white focus:outline-none"
             @click.stop
             @keydown.enter="commitRename"
             @keydown.esc="renamingId = null"
@@ -170,7 +170,7 @@ function commitRename() {
               :class="currentOutputId === row.id ? 'text-white' : 'text-white/80'"
               @dblclick.stop="startRename(row)"
             >
-              {{ row.label }}<span v-if="row.isMaster" class="text-[#96b4ff]"> · M</span>
+              {{ row.label }}<span v-if="row.isMaster" class="text-white/40"> · M</span>
             </div>
             <div class="text-[10px] text-white/35 tabular-nums leading-tight">{{ row.w }} × {{ row.h }}</div>
           </template>
@@ -207,12 +207,12 @@ function commitRename() {
     <!-- Add format -->
     <button
       ref="addBtnRef"
-      class="mt-1 w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors cursor-pointer"
-      :class="addOpen ? 'bg-[#96b4ff]/10 text-[#c9d6ff]' : 'text-white/45 hover:text-white hover:bg-white/[0.04]'"
+      class="mt-1 w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md transition-colors cursor-pointer"
+      :class="addOpen ? 'bg-white/[0.07] text-white' : 'text-white/45 hover:text-white hover:bg-white/[0.04]'"
       title="Add a format"
       @click="toggleAdd"
     >
-      <Plus class="size-3.5" />
+      <div class="w-11 shrink-0 flex items-center"><Plus class="size-3.5" /></div>
       <span class="text-[12px]">Add format</span>
     </button>
 
@@ -238,7 +238,7 @@ function commitRename() {
             <span class="block text-[12px] text-white/85 truncate">{{ f.spec.label ?? f.key }}</span>
             <span class="block text-[10px] text-white/35 tabular-nums">{{ f.spec.w }}×{{ f.spec.h }}</span>
           </span>
-          <span v-if="countFor(f.key)" class="shrink-0 text-[9px] text-[#96b4ff]/80">+ variation</span>
+          <span v-if="countFor(f.key)" class="shrink-0 text-[9px] text-white/40">+ variation</span>
         </button>
       </div>
     </Teleport>
