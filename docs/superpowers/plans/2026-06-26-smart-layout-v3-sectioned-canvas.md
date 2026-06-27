@@ -186,12 +186,22 @@ Tasks 1–7 are headless and safe (v2 path untouched), and give a visually-verif
 **Test count:** template-grid suite 90 → **117 green**, zero v2 regressions. (One pre-existing,
 unrelated failure on main: `spacetype-palette` › cornerpin — confirmed independent of this work.)
 
-**T8 (editor UI) — NOT STARTED, deliberately deferred.** `useGridEditor.ts` + `GridEditorCanvas.vue`
-+ `GridPropertyPanel.vue` are tightly typed to `TemplateV2` end-to-end (template ref, every
-mutation, undo/redo snapshot, pointer model). A sections-aware editor is a multi-hour change with
-real regression risk to the working v2 editor, so it was left for a supervised session rather than
-risk breaking Smart Layout editing overnight. The engine is fully ready underneath it. Next steps
-for T8: broaden the composable to `AnyGridTemplate`, draw the fine-grid overlay + section boxes via
-`sectionBoundsOf`, wire "Group into section" → `groupIntoSection` / `ungroupSection`, move/resize a
-section box with `dragRegion`/`resizeRegion` against `section.region`, and write section overrides
-on per-format nudges. Verify in-app with screenshots.
+**T8 (editor UI) — COMPLETE** (follow-up session, same day).
+
+- `useGridEditor` broadened to `AnyGridTemplate`; added `isV3Mode`, `sections`, `selectedSectionId`,
+  `resolvedSections`, `setSectionRegion` (master/class/output scope), `convertToV3`,
+  `groupSelectedInto`, `ungroupSelectedSection`. All v2 ops unchanged. Extracted `sectionRegionFor`
+  as the shared section-box precedence (resolver + editor agree).
+- `GridEditorCanvas.vue`: guarded section overlay (`v-if isV3Mode`) — section frames with a label
+  tab, select, move (`dragRegion`) and corner-resize (`resizeRegion`) writing `section.region`;
+  children re-resolve proportionally. v2 renders identically (overlay gated off).
+- `GridEditorShell.vue`: `AnyGridTemplate` prop, Group/Ungroup toolbar actions, `allElements` font
+  walk + export gate. Added `/dev/v3editor` harness.
+- **Verified in-app** (Playwright screenshots): dense 78×78 fine grid, "◳ headline lockup" section
+  frame, select → corner handles + Ungroup button, switch to Story → 78×148 portrait grid, section
+  + children stay locked and adapt. No fatal console errors.
+- Tests: full suite **1234 green** (10 new), 1 pre-existing unrelated failure (cornerpin).
+
+**Engine + editor first slice are now both done.** Deliberately-later (per spec §7): internal
+section auto-layout, reference remix, richer assists, extreme-format section behavior; plus
+multi-select grouping, section rename UI, and individual child editing inside a section.
