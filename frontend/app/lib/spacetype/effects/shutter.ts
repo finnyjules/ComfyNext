@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
 
 /**
  * Shutter — geometric "speed lines" sliced typography.
@@ -16,8 +17,9 @@ import { parseFills, fillShaderTexture, fillTiling, serializeFills, DEFAULT_FILL
  * fades between two colours — the trailing speed lines change hue) or fill (a studio pattern fill).
  *
  * `progress` (0 = intact word, 1 = fully fanned/sliced) drives both the horizontal spread and the
- * stripe gaps, so at 0 every copy collapses back to one solid word. Parked (Animation = static) or
- * driven by loop time (sweep-in, or seamless in/out loop).
+ * stripe gaps, so at 0 every copy collapses back to one solid word. Motion uses the scene-sequenced
+ * model (see ../motion): `mode` static freezes on the `progress` pose; loop cycles `scenes` poses
+ * (seeded amount + spread variations sized by `variance`) with hold / transition / ease timing.
  */
 
 // inkA sampling margins: horizontal is roomy so nudged copies can trail into transparent space;
@@ -44,8 +46,20 @@ const controls: ControlSpec[] = [
   { key: 'progress', label: 'Progress', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1, group: 'Slice' },
   // LAYOUT — multi-string stacking.
   { key: 'rowGap', label: 'Line gap', kind: 'slider', min: -0.3, max: 1, step: 0.02, default: 0.12, group: 'Layout' },
-  // MOTION.
-  { key: 'anim', label: 'Animation', kind: 'select', options: ['static', 'sweepin', 'loop'], default: 'static', group: 'Motion' },
+  // MOTION — scene-sequenced (same model as Corner Pin). Static freezes on the Progress pose.
+  { key: 'mode', label: 'Mode', kind: 'select', options: ['static', 'loop'], default: 'static', group: 'Motion',
+    hint: 'static = freeze on the Progress pose; loop = animate through the scenes' },
+  { key: 'scenes', label: 'Scenes', kind: 'slider', min: 2, max: 8, step: 1, default: 3, group: 'Motion',
+    hint: 'how many distinct sliced poses it cycles through per loop' },
+  { key: 'variance', label: 'Variance', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.6, group: 'Motion',
+    hint: 'how far auto-generated scenes deviate from the Progress pose (0 = no motion)' },
+  { key: 'holdTime', label: 'Hold time', kind: 'slider', min: 0, max: 10, step: 0.1, default: 3, group: 'Motion',
+    hint: 'how long it dwells on each scene (relative to Transition time; absolute speed = studio loop length)' },
+  { key: 'transitionTime', label: 'Transition time', kind: 'slider', min: 0.1, max: 10, step: 0.1, default: 1.5, group: 'Motion',
+    hint: 'how long the animated move between scenes takes (relative to Hold time)' },
+  { key: 'ease', label: 'Ease', kind: 'curve', default: '[0.42,0,0.58,1]', group: 'Motion' },
+  { key: 'seed', label: 'Seed', kind: 'slider', min: 1, max: 50, step: 1, default: 7, group: 'Motion',
+    hint: 're-roll the auto-generated scene poses' },
   // TRANSFORM (applied by the engine from these param keys).
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
   { key: 'rotateZ', label: 'Rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
@@ -63,14 +77,17 @@ let state: ShutterState | null = null
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 const COLOR_MODE: Record<string, number> = { mono: 0, palette: 1, fill: 2 }
 
-/** Map the animation mode to a 0..1 displacement amount for loop time t01. Pure in t01. */
-export function effectiveProgress(anim: string, progress: number, t01: number): number {
-  const p = clamp01(progress)
-  if (anim === 'sweepin') return clamp01(p * t01)
-  if (anim === 'loop') return clamp01(p * (1 - Math.abs(2 * t01 - 1)))
-  return p // static
+/** A scene's sliced pose: how much it's sliced (`amount` = effective progress) and how wide the
+ *  copies fan (`spread` = spacing multiplier). Scene 0 is the user's Progress pose; later scenes are
+ *  seeded deviations sized by `variance`. Pure → unit-testable. */
+export function shutterPose(scene: number, baseAmount: number, variance: number, seed: number): { amount: number; spread: number } {
+  if (scene <= 0) return { amount: clamp01(baseAmount), spread: 1 }
+  const amount = clamp01(baseAmount + hash11(seed * 131 + scene * 31.7) * variance)
+  const spread = Math.max(0.05, 1 + hash11(seed * 131 + scene * 17.1 + 4.2) * variance * 1.5)
+  return { amount, spread }
 }
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
@@ -131,9 +148,12 @@ export const shutterEffect: SpaceTypeEffect = {
   id: 'shutter',
   label: 'Shutter',
   controls,
-  liveKeys: ['copies', 'spacing', 'stripes', 'thicknessBottom', 'thicknessTop', 'progress', 'anim', 'scale', 'rotateZ', 'colorMode', 'textColor', 'paletteA', 'paletteB', 'bgColor'],
+  liveKeys: ['copies', 'spacing', 'stripes', 'thicknessBottom', 'thicknessTop', 'progress', 'mode', 'scenes', 'variance', 'holdTime', 'transitionTime', 'ease', 'seed', 'scale', 'rotateZ', 'colorMode', 'textColor', 'paletteA', 'paletteB', 'bgColor'],
 
-  loopRates() { return [1] },
+  loopRates(params) {
+    // Static = frozen (no motion). Loop = one full scene ring per loop → single seamless cycle.
+    return String(params.mode ?? 'static') === 'static' ? [] : [1]
+  },
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
@@ -220,12 +240,24 @@ export const shutterEffect: SpaceTypeEffect = {
     const s = state
     if (!s) return
     const copies = Math.min(MAX_LAYERS, Math.max(1, Math.round(n(params, 'copies'))))
-    const spacing = Math.max(0, n(params, 'spacing'))
+    const baseSpacing = Math.max(0, n(params, 'spacing'))
     const stripes = Math.max(1, n(params, 'stripes'))
     const thickA = clamp01(n(params, 'thicknessBottom'))
     const thickB = clamp01(n(params, 'thicknessTop'))
-    const prog = effectiveProgress(String(params.anim), n(params, 'progress'), t01)
     const mode = COLOR_MODE[String(params.colorMode)] ?? 0
+
+    // Scene-sequenced motion: blend the current/next scene poses (amount + spread) at loop time t01.
+    const isStatic = String(params.mode ?? 'static') === 'static'
+    const baseAmount = n(params, 'progress')
+    const variance = clamp01(n(params, 'variance'))
+    const seed = Math.round(n(params, 'seed'))
+    const holdFrac = holdFraction(n(params, 'holdTime'), n(params, 'transitionTime'))
+    const { cur, nxt, e } = sceneBlend(t01, n(params, 'scenes'), holdFrac, parseEase(params.ease), isStatic)
+    const a0 = shutterPose(cur, baseAmount, variance, seed)
+    const a1 = shutterPose(nxt, baseAmount, variance, seed)
+    const prog = lerp(a0.amount, a1.amount, e)
+    const spacing = baseSpacing * lerp(a0.spread, a1.spread, e)
+
     for (const m of s.materials) {
       const u = m.uniforms
       u.uCopies!.value = copies
