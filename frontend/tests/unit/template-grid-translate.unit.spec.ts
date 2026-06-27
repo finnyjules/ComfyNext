@@ -136,3 +136,42 @@ describe('templateToSatori (v2)', () => {
     expect(text.props.style.color).toBe('#00A3FF')
   })
 })
+
+describe('templateToSatori (v3 sections)', () => {
+  const V3: any = {
+    version: 3, id: 't3', name: 't3', master: '1x1',
+    formats: { '1x1': { w: 1080, h: 1080 }, '9x16': { w: 1080, h: 1920 } },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    background: { fill: '#101418' },
+    brand: { primary: '#E2362B', fontDisplay: 'Bebas Neue' },
+    elements: [],
+    sections: [
+      {
+        id: 'lockup', name: 'headline lockup',
+        region: { col: 1, colSpan: 40, row: 1, rowSpan: 40 },
+        children: [
+          { id: 'headline', type: 'text', content: '{{ props.text_layer_1 }}', level: 'display', priority: 1,
+            region: { col: 1, colSpan: 40, row: 1, rowSpan: 10 },
+            style: { color: '{{ brand.primary }}', fontFamily: '{{ brand.fontDisplay }}' } },
+        ],
+      },
+    ],
+  }
+
+  it('routes v3 through the grid path and renders section children', () => {
+    const { width, tree } = templateToSatori(V3, '1x1', { text_layer_1: 'Brew bold' })
+    expect(width).toBe(1080)
+    const text = flatten(tree).find(n => n?.props?.children === 'Brew bold')
+    expect(text).toBeTruthy()
+    expect(text.props.style.position).toBe('absolute')
+    expect(text.props.style.color).toBe('#E2362B')        // brand token on a child
+    expect(text.props.style.fontFamily).toBe('Bebas Neue')
+  })
+
+  it('adapts the section across formats (child still present in portrait)', () => {
+    const text = flatten(templateToSatori(V3, '9x16', { text_layer_1: 'Brew bold' }).tree)
+      .find(n => n?.props?.children === 'Brew bold')
+    expect(text).toBeTruthy()
+  })
+})

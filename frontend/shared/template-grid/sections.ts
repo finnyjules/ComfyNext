@@ -2,7 +2,15 @@
  * into named sections. Pure — every function returns a fresh template and never
  * mutates its input. The editor calls these on user actions. */
 
-import type { ElementV2, Region, SectionV3, TemplateV2, TemplateV3 } from './types'
+import type { AnyGridTemplate, ElementV2, Region, SectionV3, TemplateV2, TemplateV3 } from './types'
+import { isV3 } from './types'
+
+/** Every element a template renders: ungrouped top-level elements plus every
+ * section child. Use wherever code needs to walk all content (fonts, tokens). */
+export function allElements(t: AnyGridTemplate): ElementV2[] {
+  if (!isV3(t)) return t.elements
+  return [...t.elements, ...t.sections.flatMap(s => s.children)]
+}
 
 /** Lift a v2 template to v3: same elements, ungrouped, with an empty sections
  * array. Lossless — re-resolving matches the v2 result. */

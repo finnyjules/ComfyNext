@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupIntoSection, toV3, ungroupSection } from '~~/shared/template-grid/sections'
+import { allElements, groupIntoSection, toV3, ungroupSection } from '~~/shared/template-grid/sections'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
 function v2(): TemplateV2 {
@@ -58,5 +58,15 @@ describe('ungroupSection', () => {
     const back = ungroupSection(grouped, grouped.sections[0]!.id)
     expect(back.sections).toEqual([])
     expect(back.elements.map(e => e.id).sort()).toEqual(['headline', 'logo', 'subhead'])
+  })
+})
+
+describe('allElements', () => {
+  it('returns ungrouped elements plus every section child', () => {
+    const grouped = groupIntoSection(toV3(v2()), ['headline', 'subhead'], 'lockup')
+    expect(allElements(grouped).map(e => e.id).sort()).toEqual(['headline', 'logo', 'subhead'])
+  })
+  it('returns just elements for a v2 template', () => {
+    expect(allElements(v2()).map(e => e.id)).toEqual(['headline', 'subhead', 'logo'])
   })
 })

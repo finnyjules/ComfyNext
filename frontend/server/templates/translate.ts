@@ -11,7 +11,7 @@ import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { resolveTokens } from '../../shared/template-grid/tokens'
 import type {
-  ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
+  AnyGridTemplate, ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
 } from '../../shared/template-grid/types'
 import type {
   AspectSpec, BackgroundSpec, ImageElement, LayoutElement, Length, RenderBrand,
@@ -255,13 +255,16 @@ export interface TranslatedLayout {
 }
 
 export function templateToSatori(
-  template: Template | TemplateV2, aspectKey: string | undefined,
+  template: Template | AnyGridTemplate, aspectKey: string | undefined,
   props: RenderProps = {}, brand: RenderBrand = {},
   explicitSize?: { width: number; height: number },
   outputId?: string,
 ): TranslatedLayout {
-  if ((template as TemplateV2).version === 2) {
-    return templateV2ToSatori(template as TemplateV2, aspectKey, props, brand, explicitSize, outputId)
+  // v2 and v3 share the grid path: the resolver flattens sections into
+  // positioned elements, so this only turns resolved rects into satori nodes.
+  const version = (template as AnyGridTemplate).version
+  if (version === 2 || version === 3) {
+    return templateV2ToSatori(template as AnyGridTemplate, aspectKey, props, brand, explicitSize, outputId)
   }
   return templateV1ToSatori(template as Template, aspectKey, props, brand, explicitSize)
 }
@@ -393,7 +396,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
 }
 
 function templateV2ToSatori(
-  template: TemplateV2, formatKey: string | undefined,
+  template: AnyGridTemplate, formatKey: string | undefined,
   props: RenderProps, brand: RenderBrand,
   explicitSize?: { width: number; height: number },
   outputId?: string,

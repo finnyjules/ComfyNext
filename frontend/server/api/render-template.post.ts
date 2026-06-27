@@ -124,7 +124,11 @@ function collectFamilies(template: unknown, brand: Record<string, unknown>): str
     const r = String(resolveTokens(f.trim(), {}, brand)).trim()
     if (r) fams.add(r)
   }
-  const elements = (template as { elements?: unknown[] })?.elements ?? []
+  const t = template as { elements?: unknown[]; sections?: { children?: unknown[] }[] }
+  const elements = [
+    ...(t?.elements ?? []),
+    ...(t?.sections ?? []).flatMap(s => s?.children ?? []),   // v3 section children
+  ]
   for (const el of elements as any[]) {
     resolve(el?.style?.fontFamily)
     for (const ov of Object.values(el?.overrides ?? {})) resolve((ov as any)?.style?.fontFamily)
