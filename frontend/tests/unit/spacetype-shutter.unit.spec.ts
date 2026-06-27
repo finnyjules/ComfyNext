@@ -10,12 +10,15 @@ describe('shutter effect', () => {
     expect(getEffect('SHUTTER')).toBe(shutterEffect) // case-insensitive
   })
 
-  it('has a backend-valid id and a Progress control', () => {
+  it('has a backend-valid id and the slice/layer controls', () => {
     expect(/^[a-z0-9]+$/.test(shutterEffect.id)).toBe(true)
     const keys = shutterEffect.controls.map(c => c.key)
     expect(keys).toContain('progress')
     expect(keys).toContain('pattern')
     expect(keys).toContain('gap')
+    expect(keys).toContain('layers')
+    expect(keys).toContain('stagger')
+    expect(keys).toContain('ramp')
   })
 
   it('defaults build without throwing and progress defaults to a full 1', () => {

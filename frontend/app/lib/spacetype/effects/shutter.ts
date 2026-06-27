@@ -22,6 +22,9 @@ const controls: ControlSpec[] = [
   // SLICE — the shutter field.
   { key: 'slices', label: 'Slices', kind: 'slider', min: 4, max: 160, step: 1, default: 48, group: 'Slice' },
   { key: 'groupSize', label: 'Group size', kind: 'slider', min: 1, max: 16, step: 1, default: 4, group: 'Slice' },
+  { key: 'layers', label: 'Layers', kind: 'slider', min: 1, max: 6, step: 1, default: 3, group: 'Slice' },
+  { key: 'stagger', label: 'Layer stagger', kind: 'slider', min: 0, max: 0.25, step: 0.005, default: 0.06, group: 'Slice' },
+  { key: 'ramp', label: 'Thickness ramp', kind: 'slider', min: -2, max: 2, step: 0.05, default: 0.8, group: 'Slice' },
   { key: 'pattern', label: 'Pattern', kind: 'select', options: ['diagonal', 'random', 'sine', 'alternating'], default: 'diagonal', group: 'Slice' },
   { key: 'offset', label: 'Offset amount', kind: 'slider', min: 0, max: 0.7, step: 0.005, default: 0.16, group: 'Slice' },
   { key: 'gap', label: 'Gap', kind: 'slider', min: 0, max: 0.6, step: 0.01, default: 0.06, group: 'Slice' },
@@ -53,6 +56,8 @@ export function effectiveProgress(anim: string, progress: number, t01: number): 
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
 
+const MAX_LAYERS = 6
+
 const FRAG = [
   'precision highp float;',
   'varying vec2 vUv;',
@@ -60,6 +65,7 @@ const FRAG = [
   'uniform float uWf; uniform float uVMid; uniform float uVH;',        // glyph placement in the tile
   'uniform float uSlices; uniform float uGroup; uniform float uPattern;',
   'uniform float uOffset; uniform float uGap; uniform float uSeed; uniform float uProgress;',
+  'uniform float uLayers; uniform float uStagger; uniform float uRamp;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
   // Centre the glyph in the plane with a margin so sheared slices can travel into transparent space.
   'float inkA(vec2 p){',
@@ -68,8 +74,14 @@ const FRAG = [
   '  float a = texture2D(uText, vec2(clamp(tx, 0.0, 1.0), clamp(ty, 0.0, 1.0))).a;',
   '  return a * step(0.0, tx) * step(tx, uWf) * step(0.0, ty) * step(ty, 1.0);',
   '}',
-  'void main(){',
-  '  float band = floor(vUv.y * uSlices);',                            // which horizontal slice
+  // Thickness ramp: warp the slice coordinate so band heights grow/shrink down the column.
+  // ramp 0 = uniform; >0 = thin slices at top, wide at bottom; <0 = the inverse.
+  'float remap(float y){ return pow(clamp(y, 0.0, 1.0), pow(2.0, uRamp)); }',
+  // One sliced copy of the text, sampled at coordinate p. The matte is sampled at the TRUE p.y
+  // (glyphs are never squished); only the band index + gap use the warped coordinate.
+  'float sliceAt(vec2 p){',
+  '  float yr = remap(p.y) * uSlices;',
+  '  float band = floor(yr);',
   '  float gsize = max(1.0, uGroup);',
   '  float group = floor(band / gsize);',
   '  float groups = max(1.0, ceil(uSlices / gsize));',
@@ -79,13 +91,22 @@ const FRAG = [
   '  else if (uPattern < 2.5) off = sin(group * 0.9);',                 // sine ripple
   '  else off = (mod(group, 2.0) < 1.0) ? 1.0 : -1.0;',                 // alternating
   '  float shift = off * uOffset * uProgress;',
-  // Vertical gap: clip the bottom (uGap*progress) fraction of each band to transparent.
-  '  float bandPos = fract(vUv.y * uSlices);',
+  '  float bandPos = fract(yr);',                                       // 0..1 within the (warped) band
   '  float gapAmt = uGap * uProgress;',
   '  float vis = 1.0;',
   '  if (gapAmt > 0.001) vis = smoothstep(gapAmt - 0.012, gapAmt + 0.012, bandPos);',
-  '  vec2 puv = vUv; puv.x -= shift;',
-  '  float a = inkA(puv) * vis;',
+  '  return inkA(vec2(p.x - shift, p.y)) * vis;',
+  '}',
+  'const int MAX_LAYERS = ' + MAX_LAYERS + ';',
+  'void main(){',
+  // Stack uLayers vertically-staggered copies of the sliced text (union of their ink). The stagger
+  // scales with progress so progress 0 collapses every copy back to one intact word.
+  '  float a = 0.0;',
+  '  for (int k = 0; k < MAX_LAYERS; k++){',
+  '    if (float(k) >= uLayers) break;',
+  '    float yo = (float(k) - (uLayers - 1.0) * 0.5) * uStagger * uProgress;',
+  '    a = max(a, sliceAt(vUv + vec2(0.0, yo)));',
+  '  }',
   '  vec3 col = mix(uBg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
   '}',
@@ -97,7 +118,7 @@ export const shutterEffect: SpaceTypeEffect = {
   id: 'shutter',
   label: 'Shutter',
   controls,
-  liveKeys: ['slices', 'groupSize', 'pattern', 'offset', 'gap', 'seed', 'progress', 'anim', 'scale', 'rotateZ', 'textColor', 'bgColor'],
+  liveKeys: ['slices', 'groupSize', 'layers', 'stagger', 'ramp', 'pattern', 'offset', 'gap', 'seed', 'progress', 'anim', 'scale', 'rotateZ', 'textColor', 'bgColor'],
 
   loopRates() { return [1] },
 
@@ -126,7 +147,8 @@ export const shutterEffect: SpaceTypeEffect = {
         uBg: { value: new three.Color(String(params.bgColor)) },
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
         uSlices: { value: 48 }, uGroup: { value: 4 }, uPattern: { value: 0 },
-        uOffset: { value: 0.22 }, uGap: { value: 0.08 }, uSeed: { value: 1 }, uProgress: { value: 1 },
+        uOffset: { value: 0.16 }, uGap: { value: 0.06 }, uSeed: { value: 1 }, uProgress: { value: 1 },
+        uLayers: { value: 3 }, uStagger: { value: 0.06 }, uRamp: { value: 0.8 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -150,6 +172,9 @@ export const shutterEffect: SpaceTypeEffect = {
     u.uOffset!.value = Math.max(0, n(params, 'offset'))
     u.uGap!.value = Math.max(0, n(params, 'gap'))
     u.uSeed!.value = Math.max(1, Math.round(n(params, 'seed')))
+    u.uLayers!.value = Math.min(MAX_LAYERS, Math.max(1, Math.round(n(params, 'layers'))))
+    u.uStagger!.value = Math.max(0, n(params, 'stagger'))
+    u.uRamp!.value = n(params, 'ramp')
     u.uProgress!.value = effectiveProgress(String(params.anim), n(params, 'progress'), t01)
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
