@@ -165,3 +165,33 @@
 ## Execution note
 
 Tasks 1–7 are headless and safe (v2 path untouched), and give a visually-verifiable result via the render route. Task 8 (editor UI) is the stretch; it is additive and must not regress v2 editing. If T8 can't be completed cleanly in one sitting, leave the engine (T1–7) committed and green and document where T8 stopped.
+
+---
+
+## Status — 2026-06-26 (overnight run)
+
+**Tasks 1–7 COMPLETE** — engine done, all green, visually verified.
+
+- ✅ T1 v3 schema types (`isV3`, `SectionV3`, `TemplateV3`, `AnyGridTemplate`) — commit `bda027901`
+- ✅ T2 baseline-derived fine grid (`fineGridDims`, gutter 0 for v3) — commit `ea28896b7`
+- ✅ T3 resolver section composition + `fitElementAtRect` refactor — commit `91a1a153b`
+- ✅ T4 `toV3` / `groupIntoSection` / `ungroupSection` (`sections.ts`) — commit `451b6f639`
+- ✅ T5 `sectionBoundsOf` fine-grid editor helper — commit `8eafb430a`
+- ✅ T6 render dispatch v3 + `allElements` font/token walk — commit (render)
+- ✅ T7 `v3Demo()` + cross-format render proof — commit (demo). **Also fixed a real bug:**
+  ungrouped v3 elements were remapping through 6×6 class dims; `resolveFormat` now uses
+  `fineGridDims` for masterDims. Verified PNGs at 1x1 / 9x16 / 16x9 in scratchpad —
+  the lockup section stays locked and adapts across formats; ungrouped badge places correctly.
+
+**Test count:** template-grid suite 90 → **117 green**, zero v2 regressions. (One pre-existing,
+unrelated failure on main: `spacetype-palette` › cornerpin — confirmed independent of this work.)
+
+**T8 (editor UI) — NOT STARTED, deliberately deferred.** `useGridEditor.ts` + `GridEditorCanvas.vue`
++ `GridPropertyPanel.vue` are tightly typed to `TemplateV2` end-to-end (template ref, every
+mutation, undo/redo snapshot, pointer model). A sections-aware editor is a multi-hour change with
+real regression risk to the working v2 editor, so it was left for a supervised session rather than
+risk breaking Smart Layout editing overnight. The engine is fully ready underneath it. Next steps
+for T8: broaden the composable to `AnyGridTemplate`, draw the fine-grid overlay + section boxes via
+`sectionBoundsOf`, wire "Group into section" → `groupIntoSection` / `ungroupSection`, move/resize a
+section box with `dragRegion`/`resizeRegion` against `section.region`, and write section overrides
+on per-format nudges. Verify in-app with screenshots.
