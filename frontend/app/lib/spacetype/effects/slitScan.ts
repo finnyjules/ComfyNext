@@ -260,12 +260,15 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uBandSpeed!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed')))
     u.uSpeedMode!.value = String(params.ssSpeedMode) === 'progressive' ? 1 : 0
     u.uEase!.value = Math.min(1, Math.max(0, n(params, 'ssEase')))
-    // Cross axis (crosshatch). Falls back to the primary axis's value if a cross param is absent.
-    u.uDelay2!.value = Math.max(0, n(params, 'ssDelay2'))
-    u.uBands2!.value = Math.max(0, Math.round(n(params, 'ssBands2')))
-    u.uBandSpeed2!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed2')))
-    u.uSpeedMode2!.value = String(params.ssSpeedMode2) === 'progressive' ? 1 : 0
-    u.uEase2!.value = Math.min(1, Math.max(0, n(params, 'ssEase2')))
+    // Cross axis (crosshatch). Configs saved before these params existed lack the ss*2 keys → reading
+    // them gives NaN, which would poison tau and render BLACK. Fall back to the primary axis value
+    // (mirrors it) whenever a cross param is missing/non-finite.
+    const num2 = (k: string, fallback: number): number => { const v = Number(params[k]); return Number.isFinite(v) ? v : fallback }
+    u.uDelay2!.value = Math.max(0, num2('ssDelay2', n(params, 'ssDelay')))
+    u.uBands2!.value = Math.max(0, Math.round(num2('ssBands2', n(params, 'ssBands'))))
+    u.uBandSpeed2!.value = Math.max(0, Math.round(num2('ssBandSpeed2', n(params, 'ssBandSpeed'))))
+    u.uSpeedMode2!.value = String(params.ssSpeedMode2 ?? params.ssSpeedMode) === 'progressive' ? 1 : 0
+    u.uEase2!.value = Math.min(1, Math.max(0, num2('ssEase2', n(params, 'ssEase'))))
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
   },
