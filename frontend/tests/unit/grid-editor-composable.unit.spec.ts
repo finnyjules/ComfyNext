@@ -416,6 +416,22 @@ describe('useGridEditor', () => {
     expect(t.sections[0].region).toEqual({ col: 4, colSpan: 40, row: 40, rowSpan: 20 })   // base untouched
   })
 
+  it('setWorkingFormats rebuilds outputs from the chosen formats + sets master', () => {
+    const ed = useGridEditor(fixture())   // formats: 1x1, 728x90, 970x250
+    ed.setWorkingFormats(['728x90', '970x250'])
+    expect(ed.outputs.value.map(o => o.format)).toEqual(['728x90', '970x250'])
+    expect(ed.template.value.master).toBe('728x90')        // no 1x1 chosen → first
+    expect(ed.currentFormat.value).toBe('728x90')
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('setWorkingFormats prefers 1x1 as master when chosen, and ignores unknown formats', () => {
+    const ed = useGridEditor(fixture())
+    ed.setWorkingFormats(['728x90', '1x1', 'nope'])
+    expect(ed.outputs.value.map(o => o.format)).toEqual(['728x90', '1x1'])
+    expect(ed.template.value.master).toBe('1x1')
+  })
+
   it('addSection creates a populated section (converts to v3) and selects it', () => {
     const ed = useGridEditor(fixture())   // v2
     const id = ed.addSection()

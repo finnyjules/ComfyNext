@@ -43,6 +43,15 @@ provide('layerControls', {
 
 const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand } = ctx
 
+// Opening step: a fresh, empty layout shows the format picker first (pick the
+// deliverables, then design on a blank canvas). An existing layout — any
+// elements or sections — skips straight into editing.
+const started = ref(allElements(template.value).length > 0 || ctx.sections.value.length > 0)
+function onFormatsChosen(keys: string[]) {
+  ctx.setWorkingFormats(keys)
+  started.value = true
+}
+
 if (props.initialProps && Object.keys(props.initialProps).length > 0) {
   Object.assign(sampleProps.value, props.initialProps)
 }
@@ -458,7 +467,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       </div>
       <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
         <TemplatesGridEditorCanvas />
-        <TemplatesArchetypeGallery v-if="template.elements.length === 0" />
+        <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
         <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
       </div>
       <div v-if="selectedElement" class="w-[300px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10]">

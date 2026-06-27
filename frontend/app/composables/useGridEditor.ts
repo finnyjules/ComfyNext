@@ -193,6 +193,21 @@ export function useGridEditor(
     dirty.value = true
   }
 
+  /** Set the formats (deliverables) the user is working on — the opening
+   * format-picker choice. Rebuilds `outputs` (one per chosen format), picks a
+   * master (1x1 if chosen, else the first), and points the editor at it.
+   * Unknown keys are ignored; a no-op if none are valid. */
+  function setWorkingFormats(keys: string[]) {
+    const valid = keys.filter(k => k in template.value.formats)
+    if (!valid.length) return
+    const master = valid.includes('1x1') ? '1x1' : valid[0]
+    template.value.master = master
+    template.value.outputs = valid.map(k => ({ id: k, format: k, label: template.value.formats[k]?.label }))
+    currentOutputId.value = template.value.outputs[0]!.id
+    regionScope.value = 'class'
+    dirty.value = true
+  }
+
   /** Replace the working template wholesale (e.g. loading a saved template),
    * keeping the editor pointed at a valid format. */
   function loadTemplate(next: AnyGridTemplate) {
@@ -606,7 +621,7 @@ export function useGridEditor(
     outputs, currentOutput,
     selectedElement, selectedResolved,
     selectOutput, addOutput, duplicateOutput, removeOutput, renameOutput,
-    setFormatDims, setGridSpec, setBrand, setRegion,
+    setFormatDims, setGridSpec, setBrand, setRegion, setWorkingFormats,
     regionScope, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
     isHiddenInOutput, setHiddenInOutput,
     loadTemplate, loadArchetype,
