@@ -3,8 +3,16 @@
  * regions map to pixels — the canvas converts pointer deltas to template
  * space and these helpers do the rest. */
 
-import type { GridMetrics } from './grid'
-import type { Region } from './types'
+import { regionToRect } from './grid'
+import type { GridMetrics, Rect } from './grid'
+import type { Region, SectionV3 } from './types'
+
+/** Pixel rect of a section's box on the given metrics — what the editor draws
+ * as the section frame/handle. The same drag/resize helpers operate on
+ * `section.region` to move/resize the box on the fine grid. */
+export function sectionBoundsOf(section: SectionV3, m: GridMetrics): Rect {
+  return regionToRect(section.region, m)
+}
 
 /** Template-space point → 1-based cell coordinates (clamped). */
 export function pointToCell(x: number, y: number, m: GridMetrics): { col: number; row: number } {
