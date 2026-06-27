@@ -53,6 +53,16 @@ function onFormatsChosen(keys: string[]) {
   started.value = true
 }
 
+// Reserve space for the floating panels so the artboard fits the gap between
+// them (left: formats panel; right: inspector, only when an element is
+// selected; bottom: tool toolbar). The canvas measures this padded box.
+const canvasArea = computed(() => ({
+  top: '24px',
+  left: '272px',                                     // left-4 + w-60 + gap
+  right: selectedElement.value ? '320px' : '32px',   // right-4 + w-72 + gap
+  bottom: '88px',                                    // bottom toolbar + gap
+}))
+
 if (props.initialProps && Object.keys(props.initialProps).length > 0) {
   Object.assign(sampleProps.value, props.initialProps)
 }
@@ -278,7 +288,9 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
 
     <!-- Body: canvas fills; panels float over it; tools in a bottom toolbar. -->
     <div class="flex-1 relative min-h-0 overflow-hidden bg-[#121212]">
-      <TemplatesGridEditorCanvas />
+      <div class="absolute transition-all duration-150" :style="canvasArea">
+        <TemplatesGridEditorCanvas />
+      </div>
       <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
       <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
 
