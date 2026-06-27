@@ -31,18 +31,25 @@ describe('toV3', () => {
     toV3(src)
     expect(src.version).toBe(2)
   })
+  it('remaps element regions from the coarse class grid to the fine grid', () => {
+    const t3 = toV3(v2())
+    // headline col2 colSpan4 row2 rowSpan2 on 6×6 → ×13 on 78×78
+    const headline = t3.elements.find(e => e.id === 'headline')!
+    expect(headline.region).toEqual({ col: 14, colSpan: 52, row: 14, rowSpan: 26 })
+  })
 })
 
 describe('groupIntoSection', () => {
-  it('moves members into a new section bounded by their regions', () => {
+  it('moves members into a new section bounded by their (fine-remapped) regions', () => {
     const t3 = groupIntoSection(toV3(v2()), ['headline', 'subhead'], 'lockup')
     expect(t3.elements.map(e => e.id)).toEqual(['logo'])   // members removed
     expect(t3.sections).toHaveLength(1)
     const sec = t3.sections[0]!
     expect(sec.name).toBe('lockup')
     expect(sec.children.map(c => c.id)).toEqual(['headline', 'subhead'])
-    // bounding box: cols 2..5, rows 2..5 → col2 colSpan4 row2 rowSpan4
-    expect(sec.region).toEqual({ col: 2, colSpan: 4, row: 2, rowSpan: 4 })
+    // toV3 remaps coarse 6×6 → fine 78×78 (×13): headline col2..5/row2..3 and
+    // subhead col2..5/row5 become the fine bounding box below.
+    expect(sec.region).toEqual({ col: 14, colSpan: 52, row: 14, rowSpan: 52 })
   })
   it('is pure (input untouched)', () => {
     const src = toV3(v2())

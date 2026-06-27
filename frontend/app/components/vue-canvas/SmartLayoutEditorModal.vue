@@ -12,6 +12,7 @@ import type { ComputedRef } from 'vue'
 
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
+import { allElements } from '~~/shared/template-grid/sections'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 
@@ -56,7 +57,12 @@ function makeStarter(): AnyTemplate {
   return makeStarterTemplate(`layout_${Math.random().toString(36).slice(2, 8)}`)
 }
 
-const isV2 = computed(() => (initial.value as any)?.version === 2)
+// The Swiss-grid editor handles both v2 and v3 (sectioned). v1 uses the legacy
+// anchor/offset shell.
+const isGrid = computed(() => {
+  const v = (initial.value as any)?.version
+  return v === 2 || v === 3
+})
 
 /** v2 twin of the Python _autopopulate_elements_v2: one grid-region element
  * per connected layer socket, only when the template has none yet.
@@ -113,8 +119,11 @@ function autopopulateV2(layout: TemplateV2, connected: Record<string, string>) {
 const initial = ref<AnyTemplate | null>(null)
 onMounted(() => {
   const layout = readLayout()
-  if ((layout as any).version === 2) {
-    autopopulateV2(layout as TemplateV2, initialProps.value)
+  const version = (layout as any).version
+  if (version === 2 || version === 3) {
+    // Only seed elements for a genuinely empty template — a v3 with content in
+    // sections (but no ungrouped elements) must not be re-populated.
+    if (!allElements(layout as any).length) autopopulateV2(layout as TemplateV2, initialProps.value)
     initial.value = layout
     jsonDraft.value = JSON.stringify(layout, null, 2)
     return
@@ -390,7 +399,8 @@ const gridShellKey = ref(0)
 /** One-way v1 → v2 conversion. Only persists when the user saves afterwards;
  * closing without saving leaves the node's v1 layout untouched. */
 function convertToGrid() {
-  if (!initial.value || (initial.value as any).version === 2) return
+  const v = (initial.value as any)?.version
+  if (!initial.value || v === 2 || v === 3) return
   const converted = convertV1toV2(initial.value as Template)
   initial.value = converted
   jsonDraft.value = JSON.stringify(converted, null, 2)
@@ -417,8 +427,8 @@ const jsonError = ref('')
 function applyV2Draft(): TemplateV2 | null {
   try {
     const parsed = JSON.parse(jsonDraft.value)
-    if (parsed?.version !== 2 || typeof parsed.formats !== 'object') {
-      jsonError.value = 'Template must have "version": 2 and a "formats" object.'
+    if ((parsed?.version !== 2 && parsed?.version !== 3) || typeof parsed.formats !== 'object') {
+      jsonError.value = 'Template must have "version": 2 or 3 and a "formats" object.'
       return null
     }
     jsonError.value = ''
@@ -462,7 +472,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
     <!-- The v1 editor. EditorShell receives `initial` and mutates its
          own composable state; we re-read on Save via the @save event. -->
     <TemplatesEditorShell
-      v-if="initial && !isV2"
+      v-if="initial && !isGrid"
       :key="nodeId"
       :initial="initial as any"
       :initial-props="initialProps"
@@ -473,7 +483,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
 
     <!-- v1 → v2 conversion affordance -->
     <button
-      v-if="initial && !isV2"
+      v-if="initial && !isGrid"
       class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 h-8 px-3 rounded-full bg-[#96b4ff]/15 hover:bg-[#96b4ff]/25 border border-[#96b4ff]/25 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
       title="One-way conversion to the Swiss grid system (auto-reflow to every ad format). Takes effect when you save."
       @click="convertToGrid"

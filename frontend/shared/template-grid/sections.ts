@@ -2,7 +2,7 @@
  * into named sections. Pure — every function returns a fresh template and never
  * mutates its input. The editor calls these on user actions. */
 
-import { classifyFormat, fineGridDims, remapRegion } from './grid'
+import { classifyFormat, fineGridDims, formatDims, remapRegion } from './grid'
 import type { AnyGridTemplate, ElementV2, Region, SectionV3, TemplateV2, TemplateV3 } from './types'
 import { isV3 } from './types'
 
@@ -36,11 +36,38 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
 }
 
-/** Lift a v2 template to v3: same elements, ungrouped, with an empty sections
- * array. Lossless — re-resolving matches the v2 result. */
+/** Lift a v2 template to v3: elements stay ungrouped, but their master
+ * `region` is remapped from the v2 coarse class grid (e.g. 6×6) to the v3
+ * baseline-derived fine grid (e.g. 78×78) so they keep the same proportions on
+ * the canvas. Coarse per-class tweaks (`regionByClass`) and per-output region
+ * overrides don't translate to the fine grid and are dropped; per-output
+ * `hidden` flags are preserved. v3 re-derives cross-format placement from the
+ * fine grid (and sections), so the stale coarse tweaks would be wrong anyway. */
 export function toV3(t: TemplateV2): TemplateV3 {
   const { version: _v, ...rest } = clone(t)
-  return { version: 3, ...rest, sections: [] }
+  const v3: TemplateV3 = { version: 3, ...rest, sections: [] }
+  const coarse = formatDims(v3.formats[v3.master])
+  const fine = fineGridDims(v3, v3.formats[v3.master])
+  v3.elements = v3.elements.map(el => migrateElementToFine(el, coarse, fine))
+  return v3
+}
+
+/** Remap an element's master region coarse→fine; drop coarse per-class /
+ * per-output region tweaks (keep per-output hidden). */
+function migrateElementToFine(
+  el: ElementV2, coarse: { cols: number; rows: number }, fine: { cols: number; rows: number },
+): ElementV2 {
+  const next: ElementV2 = { ...el, region: remapRegion(el.region, coarse, fine) }
+  delete next.regionByClass
+  if (next.overrides) {
+    const kept: NonNullable<ElementV2['overrides']> = {}
+    for (const [k, ov] of Object.entries(next.overrides)) {
+      if (ov?.hidden != null) kept[k] = { hidden: ov.hidden }
+    }
+    if (Object.keys(kept).length) next.overrides = kept
+    else delete next.overrides
+  }
+  return next
 }
 
 /** Bounding region (1-based, inclusive spans) enclosing every member region. */
