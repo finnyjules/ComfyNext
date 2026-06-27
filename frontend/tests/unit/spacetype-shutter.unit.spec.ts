@@ -19,6 +19,9 @@ describe('shutter effect', () => {
     expect(keys).toContain('stripes')
     expect(keys).toContain('thicknessBottom')
     expect(keys).toContain('thicknessTop')
+    expect(keys).toContain('colorMode')
+    expect(keys).toContain('fill')
+    expect(keys).toContain('rowGap')
   })
 
   it('defaults build without throwing and progress defaults to a full 1', () => {
