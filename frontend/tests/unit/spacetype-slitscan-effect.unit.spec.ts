@@ -32,4 +32,20 @@ describe('slitScanEffect contract', () => {
     expect(SPACE_TYPE_EFFECTS.map(e => e.id)).toContain('slitscan')
     expect(getEffect('slitscan')).toBe(slitScanEffect)
   })
+
+  it('Gradient selector is the FIRST control in the Warp section', () => {
+    const warp = slitScanEffect.controls.filter(c => c.group === 'Warp')
+    expect(warp[0]?.key).toBe('ssMapDir')
+  })
+
+  it('crosshatch exposes a full cross-axis control set, gated to crosshatch via showIf', () => {
+    const byKey = Object.fromEntries(slitScanEffect.controls.map(c => [c.key, c]))
+    for (const k of ['ssDelay2', 'ssBands2', 'ssBandSpeed2', 'ssSpeedMode2', 'ssEase2']) {
+      expect(byKey[k], `missing cross control ${k}`).toBeDefined()
+      expect(byKey[k]!.showIf).toEqual({ key: 'ssMapDir', equals: 'crosshatch' })
+    }
+    // crosshatch must be a Gradient option for the gate to ever open
+    const grad = byKey['ssMapDir'] as { options?: string[] }
+    expect(grad.options).toContain('crosshatch')
+  })
 })

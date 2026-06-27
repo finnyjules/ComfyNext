@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } 
 import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
-import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
+import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
@@ -236,6 +236,16 @@ const openSections = reactive<Record<string, boolean>>(
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => c.group === name) })),
 )
+
+/** A control may declare `showIf` to appear only when another param matches (e.g. a second axis's
+ *  controls that only apply in a 'crosshatch' mode). Reactive via `params`. */
+function controlIsVisible(c: ControlSpec): boolean {
+  if (!c.showIf) return true
+  const v = params[c.showIf.key]
+  if (c.showIf.equals !== undefined) return v === c.showIf.equals
+  if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
+  return true
+}
 
 const gradientStops = reactive<GradientStop[]>([
   { color: '#3b5bff', on: true },
@@ -824,7 +834,7 @@ async function generateVideo() {
           <div class="space-y-3">
             <div
               v-for="c in section.controls" :key="c.key"
-              v-show="!(c.key === 'typeWeight' && !fontIsVariable)"
+              v-show="!(c.key === 'typeWeight' && !fontIsVariable) && controlIsVisible(c)"
               :data-control-key="c.key"
               :class="{ 'rounded-md ring-1 ring-amber-400/30 px-1 -mx-1': vibeMoved.has(c.key) }"
               data-control class="text-xs">

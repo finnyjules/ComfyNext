@@ -26,13 +26,21 @@ const controls: ControlSpec[] = [
   { key: 'typeYScale', label: 'Type size', kind: 'slider', min: 40, max: 320, step: 2, default: 200, group: 'Type' },
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
-  // WARP — the displacement map / time delay.
+  // WARP — the displacement map / time delay. Gradient picks the axis: vertical (→ horizontal slits),
+  // horizontal (→ vertical slits), or crosshatch (BOTH, each axis with its own controls below).
+  { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal', 'crosshatch'], default: 'vertical', group: 'Warp' },
+  // Primary axis (the single axis in vertical/horizontal; the horizontal slits in crosshatch).
   { key: 'ssDelay', label: 'Delay spread', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.5, group: 'Warp' },
   { key: 'ssBands', label: 'Bands', kind: 'slider', min: 0, max: 40, step: 1, default: 10, group: 'Warp' },
   { key: 'ssBandSpeed', label: 'Band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp' },
   { key: 'ssSpeedMode', label: 'Band pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp' },
   { key: 'ssEase', label: 'Speed ease', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1, group: 'Warp' },
-  { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal', 'crosshatch'], default: 'vertical', group: 'Warp' },
+  // Cross axis — only used in crosshatch (the vertical slits). Hidden otherwise.
+  { key: 'ssDelay2', label: 'Cross delay spread', kind: 'slider', min: 0, max: 4, step: 0.05, default: 1.5, group: 'Warp', showIf: { key: 'ssMapDir', equals: 'crosshatch' } },
+  { key: 'ssBands2', label: 'Cross bands', kind: 'slider', min: 0, max: 40, step: 1, default: 10, group: 'Warp', showIf: { key: 'ssMapDir', equals: 'crosshatch' } },
+  { key: 'ssBandSpeed2', label: 'Cross band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp', showIf: { key: 'ssMapDir', equals: 'crosshatch' } },
+  { key: 'ssSpeedMode2', label: 'Cross band pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp', showIf: { key: 'ssMapDir', equals: 'crosshatch' } },
+  { key: 'ssEase2', label: 'Cross speed ease', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1, group: 'Warp', showIf: { key: 'ssMapDir', equals: 'crosshatch' } },
   { key: 'ssBump', label: 'Bumps', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Warp' },
   { key: 'ssBumpFreq', label: 'Bump freq', kind: 'slider', min: 1, max: 10, step: 0.5, default: 3, group: 'Warp' },
   // MOTION — squish-wipe cycles per loop (integer ⇒ seamless). With one text line this is the pulse
@@ -75,18 +83,20 @@ const FRAG = [
   'uniform float uTileX; uniform float uTileY;',                    // clone the word into a columns×rows grid
   'uniform float uTime; uniform float uSpeed; uniform float uDelay; uniform float uMapDir;',
   'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
+  // Cross-axis band controls (crosshatch only): the second, perpendicular slit set.
+  'uniform float uDelay2; uniform float uBands2; uniform float uBandSpeed2; uniform float uSpeedMode2; uniform float uEase2;',
   'const float TAU = 6.2831853;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
-  // The slit field for ONE axis at position `coord`: returns vec2(g = band time-offset 0..1,
-  // extra = per-band added speed). No bands → smooth (g = coord, no extra). Random scrambles the
-  // offset+speed per band; progressive is an ordered/eased offset with one coherent speed.
-  'vec2 bandField(float coord){',
-  '  if (uBands < 2.0) return vec2(coord, 0.0);',
-  '  float band = floor(coord * uBands);',
-  '  float bn = band / max(1.0, uBands - 1.0);',
-  '  float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), uEase);',          // eased band index (smoothstep)
-  '  if (uSpeedMode < 0.5) return vec2(hash(band * 2.3), floor(hash(band * 1.73) * (uBandSpeed + 0.999)));',
-  '  return vec2(bne, uBandSpeed);',                                    // progressive: coherent speed
+  // The slit field for ONE axis at position `coord` with that axis's own band controls: returns
+  // vec2(g = band time-offset 0..1, extra = per-band added speed). No bands → smooth (g = coord, no
+  // extra). Random scrambles offset+speed per band; progressive is an ordered/eased offset, coherent speed.
+  'vec2 bandField(float coord, float bands, float bandSpeed, float speedMode, float ease){',
+  '  if (bands < 2.0) return vec2(coord, 0.0);',
+  '  float band = floor(coord * bands);',
+  '  float bn = band / max(1.0, bands - 1.0);',
+  '  float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), ease);',           // eased band index (smoothstep)
+  '  if (speedMode < 0.5) return vec2(hash(band * 2.3), floor(hash(band * 1.73) * (bandSpeed + 0.999)));',
+  '  return vec2(bne, bandSpeed);',                                     // progressive: coherent speed
   '}',
   // Per-line metric lookup by row index (constant-bounded loop ⇒ valid dynamic access in GLSL ES).
   'float lookupWf(float row){ float v = 1.0; for (int i = 0; i < 16; i++){ if (float(i) == row) v = uWfArr[i]; } return v; }',
@@ -121,20 +131,29 @@ const FRAG = [
   '  return a * 0.2;',
   '}',
   'void main(){',
-  // Slit field per axis (see bandField). Crosshatch combines BOTH axes: average their band offsets
-  // (a 2D grid of delays) and sum their per-band speeds, so horizontal AND vertical slits act at once.
-  // Progressive caps the offset span < 1 cycle so the squish base (period 1) never wraps/aliases.
-  '  float dly = (uSpeedMode < 0.5) ? uDelay : min(uDelay, 0.92);',
-  '  float g; float extra;',
-  '  if (uMapDir < 0.5) { vec2 f = bandField(vUv.y); g = f.x; extra = f.y; }',          // vertical → horizontal slits
-  '  else if (uMapDir < 1.5) { vec2 f = bandField(vUv.x); g = f.x; extra = f.y; }',     // horizontal → vertical slits
-  '  else { vec2 fx = bandField(vUv.x); vec2 fy = bandField(vUv.y); g = (fx.x + fy.x) * 0.5; extra = fx.y + fy.y; }', // crosshatch
+  // Per-axis slit field → a time offset (phase, in cycles) = bandField.g × that axis\'s OWN delay,
+  // plus an added speed. Crosshatch SUMS both axes (a 2D grid of slits) — each with independent
+  // bands/speed/pattern/ease/delay. Progressive caps each axis\'s span so the squish base (period 1)
+  // never wraps; halved in crosshatch so the two progressive offsets still sum under one cycle.
+  '  bool cross = uMapDir > 1.5;',
+  '  float capA = cross ? 0.46 : 0.92;',
+  '  float dlyA = (uSpeedMode < 0.5) ? uDelay : min(uDelay, capA);',
+  '  float dlyB = (uSpeedMode2 < 0.5) ? uDelay2 : min(uDelay2, 0.46);',
+  '  float phase; float extra;',
+  '  if (uMapDir < 0.5) { vec2 f = bandField(vUv.y, uBands, uBandSpeed, uSpeedMode, uEase); phase = f.x * dlyA; extra = f.y; }',      // vertical → horizontal slits
+  '  else if (uMapDir < 1.5) { vec2 f = bandField(vUv.x, uBands, uBandSpeed, uSpeedMode, uEase); phase = f.x * dlyA; extra = f.y; }', // horizontal → vertical slits
+  '  else {',                                                                                                                          // crosshatch: both axes
+  '    vec2 fy = bandField(vUv.y, uBands, uBandSpeed, uSpeedMode, uEase);',                  // primary axis = Y → horizontal slits
+  '    vec2 fx = bandField(vUv.x, uBands2, uBandSpeed2, uSpeedMode2, uEase2);',              // cross axis = X → vertical slits
+  '    phase = fy.x * dlyA + fx.x * dlyB; extra = fy.y + fx.y;',
+  '  }',
   // Multi-line: scale added speed to a multiple of the line count so every band advances a whole
   // number of full passes per loop (word index returns to start ⇒ seamless).
   '  if (uN > 1.5) extra *= uN;',
   '  float spd = uSpeed + extra;',
-  '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
-  '  float tau = uTime * spd - g * dly;',                              // per-pixel TIME offset
+  '  float dlyBump = cross ? (dlyA + dlyB) * 0.5 : dlyA;',
+  '  phase += uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq) * dlyBump;',
+  '  float tau = uTime * spd - phase;',                                // per-pixel TIME offset
   // Clone into a grid: tile the SAMPLE coord (each cell runs a full melt) while the displacement
   // field above stays global, so the slit-scan plays continuously across all clones.
   '  vec2 tuv = vec2(fract(vUv.x * uTileX), fract(vUv.y * uTileY));',
@@ -149,7 +168,7 @@ export const slitScanEffect: SpaceTypeEffect = {
   label: 'Slit Scan',
   controls,
   liveKeys: ['ssDelay', 'ssMapDir', 'ssBump', 'ssBumpFreq', 'ssBands', 'ssBandSpeed', 'ssSpeedMode',
-    'ssEase', 'ssTextCycle', 'ssMotion', 'ssPhase'],
+    'ssEase', 'ssDelay2', 'ssBands2', 'ssBandSpeed2', 'ssSpeedMode2', 'ssEase2', 'ssTextCycle', 'ssMotion', 'ssPhase'],
 
   buildScene(three, params, textTexture, env) {
     const root = new three.Group()
@@ -205,6 +224,7 @@ export const slitScanEffect: SpaceTypeEffect = {
         uTileX: { value: tileX }, uTileY: { value: tileY },
         uTime: { value: 0 }, uSpeed: { value: 2 }, uDelay: { value: 1.5 }, uMapDir: { value: 0 },
         uBump: { value: 0 }, uBumpFreq: { value: 3 }, uBands: { value: 10 }, uBandSpeed: { value: 2 }, uSpeedMode: { value: 0 }, uEase: { value: 1 },
+        uDelay2: { value: 1.5 }, uBands2: { value: 10 }, uBandSpeed2: { value: 2 }, uSpeedMode2: { value: 0 }, uEase2: { value: 1 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,   // dFdx (used for squish anti-alias) is built in under WebGL2
@@ -240,6 +260,12 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uBandSpeed!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed')))
     u.uSpeedMode!.value = String(params.ssSpeedMode) === 'progressive' ? 1 : 0
     u.uEase!.value = Math.min(1, Math.max(0, n(params, 'ssEase')))
+    // Cross axis (crosshatch). Falls back to the primary axis's value if a cross param is absent.
+    u.uDelay2!.value = Math.max(0, n(params, 'ssDelay2'))
+    u.uBands2!.value = Math.max(0, Math.round(n(params, 'ssBands2')))
+    u.uBandSpeed2!.value = Math.max(0, Math.round(n(params, 'ssBandSpeed2')))
+    u.uSpeedMode2!.value = String(params.ssSpeedMode2) === 'progressive' ? 1 : 0
+    u.uEase2!.value = Math.min(1, Math.max(0, n(params, 'ssEase2')))
     ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
     ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
   },

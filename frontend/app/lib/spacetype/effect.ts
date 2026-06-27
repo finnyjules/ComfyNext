@@ -6,8 +6,14 @@ export type Params = Record<string, ParamValue>
 /** Optional metadata any control kind may carry. `hint` is a short semantic
  *  description used by the AI control copilot (and doubles as tooltip text).
  *  `aiEditable` overrides the kind-based default (slider/select/color/font are
- *  editable; text/textList/fillList/path are not). */
-type ControlMeta = { hint?: string; aiEditable?: boolean }
+ *  editable; text/textList/fillList/path are not).
+ *  `showIf` hides the control unless another param matches — used for mode-specific
+ *  controls (e.g. a second axis's controls that only apply in a 'crosshatch' mode). */
+type ControlMeta = {
+  hint?: string
+  aiEditable?: boolean
+  showIf?: { key: string; equals?: ParamValue; notEquals?: ParamValue }
+}
 
 export type ControlSpec = (
   | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; group: string }
