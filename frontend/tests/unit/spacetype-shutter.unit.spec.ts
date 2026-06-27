@@ -16,9 +16,9 @@ describe('shutter effect', () => {
     expect(keys).toContain('progress')
     expect(keys).toContain('copies')
     expect(keys).toContain('spacing')
-    expect(keys).toContain('stripesBottom')
-    expect(keys).toContain('stripesTop')
-    expect(keys).toContain('weight')
+    expect(keys).toContain('stripes')
+    expect(keys).toContain('thicknessBottom')
+    expect(keys).toContain('thicknessTop')
   })
 
   it('defaults build without throwing and progress defaults to a full 1', () => {
