@@ -222,9 +222,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </button>
       </div>
 
-      <div class="flex-1 min-w-0">
-        <TemplatesOutputsRail />
-      </div>
+      <div class="flex-1 min-w-0" />
 
       <div class="relative">
         <button
@@ -438,7 +436,9 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
 
     <!-- Body -->
     <div class="flex-1 flex min-h-0">
-      <div class="w-[240px] shrink-0 border-r border-white/[0.06] bg-[#0e0e10] overflow-y-auto">
+      <div class="w-[240px] shrink-0 border-r border-white/[0.06] bg-[#0e0e10] overflow-y-auto flex flex-col">
+        <TemplatesFormatList />
+        <div class="border-t border-white/[0.06]" />
         <TemplatesLayersPanel />
       </div>
       <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
