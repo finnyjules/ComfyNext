@@ -42,8 +42,9 @@ Today placement snaps to coarse class cells (square 6×6, portrait 4×8, etc. �
 `grid.ts` `CLASS_DEFAULTS`). v3 introduces a **dense, configurable grid** with snapping, so the user
 places elements precisely but never with chaotic free placement ("constrained, not free").
 
-- Default resolution is **baseline-derived** so vertical type rhythm stays intact (open question
-  §8 — baseline-derived vs. fixed unit count; leaning baseline-derived).
+- Resolution is **baseline-derived** (decided) so vertical type rhythm stays intact: the fine grid
+  unit is a function of the template `typeScale` baseline rather than a fixed count, so snapping and
+  type rhythm share one source of truth across formats.
 - Regions remain the existing `{ col, colSpan, row, rowSpan }` shape, just expressed in fine units
   instead of coarse cells. The resolver already converts region → pixels via `gridMetrics()`; this
   is primarily a metrics change plus new snapping helpers.
@@ -132,8 +133,8 @@ Prove the core loop end-to-end, nothing more:
 
 ## 8. Open questions / risks
 
-- **Fine-grid resolution default:** baseline-derived (keeps type rhythm) vs. fixed unit count.
-  Leaning baseline-derived. Resolve in the plan.
+- ~~**Fine-grid resolution default:**~~ **Decided: baseline-derived** — fine-grid unit is a
+  function of the `typeScale` baseline, so snapping and type rhythm share one source of truth.
 - **Type scaling inside proportional sections:** font sizes scaling with the box can get awkward;
   may need clamping against the `typeScale`. Refinement, not a blocker for slice 1.
 - **Archetypes:** keep-but-demote in v3 (chosen) vs. cut now. Kept as optional quick-starts; remix
