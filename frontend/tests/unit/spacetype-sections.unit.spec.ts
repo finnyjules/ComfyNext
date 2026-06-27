@@ -13,6 +13,10 @@ describe('every effect control group is renderable by SpaceTypeSurface', () => {
     expect(allowed.size).toBe(SPACE_TYPE_SECTIONS.length)
   })
 
+  it('includes the Slice section (used by the shutter effect)', () => {
+    expect(allowed.has('Slice')).toBe(true)
+  })
+
   for (const effect of SPACE_TYPE_EFFECTS) {
     it(`${effect.id}: all control groups are in SPACE_TYPE_SECTIONS`, () => {
       for (const c of effect.controls) {

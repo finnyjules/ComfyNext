@@ -8,8 +8,8 @@
  */
 export const SPACE_TYPE_SECTIONS = [
   'Path', 'Type', 'Stack', 'Occlusion', 'Look', 'Blend', 'Style', 'Layout', 'Stretch', 'Skew',
-  'Warp', 'Ribbon', 'Spiral', 'Layers', 'Color', 'Stroke', 'Glitch', 'Doodles', 'Shadow', 'Wave',
-  'Motion', 'Transform', 'Output',
+  'Warp', 'Ribbon', 'Spiral', 'Slice', 'Layers', 'Color', 'Stroke', 'Glitch', 'Doodles', 'Shadow',
+  'Wave', 'Motion', 'Transform', 'Output',
 ] as const
 
 export type SpaceTypeSection = typeof SPACE_TYPE_SECTIONS[number]
