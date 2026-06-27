@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { useGridEditor } from '~/composables/useGridEditor'
-import type { TemplateV2 } from '~~/shared/template-grid/types'
+import { isV3 } from '~~/shared/template-grid/types'
+import type { TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
 
 function fixture(): TemplateV2 {
   return {
@@ -357,5 +358,76 @@ describe('useGridEditor', () => {
     ed.undo()
     expect(ed.template.value.elements.some(e => e.id === newId)).toBe(false)
     expect(ed.selectedId.value).toBeNull()
+  })
+
+  // -- v3 sections -----------------------------------------------------------
+
+  function v3Fixture(): TemplateV3 {
+    return {
+      version: 3, id: 't3', name: 't3', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 }, '9x16': { w: 1080, h: 1920 } },
+      grid: { gutter: 24, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [],
+      sections: [
+        { id: 'sec1', name: 'lockup',
+          region: { col: 4, colSpan: 40, row: 40, rowSpan: 20 },
+          children: [
+            { id: 'h', type: 'text', content: 'Hi', level: 'display', priority: 1,
+              region: { col: 4, colSpan: 40, row: 40, rowSpan: 10 } },
+          ] },
+      ],
+    }
+  }
+
+  it('exposes v3 mode + sections; v2 reports none', () => {
+    expect(useGridEditor(v3Fixture()).isV3Mode.value).toBe(true)
+    const v2 = useGridEditor(fixture())
+    expect(v2.isV3Mode.value).toBe(false)
+    expect(v2.sections.value).toEqual([])
+    expect(useGridEditor(v3Fixture()).sections.value).toHaveLength(1)
+  })
+
+  it('resolvedSections gives each section a box rect for the current format', () => {
+    const ed = useGridEditor(v3Fixture())
+    const rs = ed.resolvedSections.value
+    expect(rs).toHaveLength(1)
+    expect(rs[0].section.id).toBe('sec1')
+    expect(rs[0].rect.w).toBeGreaterThan(0)
+    expect(rs[0].rect.h).toBeGreaterThan(0)
+  })
+
+  it('setSectionRegion writes the base region on the master', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.setSectionRegion('sec1', { col: 1, colSpan: 30, row: 1, rowSpan: 15 })
+    const t = ed.template.value as TemplateV3
+    expect(t.sections[0].region).toEqual({ col: 1, colSpan: 30, row: 1, rowSpan: 15 })
+    expect(t.sections[0].regionByClass).toBeUndefined()
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('setSectionRegion on a non-master output writes regionByClass for its class', () => {
+    const ed = useGridEditor(v3Fixture(), { aspects: '1x1,9x16' })
+    ed.selectOutput(ed.outputs.value.find(o => o.format === '9x16')!.id)
+    expect(ed.formatClass.value).toBe('portrait')
+    ed.setSectionRegion('sec1', { col: 1, colSpan: 30, row: 1, rowSpan: 80 })
+    const t = ed.template.value as TemplateV3
+    expect(t.sections[0].regionByClass).toEqual({ portrait: { col: 1, colSpan: 30, row: 1, rowSpan: 80 } })
+    expect(t.sections[0].region).toEqual({ col: 4, colSpan: 40, row: 40, rowSpan: 20 })   // base untouched
+  })
+
+  it('convertToV3 lifts a v2 template, group/ungroup move elements in and out', () => {
+    const ed = useGridEditor(fixture())     // v2: headline + subhead
+    ed.convertToV3()
+    expect(isV3(ed.template.value)).toBe(true)
+    expect(ed.sections.value).toEqual([])
+    ed.groupSelectedInto('lockup', ['headline', 'subhead'])
+    expect(ed.sections.value).toHaveLength(1)
+    expect(ed.template.value.elements.map(e => e.id)).toEqual([])
+    const secId = ed.sections.value[0].id
+    expect(ed.selectedSectionId.value).toBe(secId)
+    ed.ungroupSelectedSection()
+    expect(ed.sections.value).toEqual([])
+    expect(ed.template.value.elements.map(e => e.id).sort()).toEqual(['headline', 'subhead'])
   })
 })

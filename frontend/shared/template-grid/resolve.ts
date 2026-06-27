@@ -11,6 +11,7 @@ import { defaultClassRegion } from './layouts'
 import type { Slot } from './layouts'
 import { fitText, typeSize, wrapLines } from './text'
 import type { FitResult } from './text'
+import { sectionRegionFor } from './sections'
 import { resolveTokens } from './tokens'
 import type { TokenScope } from './tokens'
 import type {
@@ -170,14 +171,9 @@ export function resolveFormat(
   // child's master-grid rect is projected proportionally into that box.
   if (isV3(template)) {
     const masterMetrics = gridMetrics(template, template.master)
-    const masterFine = fineGridDims(template, template.formats[template.master])
-    const targetFine = { cols: m.cols, rows: m.rows }
     for (const section of template.sections) {
       const sectionHidden = section.hidden || section.overrides?.[oid]?.hidden
-      const sectionRegion =
-        section.overrides?.[oid]?.region
-        ?? section.regionByClass?.[cls]
-        ?? remapRegion(section.region, masterFine, targetFine)
+      const sectionRegion = sectionRegionFor(template, section, formatKey, oid)
       const sectionRectTarget = regionToRect(sectionRegion, m)
       const sectionRectMaster = regionToRect(section.region, masterMetrics)
       for (const child of section.children) {

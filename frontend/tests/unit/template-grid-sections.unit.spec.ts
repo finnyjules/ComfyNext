@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveFormat } from '~~/shared/template-grid/resolve'
-import type { TemplateV3 } from '~~/shared/template-grid/types'
+import { sectionRegionFor } from '~~/shared/template-grid/sections'
+import type { SectionV3, TemplateV3 } from '~~/shared/template-grid/types'
 
 // A v3 template: one "headline lockup" section (top-left quadrant of the fine
 // grid) holding a headline child that fills the section's top band.
@@ -74,6 +75,23 @@ describe('resolveFormat — v3 sections', () => {
     const sq = resolveFormat(fixture(), '1x1', { text_layer_1: 'Brew bold' })
       .elements.find(e => e.el.id === 'headline')!
     expect(child.rect.h).toBeGreaterThan(sq.rect.h)
+  })
+
+  it('sectionRegionFor mirrors resolver precedence (override > class > remap)', () => {
+    const t = fixture()
+    const section: SectionV3 = {
+      id: 's', name: 's',
+      region: { col: 1, colSpan: 40, row: 1, rowSpan: 40 },
+      regionByClass: { portrait: { col: 2, colSpan: 30, row: 2, rowSpan: 60 } },
+      overrides: { out9: { region: { col: 5, colSpan: 10, row: 5, rowSpan: 10 } } },
+      children: [],
+    }
+    // master: base region as-is
+    expect(sectionRegionFor(t, section, '1x1')).toEqual({ col: 1, colSpan: 40, row: 1, rowSpan: 40 })
+    // portrait class without an output override → regionByClass.portrait
+    expect(sectionRegionFor(t, section, '9x16')).toEqual({ col: 2, colSpan: 30, row: 2, rowSpan: 60 })
+    // explicit output override wins
+    expect(sectionRegionFor(t, section, '9x16', 'out9')).toEqual({ col: 5, colSpan: 10, row: 5, rowSpan: 10 })
   })
 
   it('ungrouped elements in a v3 template still resolve (v2 path)', () => {

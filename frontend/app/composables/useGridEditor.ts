@@ -13,11 +13,17 @@ import { computed, ref, watch, type Ref } from 'vue'
 
 import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
 import type { BrandKit } from '~~/shared/brand/types'
-import { applyArchetype, classifyFormat, formatDims, gridMetrics, resolveFormat } from '~~/shared/template-grid'
+import { applyArchetype, classifyFormat, formatDims, gridMetrics, regionToRect, resolveFormat } from '~~/shared/template-grid'
+import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
+import {
+  groupIntoSection, sectionRegionFor, toV3, ungroupSection,
+} from '~~/shared/template-grid/sections'
+import { isV3 } from '~~/shared/template-grid/types'
 import type {
-  ElementV2, ImageElementV2, OutputSpec, Region, ShapeElementV2, TemplateV2, TextElementV2,
+  AnyGridTemplate, ElementV2, ImageElementV2, OutputSpec, Region, SectionV3,
+  ShapeElementV2, TemplateV2, TemplateV3, TextElementV2,
 } from '~~/shared/template-grid/types'
 
 const WORST_CASE_COPY
@@ -37,9 +43,10 @@ export function useGridEditor(
   // assume outputs exist.
   if (!initial.outputs?.length) initial.outputs = deriveOutputs(initial, opts?.aspects)
 
-  const template = ref<TemplateV2>(initial)
+  const template = ref<AnyGridTemplate>(initial)
   const currentOutputId = ref<string>(initial.outputs[0]?.id ?? initial.master)
   const selectedId = ref<string | null>(null)
+  const selectedSectionId = ref<string | null>(null)
   const dirty = ref(false)
   const sampleProps = ref<Record<string, unknown>>({})
   const sampleBrand = ref<Record<string, unknown>>({})
@@ -188,7 +195,7 @@ export function useGridEditor(
 
   /** Replace the working template wholesale (e.g. loading a saved template),
    * keeping the editor pointed at a valid format. */
-  function loadTemplate(next: TemplateV2) {
+  function loadTemplate(next: AnyGridTemplate) {
     template.value = JSON.parse(JSON.stringify(next))
     if (!template.value.formats[currentFormat.value]) {
       currentFormat.value = template.value.master in template.value.formats
@@ -427,6 +434,82 @@ export function useGridEditor(
     moveElementTo(id, dir === 'up' ? idx + 1 : idx - 1)
   }
 
+  // -- v3 sections ------------------------------------------------------------
+  // Sections are first-class draggable boxes in v3. Children ride their box
+  // proportionally (resolved by the shared resolver), so section edits are the
+  // only new interaction; all v2 element ops above keep working on
+  // template.elements (ungrouped elements), which exists in both versions.
+
+  const isV3Mode = computed(() => isV3(template.value))
+  const sections = computed<SectionV3[]>(() => isV3(template.value) ? template.value.sections : [])
+  const selectedSection = computed<SectionV3 | null>(() =>
+    sections.value.find(s => s.id === selectedSectionId.value) ?? null)
+
+  function sectionById(id: string): SectionV3 | undefined {
+    return isV3(template.value) ? template.value.sections.find(s => s.id === id) : undefined
+  }
+
+  /** One box rect per section for the current format — what the canvas draws as
+   * the section frame. Mirrors the resolver, so frame and render agree. */
+  const resolvedSections = computed<Array<{ section: SectionV3; region: Region; rect: Rect; hidden: boolean }>>(() =>
+    sections.value.map((s) => {
+      const region = sectionRegionFor(template.value, s, currentFormat.value, currentOutputId.value)
+      return {
+        section: s,
+        region,
+        rect: regionToRect(region, metrics.value),
+        hidden: s.hidden === true || s.overrides?.[currentOutputId.value]?.hidden === true,
+      }
+    }))
+
+  /** Move/resize a section box. Scope mirrors setRegion: 'output' writes
+   * overrides[oid], else master writes section.region and a non-master format
+   * writes regionByClass[class]. */
+  function setSectionRegion(id: string, region: Region) {
+    const s = sectionById(id)
+    if (!s) return
+    if (regionScope.value === 'output') {
+      s.overrides = { ...s.overrides, [currentOutputId.value]: { ...s.overrides?.[currentOutputId.value], region } }
+    } else if (isMaster.value) {
+      s.region = region
+    } else {
+      s.regionByClass = { ...s.regionByClass, [formatClass.value]: region }
+    }
+    dirty.value = true
+  }
+
+  /** Lift the working template to v3 (elements stay ungrouped) so sections can
+   * be created. No-op if already v3. */
+  function convertToV3() {
+    if (isV3(template.value)) return
+    template.value = toV3(template.value as TemplateV2)
+    dirty.value = true
+  }
+
+  /** Group the given elements (default: the current selection) into a new named
+   * section, converting to v3 first if needed. Selects the new section. */
+  function groupSelectedInto(name: string, ids?: string[]) {
+    const targetIds = ids ?? (selectedId.value ? [selectedId.value] : [])
+    if (!targetIds.length) return
+    if (!isV3(template.value)) template.value = toV3(template.value as TemplateV2)
+    const before = new Set((template.value as TemplateV3).sections.map(s => s.id))
+    template.value = groupIntoSection(template.value as TemplateV3, targetIds, name)
+    const created = (template.value as TemplateV3).sections.find(s => !before.has(s.id))
+    selectedId.value = null
+    selectedSectionId.value = created?.id ?? null
+    dirty.value = true
+  }
+
+  /** Ungroup the selected section (or a given id): its children return to
+   * ungrouped elements and the section is removed. */
+  function ungroupSelectedSection(id?: string) {
+    const sid = id ?? selectedSectionId.value
+    if (!sid || !isV3(template.value)) return
+    template.value = ungroupSection(template.value as TemplateV3, sid)
+    if (selectedSectionId.value === sid) selectedSectionId.value = null
+    dirty.value = true
+  }
+
   // -- Undo / redo ------------------------------------------------------------
   // History holds JSON snapshots of `template`. `cursor` points at the entry
   // matching the last *committed* state; the live template may have drifted
@@ -459,13 +542,17 @@ export function useGridEditor(
   }
 
   function restore(snap: string) {
-    const parsed = JSON.parse(snap) as TemplateV2
+    const parsed = JSON.parse(snap) as AnyGridTemplate
     template.value = parsed
     if (!parsed.outputs?.some(o => o.id === currentOutputId.value)) {
       currentOutputId.value = parsed.outputs?.[0]?.id ?? parsed.master
     }
     if (selectedId.value && !parsed.elements.some(e => e.id === selectedId.value)) {
       selectedId.value = null
+    }
+    if (selectedSectionId.value && isV3(parsed)
+      && !parsed.sections.some(s => s.id === selectedSectionId.value)) {
+      selectedSectionId.value = null
     }
   }
 
@@ -501,6 +588,8 @@ export function useGridEditor(
     addText, addImage, addShape, removeElement, moveElement, moveElementTo,
     toggleHidden, toggleLocked, isHidden, isLocked,
     duplicateElement, nudgeSelected,
+    isV3Mode, sections, selectedSectionId, selectedSection, resolvedSections,
+    setSectionRegion, convertToV3, groupSelectedInto, ungroupSelectedSection,
     commitNow, undo, redo, canUndo, canRedo,
   }
 }

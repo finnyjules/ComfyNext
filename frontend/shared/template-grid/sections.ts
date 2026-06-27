@@ -2,8 +2,26 @@
  * into named sections. Pure — every function returns a fresh template and never
  * mutates its input. The editor calls these on user actions. */
 
+import { classifyFormat, fineGridDims, remapRegion } from './grid'
 import type { AnyGridTemplate, ElementV2, Region, SectionV3, TemplateV2, TemplateV3 } from './types'
 import { isV3 } from './types'
+
+/** The section box region for a target format/output, mirroring the resolver's
+ * precedence: per-output override > per-class region > master region remapped
+ * to the target fine grid. The single source of truth for both the resolver
+ * and the editor (so the canvas section box matches the render). */
+export function sectionRegionFor(
+  template: AnyGridTemplate, section: SectionV3, formatKey: string, outputId?: string,
+): Region {
+  const f = template.formats[formatKey]
+  const cls = classifyFormat(f)
+  const oid = outputId ?? formatKey
+  const masterFine = fineGridDims(template, template.formats[template.master])
+  const targetFine = fineGridDims(template, f)
+  return section.overrides?.[oid]?.region
+    ?? section.regionByClass?.[cls]
+    ?? remapRegion(section.region, masterFine, targetFine)
+}
 
 /** Every element a template renders: ungrouped top-level elements plus every
  * section child. Use wherever code needs to walk all content (fonts, tokens). */
@@ -12,11 +30,17 @@ export function allElements(t: AnyGridTemplate): ElementV2[] {
   return [...t.elements, ...t.sections.flatMap(s => s.children)]
 }
 
+// JSON clone, not structuredClone — these templates are plain JSON and the
+// editor passes Vue reactive proxies (which structuredClone can't clone).
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T
+}
+
 /** Lift a v2 template to v3: same elements, ungrouped, with an empty sections
  * array. Lossless — re-resolving matches the v2 result. */
 export function toV3(t: TemplateV2): TemplateV3 {
-  const { version: _v, ...rest } = t
-  return { version: 3, ...structuredClone(rest), sections: [] }
+  const { version: _v, ...rest } = clone(t)
+  return { version: 3, ...rest, sections: [] }
 }
 
 /** Bounding region (1-based, inclusive spans) enclosing every member region. */
@@ -45,7 +69,7 @@ export function groupIntoSection(t: TemplateV3, elementIds: string[], name: stri
   const members: ElementV2[] = []
   for (const id of elementIds) {
     const el = t.elements.find(e => e.id === id)
-    if (el) members.push(structuredClone(el))
+    if (el) members.push(clone(el))
   }
   if (!members.length) return t
   const section: SectionV3 = {
@@ -55,9 +79,9 @@ export function groupIntoSection(t: TemplateV3, elementIds: string[], name: stri
     children: members,
   }
   return {
-    ...structuredClone(t),
-    elements: t.elements.filter(e => !ids.has(e.id)).map(e => structuredClone(e)),
-    sections: [...t.sections.map(s => structuredClone(s)), section],
+    ...clone(t),
+    elements: t.elements.filter(e => !ids.has(e.id)).map(e => clone(e)),
+    sections: [...t.sections.map(s => clone(s)), section],
   }
 }
 
@@ -67,11 +91,11 @@ export function ungroupSection(t: TemplateV3, sectionId: string): TemplateV3 {
   const section = t.sections.find(s => s.id === sectionId)
   if (!section) return t
   return {
-    ...structuredClone(t),
+    ...clone(t),
     elements: [
-      ...t.elements.map(e => structuredClone(e)),
-      ...section.children.map(c => structuredClone(c)),
+      ...t.elements.map(e => clone(e)),
+      ...section.children.map(c => clone(c)),
     ],
-    sections: t.sections.filter(s => s.id !== sectionId).map(s => structuredClone(s)),
+    sections: t.sections.filter(s => s.id !== sectionId).map(s => clone(s)),
   }
 }
