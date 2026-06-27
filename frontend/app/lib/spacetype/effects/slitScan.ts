@@ -128,7 +128,10 @@ const FRAG = [
   // (delay 0,0.5,1.0,1.5 → fract 0,0.5,0,0.5 → looks alternating, not progressive). Cap the
   // progressive span just under one cycle so the offsets stay monotonic 0→0.92, no wrap.
   '      dly = min(uDelay, 0.92);',
-  '      extra = floor(bne * uBandSpeed + 0.5);',                       // …eased progressive speed
+  // Progressive must stay ORDERED: every band shares ONE speed so they march in lock-step and the
+  // progression comes purely from the phase ramp g·dly. A per-band speed (as in random) would put
+  // neighbouring bands at different points of the hard squish cycle → blocky, non-progressive churn.
+  '      extra = uBandSpeed;',                                          // global coherent speed (not per-band)
   '    }',
   // With multiple lines, scale the per-band speed to a multiple of the line count so every band still
   // advances by a whole number of full passes per loop (word index returns to start ⇒ seamless).
