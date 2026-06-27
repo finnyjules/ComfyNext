@@ -454,7 +454,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
   >
     <!-- Scaled wrapper; inner div is template coordinate space. -->
     <div
-      class="relative shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
+      class="relative shrink-0 shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
       :style="{
         width: format.w + 'px',
         height: format.h + 'px',
