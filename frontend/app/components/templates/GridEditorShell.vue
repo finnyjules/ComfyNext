@@ -294,8 +294,11 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
       <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
 
-      <!-- Left floating panel: formats + elements -->
-      <div class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <!-- Left floating panel: formats + elements (only once designing) -->
+      <div
+        v-if="started"
+        class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden"
+      >
         <div class="flex-1 min-h-0 overflow-y-auto">
           <TemplatesFormatList />
           <div class="border-t border-white/[0.06]" />
@@ -313,8 +316,11 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </div>
       </div>
 
-      <!-- Bottom toolbar: view toggles + insert tools (Frame pattern) -->
-      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+      <!-- Bottom toolbar: view toggles + insert tools (only once designing) -->
+      <div
+        v-if="started"
+        class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg"
+      >
         <!-- Grid -->
         <div class="relative">
           <button
