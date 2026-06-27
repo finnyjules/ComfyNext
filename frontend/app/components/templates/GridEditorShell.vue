@@ -209,7 +209,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
     <div class="shrink-0 h-14 pl-4 pr-12 border-b border-white/[0.06] flex items-center gap-3">
       <input
         :value="template.name"
-        class="w-40 h-8 px-2 bg-transparent border border-transparent hover:border-white/[0.06] focus:border-[#96b4ff]/50 rounded text-[13px] text-white font-medium focus:outline-none"
+        class="w-40 h-8 px-2 bg-transparent border border-transparent hover:border-white/[0.06] focus:border-white/30 rounded text-[13px] text-white font-medium focus:outline-none"
         @change="(e: any) => { template.name = e.target.value; dirty = true }"
       >
 
@@ -260,12 +260,12 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
             <input
               v-model="saveAsName"
               placeholder="Template name"
-              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
               @keydown.enter="confirmSaveAs"
             >
             <div class="flex items-center gap-2 mt-2">
               <button
-                class="px-3 h-7 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer disabled:opacity-40"
+                class="px-3 h-7 rounded-md bg-white/10 hover:bg-white/20 text-[12px] text-white transition-colors cursor-pointer disabled:opacity-40"
                 :disabled="!saveAsName.trim() || saveAsState === 'saving'"
                 @click="confirmSaveAs"
               >
@@ -277,7 +277,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
           </div>
         </div>
         <button
-          class="h-8 px-3 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 flex items-center gap-1.5 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
+          class="h-8 px-3 rounded-md bg-white hover:bg-white/90 flex items-center gap-1.5 text-[12px] text-black transition-colors cursor-pointer"
           @click="handleSave"
         >
           <Save class="size-3.5" /> Save & close

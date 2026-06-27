@@ -72,22 +72,22 @@ function start() {
             :key="c.key"
             class="relative rounded-xl border bg-[#0e0e10] p-4 flex flex-col items-center gap-3 transition-colors cursor-pointer"
             :class="selected.has(c.key)
-              ? 'border-emerald-400/70 bg-emerald-400/[0.06]'
+              ? 'border-white/40 bg-white/[0.06]'
               : 'border-white/[0.08] hover:border-white/25'"
             @click="toggle(c.key)"
           >
             <!-- selected check -->
             <div
               class="absolute top-2.5 right-2.5 size-4 rounded-full flex items-center justify-center text-[10px] transition-colors"
-              :class="selected.has(c.key) ? 'bg-emerald-400 text-[#06281d]' : 'bg-white/10 text-transparent'"
+              :class="selected.has(c.key) ? 'bg-white text-black' : 'bg-white/10 text-transparent'"
             >✓</div>
             <div class="h-[96px] flex items-center justify-center">
               <div
                 class="rounded-sm"
                 :style="{
                   width: c.w + 'px', height: c.h + 'px',
-                  background: selected.has(c.key) ? 'rgba(52,211,153,0.25)' : 'rgba(255,255,255,0.07)',
-                  outline: selected.has(c.key) ? '1px solid rgba(52,211,153,0.6)' : '1px solid rgba(255,255,255,0.12)',
+                  background: selected.has(c.key) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.07)',
+                  outline: selected.has(c.key) ? '1px solid rgba(255,255,255,0.5)' : '1px solid rgba(255,255,255,0.12)',
                 }"
               />
             </div>
@@ -109,7 +109,7 @@ function start() {
           {{ count }} format{{ count === 1 ? '' : 's' }} selected
         </span>
         <button
-          class="h-9 px-4 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-[13px] font-medium text-[#06281d] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          class="h-9 px-4 rounded-lg bg-white hover:bg-white/90 text-[13px] font-medium text-black transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
           :disabled="!count"
           @click="start"
         >
