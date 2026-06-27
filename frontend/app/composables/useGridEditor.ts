@@ -102,6 +102,25 @@ export function useGridEditor(
     return template.value.elements.find(e => e.id === id)
   }
 
+  // -- Canvas zoom (shared: the canvas feeds container size + reads scale; the
+  // shell renders the zoom toolbar). --------------------------------------
+  const containerSize = ref({ w: 0, h: 0 })
+  function setContainerSize(w: number, h: number) { containerSize.value = { w, h } }
+  const zoomOverride = ref<number | null>(null)
+  const fitScale = computed(() => {
+    const f = format.value
+    if (!containerSize.value.w || !containerSize.value.h || !f) return 1
+    const padding = 64
+    return Math.min((containerSize.value.w - padding) / f.w, (containerSize.value.h - padding) / f.h, 1)
+  })
+  const scale = computed(() => zoomOverride.value ?? fitScale.value)
+  const isZoomFitted = computed(() => zoomOverride.value === null)
+  function zoomBy(factor: number) {
+    zoomOverride.value = Math.min(4, Math.max(0.05, (zoomOverride.value ?? fitScale.value) * factor))
+  }
+  function zoomFit() { zoomOverride.value = null }
+  watch(currentFormat, () => { zoomOverride.value = null })   // reset to fit on format switch
+
   // -- Outputs (chosen deliverables) -----------------------------------------
 
   function selectOutput(id: string) {
@@ -635,6 +654,7 @@ export function useGridEditor(
     selectedElement, selectedResolved,
     selectOutput, addOutput, duplicateOutput, removeOutput, renameOutput,
     setFormatDims, setGridSpec, setBrand, setRegion, setWorkingFormats,
+    containerSize, setContainerSize, scale, fitScale, zoomOverride, isZoomFitted, zoomBy, zoomFit,
     regionScope, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
     isHiddenInOutput, setHiddenInOutput,
     loadTemplate, loadArchetype,

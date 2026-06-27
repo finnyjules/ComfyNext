@@ -316,11 +316,9 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </div>
       </div>
 
-      <!-- Bottom toolbar: view toggles + insert tools (only once designing) -->
-      <div
-        v-if="started"
-        class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg"
-      >
+      <!-- Bottom toolbars: tools + zoom (only once designing) -->
+      <div v-if="started" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+        <div class="flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <!-- Grid -->
         <div class="relative">
           <button
@@ -487,6 +485,28 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         >
           <Square class="size-3.5" /> Shape
         </button>
+        </div>
+
+        <!-- Zoom -->
+        <div class="flex items-center gap-0.5 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+          <button
+            class="size-8 rounded-md flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer text-base leading-none"
+            title="Zoom out"
+            @click="ctx.zoomBy(1 / 1.2)"
+          >−</button>
+          <button
+            class="px-2 h-8 rounded-md flex items-center justify-center text-[11px] tabular-nums text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer min-w-[3rem]"
+            :title="ctx.isZoomFitted.value ? 'Fitted to view' : 'Click to fit to view'"
+            @click="ctx.zoomFit()"
+          >
+            {{ Math.round(ctx.scale.value * 100) }}%
+          </button>
+          <button
+            class="size-8 rounded-md flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer text-base leading-none"
+            title="Zoom in"
+            @click="ctx.zoomBy(1.2)"
+          >+</button>
+        </div>
       </div>
     </div>
   </div>

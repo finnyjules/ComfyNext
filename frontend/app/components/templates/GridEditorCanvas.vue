@@ -16,6 +16,7 @@ const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion, patchElement,
   isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
+  scale, zoomBy, setContainerSize,
 } = ctx
 
 // -- Render-true preview ------------------------------------------------------
@@ -66,12 +67,13 @@ onBeforeUnmount(() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl) 
 // -- Container sizing (same model as the v1 canvas) -------------------------
 
 const containerRef = ref<HTMLDivElement | null>(null)
-const containerSize = ref({ w: 0, h: 0 })
 
+// Feed the container size to the composable, which owns the shared zoom scale
+// (the zoom toolbar lives in the shell).
 function measure() {
   if (!containerRef.value) return
   const r = containerRef.value.getBoundingClientRect()
-  containerSize.value = { w: r.width, h: r.height }
+  setContainerSize(r.width, r.height)
 }
 
 onMounted(() => {
@@ -85,25 +87,6 @@ onMounted(() => {
     onUnmounted(() => window.removeEventListener('resize', measure))
   }
 })
-
-// Fit-to-container scale. `zoomOverride` (null = follow fit) lets the user
-// zoom in past fit; switching format resets to fit.
-const fitScale = computed(() => {
-  if (!containerSize.value.w || !containerSize.value.h) return 1
-  const padding = 64
-  const sw = (containerSize.value.w - padding) / format.value.w
-  const sh = (containerSize.value.h - padding) / format.value.h
-  return Math.min(sw, sh, 1)
-})
-const zoomOverride = ref<number | null>(null)
-const scale = computed(() => zoomOverride.value ?? fitScale.value)
-
-watch(() => ctx.currentFormat.value, () => { zoomOverride.value = null })
-
-function zoomBy(factor: number) {
-  zoomOverride.value = Math.min(4, Math.max(0.05, (zoomOverride.value ?? fitScale.value) * factor))
-}
-function zoomFit() { zoomOverride.value = null }
 
 function onWheel(e: WheelEvent) {
   if (!e.ctrlKey && !e.metaKey) return   // plain scroll left alone
@@ -627,31 +610,5 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       </button>
     </div>
 
-    <!-- Bottom-right: preview toggle + zoom controls + readout -->
-    <div class="absolute bottom-3 right-3 flex items-center gap-2">
-      <button
-        class="h-7 px-2.5 rounded flex items-center gap-1.5 text-[11px] backdrop-blur-sm transition-colors cursor-pointer"
-        :class="previewMode ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-black/50 text-white/60 hover:text-white'"
-        :title="previewMode ? 'Editing view' : 'Preview the actual rendered output for this format'"
-        @click="togglePreview"
-      >
-        {{ previewLoading ? 'Rendering…' : previewMode ? 'Editing' : 'Preview' }}
-      </button>
-      <div class="flex items-center gap-0.5 bg-black/50 rounded backdrop-blur-sm p-0.5">
-        <button class="size-6 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white cursor-pointer text-sm leading-none" title="Zoom out" @click="zoomBy(1 / 1.2)">−</button>
-        <button
-          class="px-1.5 h-6 rounded hover:bg-white/10 flex items-center justify-center text-[10px] hover:text-white cursor-pointer tabular-nums min-w-[3.5rem]"
-          :class="zoomOverride === null ? 'text-white/60' : 'text-[#c9d6ff]'"
-          :title="zoomOverride === null ? 'Fitted to view' : 'Click to fit to view'"
-          @click="zoomFit"
-        >
-          {{ Math.round(scale * 100) }}%
-        </button>
-        <button class="size-6 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white cursor-pointer text-sm leading-none" title="Zoom in" @click="zoomBy(1.2)">+</button>
-      </div>
-      <div class="text-[10px] text-white/40 tabular-nums bg-black/40 px-2 py-1 rounded backdrop-blur-sm">
-        {{ format.w }} × {{ format.h }} · {{ formatClass }} · {{ metrics.cols }}×{{ metrics.rows }} grid
-      </div>
-    </div>
   </div>
 </template>
