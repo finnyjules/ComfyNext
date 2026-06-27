@@ -224,164 +224,6 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
 
       <div class="flex-1 min-w-0" />
 
-      <div class="relative">
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="gridPanelOpen ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
-          title="Grid settings — columns, rows, gutter, margin"
-          @click="gridPanelOpen = !gridPanelOpen"
-        >
-          <Grid3x3 class="size-4" />
-          Grid
-        </button>
-        <div
-          v-if="gridPanelOpen"
-          class="absolute top-10 left-0 z-20 w-64 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
-        >
-          <div>
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
-              {{ currentFormat }} grid <span class="text-white/25 normal-case tracking-normal">· {{ formatClass }} default {{ classDefaultDims.cols }}×{{ classDefaultDims.rows }}</span>
-            </p>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-1.5">
-                <span class="text-[11px] text-white/40 w-8">Cols</span>
-                <input
-                  type="number" min="1" max="24" :value="format.cols ?? ''" :placeholder="String(classDefaultDims.cols)"
-                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
-                  @change="(e: any) => onDims('cols', e.target.value)"
-                >
-              </label>
-              <label class="flex items-center gap-1.5">
-                <span class="text-[11px] text-white/40 w-8">Rows</span>
-                <input
-                  type="number" min="1" max="24" :value="format.rows ?? ''" :placeholder="String(classDefaultDims.rows)"
-                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
-                  @change="(e: any) => onDims('rows', e.target.value)"
-                >
-              </label>
-            </div>
-            <button
-              v-if="format.cols != null || format.rows != null"
-              class="mt-1.5 text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
-              @click="ctx.setFormatDims(currentFormat, { cols: undefined, rows: undefined })"
-            >
-              Reset to class default
-            </button>
-            <p class="mt-1 text-[10px] text-white/30 leading-snug">
-              Applies to this format only. Clear a field to go back to automatic.
-            </p>
-          </div>
-          <div>
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Spacing <span class="text-white/25 normal-case tracking-normal">· master px, scales per format</span></p>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-1.5">
-                <span class="text-[11px] text-white/40 w-11">Gutter</span>
-                <input
-                  type="number" min="0" :value="template.grid.gutter"
-                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
-                  @change="(e: any) => onGrid('gutter', e.target.value)"
-                >
-              </label>
-              <label class="flex items-center gap-1.5">
-                <span class="text-[11px] text-white/40 w-11">Margin</span>
-                <input
-                  type="number" min="0" :value="template.grid.margin"
-                  class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
-                  @change="(e: any) => onGrid('margin', e.target.value)"
-                >
-              </label>
-            </div>
-            <p class="mt-1 text-[10px] text-white/30 leading-snug tabular-nums">
-              Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="relative">
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="brandPanelOpen ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
-          title="Brand kit — colours, fonts and logo bound across every format"
-          @click="brandPanelOpen = !brandPanelOpen"
-        >
-          <Palette class="size-4" />
-          Brand
-        </button>
-        <div
-          v-if="brandPanelOpen"
-          class="absolute top-10 right-0 z-20 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
-        >
-          <div v-if="activeKit" class="text-[10px] text-white/40 px-1">
-            Project kit overrides these template defaults.
-          </div>
-          <div>
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-2">Brand colours</p>
-            <div class="flex flex-col gap-1.5">
-              <label v-for="k in COLOR_KEYS" :key="k" class="flex items-center gap-2">
-                <input
-                  type="color" :value="brandVal(k) || '#888888'"
-                  class="size-6 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
-                  @input="(e: any) => ctx.setBrand({ [k]: e.target.value })"
-                >
-                <span class="text-[11px] text-white/55 w-20">{{ COLOR_LABELS[k] }}</span>
-                <input
-                  :value="brandVal(k)" placeholder="unset"
-                  class="flex-1 h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50 font-mono"
-                  @change="(e: any) => ctx.setBrand({ [k]: e.target.value })"
-                >
-              </label>
-            </div>
-          </div>
-          <div>
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Brand fonts</p>
-            <div class="flex flex-col gap-1.5">
-              <div>
-                <span class="text-[10px] text-white/40">Display</span>
-                <TemplatesFontPicker :model-value="brandVal('fontDisplay') || 'Inter'" @update:model-value="(f) => setBrandFont('fontDisplay', f)" />
-              </div>
-              <div>
-                <span class="text-[10px] text-white/40">Body</span>
-                <TemplatesFontPicker :model-value="brandVal('fontBody') || 'Inter'" @update:model-value="(f) => setBrandFont('fontBody', f)" />
-              </div>
-            </div>
-          </div>
-          <div>
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Logo URL</p>
-            <input
-              :value="brandVal('logo')" placeholder="https://…  (bind on an image element)"
-              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50"
-              @change="(e: any) => ctx.setBrand({ logo: e.target.value })"
-            >
-          </div>
-          <p class="text-[10px] text-white/30 leading-snug">
-            Bind an element's colour/font to a brand slot in its properties — swap the kit here and every format re-skins.
-          </p>
-        </div>
-      </div>
-
-      <button
-        class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-        :class="worstCase ? 'bg-amber-500/15 text-amber-200' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
-        title="Preview with worst-case copy length — stress-test shrinking and truncation"
-        @click="worstCase = !worstCase"
-      >
-        <CaseSensitive class="size-4" />
-        Long copy
-      </button>
-
-      <div class="flex items-center gap-1">
-        <button class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer" @click="ctx.addText()">
-          <TypeIcon class="size-3.5" /> Text
-        </button>
-        <button class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer" @click="ctx.addImage()">
-          <ImagePlus class="size-3.5" /> Image
-        </button>
-        <button class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer" @click="ctx.addShape()">
-          <Square class="size-3.5" /> Shape
-        </button>
-      </div>
-
       <div class="flex items-center gap-2">
         <span v-if="dirty" class="size-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
         <button
@@ -434,20 +276,199 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       </div>
     </div>
 
-    <!-- Body -->
-    <div class="flex-1 flex min-h-0">
-      <div class="w-[240px] shrink-0 border-r border-white/[0.06] bg-[#0e0e10] overflow-y-auto flex flex-col">
-        <TemplatesFormatList />
-        <div class="border-t border-white/[0.06]" />
-        <TemplatesLayersPanel />
+    <!-- Body: canvas fills; panels float over it; tools in a bottom toolbar. -->
+    <div class="flex-1 relative min-h-0 overflow-hidden bg-[#121212]">
+      <TemplatesGridEditorCanvas />
+      <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
+      <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
+
+      <!-- Left floating panel: formats + elements -->
+      <div class="absolute top-4 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+        <div class="flex-1 min-h-0 overflow-y-auto">
+          <TemplatesFormatList />
+          <div class="border-t border-white/[0.06]" />
+          <TemplatesLayersPanel />
+        </div>
       </div>
-      <div class="flex-1 min-w-0 relative overflow-hidden bg-[#121212]">
-        <TemplatesGridEditorCanvas />
-        <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
-        <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
+
+      <!-- Right floating panel: inspector -->
+      <div
+        v-if="selectedElement"
+        class="absolute top-4 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden"
+      >
+        <div class="flex-1 min-h-0 overflow-y-auto">
+          <TemplatesGridPropertyPanel />
+        </div>
       </div>
-      <div v-if="selectedElement" class="w-[300px] shrink-0 border-l border-white/[0.06] bg-[#0e0e10]">
-        <TemplatesGridPropertyPanel />
+
+      <!-- Bottom toolbar: view toggles + insert tools (Frame pattern) -->
+      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+        <!-- Grid -->
+        <div class="relative">
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+            :class="gridPanelOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+            title="Grid settings — columns, rows, gutter, margin"
+            @click="gridPanelOpen = !gridPanelOpen"
+          >
+            <Grid3x3 class="size-4" /> Grid
+          </button>
+          <div
+            v-if="gridPanelOpen"
+            class="absolute bottom-full mb-2 left-0 z-30 w-64 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
+          >
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
+                {{ currentFormat }} grid <span class="text-white/25 normal-case tracking-normal">· {{ formatClass }} default {{ classDefaultDims.cols }}×{{ classDefaultDims.rows }}</span>
+              </p>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-white/40 w-8">Cols</span>
+                  <input
+                    type="number" min="1" max="24" :value="format.cols ?? ''" :placeholder="String(classDefaultDims.cols)"
+                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
+                    @change="(e: any) => onDims('cols', e.target.value)"
+                  >
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-white/40 w-8">Rows</span>
+                  <input
+                    type="number" min="1" max="24" :value="format.rows ?? ''" :placeholder="String(classDefaultDims.rows)"
+                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
+                    @change="(e: any) => onDims('rows', e.target.value)"
+                  >
+                </label>
+              </div>
+              <button
+                v-if="format.cols != null || format.rows != null"
+                class="mt-1.5 text-[11px] text-white/60 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+                @click="ctx.setFormatDims(currentFormat, { cols: undefined, rows: undefined })"
+              >
+                Reset to class default
+              </button>
+              <p class="mt-1 text-[10px] text-white/30 leading-snug">
+                Applies to this format only. Clear a field to go back to automatic.
+              </p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Spacing <span class="text-white/25 normal-case tracking-normal">· master px, scales per format</span></p>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-white/40 w-11">Gutter</span>
+                  <input
+                    type="number" min="0" :value="template.grid.gutter"
+                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
+                    @change="(e: any) => onGrid('gutter', e.target.value)"
+                  >
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-white/40 w-11">Margin</span>
+                  <input
+                    type="number" min="0" :value="template.grid.margin"
+                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
+                    @change="(e: any) => onGrid('margin', e.target.value)"
+                  >
+                </label>
+              </div>
+              <p class="mt-1 text-[10px] text-white/30 leading-snug tabular-nums">
+                Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Brand -->
+        <div class="relative">
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+            :class="brandPanelOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+            title="Brand kit — colours, fonts and logo bound across every format"
+            @click="brandPanelOpen = !brandPanelOpen"
+          >
+            <Palette class="size-4" /> Brand
+          </button>
+          <div
+            v-if="brandPanelOpen"
+            class="absolute bottom-full mb-2 left-0 z-30 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
+          >
+            <div v-if="activeKit" class="text-[10px] text-white/40 px-1">
+              Project kit overrides these template defaults.
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-2">Brand colours</p>
+              <div class="flex flex-col gap-1.5">
+                <label v-for="k in COLOR_KEYS" :key="k" class="flex items-center gap-2">
+                  <input
+                    type="color" :value="brandVal(k) || '#888888'"
+                    class="size-6 shrink-0 rounded border border-white/[0.06] bg-transparent cursor-pointer"
+                    @input="(e: any) => ctx.setBrand({ [k]: e.target.value })"
+                  >
+                  <span class="text-[11px] text-white/55 w-20">{{ COLOR_LABELS[k] }}</span>
+                  <input
+                    :value="brandVal(k)" placeholder="unset"
+                    class="flex-1 h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-white/30 font-mono"
+                    @change="(e: any) => ctx.setBrand({ [k]: e.target.value })"
+                  >
+                </label>
+              </div>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Brand fonts</p>
+              <div class="flex flex-col gap-1.5">
+                <div>
+                  <span class="text-[10px] text-white/40">Display</span>
+                  <TemplatesFontPicker :model-value="brandVal('fontDisplay') || 'Inter'" @update:model-value="(f) => setBrandFont('fontDisplay', f)" />
+                </div>
+                <div>
+                  <span class="text-[10px] text-white/40">Body</span>
+                  <TemplatesFontPicker :model-value="brandVal('fontBody') || 'Inter'" @update:model-value="(f) => setBrandFont('fontBody', f)" />
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Logo URL</p>
+              <input
+                :value="brandVal('logo')" placeholder="https://…  (bind on an image element)"
+                class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-white/30"
+                @change="(e: any) => ctx.setBrand({ logo: e.target.value })"
+              >
+            </div>
+            <p class="text-[10px] text-white/30 leading-snug">
+              Bind an element's colour/font to a brand slot in its properties — swap the kit here and every format re-skins.
+            </p>
+          </div>
+        </div>
+
+        <!-- Long copy -->
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="worstCase ? 'bg-amber-500/15 text-amber-200' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+          title="Preview with worst-case copy length — stress-test shrinking and truncation"
+          @click="worstCase = !worstCase"
+        >
+          <CaseSensitive class="size-4" /> Long copy
+        </button>
+
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+          @click="ctx.addText()"
+        >
+          <TypeIcon class="size-3.5" /> Text
+        </button>
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+          @click="ctx.addImage()"
+        >
+          <ImagePlus class="size-3.5" /> Image
+        </button>
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+          @click="ctx.addShape()"
+        >
+          <Square class="size-3.5" /> Shape
+        </button>
       </div>
     </div>
   </div>
