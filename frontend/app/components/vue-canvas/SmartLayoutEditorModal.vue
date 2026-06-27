@@ -459,7 +459,8 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-sm flex">
+  <div class="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-6">
+    <div class="relative w-full max-w-[1440px] h-[88vh] flex rounded-2xl border border-white/10 bg-[#0e0e10] overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.6)]">
     <!-- Close button — Escape also works -->
     <button
       class="absolute top-3 right-3 z-10 size-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
@@ -559,6 +560,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
           <span v-if="jsonError" class="text-[11px] text-red-400 truncate">{{ jsonError }}</span>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>
