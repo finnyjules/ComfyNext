@@ -325,6 +325,19 @@ export function useGridEditor(
     return Math.max(0, ...template.value.elements.map(e => e.priority)) + 1
   }
 
+  /** A default placement region sized as a fraction of the master grid, so new
+   * elements land sensibly whether the grid is coarse (v2) or fine (v3). Each
+   * add nudges down-right a little so successive adds don't stack exactly. */
+  function defaultRegion(fracW: number, fracH: number): Region {
+    const mf = fineGridDims(template.value, template.value.formats[template.value.master])
+    const colSpan = Math.max(1, Math.round(mf.cols * fracW))
+    const rowSpan = Math.max(1, Math.round(mf.rows * fracH))
+    const stagger = template.value.elements.length % 6
+    const col = Math.min(mf.cols - colSpan + 1, Math.max(1, Math.round(mf.cols * 0.1) + stagger * Math.round(mf.cols * 0.04)))
+    const row = Math.min(mf.rows - rowSpan + 1, Math.max(1, Math.round(mf.rows * 0.1) + stagger * Math.round(mf.rows * 0.04)))
+    return { col, colSpan, row, rowSpan }
+  }
+
   function addElement(el: ElementV2) {
     template.value.elements.push(el)
     selectedId.value = el.id
@@ -335,7 +348,7 @@ export function useGridEditor(
     addElement({
       id: uid('text'), type: 'text', priority: nextPriority(),
       level: 'body', content: 'New text',
-      region: { col: 1, colSpan: 3, row: 1, rowSpan: 1 },
+      region: defaultRegion(0.5, 0.1),
       style: { color: '#ffffff' },
     } satisfies TextElementV2)
   }
@@ -344,7 +357,7 @@ export function useGridEditor(
     addElement({
       id: uid('image'), type: 'image', priority: nextPriority(),
       content: '',
-      region: { col: 2, colSpan: 4, row: 2, rowSpan: 4 },
+      region: defaultRegion(0.5, 0.5),
       style: { fit: 'cover' },
     } satisfies ImageElementV2)
   }
@@ -353,7 +366,7 @@ export function useGridEditor(
     addElement({
       id: uid('shape'), type: 'shape', priority: nextPriority(),
       shape: 'rect',
-      region: { col: 1, colSpan: 2, row: 1, rowSpan: 2 },
+      region: defaultRegion(0.25, 0.25),
       style: { fill: '#96b4ff55' },
     } satisfies ShapeElementV2)
   }

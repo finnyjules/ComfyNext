@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Download, Grid3x3, Group, ImagePlus, Palette, Redo2, Save, Square, SquareDashed, Type as TypeIcon, Ungroup, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -49,6 +49,7 @@ const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sa
 const started = ref(allElements(template.value).length > 0 || ctx.sections.value.length > 0)
 function onFormatsChosen(keys: string[]) {
   ctx.setWorkingFormats(keys)
+  ctx.convertToV3()   // design on the fine grid from the start
   started.value = true
 }
 
@@ -380,31 +381,6 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </button>
         <button class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer" @click="ctx.addShape()">
           <Square class="size-3.5" /> Shape
-        </button>
-        <span class="w-px h-5 bg-white/10 mx-0.5" />
-        <!-- v3 sections -->
-        <button
-          class="h-8 px-2.5 rounded-md bg-emerald-400/10 hover:bg-emerald-400/20 flex items-center gap-1.5 text-[12px] text-emerald-200/90 transition-colors cursor-pointer"
-          title="Add a section — a box on the fine grid that holds elements and adapts as a unit across formats"
-          @click="ctx.addSection()"
-        >
-          <SquareDashed class="size-3.5" /> Section
-        </button>
-        <button
-          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer disabled:opacity-30"
-          :title="ctx.selectedId.value ? 'Group the selected element into a section' : 'Select an element first to group it into a section'"
-          :disabled="!ctx.selectedId.value"
-          @click="ctx.groupSelectedInto('Section')"
-        >
-          <Group class="size-3.5" /> Group
-        </button>
-        <button
-          v-if="ctx.selectedSectionId.value"
-          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] flex items-center gap-1.5 text-[12px] text-white/70 transition-colors cursor-pointer"
-          title="Ungroup the selected section"
-          @click="ctx.ungroupSelectedSection()"
-        >
-          <Ungroup class="size-3.5" /> Ungroup
         </button>
       </div>
 

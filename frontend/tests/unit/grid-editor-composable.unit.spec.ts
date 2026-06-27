@@ -432,6 +432,17 @@ describe('useGridEditor', () => {
     expect(ed.template.value.master).toBe('1x1')
   })
 
+  it('addText lands a sensibly-sized, in-bounds region on a fine (v3) grid', () => {
+    const ed = useGridEditor(v3Fixture())   // fine grid (~78 cols for 1080/12)
+    ed.addText()
+    const el = ed.template.value.elements.at(-1)!
+    const m = ed.metrics.value
+    // ~half width on the fine grid (not the old coarse colSpan:3)
+    expect(el.region.colSpan).toBeGreaterThan(m.cols * 0.3)
+    expect(el.region.col + el.region.colSpan - 1).toBeLessThanOrEqual(m.cols)
+    expect(el.region.row + el.region.rowSpan - 1).toBeLessThanOrEqual(m.rows)
+  })
+
   it('addSection creates a populated section (converts to v3) and selects it', () => {
     const ed = useGridEditor(fixture())   // v2
     const id = ed.addSection()
