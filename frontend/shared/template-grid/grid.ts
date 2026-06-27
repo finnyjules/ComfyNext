@@ -2,7 +2,8 @@
  * resolution, and proportional remapping. Pure functions — the single source
  * of truth for both the renderer and the editor. */
 
-import type { FormatClass, FormatSpec, Region, TemplateV2 } from './types'
+import type { AnyGridTemplate, FormatClass, FormatSpec, Region, TemplateV2 } from './types'
+import { isV3 } from './types'
 
 export const CLASS_DEFAULTS: Record<FormatClass, { cols: number; rows: number; typeMultiplier: number }> = {
   skyscraper: { cols: 3,  rows: 10, typeMultiplier: 2 },
@@ -33,6 +34,23 @@ export function formatDims(f: FormatSpec): { cols: number; rows: number } {
   return { cols: f.cols ?? d.cols, rows: f.rows ?? d.rows }
 }
 
+/** Grid dimensions for a format. v2 → coarse class cells (formatDims). v3 →
+ * a baseline-derived FINE grid: one fine unit ≈ `grid.baseline` master px, so
+ * snapping and vertical type rhythm share one source of truth. Explicit
+ * `f.cols`/`f.rows` still win. The margin used is the unscaled master margin so
+ * every format derives proportionally (remapRegion bridges differing dims). */
+export function fineGridDims(template: AnyGridTemplate, f: FormatSpec): { cols: number; rows: number } {
+  if (!isV3(template)) return formatDims(f)
+  const baseline = Math.max(1, template.grid.baseline)
+  const margin = template.grid.margin
+  const innerW = Math.max(baseline, f.w - 2 * margin)
+  const innerH = Math.max(baseline, f.h - 2 * margin)
+  return {
+    cols: f.cols ?? Math.max(1, Math.round(innerW / baseline)),
+    rows: f.rows ?? Math.max(1, Math.round(innerH / baseline)),
+  }
+}
+
 export interface Rect { x: number; y: number; w: number; h: number }
 
 export interface GridMetrics {
@@ -45,20 +63,22 @@ export interface GridMetrics {
 
 /** Metric scale factor relative to the master format: min-dimension ratio, so
  * width-bound text stays stable across portrait/landscape flips. */
-export function metricScale(template: TemplateV2, f: FormatSpec): number {
+export function metricScale(template: AnyGridTemplate, f: FormatSpec): number {
   const master = template.formats[template.master]
   return Math.min(f.w, f.h) / Math.min(master.w, master.h)
 }
 
-export function gridMetrics(template: TemplateV2, formatKey: string): GridMetrics {
+export function gridMetrics(template: AnyGridTemplate, formatKey: string): GridMetrics {
   const f = template.formats[formatKey]
   if (!f) throw new Error(`Unknown format '${formatKey}' on template '${template.id}'`)
   const s = metricScale(template, f)
-  const gutter = Math.max(MIN_GUTTER, template.grid.gutter * s)
+  // v3 fine grid is a positioning lattice (cell ≈ baseline), so it carries no
+  // inter-cell gutter; v2 keeps its coarse gutter'd columns.
+  const gutter = isV3(template) ? 0 : Math.max(MIN_GUTTER, template.grid.gutter * s)
   const margin = Math.max(MIN_MARGIN, template.grid.margin * s)
   const baseline = Math.max(1, template.grid.baseline * s)
   const safe = { top: 0, right: 0, bottom: 0, left: 0, ...(f.safeArea ?? {}) }
-  const { cols, rows } = formatDims(f)
+  const { cols, rows } = fineGridDims(template, f)
   // Clamp so degenerate safe areas/margins can't push cells non-positive.
   const innerW = Math.max(cols, f.w - safe.left - safe.right - 2 * margin)
   const innerH = Math.max(rows, f.h - safe.top - safe.bottom - 2 * margin)
