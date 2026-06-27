@@ -22,6 +22,7 @@ import { turntableEffect } from './turntable'
 import { tearEffect } from './tear'
 import { slitScanEffect } from './slitScan'
 import { cornerPinEffect } from './cornerPin'
+import { shutterEffect } from './shutter'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -48,6 +49,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   tearEffect,
   slitScanEffect,
   cornerPinEffect,
+  shutterEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
