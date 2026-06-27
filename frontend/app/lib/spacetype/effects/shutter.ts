@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
 
 /**
@@ -14,7 +14,8 @@ import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
  *
  * Multi-string: a newline-separated `text` stacks into a centred poster, each line getting its own
  * shutter treatment (shared settings). Colour: `colorMode` is mono (one colour), palette (each copy
- * fades between two colours — the trailing speed lines change hue) or fill (a studio pattern fill).
+ * fades between two colours — the trailing speed lines change hue) or fill (ONE fill PER COPY from
+ * the fill list, bottom-of-pile → top — each row a solid colour or a studio pattern).
  *
  * `progress` (0 = intact word, 1 = fully fanned/sliced) drives both the horizontal spread and the
  * stripe gaps, so at 0 every copy collapses back to one solid word. Motion uses the scene-sequenced
@@ -27,7 +28,8 @@ import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
 const MX = 1.5
 const MY = 1.15
 
-const FILL_DEFAULT = serializeFills([{ ...DEFAULT_FILL, type: 'gradient', a: '#ff4d2e', b: '#101010' }])
+// One fill per copy (bottom of pile → top). Each can be a solid colour or a studio pattern.
+const FILL_DEFAULT = serializeFills(['#ff4d2e', '#f4a300', '#10b981', '#0a0a0a'].map(c => ({ ...DEFAULT_FILL, a: c })))
 
 const controls: ControlSpec[] = [
   // TYPE.
@@ -64,11 +66,13 @@ const controls: ControlSpec[] = [
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
   { key: 'rotateZ', label: 'Rotate', kind: 'slider', min: -3.14, max: 3.14, step: 0.01, default: 0, group: 'Transform' },
   // COLOR.
-  { key: 'colorMode', label: 'Color mode', kind: 'select', options: ['mono', 'palette', 'fill'], default: 'mono', group: 'Color' },
+  { key: 'colorMode', label: 'Color mode', kind: 'select', options: ['mono', 'palette', 'fill'], default: 'mono', group: 'Color',
+    hint: 'mono = one colour; palette = two-colour fade across copies; fill = one fill per copy from the list' },
   { key: 'textColor', label: 'Text (mono)', kind: 'color', default: '#000000', group: 'Color' },
   { key: 'paletteA', label: 'Palette · trailing', kind: 'color', default: '#10b981', group: 'Color' },
   { key: 'paletteB', label: 'Palette · front', kind: 'color', default: '#0a0a0a', group: 'Color' },
-  { key: 'fill', label: 'Pattern fill', kind: 'fillList', default: FILL_DEFAULT, group: 'Color' },
+  { key: 'fill', label: 'Fills (one per copy)', kind: 'fillList', default: FILL_DEFAULT, group: 'Color',
+    hint: 'fill mode: row 1 = bottom copy (trailing) … last row = top copy (front); wraps if fewer rows than copies' },
   { key: 'bgColor', label: 'Background', kind: 'color', default: '#ffffff', group: 'Color' },
 ]
 
@@ -102,7 +106,7 @@ const FRAG = [
   'uniform float uCopies; uniform float uSpacing; uniform float uStripes;',
   'uniform float uThickA; uniform float uThickB; uniform float uProgress;',
   'uniform float uColorMode; uniform vec3 uTextColor; uniform vec3 uPalA; uniform vec3 uPalB;',
-  'uniform sampler2D uFill; uniform float uFillTiling;',
+  'uniform sampler2D uFill; uniform float uFillCount; uniform float uFillTiling;',
   SRGB_TO_LINEAR_GLSL,
   // Centre this word's glyphs in the plane (roomy in x for the nudge, tight in y so lines stack close).
   'float inkA(vec2 p){',
@@ -120,11 +124,14 @@ const FRAG = [
   '  float m = 1.0 - smoothstep(duty - 0.02, duty + 0.02, s);',        // 1 in stripe, 0 in gap
   '  return w * m;',
   '}',
-  // Colour for copy k (t = 0 bottom .. 1 top): one colour, a two-colour palette fade, or a fill pattern.
-  'vec3 copyColor(float t, vec2 uv){',
+  // Colour for copy k of kf (t = 0 bottom .. 1 top): one colour, a two-colour palette fade, or this
+  // copy\'s own fill from the per-copy fill atlas (band = k, wrapping if fewer fills than copies).
+  'vec3 copyColor(float t, float kf, vec2 uv){',
   '  if (uColorMode < 0.5) return uTextColor;',
   '  if (uColorMode < 1.5) return mix(uPalA, uPalB, t);',
-  '  return stLin(texture2D(uFill, uv * uFillTiling).rgb);',
+  '  float band = mod(kf, uFillCount);',
+  '  vec2 fuv = vec2(fract(uv.x * uFillTiling), (band + clamp(uv.y, 0.0, 1.0)) / uFillCount);',
+  '  return stLin(texture2D(uFill, fuv).rgb);',
   '}',
   'const int MAX_LAYERS = ' + MAX_LAYERS + ';',
   'void main(){',
@@ -138,7 +145,7 @@ const FRAG = [
   '    float dx = (float(k) - (uCopies - 1.0) * 0.5) * uSpacing * uProgress;',
   '    float duty = mix(1.0, mix(uThickA, uThickB, t), uProgress);',
   '    float ink = stripeCopy(vUv, dx, duty);',
-  '    col = mix(col, copyColor(t, vUv), ink);',
+  '    col = mix(col, copyColor(t, float(k), vUv), ink);',
   '  }',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
   '}',
@@ -170,10 +177,10 @@ export const shutterEffect: SpaceTypeEffect = {
     const inkVH = Math.max(0.02, Number(ud.inkHeightFrac ?? 0.6))
     const inkVMid0 = Number(ud.inkVMid ?? 0.5)
 
-    // The shared pattern-fill texture (solid -> 1×1 swatch); cached singleton, not disposed by engine.
-    const fill = parseFills(params.fill)[0]!
-    const fillTex = fillShaderTexture(three, fill)
-    const fillTile = fillTiling(fill)
+    // Per-copy fill atlas (one band per fill row); cached singleton, not disposed by the engine.
+    const fills = parseFills(params.fill)
+    const fillTex = fillAtlasTexture(three, fills)
+    const fillCount = Math.max(1, fills.length)
 
     // Per-word ink aspect (width / height), used for plane sizing.
     const aspects: number[] = []
@@ -219,7 +226,7 @@ export const shutterEffect: SpaceTypeEffect = {
           uTextColor: { value: new three.Color(String(params.textColor)) },
           uPalA: { value: new three.Color(String(params.paletteA)) },
           uPalB: { value: new three.Color(String(params.paletteB)) },
-          uFill: { value: fillTex }, uFillTiling: { value: fillTile },
+          uFill: { value: fillTex }, uFillCount: { value: fillCount }, uFillTiling: { value: 1 },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
