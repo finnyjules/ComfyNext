@@ -32,7 +32,7 @@ const controls: ControlSpec[] = [
   { key: 'ssBandSpeed', label: 'Band speed', kind: 'slider', min: 0, max: 6, step: 1, default: 2, group: 'Warp' },
   { key: 'ssSpeedMode', label: 'Band pattern', kind: 'select', options: ['random', 'progressive'], default: 'random', group: 'Warp' },
   { key: 'ssEase', label: 'Speed ease', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1, group: 'Warp' },
-  { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal'], default: 'vertical', group: 'Warp' },
+  { key: 'ssMapDir', label: 'Gradient', kind: 'select', options: ['vertical', 'horizontal', 'crosshatch'], default: 'vertical', group: 'Warp' },
   { key: 'ssBump', label: 'Bumps', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0, group: 'Warp' },
   { key: 'ssBumpFreq', label: 'Bump freq', kind: 'slider', min: 1, max: 10, step: 0.5, default: 3, group: 'Warp' },
   // MOTION — squish-wipe cycles per loop (integer ⇒ seamless). With one text line this is the pulse
@@ -77,6 +77,17 @@ const FRAG = [
   'uniform float uBump; uniform float uBumpFreq; uniform float uBands; uniform float uBandSpeed; uniform float uSpeedMode; uniform float uEase;',
   'const float TAU = 6.2831853;',
   'float hash(float n){ return fract(sin(n * 12.9898) * 43758.5453); }',
+  // The slit field for ONE axis at position `coord`: returns vec2(g = band time-offset 0..1,
+  // extra = per-band added speed). No bands → smooth (g = coord, no extra). Random scrambles the
+  // offset+speed per band; progressive is an ordered/eased offset with one coherent speed.
+  'vec2 bandField(float coord){',
+  '  if (uBands < 2.0) return vec2(coord, 0.0);',
+  '  float band = floor(coord * uBands);',
+  '  float bn = band / max(1.0, uBands - 1.0);',
+  '  float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), uEase);',          // eased band index (smoothstep)
+  '  if (uSpeedMode < 0.5) return vec2(hash(band * 2.3), floor(hash(band * 1.73) * (uBandSpeed + 0.999)));',
+  '  return vec2(bne, uBandSpeed);',                                    // progressive: coherent speed
+  '}',
   // Per-line metric lookup by row index (constant-bounded loop ⇒ valid dynamic access in GLSL ES).
   'float lookupWf(float row){ float v = 1.0; for (int i = 0; i < 16; i++){ if (float(i) == row) v = uWfArr[i]; } return v; }',
   'float lookupHS(float row){ float v = 1.0; for (int i = 0; i < 16; i++){ if (float(i) == row) v = uHSArr[i]; } return v; }',
@@ -110,34 +121,18 @@ const FRAG = [
   '  return a * 0.2;',
   '}',
   'void main(){',
-  '  float coord = (uMapDir < 0.5) ? vUv.y : vUv.x;',                   // gradient axis
-  '  float g = coord;',
-  '  float spd = uSpeed;',
-  '  float dly = uDelay;',                                             // band-offset span (cycles)
-  '  if (uBands >= 2.0) {',                                             // quantise into N bands…
-  '    float band = floor(coord * uBands);',
-  '    float bn = band / max(1.0, uBands - 1.0);',                      // 0..1 band index
-  '    float bne = mix(bn, bn * bn * (3.0 - 2.0 * bn), uEase);',        // eased index (smoothstep)
-  '    float extra;',                                                   // …each its own integer speed:
-  '    if (uSpeedMode < 0.5) {',
-  '      g = hash(band * 2.3);',                                        // random: SCRAMBLED band offset (differs even at Band speed 0)
-  '      extra = floor(hash(band * 1.73) * (uBandSpeed + 0.999));',     // …random speed
-  '    } else {',
-  '      g = bne;',                                                     // progressive: ordered/eased band offset
-  // The squish base repeats every 1.0 cycle, so a span ≥ 1 wraps and adjacent bands ALIAS
-  // (delay 0,0.5,1.0,1.5 → fract 0,0.5,0,0.5 → looks alternating, not progressive). Cap the
-  // progressive span just under one cycle so the offsets stay monotonic 0→0.92, no wrap.
-  '      dly = min(uDelay, 0.92);',
-  // Progressive must stay ORDERED: every band shares ONE speed so they march in lock-step and the
-  // progression comes purely from the phase ramp g·dly. A per-band speed (as in random) would put
-  // neighbouring bands at different points of the hard squish cycle → blocky, non-progressive churn.
-  '      extra = uBandSpeed;',                                          // global coherent speed (not per-band)
-  '    }',
-  // With multiple lines, scale the per-band speed to a multiple of the line count so every band still
-  // advances by a whole number of full passes per loop (word index returns to start ⇒ seamless).
-  '    if (uN > 1.5) extra *= uN;',
-  '    spd = uSpeed + extra;',
-  '  }',
+  // Slit field per axis (see bandField). Crosshatch combines BOTH axes: average their band offsets
+  // (a 2D grid of delays) and sum their per-band speeds, so horizontal AND vertical slits act at once.
+  // Progressive caps the offset span < 1 cycle so the squish base (period 1) never wraps/aliases.
+  '  float dly = (uSpeedMode < 0.5) ? uDelay : min(uDelay, 0.92);',
+  '  float g; float extra;',
+  '  if (uMapDir < 0.5) { vec2 f = bandField(vUv.y); g = f.x; extra = f.y; }',          // vertical → horizontal slits
+  '  else if (uMapDir < 1.5) { vec2 f = bandField(vUv.x); g = f.x; extra = f.y; }',     // horizontal → vertical slits
+  '  else { vec2 fx = bandField(vUv.x); vec2 fy = bandField(vUv.y); g = (fx.x + fy.x) * 0.5; extra = fx.y + fy.y; }', // crosshatch
+  // Multi-line: scale added speed to a multiple of the line count so every band advances a whole
+  // number of full passes per loop (word index returns to start ⇒ seamless).
+  '  if (uN > 1.5) extra *= uN;',
+  '  float spd = uSpeed + extra;',
   '  g = clamp(g + uBump * 0.5 * sin(vUv.x * TAU * uBumpFreq) * sin(vUv.y * TAU * uBumpFreq), 0.0, 1.0);',
   '  float tau = uTime * spd - g * dly;',                              // per-pixel TIME offset
   // Clone into a grid: tile the SAMPLE coord (each cell runs a full melt) while the displacement
@@ -238,7 +233,7 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uTileX!.value = Math.max(1, Math.round(n(params, 'ssTileX') || 1))
     u.uTileY!.value = Math.max(1, Math.round(n(params, 'ssTileY') || 1))
     u.uDelay!.value = Math.max(0, n(params, 'ssDelay'))
-    u.uMapDir!.value = String(params.ssMapDir) === 'horizontal' ? 1 : 0
+    u.uMapDir!.value = String(params.ssMapDir) === 'crosshatch' ? 2 : String(params.ssMapDir) === 'horizontal' ? 1 : 0
     u.uBump!.value = Math.max(0, n(params, 'ssBump'))
     u.uBumpFreq!.value = Math.max(1, n(params, 'ssBumpFreq'))
     u.uBands!.value = Math.max(0, Math.round(n(params, 'ssBands')))
