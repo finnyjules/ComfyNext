@@ -11,6 +11,12 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
+import { useStudioAgent } from '~/composables/useStudioAgent'
+import { makeConfigParams } from '~/lib/agent/configParams'
+import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import {
   ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
@@ -33,6 +39,16 @@ const isRadial = computed(() => config.value.canvas.layout === 'radial' || confi
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+
+// In-product agent — "tune" the gradient in natural language (Phase 1). The
+// studio's nested `config` is bridged to a flat Params via makeConfigParams; only
+// the controls that apply to the current layout are offered to the model.
+const agentParams = makeConfigParams(() => config.value, () => activeLayer.value)
+const activeAgentControls = computed(() => gradientAgentControls(config.value))
+const {
+  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, hasProposal: agHasProposal, hovered: agHovered,
+  ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
+} = useStudioAgent({ controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio' })
 
 // Flow speed/gloss are optional on the schema; proxy them so v-model stays simple.
 const flowSpeed = computed({
@@ -495,6 +511,23 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #controls>
+      <!-- In-product agent: tune the gradient in natural language. -->
+      <div class="mb-3">
+        <AgentBar
+          :busy="agBusy" :error="agError" :notice="agNotice"
+          :chips="['Warmer palette', 'More flow', 'Calmer / softer', 'More contrast']"
+          placeholder="Describe the look — e.g. warmer, more liquid, calmer…"
+          @submit="agAsk" @chip="agAsk"
+        />
+        <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
+        <div v-else-if="agHasProposal" class="pt-2.5">
+          <AgentProposal
+            :changes="agChanges" :busy="agBusy"
+            @accept="agAccept" @reject="agReject" @reroll="agReroll"
+            @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
+          />
+        </div>
+      </div>
       <!-- Canvas -->
       <StudioSection title="Canvas" badge="both layers">
         <label class="mb-1 flex items-center justify-between text-xs text-white/60">

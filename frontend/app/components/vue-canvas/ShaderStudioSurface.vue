@@ -18,6 +18,12 @@ import { ADJUST_PRESETS, DUOTONE_PRESETS, applyAdjustPreset } from '~/lib/shader
 import { loadImage } from '~/lib/shaderstudio/source'
 import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
+import { useStudioAgent } from '~/composables/useStudioAgent'
+import { makeConfigParams } from '~/lib/agent/configParams'
+import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; wiredUrl?: string | null }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -43,6 +49,16 @@ const effectDef = computed<EffectDef | null>(
   () => catalog.value?.effects.find(e => e.id === config.value.effect.id) ?? null)
 const effectUniforms = computed(() =>
   effectDef.value ? resolveUniforms(effectDef.value, config.value.effect.params) : {})
+
+// In-product agent — "tune" the shader in natural language (Phase 1). The nested
+// `config` is bridged to a flat Params; only the controls for currently-enabled
+// stages (plus the active effect's float uniforms) are offered to the model.
+const agentParams = makeConfigParams(() => config.value)
+const activeAgentControls = computed(() => shaderAgentControls(config.value, effectDef.value))
+const {
+  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, hasProposal: agHasProposal, hovered: agHovered,
+  ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
+} = useStudioAgent({ controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio' })
 
 // ── effect textures (mirror ShaderEffectNode) ───────────────────────────────
 const textureImages = new Map<string, HTMLImageElement>()
@@ -313,6 +329,23 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
     </template>
 
     <template #controls>
+      <!-- In-product agent: tune the shader in natural language. -->
+      <div class="mb-3">
+        <AgentBar
+          :busy="agBusy" :error="agError" :notice="agNotice"
+          :chips="['More intense', 'Warmer grade', 'Higher contrast', 'Softer / dreamier']"
+          placeholder="Describe the look — e.g. punchier, warmer, more glow…"
+          @submit="agAsk" @chip="agAsk"
+        />
+        <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
+        <div v-else-if="agHasProposal" class="pt-2.5">
+          <AgentProposal
+            :changes="agChanges" :busy="agBusy"
+            @accept="agAccept" @reject="agReject" @reroll="agReroll"
+            @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
+          />
+        </div>
+      </div>
       <!-- Source -->
       <StudioSection title="Source">
         <p v-if="wiredUrl" class="mb-2 text-[11px] text-white/50">Using wired input</p>
