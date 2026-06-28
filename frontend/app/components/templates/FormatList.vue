@@ -125,7 +125,7 @@ function commitRename() {
 
 <template>
   <div class="px-2 py-2">
-    <p class="px-1 pb-1.5 text-[10px] uppercase tracking-[0.14em] text-white/35">Formats</p>
+    <p class="panel-heading px-1 pb-1.5">Formats</p>
 
     <div class="flex flex-col gap-0.5">
       <div

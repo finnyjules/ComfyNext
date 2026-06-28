@@ -30,6 +30,20 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
 /* Full-width labeled variant for the media studios (StudioSlider + auto-built
    controls): width + a grouping margin so each label+slider reads as one block. */
 .studio-range { width: 100%; margin: 0 0 0.85rem; }
+
+/* ── Unified panel type scale ──────────────────────────────────────────────
+   One hierarchy for every editor controls panel (studios, Compositor/Frame,
+   Smart Layout) so labels read consistently. Matches the studio components.
+   • panel-heading — a section/group title (sentence case, medium)
+   • panel-label   — a control's label
+   • panel-value   — a numeric/value readout (mono, brightest)
+   • panel-sublabel— a tiny in-control label (X/Y/Blur, colour stops)
+   • panel-help    — secondary helper text */
+.panel-heading  { @apply text-[11px] font-medium text-white/50; }
+.panel-label    { @apply text-[11px] text-white/55; }
+.panel-value    { @apply font-mono text-[11px] text-white/80; }
+.panel-sublabel { @apply text-[9px] uppercase tracking-wide text-white/35; }
+.panel-help     { @apply text-[10px] leading-snug text-white/40; }
 /* Inline variant for sliders that sit IN a row (e.g. fillList angle/density). Two
    classes → beats `.studio-range`'s width:100% and the Tailwind width utility. */
 .studio-range.studio-range-inline { width: 3.5rem; margin: 0; flex: none; }

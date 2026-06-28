@@ -13,7 +13,7 @@
  * One renderer (`drawLocalLayer`) draws to any 2D context at any resolution.
  */
 
-export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path'
+export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image'
 
 // ── Motion painter indirection ───────────────────────────────────────────────
 // paintLayerStack(t) needs the motion module, but motion/paint.ts imports
@@ -245,6 +245,9 @@ export interface ImageLayer extends LayerCommon {
   kind: 'image'
   filename: string        // uploaded image in ComfyUI's input dir
   w: number; h: number    // normalized to canvas width (aspect preserved on drop)
+  tint?: Paint            // optional fill blended over the image, clipped to its alpha
+  tintBlend?: string      // blend mode for the tint (same names as layer blend)
+  tintOpacity?: number    // 0..1 tint strength; default 1
 }
 
 export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer
@@ -512,6 +515,28 @@ function resolveFill(
     pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / tw, bh / th))
   }
   return pat
+}
+
+/** Draw an image with a fill (`tint`) blended over it, clipped to the image's
+ *  alpha. Three passes in a centered offscreen: image → blend-fill tint → keep
+ *  only where the image is opaque (destination-in). Then place it centered. */
+function drawTintedImage(
+  ctx: CanvasRenderingContext2D, img: CanvasImageSource, layer: ImageLayer, w: number, h: number,
+): void {
+  const tw = Math.max(1, Math.round(w)), th = Math.max(1, Math.round(h))
+  const off = document.createElement('canvas'); off.width = tw; off.height = th
+  const octx = off.getContext('2d')
+  if (!octx) { ctx.drawImage(img, -w / 2, -h / 2, w, h); return }
+  octx.translate(tw / 2, th / 2) // center, so resolvePaint's gradient/pattern geometry lines up
+  octx.drawImage(img, -tw / 2, -th / 2, tw, th)
+  octx.globalCompositeOperation = WIRED_BLEND_OP[layer.tintBlend ?? 'normal'] ?? 'source-over'
+  octx.globalAlpha = Math.max(0, Math.min(1, layer.tintOpacity ?? 1))
+  octx.fillStyle = resolvePaint(octx, layer.tint!, { w: tw, h: th })
+  octx.fillRect(-tw / 2, -th / 2, tw, th)
+  octx.globalAlpha = 1
+  octx.globalCompositeOperation = 'destination-in' // clip the tint back to the image silhouette
+  octx.drawImage(img, -tw / 2, -th / 2, tw, th)
+  ctx.drawImage(off, -w / 2, -h / 2, w, h)
 }
 
 /** Split text into explicit-newline lines. */
@@ -883,7 +908,8 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     const w = layer.w * W, h = layer.h * W
     const img = _imageCache.get(imageLayerUrl(layer.filename))
     if (img && img.complete && img.naturalWidth) {
-      ctx.drawImage(img, -w / 2, -h / 2, w, h)
+      if (hasPaint(layer.tint)) drawTintedImage(ctx, img, layer, w, h)
+      else ctx.drawImage(img, -w / 2, -h / 2, w, h)
     } else {
       // Not loaded yet — faint placeholder; a preload + re-render fills it in.
       ctx.fillStyle = 'rgba(255,255,255,0.06)'
@@ -1031,7 +1057,18 @@ export function paintLayerStack(
   motion?: { fps: number; duration: number },
   /** Per-key treatments for wired layers (mask ref + showSource). Locals carry their own. */
   wiredTreatments?: Record<string, { maskedByKey?: string; showSource?: boolean }>,
+  /** Doc-level background fill, painted first (behind every layer). */
+  background?: Paint,
 ) {
+  // Background fill — the bottom-most thing in the frame, baked into output.
+  if (hasPaint(background)) {
+    ctx.save()
+    ctx.translate(W / 2, H / 2) // center so gradient/pattern geometry spans the canvas
+    ctx.fillStyle = resolvePaint(ctx, background!, { w: W, h: H })
+    ctx.fillRect(-W / 2, -H / 2, W, H)
+    ctx.restore()
+  }
+
   const byKey = new Map(items.map(it => [it.key, it]))
   // Resolve every item's mask reference (local → layerMaskRef; wired → treatments).
   const maskRefOf = (it: StackItem): string | undefined =>

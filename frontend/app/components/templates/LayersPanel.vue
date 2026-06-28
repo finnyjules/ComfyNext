@@ -99,7 +99,7 @@ function onDragEnd() {
 <template>
   <div class="flex flex-col">
     <div class="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
-      <div class="text-[10px] uppercase tracking-[0.12em] text-white/35 font-medium">Elements</div>
+      <div class="panel-heading">Elements</div>
       <span class="text-[10px] text-white/30">{{ template.elements.length }}</span>
     </div>
 

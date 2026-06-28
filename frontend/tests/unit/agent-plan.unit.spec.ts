@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { TemplateV3 } from '~~/shared/template-grid/types'
 import { applySmartLayoutCommand, describeSmartLayout } from '~/lib/agent/surfaces/smartLayout'
 import { applyPlan } from '~/lib/agent/plan'
-import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
+import { buildAgentPrompt, buildCommandSchema, buildReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
 
 function fx(): TemplateV3 {
   return {
@@ -91,6 +91,96 @@ describe('protocol', () => {
     const { commands, rationale } = parseAgentResponse(text)
     expect(rationale).toBe('x')
     expect(commands[0]).toEqual({ op: 'setText', target: 'h', args: { text: 'HELLO' } })
+  })
+
+  it('carries a per-change rationale parallel to the commands', () => {
+    const text = JSON.stringify({ rationale: 'x', commands: [
+      { op: 'setText', target: 'h', args: JSON.stringify({ text: 'HELLO' }), rationale: 'punchier hook' },
+      { op: 'setSectionRegion', target: 'section-1', args: JSON.stringify({ region: { col: 1, colSpan: 6, row: 1, rowSpan: 1 } }) },
+    ] })
+    const { changeRationales } = parseAgentResponse(text)
+    expect(changeRationales[0]).toBe('punchier hook')
+    expect(changeRationales[1]).toBe('') // missing rationale → empty string, never undefined
+  })
+
+  it('command schema includes a per-change rationale field', () => {
+    const schema = buildCommandSchema(describeSmartLayout(fx()).commands) as {
+      properties: { commands: { items: { properties: Record<string, unknown> } } }
+    }
+    expect(schema.properties.commands.items.properties.rationale).toBeDefined()
+  })
+
+  it('command schema has a required top-level message channel (answer / refuse / clarify)', () => {
+    const schema = buildCommandSchema(describeSmartLayout(fx()).commands) as {
+      properties: Record<string, unknown>; required: string[]
+    }
+    expect(schema.properties.message).toBeDefined()
+    expect(schema.required).toContain('message')
+  })
+
+  it('extracts the JSON plan even when wrapped in a ```json fence or prose (streamed thinking has no strict schema)', () => {
+    const fenced = 'Here is the plan:\n```json\n' + JSON.stringify({ rationale: 'x', commands: [{ op: 'setText', target: 'h', args: '{"text":"HI"}' }] }) + '\n```'
+    const { commands } = parseAgentResponse(fenced)
+    expect(commands[0]).toEqual({ op: 'setText', target: 'h', args: { text: 'HI' } })
+    const prose = 'Sure! ' + JSON.stringify({ rationale: 'y', commands: [], message: 'done' }) + ' hope that helps'
+    expect(parseAgentResponse(prose).message).toBe('done')
+  })
+
+  it('parses the message channel; empty when absent', () => {
+    const withMsg = parseAgentResponse(JSON.stringify({ rationale: '', commands: [], message: 'I can change text, colours and layout — not generate audio.' }))
+    expect(withMsg.message).toContain('I can change')
+    expect(withMsg.commands).toEqual([])
+    const noMsg = parseAgentResponse(JSON.stringify({ rationale: 'x', commands: [] }))
+    expect(noMsg.message).toBe('')
+  })
+
+  it('parses the reasoning field (the model\'s thinking, shown to the user)', () => {
+    const r = parseAgentResponse(JSON.stringify({ reasoning: 'They want a blue canvas, so I will set the background fill.', rationale: 'x', commands: [], message: '' }))
+    expect(r.reasoning).toContain('blue canvas')
+    expect(parseAgentResponse('{}').reasoning).toBe('')
+  })
+
+  it('command schema requires the reasoning field', () => {
+    const schema = buildCommandSchema(describeSmartLayout(fx()).commands) as { properties: Record<string, unknown>; required: string[] }
+    expect(schema.properties.reasoning).toBeDefined()
+    expect(schema.required).toContain('reasoning')
+  })
+
+  it('the prompt instructs an honest refusal / answer instead of forcing a command', () => {
+    const prompt = buildAgentPrompt(describeSmartLayout(fx()), 'order me a pizza')
+    expect(prompt.toLowerCase()).toContain('outside the command list')
+    expect(prompt).toContain('generateImage') // generative content is now in-vocabulary
+  })
+
+  it('builds a visual-review schema (assessment + issues + fixes) and prompt', () => {
+    const snap = describeSmartLayout(fx())
+    const schema = buildReviewSchema(snap.commands) as { properties: Record<string, unknown>; required: string[] }
+    expect(schema.properties.assessment).toBeDefined()
+    expect(schema.properties.issues).toBeDefined()
+    expect(schema.properties.fixes).toBeDefined()
+    expect(schema.required).toEqual(expect.arrayContaining(['assessment', 'issues', 'fixes']))
+    const prompt = buildReviewPrompt(snap, 'make a poster')
+    expect(prompt.toLowerCase()).toContain('attached image')
+    expect(prompt).toContain('make a poster')
+  })
+
+  it('parses a visual-review reply into assessment, issues and fix commands', () => {
+    const text = JSON.stringify({
+      assessment: 'Strong, but the headline crowds the edge.',
+      issues: ['headline touches the right edge', 'subhead too close to headline'],
+      fixes: [{ op: 'setElementProps', target: 'h', args: JSON.stringify({ patch: { region: { col: 1, colSpan: 40, row: 1, rowSpan: 6 } } }), rationale: 'give the headline room' }],
+    })
+    const r = parseReviewResponse(text)
+    expect(r.assessment).toContain('crowds')
+    expect(r.issues).toHaveLength(2)
+    expect(r.fixes[0]).toEqual({ op: 'setElementProps', target: 'h', args: { patch: { region: { col: 1, colSpan: 40, row: 1, rowSpan: 6 } } } })
+  })
+
+  it('carries the Swiss design system so the agent composes in that style by default', () => {
+    const prompt = buildAgentPrompt(describeSmartLayout(fx()), 'make a poster')
+    expect(prompt).toContain('SWISS')
+    expect(prompt.toLowerCase()).toContain('flush-left')
+    expect(prompt.toLowerCase()).toContain('grid')
   })
 })
 

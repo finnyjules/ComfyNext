@@ -11,6 +11,11 @@ import {
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
+import { useCompositorAgent } from '~/composables/useCompositorAgent'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
+import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -236,11 +241,26 @@ const {
   onCanvasPointerDown, onCanvasDblClick,
   addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
   addPathLayers, addPathFromSvg, deleteLayers,
+  background, setBackground,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
   groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
 } = editor
+
+// In-product agent (Phase 2, 2nd home) — drives the frame through the Compositor
+// command surface. Bridges to the local-layer editor: read layers + background;
+// write via commit (+ setBackground when it changes).
+const { getLocalSetting } = useLocalSettings()
+const {
+  busy: caBusy, error: caError, notice: caNotice,
+  changes: caChanges, hasProposal: caHasProposal, hovered: caHovered,
+  ask: caAsk, acceptChange: caAccept, rejectChange: caReject, reroll: caReroll, keep: caKeep, revert: caRevert,
+} = useCompositorAgent({
+  getState: () => ({ layers: localLayers.value, background: background.value }),
+  setState: (s) => { commit(s.layers); if (s.background !== background.value) setBackground(s.background) },
+  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+})
 
 const selectedCount = computed(() => selectedLayers.value.length)
 const ALIGN_BTNS = [
@@ -344,6 +364,9 @@ function selectTool() {
   if (genActive.value) exitGenMode()
 }
 const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value && !genActive.value)
+
+/** True when an image layer has an active tint fill (shows blend + opacity). */
+function hasTint(l: any): boolean { const t = l?.tint; return !!t && t !== 'none' && t !== '' }
 
 // ── Distort: slant (skew) + corner-pin / perspective ─────────────────────────
 const distortTool = ref(false)
@@ -1212,7 +1235,7 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   await ensureLayerImages(localLayers.value as LocalLayer[])
   await ensureLayerFonts(localLayers.value as LocalLayer[], W)
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value)
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
@@ -1273,7 +1296,7 @@ function renderStack() {
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
-    wiredTreatments.value)
+    wiredTreatments.value, background.value)
 }
 watch(
   () => [
@@ -1284,6 +1307,7 @@ watch(
     nodeEdit.active.value, nodeEdit.layerId.value,
     JSON.stringify(readSlotArr('comfynext_hiddenWired')),
     JSON.stringify(wiredTreatments.value),
+    JSON.stringify(background.value),
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -1890,10 +1914,28 @@ onUnmounted(() => {
     <!-- Modal title (top-left, studio-style) -->
     <div class="absolute top-4 left-6 z-30 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
 
+    <!-- Glimm sweep over the frame while the agent works. -->
+    <AgentSweep :active="caBusy" />
+
+    <!-- In-product agent: command bar + proposal (top-centre). -->
+    <div class="glass-panel absolute top-4 left-1/2 z-30 w-[440px] max-w-[calc(100%-560px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#0e0e10]/85 backdrop-blur-md shadow-2xl p-3">
+      <AgentBar :busy="caBusy" :error="caError" :notice="caNotice" @submit="caAsk" @chip="caAsk" />
+      <div v-if="caBusy" class="pt-2.5">
+        <AgentProgress :active="caBusy" />
+      </div>
+      <div v-else-if="caHasProposal" class="pt-2.5">
+        <AgentProposal
+          :changes="caChanges" :busy="caBusy"
+          @accept="caAccept" @reject="caReject" @reroll="caReroll"
+          @keep="caKeep" @revert="caRevert" @hover="(i: number | null) => caHovered = i"
+        />
+      </div>
+    </div>
+
     <!-- Left sidebar: floating glass layer panel -->
-    <div class="absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+    <div class="glass-panel absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <div class="px-3 pt-3 pb-3 flex-1 min-h-0 overflow-y-auto">
-        <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2 px-1">Layers</div>
+        <div class="panel-heading mb-2 px-1">Layers</div>
 
         <!-- Unified z-order stack (top-first). Grouped layers indent; grip to reorder. -->
         <div @drop="onListDrop" @dragover.prevent>
@@ -2455,7 +2497,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Right sidebar: floating glass properties panel -->
-    <div class="absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+    <div class="glass-panel absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <!-- Brand kits (opening the palette takes over the inspector) -->
       <template v-if="brandOpen">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
@@ -2489,7 +2531,7 @@ onUnmounted(() => {
           <!-- Mode + model + style (new-object generation only) -->
           <template v-if="!genTarget">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Mode</div>
+              <div class="panel-label mb-2">Mode</div>
               <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
                 <button
                   class="flex-1 h-8 rounded text-[11px] cursor-pointer transition-colors"
@@ -2507,7 +2549,7 @@ onUnmounted(() => {
 
             <!-- Model picker -->
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Model</div>
+              <div class="panel-label mb-2">Model</div>
               <div class="relative">
                 <button
                   class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
@@ -2536,7 +2578,7 @@ onUnmounted(() => {
 
             <!-- Style picker (Flux + Style mode only) -->
             <div v-if="showStylePicker">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-2">Style</div>
+              <div class="panel-label mb-2">Style</div>
               <div class="relative">
                 <button
                   class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
@@ -2572,7 +2614,7 @@ onUnmounted(() => {
 
           <!-- Region tool -->
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Region</div>
+            <div class="panel-label mb-1.5">Region</div>
             <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05]">
               <button v-for="t in GEN_TOOLS" :key="t"
                 class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer transition-colors"
@@ -2593,7 +2635,7 @@ onUnmounted(() => {
 
           <!-- Prompt -->
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Prompt</div>
+            <div class="panel-label mb-1.5">Prompt</div>
             <textarea
               v-model="genPrompt"
               rows="3"
@@ -2631,19 +2673,19 @@ onUnmounted(() => {
             <button class="text-white/40 hover:text-red-400 p-1" title="Delete" @click="deleteLocal(selectedLocal.id)"><Trash2 class="size-3.5" /></button>
           </div>
         </div>
-        <div class="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+        <div class="inspector-body p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <!-- Text controls -->
           <template v-if="selectedLocal.kind === 'text'">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Text</div>
+              <div class="panel-label mb-1.5">Text</div>
               <textarea
                 :value="(selectedLocal as any).text" rows="2"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none resize-none"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none resize-none"
                 @input="setLocal(selectedLocal!.id, { text: ($event.target as HTMLTextAreaElement).value })"
               />
             </div>
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Font</div>
+              <div class="panel-label mb-1.5">Font</div>
               <FontPicker
                 :selected-key="fontPickerKey"
                 :label="(selectedLocal as any).fontFamily || 'Inter'"
@@ -2653,15 +2695,15 @@ onUnmounted(() => {
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Size</div>
+                <div class="panel-label mb-1.5">Size</div>
                 <input type="number" min="1" :value="pxW((selectedLocal as any).fontSize)"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setSizePx(selectedLocal!.id, 'fontSize', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
               </div>
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Weight</div>
+                <div class="panel-label mb-1.5">Weight</div>
                 <select :value="(selectedLocal as any).fontWeight || 400"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
                   @change="setLocal(selectedLocal!.id, { fontWeight: parseInt(($event.target as HTMLSelectElement).value) || 400 })">
                   <option v-for="w in FONT_WEIGHTS" :key="w.v" :value="w.v">{{ w.label }} · {{ w.v }}</option>
                 </select>
@@ -2669,10 +2711,10 @@ onUnmounted(() => {
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Align</div>
+                <div class="panel-label mb-1.5">Align</div>
                 <div class="flex gap-1">
                   <button v-for="a in (['left','center','right'] as const)" :key="a"
-                    class="flex-1 flex items-center justify-center bg-[#1a1a1a] border border-[#2a2a2a] rounded py-1.5"
+                    class="flex-1 flex items-center justify-center bg-white/[0.04] border border-white/[0.06] rounded py-1.5"
                     :class="(selectedLocal as any).align === a ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
                     @click="setLocal(selectedLocal!.id, { align: a })">
                     <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : AlignRight" class="size-3.5" />
@@ -2680,25 +2722,25 @@ onUnmounted(() => {
                 </div>
               </div>
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5" title="Set a width to auto-wrap words; clear for free-flowing text">Text box W</div>
+                <div class="panel-label mb-1.5" title="Set a width to auto-wrap words; clear for free-flowing text">Text box W</div>
                 <input type="number" min="0" placeholder="auto"
                   :value="(selectedLocal as any).boxW ? pxW((selectedLocal as any).boxW) : ''"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
               </div>
             </div>
             <div class="space-y-3">
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
+                <div class="panel-label mb-1.5">Color</div>
                 <FillControl :model-value="(selectedLocal as any).color"
                   @update:model-value="(v: any) => setLocal(selectedLocal!.id, { color: v })" />
               </div>
               <div>
-                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Outline</div>
+                <div class="panel-label mb-1.5">Outline</div>
                 <FillControl allow-none :model-value="(selectedLocal as any).strokeColor"
                   @update:model-value="(v: any) => setLocal(selectedLocal!.id, { strokeColor: v })" />
                 <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Outline width"
-                  class="mt-1.5 w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               </div>
             </div>
@@ -2707,22 +2749,22 @@ onUnmounted(() => {
           <!-- Rect / ellipse controls -->
           <template v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse'">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Fill</div>
+              <div class="panel-label mb-1.5">Fill</div>
               <FillControl allow-none :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Stroke</div>
+              <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
               <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
-                class="mt-1.5 w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
             </div>
             <div v-if="selectedLocal.kind === 'rect'">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Corner radius</div>
+              <div class="panel-label mb-1.5">Corner radius</div>
               <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).radius)"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'radius', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
             </div>
           </template>
@@ -2730,23 +2772,58 @@ onUnmounted(() => {
           <!-- Line controls -->
           <template v-if="selectedLocal.kind === 'line'">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Color</div>
+              <div class="panel-label mb-1.5">Color</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
             </div>
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Thickness</div>
+              <div class="panel-label mb-1.5">Thickness</div>
               <input type="number" min="1" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
+            </div>
+          </template>
+
+          <!-- Path (vector) controls -->
+          <template v-if="selectedLocal.kind === 'path'">
+            <div>
+              <div class="panel-label mb-1.5">Fill</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Stroke</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).stroke"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+            </div>
+          </template>
+
+          <!-- Image tint: fill blended over the image, clipped to its alpha -->
+          <template v-if="selectedLocal.kind === 'image'">
+            <div>
+              <div class="panel-label mb-1.5">Tint</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).tint"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { tint: v })" />
+              <div v-if="hasTint(selectedLocal)" class="mt-1.5 grid grid-cols-2 gap-2">
+                <select :value="(selectedLocal as any).tintBlend || 'normal'"
+                  class="bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer capitalize"
+                  @change="setLocal(selectedLocal!.id, { tintBlend: ($event.target as HTMLSelectElement).value } as any)">
+                  <option v-for="m in LOCAL_BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
+                </select>
+                <div class="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded px-2">
+                  <input type="range" min="0" max="100" step="1" :value="Math.round(((selectedLocal as any).tintOpacity ?? 1) * 100)" class="w-full accent-white cursor-pointer"
+                    @input="setLocal(selectedLocal!.id, { tintOpacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) } as any)" />
+                  <span class="text-[10px] text-white/40 tabular-nums w-7 text-right">{{ Math.round(((selectedLocal as any).tintOpacity ?? 1) * 100) }}</span>
+                </div>
+              </div>
             </div>
           </template>
 
           <!-- Size: W / H with aspect-ratio lock (shapes & images) -->
           <div v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse' || selectedLocal.kind === 'image'">
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Size</div>
+            <div class="panel-label mb-1.5">Size</div>
             <div class="flex items-center gap-2">
-              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">W</span>
                 <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
                   class="w-full bg-transparent text-xs text-white/90 outline-none"
@@ -2761,7 +2838,7 @@ onUnmounted(() => {
                 <Lock v-if="lockRatio" class="size-3.5" />
                 <LockOpen v-else class="size-3.5" />
               </button>
-              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">H</span>
                 <input type="number" min="1" :value="pxW((selectedLocal as any).h)"
                   class="w-full bg-transparent text-xs text-white/90 outline-none"
@@ -2771,45 +2848,45 @@ onUnmounted(() => {
           </div>
           <!-- Line: single length value -->
           <div v-else-if="selectedLocal.kind === 'line'">
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Length</div>
+            <div class="panel-label mb-1.5">Length</div>
             <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
-              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+              class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="setSizePx(selectedLocal!.id, 'w', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
           </div>
 
           <!-- Common: rotation + opacity -->
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Rotation</div>
+              <div class="panel-label mb-1.5">Rotation</div>
               <input type="number" step="1" :value="Math.round(selectedLocal.rotation)"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
             </div>
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Opacity</div>
+              <div class="panel-label mb-1.5">Opacity</div>
               <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
-                class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { opacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) })" />
             </div>
           </div>
 
           <!-- Distort: slant (affine) + perspective + free corner-pin (Distort tool) -->
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Distort</div>
+            <div class="panel-label mb-1.5">Distort</div>
             <div class="grid grid-cols-2 gap-3 mb-2">
               <div>
-                <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Slant X</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewX || 0) }}°</span></div>
+                <div class="flex items-center justify-between panel-sublabel mb-1"><span>Slant X</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewX || 0) }}°</span></div>
                 <input type="range" min="-60" max="60" step="1" :value="(selectedLocal as any).skewX || 0" class="w-full accent-white cursor-pointer"
                   @input="setLocal(selectedLocal!.id, { skewX: parseFloat(($event.target as HTMLInputElement).value) || 0 } as any)" />
               </div>
               <div>
-                <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Slant Y</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewY || 0) }}°</span></div>
+                <div class="flex items-center justify-between panel-sublabel mb-1"><span>Slant Y</span><span class="tabular-nums normal-case">{{ Math.round((selectedLocal as any).skewY || 0) }}°</span></div>
                 <input type="range" min="-60" max="60" step="1" :value="(selectedLocal as any).skewY || 0" class="w-full accent-white cursor-pointer"
                   @input="setLocal(selectedLocal!.id, { skewY: parseFloat(($event.target as HTMLInputElement).value) || 0 } as any)" />
               </div>
             </div>
             <div class="mb-2">
-              <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1"><span>Perspective</span><span class="tabular-nums normal-case">{{ Math.round(perspectiveAmount(selectedLocal) * 100) }}</span></div>
+              <div class="flex items-center justify-between panel-sublabel mb-1"><span>Perspective</span><span class="tabular-nums normal-case">{{ Math.round(perspectiveAmount(selectedLocal) * 100) }}</span></div>
               <input type="range" min="-80" max="80" step="1" :value="Math.round(perspectiveAmount(selectedLocal) * 100)" class="w-full accent-white cursor-pointer"
                 @input="setPerspective(selectedLocal!.id, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)" />
             </div>
@@ -2821,9 +2898,9 @@ onUnmounted(() => {
 
           <!-- Blend mode (vs layers below; same modes as wired layers) -->
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Blend</div>
+            <div class="panel-label mb-1.5">Blend</div>
             <select :value="(selectedLocal as any).blend || 'normal'"
-              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
               @change="setLocal(selectedLocal!.id, { blend: ($event.target as HTMLSelectElement).value } as any)">
               <option v-for="m in LOCAL_BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
             </select>
@@ -2832,7 +2909,7 @@ onUnmounted(() => {
           <!-- Drop shadow effect -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Drop shadow</div>
+              <div class="panel-label">Drop shadow</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleLocalShadow(selectedLocal!)">{{ localShadow(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>
@@ -2842,9 +2919,9 @@ onUnmounted(() => {
                   class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
                   @input="setLocalShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, shadowAlpha(selectedLocal)) })" />
                 <input type="text" spellcheck="false" maxlength="7" :value="shadowHex(selectedLocal)" title="Hex color"
-                  class="flex-1 min-w-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs font-mono uppercase text-white/90 outline-none"
+                  class="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs font-mono uppercase text-white/90 outline-none"
                   @change="setShadowHex(selectedLocal!, ($event.target as HTMLInputElement).value)" />
-                <div class="flex items-center gap-0.5 shrink-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
+                <div class="flex items-center gap-0.5 shrink-0 bg-white/[0.04] border border-white/[0.06] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
                   <input type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)"
                     class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
                     @input="setLocalShadow(selectedLocal!, { color: composeRgba(shadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
@@ -2853,21 +2930,21 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-3 gap-1.5">
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">X</div>
+                  <div class="panel-sublabel mb-1">X</div>
                   <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.x || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Y</div>
+                  <div class="panel-sublabel mb-1">Y</div>
                   <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.y || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Blur</div>
+                  <div class="panel-sublabel mb-1">Blur</div>
                   <input type="number" min="0" step="0.5" :value="Math.round((localShadow(selectedLocal)?.blur || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
               </div>
@@ -2877,7 +2954,7 @@ onUnmounted(() => {
           <!-- Inner shadow -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Inner shadow</div>
+              <div class="panel-label">Inner shadow</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleInnerShadow(selectedLocal!)">{{ innerShadow(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>
@@ -2886,7 +2963,7 @@ onUnmounted(() => {
                 <input type="color" :value="innerShadowHex(selectedLocal)" title="Shadow color"
                   class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
                   @input="setInnerShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, innerShadowAlpha(selectedLocal)) })" />
-                <div class="flex items-center gap-0.5 shrink-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
+                <div class="flex items-center gap-0.5 shrink-0 bg-white/[0.04] border border-white/[0.06] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
                   <input type="number" min="0" max="100" step="1" :value="Math.round(innerShadowAlpha(selectedLocal) * 100)"
                     class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
                     @input="setInnerShadow(selectedLocal!, { color: composeRgba(innerShadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
@@ -2895,21 +2972,21 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-3 gap-1.5">
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">X</div>
+                  <div class="panel-sublabel mb-1">X</div>
                   <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.x || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Y</div>
+                  <div class="panel-sublabel mb-1">Y</div>
                   <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.y || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">Blur</div>
+                  <div class="panel-sublabel mb-1">Blur</div>
                   <input type="number" min="0" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.blur || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
               </div>
@@ -2919,14 +2996,14 @@ onUnmounted(() => {
           <!-- Layer blur -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Layer blur</div>
+              <div class="panel-label">Layer blur</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleLayerBlur(selectedLocal!)">{{ layerBlur(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>
             <div v-if="layerBlur(selectedLocal)" class="flex items-center gap-2">
-              <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Radius</div>
+              <div class="panel-sublabel shrink-0">Radius</div>
               <input type="number" min="0" step="0.5" :value="Math.round((layerBlur(selectedLocal)?.radius || 0) * 1000) / 10"
-                class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLayerBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
           </div>
@@ -2934,23 +3011,23 @@ onUnmounted(() => {
           <!-- Background blur (blurs what's behind the layer, inside its shape) -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Background blur</div>
+              <div class="panel-label">Background blur</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleBgBlur(selectedLocal!)">{{ bgBlur(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>
             <div v-if="bgBlur(selectedLocal)" class="flex items-center gap-2">
-              <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Radius</div>
+              <div class="panel-sublabel shrink-0">Radius</div>
               <input type="number" min="0" step="0.5" :value="Math.round((bgBlur(selectedLocal)?.radius || 0) * 1000) / 10"
-                class="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setBgBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
           </div>
 
           <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
           <div class="mt-3">
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
+            <div class="panel-label mb-1.5">Mask</div>
             <select :value="currentMaskRef(localKey(selectedLocal!.id))"
-              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+              class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @change="setMaskRef(localKey(selectedLocal!.id), ($event.target as HTMLSelectElement).value)">
               <option value="">No mask</option>
               <option v-for="o in maskCandidates(localKey(selectedLocal!.id))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
@@ -2965,7 +3042,7 @@ onUnmounted(() => {
           <!-- Crop to a rect/ellipse region -->
           <div class="mt-3">
             <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Crop</div>
+              <div class="panel-label">Crop</div>
               <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
                 @click="toggleLayerMask(selectedLocal!)">{{ layerMask(selectedLocal) ? 'Remove' : 'Add' }}</button>
             </div>
@@ -2980,9 +3057,9 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-4 gap-1.5">
                 <div v-for="k in (['x','y','w','h'] as const)" :key="k">
-                  <div class="text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">{{ k }}</div>
+                  <div class="panel-sublabel mb-1">{{ k }}</div>
                   <input type="number" step="0.5" :value="Math.round((layerMask(selectedLocal)?.[k] || 0) * 1000) / 10"
-                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLayerMask(selectedLocal!, { [k]: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
               </div>
@@ -3032,16 +3109,16 @@ onUnmounted(() => {
             <button class="text-white/40 hover:text-white/80 p-1" title="Send backward" @click="moveStackZ(wiredKey(selected.slot), -1)"><ArrowDown class="size-3.5" /></button>
           </div>
         </div>
-        <div v-if="selected" class="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+        <div v-if="selected" class="inspector-body p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Position</div>
+            <div class="panel-label mb-1.5">Position</div>
             <div class="flex gap-2">
-              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">X</span>
                 <input type="number" step="0.01" :value="selected.x.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
                   @input="setLayerProp(selected.slot, 'x', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               </label>
-              <label class="flex-1 flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">Y</span>
                 <input type="number" step="0.01" :value="selected.y.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
                   @input="setLayerProp(selected.slot, 'y', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
@@ -3050,8 +3127,8 @@ onUnmounted(() => {
           </div>
 
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Rotation</div>
-            <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+            <div class="panel-label mb-1.5">Rotation</div>
+            <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
               <input type="number" step="1" :value="selected.rotation.toFixed(1)" class="w-full bg-transparent text-xs text-white/90 outline-none"
                 @input="setLayerProp(selected.slot, 'rotation', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               <span class="text-xs text-white/40">°</span>
@@ -3059,8 +3136,8 @@ onUnmounted(() => {
           </div>
 
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Scale</div>
-            <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+            <div class="panel-label mb-1.5">Scale</div>
+            <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
               <input type="number" step="0.05" min="0.1" max="3" :value="selected.scale.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
                 @input="setLayerProp(selected.slot, 'scale', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
               <span class="text-xs text-white/40">×</span>
@@ -3069,16 +3146,16 @@ onUnmounted(() => {
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Opacity</div>
-              <div class="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5">
+              <div class="panel-label mb-1.5">Opacity</div>
+              <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <input type="number" min="0" max="100" step="1" :value="Math.round(selected.opacity * 100)" class="w-full bg-transparent text-xs text-white/90 outline-none"
                   @input="setLayerProp(selected.slot, 'opacity', Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)))" />
                 <span class="text-xs text-white/40">%</span>
               </div>
             </div>
             <div>
-              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Blend mode</div>
-              <select :value="selected.blend" class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              <div class="panel-label mb-1.5">Blend mode</div>
+              <select :value="selected.blend" class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
                 @change="setLayerProp(selected.slot, 'blend', ($event.target as HTMLSelectElement).value)">
                 <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
               </select>
@@ -3087,9 +3164,9 @@ onUnmounted(() => {
 
           <!-- Mask: clip this layer to another layer's silhouette (cross-source) -->
           <div>
-            <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Mask</div>
+            <div class="panel-label mb-1.5">Mask</div>
             <select :value="currentMaskRef(wiredKey(selected.slot))"
-              class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+              class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
               @change="setMaskRef(wiredKey(selected.slot), ($event.target as HTMLSelectElement).value)">
               <option value="">No mask</option>
               <option v-for="o in maskCandidates(wiredKey(selected.slot))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
@@ -3104,8 +3181,17 @@ onUnmounted(() => {
           <!-- Cloner: repeat this layer (linear/grid/radial) with falloff -->
           <CompositorClonerPanel :cloner="selected.cloner" @update="(cl) => setWiredCloner(selected!.slot, cl)" />
         </div>
-        <div v-else class="p-4 text-xs text-white/40 italic">
-          Select a layer to edit its properties, or use the toolbar to add text and shapes.
+        <div v-else class="p-4 flex flex-col gap-4">
+          <!-- Canvas background fill (bottom-most; baked into the frame) -->
+          <div>
+            <div class="panel-label mb-1.5">Background</div>
+            <FillControl allow-none :model-value="background"
+              @update:model-value="(v: any) => setBackground(v)" />
+            <p class="mt-1.5 text-[10px] text-white/30 leading-snug">Fills behind every layer and bakes into the frame. An opaque generated image will sit on top of it.</p>
+          </div>
+          <p class="text-xs text-white/40 italic">
+            Select a layer to edit its properties, or use the toolbar to add text and shapes.
+          </p>
         </div>
       </template>
     </div>
@@ -3114,6 +3200,27 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Glassy section cards in the inspector — each top-level control group becomes a
+   bordered translucent card (the studios' panel look) without restructuring the
+   template. Direct children only, so nested grids/rows are unaffected. */
+/* Glassy floating panels (left layers list + right inspector) — a soft diagonal
+   sheen layered over the translucent fill (separate background-image, so the
+   bg-[#0e0e10]/80 fill is preserved). */
+.glass-panel {
+  background-image: linear-gradient(140deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.008) 42%, rgba(255, 255, 255, 0.035) 100%);
+}
+
+.inspector-body > div {
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  /* A diagonal sheen layered over a faint fill = the studios' glassy card. The
+     gradient is part of the background so it sits behind the controls. */
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.018) 45%, rgba(255, 255, 255, 0.05) 100%),
+    rgba(255, 255, 255, 0.025);
+  padding: 0.75rem;
+}
+
 /* Strip the native number-input spinner arrows in the inspector. */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {

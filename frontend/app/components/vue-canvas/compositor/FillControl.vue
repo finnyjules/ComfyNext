@@ -8,10 +8,12 @@
  * so it drops straight into resolvePaint without new render code.
  */
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown, Dices } from 'lucide-vue-next'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import GradientEditor from '~/components/vue-canvas/compositor/GradientEditor.vue'
 import { type Fill, type FillType, FILL_TYPES, DEFAULT_FILL, fillTileCanvas } from '~/lib/spacetype/fillTile'
-import { type Paint, isFill, isGradient } from '~/composables/useCompositorLayers'
+import { rollPaintItem, gradientFromPaint } from '~/lib/compositor/fillPalette'
+import { type Paint, type Gradient, isFill, isGradient } from '~/composables/useCompositorLayers'
 
 const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean }>(), { allowNone: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
@@ -37,17 +39,49 @@ function toFill(p: Paint | undefined): Fill {
 
 const isNone = computed(() => !!props.allowNone && (props.modelValue === 'none' || props.modelValue === '' || props.modelValue == null))
 
-const fill = reactive<Fill>(toFill(props.modelValue))
-watch(() => props.modelValue, (v) => { Object.assign(fill, toFill(v)); drawPreview() })
+/** Normalize whatever Paint we were handed into an editable multi-stop Gradient. */
+function toGrad(p: Paint | undefined, f: Fill): Gradient {
+  return gradientFromPaint(p, f.a, f.b, f.angle)
+}
 
-/** Editable Fill → the Paint we emit. Gradient maps to the compositor's spanning Gradient. */
+const fill = reactive<Fill>(toFill(props.modelValue))
+const grad = ref<Gradient>(toGrad(props.modelValue, fill))
+watch(() => props.modelValue, (v) => { Object.assign(fill, toFill(v)); grad.value = toGrad(v, fill); drawPreview() })
+
+/** Editable Fill → the Paint we emit (solid → hex, patterns → Fill object). Gradient
+ *  is emitted from `grad` (the native multi-stop Gradient), not collapsed here. */
 function paintFromFill(f: Fill): Paint {
   if (f.type === 'solid') return f.a
-  if (f.type === 'gradient') return { type: 'linear', angle: f.angle, stops: [{ offset: 0, color: f.a }, { offset: 1, color: f.b }] }
   return { type: f.type, a: f.a, b: f.b, textColor: f.textColor, angle: f.angle, density: f.density }
 }
-function push() { if (!isNone.value) emit('update:modelValue', paintFromFill(fill)); drawPreview() }
-function setType(t: FillType) { fill.type = t; push() }
+function push() {
+  if (!isNone.value) emit('update:modelValue', fill.type === 'gradient' ? grad.value : paintFromFill(fill))
+  drawPreview()
+}
+function setType(t: FillType) {
+  // Switching INTO gradient seeds it from the current colours; an authored gradient
+  // is preserved while you stay on the gradient type.
+  if (t === 'gradient' && fill.type !== 'gradient') grad.value = toGrad(undefined, fill)
+  fill.type = t; push()
+}
+function onGrad(g: Gradient) { grad.value = g; push() }
+
+// ── Shuffle: roll a tasteful fill from the Vessell palette (patterns + a few
+// brand gradients). A rolling counter seeds the pick so repeated clicks vary. ──
+let rollN = 0
+function shuffle() {
+  rollN += 1
+  const pick = rollPaintItem(rollN)
+  if (isGradient(pick)) {
+    grad.value = pick
+    fill.type = 'gradient'
+    emit('update:modelValue', grad.value)
+  } else {
+    Object.assign(fill, pick)
+    emit('update:modelValue', paintFromFill(fill))
+  }
+  drawPreview()
+}
 function setColor(key: 'a' | 'b', v: string) { fill[key] = v; push() }
 function setNum(key: 'angle' | 'density', v: number) { fill[key] = v; push() }
 function toggleNone() {
@@ -55,10 +89,23 @@ function toggleNone() {
   else emit('update:modelValue', 'none')
 }
 
-const needsB = computed(() => fill.type !== 'solid')
-const needsAngle = computed(() => fill.type === 'gradient' || fill.type === 'ombre' || fill.type === 'stripes')
+// Gradient gets its own editor; patterns keep the A/B + angle + density controls.
+const needsB = computed(() => fill.type !== 'solid' && fill.type !== 'gradient')
+const needsAngle = computed(() => fill.type === 'ombre' || fill.type === 'stripes')
 const needsDensity = computed(() => fill.type === 'grid' || fill.type === 'checkerboard' || fill.type === 'stripes' || fill.type === 'noise' || fill.type === 'qr')
 
+function drawGradientPreview(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const g = grad.value
+  const stops = [...g.stops].sort((a, b) => a.offset - b.offset)
+  let cg: CanvasGradient
+  if (g.type === 'radial') cg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) / 2)
+  else {
+    const rad = (g.angle * Math.PI) / 180, hx = (Math.cos(rad) * w) / 2, hy = (Math.sin(rad) * h) / 2
+    cg = ctx.createLinearGradient(w / 2 - hx, h / 2 - hy, w / 2 + hx, h / 2 + hy)
+  }
+  for (const s of stops) cg.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
+  ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h)
+}
 function drawPreview() {
   const cv = previewRef.value; if (!cv) return
   const ctx = cv.getContext('2d'); if (!ctx) return
@@ -68,10 +115,12 @@ function drawPreview() {
     ctx.beginPath(); ctx.moveTo(1, cv.height - 1); ctx.lineTo(cv.width - 1, 1); ctx.stroke()
     return
   }
+  if (fill.type === 'gradient') { drawGradientPreview(ctx, cv.width, cv.height); return }
   try { ctx.drawImage(fillTileCanvas(fill, 28), 0, 0, cv.width, cv.height) } catch { /* no canvas */ }
 }
 onMounted(drawPreview)
 watch(fill, drawPreview, { deep: true })
+watch(grad, drawPreview, { deep: true })
 </script>
 
 <template>
@@ -84,6 +133,9 @@ watch(fill, drawPreview, { deep: true })
         <span>{{ isNone ? 'No fill' : fill.type }}</span>
         <ChevronDown class="size-3.5 text-white/35 transition-transform" :class="open ? 'rotate-180' : ''" />
       </button>
+      <button type="button" class="h-8 w-8 shrink-0 grid place-items-center rounded border border-[#2a2a2a] bg-[#1a1a1a] text-white/55 hover:text-white cursor-pointer" title="Shuffle a palette fill" @click="shuffle">
+        <Dices class="size-4" />
+      </button>
       <button v-if="allowNone" type="button" class="h-8 px-2 rounded border border-[#2a2a2a] bg-[#1a1a1a] text-[11px] text-white/70 hover:text-white cursor-pointer" :title="isNone ? 'Add a fill' : 'Remove'" @click="toggleNone">
         {{ isNone ? 'Add' : '✕' }}
       </button>
@@ -95,7 +147,9 @@ watch(fill, drawPreview, { deep: true })
         <option v-for="t in FILL_TYPES" :key="t" :value="t">{{ t }}</option>
       </select>
 
-      <div class="flex items-center gap-1.5">
+      <GradientEditor v-if="fill.type === 'gradient'" :model-value="grad" @update:model-value="onGrad" />
+
+      <div v-else class="flex items-center gap-1.5">
         <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">{{ needsB ? 'A' : 'Color' }}</span>
         <StudioColor :model-value="fill.a" @update:model-value="(v: string) => setColor('a', v)" />
         <template v-if="needsB">

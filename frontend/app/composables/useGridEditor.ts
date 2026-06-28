@@ -266,6 +266,18 @@ export function useGridEditor(
     dirty.value = true
   }
 
+  /** Set the document/canvas background fill (colour or CSS gradient) and/or
+   *  image. Empty string clears a field; clearing both removes the background. */
+  function setBackground(patch: { fill?: string; image?: string }) {
+    const bg = (template.value.background ??= {})
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null || v === '') delete (bg as Record<string, unknown>)[k]
+      else (bg as Record<string, unknown>)[k] = v
+    }
+    if (!bg.fill && !bg.image) delete template.value.background
+    dirty.value = true
+  }
+
   // Where region edits land: 'class' (every format of this class via
   // regionByClass — or the base region when on the master) or 'output' (only
   // the current output, via overrides[outputId] — diverges a variation).
@@ -653,7 +665,7 @@ export function useGridEditor(
     outputs, currentOutput,
     selectedElement, selectedResolved,
     selectOutput, addOutput, duplicateOutput, removeOutput, renameOutput,
-    setFormatDims, setGridSpec, setBrand, setRegion, setWorkingFormats,
+    setFormatDims, setGridSpec, setBrand, setBackground, setRegion, setWorkingFormats,
     containerSize, setContainerSize, scale, fitScale, zoomOverride, isZoomFitted, zoomBy, zoomFit,
     regionScope, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
     isHiddenInOutput, setHiddenInOutput,

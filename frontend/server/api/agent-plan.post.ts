@@ -1,10 +1,13 @@
 /**
- * Agent planning route (F1 wiring). A thin, stateless proxy to the model:
- * the client builds the prompt + structured-output schema from a surface
- * snapshot (see app/lib/agent/protocol.ts), this route calls the model at the
- * requested altitude tier and returns the raw JSON text. The client parses it
- * (parseAgentResponse) and applies it (applyPlan) — keeping the template and
- * the apply/ghost loop client-side. Mirrors the existing /api/vibe pattern.
+ * Agent planning route (F1 wiring). A thin, stateless, NON-streaming proxy to the
+ * model: the client builds the prompt + structured-output schema from a surface
+ * snapshot (app/lib/agent/protocol.ts); this route calls the model at the
+ * requested altitude tier with strict json_schema output and returns the raw JSON
+ * text. The client parses it (parseAgentResponse) and applies it.
+ *
+ * Deliberately not streaming: SSE streaming proved fragile here (extended-thinking
+ * hangs, sockets that never closed exhausting the browser pool). A single request
+ * is reliable, and the model's `reasoning` field carries its thinking for display.
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { modelForTier } from '../lib/aiModels'
@@ -41,7 +44,7 @@ export default defineEventHandler(async (event) => {
   })
 
   if (!res.ok) {
-    const detail = await res.text()
+    const detail = await res.text().catch(() => '')
     throw createError({ statusCode: res.status, statusMessage: `model error: ${detail.slice(0, 200)}` })
   }
 

@@ -125,24 +125,32 @@ One decision, rendered across a data table and every format.
 
 ---
 
-## Current build status (2026-06-27) — pick up here
+## Current build status (2026-06-28) — pick up here
 
-**Built on `main`, UNCOMMITTED (untracked files), all tests green + tsc-clean on new files:**
-- F1 spine — `frontend/app/lib/agent/`:
-  - `commandSurface.ts` — shared types (DescribedObject, CommandSpec, SurfaceSnapshot, Command, CommandResult).
-  - `surfaces/smartLayout.ts` — `describeSmartLayout` (sections + elements + command catalog w/ hints) and `applySmartLayoutCommand` (ops: setSectionRegion, setText, group, ungroup, applyArchetype, setBrand, addChildToSection, internal restore). Pure, reversible (inverse per command), input-immutable (clone-at-top), validated (typed invalid/out-of-vocabulary).
-  - `plan.ts` — `applyPlan` (runs a command list as one reversible batch; rolls back partials on failure).
-  - `protocol.ts` — `buildCommandSchema` (constrains model `op` to the catalog), `buildAgentPrompt`, `parseAgentResponse` (args ride as JSON string).
-- F2 seed — `frontend/server/lib/aiModels.ts` (AI_TIERS: patch=haiku, plan=sonnet-4-6, campaign=opus-4-8) + `frontend/server/api/agent-plan.post.ts` (thin model proxy, mirrors /api/vibe).
-- Tests — `tests/unit/agent-smart-layout-surface.unit.spec.ts` (36) + `tests/unit/agent-plan.unit.spec.ts` (8, incl. a simulated end-to-end). Full suite 1309 pass; the only 2 failures (`spacetype-palette`) are pre-existing user WIP, not ours.
-- Adversarially reviewed; immutability + validation holes fixed.
+The Smart Layout agent is **live end-to-end** (user-confirmed working in-app). Phase 0
+foundations are done and Phase 2's proof milestone is achieved on Smart Layout. All
+client-side; full suite green (~1392 pass; the only 2 failures are pre-existing
+`spacetype-palette` user WIP). UNCOMMITTED on `main`.
 
-**Verified vs not:** client loop proven deterministically (simulated model). NOT yet run: full Nuxt typecheck (only scoped tsc), the live model round-trip (needs the user's Anthropic key), and any Vue-component test (no component test harness — verify via the app/Playwright).
+**Phase 0 — Foundations: DONE.**
+- **F1** ✅ `frontend/app/lib/agent/` — `commandSurface.ts`, `surfaces/smartLayout.ts` (full verb set, see below), `plan.ts`, `protocol.ts` (now non-strict + tolerant parse + a `message` refuse/answer channel + a `reasoning` field).
+- **F2** ✅ `server/lib/aiModels.ts` + `server/api/agent-plan.post.ts` (non-streaming, strict json_schema) + `server/api/agent-review.post.ts` (multimodal visual review).
+- **F3** ✅ rich hints on every command; **standard = the vocabulary must cover what the RENDERER accepts** (not the inspector — that gap caused the gradient/grid/brand misses).
+- **F4** ✅ `frontend/app/lib/agent/verify.ts` — deterministic postconditions (off-canvas, contrast, narrow-headline, palette/type-size restraint, hierarchy, all-centred) **+ visual self-review** (render via `/api/render-template` → `/api/agent-review` vision critique → self-correcting fix commands appended to the proposal).
 
-**In progress — the last mile (option 1):** `AgentBar.vue` (the agent marker = VibeControlBar + the canonical `.pastel-hairline` / `--pastel-gradient`, idle muted → focus bloom) + `useLayoutAgent` composable (describe → POST `/api/agent-plan` → parseAgentResponse → applyPlan → Keep/Revert proposal) + mount in the Smart Layout editor. Marker + redesigned proposal block previewed as screenshots (scratchpad), awaiting final sign-off.
+**Smart Layout verb set (`applySmartLayoutCommand`):** setText, setTextColor, setElementStyle, setElementProps, addElement, removeElement, reorderElement, setSectionRegion, setSectionProps, group, ungroup, applyArchetype (remaps coarse→fine grid), setBackground (colour/gradient/image), setBrand, addFormat, removeFormat, setGrid, setTypeScale, generateImage, removeImageBackground, editImage, restore (internal). All reversible, immutable, validated.
 
-**Open design decisions (await user):** proposal-block redesign sign-off (new-value-primary, actions in footer, pastel identity; consider per-change accept à la Cursor); marker ring muted-until-focus vs always-on; "thinking" state = `gen-pastel` flow / glimm "citrus" sweep; button label "Ask" vs "Apply". Reuse `REGION_PASTEL` + `.pastel-hairline` is confirmed (the canonical AI style).
+**Phase 2 — proof milestone: ACHIEVED on Smart Layout.** `useLayoutAgent` + `AgentBar`/`AgentProposal`/`AgentProgress`/`AgentSweep` in `GridEditorShell`. Ghost propose→review→commit with per-change accept/reject/**reroll** (intent-preserving), inverse undo, generative content, rotating progress, glimm sweep, honest refusal/answer.
 
-**Parked:** Mobbin MCP — added to config but needs a Claude Code restart to load; use it for design references once it's online.
+**Beyond the plan (built this session):**
+- **Swiss design system** — `frontend/app/lib/agent/designPrinciples.ts` (`SWISS_DESIGN_PROMPT` generative) + verify.ts checks (`SWISS_LIMITS`). Doc: `docs/agent-swiss-design.md`. The agent composes in International Typographic Style by default.
+- **Visual self-review** — the first of the design-learning loops (preference-memory, exemplars, failure→check ratchet still to come).
+- **Unified panel UI** — glassy `StudioSection`/`glass-panel` look + a shared panel type scale (`.panel-heading/label/value/sublabel/help` in `main.css`) across studios / Compositor / Smart Layout.
 
-**Backlog/tasks** (also tracked as session tasks #1–#7): F1 (active) · F2 (active, tier map seeded) · F3 hints · F4 postconditions · T1 expose Compositor · T1 expose Smart Layout (active) · T1 unhide Texture fills.
+**NEXT (frontier = breadth or altitude):**
+- **T1 Compositor** — the agent's 2nd Phase-2 home. Only its *UI* was touched this session; the command surface (`surfaces/compositor.ts` describe+apply over the local-layer model) is the planned next exposure and proves the F1 abstraction generalizes.
+- **Phase 1 breadth** — generalize tune ("warmer/tighter") to the other studios.
+- **Phase 3** — canvas/node `CommandSurface` + branching UX.
+- **Learning loops** — preference memory (persist accept/reject), exemplar library, failure→check ratchet.
+
+**Verified vs not:** Smart Layout agent confirmed live in-app. NOT yet run: full Nuxt typecheck (scoped tsc only); visual-review render path on v3 *sections* may be partial (loose elements + background always render). LiteGraph "Level 1" (hide iframe) still deferred.

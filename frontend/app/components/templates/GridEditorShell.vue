@@ -8,13 +8,18 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
 import { allElements } from '~~/shared/template-grid/sections'
-import { BRAND_COLOR_KEYS } from '~~/shared/template-grid/types'
-import type { AnyGridTemplate, BrandKit, TemplateV2 } from '~~/shared/template-grid/types'
+import { BRAND_COLOR_KEYS, isV3 } from '~~/shared/template-grid/types'
+import type { AnyGridTemplate, BrandKit, TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
+import { useLayoutAgent } from '~/composables/useLayoutAgent'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
+import AgentSweep from '~/components/agent/AgentSweep.vue'
 
 const props = defineProps<{
   initial: AnyGridTemplate
@@ -43,6 +48,21 @@ provide('layerControls', {
 
 const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand } = ctx
 
+// In-product agent (last-mile of F1): drives the template through the command
+// surface. Gated to v3 templates in the UI below.
+const { getLocalSetting } = useLocalSettings()
+const {
+  busy: agentBusy, error: agentError, notice: agentNotice, issues: agentIssues, review: agentReview, reviewing: agentReviewing, changes: agentChanges, hasProposal: agentHasProposal, hovered: agentHovered,
+  ask: agentAsk, acceptChange, rejectChange, reroll: agentReroll,
+  keep: agentKeep, revert: agentRevert,
+} = useLayoutAgent({
+  template: template as unknown as Ref<TemplateV3>,
+  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  sampleProps: () => sampleProps.value,
+  sampleBrand: () => sampleBrand.value as BrandKit,
+})
+function onAgentHover(i: number | null) { agentHovered.value = i }
+
 // Opening step: a fresh, empty layout shows the format picker first (pick the
 // deliverables, then design on a blank canvas). An existing layout — any
 // elements or sections — skips straight into editing.
@@ -59,7 +79,8 @@ function onFormatsChosen(keys: string[]) {
 const canvasArea = computed(() => ({
   top: '24px',
   left: '272px',                                     // left-4 + w-60 + gap
-  right: selectedElement.value ? '320px' : '32px',   // right-4 + w-72 + gap
+  // Right column (agent on v3, and/or the element inspector) is w-80 = 320px.
+  right: (isV3(template.value) || selectedElement.value) ? '344px' : '32px', // right-4 + w-80 + gap
   bottom: '88px',                                    // bottom toolbar + gap
 }))
 
@@ -196,6 +217,16 @@ function brandVal(key: string): string {
   return (template.value.brand as any)?.[key] ?? ''
 }
 
+// -- Background popover --------------------------------------------------------
+
+const bgPanelOpen = ref(false)
+const bgFill = computed(() => template.value.background?.fill ?? '')
+const hasBgImage = computed(() => !!template.value.background?.image)
+const bgColorHex = computed(() => (/^#[0-9a-f]{6}$/i.test(bgFill.value) ? bgFill.value : '#000000'))
+/** A fill (colour/gradient) replaces any image so it actually shows. */
+function setBgFill(v: string) { ctx.setBackground({ fill: v, image: '' }) }
+function clearBackground() { ctx.setBackground({ fill: '', image: '' }) }
+
 const exportOpen = ref(false)
 function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
   ensureFont(family)
@@ -290,6 +321,8 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
     <div class="flex-1 relative min-h-0 overflow-hidden bg-[#121212]">
       <div class="absolute transition-all duration-150" :style="canvasArea">
         <TemplatesGridEditorCanvas />
+        <!-- Glimm "citrus" sweep over the artboard while the agent is working. -->
+        <AgentSweep :active="agentBusy" />
       </div>
       <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
       <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
@@ -306,13 +339,31 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </div>
       </div>
 
-      <!-- Right floating panel: inspector -->
+      <!-- Right panel: ONE card — the agent pinned at the top, the proposal and
+           element inspector scrolling beneath it. -->
       <div
-        v-if="selectedElement"
-        class="absolute top-4 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden"
+        v-if="started && (isV3(template) || selectedElement)"
+        class="absolute top-4 right-4 bottom-4 z-30 flex w-80 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0e0e10]/80 shadow-2xl backdrop-blur-md"
       >
-        <div class="flex-1 min-h-0 overflow-y-auto">
-          <TemplatesGridPropertyPanel />
+        <div v-if="isV3(template)" class="shrink-0 border-b border-white/[0.06] px-4 pt-4 pb-5">
+          <AgentBar :busy="agentBusy" :error="agentError" :notice="agentNotice" @submit="agentAsk" @chip="agentAsk" />
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto pt-2">
+          <!-- The progress line fades out and the proposal fades in (out-in). -->
+          <Transition name="agent-fade" mode="out-in">
+            <div v-if="agentBusy" key="progress" class="p-3">
+              <AgentProgress :active="agentBusy" />
+            </div>
+            <div v-else-if="agentHasProposal" key="proposal" class="p-3 pb-0">
+              <AgentProposal
+                :changes="agentChanges" :busy="agentBusy" :issues="agentIssues"
+                :review="agentReview" :reviewing="agentReviewing"
+                @accept="acceptChange" @reject="rejectChange" @reroll="agentReroll"
+                @keep="agentKeep" @revert="agentRevert" @hover="onAgentHover"
+              />
+            </div>
+          </Transition>
+          <TemplatesGridPropertyPanel v-if="selectedElement && !agentBusy" />
         </div>
       </div>
 
@@ -389,6 +440,48 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
               <p class="mt-1 text-[10px] text-white/30 leading-snug tabular-nums">
                 Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
               </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Background -->
+        <div class="relative">
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+            :class="bgPanelOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+            title="Canvas background — colour or gradient"
+            @click="bgPanelOpen = !bgPanelOpen"
+          >
+            <PaintBucket class="size-4" /> Background
+          </button>
+          <div
+            v-if="bgPanelOpen"
+            class="absolute bottom-full mb-2 left-0 z-30 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-2.5"
+          >
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Canvas background</p>
+            <div class="flex items-center gap-2">
+              <input
+                type="color" :value="bgColorHex" title="Background colour"
+                class="h-8 w-9 shrink-0 cursor-pointer rounded border border-white/10 bg-transparent"
+                @input="(e: any) => setBgFill(e.target.value)"
+              >
+              <input
+                type="text" :value="bgFill" placeholder="#0a0a0a or linear-gradient(135deg,#FF6EB4,#FF8C42)"
+                class="h-8 w-full rounded border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white focus:border-white/30 focus:outline-none"
+                @change="(e: any) => setBgFill(e.target.value)"
+              >
+            </div>
+            <p v-if="hasBgImage" class="text-[11px] text-white/45">
+              An image background is set —
+              <button class="cursor-pointer text-white/70 underline underline-offset-2 hover:text-white" @click="setBgFill(bgFill || '#0a0a0a')">replace with colour</button>.
+            </p>
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] leading-snug text-white/30">Solid colour or any CSS gradient.</p>
+              <button
+                v-if="bgFill || hasBgImage"
+                class="cursor-pointer text-[11px] text-white/55 underline underline-offset-2 hover:text-white"
+                @click="clearBackground()"
+              >Clear</button>
             </div>
           </div>
         </div>
@@ -511,3 +604,11 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Crossfade the agent progress line out and the proposed changes in. */
+.agent-fade-enter-active,
+.agent-fade-leave-active { transition: opacity 0.25s ease; }
+.agent-fade-enter-from,
+.agent-fade-leave-to { opacity: 0; }
+</style>

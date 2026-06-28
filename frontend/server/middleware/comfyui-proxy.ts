@@ -23,7 +23,7 @@ const PROXY_PREFIXES = [
 ]
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
-const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe']
+const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe', '/api/agent-plan', '/api/agent-review']
 const NITRO_API_PREFIXES = ['/api/templates', '/api/cloud-train', '/api/voice-clone', '/api/krea', '/api/vector', '/api/inpaint', '/api/brand-kits', '/api/template-fonts']
 const NITRO_ROUTE_PREFIXES = ['/view', '/history']
 

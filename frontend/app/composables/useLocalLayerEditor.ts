@@ -9,7 +9,7 @@
  * (possibly zoomed) artboard element.
  */
 import {
-  type LocalLayer, type TextLayer, type RectLayer, type LineLayer, type PathLayer,
+  type LocalLayer, type TextLayer, type RectLayer, type LineLayer, type PathLayer, type Paint,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
   localLayerBox, shapeToPathLayer,
 } from '~/composables/useCompositorLayers'
@@ -49,16 +49,26 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     ;(n.data.properties as any).comfynext_stackOrder = order
   }
 
+  // Doc-level background fill (behind every layer; baked into output).
+  const background = computed<Paint | undefined>(() => (node()?.data?.properties as any)?.comfynext_localBg as Paint | undefined)
+  function writeBg(p: Paint | undefined) {
+    const n = node(); if (!n) return
+    if (!n.data.properties) n.data.properties = {}
+    if (p === undefined || p === 'none' || p === '') delete (n.data.properties as any).comfynext_localBg
+    else (n.data.properties as any).comfynext_localBg = p
+  }
+  function setBackground(p: Paint | undefined) { recordHistory(); writeBg(p) }
+
   // ── Undo / redo (snapshot history over local layers + z-order) ──────────────
   // The editor is the single mutation choke point, so one history stack here
   // covers every vector edit. Discrete ops record before mutating; a drag
   // records once at pointer-down (coalesced) so it's a single undo step.
-  type Snapshot = { layers: LocalLayer[]; order: string[] }
+  type Snapshot = { layers: LocalLayer[]; order: string[]; bg: Paint | undefined }
   const HISTORY_CAP = 120
   const _past = ref<Snapshot[]>([])
   const _future = ref<Snapshot[]>([])
-  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()] } }
-  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]) }
+  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()], bg: background.value } }
+  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]); writeBg(s.bg) }
   function recordHistory() {
     _past.value.push(snapshot())
     if (_past.value.length > HISTORY_CAP) _past.value.shift()
@@ -475,6 +485,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
+    background, setBackground,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
     groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,

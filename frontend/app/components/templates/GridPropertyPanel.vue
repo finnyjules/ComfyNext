@@ -6,6 +6,7 @@
  */
 import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square } from 'lucide-vue-next'
 
+import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
@@ -164,12 +165,12 @@ const focalSrc = computed(() => {
 })
 
 const inputCls = 'w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50'
-const labelCls = 'text-[10px] uppercase tracking-[0.12em] text-white/35'
+const labelCls = 'panel-label'
 const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-pointer'
 </script>
 
 <template>
-  <div v-if="el" class="h-full overflow-y-auto p-3 flex flex-col gap-4">
+  <div v-if="el" class="h-full overflow-y-auto p-3 flex flex-col gap-2.5">
     <!-- Header -->
     <div class="flex items-center gap-2">
       <component
@@ -259,57 +260,56 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </label>
     </div>
 
-    <!-- Region -->
-    <div>
-      <p :class="labelCls" class="mb-1.5">Grid region</p>
-      <div v-if="region" class="grid grid-cols-2 gap-2">
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] text-white/40 w-8">Col</span>
-          <input type="number" min="1" :max="metrics.cols" :value="region.col" :class="inputCls" @change="(e: any) => setRegionField('col', e.target.value)">
-        </label>
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] text-white/40 w-8">Span</span>
-          <input type="number" min="1" :max="metrics.cols" :value="region.colSpan" :class="inputCls" @change="(e: any) => setRegionField('colSpan', e.target.value)">
-        </label>
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] text-white/40 w-8">Row</span>
-          <input type="number" min="1" :max="metrics.rows" :value="region.row" :class="inputCls" @change="(e: any) => setRegionField('row', e.target.value)">
-        </label>
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] text-white/40 w-8">Span</span>
-          <input type="number" min="1" :max="metrics.rows" :value="region.rowSpan" :class="inputCls" @change="(e: any) => setRegionField('rowSpan', e.target.value)">
+    <!-- Position & size -->
+    <StudioSection title="Layout" :badge="el.type">
+      <div>
+        <p :class="labelCls" class="mb-1.5">Grid region</p>
+        <div v-if="region" class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-1.5">
+            <span class="text-[11px] text-white/40 w-8">Col</span>
+            <input type="number" min="1" :max="metrics.cols" :value="region.col" :class="inputCls" @change="(e: any) => setRegionField('col', e.target.value)">
+          </label>
+          <label class="flex items-center gap-1.5">
+            <span class="text-[11px] text-white/40 w-8">Span</span>
+            <input type="number" min="1" :max="metrics.cols" :value="region.colSpan" :class="inputCls" @change="(e: any) => setRegionField('colSpan', e.target.value)">
+          </label>
+          <label class="flex items-center gap-1.5">
+            <span class="text-[11px] text-white/40 w-8">Row</span>
+            <input type="number" min="1" :max="metrics.rows" :value="region.row" :class="inputCls" @change="(e: any) => setRegionField('row', e.target.value)">
+          </label>
+          <label class="flex items-center gap-1.5">
+            <span class="text-[11px] text-white/40 w-8">Span</span>
+            <input type="number" min="1" :max="metrics.rows" :value="region.rowSpan" :class="inputCls" @change="(e: any) => setRegionField('rowSpan', e.target.value)">
+          </label>
+        </div>
+        <button
+          v-else
+          class="w-full h-8 rounded-md bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200/90 hover:bg-amber-500/20 transition-colors cursor-pointer"
+          @click="placeHere"
+        >
+          Culled in this format — place it here
+        </button>
+        <label class="mt-2 flex items-center gap-2 text-[12px] text-white/70 cursor-pointer">
+          <input
+            type="checkbox" :checked="el.bleed === true"
+            @change="(e: any) => patchElement(el!.id, { bleed: e.target.checked || undefined })"
+          >
+          <span>Bleed past margin <span class="text-white/35">(extend to canvas edge on the sides it borders)</span></span>
         </label>
       </div>
-      <button
-        v-else
-        class="w-full h-8 rounded-md bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200/90 hover:bg-amber-500/20 transition-colors cursor-pointer"
-        @click="placeHere"
-      >
-        Culled in this format — place it here
-      </button>
-      <label class="mt-2 flex items-center gap-2 text-[12px] text-white/70 cursor-pointer">
+      <div>
+        <p :class="labelCls" class="mb-1.5">Priority</p>
         <input
-          type="checkbox" :checked="el.bleed === true"
-          @change="(e: any) => patchElement(el!.id, { bleed: e.target.checked || undefined })"
+          type="number" min="1" max="9" :value="el.priority" :class="inputCls"
+          @change="(e: any) => patchElement(el!.id, { priority: Math.max(1, Math.round(Number(e.target.value)) || 1) })"
         >
-        <span>Bleed past margin <span class="text-white/35">(extend to canvas edge on the sides it borders)</span></span>
-      </label>
-    </div>
-
-    <!-- Priority -->
-    <div>
-      <p :class="labelCls" class="mb-1.5">Priority</p>
-      <input
-        type="number" min="1" max="9" :value="el.priority" :class="inputCls"
-        @change="(e: any) => patchElement(el!.id, { priority: Math.max(1, Math.round(Number(e.target.value)) || 1) })"
-      >
-      <p class="mt-1 text-[10px] text-white/30">1 = most important; survives longest on small formats.</p>
-    </div>
+        <p class="mt-1 text-[10px] text-white/30">1 = most important; survives longest on small formats.</p>
+      </div>
+    </StudioSection>
 
     <!-- Text -->
     <template v-if="textEl">
-      <div>
-        <p :class="labelCls" class="mb-1.5">Content</p>
+      <StudioSection title="Content" badge="Text">
         <textarea
           :value="textEl.content"
           rows="3"
@@ -317,9 +317,10 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           class="h-auto py-1.5 resize-y"
           @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
         />
-      </div>
-      <div>
-        <p :class="labelCls" class="mb-1.5">Font</p>
+      </StudioSection>
+      <StudioSection title="Typography">
+        <div>
+          <p :class="labelCls" class="mb-1.5">Font</p>
         <TemplatesFontPicker
           :model-value="fontBoundLabel ? (effectiveBrand as any)[brandTokenKey(styleOf().fontFamily)!] : (styleOf().fontFamily ?? 'Inter')"
           @update:model-value="setFontFamily"
@@ -394,8 +395,9 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           >
         </div>
       </div>
+      </StudioSection>
+      <StudioSection title="Alignment">
       <div>
-        <p :class="labelCls" class="mb-1.5">Align</p>
         <div class="flex gap-1 mb-2">
           <button
             v-for="a in ['left', 'center', 'right']" :key="a" :class="[btnRowCls, (styleOf().align ?? 'left') === a ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
@@ -409,6 +411,8 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           >{{ v }}</button>
         </div>
       </div>
+      </StudioSection>
+      <StudioSection title="Colour">
       <div>
         <p :class="labelCls" class="mb-1.5">Color</p>
         <div class="flex gap-2 items-center">
@@ -493,10 +497,12 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           </div>
         </template>
       </div>
+      </StudioSection>
     </template>
 
     <!-- Image -->
     <template v-else-if="el.type === 'image'">
+      <StudioSection title="Image" badge="Image">
       <div>
         <p :class="labelCls" class="mb-1.5">Source</p>
         <input
@@ -544,10 +550,12 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           @change="(f) => patchElement(el!.id, { focal: f })"
         />
       </div>
+      </StudioSection>
     </template>
 
     <!-- Shape -->
     <template v-else-if="el.type === 'shape'">
+      <StudioSection title="Shape" badge="Shape">
       <div>
         <p :class="labelCls" class="mb-1.5">Shape</p>
         <div class="flex gap-1">
@@ -591,6 +599,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           @change="(e: any) => patchStyle(el!.id, { borderRadius: Math.max(0, Number(e.target.value) || 0) })"
         >
       </div>
+      </StudioSection>
     </template>
   </div>
 </template>
