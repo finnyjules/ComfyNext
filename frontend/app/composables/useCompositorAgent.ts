@@ -12,8 +12,9 @@ import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
 import type { ProposedChange } from '~/composables/useLayoutAgent'
-import { applyCompositorCommand, describeCompositor, summarizeCompositorChange, type CompositorState } from '~/lib/agent/surfaces/compositor'
+import { applyCompositorCommand, describeCompositor, summarizeCompositorChange, verifyCompositor, type CompositorState } from '~/lib/agent/surfaces/compositor'
 import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
+import type { LayoutIssue } from '~/lib/agent/verify'
 
 const REROLLABLE = new Set(['setText', 'setTextStyle', 'setFill', 'setStroke', 'setBackground'])
 const clone = (s: CompositorState): CompositorState => JSON.parse(JSON.stringify(s)) as CompositorState
@@ -51,6 +52,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
   const reasoning = ref('')
   const lastPhrase = ref('')
   const changes = ref<ProposedChange[]>([])
+  const issues = ref<LayoutIssue[]>([])
   const hovered = ref<number | null>(null)
   let original: CompositorState | null = null
   const hasProposal = computed(() => changes.value.length > 0)
@@ -77,6 +79,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
       if (r.ok) s = r.template
     }
     opts.setState(s)
+    issues.value = verifyCompositor(s)
   }
 
   function buildChange(probe: CompositorState, cmd: Command, rationale: string): ProposedChange | null {
@@ -138,7 +141,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
   async function ask(phrase: string) {
     const p = phrase.trim()
     if (!p || busy.value) return
-    busy.value = true; error.value = ''; notice.value = ''; reasoning.value = ''; lastPhrase.value = p
+    busy.value = true; error.value = ''; notice.value = ''; reasoning.value = ''; issues.value = []; lastPhrase.value = p
     try {
       original = clone(opts.getState())
       const { commands, changeRationales, message } = await callModel(buildAgentPrompt(describeCompositor(original), p))
@@ -193,8 +196,8 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
     }
   }
 
-  function keep() { changes.value = []; original = null; notice.value = '' }
-  function revert() { if (original) opts.setState(original); changes.value = []; original = null; notice.value = '' }
+  function keep() { changes.value = []; original = null; notice.value = ''; issues.value = [] }
+  function revert() { if (original) opts.setState(original); changes.value = []; original = null; notice.value = ''; issues.value = [] }
 
-  return { busy, error, notice, reasoning, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
+  return { busy, error, notice, reasoning, changes, issues, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
 }

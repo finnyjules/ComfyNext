@@ -8,8 +8,10 @@
  * to `node.data.properties.comfynext_localLayers` + the background, and runs the
  * media ops (generate/edit/remove-bg) which need async backend calls.
  */
-import type { LocalLayer, LocalLayerKind, Paint } from '~/composables/useCompositorLayers'
+import type { LocalLayer, LocalLayerKind, Paint, TextLayer } from '~/composables/useCompositorLayers'
 import type { Command, CommandResult, CommandSpec, SurfaceSnapshot } from '~/lib/agent/commandSurface'
+import { contrastRatio, parseColor, type LayoutIssue } from '~/lib/agent/verify'
+import { SWISS_LIMITS } from '~/lib/agent/designPrinciples'
 
 export interface CompositorState {
   layers: LocalLayer[]
@@ -213,6 +215,46 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
     default:
       return { ok: false, reason: 'out-of-vocabulary', detail: `unknown op '${cmd.op}'` }
   }
+}
+
+/** Postcondition checks on a frame (parity with Smart Layout's verify): a layer
+ *  off-canvas, text too small or low-contrast against the background, a busy
+ *  palette, or an all-centred composition (un-Swiss). Pure; warnings only. */
+export function verifyCompositor(state: CompositorState): LayoutIssue[] {
+  const issues: LayoutIssue[] = []
+  const bg = typeof state.background === 'string' ? parseColor(state.background) : null
+  const colours = new Set<string>()
+  const addColour = (p?: Paint) => { if (typeof p === 'string') { const c = parseColor(p); if (c) colours.add(`${c.r},${c.g},${c.b}`) } }
+  addColour(state.background)
+  const texts: TextLayer[] = []
+
+  for (const l of state.layers) {
+    if (l.visible === false) continue
+    const name = l.kind === 'text' ? `“${(l as TextLayer).text}”` : l.kind
+    if (l.x < -0.02 || l.x > 1.02 || l.y < -0.02 || l.y > 1.02) {
+      issues.push({ level: 'warn', target: l.id, message: `${name} is off-canvas (its centre is outside the frame)` })
+    }
+    if (l.kind === 'text') {
+      const t = l as TextLayer
+      texts.push(t)
+      addColour(t.color)
+      if (t.fontSize < 0.018) issues.push({ level: 'warn', target: l.id, message: `${name} is very small — likely unreadable` })
+      const txt = typeof t.color === 'string' ? parseColor(t.color) : null
+      if (txt && bg) {
+        const ratio = contrastRatio(txt, bg)
+        if (ratio < 2.5) issues.push({ level: 'warn', target: l.id, message: `${name} may be hard to read — low contrast (${ratio.toFixed(1)}:1) on the background` })
+      }
+    } else if (l.kind === 'rect' || l.kind === 'ellipse' || l.kind === 'path') {
+      addColour((l as unknown as { fill?: Paint }).fill)
+    }
+  }
+  if (colours.size > SWISS_LIMITS.maxColours) {
+    issues.push({ level: 'warn', message: `${colours.size} colours in use — Swiss style favours restraint (one accent)` })
+  }
+  if (texts.length >= 2 && texts.every(t => t.align === 'center')) {
+    issues.push({ level: 'warn', message: 'all text is centred — Swiss style favours a flush-left, asymmetric composition' })
+  }
+  return issues
 }
 
 /** Human-readable summary of a command for the proposal UI. */

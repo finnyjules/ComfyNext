@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { LocalLayer } from '~/composables/useCompositorLayers'
-import { describeCompositor, applyCompositorCommand, summarizeCompositorChange, type CompositorState } from '~/lib/agent/surfaces/compositor'
+import { describeCompositor, applyCompositorCommand, summarizeCompositorChange, verifyCompositor, type CompositorState } from '~/lib/agent/surfaces/compositor'
 
 function state(): CompositorState {
   return {
@@ -93,6 +93,24 @@ describe('applyCompositorCommand', () => {
     const before = state()
     applyCompositorCommand(before, { op: 'setFill', target: 'r1', args: { paint: '#fff' } })
     expect((before.layers[1] as any).fill).toBe('#ff0000')
+  })
+})
+
+describe('verifyCompositor', () => {
+  it('flags an off-canvas layer', () => {
+    const s = state(); (s.layers[1] as any).x = 1.4
+    expect(verifyCompositor(s).some(i => /off-canvas/i.test(i.message))).toBe(true)
+  })
+  it('flags low-contrast text on the background', () => {
+    const s = state(); (s.layers[0] as any).color = '#0a0a0a' // near-black text on #000000 bg
+    expect(verifyCompositor(s).some(i => /contrast/i.test(i.message))).toBe(true)
+  })
+  it('flags very small text', () => {
+    const s = state(); (s.layers[0] as any).fontSize = 0.01
+    expect(verifyCompositor(s).some(i => /small/i.test(i.message))).toBe(true)
+  })
+  it('a legible, on-canvas frame is clean', () => {
+    expect(verifyCompositor(state())).toEqual([]) // white text on black bg, in-frame
   })
 })
 
