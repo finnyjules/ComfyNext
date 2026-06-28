@@ -254,12 +254,13 @@ const {
 const { getLocalSetting } = useLocalSettings()
 const {
   busy: caBusy, error: caError, notice: caNotice,
-  changes: caChanges, issues: caIssues, hasProposal: caHasProposal, hovered: caHovered,
+  changes: caChanges, issues: caIssues, review: caReview, reviewing: caReviewing, hasProposal: caHasProposal, hovered: caHovered,
   ask: caAsk, acceptChange: caAccept, rejectChange: caReject, reroll: caReroll, keep: caKeep, revert: caRevert,
 } = useCompositorAgent({
   getState: () => ({ layers: localLayers.value, background: background.value }),
   setState: (s) => { commit(s.layers); if (s.background !== background.value) setBackground(s.background) },
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
 })
 
 const selectedCount = computed(() => selectedLayers.value.length)
@@ -1925,7 +1926,7 @@ onUnmounted(() => {
       </div>
       <div v-else-if="caHasProposal" class="pt-2.5">
         <AgentProposal
-          :changes="caChanges" :busy="caBusy" :issues="caIssues"
+          :changes="caChanges" :busy="caBusy" :issues="caIssues" :review="caReview" :reviewing="caReviewing"
           @accept="caAccept" @reject="caReject" @reroll="caReroll"
           @keep="caKeep" @revert="caRevert" @hover="(i: number | null) => caHovered = i"
         />

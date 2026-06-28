@@ -11,10 +11,11 @@
 import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
-import type { ProposedChange } from '~/composables/useLayoutAgent'
+import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import { applyCompositorCommand, describeCompositor, summarizeCompositorChange, verifyCompositor, type CompositorState } from '~/lib/agent/surfaces/compositor'
-import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
+import { buildAgentPrompt, buildCommandSchema, buildReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
 import type { LayoutIssue } from '~/lib/agent/verify'
+import { ensureLayerImages, paintLayerStack, type LocalLayer } from '~/composables/useCompositorLayers'
 
 const REROLLABLE = new Set(['setText', 'setTextStyle', 'setFill', 'setStroke', 'setBackground'])
 const clone = (s: CompositorState): CompositorState => JSON.parse(JSON.stringify(s)) as CompositorState
@@ -45,7 +46,7 @@ async function uploadDataUrl(dataUrl: string): Promise<string> {
   return up?.name ?? name
 }
 
-export function useCompositorAgent(opts: { getState: () => CompositorState; setState: (s: CompositorState) => void; apiKey: () => string; tier?: string }) {
+export function useCompositorAgent(opts: { getState: () => CompositorState; setState: (s: CompositorState) => void; apiKey: () => string; tier?: string; dims?: () => { w: number; h: number } }) {
   const busy = ref(false)
   const error = ref('')
   const notice = ref('')
@@ -53,6 +54,9 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
   const lastPhrase = ref('')
   const changes = ref<ProposedChange[]>([])
   const issues = ref<LayoutIssue[]>([])
+  /** The visual self-review: a designer's-eye critique of the rendered frame. */
+  const review = ref<VisualReview | null>(null)
+  const reviewing = ref(false)
   const hovered = ref<number | null>(null)
   let original: CompositorState | null = null
   const hasProposal = computed(() => changes.value.length > 0)
@@ -138,10 +142,63 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
     return { resolved, genFailed }
   }
 
+  /** Render the current frame (current state = original + accepted changes) to a
+   *  PNG data URL on an offscreen canvas. Best-effort; null when unavailable. */
+  async function renderFramePng(): Promise<string | null> {
+    if (typeof document === 'undefined') return null
+    try {
+      const state = opts.getState()
+      const aspect = (() => { const d = opts.dims?.(); return d && d.w > 0 && d.h > 0 ? d.w / d.h : 1 })()
+      const W = aspect >= 1 ? 1024 : Math.round(1024 * aspect)
+      const H = aspect >= 1 ? Math.round(1024 / aspect) : 1024
+      await ensureLayerImages(state.layers as LocalLayer[])
+      const canvas = document.createElement('canvas')
+      canvas.width = W; canvas.height = H
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      const items = (state.layers as LocalLayer[]).map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l }))
+      paintLayerStack(ctx, W, H, items, state.layers as LocalLayer[], undefined, undefined, undefined, undefined, state.background)
+      return canvas.toDataURL('image/png')
+    } catch { return null }
+  }
+
+  /** Visual self-review: render the frame, let a multimodal model critique the
+   *  actual composition, surface its findings and append any fix commands as
+   *  additional (self-correcting) proposed changes. Best-effort — never throws. */
+  async function runVisualReview(intent: string) {
+    reviewing.value = true
+    try {
+      const image = await renderFramePng()
+      if (!image || !original) return
+      const snapshot = describeCompositor(opts.getState())
+      const schema = buildReviewSchema(snapshot.commands)
+      const res = await $fetch<{ text: string }>('/api/agent-review', {
+        method: 'POST',
+        body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildReviewPrompt(snapshot, intent), schema, image },
+        timeout: 60_000,
+      })
+      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
+      review.value = { assessment, issues: found }
+      if (fixes.length) {
+        let probe = clone(opts.getState()) // current frame (original + accepted changes)
+        fixes.forEach((cmd, i) => {
+          const ch = buildChange(probe, cmd, fixRationales[i] || 'Visual review fix')
+          if (!ch) return
+          ch.fromReview = true
+          changes.value = [...changes.value, ch]
+          const r = applyCompositorCommand(probe, cmd)
+          if (r.ok) probe = r.template
+        })
+        recompute()
+      }
+    } catch { /* review is best-effort */ }
+    finally { reviewing.value = false }
+  }
+
   async function ask(phrase: string) {
     const p = phrase.trim()
     if (!p || busy.value) return
-    busy.value = true; error.value = ''; notice.value = ''; reasoning.value = ''; issues.value = []; lastPhrase.value = p
+    busy.value = true; error.value = ''; notice.value = ''; reasoning.value = ''; issues.value = []; review.value = null; lastPhrase.value = p
     try {
       original = clone(opts.getState())
       const { commands, changeRationales, message } = await callModel(buildAgentPrompt(describeCompositor(original), p))
@@ -162,6 +219,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
         else error.value = commands.length ? 'The agent proposed changes, but none applied to this frame.' : 'No changes proposed for that request.'
       } else if (message) notice.value = message
       recompute()
+      if (built.length) void runVisualReview(p) // fire-and-forget: proposal shows now, review catches up
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
       if (original) opts.setState(original)
@@ -196,8 +254,8 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
     }
   }
 
-  function keep() { changes.value = []; original = null; notice.value = ''; issues.value = [] }
-  function revert() { if (original) opts.setState(original); changes.value = []; original = null; notice.value = ''; issues.value = [] }
+  function keep() { changes.value = []; original = null; notice.value = ''; issues.value = []; review.value = null }
+  function revert() { if (original) opts.setState(original); changes.value = []; original = null; notice.value = ''; issues.value = []; review.value = null }
 
-  return { busy, error, notice, reasoning, changes, issues, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
+  return { busy, error, notice, reasoning, changes, issues, review, reviewing, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
 }
