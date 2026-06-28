@@ -4,11 +4,13 @@
 // the parent owns useLayoutAgent and handles submit/chip.
 import { ref } from 'vue'
 
-defineProps<{ busy: boolean; error?: string; notice?: string }>()
+const props = withDefaults(defineProps<{ busy: boolean; error?: string; notice?: string; chips?: string[]; placeholder?: string }>(), {
+  chips: () => ['Apply brand', 'Adapt to all formats', 'Tighten spacing', 'Group selection'],
+})
 const emit = defineEmits<{ submit: [phrase: string]; chip: [action: string] }>()
 
 const phrase = ref('')
-const QUICK = ['Apply brand', 'Adapt to all formats', 'Tighten spacing', 'Group selection']
+const QUICK = props.chips
 
 function go() {
   const p = phrase.value.trim()
@@ -22,7 +24,7 @@ function go() {
       <span class="text-[13px] text-white/90">✦</span>
       <input
         v-model="phrase" :disabled="busy" type="text"
-        placeholder="Tighten the layout and warm the palette…"
+        :placeholder="placeholder ?? 'Tighten the layout and warm the palette…'"
         class="flex-1 bg-transparent text-[12px] text-white/90 placeholder:text-white/25 outline-none"
         @keydown.enter="go"
       >

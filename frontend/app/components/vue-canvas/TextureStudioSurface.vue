@@ -18,6 +18,10 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import { useStudioAgent } from '~/composables/useStudioAgent'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -27,6 +31,14 @@ const { recordAsset } = useProjectGenerations()
 const { activeTab } = useTabs()
 
 const params = reactive<Params>(textureDefaults())
+
+// In-product agent — "tune" via natural language (Phase 1). Only the controls
+// currently visible (their `when` passes) are offered to the model.
+const activeControls = computed(() => (TEXTURE_CONTROLS as TextureControl[]).filter(c => !c.when || c.when(params)))
+const {
+  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, hasProposal: taHasProposal, hovered: taHovered,
+  ask: taAsk, acceptChange: taAccept, rejectChange: taReject, reroll: taReroll, keep: taKeep, revert: taRevert,
+} = useStudioAgent({ controls: () => activeControls.value, params, label: () => 'Pattern Studio' })
 const repeat = ref(2)
 const seams = ref(true)
 const baking = ref(false)
@@ -474,6 +486,23 @@ onBeforeUnmount(() => {
     </template>
 
     <template #controls>
+      <!-- In-product agent: tune the texture in natural language. -->
+      <div class="mb-3">
+        <AgentBar
+          :busy="taBusy" :error="taError" :notice="taNotice"
+          :chips="['Bolder palette', 'More contrast', 'Softer / calmer', 'More detail']"
+          placeholder="Describe the look — e.g. warmer, bolder, more organic…"
+          @submit="taAsk" @chip="taAsk"
+        />
+        <div v-if="taBusy" class="pt-2.5"><AgentProgress :active="taBusy" /></div>
+        <div v-else-if="taHasProposal" class="pt-2.5">
+          <AgentProposal
+            :changes="taChanges" :busy="taBusy"
+            @accept="taAccept" @reject="taReject" @reroll="taReroll"
+            @keep="taKeep" @revert="taRevert" @hover="(i: number | null) => taHovered = i"
+          />
+        </div>
+      </div>
       <StudioSection v-for="s in sections" :key="s.title" :title="s.title">
         <div v-for="c in s.controls" :key="c.key">
           <template v-if="c.kind === 'slider'">
