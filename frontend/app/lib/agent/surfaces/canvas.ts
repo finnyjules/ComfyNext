@@ -71,6 +71,7 @@ const CANVAS_COMMANDS: CommandSpec[] = [
  *  "no layerN connected" noise. */
 function effectivelyOptional(p: PortLite): boolean {
   if (p.optional) return true
+  if (p.type === 'MASK') return true // a mask is an optional treatment on almost every node
   if (/_mask$/i.test(p.name)) return true // masks are an optional treatment, never required
   const m = /^([a-z]+)(\d+)$/i.exec(p.name) // a numbered series like layer2 / image10
   return !!m && Number(m[2]) > 1 // only <prefix>1 is the required member of the series
@@ -212,7 +213,9 @@ export function verifyCanvas(s: CanvasSnapshot): LayoutIssue[] {
     for (const p of n.inputs) {
       if (!effectivelyOptional(p) && !conn.has(p.name)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} has no “${p.name}” connected (required input)` })
     }
-    if (s.nodes.length > 1 && !linked.has(n.id)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} is not connected to anything` })
+    // Only flag isolation for CONSUMERS (nodes with inputs). A pure source/generator
+    // with no inputs is a legitimate standalone root mid-build, not an error.
+    if (s.nodes.length > 1 && n.inputs.length > 0 && !linked.has(n.id)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} is not connected to anything` })
   }
   return issues
 }

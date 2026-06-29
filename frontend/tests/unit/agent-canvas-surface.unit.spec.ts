@@ -122,6 +122,23 @@ describe('verifyCanvas', () => {
     const g = graph(); g.nodes[2]!.mode = 2
     expect(verifyCanvas(g).some(i => /images/.test(i.message))).toBe(false)
   })
+  it('does not flag MASK inputs or numbered-series layers as required (no flood)', () => {
+    const g: CanvasSnapshot = { nodes: [
+      { id: 'c', nodeType: 'Compositor', title: 'Frame', widgets: {},
+        inputs: [{ name: 'layer1', type: 'IMAGE' }, { name: 'layer2', type: 'IMAGE' }, { name: 'layer1_mask', type: 'MASK' }, { name: 'keep_subject', type: 'MASK' }],
+        outputs: [{ name: 'image', type: 'IMAGE' }] },
+    ], edges: [] }
+    const msgs = verifyCanvas(g).map(i => i.message).join(' ')
+    expect(msgs).not.toMatch(/layer2|layer1_mask|keep_subject/) // optional in practice
+    expect(msgs).toMatch(/layer1/) // the first layer IS required
+  })
+  it('does not flag a pure-source node (no inputs) as "not connected"', () => {
+    const g: CanvasSnapshot = { nodes: [
+      { id: 'gen', nodeType: 'GenerateImageNode', title: 'Generate', widgets: {}, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE' }] },
+      { id: 'up', nodeType: 'Upscale', title: 'Upscale', widgets: {}, inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }] },
+    ], edges: [] }
+    expect(verifyCanvas(g).some(i => /Generate.*not connected/.test(i.message))).toBe(false)
+  })
 })
 
 describe('summarizeCanvasChange', () => {

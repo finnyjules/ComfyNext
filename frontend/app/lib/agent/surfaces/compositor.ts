@@ -22,12 +22,24 @@ function clone<T>(v: T): T {
   return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T)
 }
 
-/** A short, human-readable rendering of a Paint (colour / gradient / pattern). */
+/** A short, human-readable rendering of a Paint (colour / gradient / pattern).
+ *  Gradients include their stop colours + angle so the model can read and adjust
+ *  them (relative colour edits otherwise lose the stops). */
 function paintLabel(p: Paint | undefined): string {
   if (p == null || p === '') return 'none'
   if (typeof p === 'string') return p
-  if (typeof p === 'object' && 'type' in p) return (p as { type: string }).type === 'radial' ? 'radial gradient' : 'gradient'
+  if (typeof p === 'object' && 'type' in p) {
+    const g = p as { type: string; angle?: number; stops?: { color?: string }[] }
+    const stops = Array.isArray(g.stops) ? g.stops.map(s => s.color).filter(Boolean).join('→') : ''
+    const ang = g.type === 'linear' && typeof g.angle === 'number' ? ` ${g.angle}°` : ''
+    return `${g.type} gradient${ang}${stops ? ` [${stops}]` : ''}`
+  }
   return 'fill'
+}
+
+const clamp = (v: unknown, lo: number, hi: number, fallback: number): number => {
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback
 }
 
 /** Which field carries the FILL paint for each layer kind (null = no fill). */
@@ -46,18 +58,21 @@ function strokeField(kind: LocalLayerKind): string | null {
 }
 
 /** Whitelisted common (transform) props every layer accepts. */
-const COMMON_PROPS = new Set(['x', 'y', 'rotation', 'opacity', 'blend', 'visible', 'locked', 'skewX', 'skewY'])
+const COMMON_PROPS = new Set(['x', 'y', 'rotation', 'opacity', 'blend', 'visible', 'locked', 'skewX', 'skewY', 'radius'])
+// Props that must stay within bounds (0..1 fractions / sane ranges) so a bad model
+// value can't break rendering.
+const PROP_CLAMP: Record<string, [number, number]> = { x: [-1, 2], y: [-1, 2], opacity: [0, 1], rotation: [-360, 360], radius: [0, 1] }
 
 /** The agent-facing command menu. Media ops (generateImage/editImage/
  *  removeImageBackground) are listed so the model can emit them; the composable
  *  resolves them async (they call the canvas tools). `restore` is internal. */
 const COMPOSITOR_COMMANDS: CommandSpec[] = [
-  { op: 'setLayerProps', hint: 'Move/transform a layer. target = layer id; args: { patch }. Keys: x, y (0..1 of canvas, layer CENTER), rotation (deg), opacity (0..1), blend ("normal"|"multiply"|"screen"|…), visible (bool), skewX/skewY (deg). e.g. centre = x:0.5,y:0.5.' },
+  { op: 'setLayerProps', hint: 'Move/transform a layer. target = layer id; args: { patch }. Keys: x, y (0..1 of canvas, layer CENTER), rotation (deg), opacity (0..1, so "50%"=0.5), blend ("normal"|"multiply"|"screen"|…), visible (bool), skewX/skewY (deg), radius (0..1, rectangle corner rounding). Positional presets (account for the layer\'s own size): centre 0.5,0.5; top-left ~0.15,0.12; top-centre 0.5,0.12; top-right ~0.85,0.12; bottom-left ~0.15,0.88; bottom-centre 0.5,0.88; bottom-right ~0.85,0.88. Relative moves ("up a bit") = adjust the CURRENT x/y shown.' },
   { op: 'setText', hint: 'Change a TEXT layer\'s copy. target = layer id; args: { text }. You may write/rewrite the copy yourself.' },
   { op: 'setTextStyle', hint: 'Style a TEXT layer. target = layer id; args: { patch }. Keys: fontFamily (ANY Google Font by name — for an Impact-style / bold condensed poster headline use "Anton" (also good: "Oswald", "Archivo Black", "Bebas Neue"); for body use "Inter"), fontWeight (100..900), fontSize (fraction of canvas WIDTH: body ~0.03, a normal heading ~0.08, a big headline ~0.15, a HUGE poster headline that fills the frame 0.25–0.45), align ("left"|"center"|"right"), lineHeight (multiplier), boxW (0..1 wrap width). For "huge headline" set fontSize ≥ 0.25 and usually fontWeight 700–900.' },
   { op: 'setFill', hint: 'Set a layer\'s FILL — text colour, shape fill, or image tint. target = layer id; args: { paint }. paint is a "#RRGGBB" colour OR a gradient object {type:"linear",angle,stops:[{offset,color}]} / {type:"radial",stops}. "none"/"" = no fill. This is what "make it blue", "give it a sunset gradient" mean.' },
   { op: 'setStroke', hint: 'Set a layer\'s STROKE/outline. target = layer id; args: { paint, width? }. paint as in setFill (or "none"); width is 0..1 of canvas width.' },
-  { op: 'setSize', hint: 'Resize a layer. target = layer id; args: { w?, h?, scale? } (0..1 of canvas width; line uses w as length; path uses scale).' },
+  { op: 'setSize', hint: 'Resize a SHAPE/image/line layer. target = layer id; args: { w?, h?, scale? } (0..1 of canvas width; line uses w as length; path uses scale). TEXT size is NOT here — use setTextStyle fontSize.' },
   { op: 'addLayer', hint: 'Add a NEW layer. args: { layer }. layer needs: kind ("text"|"rect"|"ellipse"|"line"), x, y (0..1, center). text also: text + you may set fontFamily/fontWeight/fontSize/color inline (a HUGE headline = fontSize 0.25–0.45, fontWeight 800; Impact-style font = "Anton"). Give the layer an id you choose so you can target it next. New layers land ON TOP by default — to put one BEHIND the image/other layers, follow with setLayerDepth …"back". (For images use generateImage.)' },
   { op: 'removeLayer', hint: 'Delete a layer by id. target = layer id.' },
   { op: 'setLayerDepth', hint: 'Change a layer\'s stacking depth (z-order). target = layer id; args: { to: "back" | "front" }. "back" puts it BEHIND every other layer including the connected/wired image — use this for "put the headline BEHIND the image". "front" brings it to the top.' },
@@ -74,11 +89,20 @@ function findLayer(s: CompositorState, id?: string): LocalLayer | undefined {
 /** Read a Compositor frame as an agent snapshot: each layer + a document object. */
 export function describeCompositor(state: CompositorState): SurfaceSnapshot {
   const objects: SurfaceSnapshot['objects'] = state.layers.map((l) => {
+    // Expose enough CURRENT state for relative edits ("bigger", "a bit darker",
+    // "rotate more") and questions ("what font is the title?") to be answerable.
     const cur: Record<string, unknown> = { x: l.x, y: l.y, opacity: l.opacity }
-    if (l.kind === 'text') { cur.text = l.text; cur.fontSize = l.fontSize; cur.color = paintLabel(l.color); cur.align = l.align }
-    else if (l.kind === 'image') { cur.image = l.filename; if (l.tint) cur.tint = paintLabel(l.tint) }
-    else if (l.kind === 'rect' || l.kind === 'ellipse') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill) }
-    else if (l.kind === 'line') { cur.length = l.w; cur.stroke = paintLabel(l.stroke) }
+    if (l.rotation) cur.rotation = l.rotation
+    if (l.blend && l.blend !== 'normal') cur.blend = l.blend
+    if (l.kind === 'text') {
+      cur.text = l.text; cur.fontFamily = l.fontFamily; cur.fontWeight = l.fontWeight
+      cur.fontSize = l.fontSize; cur.color = paintLabel(l.color); cur.align = l.align; cur.lineHeight = l.lineHeight
+      if (l.boxW != null) cur.boxW = l.boxW
+      if (l.strokeColor && l.strokeWidth) { cur.outline = paintLabel(l.strokeColor); cur.outlineWidth = l.strokeWidth }
+    } else if (l.kind === 'image') { cur.image = l.filename; cur.w = l.w; cur.h = l.h; if (l.tint) cur.tint = paintLabel(l.tint) }
+    else if (l.kind === 'rect') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill); if (l.radius) cur.radius = l.radius; if (l.stroke) { cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth } }
+    else if (l.kind === 'ellipse') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill); if (l.stroke) { cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth } }
+    else if (l.kind === 'line') { cur.length = l.w; cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth }
     else if (l.kind === 'path') { cur.fill = paintLabel(l.fill) }
     if (l.visible === false) cur.hidden = true
     return { id: l.id, label: l.kind === 'text' ? `“${l.text}”` : l.kind, type: l.kind, current: cur }
@@ -121,7 +145,9 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       if (bad.length) return { ok: false, reason: 'invalid', detail: `prop(s) not valid: ${bad.join(', ')}` }
       const layer = findLayer(state, cmd.target)
       if (!layer) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
-      Object.assign(layer, clone(patch))
+      const safe = clone(patch)
+      for (const [k, [lo, hi]] of Object.entries(PROP_CLAMP)) if (k in safe) safe[k] = clamp(safe[k], lo, hi, ((layer as unknown as Record<string, unknown>)[k] as number) ?? 0)
+      Object.assign(layer, safe)
       return { ok: true, template: state, inverse: snapshot() }
     }
     case 'setText': {
@@ -141,7 +167,12 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       if (bad.length) return { ok: false, reason: 'invalid', detail: `text style key(s) not valid: ${bad.join(', ')}` }
       const layer = findLayer(state, cmd.target)
       if (!layer || layer.kind !== 'text') return { ok: false, reason: 'invalid', detail: `no text layer '${String(cmd.target)}'` }
-      Object.assign(layer, clone(patch))
+      const safe = clone(patch)
+      if ('fontSize' in safe) safe.fontSize = clamp(safe.fontSize, 0.005, 1, layer.fontSize)
+      if ('fontWeight' in safe) safe.fontWeight = clamp(safe.fontWeight, 100, 900, layer.fontWeight)
+      if ('lineHeight' in safe) safe.lineHeight = clamp(safe.lineHeight, 0.5, 4, layer.lineHeight)
+      if ('boxW' in safe) safe.boxW = clamp(safe.boxW, 0.02, 1, layer.boxW ?? 1)
+      Object.assign(layer, safe)
       return { ok: true, template: state, inverse: snapshot() }
     }
     case 'setFill': {
@@ -171,9 +202,10 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       const a = cmd.args ?? {}
       const L = layer as unknown as Record<string, unknown>
       let touched = false
-      if (typeof a.w === 'number' && ('w' in layer)) { L.w = a.w; touched = true }
-      if (typeof a.h === 'number' && (layer.kind === 'rect' || layer.kind === 'ellipse' || layer.kind === 'image')) { L.h = a.h; touched = true }
-      if (typeof a.scale === 'number' && layer.kind === 'path') { L.scale = a.scale; touched = true }
+      if (layer.kind === 'text') return { ok: false, reason: 'invalid', detail: 'text size is fontSize — use setTextStyle, not setSize' }
+      if (typeof a.w === 'number' && ('w' in layer)) { L.w = clamp(a.w, 0.002, 3, (L.w as number) ?? 0.3); touched = true }
+      if (typeof a.h === 'number' && (layer.kind === 'rect' || layer.kind === 'ellipse' || layer.kind === 'image')) { L.h = clamp(a.h, 0.002, 3, (L.h as number) ?? 0.3); touched = true }
+      if (typeof a.scale === 'number' && layer.kind === 'path') { L.scale = clamp(a.scale, 0.05, 10, (L.scale as number) ?? 1); touched = true }
       if (!touched) return { ok: false, reason: 'invalid', detail: `no resizable dimension for ${layer.kind} in args` }
       return { ok: true, template: state, inverse: snapshot() }
     }
@@ -183,7 +215,7 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       // 'image' is allowed for the composable's media path (generateImage) — it
       // needs a filename; the model is steered to generateImage via the hint.
       if (!raw || !kind || !['text', 'rect', 'ellipse', 'line', 'image'].includes(kind)) return { ok: false, reason: 'invalid', detail: 'layer needs a kind of text|rect|ellipse|line' }
-      if (kind === 'image' && typeof raw.filename !== 'string') return { ok: false, reason: 'invalid', detail: 'image layer needs a filename' }
+      if (kind === 'image' && (typeof raw.filename !== 'string' || !raw.filename)) return { ok: false, reason: 'invalid', detail: 'image layer needs a non-empty filename (use generateImage to create one)' }
       const id = typeof raw.id === 'string' ? raw.id : `l_${state.layers.length + 1}_${kind}`
       if (state.layers.some(l => l.id === id)) return { ok: false, reason: 'invalid', detail: `layer id '${id}' already exists` }
       const layer = { ...defaultLayer(kind, id), ...clone(raw), id, kind } as unknown as LocalLayer

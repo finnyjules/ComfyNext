@@ -13,7 +13,7 @@
  * modal's upload+canvas tooling and are skipped here with a notice.
  */
 import { $fetch } from 'ofetch'
-import { applyCompositorCommand, describeCompositor, summarizeCompositorChange, type CompositorState } from '~/lib/agent/surfaces/compositor'
+import { applyCompositorCommand, describeCompositor, summarizeCompositorChange, verifyCompositor, type CompositorState } from '~/lib/agent/surfaces/compositor'
 import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
 
 const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'])
@@ -55,13 +55,23 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
   const prior = readState(node)
   const priorOrder = readStackOrder(node)
   const restore = () => { writeState(node, prior); writeStackOrder(node, priorOrder) }
+  // Guard: only a Frame (Compositor) has the layer/background state this reads &
+  // writes — never scribble those keys onto another node type.
+  if (node?.data?.nodeType !== 'Compositor') {
+    return { ok: false, rows: [], restore, notice: `I can only tune a Frame in place — “${node?.data?.title ?? 'this node'}” isn’t one.` }
+  }
   let state = readState(node)
   const snapshot = describeCompositor(state)
-  const res = await $fetch<{ text: string }>('/api/agent-plan', {
-    method: 'POST',
-    body: { apiKey, tier, prompt: buildAgentPrompt(snapshot, request), schema: buildCommandSchema(snapshot.commands) },
-    timeout: 60_000,
-  })
+  let res: { text: string }
+  try {
+    res = await $fetch<{ text: string }>('/api/agent-plan', {
+      method: 'POST',
+      body: { apiKey, tier, prompt: buildAgentPrompt(snapshot, request), schema: buildCommandSchema(snapshot.commands) },
+      timeout: 60_000,
+    })
+  } catch (e) {
+    return { ok: false, rows: [], restore, error: e instanceof Error ? e.message : String(e) }
+  }
   const { commands, changeRationales, message } = parseAgentResponse(res.text)
   const rows: TuneRow[] = []
   const backIds: string[] = []
@@ -91,8 +101,14 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
       writeStackOrder(node, [...backKeys, ...readStackOrder(node).filter(k => !drop.has(k))])
     }
   }
-  const notice = droppedMedia
-    ? 'Generating or editing images inside a frame isn’t available from the canvas yet — open the frame to do that.'
-    : (rows.length ? undefined : (message || undefined))
-  return { ok: rows.length > 0, rows, restore, notice }
+  // Additive notice: a dropped media op must NOT hide that other edits applied; a
+  // verify warning (off-canvas / low-contrast) rides along too.
+  const parts: string[] = []
+  if (!rows.length && message) parts.push(message)
+  if (droppedMedia) parts.push('Generating or editing images inside a frame isn’t available from the canvas yet — open the frame to do that.')
+  if (rows.length) {
+    const warn = verifyCompositor(state).find(i => i.level === 'warn')
+    if (warn) parts.push(`Heads up: ${warn.message}`)
+  }
+  return { ok: rows.length > 0, rows, restore, notice: parts.length ? parts.join(' ') : undefined }
 }

@@ -120,8 +120,50 @@ describe('summarizeCompositorChange', () => {
     expect(s?.before).toBe('#ff0000')
     expect(s?.after).toBe('#0000ff')
   })
-  it('renders a gradient paint as "gradient"', () => {
+  it('renders a gradient paint with its type (+ stops when present)', () => {
     const s = summarizeCompositorChange(state(), { op: 'setBackground', args: { paint: { type: 'linear', angle: 0, stops: [] } } })
-    expect(s?.after).toBe('gradient')
+    expect(s?.after).toContain('gradient')
+    const withStops = summarizeCompositorChange(state(), { op: 'setBackground', args: { paint: { type: 'linear', angle: 45, stops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] } } })
+    expect(withStops?.after).toContain('#ff0000')
+  })
+})
+
+// Hardening pass: z-order, value clamping, current-value exposure, and guards.
+describe('hardening', () => {
+  it('setLayerDepth back moves the layer to the front of the array (bottom of z), front to the end', () => {
+    const back = applyCompositorCommand(state(), { op: 'setLayerDepth', target: 'img1', args: { to: 'back' } })
+    expect(back.ok).toBe(true); if (!back.ok) return
+    expect(back.template.layers[0]!.id).toBe('img1')
+    const front = applyCompositorCommand(state(), { op: 'setLayerDepth', target: 't1', args: { to: 'front' } })
+    if (!front.ok) throw new Error('fail')
+    expect(front.template.layers[front.template.layers.length - 1]!.id).toBe('t1')
+  })
+  it('setLayerDepth rejects a bad direction', () => {
+    expect(applyCompositorCommand(state(), { op: 'setLayerDepth', target: 't1', args: { to: 'sideways' } }).ok).toBe(false)
+  })
+  it('clamps out-of-range opacity and fontSize instead of storing them', () => {
+    const op = applyCompositorCommand(state(), { op: 'setLayerProps', target: 't1', args: { patch: { opacity: 50 } } })
+    if (!op.ok) throw new Error('fail')
+    expect((op.template.layers[0] as { opacity: number }).opacity).toBe(1)
+    const fs = applyCompositorCommand(state(), { op: 'setTextStyle', target: 't1', args: { patch: { fontSize: 24 } } })
+    if (!fs.ok) throw new Error('fail')
+    expect((fs.template.layers[0] as { fontSize: number }).fontSize).toBe(1)
+  })
+  it('setSize on a text layer is rejected (points to setTextStyle)', () => {
+    const r = applyCompositorCommand(state(), { op: 'setSize', target: 't1', args: { w: 0.5 } })
+    expect(r.ok).toBe(false)
+  })
+  it('addLayer rejects an image layer with an empty filename', () => {
+    expect(applyCompositorCommand(state(), { op: 'addLayer', args: { layer: { kind: 'image', filename: '' } } }).ok).toBe(false)
+  })
+  it('describeCompositor exposes fontFamily/fontWeight (so "what font" + relative weight work)', () => {
+    const cur = describeCompositor(state()).objects.find(o => o.id === 't1')!.current as Record<string, unknown>
+    expect(cur.fontFamily).toBe('Inter')
+    expect(cur.fontWeight).toBe(700)
+  })
+  it('setLayerProps can round a rectangle (radius is a common prop now)', () => {
+    const r = applyCompositorCommand(state(), { op: 'setLayerProps', target: 'r1', args: { patch: { radius: 0.05 } } })
+    if (!r.ok) throw new Error('fail')
+    expect((r.template.layers[1] as { radius: number }).radius).toBe(0.05)
   })
 })
