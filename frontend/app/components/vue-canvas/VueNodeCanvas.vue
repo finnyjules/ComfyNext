@@ -392,7 +392,7 @@ function glimmBurstOver(nodeIds: string[]) {
   // border-radius is authored pre-transform px → scale by zoom for our overlay.
   glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: `${radius * zoom}px` }
   if (glimmTimer) clearTimeout(glimmTimer)
-  glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1700)
+  glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1150)
 }
 
 const {
@@ -4811,7 +4811,7 @@ defineExpose({
         ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', clipPath: `inset(0 round ${glimmBurst.radius})` }
         : { display: 'none' }"
     >
-      <AgentSweep :active="!!glimmBurst" />
+      <AgentSweep :active="!!glimmBurst" :period="0.55" />
     </div>
 
     <VueFlow

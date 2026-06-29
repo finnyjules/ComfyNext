@@ -6,13 +6,12 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 type ShaderController = import('glimm').ShaderController
 
-const props = defineProps<{ active: boolean }>()
+const props = defineProps<{ active: boolean; period?: number }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let ctrl: ShaderController | null = null
 let raf = 0
 let t0 = 0
-const PERIOD = 1.6 // seconds per sweep cycle
 const PEAK_ALPHA = 0.5
 
 async function ensure() {
@@ -27,8 +26,9 @@ async function ensure() {
 function loop() {
   if (ctrl) {
     if (props.active) {
+      const period = props.period ?? 1.6 // seconds per sweep cycle
       const t = (performance.now() - t0) / 1000
-      ctrl.setProgress((t % PERIOD) / PERIOD)
+      ctrl.setProgress((t % period) / period)
       ctrl.setAlpha(PEAK_ALPHA)
     } else {
       ctrl.setAlpha(0)
