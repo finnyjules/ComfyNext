@@ -4,11 +4,12 @@
 // nodes; results (answer / proposal / progress) expand UPWARD above the input,
 // which stays anchored just above the toolbar. Owns useCanvasAgent; the parent
 // supplies the VueNodeCanvas ref (agentSnapshot + applyCanvasOps).
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { Sparkles, ArrowUp } from 'lucide-vue-next'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
 import { useCanvasAgent } from '~/composables/useCanvasAgent'
+import { useAgentActivity } from '~/composables/useAgentActivity'
 
 const props = defineProps<{ vueCanvas?: any }>()
 const { getLocalSetting } = useLocalSettings()
@@ -23,6 +24,11 @@ const {
   materialise: (cmds) => props.vueCanvas.applyCanvasOps(cmds),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
+
+// Drive the dot-grid "thinking" animation off the agent's busy state.
+const { thinking } = useAgentActivity()
+watch(busy, (v) => { thinking.value = v })
+onBeforeUnmount(() => { thinking.value = false })
 
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }

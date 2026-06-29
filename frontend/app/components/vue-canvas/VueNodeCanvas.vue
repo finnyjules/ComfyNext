@@ -11,6 +11,7 @@ import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
 import { capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
+import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -147,6 +148,9 @@ const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = u
 // anchored on the selection + the request). applyCanvasOps() MATERIALISES
 // validated commands onto the live graph — undo comes free from the deep-watch
 // history. Both exposed for the canvas prompt.
+
+// Background dot-grid "thinking" animation, driven by the prompt's agent.
+const { thinking: agentThinking } = useAgentActivity()
 
 // NodeTypeLite[] = the cached /object_info nodes (incl. the backend generators +
 // Compositor/SmartLayout) PLUS the frontend-only studios (which have no
@@ -4730,7 +4734,7 @@ defineExpose({
     @contextmenu.prevent
   >
     <!-- Dot grid behind everything -->
-    <VueCanvasAnimatedDotGrid :running="isRunning" />
+    <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
 
     <VueFlow
       v-model:nodes="nodes"

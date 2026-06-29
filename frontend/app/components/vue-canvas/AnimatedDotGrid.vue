@@ -3,6 +3,8 @@ import { useVueFlow } from '@vue-flow/core'
 
 const props = defineProps<{
   running?: boolean
+  /** Agent is planning — animate sparks travelling dot-to-dot. */
+  thinking?: boolean
   gap?: number
   dotRadius?: number
   baseColor?: string
@@ -20,6 +22,19 @@ const { viewport } = useVueFlow()
 let animFrame = 0
 let sweepX = -0.3 // normalized 0-1 sweep position across viewport
 let rainbowOffset = 0 // horizontal scroll offset for rainbow
+
+// ── "Thinking" sparks: short segments that wander dot-to-dot along the grid ──
+interface Spark { gx: number; gy: number; dx: number; dy: number; p: number; speed: number }
+let sparks: Spark[] = []
+const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+function spawnSpark(gxMin: number, gxMax: number, gyMin: number, gyMax: number): Spark {
+  const d = DIRS[Math.floor(Math.random() * 4)]!
+  return {
+    gx: gxMin + Math.floor(Math.random() * (gxMax - gxMin + 1)),
+    gy: gyMin + Math.floor(Math.random() * (gyMax - gyMin + 1)),
+    dx: d[0], dy: d[1], p: Math.random(), speed: 0.018 + Math.random() * 0.03,
+  }
+}
 
 function draw() {
   const canvas = canvasRef.value
@@ -95,6 +110,47 @@ function draw() {
       }
       ctx.fill()
     }
+  }
+
+  // Thinking sparks — little segments firing dot-to-dot like synapses.
+  if (props.thinking) {
+    const gxMin = Math.floor((0 - offsetX) / g) - 1
+    const gxMax = Math.ceil((w - offsetX) / g) + 1
+    const gyMin = Math.floor((0 - offsetY) / g) - 1
+    const gyMax = Math.ceil((h - offsetY) / g) + 1
+    if (!sparks.length) {
+      const n = Math.min(12, Math.max(5, Math.round((gxMax - gxMin) / 7)))
+      sparks = Array.from({ length: n }, () => spawnSpark(gxMin, gxMax, gyMin, gyMax))
+    }
+    ctx.lineCap = 'round'
+    for (const s of sparks) {
+      s.p += s.speed
+      if (s.p >= 1) {
+        s.gx += s.dx; s.gy += s.dy; s.p = 0
+        // new direction, avoiding an immediate reverse (nicer wander)
+        const opts = DIRS.filter(d => !(d[0] === -s.dx && d[1] === -s.dy))
+        const nd = opts[Math.floor(Math.random() * opts.length)]!
+        s.dx = nd[0]; s.dy = nd[1]
+        if (s.gx < gxMin - 2 || s.gx > gxMax + 2 || s.gy < gyMin - 2 || s.gy > gyMax + 2 || Math.random() < 0.05) {
+          Object.assign(s, spawnSpark(gxMin, gxMax, gyMin, gyMax))
+        }
+      }
+      const sx = offsetX + s.gx * g, sy = offsetY + s.gy * g
+      const nx = sx + s.dx * g, ny = sy + s.dy * g
+      const tx = sx + (nx - sx) * s.p, ty = sy + (ny - sy) * s.p
+      const t0 = Math.max(0, s.p - 0.5)
+      const x0 = sx + (nx - sx) * t0, y0 = sy + (ny - sy) * t0
+      const grad = ctx.createLinearGradient(x0, y0, tx, ty)
+      grad.addColorStop(0, 'rgba(150,200,255,0)')
+      grad.addColorStop(1, 'rgba(185,222,255,0.85)')
+      ctx.strokeStyle = grad
+      ctx.lineWidth = 1.6
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(tx, ty); ctx.stroke()
+      ctx.beginPath(); ctx.arc(tx, ty, 1.8, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(212,236,255,0.95)'; ctx.fill()
+    }
+  } else if (sparks.length) {
+    sparks = []
   }
 
   // Reset transform for next frame
