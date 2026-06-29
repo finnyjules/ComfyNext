@@ -18,7 +18,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
-import { useStudioAgent } from '~/composables/useStudioAgent'
+import { useTextureAgent } from '~/composables/useTextureAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
@@ -32,13 +32,19 @@ const { activeTab } = useTabs()
 
 const params = reactive<Params>(textureDefaults())
 
-// In-product agent — "tune" via natural language (Phase 1). Only the controls
-// currently visible (their `when` passes) are offered to the model.
-const activeControls = computed(() => (TEXTURE_CONTROLS as TextureControl[]).filter(c => !c.when || c.when(params)))
+// In-product agent — STRUCTURAL: edits per-role fills AND tunes flat controls
+// through the command surface (describeTexture/applyTextureCommand). setState
+// mutates the reactive params in place (fills replaced wholesale so revert clears
+// a custom fill) then re-renders via onParam().
+const { getLocalSetting } = useLocalSettings()
 const {
-  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, hasProposal: taHasProposal, hovered: taHovered,
+  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, issues: taIssues, hasProposal: taHasProposal, hovered: taHovered,
   ask: taAsk, acceptChange: taAccept, rejectChange: taReject, reroll: taReroll, keep: taKeep, revert: taRevert,
-} = useStudioAgent({ controls: () => activeControls.value, params, label: () => 'Pattern Studio' })
+} = useTextureAgent({
+  getState: () => ({ params }),
+  setState: (s) => { Object.assign(params, s.params); (params as any).fills = (s.params as any).fills; onParam() },
+  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+})
 const repeat = ref(2)
 const seams = ref(true)
 const baking = ref(false)
@@ -486,18 +492,18 @@ onBeforeUnmount(() => {
     </template>
 
     <template #controls>
-      <!-- In-product agent: tune the texture in natural language. -->
+      <!-- In-product agent: edit fills + tune the texture in natural language. -->
       <div class="mb-3">
         <AgentBar
           :busy="taBusy" :error="taError" :notice="taNotice"
-          :chips="['Bolder palette', 'More contrast', 'Softer / calmer', 'More detail']"
-          placeholder="Describe the look — e.g. warmer, bolder, more organic…"
+          :chips="['Recolour the roles', 'Warmer palette', 'Gradient the ground', 'Tighter cells']"
+          placeholder="Describe it — e.g. red and cream, fade the ground, tighter cells…"
           @submit="taAsk" @chip="taAsk"
         />
         <div v-if="taBusy" class="pt-2.5"><AgentProgress :active="taBusy" /></div>
         <div v-else-if="taHasProposal" class="pt-2.5">
           <AgentProposal
-            :changes="taChanges" :busy="taBusy"
+            :changes="taChanges" :busy="taBusy" :issues="taIssues"
             @accept="taAccept" @reject="taReject" @reroll="taReroll"
             @keep="taKeep" @revert="taRevert" @hover="(i: number | null) => taHovered = i"
           />
