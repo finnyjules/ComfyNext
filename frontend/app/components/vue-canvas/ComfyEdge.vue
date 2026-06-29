@@ -11,11 +11,17 @@ const props = defineProps<{
   targetY: number
   sourcePosition: Position
   targetPosition: Position
-  data: { dataType: string; running?: boolean }
+  data: { dataType: string; running?: boolean; ghost?: boolean; blueprint?: boolean }
   selected: boolean
 }>()
 
 const color = computed(() => getTypeColor(props.data?.dataType))
+// Agent preview: a proposed connection rendered as a steady pastel ghost dash, or
+// — during the blueprint draw-in — a flowing white repeating dash. Driven through
+// `data` (reactive, like `running`) because this custom edge has no
+// `.vue-flow__edge-path` for the global agent CSS to target.
+const isGhost = computed(() => props.data?.ghost)
+const isBlueprint = computed(() => props.data?.blueprint)
 
 const bezier = computed(() => getBezierPath({
   sourceX: props.sourceX,
@@ -96,9 +102,11 @@ function onInsert() {
     <path
       :d="path"
       fill="none"
-      :stroke="isRunning ? `url(#${gradientId})` : color"
-      :stroke-width="isDropTarget ? 3.5 : selected ? 3 : 2"
-      :stroke-opacity="isRunning ? 1 : (isDropTarget || selected) ? 1 : 0.6"
+      :class="{ 'cn-edge-blueprint': isBlueprint, 'cn-edge-ghost': isGhost && !isBlueprint }"
+      :stroke="isRunning ? `url(#${gradientId})` : isBlueprint ? '#ffffff' : isGhost ? '#cfe8ff' : color"
+      :stroke-width="isBlueprint ? 1.25 : isDropTarget ? 3.5 : selected ? 3 : 2"
+      :stroke-opacity="(isRunning || isBlueprint) ? 1 : isGhost ? 0.8 : (isDropTarget || selected) ? 1 : 0.6"
+      :stroke-dasharray="isBlueprint ? '18 26' : isGhost ? '7 5' : undefined"
       stroke-linecap="round"
     />
 

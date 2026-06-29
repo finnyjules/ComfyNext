@@ -357,6 +357,9 @@ const canvasRootRef = ref<HTMLElement | null>(null)
 interface OverlayRect { left: number; top: number; w: number; h: number; radius: string }
 const blueprintRects = ref<OverlayRect[]>([])
 const glimmBurst = ref<OverlayRect | null>(null)
+// The node(s) the overlays currently sit on — kept so the blueprint rings + glimm
+// re-track the cards when the canvas pans/zooms (the overlays are screen-space).
+const overlayNodeIds = ref<string[]>([])
 const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
 const glimmPeriod = ref(0.55) // sweep speed: slow during the blueprint, fast on commit
 let ghostDrawTimer = 0
@@ -404,6 +407,7 @@ function agentDiscard() {
   if (glimmTimer) { clearTimeout(glimmTimer); glimmTimer = 0 }
   blueprintRects.value = []
   glimmOn.value = false
+  overlayNodeIds.value = []
   if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
   ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
   ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
@@ -418,8 +422,9 @@ async function agentPreview(commands: Command[], animate = false) {
   // overlays, and draw the edge; then settle into the steady ghost after ~1s.
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost agent-ghost-hidden'
-  for (const e of edges.value as any[]) if (e.data?.ghost && typeof e.class === 'string') e.class = 'agent-ghost-edge agent-ghost-edge-draw'
+  for (const e of edges.value as any[]) if (e.data?.ghost) e.data.blueprint = true // white flowing dash on the wire
   await nextTick()
+  overlayNodeIds.value = ghostNodeIds // so the overlays re-track on pan/zoom
   const rects = cardRects(ghostNodeIds)
   blueprintRects.value = rects
   // A slow glimm where the node is about to appear (under the white contour).
@@ -428,8 +433,9 @@ async function agentPreview(commands: Command[], animate = false) {
     ghostDrawTimer = 0
     blueprintRects.value = []
     glimmOn.value = false // fade the slow glimm out as the node settles in
+    overlayNodeIds.value = []
     for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost'
-    for (const e of edges.value as any[]) if (e.data?.ghost) e.class = 'agent-ghost-edge'
+    for (const e of edges.value as any[]) if (e.data?.ghost) e.data.blueprint = false // back to the steady ghost dash
   }, BLUEPRINT_MS)
 }
 
@@ -438,7 +444,7 @@ function agentCommit() {
   blueprintRects.value = []
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
-  for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
+  for (const e of edges.value as any[]) if (e.data?.ghost) { e.data.ghost = false; e.data.blueprint = false }
   glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
 }
 
@@ -450,8 +456,9 @@ function glimmBurstOver(nodeIds: string[]) {
   glimmPeriod.value = 0.55 // quick celebratory sweep
   glimmBurst.value = unionRect(rects)
   glimmOn.value = true
+  overlayNodeIds.value = nodeIds // re-track on pan/zoom during the burst
   if (glimmTimer) clearTimeout(glimmTimer)
-  glimmTimer = window.setTimeout(() => { glimmOn.value = false }, 1150) // keep the rect; fade out via opacity
+  glimmTimer = window.setTimeout(() => { glimmOn.value = false; overlayNodeIds.value = [] }, 1150) // keep the rect; fade out via opacity
 }
 
 const {
@@ -505,6 +512,17 @@ const {
   project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
   onConnectStart, onConnectEnd,
 } = useVueFlow()
+
+// Re-track the screen-space agent overlays (blueprint rings + glimm) to their
+// cards whenever the canvas pans/zooms — otherwise they'd stay pinned to the
+// screen while the nodes move under them.
+watch(vfViewport, () => {
+  if (!overlayNodeIds.value.length) return
+  const rects = cardRects(overlayNodeIds.value)
+  if (!rects.length) return
+  if (blueprintRects.value.length) blueprintRects.value = rects
+  if (glimmBurst.value) glimmBurst.value = unionRect(rects)
+}, { deep: true })
 
 // Selection helpers — Vue Flow marks selected nodes with `selected: true`.
 function getSelectedNodeIds(): string[] {
