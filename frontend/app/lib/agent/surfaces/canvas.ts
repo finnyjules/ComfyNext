@@ -63,6 +63,18 @@ const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'restore', hint: 'internal — undo support.' },
 ]
 
+/** Many nodes declare a long fan of inputs as "required" that are additive in
+ *  practice — e.g. the Compositor's layer2…layer16 and every layerN_mask. Only the
+ *  FIRST in a numbered series is genuinely needed, and masks are always optional.
+ *  Treating these as optional keeps the model + the health readout from drowning in
+ *  "no layerN connected" noise. */
+function effectivelyOptional(p: PortLite): boolean {
+  if (p.optional) return true
+  if (/_mask$/i.test(p.name)) return true // masks are an optional treatment, never required
+  const m = /^([a-z]+)(\d+)$/i.exec(p.name) // a numbered series like layer2 / image10
+  return !!m && Number(m[2]) > 1 // only <prefix>1 is the required member of the series
+}
+
 /** Read the (selected) graph as an agent snapshot: one object per node, each with
  *  its settable widgets + which inputs are connected, plus a graph summary. */
 export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
@@ -71,7 +83,7 @@ export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
     const conn = connectedInputs(s, n.id)
     const cur: Record<string, unknown> = {
       nodeType: n.nodeType,
-      inputs: n.inputs.map(p => ({ name: p.name, type: p.type, connected: conn.has(p.name), ...(p.optional ? { optional: true } : {}) })),
+      inputs: n.inputs.map(p => ({ name: p.name, type: p.type, connected: conn.has(p.name), ...(effectivelyOptional(p) ? { optional: true } : {}) })),
       outputs: n.outputs.map(p => p.name),
     }
     if (Object.keys(n.widgets).length) cur.widgets = n.widgets
@@ -197,7 +209,7 @@ export function verifyCanvas(s: CanvasSnapshot): LayoutIssue[] {
     if (n.mode === 2 || n.mode === 4) continue
     const conn = connectedInputs(s, n.id)
     for (const p of n.inputs) {
-      if (!p.optional && !conn.has(p.name)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} has no “${p.name}” connected (required input)` })
+      if (!effectivelyOptional(p) && !conn.has(p.name)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} has no “${p.name}” connected (required input)` })
     }
     if (s.nodes.length > 1 && !linked.has(n.id)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} is not connected to anything` })
   }

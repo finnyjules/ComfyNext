@@ -120,6 +120,8 @@ const PARAPHRASES: { phrase: string; expect: string }[] = [
   { phrase: 'arrange a poster with a headline', expect: 'SmartLayout' },
   { phrase: 'stack these images into one frame', expect: 'Compositor' },
   { phrase: 'overlay a caption on the photo', expect: 'Compositor' },
+  { phrase: 'put this image in a frame on a solid blue background', expect: 'Compositor' },
+  { phrase: 'give the frame a coloured backdrop behind the layers', expect: 'Compositor' },
   { phrase: 'animate the word welcome in 3d', expect: 'SpaceType' },
   { phrase: 'change her shirt to red', expect: 'EditImageNode' },
   { phrase: 'restyle this in the look of that reference', expect: 'RestyleFromImageNode' },
