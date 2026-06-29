@@ -147,10 +147,16 @@ client-side; full suite green (~1392 pass; the only 2 failures are pre-existing
 - **Visual self-review** — the first of the design-learning loops (preference-memory, exemplars, failure→check ratchet still to come).
 - **Unified panel UI** — glassy `StudioSection`/`glass-panel` look + a shared panel type scale (`.panel-heading/label/value/sublabel/help` in `main.css`) across studios / Compositor / Smart Layout.
 
-**NEXT (frontier = breadth or altitude):**
-- **T1 Compositor** — the agent's 2nd Phase-2 home. Only its *UI* was touched this session; the command surface (`surfaces/compositor.ts` describe+apply over the local-layer model) is the planned next exposure and proves the F1 abstraction generalizes.
-- **Phase 1 breadth** — generalize tune ("warmer/tighter") to the other studios.
-- **Phase 3** — canvas/node `CommandSurface` + branching UX.
+**DONE since (this session, all on `main`, suite ~1433 pass + same 2 pre-existing):**
+- **T1 Compositor** ✅ `surfaces/compositor.ts` + `useCompositorAgent` + UI mount + visual-review parity (client-side `paintLayerStack` render → `/api/agent-review`).
+- **Phase 1 Tune-everywhere** ✅ generic `useStudioAgent` in Type/Gradient/Shader/Texture (Gradient/Shader via the `lib/agent/configParams.ts` dotted-path bridge over their nested `config` ref).
+- **T1 Texture (fills)** ✅ `surfaces/texture.ts` + `useTextureAgent` — STRUCTURAL (per-role fills + tune), replaces the tune agent in that studio.
+- **Visual self-review on ALL studios** ✅ extended to Texture/Gradient/Shader (Gradient/Shader via an optional review path added to `useStudioAgent`).
+
+**Phase 3 — SCOPED 2026-06-28 (`docs/agent-canvas-surface-scope.md`).** Two code audits **overturned the stale "canvas is the laggard" finding**: the app is now **Vue Flow native** (`VueNodeCanvas.vue`/`useVueNodes.ts`) — every graph mutation (add/delete/connect/disconnect/`setNamedWidget`/splice/move/dup/mute/run-filtered) is LIVE from Vue; node-discovery infra (`/object_info` cache, `nodeMatch`/`nodeKeywords`, `portIntentCatalog.buildCatalog`, `portIntent`) already exists. So Phase 3 = a describe+command+validate layer (like the studio surfaces) + two new pieces: **plan-then-materialize** lifecycle (graph mutations aren't pure JSON; `$newN` placeholder-id resolution at Keep) and a **canvas home** for the bar (⌘K palette). Build order: Slice 0 (explain graph, read-only) → Slice 1 (edit existing nodes) → **Slice 2 add+wire = canvas proof milestone** → S3 subgraph build → S4 run-in-loop. No bridge work; Level 2 is effectively already done.
+
+**NEXT:**
+- **Phase 3 Slice 0/1** — read-only graph Q&A, then single-op edits (low risk, hardens describe + validation for Slice 2).
 - **Learning loops** — preference memory (persist accept/reject), exemplar library, failure→check ratchet.
 
-**Verified vs not:** Smart Layout agent confirmed live in-app. NOT yet run: full Nuxt typecheck (scoped tsc only); visual-review render path on v3 *sections* may be partial (loose elements + background always render). LiteGraph "Level 1" (hide iframe) still deferred.
+**Verified vs not:** Smart Layout + Compositor agents confirmed live in-app. Studio tune + Texture structural + visual-review NOT yet user-verified live (scoped tsc only, suite green). Phase 3 is scoped only — not started.
