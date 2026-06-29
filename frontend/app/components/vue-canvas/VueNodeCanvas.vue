@@ -367,22 +367,30 @@ function agentCommit() {
   glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
 }
 
-// Glimm "citrus" sweep over the just-committed nodes + their connection, for a
-// brief celebratory finish. Positioned over the union bbox in screen space.
-const glimmBurst = ref<{ left: number; top: number; w: number; h: number } | null>(null)
+// Glimm "citrus" sweep over the just-committed node(s) — exactly their on-screen
+// box AND rounded corners (read from the DOM, relative to the canvas root). Brief
+// celebratory finish.
+const canvasRootRef = ref<HTMLElement | null>(null)
+const glimmBurst = ref<{ left: number; top: number; w: number; h: number; radius: string } | null>(null)
 let glimmTimer = 0
 function glimmBurstOver(nodeIds: string[]) {
-  const ids = new Set(nodeIds.map(String))
-  const rects = (nodes.value as any[]).filter(n => ids.has(String(n.id))).map((n) => {
-    const w = n.dimensions?.width ?? n.data?.size?.[0] ?? 220
-    const h = n.dimensions?.height ?? n.data?.size?.[1] ?? 120
-    return { x: n.position?.x ?? 0, y: n.position?.y ?? 0, w, h }
-  })
-  if (!rects.length) return
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const r of rects) { minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h) }
-  const vp = vfViewport.value, z = vp.zoom, m = 28
-  glimmBurst.value = { left: vp.x + minX * z - m, top: vp.y + minY * z - m, w: (maxX - minX) * z + m * 2, h: (maxY - minY) * z + m * 2 }
+  const root = canvasRootRef.value
+  if (!nodeIds.length || typeof document === 'undefined' || !root) return
+  const rootRect = root.getBoundingClientRect()
+  const zoom = vfViewport.value.zoom
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, radius = 12
+  for (const id of nodeIds) {
+    const el = document.querySelector(`.vue-flow__node[data-id="${window.CSS?.escape?.(id) ?? id}"]`) as HTMLElement | null
+    if (!el) continue
+    const r = el.getBoundingClientRect() // already includes the zoom transform
+    minX = Math.min(minX, r.left - rootRect.left); minY = Math.min(minY, r.top - rootRect.top)
+    maxX = Math.max(maxX, r.right - rootRect.left); maxY = Math.max(maxY, r.bottom - rootRect.top)
+    const br = parseFloat(getComputedStyle(el).borderTopLeftRadius)
+    if (Number.isFinite(br)) radius = br
+  }
+  if (!Number.isFinite(minX)) return
+  // border-radius is authored pre-transform px → scale by zoom for our overlay.
+  glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: `${radius * zoom}px` }
   if (glimmTimer) clearTimeout(glimmTimer)
   glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1700)
 }
@@ -4784,6 +4792,7 @@ defineExpose({
        zoom gestures for itself). focus:outline-none keeps the focus ring
        invisible; we only need the focus state for event routing, not UI. -->
   <div
+    ref="canvasRootRef"
     class="vue-node-canvas-root w-full h-full relative bg-[#0a0a0a] focus:outline-none"
     tabindex="-1"
     @dragover.prevent
@@ -4797,9 +4806,9 @@ defineExpose({
          active false→true change with the canvas already sized — a v-if + constant
          active would run AgentSweep's immediate watch before the canvas mounts. -->
     <div
-      class="absolute pointer-events-none z-30 overflow-hidden rounded-2xl"
+      class="absolute pointer-events-none z-30 overflow-hidden"
       :style="glimmBurst
-        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px' }
+        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', borderRadius: glimmBurst.radius }
         : { display: 'none' }"
     >
       <AgentSweep :active="!!glimmBurst" />
