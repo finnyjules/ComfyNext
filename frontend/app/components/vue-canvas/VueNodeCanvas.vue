@@ -253,16 +253,28 @@ async function applyCanvasOps(commands: Command[]) {
   // here, so a later connect can reference the just-added node.
   const idMap: Record<string, string> = {}
   const sel = (nodes.value as any[]).find(n => n.selected)
-  const baseX = (sel?.position?.x ?? 0) + 340
-  const baseY = (sel?.position?.y ?? 0)
   const newIds: string[] = []
   const realId = (id: unknown): string => { const s = String(id); return idMap[s] ?? s }
   const findNode = (id: unknown) => (nodes.value as any[]).find(n => String(n.id) === realId(id))
 
+  // Anchor a new node next to the node it will be wired FROM (per a connect
+  // command), else the user's selection, else the rightmost existing node — so it
+  // lands beside its source, not in the top-left corner. Snapshot existing nodes
+  // up front (the list mutates as we add).
+  const existing = (nodes.value as any[]).slice()
+  const rightmost = existing.reduce<any>((a, n) => ((n.position?.x ?? 0) > (a?.position?.x ?? -Infinity) ? n : a), null)
+  function anchorFor(placeholderId: unknown): { x: number; y: number } {
+    const wire = commands.find(c => c.op === 'connect' && c.args?.to === placeholderId)
+    const src = wire ? existing.find(n => String(n.id) === realId(wire.args?.from)) : null
+    const ref = src ?? sel ?? rightmost
+    return ref ? { x: (ref.position?.x ?? 0) + 360, y: ref.position?.y ?? 0 } : { x: 400, y: 240 }
+  }
+
   // PHASE 1 — create all new nodes first.
   for (const cmd of commands) {
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
-      const node = createNodeData(cmd.args.nodeType, { x: baseX, y: baseY + newIds.length * 170 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
+      const pos = anchorFor(cmd.args?.id)
+      const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
       node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
