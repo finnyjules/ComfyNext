@@ -70,19 +70,19 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
 /* The pastel ring is on the wrapper while the <input> is a child, so forward the
    focus bloom via :focus-within (canonical .pastel-hairline only reacts to :focus
    on itself). Mirrors the inpaint / AgentBar fields. */
-.pastel-hairline:focus-within {
-  border-width: 1px;
-  filter: saturate(1);
-}
-
-/* Slowly drift the pastel along the ring. .pastel-hairline paints two background
-   layers — the solid inner fill (layer 1, kept static) and the pastel gradient
-   (layer 2). Widen + pan only the gradient layer; ease-in-out + alternate so it
-   flows back and forth with no seam jump (same idea as .gen-pastel-flow). */
+/* The canonical hairline is 0.5px, but this prompt is centred with
+   -translate-x-1/2 → its left/right edges land on a fractional x, so a sub-pixel
+   border renders thinner on the vertical sides than the (near-integer) top/bottom.
+   Pin it to a full 1px so the ring is even all the way round. */
 .pastel-hairline {
+  border-width: 1px;
   background-size: 100% 100%, 200% 100%;
   background-position: 0% 0%, 0% 50%;
   animation: prompt-pastel-pan 9s ease-in-out infinite alternate;
+}
+/* Focus just blooms the colour (width is already a full pixel). */
+.pastel-hairline:focus-within {
+  filter: saturate(1);
 }
 @keyframes prompt-pastel-pan {
   from { background-position: 0% 0%, 0% 50%; }
