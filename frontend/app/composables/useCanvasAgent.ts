@@ -105,7 +105,7 @@ export function useCanvasAgent(opts: {
       // `busy` true so the grid sparks keep animating through the blueprint; the
       // card (and sparks-off) land together when the delay ends.
       opts.preview(built.map(c => c.command), true)
-      await new Promise(r => setTimeout(r, 1000))
+      await new Promise(r => setTimeout(r, 1800)) // matches the blueprint duration
       changes.value = built
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)

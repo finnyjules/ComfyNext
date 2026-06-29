@@ -356,9 +356,16 @@ interface OverlayRect { left: number; top: number; w: number; h: number; radius:
 const blueprintRects = ref<OverlayRect[]>([])
 const glimmBurst = ref<OverlayRect | null>(null)
 const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
+const glimmPeriod = ref(0.55) // sweep speed: slow during the blueprint, fast on commit
 let ghostDrawTimer = 0
 let glimmTimer = 0
-const BLUEPRINT_MS = 1000
+const BLUEPRINT_MS = 1800
+
+function unionRect(rects: OverlayRect[]): OverlayRect {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const r of rects) { minX = Math.min(minX, r.left); minY = Math.min(minY, r.top); maxX = Math.max(maxX, r.left + r.w); maxY = Math.max(maxY, r.top + r.h) }
+  return { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: rects[0]!.radius }
+}
 
 // On-screen rect + corner radius of each node's rounded CARD — the component root
 // (.comfy-node) or a nested frame, not Vue Flow's square wrapper — relative to the
@@ -391,7 +398,9 @@ function cardRects(nodeIds: string[]): OverlayRect[] {
 
 function agentDiscard() {
   if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
+  if (glimmTimer) { clearTimeout(glimmTimer); glimmTimer = 0 }
   blueprintRects.value = []
+  glimmOn.value = false
   if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
   ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
   ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
@@ -408,10 +417,14 @@ async function agentPreview(commands: Command[], animate = false) {
   for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost agent-ghost-hidden'
   for (const e of edges.value as any[]) if (e.data?.ghost && typeof e.class === 'string') e.class = 'agent-ghost-edge agent-ghost-edge-draw'
   await nextTick()
-  blueprintRects.value = cardRects(ghostNodeIds)
+  const rects = cardRects(ghostNodeIds)
+  blueprintRects.value = rects
+  // A slow glimm where the node is about to appear (under the white contour).
+  if (rects.length) { glimmPeriod.value = 3; glimmBurst.value = unionRect(rects); glimmOn.value = true }
   ghostDrawTimer = window.setTimeout(() => {
     ghostDrawTimer = 0
     blueprintRects.value = []
+    glimmOn.value = false // fade the slow glimm out as the node settles in
     for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost'
     for (const e of edges.value as any[]) if (e.data?.ghost) e.class = 'agent-ghost-edge'
   }, BLUEPRINT_MS)
@@ -431,9 +444,8 @@ function agentCommit() {
 function glimmBurstOver(nodeIds: string[]) {
   const rects = cardRects(nodeIds)
   if (!rects.length) return
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const r of rects) { minX = Math.min(minX, r.left); minY = Math.min(minY, r.top); maxX = Math.max(maxX, r.left + r.w); maxY = Math.max(maxY, r.top + r.h) }
-  glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: rects[0]!.radius }
+  glimmPeriod.value = 0.55 // quick celebratory sweep
+  glimmBurst.value = unionRect(rects)
   glimmOn.value = true
   if (glimmTimer) clearTimeout(glimmTimer)
   glimmTimer = window.setTimeout(() => { glimmOn.value = false }, 1150) // keep the rect; fade out via opacity
@@ -4865,7 +4877,7 @@ defineExpose({
         ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', clipPath: `inset(0 round ${glimmBurst.radius})`, opacity: glimmOn ? 1 : 0, transition: 'opacity 0.4s ease' }
         : { display: 'none' }"
     >
-      <AgentSweep :active="glimmOn" :period="0.55" />
+      <AgentSweep :active="glimmOn" :period="glimmPeriod" />
     </div>
 
     <VueFlow
