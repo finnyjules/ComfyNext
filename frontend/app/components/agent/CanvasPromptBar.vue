@@ -76,27 +76,34 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
   position: relative;
   background: #1a1a1a;
 }
+/* Animate the gradient by ROTATING a conic via a registered custom property.
+   background-position animation is cached (frozen) on masked elements in
+   Chromium; animating an @property angle re-rasterizes the gradient each frame,
+   so the colours actually flow around the ring. */
+@property --pastel-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
 .prompt-field::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   padding: 1px;                       /* ring thickness */
-  background-image: var(--pastel-gradient);
-  background-size: 200% 100%;
+  background: conic-gradient(from var(--pastel-angle), #ffd6e7, #cfe8ff, #d6ffe0, #fff4cc, #e7d6ff, #ffd6e7);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   opacity: 0.4;                       /* muted at rest */
   transition: opacity 0.4s ease;
-  animation: prompt-pastel-pan 9s ease-in-out infinite alternate;
+  animation: prompt-pastel-spin 8s linear infinite;
   pointer-events: none;
 }
 .prompt-field:focus-within::before { opacity: 1; }   /* fade to full when active */
-@keyframes prompt-pastel-pan {
-  from { background-position: 0% 50%; }
-  to { background-position: 100% 50%; }
+@keyframes prompt-pastel-spin {
+  to { --pastel-angle: 360deg; }
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-field::before { animation: none; }
