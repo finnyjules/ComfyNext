@@ -21,7 +21,7 @@ const {
   ask, acceptChange, rejectChange, reroll, keep, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
-  preview: (cmds) => props.vueCanvas.agentPreview(cmds),
+  preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
   commit: () => props.vueCanvas.agentCommit(),
   discard: () => props.vueCanvas.agentDiscard(),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',

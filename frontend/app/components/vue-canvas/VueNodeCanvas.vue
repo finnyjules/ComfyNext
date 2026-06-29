@@ -249,7 +249,7 @@ function wireEdge(from: any, to: any, fromPort?: string, toPort?: string, ghost 
     id,
     source: String(from.id), sourceHandle: `output-${pair.oi}`,
     target: String(to.id), targetHandle: `input-${pair.ii}`,
-    type: 'comfy', class: ghost ? 'agent-ghost-edge agent-ghost-edge-draw' : undefined,
+    type: 'comfy', class: ghost ? 'agent-ghost-edge' : undefined,
     data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*'), ...(ghost ? { ghost: true } : {}) },
   }])
   return id
@@ -288,7 +288,7 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
       const pos = anchorFor(cmd.args?.id)
       const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
       node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
-      if (ghost) { node.class = 'agent-ghost agent-ghost-draw'; node.data.ghost = true }
+      if (ghost) { node.class = 'agent-ghost'; node.data.ghost = true }
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
       newIds.push(node.id)
@@ -346,54 +346,27 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
 }
 
 // ── Agent ghost-preview lifecycle ────────────────────────────────────────────
-// preview: render the proposal as semi-transparent pastel ghosts on the canvas.
-// commit: promote them to real nodes/edges + glimm-sweep over them. discard:
-// remove them. Source of truth = the `data.ghost` tag (race-safe vs id lists).
-let ghostDrawTimer = 0
-
-// After the ~1s blueprint draw-in, strip the -draw classes so the ghosts settle
-// into the steady (rainbow ring + flowing dash) state.
-function settleGhostDraw() {
-  for (const n of nodes.value as any[]) if (n.data?.ghost && typeof n.class === 'string' && n.class.includes('agent-ghost-draw')) n.class = 'agent-ghost'
-  for (const e of edges.value as any[]) if (e.data?.ghost && typeof e.class === 'string' && e.class.includes('agent-ghost-edge-draw')) e.class = 'agent-ghost-edge'
-}
-
-function agentDiscard() {
-  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
-  if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
-  ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
-  ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
-}
-
-async function agentPreview(commands: Command[]) {
-  agentDiscard() // clear any prior preview first
-  if (!commands.length) return
-  await applyCanvasOps(commands, true)
-  ghostDrawTimer = window.setTimeout(settleGhostDraw, 1000) // end the blueprint draw-in
-}
-
-function agentCommit() {
-  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
-  const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
-  for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
-  for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
-  glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
-}
-
-// Glimm "citrus" sweep over the just-committed node(s) — exactly their on-screen
-// box AND rounded corners (read from the DOM, relative to the canvas root). Brief
-// celebratory finish.
+// preview(animate): render the proposal as semi-transparent pastel ghosts. When
+// animate, first play a ~1s white "blueprint" draw-in (node hidden, its contour
+// traced as an overlay + the edge drawn) before the ghosts settle. commit:
+// promote to real nodes/edges + glimm. discard: remove. Source of truth for
+// ghost membership = the `data.ghost` tag (race-safe vs id lists).
 const canvasRootRef = ref<HTMLElement | null>(null)
-const glimmBurst = ref<{ left: number; top: number; w: number; h: number; radius: string } | null>(null)
+interface OverlayRect { left: number; top: number; w: number; h: number; radius: string }
+const blueprintRects = ref<OverlayRect[]>([])
+const glimmBurst = ref<OverlayRect | null>(null)
+let ghostDrawTimer = 0
 let glimmTimer = 0
-function glimmBurstOver(nodeIds: string[]) {
+const BLUEPRINT_MS = 1000
+
+// On-screen rect + corner radius of each node's rounded CARD — the component root
+// (.comfy-node) or a nested frame, not Vue Flow's square wrapper — relative to the
+// canvas root. Used by both the blueprint contours and the commit glimm.
+function cardRects(nodeIds: string[]): OverlayRect[] {
   const root = canvasRootRef.value
-  if (!nodeIds.length || typeof document === 'undefined' || !root) return
+  if (!nodeIds.length || typeof document === 'undefined' || !root) return []
   const rootRect = root.getBoundingClientRect()
   const zoom = vfViewport.value.zoom
-  // The rounded "card" is the component root (.comfy-node) or a nested frame, not
-  // Vue Flow's square .vue-flow__node wrapper — find the widest descendant with a
-  // border-radius (skips small rounded handles/chips).
   const cardOf = (nodeEl: HTMLElement): { el: HTMLElement; radius: number } => {
     let best = nodeEl, bestR = parseFloat(getComputedStyle(nodeEl).borderTopLeftRadius) || 0
     nodeEl.querySelectorAll<HTMLElement>('*').forEach((c) => {
@@ -403,19 +376,63 @@ function glimmBurstOver(nodeIds: string[]) {
     })
     return { el: best, radius: bestR }
   }
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, radius = 12
+  const out: OverlayRect[] = []
   for (const id of nodeIds) {
     const nodeEl = document.querySelector(`.vue-flow__node[data-id="${window.CSS?.escape?.(id) ?? id}"]`) as HTMLElement | null
     if (!nodeEl) continue
     const card = cardOf(nodeEl)
     const r = card.el.getBoundingClientRect() // already includes the zoom transform
-    minX = Math.min(minX, r.left - rootRect.left); minY = Math.min(minY, r.top - rootRect.top)
-    maxX = Math.max(maxX, r.right - rootRect.left); maxY = Math.max(maxY, r.bottom - rootRect.top)
-    radius = card.radius
+    // border-radius is authored pre-transform px → scale by zoom for our overlay.
+    out.push({ left: r.left - rootRect.left, top: r.top - rootRect.top, w: r.width, h: r.height, radius: `${card.radius * zoom}px` })
   }
-  if (!Number.isFinite(minX)) return
-  // border-radius is authored pre-transform px → scale by zoom for our overlay.
-  glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: `${radius * zoom}px` }
+  return out
+}
+
+function agentDiscard() {
+  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
+  blueprintRects.value = []
+  if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
+  ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
+  ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
+}
+
+async function agentPreview(commands: Command[], animate = false) {
+  agentDiscard() // clear any prior preview first
+  if (!commands.length) return
+  await applyCanvasOps(commands, true)
+  if (!animate) return
+  // Blueprint draw-in: hide the ghost cards, trace their white contours as
+  // overlays, and draw the edge; then settle into the steady ghost after ~1s.
+  const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
+  for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost agent-ghost-hidden'
+  for (const e of edges.value as any[]) if (e.data?.ghost && typeof e.class === 'string') e.class = 'agent-ghost-edge agent-ghost-edge-draw'
+  await nextTick()
+  blueprintRects.value = cardRects(ghostNodeIds)
+  ghostDrawTimer = window.setTimeout(() => {
+    ghostDrawTimer = 0
+    blueprintRects.value = []
+    for (const n of nodes.value as any[]) if (n.data?.ghost) n.class = 'agent-ghost'
+    for (const e of edges.value as any[]) if (e.data?.ghost) e.class = 'agent-ghost-edge'
+  }, BLUEPRINT_MS)
+}
+
+function agentCommit() {
+  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
+  blueprintRects.value = []
+  const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
+  for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
+  for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
+  glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
+}
+
+/** Glimm "citrus" sweep over the just-committed node(s) — their exact on-screen
+ *  box + rounded corners. Brief celebratory finish. */
+function glimmBurstOver(nodeIds: string[]) {
+  const rects = cardRects(nodeIds)
+  if (!rects.length) return
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const r of rects) { minX = Math.min(minX, r.left); minY = Math.min(minY, r.top); maxX = Math.max(maxX, r.left + r.w); maxY = Math.max(maxY, r.top + r.h) }
+  glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: rects[0]!.radius }
   if (glimmTimer) clearTimeout(glimmTimer)
   glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1150)
 }
@@ -4825,6 +4842,13 @@ defineExpose({
   >
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
+
+    <!-- Blueprint draw-in: a white hairline contour traces each proposed node. -->
+    <div
+      v-for="(b, i) in blueprintRects" :key="'bp' + i"
+      class="agent-blueprint-ring absolute pointer-events-none z-30"
+      :style="{ left: b.left + 'px', top: b.top + 'px', width: b.w + 'px', height: b.h + 'px', borderRadius: b.radius }"
+    />
 
     <!-- Glimm "citrus" sweep over a just-committed agent node + its connection.
          Persistently mounted (display toggled) so glimm initialises on the
