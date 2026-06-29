@@ -29,14 +29,14 @@ let rainbowOffset = 0 // horizontal scroll offset for rainbow
 interface Spark { gx: number; gy: number; dx: number; dy: number; p: number; speed: number; hueBase: number; trail: { wx: number; wy: number }[] }
 let sparks: Spark[] = []
 let sparkHue = 0 // global flowing offset so the rainbow drifts over time
-const TRAIL_LEN = 34 // points of history → a long comet spanning a few dots
+const TRAIL_LEN = 64 // points of history → a long comet
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 function spawnSpark(gxMin: number, gxMax: number, gyMin: number, gyMax: number): Spark {
   const d = DIRS[Math.floor(Math.random() * 4)]!
   return {
     gx: gxMin + Math.floor(Math.random() * (gxMax - gxMin + 1)),
     gy: gyMin + Math.floor(Math.random() * (gyMax - gyMin + 1)),
-    dx: d[0], dy: d[1], p: Math.random(), speed: 0.02 + Math.random() * 0.03,
+    dx: d[0], dy: d[1], p: Math.random(), speed: 0.07 + Math.random() * 0.07,
     hueBase: Math.random() * 360, trail: [],
   }
 }
@@ -149,8 +149,9 @@ function draw() {
         const a = s.trail[i - 1]!, b = s.trail[i]!
         const t = i / s.trail.length // 0 tail → 1 head
         const hue = (sparkHue + s.hueBase + i * 7) % 360
-        ctx.strokeStyle = `hsla(${hue}, 75%, 82%, ${(0.1 + 0.8 * t).toFixed(3)})`
-        ctx.lineWidth = 0.8 + 2.2 * t
+        // Steep (quadratic) falloff so the tail fades out fast behind the head.
+        ctx.strokeStyle = `hsla(${hue}, 75%, 82%, ${(0.9 * t * t).toFixed(3)})`
+        ctx.lineWidth = 0.4 + 2.6 * t * t
         ctx.beginPath()
         ctx.moveTo(offsetX + a.wx * g, offsetY + a.wy * g)
         ctx.lineTo(offsetX + b.wx * g, offsetY + b.wy * g)
