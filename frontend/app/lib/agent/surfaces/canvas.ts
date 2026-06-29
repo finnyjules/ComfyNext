@@ -26,6 +26,10 @@ export interface NodeLite {
   mode?: number
   /** widget name → current value (keys are the settable widget names). */
   widgets: Record<string, unknown>
+  /** widget name → allowed values, for choice/combo widgets (sampler, scheduler,
+   *  model, aspect ratio…). Lets the agent pick a valid option and lets setWidget
+   *  reject an invented one that would break the run. */
+  widgetOptions?: Record<string, string[]>
   inputs: PortLite[]
   outputs: PortLite[]
   /** True for the node the user currently has selected — what "this"/"it" refers to. */
@@ -55,7 +59,7 @@ function connectedInputs(s: CanvasSnapshot, nodeId: string): Set<string> {
 }
 
 const CANVAS_COMMANDS: CommandSpec[] = [
-  { op: 'setWidget', hint: 'Set a node\'s parameter (widget) by name. target = node id; args: { name, value }. name MUST be one of that node\'s widget keys (see its "widgets"). e.g. set sampler steps → {name:"steps", value:30}. This is what "set the seed to 42", "30 steps", "use the euler sampler" mean.' },
+  { op: 'setWidget', hint: 'Set a node\'s parameter (widget) by name. target = node id; args: { name, value }. name MUST be one of that node\'s widget keys (see its "widgets"). For a CHOICE widget (the node lists its allowed values under "choices"), value MUST be EXACTLY one of those options — never invent one (a wrong sampler/model/scheduler name breaks the run). Numeric widgets take a number, not a string. e.g. steps → {name:"steps", value:30}. This is what "set the seed to 42", "30 steps", "use the euler sampler" mean.' },
   { op: 'setMode', hint: 'Mute or bypass a node (or re-enable it). target = node id; args: { mode: "normal" | "mute" | "bypass" }. Muted = does not run; bypass = passes input through.' },
   { op: 'addNode', hint: 'Add a NEW node from the palette. args: { nodeType (a "type" from the palette — NOT a display name), id (a placeholder you assign, e.g. "$new1", so you can connect it), widgetOverrides? }. The palette is ranked by relevance to the request and leads with the app\'s high-level GENERATORS (generate/edit/upscale/remove-background/restore an image, generate video/music/speech/3D, …) and STUDIOS (Gradient, Shader, Texture, Smart Layout, Frame/Compositor, Type). STRONGLY prefer a single such capability over wiring up low-level ComfyUI nodes. To act on an existing image, addNode the capability then connect the image to it.' },
   { op: 'connect', hint: 'Wire two nodes. args: { from, to, fromPort?, toPort? }. from/to are node ids — existing ids OR a placeholder you gave a just-added node (e.g. "$new1"). Omit the ports to auto-pick the first type-compatible pair. When the request is "do X to this/it", "this" is the node with selected:true — emit addNode for the effect then connect { from: <selected id>, to: "$new1" }.' },
@@ -89,6 +93,15 @@ export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
       outputs: n.outputs.map(p => p.name),
     }
     if (Object.keys(n.widgets).length) cur.widgets = n.widgets
+    // Surface allowed values for choice widgets so the model picks a real option
+    // (truncated for the prompt; setWidget validates against the full list).
+    if (n.widgetOptions) {
+      const choices: Record<string, string[]> = {}
+      for (const [k, opts] of Object.entries(n.widgetOptions)) {
+        if (Array.isArray(opts) && opts.length) choices[k] = opts.length > 30 ? [...opts.slice(0, 30), `…(+${opts.length - 30})`] : opts
+      }
+      if (Object.keys(choices).length) cur.choices = choices
+    }
     if (n.mode && MODE_LABEL[n.mode] && n.mode !== 0) cur.state = MODE_LABEL[n.mode]
     if (n.selected) cur.selected = true
     return { id: n.id, label: nodeName(n), type: 'node', current: cur }
@@ -137,6 +150,11 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       const name = cmd.args?.name
       if (typeof name !== 'string' || !(name in node.widgets)) return { ok: false, reason: 'invalid', detail: `'${String(name)}' is not a widget on ${nodeName(node)} (has: ${Object.keys(node.widgets).join(', ') || 'none'})` }
       if (!('value' in (cmd.args ?? {}))) return { ok: false, reason: 'invalid', detail: 'missing args.value' }
+      // Choice widgets: reject a value that isn't an allowed option (would break the run).
+      const opts = node.widgetOptions?.[name]
+      if (Array.isArray(opts) && opts.length && !opts.includes(cmd.args!.value as string)) {
+        return { ok: false, reason: 'invalid', detail: `'${String(cmd.args!.value)}' is not a valid ${name}; choose one of: ${opts.slice(0, 20).join(', ')}${opts.length > 20 ? ', …' : ''}` }
+      }
       node.widgets[name] = cmd.args!.value
       return { ok: true, template: state, inverse: snapshot() }
     }

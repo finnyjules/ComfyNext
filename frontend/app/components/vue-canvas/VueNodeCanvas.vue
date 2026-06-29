@@ -201,13 +201,19 @@ function agentSnapshot(phrase?: string): CanvasSnapshot {
       const defs = (n.data?.widgetDefs ?? []) as any[]
       const vals = (n.data?.widgetsValues ?? []) as any[]
       const widgets: Record<string, unknown> = {}
-      defs.forEach((d, i) => { if (d?.name != null) widgets[d.name] = vals[i] })
+      const widgetOptions: Record<string, string[]> = {}
+      defs.forEach((d, i) => {
+        if (d?.name == null) return
+        widgets[d.name] = vals[i]
+        if (Array.isArray(d.options) && d.options.length) widgetOptions[d.name] = d.options.map((o: unknown) => String(o))
+      })
       return {
         id: String(n.id),
         nodeType: String(n.data?.nodeType ?? n.data?.type ?? n.type ?? 'unknown'),
         title: String(n.data?.title ?? ''),
         mode: n.data?.mode,
         widgets,
+        ...(Object.keys(widgetOptions).length ? { widgetOptions } : {}),
         inputs: ((n.data?.inputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*'), optional: !!p.optional })),
         outputs: ((n.data?.outputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*') })),
         selected: !!n.selected,

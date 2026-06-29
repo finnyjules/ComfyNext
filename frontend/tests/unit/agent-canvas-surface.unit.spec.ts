@@ -141,6 +141,29 @@ describe('verifyCanvas', () => {
   })
 })
 
+describe('setWidget choice validation', () => {
+  const g = (): CanvasSnapshot => ({ nodes: [
+    { id: 'k', nodeType: 'KSampler', title: 'KSampler', widgets: { sampler_name: 'euler', steps: 20 },
+      widgetOptions: { sampler_name: ['euler', 'euler_ancestral', 'dpmpp_2m'] },
+      inputs: [], outputs: [] },
+  ], edges: [] })
+  it('accepts a valid option', () => {
+    expect(applyCanvasCommand(g(), { op: 'setWidget', target: 'k', args: { name: 'sampler_name', value: 'dpmpp_2m' } }).ok).toBe(true)
+  })
+  it('rejects an invalid option (would break the run) and lists the choices', () => {
+    const r = applyCanvasCommand(g(), { op: 'setWidget', target: 'k', args: { name: 'sampler_name', value: 'euler2' } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.detail).toMatch(/euler_ancestral/)
+  })
+  it('a free (non-choice) widget still accepts any value', () => {
+    expect(applyCanvasCommand(g(), { op: 'setWidget', target: 'k', args: { name: 'steps', value: 35 } }).ok).toBe(true)
+  })
+  it('describeCanvas surfaces the choices for a combo widget', () => {
+    const cur = describeCanvas(g()).objects.find(o => o.id === 'k')!.current as { choices?: Record<string, string[]> }
+    expect(cur.choices?.sampler_name).toContain('dpmpp_2m')
+  })
+})
+
 describe('summarizeCanvasChange', () => {
   it('summarizes setWidget with a before/after', () => {
     const s = summarizeCanvasChange(graph(), { op: 'setWidget', target: '2', args: { name: 'steps', value: 30 } })
