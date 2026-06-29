@@ -101,9 +101,9 @@ export function useCanvasAgent(opts: {
         return
       }
       issues.value = verifyCanvas(probe)
-      // Play the blueprint draw-in on the canvas BEFORE the result card appears:
-      // stop the thinking sparks, draw the ghosts, then reveal the proposal.
-      busy.value = false
+      // Play the blueprint on the canvas BEFORE the result card appears. Keep
+      // `busy` true so the grid sparks keep animating through the blueprint; the
+      // card (and sparks-off) land together when the delay ends.
       opts.preview(built.map(c => c.command), true)
       await new Promise(r => setTimeout(r, 1000))
       changes.value = built

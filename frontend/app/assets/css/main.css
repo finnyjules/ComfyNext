@@ -350,16 +350,16 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
    white dash; then the ghost settles in. */
 .agent-blueprint-ring {
   padding: 1px; /* hairline ring thickness */
-  background: repeating-conic-gradient(from var(--pastel-angle), #ffffff 0deg 10deg, transparent 10deg 26deg);
+  background: repeating-conic-gradient(from var(--pastel-angle), #ffffff 0deg 26deg, transparent 26deg 90deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: pastel-spin 2.5s linear infinite;
+  animation: pastel-spin 6s linear infinite;
 }
 .vue-flow__edge.agent-ghost-edge-draw .vue-flow__edge-path {
   stroke: #ffffff;
   stroke-width: 1;
-  stroke-dasharray: 6 6;
-  animation: ghost-dash 0.5s linear infinite;
+  stroke-dasharray: 10 10;
+  animation: ghost-dash 0.9s linear infinite;
 }
