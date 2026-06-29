@@ -4,7 +4,7 @@ import {
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
-  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
@@ -92,10 +92,8 @@ const sidebarItems = [
   { label: 'Styles', icon: Library, panel: 'loras' },
   { label: 'Characters', icon: Drama, panel: 'characters' },
   { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
-  { label: 'Annotate', icon: MessageSquareDashed, submenu: 'annotate' },
-  // Power-user
-  { label: 'Nodes', icon: GitFork, tabId: 'node-library', dividerBefore: true },
-  { label: 'Blocks', icon: Boxes, panel: 'blocks' },
+  // Power-user + annotate, folded into one overflow menu
+  { label: 'More', icon: Ellipsis, submenu: 'more', dividerBefore: true },
   // Hidden for now. Re-add to restore.
   // { label: 'Apps', icon: AppWindow, tabId: 'apps' },
   // { label: 'Templates', icon: LayoutTemplate },
@@ -172,11 +170,18 @@ const annotateOptions = [
   { label: 'Image pin',   icon: Image,      kind: 'image' },
   { label: 'Arrow',       icon: ArrowRight, kind: 'arrow',     hint: 'A' },
 ]
-const annotateMenuOpen = ref(false)
+// "More" overflow menu — folds the power-user + annotate actions behind one
+// toolbar item. Nodes/Blocks reuse runSidebarItem; annotate options fire
+// addAnnotation. (Annotate is no longer a top-level toolbar item.)
+const moreMenuOpen = ref(false)
+const moreOptions = [
+  { label: 'Nodes', icon: GitFork, tabId: 'node-library' },
+  { label: 'Blocks', icon: Boxes, panel: 'blocks' },
+]
 
 function addAnnotation(kind: string) {
   window.dispatchEvent(new CustomEvent('comfynext:addAnnotation', { detail: { kind } }))
-  annotateMenuOpen.value = false
+  moreMenuOpen.value = false
 }
 
 // "Get Started" modal: pops up once per fresh blank project. We track the
@@ -289,7 +294,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.panel === 'assets') return assetsPanelOpen.value
   if (item?.submenu === 'load') return loadMenuOpen.value
-  if (item?.submenu === 'annotate') return annotateMenuOpen.value
+  if (item?.submenu === 'more') return moreMenuOpen.value || blockLibraryPanelOpen.value || vueNodesSidebarOpen.value
   return activeSidebarItem.value === item?.label
 }
 
@@ -306,23 +311,23 @@ function toggleSidebarItem(label: string) {
     loraLibraryPanelOpen.value = false
     charactersPanelOpen.value = false
     blockLibraryPanelOpen.value = false
-    annotateMenuOpen.value = false
+    moreMenuOpen.value = false
     loadMenuOpen.value = !loadMenuOpen.value
     return
   }
-  if (item?.submenu === 'annotate') {
-    toolboxPanelOpen.value = false
-    generatorsPanelOpen.value = false
-    loraLibraryPanelOpen.value = false
-    charactersPanelOpen.value = false
-    blockLibraryPanelOpen.value = false
+  if (item?.submenu === 'more') {
     loadMenuOpen.value = false
-    annotateMenuOpen.value = !annotateMenuOpen.value
+    moreMenuOpen.value = !moreMenuOpen.value
     return
   }
-  // Any other sidebar item closes both popups.
+  runSidebarItem(item)
+}
+
+// Perform a leaf sidebar action (tool / panel / tab). Shared by the toolbar and
+// the "More" overflow menu so their behaviour can't drift.
+function runSidebarItem(item: any) {
   loadMenuOpen.value = false
-  annotateMenuOpen.value = false
+  moreMenuOpen.value = false
   if (item?.tool) {
     // Deactivate explain if switching away
     if (activeTool.value === 'explain' && item.tool !== 'explain') {
@@ -353,8 +358,8 @@ function toggleSidebarItem(label: string) {
     target.value = !wasOpen
   }
   else if (item?.tabId) {
-    const wasActive = activeSidebarItem.value === label
-    activeSidebarItem.value = wasActive ? null : label
+    const wasActive = activeSidebarItem.value === item.label
+    activeSidebarItem.value = wasActive ? null : item.label
 
     if (vueNodesEnabled.value) {
       // Vue mode: use native panels where available, iframe for the rest
@@ -2943,11 +2948,11 @@ function dismissRunResult() {
           class="absolute inset-0 z-30"
           @click="loadMenuOpen = false"
         />
-        <!-- Same backdrop pattern for the Annotate popup. -->
+        <!-- Same backdrop pattern for the More popup. -->
         <div
-          v-if="annotateMenuOpen && activeTab.type === 'project'"
+          v-if="moreMenuOpen && activeTab.type === 'project'"
           class="absolute inset-0 z-30"
-          @click="annotateMenuOpen = false"
+          @click="moreMenuOpen = false"
         />
         <!-- Workflow status bar: replaces the start/complete/error toasts
              with one persistent surface for "what's the workflow doing."
@@ -3017,13 +3022,27 @@ function dismissRunResult() {
                   <div v-if="opt.dividerAfter" class="h-px bg-white/10 mx-1 my-1" />
                 </template>
               </div>
-              <!-- Popup anchored above the Annotate button. Each entry fires
-                   a window-level event the canvas listens for. -->
+              <!-- "More" overflow popup: power-user actions (Nodes, Blocks) +
+                   the annotate options, folded behind one toolbar item. -->
               <div
-                v-if="item.submenu === 'annotate' && annotateMenuOpen"
+                v-if="item.submenu === 'more' && moreMenuOpen"
                 class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[180px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
+                <button
+                  v-for="opt in moreOptions"
+                  :key="opt.label"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                  :class="isSidebarItemActive(opt) ? 'bg-white/10' : ''"
+                  @click="runSidebarItem(opt)"
+                >
+                  <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
+                  <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
+                </button>
+                <div class="h-px bg-white/10 mx-1 my-1" />
+                <p class="px-3 pt-0.5 pb-1 flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-white/35">
+                  <MessageSquareDashed class="size-3" /> Annotate
+                </p>
                 <button
                   v-for="opt in annotateOptions"
                   :key="opt.label"
