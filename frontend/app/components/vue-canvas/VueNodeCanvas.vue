@@ -203,6 +203,7 @@ function agentSnapshot(phrase?: string): CanvasSnapshot {
         widgets,
         inputs: ((n.data?.inputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*'), optional: !!p.optional })),
         outputs: ((n.data?.outputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*') })),
+        selected: !!n.selected,
       }
     }),
     edges: (edges.value as any[]).map(e => ({
@@ -232,44 +233,61 @@ function resolveLivePorts(fromNode: any, toNode: any, fromPort?: string, toPort?
   return null
 }
 
-function applyCanvasOps(commands: Command[]) {
+function wireEdge(from: any, to: any, fromPort?: string, toPort?: string): boolean {
+  const pair = resolveLivePorts(from, to, fromPort, toPort)
+  if (!pair) return false
+  // One link per input slot — drop any existing edge into it first.
+  const kept = (edges.value as any[]).filter(e => !(String(e.target) === String(to.id) && e.targetHandle === `input-${pair.ii}`))
+  if (kept.length !== edges.value.length) edges.value.splice(0, edges.value.length, ...kept)
+  addEdges([{
+    id: `e-${from.id}-${pair.oi}-${to.id}-${pair.ii}`,
+    source: String(from.id), sourceHandle: `output-${pair.oi}`,
+    target: String(to.id), targetHandle: `input-${pair.ii}`,
+    type: 'comfy', data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*') },
+  }])
+  return true
+}
+
+async function applyCanvasOps(commands: Command[]) {
   // Placeholder ids ($new1…) the model assigned in addNode → the real ids we mint
   // here, so a later connect can reference the just-added node.
   const idMap: Record<string, string> = {}
   const sel = (nodes.value as any[]).find(n => n.selected)
   const baseX = (sel?.position?.x ?? 0) + 340
   const baseY = (sel?.position?.y ?? 0)
-  let added = 0
+  const newIds: string[] = []
   const realId = (id: unknown): string => { const s = String(id); return idMap[s] ?? s }
+  const findNode = (id: unknown) => (nodes.value as any[]).find(n => String(n.id) === realId(id))
 
+  // PHASE 1 — create all new nodes first.
   for (const cmd of commands) {
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
-      const node = createNodeData(cmd.args.nodeType, { x: baseX, y: baseY + added * 170 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
-      node.id = `${Date.now()}-${added}` // unique within the batch (createNodeData uses Date.now())
+      const node = createNodeData(cmd.args.nodeType, { x: baseX, y: baseY + newIds.length * 170 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
+      node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
-      added++
-      continue
+      newIds.push(node.id)
     }
+  }
+  // VueFlow must register the new nodes (and mount their handles) before any edge
+  // can attach — otherwise edges referencing them are pruned as invalid. (Same
+  // reason spliceAfterNode awaits here.)
+  if (newIds.length) await nextTick()
+
+  // PHASE 2 — connects + widget/mode/delete, in command order.
+  const wiredInputs = new Set<string>() // `${nodeId}:${inputIndex}` actually wired
+  for (const cmd of commands) {
     if (cmd.op === 'connect') {
-      const from = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.args?.from))
-      const to = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.args?.to))
-      if (!from || !to) continue
-      const pair = resolveLivePorts(from, to, cmd.args?.fromPort as string | undefined, cmd.args?.toPort as string | undefined)
-      if (!pair) continue
-      // One link per input slot — drop any existing edge into it first.
-      const kept = (edges.value as any[]).filter(e => !(String(e.target) === String(to.id) && e.targetHandle === `input-${pair.ii}`))
-      if (kept.length !== edges.value.length) edges.value.splice(0, edges.value.length, ...kept)
-      addEdges([{
-        id: `e-${from.id}-${pair.oi}-${to.id}-${pair.ii}`,
-        source: String(from.id), sourceHandle: `output-${pair.oi}`,
-        target: String(to.id), targetHandle: `input-${pair.ii}`,
-        type: 'comfy', data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*') },
-      }])
+      const from = findNode(cmd.args?.from)
+      const to = findNode(cmd.args?.to)
+      if (from && to && wireEdge(from, to, cmd.args?.fromPort as string | undefined, cmd.args?.toPort as string | undefined)) {
+        wiredInputs.add(String(to.id))
+      }
       continue
     }
     if (cmd.op === 'deleteNode' && cmd.target) { deleteNodes([realId(cmd.target)]); continue }
-    const node = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.target))
+    if (cmd.op === 'addNode') continue
+    const node = findNode(cmd.target)
     if (!node) continue
     if (cmd.op === 'setWidget' && typeof cmd.args?.name === 'string') {
       const defs = (node.data?.widgetDefs ?? []) as any[]
@@ -281,6 +299,20 @@ function applyCanvasOps(commands: Command[]) {
       }
     } else if (cmd.op === 'setMode') {
       setMode([realId(cmd.target)], AGENT_MODE[String(cmd.args?.mode ?? '').toLowerCase()] ?? 0)
+    }
+  }
+
+  // PHASE 3 — safety net: if a freshly-added node still has an unconnected
+  // REQUIRED input and the user had a node selected whose output is compatible,
+  // auto-wire it. Covers "do X to this image" when the model forgot the connect.
+  if (sel) {
+    for (const id of newIds) {
+      const node = (nodes.value as any[]).find(n => String(n.id) === id)
+      if (!node || String(sel.id) === id || wiredInputs.has(id)) continue
+      const ins = (node.data?.inputs ?? []) as any[]
+      const hasUnconnectedRequired = ins.some((p, i) => !p.optional
+        && !(edges.value as any[]).some(e => String(e.target) === id && e.targetHandle === `input-${i}`))
+      if (hasUnconnectedRequired) wireEdge(sel, node)
     }
   }
 }

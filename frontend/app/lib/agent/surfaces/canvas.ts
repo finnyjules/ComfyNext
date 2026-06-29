@@ -28,6 +28,8 @@ export interface NodeLite {
   widgets: Record<string, unknown>
   inputs: PortLite[]
   outputs: PortLite[]
+  /** True for the node the user currently has selected — what "this"/"it" refers to. */
+  selected?: boolean
 }
 export interface EdgeLite { source: string; sourcePort?: string; target: string; targetPort?: string }
 /** `catalog` = addable node types (trimmed by buildCatalog to what's relevant to
@@ -56,7 +58,7 @@ const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'setWidget', hint: 'Set a node\'s parameter (widget) by name. target = node id; args: { name, value }. name MUST be one of that node\'s widget keys (see its "widgets"). e.g. set sampler steps → {name:"steps", value:30}. This is what "set the seed to 42", "30 steps", "use the euler sampler" mean.' },
   { op: 'setMode', hint: 'Mute or bypass a node (or re-enable it). target = node id; args: { mode: "normal" | "mute" | "bypass" }. Muted = does not run; bypass = passes input through.' },
   { op: 'addNode', hint: 'Add a NEW node from the palette. args: { nodeType (a "type" from the palette — NOT a display name), id (a placeholder you assign, e.g. "$new1", so you can connect it), widgetOverrides? }. The palette is ranked by relevance to the request and leads with the app\'s high-level GENERATORS (generate/edit/upscale/remove-background/restore an image, generate video/music/speech/3D, …) and STUDIOS (Gradient, Shader, Texture, Smart Layout, Frame/Compositor, Type). STRONGLY prefer a single such capability over wiring up low-level ComfyUI nodes. To act on an existing image, addNode the capability then connect the image to it.' },
-  { op: 'connect', hint: 'Wire two nodes. args: { from, to, fromPort?, toPort? }. from/to are node ids — existing ids OR a placeholder you gave a just-added node (e.g. "$new1"). Omit the ports to auto-pick the first type-compatible pair, or name them. This is "connect the sampler to the new upscaler", "add X after this".' },
+  { op: 'connect', hint: 'Wire two nodes. args: { from, to, fromPort?, toPort? }. from/to are node ids — existing ids OR a placeholder you gave a just-added node (e.g. "$new1"). Omit the ports to auto-pick the first type-compatible pair. When the request is "do X to this/it", "this" is the node with selected:true — emit addNode for the effect then connect { from: <selected id>, to: "$new1" }.' },
   { op: 'deleteNode', hint: 'Delete a node from the graph. target = node id. Edges touching it are removed too.' },
   { op: 'restore', hint: 'internal — undo support.' },
 ]
@@ -74,6 +76,7 @@ export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
     }
     if (Object.keys(n.widgets).length) cur.widgets = n.widgets
     if (n.mode && MODE_LABEL[n.mode] && n.mode !== 0) cur.state = MODE_LABEL[n.mode]
+    if (n.selected) cur.selected = true
     return { id: n.id, label: nodeName(n), type: 'node', current: cur }
   })
   const edgeList = s.edges.map((e) => {
