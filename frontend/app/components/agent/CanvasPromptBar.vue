@@ -8,6 +8,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { Sparkles, ArrowUp } from 'lucide-vue-next'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
+import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasAgent } from '~/composables/useCanvasAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 
@@ -46,7 +47,11 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
 <template>
   <div v-if="ready" class="flex flex-col gap-2">
     <!-- Results expand upward, above the input -->
-    <div v-if="hasResult" class="max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
+    <div v-if="hasResult" class="relative max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
+      <!-- Slow glimm sweep over the thinking card while the agent works. -->
+      <div v-if="busy" class="pointer-events-none absolute inset-0" style="clip-path: inset(0 round 12px)">
+        <AgentSweep :active="busy" :period="3" />
+      </div>
       <div v-if="busy"><AgentProgress :active="busy" /></div>
       <template v-else>
         <p v-if="error" class="text-[12px] leading-snug text-red-400/90">{{ error }}</p>
