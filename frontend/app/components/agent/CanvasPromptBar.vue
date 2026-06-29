@@ -4,7 +4,7 @@
 // nodes; results (answer / proposal / progress) expand UPWARD above the input,
 // which stays anchored just above the toolbar. Owns useCanvasAgent; the parent
 // supplies the VueNodeCanvas ref (agentSnapshot + applyCanvasOps).
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, watch, onBeforeUnmount } from 'vue'
 import { Sparkles, ArrowUp } from 'lucide-vue-next'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
@@ -39,6 +39,12 @@ watch(hovered, (i) => {
   props.vueCanvas.agentHighlight(i != null ? changes.value[i]?.command ?? null : null)
 })
 
+// Slow glimm over the thinking card. Flip active false→true a tick AFTER the card
+// mounts so AgentSweep measures a sized canvas (an immediate true-at-mount never
+// starts the sweep — same gotcha as the on-canvas glimm).
+const glimmActive = ref(false)
+watch(busy, async (v) => { if (v) { await nextTick(); glimmActive.value = true } else { glimmActive.value = false } })
+
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
 const hasResult = computed(() => busy.value || hasProposal.value || !!answer.value || !!error.value)
@@ -48,9 +54,11 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
   <div v-if="ready" class="flex flex-col gap-2">
     <!-- Results expand upward, above the input -->
     <div v-if="hasResult" class="relative max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
-      <!-- Slow glimm sweep over the thinking card while the agent works. -->
-      <div v-if="busy" class="pointer-events-none absolute inset-0" style="clip-path: inset(0 round 12px)">
-        <AgentSweep :active="busy" :period="3" />
+      <!-- Slow glimm sweep over the thinking card while the agent works. Persistently
+           mounted (active gated reactively) and painted ON TOP via z-10 so the screen
+           blend reads over the card. -->
+      <div class="pointer-events-none absolute inset-0 z-10" style="clip-path: inset(0 round 12px)">
+        <AgentSweep :active="glimmActive" :period="3" />
       </div>
       <div v-if="busy"><AgentProgress :active="busy" /></div>
       <template v-else>
