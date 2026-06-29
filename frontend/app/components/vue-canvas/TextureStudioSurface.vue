@@ -38,13 +38,27 @@ const params = reactive<Params>(textureDefaults())
 // a custom fill) then re-renders via onParam().
 const { getLocalSetting } = useLocalSettings()
 const {
-  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, issues: taIssues, hasProposal: taHasProposal, hovered: taHovered,
+  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, issues: taIssues, review: taReview, reviewing: taReviewing, hasProposal: taHasProposal, hovered: taHovered,
   ask: taAsk, acceptChange: taAccept, rejectChange: taReject, reroll: taReroll, keep: taKeep, revert: taRevert,
 } = useTextureAgent({
   getState: () => ({ params }),
   setState: (s) => { Object.assign(params, s.params); (params as any).fills = (s.params as any).fills; onParam() },
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  render: () => renderTileForReview(),
 })
+
+// Render a clean 2×2 repeat of the current tile to a PNG for the agent's visual
+// self-review (no seam guides — show the texture as it reads).
+function renderTileForReview(): string | null {
+  if (typeof document === 'undefined') return null
+  try {
+    const tile = stylizeTile(textureFx.render(params, TILE, TILE, 0), params, TILE, TILE)
+    const off = document.createElement('canvas'); off.width = TILE * 2; off.height = TILE * 2
+    const ctx = off.getContext('2d'); if (!ctx) return null
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) ctx.drawImage(tile, x * TILE, y * TILE)
+    return off.toDataURL('image/png')
+  } catch { return null }
+}
 const repeat = ref(2)
 const seams = ref(true)
 const baking = ref(false)
@@ -503,7 +517,7 @@ onBeforeUnmount(() => {
         <div v-if="taBusy" class="pt-2.5"><AgentProgress :active="taBusy" /></div>
         <div v-else-if="taHasProposal" class="pt-2.5">
           <AgentProposal
-            :changes="taChanges" :busy="taBusy" :issues="taIssues"
+            :changes="taChanges" :busy="taBusy" :issues="taIssues" :review="taReview" :reviewing="taReviewing"
             @accept="taAccept" @reject="taReject" @reroll="taReroll"
             @keep="taKeep" @revert="taRevert" @hover="(i: number | null) => taHovered = i"
           />

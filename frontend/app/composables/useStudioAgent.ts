@@ -9,17 +9,27 @@
  * structural commands — but they ride the same AgentBar/AgentProposal UI.
  */
 import { computed, ref } from 'vue'
+import { $fetch } from 'ofetch'
 import type { ControlSpec, Params, ParamValue } from '~/lib/spacetype/effect'
-import type { ProposedChange } from '~/composables/useLayoutAgent'
+import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import { useVibeControl } from '~/composables/useVibeControl'
+import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
+import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
+import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 
-export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string }) {
+/** opts.render returns a PNG data URL of the current studio canvas (enables the
+ *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
+ *  optional — omit them and the agent is tune-only (no review). */
+export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null; apiKey?: () => string; tier?: string }) {
   const { requestPatch } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
   const notice = ref('')
   const lastPhrase = ref('')
   const changes = ref<ProposedChange[]>([])
+  /** The visual self-review: a designer's-eye critique of the rendered result. */
+  const review = ref<VisualReview | null>(null)
+  const reviewing = ref(false)
   const hovered = ref<number | null>(null)
   /** Prior value of every key a change touched — for accept/reject + revert. */
   const original: Record<string, ParamValue> = {}
@@ -49,10 +59,48 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     }
   }
 
+  /** Visual self-review: render the result, let a multimodal model critique it,
+   *  surface findings + append setParam fixes as fromReview changes. Best-effort. */
+  async function runVisualReview(intent: string) {
+    if (!opts.render || !opts.apiKey) return
+    reviewing.value = true
+    try {
+      const image = opts.render()
+      if (!image) return
+      const described = describeControls(opts.controls(), opts.params)
+      const snapshot: SurfaceSnapshot = {
+        surface: opts.label(),
+        objects: [{ id: 'settings', label: 'Tunable settings', type: 'settings', current: { controls: described } }],
+        commands: [{ op: 'setParam', hint: 'Tune one control toward a better result. target = a control key from settings; args: { value } within that control\'s range/options.' }],
+      }
+      const res = await $fetch<{ text: string }>('/api/agent-review', {
+        method: 'POST',
+        body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildReviewPrompt(snapshot, intent), schema: buildReviewSchema(snapshot.commands), image },
+        timeout: 60_000,
+      })
+      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
+      review.value = { assessment, issues: found }
+      fixes.forEach((cmd, i) => {
+        if (cmd.op !== 'setParam' || typeof cmd.target !== 'string') return
+        const value = cmd.args?.value as ParamValue | undefined
+        if (value === undefined) return
+        const valid = validatePatch({ [cmd.target]: value }, described)
+        const v = valid[cmd.target]
+        if (v === undefined || v === opts.params[cmd.target]) return
+        if (!(cmd.target in original)) original[cmd.target] = opts.params[cmd.target] as ParamValue
+        const ch = changeFor(cmd.target, v, fixRationales[i] || 'Visual review fix')
+        ch.fromReview = true
+        changes.value = [...changes.value, ch]
+      })
+      recompute()
+    } catch { /* review is best-effort */ }
+    finally { reviewing.value = false }
+  }
+
   async function ask(phrase: string) {
     const p = phrase.trim()
     if (!p || busy.value) return
-    busy.value = true; error.value = ''; notice.value = ''; lastPhrase.value = p
+    busy.value = true; error.value = ''; notice.value = ''; review.value = null; lastPhrase.value = p
     clearOriginal()
     try {
       const { patch, rationale } = await requestPatch(opts.controls(), opts.params, opts.label(), p)
@@ -65,6 +113,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       changes.value = built
       if (!built.length) notice.value = rationale || 'No changes for that request.'
       recompute()
+      if (built.length) void runVisualReview(p) // fire-and-forget: proposal shows now, review catches up
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -97,11 +146,11 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     }
   }
 
-  function keep() { changes.value = []; clearOriginal(); notice.value = '' } // accepted values already live
+  function keep() { changes.value = []; clearOriginal(); notice.value = ''; review.value = null } // accepted values already live
   function revert() {
     for (const [k, v] of Object.entries(original)) opts.params[k] = v
-    changes.value = []; clearOriginal(); notice.value = ''
+    changes.value = []; clearOriginal(); notice.value = ''; review.value = null
   }
 
-  return { busy, error, notice, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
+  return { busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
 }

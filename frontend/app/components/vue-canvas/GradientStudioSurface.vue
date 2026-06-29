@@ -43,12 +43,31 @@ const isMesh = computed(() => config.value.canvas.layout === 'mesh')
 // In-product agent — "tune" the gradient in natural language (Phase 1). The
 // studio's nested `config` is bridged to a flat Params via makeConfigParams; only
 // the controls that apply to the current layout are offered to the model.
+const { getLocalSetting } = useLocalSettings()
 const agentParams = makeConfigParams(() => config.value, () => activeLayer.value)
 const activeAgentControls = computed(() => gradientAgentControls(config.value))
 const {
-  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, hasProposal: agHasProposal, hovered: agHovered,
+  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, review: agReview, reviewing: agReviewing, hasProposal: agHasProposal, hovered: agHovered,
   ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
-} = useStudioAgent({ controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio' })
+} = useStudioAgent({
+  controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio',
+  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  render: () => renderGradientForReview(),
+})
+
+// Render the current gradient to a PNG for the agent's visual self-review.
+function renderGradientForReview(): string | null {
+  if (typeof document === 'undefined') return null
+  try {
+    const ar = aspectRatio(config.value.canvas.aspect)
+    const W = ar >= 1 ? 1024 : Math.round(1024 * ar)
+    const H = ar >= 1 ? Math.round(1024 / ar) : 1024
+    const off = document.createElement('canvas'); off.width = W; off.height = H
+    const ctx = off.getContext('2d'); if (!ctx) return null
+    ctx.drawImage(gradientFx.render(config.value, W, H, 0), 0, 0)
+    return off.toDataURL('image/png')
+  } catch { return null }
+}
 
 // Flow speed/gloss are optional on the schema; proxy them so v-model stays simple.
 const flowSpeed = computed({
@@ -522,7 +541,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
         <div v-else-if="agHasProposal" class="pt-2.5">
           <AgentProposal
-            :changes="agChanges" :busy="agBusy"
+            :changes="agChanges" :busy="agBusy" :review="agReview" :reviewing="agReviewing"
             @accept="agAccept" @reject="agReject" @reroll="agReroll"
             @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
           />

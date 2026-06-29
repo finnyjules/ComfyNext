@@ -53,12 +53,19 @@ const effectUniforms = computed(() =>
 // In-product agent — "tune" the shader in natural language (Phase 1). The nested
 // `config` is bridged to a flat Params; only the controls for currently-enabled
 // stages (plus the active effect's float uniforms) are offered to the model.
+const { getLocalSetting } = useLocalSettings()
 const agentParams = makeConfigParams(() => config.value)
 const activeAgentControls = computed(() => shaderAgentControls(config.value, effectDef.value))
 const {
-  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, hasProposal: agHasProposal, hovered: agHovered,
+  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, review: agReview, reviewing: agReviewing, hasProposal: agHasProposal, hovered: agHovered,
   ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
-} = useStudioAgent({ controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio' })
+} = useStudioAgent({
+  controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio',
+  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  // Force a fresh synchronous render of the current config to the preview canvas,
+  // then export it for the agent's visual self-review.
+  render: () => { renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
+})
 
 // ── effect textures (mirror ShaderEffectNode) ───────────────────────────────
 const textureImages = new Map<string, HTMLImageElement>()
@@ -340,7 +347,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
         <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
         <div v-else-if="agHasProposal" class="pt-2.5">
           <AgentProposal
-            :changes="agChanges" :busy="agBusy"
+            :changes="agChanges" :busy="agBusy" :review="agReview" :reviewing="agReviewing"
             @accept="agAccept" @reject="agReject" @reroll="agReroll"
             @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
           />
