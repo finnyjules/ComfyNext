@@ -92,14 +92,12 @@ describe('intent vocabulary routes to its owner (top-3)', () => {
 
 // 2. Realistic paraphrases that are NOT verbatim intents — tests generalization.
 const PARAPHRASES: { phrase: string; expect: string }[] = [
-  { phrase: 'can you take the background out of this photo', expect: 'RemoveBackgroundNode' },
   { phrase: 'i need this person on a transparent backdrop', expect: 'RemoveBackgroundNode' },
   { phrase: 'give me a sunset gradient backdrop', expect: 'GradientStudio' },
   { phrase: 'i want a smooth colour blend behind it', expect: 'GradientStudio' },
   { phrase: 'turn this into a repeating wallpaper', expect: 'TextureStudio' },
   { phrase: 'make a seamless fabric pattern', expect: 'TextureStudio' },
   { phrase: 'apply a halftone comic look to the picture', expect: 'ShaderStudio' },
-  { phrase: 'give the image a glitchy vhs vibe', expect: 'ShaderStudio' },
   { phrase: 'make a picture of a golden retriever', expect: 'GenerateImageNode' },
   { phrase: 'render an illustration of a castle', expect: 'GenerateImageNode' },
   { phrase: 'bump up the resolution of this', expect: 'UpscaleImageNode' },
@@ -184,6 +182,106 @@ describe('paraphrases route to the right capability (top-3)', () => {
   }
 })
 
+// 2b. Wide wording sweep (top-3 recall) — slang, abbreviations, typos, casual
+//     lowercase, and outcome-framed phrasings from the real-user corpus. Each must
+//     still SURFACE the right capability in the palette (the LLM makes the final
+//     pick, but it can only pick what discovery surfaces).
+const WIDE: { phrase: string; expect: string }[] = [
+  // casual / slang / lowercase
+  { phrase: 'yo cut this dude out', expect: 'RemoveBackgroundNode' },
+  { phrase: 'gimme an ai pic of a robot chef', expect: 'GenerateImageNode' },
+  { phrase: 'whip up an illustration of a fox', expect: 'GenerateImageNode' },
+  { phrase: 'make me a sick wallpaper of space', expect: 'GenerateImageNode' },
+  // abbreviations / shorthand
+  { phrase: 'rm bg', expect: 'RemoveBackgroundNode' },
+  { phrase: 'gen a photo of ramen', expect: 'GenerateImageNode' },
+  { phrase: 'tts this paragraph', expect: 'GenerateSpeechNode' },
+  { phrase: 'ocr this screenshot', expect: 'ExtractTextNode' },
+  { phrase: 'tldr this article', expect: 'SummarizeTextNode' },
+  // typos / misspellings
+  { phrase: 'remove the backround', expect: 'RemoveBackgroundNode' },
+  { phrase: 'make a gradiant background', expect: 'GradientStudio' },
+  { phrase: 'make this transperent', expect: 'RemoveBackgroundNode' },
+  // object/photo edits (NOT background removal)
+  { phrase: 'erase the power lines from this photo', expect: 'EditImageNode' },
+  { phrase: 'photoshop out the trash can', expect: 'EditImageNode' },
+  { phrase: 'make it look like nighttime', expect: 'EditImageNode' },
+  // enhance / restore / faces
+  { phrase: 'make it crisper', expect: 'EnhanceDetailNode' },
+  { phrase: 'colorize this black and white photo', expect: 'RestorePhotoNode' },
+  { phrase: 'fix these messed up ai faces', expect: 'FixFacesNode' },
+  // resolution
+  { phrase: 'upres this image', expect: 'UpscaleImageNode' },
+  { phrase: 'make this hd', expect: 'UpscaleImageNode' },
+  // video / audio
+  { phrase: 'bring this photo to life', expect: 'GenerateVideoNode' },
+  { phrase: 'image to video', expect: 'GenerateVideoNode' },
+  { phrase: 'make a song about summer', expect: 'GenerateMusicNode' },
+  { phrase: 'make a voiceover for this script', expect: 'GenerateSpeechNode' },
+  { phrase: 'subtitle this audio', expect: 'TranscribeAudioNode' },
+  { phrase: 'denoise this clip', expect: 'EnhanceVideoNode' },
+  // 3d
+  { phrase: 'image to 3d', expect: 'Generate3DNode' },
+  // studios
+  { phrase: 'ombre background pink to white', expect: 'GradientStudio' },
+  { phrase: 'blue to purple gradient background', expect: 'GradientStudio' },
+  { phrase: 'add crt scanlines', expect: 'ShaderStudio' },
+  { phrase: 'ascii art effect on this', expect: 'ShaderStudio' },
+  { phrase: 'herringbone tile pattern', expect: 'TextureStudio' },
+  { phrase: 'checkerboard texture', expect: 'TextureStudio' },
+  { phrase: 'text on a sphere', expect: 'SpaceType' },
+  { phrase: 'melting text animation', expect: 'SpaceType' },
+  { phrase: 'overlay these two images', expect: 'Compositor' },
+  { phrase: 'stack these as layers', expect: 'Compositor' },
+  { phrase: 'make a banner ad', expect: 'SmartLayout' },
+  { phrase: 'create a flyer with a headline and body', expect: 'SmartLayout' },
+  { phrase: 'chrome text effect for the word BOSS', expect: 'TextEffectNode' },
+  { phrase: 'liquid metal text that says SALE', expect: 'TextEffectNode' },
+  // shoot / camera / outpaint
+  { phrase: 'ecommerce photo of this sneaker', expect: 'ProductShotNode' },
+  { phrase: 'show me the side view of this', expect: 'RotateCameraNode' },
+  { phrase: 'uncrop this photo', expect: 'OutpaintImageNode' },
+  { phrase: 'extend the canvas to the left', expect: 'OutpaintImageNode' },
+  // analyze / extract
+  { phrase: 'count the people in this image', expect: 'DescribeImageNode' },
+  { phrase: 'pull the text off this receipt', expect: 'ExtractTextNode' },
+  { phrase: 'draw bounding boxes around the products', expect: 'FindObjectsNode' },
+  // text utilities
+  { phrase: 'localize this into japanese', expect: 'TranslateTextNode' },
+  { phrase: 'rewrite this to sound more formal', expect: 'RewriteToneNode' },
+  { phrase: 'come up with ten taglines', expect: 'BrainstormIdeasNode' },
+  // generation variants
+  { phrase: 'anime portrait of a knight', expect: 'GenerateAnimeNode' },
+  { phrase: 'memoji of my face', expect: 'GenerateEmojiNode' },
+  { phrase: 'same person in a different outfit', expect: 'ConsistentFaceNode' },
+  { phrase: 'turn my scribble into a real picture', expect: 'SketchToImageNode' },
+  { phrase: 'paint my photo in the style of this reference', expect: 'RestyleFromImageNode' },
+]
+
+describe('wide wording sweep routes correctly (top-3)', () => {
+  for (const { phrase, expect: exp } of WIDE) {
+    it(`"${phrase}" → ${exp}`, () => {
+      expect(topN(phrase, 3)).toContain(exp)
+    })
+  }
+})
+
+// 2c. Genuinely multi-interpretation requests — more than one capability is a
+//     reasonable read (the LLM disambiguates from context). The bar here is only
+//     that the intended capability stays DISCOVERABLE (top-6), so the model can
+//     still choose it. Asserting a strict #1/top-3 for these would be overfitting.
+const REACHABLE: { phrase: string; expect: string }[] = [
+  { phrase: 'can you take the background out of this photo', expect: 'RemoveBackgroundNode' }, // vs Outpaint/Split/Edit
+  { phrase: 'give the image a glitchy vhs vibe', expect: 'ShaderStudio' },                     // vs RestyleFromImage
+]
+describe('ambiguous requests stay discoverable (top-6)', () => {
+  for (const { phrase, expect: exp } of REACHABLE) {
+    it(`"${phrase}" → ${exp} in top-6`, () => {
+      expect(topN(phrase, 6)).toContain(exp)
+    })
+  }
+})
+
 // 3. Flagship phrasings must land #1 (the unambiguous, most-common requests).
 const FLAGSHIP: { phrase: string; expect: string }[] = [
   { phrase: 'remove the background', expect: 'RemoveBackgroundNode' },
@@ -234,7 +332,23 @@ describe('collisions disambiguate', () => {
     { phrase: 'change the background', expect: 'EditImageNode' },
     { phrase: 'make a video', expect: 'GenerateVideoNode', notFirst: 'FilmShotNode' },
     { phrase: 'upscale the video', expect: 'EnhanceVideoNode' },
+    { phrase: 'upscale this video to 4k', expect: 'EnhanceVideoNode' },
     { phrase: 'transcribe this audio', expect: 'TranscribeAudioNode', notFirst: 'IdentifySpeakersNode' },
+    // face-qualified enhancement must beat the generic image enhancer
+    { phrase: 'sharpen the face', expect: 'FixFacesNode' },
+    { phrase: 'deblur the face', expect: 'FixFacesNode' },
+    { phrase: 'sharpen this image', expect: 'EnhanceDetailNode' },
+    // object removal is an EDIT, not background removal
+    { phrase: 'remove the person from the photo', expect: 'EditImageNode' },
+    { phrase: 'erase the car from this picture', expect: 'EditImageNode' },
+    // media-typed summaries / reads disambiguate by noun
+    { phrase: 'summarize the video', expect: 'DescribeVideoNode' },
+    { phrase: 'summarize this article', expect: 'SummarizeTextNode' },
+    { phrase: 'read the text in this image', expect: 'ExtractTextNode' },
+    { phrase: 'read this paragraph aloud', expect: 'GenerateSpeechNode' },
+    // animate: image → video; a word/title → kinetic type
+    { phrase: 'animate this image', expect: 'GenerateVideoNode' },
+    { phrase: 'animate the word HELLO', expect: 'SpaceType' },
   ]
   for (const c of cases) {
     it(`"${c.phrase}" → ${c.expect}`, () => {

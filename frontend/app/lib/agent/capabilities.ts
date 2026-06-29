@@ -106,7 +106,7 @@ const IMG = [{ name: 'IMAGE', type: 'IMAGE' }]
 const GENERATORS: AgentCapability[] = [
   // ---- Image · generation ----
   { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt.', inputs: [], outputs: IMG,
-    intents: ['generate an image', 'make a picture', 'create an image', 'text to image', 'draw me', 'render a photo', 'make art', 'generate a photo of', 'imagine', 'dream up', 'conjure an image', 'produce an image', 'ai image', 'picture of a', 'visualize', 'make me a graphic', 'generate a dog', 'create artwork', 'create a painting of', 'render an illustration'] },
+    intents: ['generate an image', 'make a picture', 'create an image', 'text to image', 'draw me', 'render a photo', 'make art', 'generate a photo of', 'imagine', 'dream up', 'conjure an image', 'produce an image', 'ai image', 'picture of a', 'visualize', 'make me a graphic', 'generate a dog', 'create artwork', 'create a painting of', 'render an illustration', 'wallpaper of a', 'make a wallpaper of', 'background image of'] },
   { nodeType: 'FluxLoRARemoteNode', kind: 'generator', title: 'Generate with your LoRA', summary: 'Generate with a trained LoRA (character/style), or img2img-restyle with it.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
     intents: ['generate with my lora', 'use my trained model', 'make an image of my character', 'generate my character', 'use my finetune', 'lora generation', 'my model image', 'personalized generation', 'generate using my training'] },
   { nodeType: 'FluxMultiLoRARemoteNode', kind: 'generator', title: 'Generate with two LoRAs', summary: 'Stack two LoRAs (character + style) in one Flux generation.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
@@ -124,7 +124,10 @@ const GENERATORS: AgentCapability[] = [
 
   // ---- Image · editing & transformation ----
   { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana / Flux Kontext) — change, add, remove anything.', inputs: [{ name: 'input_image', type: 'IMAGE' }], outputs: IMG,
-    intents: ['edit this image', 'change the color of', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'tweak this image', 'photoshop this', 'add an object', 'add a hat', 'put glasses on', 'remove an object', 'add a logo to the image'] },
+    intents: ['edit this image', 'change the color of', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'tweak this image', 'photoshop this', 'photoshop out', 'add an object', 'add a hat', 'put glasses on', 'add a logo to the image',
+      // Object removal / replacement is an EDIT (not background removal) — specific
+      // enough to beat RemoveBackground for "remove the <thing>".
+      'remove an object', 'remove the person', 'remove the car', 'remove the object', 'erase the object', 'get rid of the object'] },
   { nodeType: 'RestyleFromImageNode', kind: 'effect', title: 'Restyle from image', summary: 'Apply the style of one reference image onto another content image.', inputs: [{ name: 'content_image', type: 'IMAGE' }, { name: 'style_image', type: 'IMAGE' }], outputs: IMG,
     intents: ['apply this style', 'make it look like this', 'style transfer', 'restyle using this image', 'use this as a style reference', 'match this aesthetic', 'transfer the look', 'paint in this style', 'copy the style of', 'give it this vibe'] },
   { nodeType: 'RestyleWithLoRANode', kind: 'effect', title: 'Restyle with a trained LoRA', summary: 'Restyle a content image with a trained LoRA, keeping structure.', inputs: [{ name: 'content_image', type: 'IMAGE' }], outputs: IMG,
@@ -148,7 +151,7 @@ const GENERATORS: AgentCapability[] = [
   { nodeType: 'FixFacesNode', kind: 'effect', title: 'Fix faces', summary: 'Face-specific restoration (CodeFormer) — sharpen/de-blur/reconstruct faces.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
     intents: ['fix the faces', 'restore the face', 'sharpen the face', 'deblur the face', 'fix blurry faces', 'reconstruct the face', 'clean up the face', 'fix the eyes', 'repair distorted face', 'enhance faces', 'fix ai face artifacts'] },
   { nodeType: 'RemoveBackgroundNode', kind: 'effect', title: 'Remove background', summary: 'Fast alpha-matte background removal.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG, boost: 3,
-    intents: ['remove the background', 'cut out the subject', 'make it transparent', 'isolate the person', 'knock out the background', 'remove bg', 'transparent png', 'delete the background', 'extract the subject', 'matte the image', 'clear background', 'background removal', 'cutout', 'remove backdrop', 'take the background out', 'take out the background', 'get rid of the background', 'no background', 'on a transparent backdrop'] },
+    intents: ['remove the background', 'cut out the subject', 'make it transparent', 'make this transparent', 'isolate the person', 'knock out the background', 'remove bg', 'transparent png', 'delete the background', 'extract the subject', 'matte the image', 'clear background', 'background removal', 'cutout', 'remove backdrop', 'take the background out', 'take out the background', 'get rid of the background', 'no background', 'on a transparent backdrop', 'transperent', 'transparant'] },
 
   // ---- Image · decompose & analyze ----
   { nodeType: 'SplitPhotoLayersNode', kind: 'effect', title: 'Split photo into layers', summary: 'Decompose into a transparent subject cutout + a clean background plate.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'subject', type: 'IMAGE' }, { name: 'background', type: 'IMAGE' }],
