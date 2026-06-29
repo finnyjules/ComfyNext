@@ -49,8 +49,8 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
       </template>
     </div>
 
-    <!-- Input bar — pastel gradient stroke (matches the agent fields elsewhere) -->
-    <div class="pastel-hairline flex items-center gap-2.5 rounded-[12px] px-3.5 py-3.5 shadow-lg" style="--pastel-hairline-bg: #1a1a1a;">
+    <!-- Input bar — dark box with a pastel ring that fades in when active -->
+    <div class="prompt-field flex items-center gap-2.5 rounded-[12px] px-3.5 py-3.5 shadow-lg">
       <Sparkles class="size-4 shrink-0 text-white/45" />
       <input
         v-model="phrase" :disabled="busy" type="text"
@@ -67,28 +67,38 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
 </template>
 
 <style scoped>
-/* The pastel ring is on the wrapper while the <input> is a child, so forward the
-   focus bloom via :focus-within (canonical .pastel-hairline only reacts to :focus
-   on itself). Mirrors the inpaint / AgentBar fields. */
-/* The canonical hairline is 0.5px, but this prompt is centred with
-   -translate-x-1/2 → its left/right edges land on a fractional x, so a sub-pixel
-   border renders thinner on the vertical sides than the (near-integer) top/bottom.
-   Pin it to a full 1px so the ring is even all the way round. */
-.pastel-hairline {
-  border-width: 1px;
-  background-size: 100% 100%, 200% 100%;
-  background-position: 0% 0%, 0% 50%;
+/* Dark prompt box with a pastel gradient ring that is INVISIBLE at rest and fades
+   to full when the field is active (focused). The ring is a masked pseudo-element
+   so its opacity can transition — you can't fade a background-image gradient — and
+   a full-pixel `padding` keeps it even on all sides despite the centred (fractional
+   x) position. It slowly drifts regardless (paused for reduced-motion). */
+.prompt-field {
+  position: relative;
+  background: #1a1a1a;
+}
+.prompt-field::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;                       /* ring thickness */
+  background-image: var(--pastel-gradient);
+  background-size: 200% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;                         /* transparent at rest */
+  transition: opacity 0.4s ease;
   animation: prompt-pastel-pan 9s ease-in-out infinite alternate;
+  pointer-events: none;
 }
-/* Focus just blooms the colour (width is already a full pixel). */
-.pastel-hairline:focus-within {
-  filter: saturate(1);
-}
+.prompt-field:focus-within::before { opacity: 1; }   /* fade to full when active */
 @keyframes prompt-pastel-pan {
-  from { background-position: 0% 0%, 0% 50%; }
-  to { background-position: 0% 0%, 100% 50%; }
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pastel-hairline { animation: none; }
+  .prompt-field::before { animation: none; }
 }
 </style>
