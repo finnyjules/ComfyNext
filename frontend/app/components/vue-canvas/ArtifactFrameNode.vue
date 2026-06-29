@@ -441,7 +441,7 @@ function renderStack() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
-    undefined, undefined, wiredTreatments.value)
+    undefined, undefined, wiredTreatments.value, editor.background.value)
 }
 // Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
@@ -455,6 +455,7 @@ watch(
     Object.keys(wiredImages.value).length,
     JSON.stringify([...hiddenWiredSet.value]),
     JSON.stringify(wiredTreatments.value),
+    JSON.stringify(editor.background.value ?? null),
   ] as const,
   async () => {
     for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
@@ -506,7 +507,7 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   // Route through the same masked renderer as the preview (no editing-skip — an
   // export includes every visible layer), so silhouette masks apply on download.
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
-    undefined, undefined, undefined, wiredTreatments.value)
+    undefined, undefined, undefined, wiredTreatments.value, editor.background.value)
   return cv
 }
 
