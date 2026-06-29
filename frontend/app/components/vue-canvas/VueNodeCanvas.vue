@@ -362,19 +362,17 @@ async function agentPreview(commands: Command[]) {
 
 function agentCommit() {
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
-  const ghostEdgeIds = (edges.value as any[]).filter(e => e.data?.ghost).map(e => String(e.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
   for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
-  glimmBurstOver(ghostNodeIds, ghostEdgeIds)
+  glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
 }
 
 // Glimm "citrus" sweep over the just-committed nodes + their connection, for a
 // brief celebratory finish. Positioned over the union bbox in screen space.
 const glimmBurst = ref<{ left: number; top: number; w: number; h: number } | null>(null)
 let glimmTimer = 0
-function glimmBurstOver(nodeIds: string[], edgeIds: string[]) {
+function glimmBurstOver(nodeIds: string[]) {
   const ids = new Set(nodeIds.map(String))
-  for (const e of edges.value as any[]) if (edgeIds.includes(String(e.id))) { ids.add(String(e.source)); ids.add(String(e.target)) }
   const rects = (nodes.value as any[]).filter(n => ids.has(String(n.id))).map((n) => {
     const w = n.dimensions?.width ?? n.data?.size?.[0] ?? 220
     const h = n.dimensions?.height ?? n.data?.size?.[1] ?? 120
