@@ -7,6 +7,9 @@ import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, ge
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import type { CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import type { Command } from '~/lib/agent/commandSurface'
+import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
+import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
+import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -136,13 +139,41 @@ const annotationsBridge = { load: (_: unknown) => {}, export: () => ({}) as unkn
 
 const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge, annotationsBridge })
 
-// ── Canvas agent (Phase 3, Slice 1) — perceive + mutate existing nodes ───────
+// ── Canvas agent (Phase 3) — perceive + mutate the graph ─────────────────────
 // agentSnapshot() maps the live Vue Flow refs into the pure CanvasSnapshot the
 // agent reads (edge handles "output-<i>"/"input-<i>" → port names; widgetDefs[i]
-// ↔ widgetsValues[i]). applyCanvasOps() MATERIALISES validated commands onto the
-// live graph — undo comes free from the deep-watch history. Both exposed for the
-// Explain panel's interactive mode.
-function agentSnapshot(): CanvasSnapshot {
+// ↔ widgetsValues[i]) PLUS a trimmed palette of addable node types (buildCatalog,
+// anchored on the selection + the request). applyCanvasOps() MATERIALISES
+// validated commands onto the live graph — undo comes free from the deep-watch
+// history. Both exposed for the canvas prompt.
+
+// NodeTypeLite[] derived from the cached /object_info, for buildCatalog.
+function agentNodeTypes(): NodeTypeLite[] {
+  const oi = (objectInfo.value || {}) as Record<string, any>
+  return Object.keys(oi).map((name) => {
+    const info = oi[name]
+    return {
+      name,
+      displayName: info?.display_name || name,
+      description: info?.description || '',
+      category: info?.category || '',
+      inputs: linkInputPorts(info),
+      outputs: outputPorts(info),
+    }
+  })
+}
+// Palette for addNode/connect: nodes compatible with the selection's output (or
+// a wildcard when nothing's selected) + intent-matched nodes for the phrase.
+function agentCatalog(intent?: string): CatalogEntry[] {
+  const oi = (objectInfo.value || {}) as Record<string, any>
+  if (!Object.keys(oi).length) return []
+  const sel = (nodes.value as any[]).find(n => n.selected)
+  const out = sel?.data?.outputs?.[0]
+  const anchor = { portType: String(out?.type ?? '*'), direction: 'output' as const }
+  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST, maxNodes: 40, maxEnum: 6, maxIntent: 12 })
+}
+
+function agentSnapshot(phrase?: string): CanvasSnapshot {
   const ns = nodes.value as any[]
   const byId = new Map(ns.map(n => [String(n.id), n]))
   const portName = (node: any, handle: string | null | undefined, kind: 'output' | 'input'): string | undefined => {
@@ -172,14 +203,65 @@ function agentSnapshot(): CanvasSnapshot {
       target: String(e.target),
       targetPort: portName(byId.get(String(e.target)), e.targetHandle, 'input'),
     })),
+    catalog: agentCatalog(phrase),
   }
 }
 
 const AGENT_MODE: Record<string, number> = { normal: 0, mute: 2, muted: 2, bypass: 4, bypassed: 4 }
+
+/** First type-compatible (outIndex, inIndex) pair between two live nodes, honouring
+ *  any pinned port names. Returns null when nothing connects. */
+function resolveLivePorts(fromNode: any, toNode: any, fromPort?: string, toPort?: string): { oi: number; ii: number } | null {
+  const outs = (fromNode.data?.outputs ?? []) as any[]
+  const ins = (toNode.data?.inputs ?? []) as any[]
+  for (let a = 0; a < outs.length; a++) {
+    if (fromPort && outs[a]?.name !== fromPort) continue
+    for (let b = 0; b < ins.length; b++) {
+      if (toPort && ins[b]?.name !== toPort) continue
+      if (isTypeCompatible(String(outs[a]?.type ?? '*'), String(ins[b]?.type ?? '*'))) return { oi: a, ii: b }
+    }
+  }
+  return null
+}
+
 function applyCanvasOps(commands: Command[]) {
+  // Placeholder ids ($new1…) the model assigned in addNode → the real ids we mint
+  // here, so a later connect can reference the just-added node.
+  const idMap: Record<string, string> = {}
+  const sel = (nodes.value as any[]).find(n => n.selected)
+  const baseX = (sel?.position?.x ?? 0) + 340
+  const baseY = (sel?.position?.y ?? 0)
+  let added = 0
+  const realId = (id: unknown): string => { const s = String(id); return idMap[s] ?? s }
+
   for (const cmd of commands) {
-    if (cmd.op === 'deleteNode' && cmd.target) { deleteNodes([String(cmd.target)]); continue }
-    const node = (nodes.value as any[]).find(n => String(n.id) === String(cmd.target))
+    if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
+      const node = createNodeData(cmd.args.nodeType, { x: baseX, y: baseY + added * 170 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
+      node.id = `${Date.now()}-${added}` // unique within the batch (createNodeData uses Date.now())
+      ;(nodes.value as any[]).push(node)
+      if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
+      added++
+      continue
+    }
+    if (cmd.op === 'connect') {
+      const from = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.args?.from))
+      const to = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.args?.to))
+      if (!from || !to) continue
+      const pair = resolveLivePorts(from, to, cmd.args?.fromPort as string | undefined, cmd.args?.toPort as string | undefined)
+      if (!pair) continue
+      // One link per input slot — drop any existing edge into it first.
+      const kept = (edges.value as any[]).filter(e => !(String(e.target) === String(to.id) && e.targetHandle === `input-${pair.ii}`))
+      if (kept.length !== edges.value.length) edges.value.splice(0, edges.value.length, ...kept)
+      addEdges([{
+        id: `e-${from.id}-${pair.oi}-${to.id}-${pair.ii}`,
+        source: String(from.id), sourceHandle: `output-${pair.oi}`,
+        target: String(to.id), targetHandle: `input-${pair.ii}`,
+        type: 'comfy', data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*') },
+      }])
+      continue
+    }
+    if (cmd.op === 'deleteNode' && cmd.target) { deleteNodes([realId(cmd.target)]); continue }
+    const node = (nodes.value as any[]).find(n => String(n.id) === realId(cmd.target))
     if (!node) continue
     if (cmd.op === 'setWidget' && typeof cmd.args?.name === 'string') {
       const defs = (node.data?.widgetDefs ?? []) as any[]
@@ -190,7 +272,7 @@ function applyCanvasOps(commands: Command[]) {
         node.data.widgetsValues[idx] = cmd.args!.value
       }
     } else if (cmd.op === 'setMode') {
-      setMode([String(cmd.target)], AGENT_MODE[String(cmd.args?.mode ?? '').toLowerCase()] ?? 0)
+      setMode([realId(cmd.target)], AGENT_MODE[String(cmd.args?.mode ?? '').toLowerCase()] ?? 0)
     }
   }
 }

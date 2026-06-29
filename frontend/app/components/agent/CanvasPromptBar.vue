@@ -19,7 +19,7 @@ const {
   busy, error, reasoning, answer, changes, issues, hasProposal, hovered,
   ask, acceptChange, rejectChange, reroll, keep, dismiss,
 } = useCanvasAgent({
-  getSnapshot: () => props.vueCanvas.agentSnapshot(),
+  getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   materialise: (cmds) => props.vueCanvas.applyCanvasOps(cmds),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })

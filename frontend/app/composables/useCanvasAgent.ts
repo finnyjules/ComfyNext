@@ -17,11 +17,12 @@ import { applyCanvasCommand, describeCanvas, summarizeCanvasChange, verifyCanvas
 import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
 import type { LayoutIssue } from '~/lib/agent/verify'
 
-const REROLLABLE = new Set(['setWidget', 'setMode'])
+const REROLLABLE = new Set(['setWidget', 'setMode', 'addNode'])
 const clone = (s: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(s)) as CanvasSnapshot
 
 export function useCanvasAgent(opts: {
-  getSnapshot: () => CanvasSnapshot
+  /** phrase lets the snapshot tailor its node palette (catalog) to the request. */
+  getSnapshot: (phrase?: string) => CanvasSnapshot
   materialise: (commands: Command[]) => void
   apiKey: () => string
   tier?: string
@@ -38,11 +39,10 @@ export function useCanvasAgent(opts: {
   let original: CanvasSnapshot | null = null
   const hasProposal = computed(() => changes.value.length > 0)
 
-  async function callModel(prompt: string) {
-    const snapshot = describeCanvas(opts.getSnapshot())
+  async function callModel(prompt: string, commands: { op: string }[]) {
     const res = await $fetch<{ text: string }>('/api/agent-plan', {
       method: 'POST',
-      body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt, schema: buildCommandSchema(snapshot.commands) },
+      body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt, schema: buildCommandSchema(commands) },
       timeout: 60_000,
     })
     const parsed = parseAgentResponse(res.text)
@@ -75,8 +75,9 @@ export function useCanvasAgent(opts: {
     if (!opts.apiKey()) { error.value = 'Add your Anthropic key in Settings → AI.'; return }
     busy.value = true; error.value = ''; reasoning.value = ''; answer.value = ''; changes.value = []; issues.value = []; lastPhrase.value = p
     try {
-      original = clone(opts.getSnapshot())
-      const { commands, changeRationales, message } = await callModel(buildAgentPrompt(describeCanvas(original), p))
+      original = clone(opts.getSnapshot(p))
+      const desc = describeCanvas(original)
+      const { commands, changeRationales, message } = await callModel(buildAgentPrompt(desc, p), desc.commands)
       const built: ProposedChange[] = []
       let probe = clone(original)
       commands.forEach((cmd, i) => {
@@ -107,7 +108,8 @@ export function useCanvasAgent(opts: {
       const nonce = Math.random().toString(36).slice(2, 7)
       const intent = lastPhrase.value ? `The user's original request was: "${lastPhrase.value}". ` : ''
       const phrase = `${intent}Re-roll ONLY the "${ch.label}" change (currently "${ch.after}"). Propose a DIFFERENT value that still satisfies the request — not "${ch.after}". Same op "${ch.command.op}"${ch.command.target ? ` on "${ch.command.target}"` : ''}; change nothing else. (variation ${nonce})`
-      const { commands, changeRationales } = await callModel(buildAgentPrompt(describeCanvas(opts.getSnapshot()), phrase))
+      const rdesc = describeCanvas(opts.getSnapshot(lastPhrase.value))
+      const { commands, changeRationales } = await callModel(buildAgentPrompt(rdesc, phrase), rdesc.commands)
       const idx = commands.findIndex(c => c.op === ch.command.op && (c.target ?? '') === (ch.command.target ?? ''))
       const next = idx >= 0 ? commands[idx] : commands[0]
       if (next) {

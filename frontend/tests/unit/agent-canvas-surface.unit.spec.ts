@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { describeCanvas, applyCanvasCommand, verifyCanvas, summarizeCanvasChange, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import type { CatalogEntry } from '~/lib/portIntentCatalog'
+
+const CATALOG: CatalogEntry[] = [
+  { type: 'VAEDecode', name: 'VAE Decode', description: '', inputs: [{ name: 'samples', type: 'LATENT' }, { name: 'vae', type: 'VAE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }], widgets: [] },
+  { type: 'UpscaleImage', name: 'Upscale Image', description: '', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }], widgets: [{ name: 'scale', type: 'FLOAT', default: 2 }] },
+]
 
 function graph(): CanvasSnapshot {
   return {
@@ -9,6 +15,7 @@ function graph(): CanvasSnapshot {
       { id: '3', nodeType: 'SaveImage', title: 'Save Image', widgets: {}, inputs: [{ name: 'images', type: 'IMAGE' }], outputs: [] },
     ],
     edges: [{ source: '1', sourcePort: 'MODEL', target: '2', targetPort: 'model' }],
+    catalog: CATALOG,
   }
 }
 
@@ -29,6 +36,11 @@ describe('describeCanvas', () => {
   })
   it('every command carries a hint', () => {
     expect(describeCanvas(graph()).commands.every(c => typeof c.hint === 'string' && c.hint!.length > 0)).toBe(true)
+  })
+  it('exposes the palette of addable node types when a catalog is present', () => {
+    const palette = describeCanvas(graph()).objects.find(o => o.type === 'palette')!
+    expect(palette).toBeTruthy()
+    expect((palette.current as { type: string }[]).map(c => c.type)).toContain('UpscaleImage')
   })
 })
 
@@ -57,6 +69,38 @@ describe('applyCanvasCommand', () => {
     expect(r.template.nodes.some(n => n.id === '2')).toBe(false)
     expect(r.template.edges.length).toBe(0) // the 1→2 edge is gone
   })
+  it('addNode adds a palette node with a placeholder id + default/overridden widgets', () => {
+    const r = applyCanvasCommand(graph(), { op: 'addNode', args: { nodeType: 'UpscaleImage', id: '$new1', widgetOverrides: { scale: 4 } } })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    const n = r.template.nodes.find(x => x.id === '$new1')!
+    expect(n.nodeType).toBe('UpscaleImage')
+    expect(n.widgets.scale).toBe(4) // override applied (default was 2)
+    expect(n.outputs[0]!.type).toBe('IMAGE')
+  })
+  it('addNode rejects a type not in the palette', () => {
+    expect(applyCanvasCommand(graph(), { op: 'addNode', args: { nodeType: 'NotReal', id: '$x' } }).ok).toBe(false)
+  })
+  it('connect auto-resolves a type-compatible port pair', () => {
+    // KSampler LATENT out → VAEDecode samples (LATENT). Add the decode, then connect.
+    const added = applyCanvasCommand(graph(), { op: 'addNode', args: { nodeType: 'VAEDecode', id: '$dec' } })
+    if (!added.ok) throw new Error('fail')
+    const r = applyCanvasCommand(added.template, { op: 'connect', args: { from: '2', to: '$dec' } })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    expect(r.template.edges.some(e => e.source === '2' && e.target === '$dec' && e.sourcePort === 'LATENT' && e.targetPort === 'samples')).toBe(true)
+  })
+  it('connect rejects an incompatible pair and a bad port name', () => {
+    // Checkpoint(MODEL) → SaveImage(IMAGE) has no compatible pair.
+    expect(applyCanvasCommand(graph(), { op: 'connect', args: { from: '1', to: '3' } }).ok).toBe(false)
+    expect(applyCanvasCommand(graph(), { op: 'connect', args: { from: '2', to: '3', fromPort: 'NOPE' } }).ok).toBe(false)
+  })
+  it('connect replaces an existing edge into the same input slot', () => {
+    // model input on KSampler already wired from node 1; rewire from a clone is n/a,
+    // so assert single-link: connecting again into the same input keeps one edge.
+    const r = applyCanvasCommand(graph(), { op: 'connect', args: { from: '1', to: '2', fromPort: 'MODEL', toPort: 'model' } })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    expect(r.template.edges.filter(e => e.target === '2' && e.targetPort === 'model').length).toBe(1)
+  })
+
   it('rejects an unknown node and an out-of-vocabulary op', () => {
     expect(applyCanvasCommand(graph(), { op: 'setWidget', target: 'zzz', args: { name: 'steps', value: 1 } }).ok).toBe(false)
     expect(applyCanvasCommand(graph(), { op: 'frobnicate' }).ok).toBe(false)

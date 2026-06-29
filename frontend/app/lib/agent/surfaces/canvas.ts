@@ -14,6 +14,8 @@
  */
 import type { Command, CommandResult, CommandSpec, SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import type { LayoutIssue } from '~/lib/agent/verify'
+import { isTypeCompatible } from '~/lib/portIntent'
+import type { CatalogEntry } from '~/lib/portIntentCatalog'
 
 export interface PortLite { name: string; type: string; optional?: boolean }
 export interface NodeLite {
@@ -28,7 +30,10 @@ export interface NodeLite {
   outputs: PortLite[]
 }
 export interface EdgeLite { source: string; sourcePort?: string; target: string; targetPort?: string }
-export interface CanvasSnapshot { nodes: NodeLite[]; edges: EdgeLite[] }
+/** `catalog` = addable node types (trimmed by buildCatalog to what's relevant to
+ *  the selection + the request), so the agent can pick a real nodeType and wire
+ *  its real ports. Absent in read/edit-only contexts. */
+export interface CanvasSnapshot { nodes: NodeLite[]; edges: EdgeLite[]; catalog?: CatalogEntry[] }
 
 const MODE_BY_NAME: Record<string, number> = { normal: 0, mute: 2, muted: 2, bypass: 4, bypassed: 4 }
 const MODE_LABEL: Record<number, string> = { 0: 'normal', 2: 'muted', 4: 'bypassed' }
@@ -50,6 +55,8 @@ function connectedInputs(s: CanvasSnapshot, nodeId: string): Set<string> {
 const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'setWidget', hint: 'Set a node\'s parameter (widget) by name. target = node id; args: { name, value }. name MUST be one of that node\'s widget keys (see its "widgets"). e.g. set sampler steps → {name:"steps", value:30}. This is what "set the seed to 42", "30 steps", "use the euler sampler" mean.' },
   { op: 'setMode', hint: 'Mute or bypass a node (or re-enable it). target = node id; args: { mode: "normal" | "mute" | "bypass" }. Muted = does not run; bypass = passes input through.' },
+  { op: 'addNode', hint: 'Add a NEW node from the palette. args: { nodeType (a "type" from the palette object — NOT a display name), id (a placeholder you assign, e.g. "$new1", so you can connect it), widgetOverrides? }. Use the palette to pick the right nodeType and to see its ports.' },
+  { op: 'connect', hint: 'Wire two nodes. args: { from, to, fromPort?, toPort? }. from/to are node ids — existing ids OR a placeholder you gave a just-added node (e.g. "$new1"). Omit the ports to auto-pick the first type-compatible pair, or name them. This is "connect the sampler to the new upscaler", "add X after this".' },
   { op: 'deleteNode', hint: 'Delete a node from the graph. target = node id. Edges touching it are removed too.' },
   { op: 'restore', hint: 'internal — undo support.' },
 ]
@@ -74,7 +81,30 @@ export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
     return `${a ? nodeName(a) : e.source}${e.sourcePort ? `.${e.sourcePort}` : ''} → ${b ? nodeName(b) : e.target}${e.targetPort ? `.${e.targetPort}` : ''}`
   })
   objects.push({ id: 'graph', label: 'Graph', type: 'graph', current: { nodeCount: s.nodes.length, edgeCount: s.edges.length, connections: edgeList } })
+
+  // Palette: the addable node types (for addNode/connect). Compact form — the
+  // model needs each type's id, ports, and key widget names.
+  if (s.catalog?.length) {
+    objects.push({
+      id: 'palette', label: 'Addable node types', type: 'palette',
+      current: s.catalog.map(c => ({
+        type: c.type,
+        in: c.inputs.map(p => `${p.name}:${p.type}`),
+        out: c.outputs.map(p => `${p.name}:${p.type}`),
+        widgets: c.widgets.map(w => w.name),
+      })),
+    })
+  }
   return { surface: 'canvas', objects, commands: CANVAS_COMMANDS }
+}
+
+/** Find a type-compatible (output, input) pair between two nodes, honouring any
+ *  named ports the caller pinned. Returns null when nothing connects. */
+function resolvePorts(from: NodeLite, to: NodeLite, fromPort?: string, toPort?: string): { out: PortLite; in: PortLite } | null {
+  const outs = fromPort ? from.outputs.filter(p => p.name === fromPort) : from.outputs
+  const ins = toPort ? to.inputs.filter(p => p.name === toPort) : to.inputs
+  for (const o of outs) for (const i of ins) if (isTypeCompatible(o.type, i.type)) return { out: o, in: i }
+  return null
 }
 
 /** Apply one command to the snapshot (a dry-run for the proposal preview +
@@ -101,11 +131,45 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       node.mode = MODE_BY_NAME[raw]
       return { ok: true, template: state, inverse: snapshot() }
     }
+    case 'addNode': {
+      const nodeType = cmd.args?.nodeType
+      if (typeof nodeType !== 'string') return { ok: false, reason: 'invalid', detail: 'missing args.nodeType' }
+      const entry = (state.catalog ?? []).find(c => c.type === nodeType)
+      if (!entry) return { ok: false, reason: 'invalid', detail: `'${nodeType}' is not in the palette` }
+      const id = (typeof cmd.args?.id === 'string' && cmd.args.id) ? cmd.args.id : `new_${state.nodes.length + 1}`
+      if (state.nodes.some(n => n.id === id)) return { ok: false, reason: 'invalid', detail: `node id '${id}' already exists` }
+      const widgets: Record<string, unknown> = {}
+      for (const w of entry.widgets) widgets[w.name] = w.default
+      const overrides = cmd.args?.widgetOverrides as Record<string, unknown> | undefined
+      if (overrides) for (const [k, v] of Object.entries(overrides)) if (k in widgets) widgets[k] = v
+      const node: NodeLite = {
+        id, nodeType, title: entry.name, widgets,
+        inputs: entry.inputs.map(p => ({ name: p.name, type: p.type })),
+        outputs: entry.outputs.map(p => ({ name: p.name, type: p.type })),
+      }
+      return { ok: true, template: { ...state, nodes: [...state.nodes, node] }, inverse: snapshot() }
+    }
+    case 'connect': {
+      const from = findNode(state, typeof cmd.args?.from === 'string' ? cmd.args.from : undefined)
+      const to = findNode(state, typeof cmd.args?.to === 'string' ? cmd.args.to : undefined)
+      if (!from) return { ok: false, reason: 'invalid', detail: `no source node '${String(cmd.args?.from)}'` }
+      if (!to) return { ok: false, reason: 'invalid', detail: `no target node '${String(cmd.args?.to)}'` }
+      if (from.id === to.id) return { ok: false, reason: 'invalid', detail: 'cannot connect a node to itself' }
+      const fromPort = typeof cmd.args?.fromPort === 'string' ? cmd.args.fromPort : undefined
+      const toPort = typeof cmd.args?.toPort === 'string' ? cmd.args.toPort : undefined
+      if (fromPort && !from.outputs.some(p => p.name === fromPort)) return { ok: false, reason: 'invalid', detail: `'${fromPort}' is not an output of ${nodeName(from)}` }
+      if (toPort && !to.inputs.some(p => p.name === toPort)) return { ok: false, reason: 'invalid', detail: `'${toPort}' is not an input of ${nodeName(to)}` }
+      const pair = resolvePorts(from, to, fromPort, toPort)
+      if (!pair) return { ok: false, reason: 'invalid', detail: `no type-compatible ports between ${nodeName(from)} and ${nodeName(to)}` }
+      // One link per input slot — replace any existing edge into it.
+      const edges = state.edges.filter(e => !(e.target === to.id && e.targetPort === pair.in.name))
+      return { ok: true, template: { ...state, edges: [...edges, { source: from.id, sourcePort: pair.out.name, target: to.id, targetPort: pair.in.name }] }, inverse: snapshot() }
+    }
     case 'deleteNode': {
       if (!findNode(state, cmd.target)) return { ok: false, reason: 'invalid', detail: `no node '${String(cmd.target)}'` }
       return {
         ok: true,
-        template: { nodes: state.nodes.filter(n => n.id !== cmd.target), edges: state.edges.filter(e => e.source !== cmd.target && e.target !== cmd.target) },
+        template: { ...state, nodes: state.nodes.filter(n => n.id !== cmd.target), edges: state.edges.filter(e => e.source !== cmd.target && e.target !== cmd.target) },
         inverse: snapshot(),
       }
     }
@@ -145,6 +209,8 @@ export function summarizeCanvasChange(state: CanvasSnapshot, cmd: Command): { la
   switch (cmd.op) {
     case 'setWidget': return { label: `${name} · ${String(a.name ?? '')}`, before: node ? String(node.widgets[String(a.name)] ?? '') : '', after: String(a.value ?? '') }
     case 'setMode': return { label: name, before: node && node.mode ? (MODE_LABEL[node.mode] ?? 'normal') : 'normal', after: String(a.mode ?? '') }
+    case 'addNode': { const entry = (state.catalog ?? []).find(c => c.type === a.nodeType); return { label: 'Add node', before: '', after: entry?.name ?? String(a.nodeType ?? 'node') } }
+    case 'connect': { const f = findNode(state, typeof a.from === 'string' ? a.from : undefined); const t = findNode(state, typeof a.to === 'string' ? a.to : undefined); return { label: 'Connect', before: '', after: `${f ? nodeName(f) : String(a.from)} → ${t ? nodeName(t) : String(a.to)}` } }
     case 'deleteNode': return { label: 'Delete', before: name, after: 'removed' }
     default: return { label: cmd.op, before: '', after: a ? JSON.stringify(a) : '' }
   }
