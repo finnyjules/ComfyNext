@@ -378,15 +378,27 @@ function glimmBurstOver(nodeIds: string[]) {
   if (!nodeIds.length || typeof document === 'undefined' || !root) return
   const rootRect = root.getBoundingClientRect()
   const zoom = vfViewport.value.zoom
+  // The rounded "card" is the component root (.comfy-node) or a nested frame, not
+  // Vue Flow's square .vue-flow__node wrapper — find the widest descendant with a
+  // border-radius (skips small rounded handles/chips).
+  const cardOf = (nodeEl: HTMLElement): { el: HTMLElement; radius: number } => {
+    let best = nodeEl, bestR = parseFloat(getComputedStyle(nodeEl).borderTopLeftRadius) || 0
+    nodeEl.querySelectorAll<HTMLElement>('*').forEach((c) => {
+      if (c.clientWidth < nodeEl.clientWidth * 0.6) return
+      const r = parseFloat(getComputedStyle(c).borderTopLeftRadius) || 0
+      if (r > bestR) { bestR = r; best = c }
+    })
+    return { el: best, radius: bestR }
+  }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, radius = 12
   for (const id of nodeIds) {
-    const el = document.querySelector(`.vue-flow__node[data-id="${window.CSS?.escape?.(id) ?? id}"]`) as HTMLElement | null
-    if (!el) continue
-    const r = el.getBoundingClientRect() // already includes the zoom transform
+    const nodeEl = document.querySelector(`.vue-flow__node[data-id="${window.CSS?.escape?.(id) ?? id}"]`) as HTMLElement | null
+    if (!nodeEl) continue
+    const card = cardOf(nodeEl)
+    const r = card.el.getBoundingClientRect() // already includes the zoom transform
     minX = Math.min(minX, r.left - rootRect.left); minY = Math.min(minY, r.top - rootRect.top)
     maxX = Math.max(maxX, r.right - rootRect.left); maxY = Math.max(maxY, r.bottom - rootRect.top)
-    const br = parseFloat(getComputedStyle(el).borderTopLeftRadius)
-    if (Number.isFinite(br)) radius = br
+    radius = card.radius
   }
   if (!Number.isFinite(minX)) return
   // border-radius is authored pre-transform px → scale by zoom for our overlay.
