@@ -4794,13 +4794,17 @@ defineExpose({
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
 
-    <!-- Glimm "citrus" sweep over a just-committed agent node + its connection. -->
+    <!-- Glimm "citrus" sweep over a just-committed agent node + its connection.
+         Persistently mounted (display toggled) so glimm initialises on the
+         active false→true change with the canvas already sized — a v-if + constant
+         active would run AgentSweep's immediate watch before the canvas mounts. -->
     <div
-      v-if="glimmBurst"
       class="absolute pointer-events-none z-30 overflow-hidden rounded-2xl"
-      :style="{ left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px' }"
+      :style="glimmBurst
+        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px' }
+        : { display: 'none' }"
     >
-      <AgentSweep :active="true" />
+      <AgentSweep :active="!!glimmBurst" />
     </div>
 
     <VueFlow
