@@ -3,11 +3,11 @@
  *  • questions about the graph → a plain answer (the "message" channel), and
  *  • edits to existing nodes (setWidget / setMode / deleteNode) → a proposal.
  *
- * Plan-then-materialise: graph mutations aren't pure JSON, so the proposal is a
- * DRY-RUN over a CanvasSnapshot (preview + validation only — the live graph is
- * never touched as you accept/reject). On Keep, opts.materialise applies the
- * accepted commands to the real graph (where the canvas's own deep-watch history
- * gives undo for free). Dismiss leaves the graph exactly as it was.
+ * Ghost-preview lifecycle: as the proposal is built/toggled, the accepted
+ * commands are rendered on the canvas as semi-transparent pastel GHOSTS
+ * (opts.preview); a dry-run over a CanvasSnapshot drives the health readout. On
+ * Keep, opts.commit promotes the ghosts to real nodes/edges (+ a glimm sweep);
+ * on Dismiss, opts.discard removes them.
  */
 import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
@@ -23,7 +23,12 @@ const clone = (s: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(s
 export function useCanvasAgent(opts: {
   /** phrase lets the snapshot tailor its node palette (catalog) to the request. */
   getSnapshot: (phrase?: string) => CanvasSnapshot
-  materialise: (commands: Command[]) => void
+  /** Render the accepted commands on the canvas as semi-transparent ghosts. */
+  preview: (commands: Command[]) => void
+  /** Promote the ghosts to real nodes/edges (+ glimm). Called on Keep. */
+  commit: () => void
+  /** Remove the ghosts. Called on Dismiss. */
+  discard: () => void
   apiKey: () => string
   tier?: string
 }) {
@@ -50,17 +55,19 @@ export function useCanvasAgent(opts: {
     return parsed
   }
 
-  /** Re-run the DRY-RUN preview: predicted snapshot from accepted commands, for
-   *  the health readout. Never touches the live graph. */
+  const acceptedCommands = () => changes.value.filter(c => c.accepted).map(c => c.command)
+
+  /** Re-derive the dry-run health readout AND refresh the on-canvas ghost preview
+   *  from the currently-accepted commands. */
   function recompute() {
     if (!original) return
     let s = clone(original)
-    for (const ch of changes.value) {
-      if (!ch.accepted) continue
-      const r = applyCanvasCommand(s, ch.command)
+    for (const cmd of acceptedCommands()) {
+      const r = applyCanvasCommand(s, cmd)
       if (r.ok) s = r.template
     }
     issues.value = verifyCanvas(s)
+    opts.preview(acceptedCommands()) // ghosts on the canvas
   }
 
   function buildChange(probe: CanvasSnapshot, cmd: Command, rationale: string): ProposedChange | null {
@@ -73,7 +80,8 @@ export function useCanvasAgent(opts: {
     const p = phrase.trim()
     if (!p || busy.value) return
     if (!opts.apiKey()) { error.value = 'Add your Anthropic key in Settings → AI.'; return }
-    busy.value = true; error.value = ''; reasoning.value = ''; answer.value = ''; changes.value = []; issues.value = []; lastPhrase.value = p
+    busy.value = true; error.value = ''; reasoning.value = ''; answer.value = ''; issues.value = []; lastPhrase.value = p
+    opts.discard(); changes.value = [] // clear any prior un-kept ghost preview
     try {
       original = clone(opts.getSnapshot(p))
       const desc = describeCanvas(original)
@@ -92,6 +100,7 @@ export function useCanvasAgent(opts: {
       recompute()
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
+      opts.discard()
     } finally {
       busy.value = false
     }
@@ -124,14 +133,13 @@ export function useCanvasAgent(opts: {
     }
   }
 
-  /** Commit: materialise the accepted commands onto the live graph. */
+  /** Commit: promote the on-canvas ghosts to real nodes/edges (+ glimm). */
   function keep() {
-    const accepted = changes.value.filter(c => c.accepted).map(c => c.command)
-    if (accepted.length) opts.materialise(accepted)
+    opts.commit()
     changes.value = []; original = null; issues.value = []
   }
-  /** Dismiss: the graph was never touched, so just clear the proposal. */
-  function dismiss() { changes.value = []; original = null; issues.value = []; answer.value = '' }
+  /** Dismiss: remove the ghost preview from the canvas. */
+  function dismiss() { opts.discard(); changes.value = []; original = null; issues.value = []; answer.value = '' }
 
   return { busy, error, reasoning, answer, changes, issues, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, dismiss }
 }

@@ -12,6 +12,7 @@ import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
 import { capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -237,22 +238,27 @@ function resolveLivePorts(fromNode: any, toNode: any, fromPort?: string, toPort?
   return null
 }
 
-function wireEdge(from: any, to: any, fromPort?: string, toPort?: string): boolean {
+function wireEdge(from: any, to: any, fromPort?: string, toPort?: string, ghost = false): string | null {
   const pair = resolveLivePorts(from, to, fromPort, toPort)
-  if (!pair) return false
+  if (!pair) return null
   // One link per input slot — drop any existing edge into it first.
   const kept = (edges.value as any[]).filter(e => !(String(e.target) === String(to.id) && e.targetHandle === `input-${pair.ii}`))
   if (kept.length !== edges.value.length) edges.value.splice(0, edges.value.length, ...kept)
+  const id = `e-${from.id}-${pair.oi}-${to.id}-${pair.ii}${ghost ? '-ghost' : ''}`
   addEdges([{
-    id: `e-${from.id}-${pair.oi}-${to.id}-${pair.ii}`,
+    id,
     source: String(from.id), sourceHandle: `output-${pair.oi}`,
     target: String(to.id), targetHandle: `input-${pair.ii}`,
-    type: 'comfy', data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*') },
+    type: 'comfy', class: ghost ? 'agent-ghost-edge' : undefined,
+    data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*'), ...(ghost ? { ghost: true } : {}) },
   }])
-  return true
+  return id
 }
 
-async function applyCanvasOps(commands: Command[]) {
+/** Materialise a command list onto the live graph. With { ghost:true } the new
+ *  nodes/edges are tagged for the proposal preview (semi-transparent + pastel).
+ *  Returns the ids it created so the caller can commit/discard them. */
+async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
   // Placeholder ids ($new1…) the model assigned in addNode → the real ids we mint
   // here, so a later connect can reference the just-added node.
   const idMap: Record<string, string> = {}
@@ -274,12 +280,15 @@ async function applyCanvasOps(commands: Command[]) {
     return ref ? { x: (ref.position?.x ?? 0) + 360, y: ref.position?.y ?? 0 } : { x: 400, y: 240 }
   }
 
+  const edgeIds: string[] = []
+
   // PHASE 1 — create all new nodes first.
   for (const cmd of commands) {
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
       const pos = anchorFor(cmd.args?.id)
       const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
       node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
+      if (ghost) { node.class = 'agent-ghost'; node.data.ghost = true }
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
       newIds.push(node.id)
@@ -296,8 +305,9 @@ async function applyCanvasOps(commands: Command[]) {
     if (cmd.op === 'connect') {
       const from = findNode(cmd.args?.from)
       const to = findNode(cmd.args?.to)
-      if (from && to && wireEdge(from, to, cmd.args?.fromPort as string | undefined, cmd.args?.toPort as string | undefined)) {
-        wiredInputs.add(String(to.id))
+      if (from && to) {
+        const eid = wireEdge(from, to, cmd.args?.fromPort as string | undefined, cmd.args?.toPort as string | undefined, ghost)
+        if (eid) { wiredInputs.add(String(to.id)); edgeIds.push(eid) }
       }
       continue
     }
@@ -328,9 +338,55 @@ async function applyCanvasOps(commands: Command[]) {
       const ins = (node.data?.inputs ?? []) as any[]
       const hasUnconnectedRequired = ins.some((p, i) => !p.optional
         && !(edges.value as any[]).some(e => String(e.target) === id && e.targetHandle === `input-${i}`))
-      if (hasUnconnectedRequired) wireEdge(sel, node)
+      if (hasUnconnectedRequired) { const eid = wireEdge(sel, node, undefined, undefined, ghost); if (eid) edgeIds.push(eid) }
     }
   }
+
+  return { nodeIds: newIds, edgeIds }
+}
+
+// ── Agent ghost-preview lifecycle ────────────────────────────────────────────
+// preview: render the proposal as semi-transparent pastel ghosts on the canvas.
+// commit: promote them to real nodes/edges + glimm-sweep over them. discard:
+// remove them. Source of truth = the `data.ghost` tag (race-safe vs id lists).
+function agentDiscard() {
+  if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
+  ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
+  ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
+}
+
+async function agentPreview(commands: Command[]) {
+  agentDiscard() // clear any prior preview first
+  if (commands.length) await applyCanvasOps(commands, true)
+}
+
+function agentCommit() {
+  const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
+  const ghostEdgeIds = (edges.value as any[]).filter(e => e.data?.ghost).map(e => String(e.id))
+  for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
+  for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
+  glimmBurstOver(ghostNodeIds, ghostEdgeIds)
+}
+
+// Glimm "citrus" sweep over the just-committed nodes + their connection, for a
+// brief celebratory finish. Positioned over the union bbox in screen space.
+const glimmBurst = ref<{ left: number; top: number; w: number; h: number } | null>(null)
+let glimmTimer = 0
+function glimmBurstOver(nodeIds: string[], edgeIds: string[]) {
+  const ids = new Set(nodeIds.map(String))
+  for (const e of edges.value as any[]) if (edgeIds.includes(String(e.id))) { ids.add(String(e.source)); ids.add(String(e.target)) }
+  const rects = (nodes.value as any[]).filter(n => ids.has(String(n.id))).map((n) => {
+    const w = n.dimensions?.width ?? n.data?.size?.[0] ?? 220
+    const h = n.dimensions?.height ?? n.data?.size?.[1] ?? 120
+    return { x: n.position?.x ?? 0, y: n.position?.y ?? 0, w, h }
+  })
+  if (!rects.length) return
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const r of rects) { minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h) }
+  const vp = vfViewport.value, z = vp.zoom, m = 28
+  glimmBurst.value = { left: vp.x + minX * z - m, top: vp.y + minY * z - m, w: (maxX - minX) * z + m * 2, h: (maxY - minY) * z + m * 2 }
+  if (glimmTimer) clearTimeout(glimmTimer)
+  glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1700)
 }
 
 const {
@@ -4713,7 +4769,9 @@ defineExpose({
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
   agentSnapshot,
-  applyCanvasOps,
+  agentPreview,
+  agentCommit,
+  agentDiscard,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
@@ -4735,6 +4793,15 @@ defineExpose({
   >
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
+
+    <!-- Glimm "citrus" sweep over a just-committed agent node + its connection. -->
+    <div
+      v-if="glimmBurst"
+      class="absolute pointer-events-none z-30 overflow-hidden rounded-2xl"
+      :style="{ left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px' }"
+    >
+      <AgentSweep :active="true" />
+    </div>
 
     <VueFlow
       v-model:nodes="nodes"

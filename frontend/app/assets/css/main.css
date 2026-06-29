@@ -305,3 +305,40 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   from { background-position: 0% 50%; }
   to { background-position: 100% 50%; }
 }
+
+/* Rotating pastel ring primitives — registered once here, reused by the canvas
+   prompt and the agent ghost-preview. Animating a registered custom property
+   re-rasterizes the conic each frame, which works even behind a CSS mask. */
+@property --pastel-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes pastel-spin { to { --pastel-angle: 360deg; } }
+
+/* Agent ghost preview: a PROPOSED node sits on the canvas semi-transparent with
+   a flowing pastel gradient ring around it; its PROPOSED edge flows a pastel
+   dash. Both are set via node.class/edge.class while a proposal is pending. */
+.vue-flow__node.agent-ghost { opacity: 0.6; }
+.vue-flow__node.agent-ghost::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 16px;
+  padding: 2px;
+  background: conic-gradient(from var(--pastel-angle), #ffd6e7, #cfe8ff, #d6ffe0, #fff4cc, #e7d6ff, #ffd6e7);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: pastel-spin 7s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+.vue-flow__edge.agent-ghost-edge .vue-flow__edge-path {
+  stroke: #cfe8ff;
+  opacity: 0.75;
+  stroke-dasharray: 7 5;
+  animation: ghost-dash 0.6s linear infinite;
+}
+@keyframes ghost-dash { to { stroke-dashoffset: -12; } }

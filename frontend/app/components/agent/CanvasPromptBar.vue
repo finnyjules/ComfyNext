@@ -14,14 +14,16 @@ import { useAgentActivity } from '~/composables/useAgentActivity'
 const props = defineProps<{ vueCanvas?: any }>()
 const { getLocalSetting } = useLocalSettings()
 
-const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.applyCanvasOps === 'function')
+const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
 const {
   busy, error, reasoning, answer, changes, issues, hasProposal, hovered,
   ask, acceptChange, rejectChange, reroll, keep, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
-  materialise: (cmds) => props.vueCanvas.applyCanvasOps(cmds),
+  preview: (cmds) => props.vueCanvas.agentPreview(cmds),
+  commit: () => props.vueCanvas.agentCommit(),
+  discard: () => props.vueCanvas.agentDiscard(),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 
@@ -82,15 +84,10 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
   position: relative;
   background: #1a1a1a;
 }
-/* Animate the gradient by ROTATING a conic via a registered custom property.
-   background-position animation is cached (frozen) on masked elements in
-   Chromium; animating an @property angle re-rasterizes the gradient each frame,
-   so the colours actually flow around the ring. */
-@property --pastel-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
+/* Animate the gradient by ROTATING a conic via the registered --pastel-angle
+   custom property (declared globally in main.css). background-position animation
+   is cached/frozen on masked elements in Chromium; animating the angle
+   re-rasterizes the conic each frame, so the colours flow around the ring. */
 .prompt-field::before {
   content: '';
   position: absolute;
