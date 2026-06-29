@@ -287,7 +287,9 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
       const pos = anchorFor(cmd.args?.id)
       const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
-      node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
+      // Unique NUMERIC id — the run serializer parses node ids as numbers, so a
+      // hyphenated id (e.g. "171…-0") would be truncated and break its links.
+      node.id = String(Date.now() + (agentNodeSeq++))
       if (ghost) { node.class = 'agent-ghost'; node.data.ghost = true }
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
@@ -359,6 +361,7 @@ const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
 const glimmPeriod = ref(0.55) // sweep speed: slow during the blueprint, fast on commit
 let ghostDrawTimer = 0
 let glimmTimer = 0
+let agentNodeSeq = 0 // monotonic offset for unique NUMERIC node ids (see below)
 const BLUEPRINT_MS = 1800
 
 function unionRect(rects: OverlayRect[]): OverlayRect {
