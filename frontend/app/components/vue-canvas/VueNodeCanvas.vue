@@ -5,6 +5,8 @@ import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
+import CanvasAgentBar from '~/components/agent/CanvasAgentBar.vue'
+import type { CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -133,6 +135,44 @@ const groupsBridge = { load: (_: any[] | undefined | null) => {}, export: () => 
 const annotationsBridge = { load: (_: unknown) => {}, export: () => ({}) as unknown }
 
 const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge, annotationsBridge })
+
+// ── Canvas agent (Phase 3, Slice 0 — read-only "explain the graph") ──────────
+// Map the live Vue Flow refs into the pure CanvasSnapshot the agent reads. Edge
+// handles are "output-<i>"/"input-<i>" → resolve to port names via the node's
+// outputs/inputs arrays; widgets pair widgetDefs[i].name ↔ widgetsValues[i].
+const { getLocalSetting } = useLocalSettings()
+function agentSnapshot(): CanvasSnapshot {
+  const ns = nodes.value as any[]
+  const byId = new Map(ns.map(n => [String(n.id), n]))
+  const portName = (node: any, handle: string | null | undefined, kind: 'output' | 'input'): string | undefined => {
+    const arr = kind === 'output' ? node?.data?.outputs : node?.data?.inputs
+    const i = parseInt(String(handle ?? '').replace(`${kind}-`, '') || '0')
+    return arr?.[i]?.name
+  }
+  return {
+    nodes: ns.map((n) => {
+      const defs = (n.data?.widgetDefs ?? []) as any[]
+      const vals = (n.data?.widgetsValues ?? []) as any[]
+      const widgets: Record<string, unknown> = {}
+      defs.forEach((d, i) => { if (d?.name != null) widgets[d.name] = vals[i] })
+      return {
+        id: String(n.id),
+        nodeType: String(n.data?.nodeType ?? n.data?.type ?? n.type ?? 'unknown'),
+        title: String(n.data?.title ?? ''),
+        mode: n.data?.mode,
+        widgets,
+        inputs: ((n.data?.inputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*'), optional: !!p.optional })),
+        outputs: ((n.data?.outputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*') })),
+      }
+    }),
+    edges: (edges.value as any[]).map(e => ({
+      source: String(e.source),
+      sourcePort: portName(byId.get(String(e.source)), e.sourceHandle, 'output'),
+      target: String(e.target),
+      targetPort: portName(byId.get(String(e.target)), e.targetHandle, 'input'),
+    })),
+  }
+}
 
 const {
   groups,
@@ -4534,6 +4574,9 @@ defineExpose({
   >
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" />
+
+    <!-- Canvas copilot (Phase 3, Slice 0 — read-only graph Q&A) -->
+    <CanvasAgentBar :get-snapshot="agentSnapshot" :api-key="() => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''" />
 
     <VueFlow
       v-model:nodes="nodes"
