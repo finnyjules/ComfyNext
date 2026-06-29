@@ -3180,7 +3180,7 @@ function dismissRunResult() {
         </Transition>
 
         <!-- Explain panel -->
-        <ExplainPanel />
+        <ExplainPanel :vue-canvas="vueCanvasRef" />
       </main>
     </div>
 

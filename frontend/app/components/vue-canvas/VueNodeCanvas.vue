@@ -5,6 +5,8 @@ import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
+import type { CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import type { Command } from '~/lib/agent/commandSurface'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -133,6 +135,65 @@ const groupsBridge = { load: (_: any[] | undefined | null) => {}, export: () => 
 const annotationsBridge = { load: (_: unknown) => {}, export: () => ({}) as unknown }
 
 const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge, annotationsBridge })
+
+// ── Canvas agent (Phase 3, Slice 1) — perceive + mutate existing nodes ───────
+// agentSnapshot() maps the live Vue Flow refs into the pure CanvasSnapshot the
+// agent reads (edge handles "output-<i>"/"input-<i>" → port names; widgetDefs[i]
+// ↔ widgetsValues[i]). applyCanvasOps() MATERIALISES validated commands onto the
+// live graph — undo comes free from the deep-watch history. Both exposed for the
+// Explain panel's interactive mode.
+function agentSnapshot(): CanvasSnapshot {
+  const ns = nodes.value as any[]
+  const byId = new Map(ns.map(n => [String(n.id), n]))
+  const portName = (node: any, handle: string | null | undefined, kind: 'output' | 'input'): string | undefined => {
+    const arr = kind === 'output' ? node?.data?.outputs : node?.data?.inputs
+    const i = parseInt(String(handle ?? '').replace(`${kind}-`, '') || '0')
+    return arr?.[i]?.name
+  }
+  return {
+    nodes: ns.map((n) => {
+      const defs = (n.data?.widgetDefs ?? []) as any[]
+      const vals = (n.data?.widgetsValues ?? []) as any[]
+      const widgets: Record<string, unknown> = {}
+      defs.forEach((d, i) => { if (d?.name != null) widgets[d.name] = vals[i] })
+      return {
+        id: String(n.id),
+        nodeType: String(n.data?.nodeType ?? n.data?.type ?? n.type ?? 'unknown'),
+        title: String(n.data?.title ?? ''),
+        mode: n.data?.mode,
+        widgets,
+        inputs: ((n.data?.inputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*'), optional: !!p.optional })),
+        outputs: ((n.data?.outputs ?? []) as any[]).map(p => ({ name: p.name, type: String(p.type ?? '*') })),
+      }
+    }),
+    edges: (edges.value as any[]).map(e => ({
+      source: String(e.source),
+      sourcePort: portName(byId.get(String(e.source)), e.sourceHandle, 'output'),
+      target: String(e.target),
+      targetPort: portName(byId.get(String(e.target)), e.targetHandle, 'input'),
+    })),
+  }
+}
+
+const AGENT_MODE: Record<string, number> = { normal: 0, mute: 2, muted: 2, bypass: 4, bypassed: 4 }
+function applyCanvasOps(commands: Command[]) {
+  for (const cmd of commands) {
+    if (cmd.op === 'deleteNode' && cmd.target) { deleteNodes([String(cmd.target)]); continue }
+    const node = (nodes.value as any[]).find(n => String(n.id) === String(cmd.target))
+    if (!node) continue
+    if (cmd.op === 'setWidget' && typeof cmd.args?.name === 'string') {
+      const defs = (node.data?.widgetDefs ?? []) as any[]
+      const idx = defs.findIndex(w => w?.name === cmd.args!.name)
+      if (idx >= 0) {
+        if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
+        while (node.data.widgetsValues.length <= idx) node.data.widgetsValues.push(null)
+        node.data.widgetsValues[idx] = cmd.args!.value
+      }
+    } else if (cmd.op === 'setMode') {
+      setMode([String(cmd.target)], AGENT_MODE[String(cmd.args?.mode ?? '').toLowerCase()] ?? 0)
+    }
+  }
+}
 
 const {
   groups,
@@ -4513,6 +4574,8 @@ defineExpose({
   selectNode,
   getEdges: () => edges.value,
   getObjectInfo: () => objectInfo.value,
+  agentSnapshot,
+  applyCanvasOps,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
