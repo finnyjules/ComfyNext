@@ -170,7 +170,7 @@ function agentCatalog(intent?: string): CatalogEntry[] {
   const sel = (nodes.value as any[]).find(n => n.selected)
   const out = sel?.data?.outputs?.[0]
   const anchor = { portType: String(out?.type ?? '*'), direction: 'output' as const }
-  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST, maxNodes: 40, maxEnum: 6, maxIntent: 12 })
+  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST, maxNodes: 60, maxEnum: 6, maxIntent: 18 })
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {

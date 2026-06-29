@@ -103,7 +103,11 @@ export function buildCatalog(
     intentBucket = matches.filter(n => !covered.has(n.name)).slice(0, maxIntent)
   }
 
-  return [...hop1, ...hop2, ...intentBucket].slice(0, maxNodes).map((n) => {
+  // Intent-matched nodes go FIRST so the thing the user actually asked for is
+  // never truncated by a large type-compatible hop1 (an IMAGE output, say, makes
+  // dozens of nodes "compatible" and would otherwise overflow maxNodes and slice
+  // the intent bucket off entirely). intentBucket already excludes hop1/hop2.
+  return [...intentBucket, ...hop1, ...hop2].slice(0, maxNodes).map((n) => {
     const info = objectInfo[n.name]
     return {
       type: n.name,

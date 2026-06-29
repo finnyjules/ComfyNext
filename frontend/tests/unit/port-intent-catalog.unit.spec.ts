@@ -50,6 +50,16 @@ describe('buildCatalog', () => {
     expect(cat).toHaveLength(1)
     expect(cat[0]!.type).toBe('VAEEncode')
   })
+  it('keeps an intent-matched node even when type-compatible nodes overflow the cap', () => {
+    // An IMAGE output makes many nodes "compatible"; the requested node (only
+    // reachable via intent, not type) must still survive the maxNodes slice.
+    const bgRemove = lite('BackgroundRemove', [{ name: 'x', type: 'FOO' }], [{ name: 'IMAGE', type: 'IMAGE' }])
+    const fillers = Array.from({ length: 5 }, (_, i) => lite(`Filler${i}`, [{ name: 'image', type: 'IMAGE' }], []))
+    const cat = buildCatalog([...fillers, bgRemove], {}, { portType: 'IMAGE', direction: 'output' }, {
+      maxNodes: 3, intent: 'remove the background', keywords: { BackgroundRemove: ['remove background', 'background'] },
+    })
+    expect(cat.map(e => e.type)).toContain('BackgroundRemove')
+  })
   it('uses object_info for ports/widgets when available, falls back to the lite entry', () => {
     const cat = buildCatalog([imgToLatent, latentConsumer], objectInfo, { portType: 'IMAGE', direction: 'output' })
     // VAEEncode has an objectInfo entry → ports derived from it
