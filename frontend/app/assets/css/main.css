@@ -342,3 +342,25 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   animation: ghost-dash 0.6s linear infinite;
 }
 @keyframes ghost-dash { to { stroke-dashoffset: -12; } }
+
+/* Blueprint draw-in (~1s): when the agent first proposes a node, its contour
+   traces itself around the perimeter and its connection draws end-to-end, then
+   both settle into the steady ghost. The -draw classes are stripped after 1s. */
+@property --draw-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.vue-flow__node.agent-ghost-draw { animation: ghost-fade-in 1s ease-out; }
+@keyframes ghost-fade-in { from { opacity: 0.08; } to { opacity: 0.6; } }
+.vue-flow__node.agent-ghost-draw::after {
+  background: conic-gradient(from -90deg, #d8ecff 0 var(--draw-angle), transparent var(--draw-angle));
+  animation: ghost-contour-draw 1s ease-out;
+}
+@keyframes ghost-contour-draw { from { --draw-angle: 0deg; } to { --draw-angle: 360deg; } }
+.vue-flow__edge.agent-ghost-edge-draw .vue-flow__edge-path {
+  stroke-dasharray: 2000;
+  stroke-dashoffset: 2000;
+  animation: edge-draw 1s ease-out forwards;
+}
+@keyframes edge-draw { to { stroke-dashoffset: 0; } }

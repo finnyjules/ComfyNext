@@ -249,7 +249,7 @@ function wireEdge(from: any, to: any, fromPort?: string, toPort?: string, ghost 
     id,
     source: String(from.id), sourceHandle: `output-${pair.oi}`,
     target: String(to.id), targetHandle: `input-${pair.ii}`,
-    type: 'comfy', class: ghost ? 'agent-ghost-edge' : undefined,
+    type: 'comfy', class: ghost ? 'agent-ghost-edge agent-ghost-edge-draw' : undefined,
     data: { dataType: String((from.data?.outputs ?? [])[pair.oi]?.type ?? '*'), ...(ghost ? { ghost: true } : {}) },
   }])
   return id
@@ -288,7 +288,7 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
       const pos = anchorFor(cmd.args?.id)
       const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
       node.id = `${Date.now()}-${newIds.length}` // unique within the batch (createNodeData uses Date.now())
-      if (ghost) { node.class = 'agent-ghost'; node.data.ghost = true }
+      if (ghost) { node.class = 'agent-ghost agent-ghost-draw'; node.data.ghost = true }
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
       newIds.push(node.id)
@@ -349,7 +349,17 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
 // preview: render the proposal as semi-transparent pastel ghosts on the canvas.
 // commit: promote them to real nodes/edges + glimm-sweep over them. discard:
 // remove them. Source of truth = the `data.ghost` tag (race-safe vs id lists).
+let ghostDrawTimer = 0
+
+// After the ~1s blueprint draw-in, strip the -draw classes so the ghosts settle
+// into the steady (rainbow ring + flowing dash) state.
+function settleGhostDraw() {
+  for (const n of nodes.value as any[]) if (n.data?.ghost && typeof n.class === 'string' && n.class.includes('agent-ghost-draw')) n.class = 'agent-ghost'
+  for (const e of edges.value as any[]) if (e.data?.ghost && typeof e.class === 'string' && e.class.includes('agent-ghost-edge-draw')) e.class = 'agent-ghost-edge'
+}
+
 function agentDiscard() {
+  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
   if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
   ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
   ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
@@ -357,10 +367,13 @@ function agentDiscard() {
 
 async function agentPreview(commands: Command[]) {
   agentDiscard() // clear any prior preview first
-  if (commands.length) await applyCanvasOps(commands, true)
+  if (!commands.length) return
+  await applyCanvasOps(commands, true)
+  ghostDrawTimer = window.setTimeout(settleGhostDraw, 1000) // end the blueprint draw-in
 }
 
 function agentCommit() {
+  if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
   for (const e of edges.value as any[]) if (e.data?.ghost) { e.class = undefined; e.data.ghost = false }
