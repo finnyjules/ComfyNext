@@ -133,12 +133,10 @@ function draw() {
     for (const s of sparks) {
       s.p += s.speed
       if (s.p >= 1) {
+        // Keep going straight in the same direction (no swerving). Step to the
+        // next dot; respawn only once we've travelled off-screen.
         s.gx += s.dx; s.gy += s.dy; s.p = 0
-        // new direction, avoiding an immediate reverse (nicer wander)
-        const opts = DIRS.filter(d => !(d[0] === -s.dx && d[1] === -s.dy))
-        const nd = opts[Math.floor(Math.random() * opts.length)]!
-        s.dx = nd[0]; s.dy = nd[1]
-        if (s.gx < gxMin - 3 || s.gx > gxMax + 3 || s.gy < gyMin - 3 || s.gy > gyMax + 3 || Math.random() < 0.04) {
+        if (s.gx < gxMin - 3 || s.gx > gxMax + 3 || s.gy < gyMin - 3 || s.gy > gyMax + 3) {
           Object.assign(s, spawnSpark(gxMin, gxMax, gyMin, gyMax)) // teleport → fresh (empty) trail
         }
       }
