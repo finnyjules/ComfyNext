@@ -2972,19 +2972,19 @@ function dismissRunResult() {
           @dismiss-result="dismissRunResult"
         />
 
-        <!-- Canvas agent prompt — persistent, sits just above the toolbar -->
-        <div
-          v-if="activeTab.type === 'project' && vueNodesEnabled"
-          class="absolute bottom-[5.25rem] left-1/2 -translate-x-1/2 z-40"
-        >
-          <AgentCanvasPromptBar :vue-canvas="vueCanvasRef" />
-        </div>
-
-        <!-- Floating toolbar overlay (only visible on project tabs) -->
+        <!-- Bottom-centre stack: the agent prompt sits above the toolbar and is
+             sized to match it (the toolbar is the intrinsic-width child; the
+             prompt is w-full). Only on project tabs. -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg z-40"
+          class="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3"
         >
+          <AgentCanvasPromptBar v-if="vueNodesEnabled" :vue-canvas="vueCanvasRef" class="w-0 min-w-full" />
+
+          <!-- Floating toolbar -->
+          <div
+            class="flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg"
+          >
           <template v-for="(item) in sidebarItems" :key="item.label">
             <div
               v-if="item.dividerBefore"
@@ -3056,6 +3056,7 @@ function dismissRunResult() {
               </div>
             </div>
           </template>
+          </div>
         </div>
         <!-- Floating zoom/map toolbar (bottom-right, only on project tabs) -->
         <div
