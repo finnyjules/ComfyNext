@@ -118,7 +118,7 @@ function openEditor() {
 }
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }))
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }))
 }
 </script>
 

@@ -151,7 +151,7 @@ function triggerUpload() { fileInputRef.value?.click() }
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
   window.dispatchEvent(
-    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id] } }),
+    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
   )
 }
 
