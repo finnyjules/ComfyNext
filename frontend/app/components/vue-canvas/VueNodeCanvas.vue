@@ -10,6 +10,7 @@ import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
+import { capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
@@ -147,10 +148,12 @@ const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = u
 // validated commands onto the live graph — undo comes free from the deep-watch
 // history. Both exposed for the canvas prompt.
 
-// NodeTypeLite[] derived from the cached /object_info, for buildCatalog.
+// NodeTypeLite[] = the cached /object_info nodes (incl. the backend generators +
+// Compositor/SmartLayout) PLUS the frontend-only studios (which have no
+// /object_info, so they're synthesized from the capability registry).
 function agentNodeTypes(): NodeTypeLite[] {
   const oi = (objectInfo.value || {}) as Record<string, any>
-  return Object.keys(oi).map((name) => {
+  const fromInfo = Object.keys(oi).map((name) => {
     const info = oi[name]
     return {
       name,
@@ -161,16 +164,21 @@ function agentNodeTypes(): NodeTypeLite[] {
       outputs: outputPorts(info),
     }
   })
+  return [...studioNodeTypes(), ...fromInfo]
 }
 // Palette for addNode/connect: nodes compatible with the selection's output (or
 // a wildcard when nothing's selected) + intent-matched nodes for the phrase.
+// Capability intents/boosts make the studios + generators surface and rank above
+// raw ComfyUI nodes for creative requests.
 function agentCatalog(intent?: string): CatalogEntry[] {
   const oi = (objectInfo.value || {}) as Record<string, any>
   if (!Object.keys(oi).length) return []
   const sel = (nodes.value as any[]).find(n => n.selected)
   const out = sel?.data?.outputs?.[0]
   const anchor = { portType: String(out?.type ?? '*'), direction: 'output' as const }
-  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST, maxNodes: 60, maxEnum: 6, maxIntent: 18 })
+  const keywords = { ...NODE_KEYWORDS, ...capabilityKeywords() }
+  const boosts = { ...NODE_BOOST, ...capabilityBoosts() }
+  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24 })
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {

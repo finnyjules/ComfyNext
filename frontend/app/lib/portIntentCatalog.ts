@@ -95,19 +95,19 @@ export function buildCatalog(
       : n.outputs.some(p => farTypes.has(p.type))),
   )
 
-  // Intent bucket: top text/keyword matches not already covered by hop1/hop2.
-  let intentBucket: NodeTypeLite[] = []
-  if (intent && intent.trim()) {
-    const covered = new Set([...hop1Names, ...hop2.map(n => n.name)])
-    const matches = searchNodes(nodeTypes, intent, { keywords, boosts, limit: maxIntent + covered.size })
-    intentBucket = matches.filter(n => !covered.has(n.name)).slice(0, maxIntent)
-  }
+  // Intent-matched nodes, ranked over ALL node types, go FIRST so the thing the
+  // user actually asked for is never truncated. Crucially this is NOT filtered to
+  // exclude hop1/hop2 — a node that is BOTH type-compatible AND intent-relevant
+  // (e.g. RemoveBackground for "remove the background" on an IMAGE anchor) would
+  // otherwise sit unranked deep in a large hop1 and get sliced off by maxNodes.
+  const intentRanked = (intent && intent.trim())
+    ? searchNodes(nodeTypes, intent, { keywords, boosts, limit: maxIntent })
+    : []
+  const ranked = new Set(intentRanked.map(n => n.name))
+  const hop1Rest = hop1.filter(n => !ranked.has(n.name))
+  const hop2Rest = hop2.filter(n => !ranked.has(n.name))
 
-  // Intent-matched nodes go FIRST so the thing the user actually asked for is
-  // never truncated by a large type-compatible hop1 (an IMAGE output, say, makes
-  // dozens of nodes "compatible" and would otherwise overflow maxNodes and slice
-  // the intent bucket off entirely). intentBucket already excludes hop1/hop2.
-  return [...intentBucket, ...hop1, ...hop2].slice(0, maxNodes).map((n) => {
+  return [...intentRanked, ...hop1Rest, ...hop2Rest].slice(0, maxNodes).map((n) => {
     const info = objectInfo[n.name]
     return {
       type: n.name,
