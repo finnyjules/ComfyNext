@@ -54,12 +54,13 @@ const COMMON_PROPS = new Set(['x', 'y', 'rotation', 'opacity', 'blend', 'visible
 const COMPOSITOR_COMMANDS: CommandSpec[] = [
   { op: 'setLayerProps', hint: 'Move/transform a layer. target = layer id; args: { patch }. Keys: x, y (0..1 of canvas, layer CENTER), rotation (deg), opacity (0..1), blend ("normal"|"multiply"|"screen"|…), visible (bool), skewX/skewY (deg). e.g. centre = x:0.5,y:0.5.' },
   { op: 'setText', hint: 'Change a TEXT layer\'s copy. target = layer id; args: { text }. You may write/rewrite the copy yourself.' },
-  { op: 'setTextStyle', hint: 'Style a TEXT layer. target = layer id; args: { patch }. Keys: fontFamily (any Google font name), fontWeight (100..900), fontSize (0..1 of canvas width — ~0.1 is large), align ("left"|"center"|"right"), lineHeight (multiplier), boxW (0..1 wrap width).' },
+  { op: 'setTextStyle', hint: 'Style a TEXT layer. target = layer id; args: { patch }. Keys: fontFamily (ANY Google Font by name — for an Impact-style / bold condensed poster headline use "Anton" (also good: "Oswald", "Archivo Black", "Bebas Neue"); for body use "Inter"), fontWeight (100..900), fontSize (fraction of canvas WIDTH: body ~0.03, a normal heading ~0.08, a big headline ~0.15, a HUGE poster headline that fills the frame 0.25–0.45), align ("left"|"center"|"right"), lineHeight (multiplier), boxW (0..1 wrap width). For "huge headline" set fontSize ≥ 0.25 and usually fontWeight 700–900.' },
   { op: 'setFill', hint: 'Set a layer\'s FILL — text colour, shape fill, or image tint. target = layer id; args: { paint }. paint is a "#RRGGBB" colour OR a gradient object {type:"linear",angle,stops:[{offset,color}]} / {type:"radial",stops}. "none"/"" = no fill. This is what "make it blue", "give it a sunset gradient" mean.' },
   { op: 'setStroke', hint: 'Set a layer\'s STROKE/outline. target = layer id; args: { paint, width? }. paint as in setFill (or "none"); width is 0..1 of canvas width.' },
   { op: 'setSize', hint: 'Resize a layer. target = layer id; args: { w?, h?, scale? } (0..1 of canvas width; line uses w as length; path uses scale).' },
-  { op: 'addLayer', hint: 'Add a NEW layer. args: { layer }. layer needs: kind ("text"|"rect"|"ellipse"|"line"), x, y (0..1, center). text also: text; gives sensible defaults for the rest. (For images use generateImage.)' },
+  { op: 'addLayer', hint: 'Add a NEW layer. args: { layer }. layer needs: kind ("text"|"rect"|"ellipse"|"line"), x, y (0..1, center). text also: text + you may set fontFamily/fontWeight/fontSize/color inline (a HUGE headline = fontSize 0.25–0.45, fontWeight 800; Impact-style font = "Anton"). Give the layer an id you choose so you can target it next. New layers land ON TOP by default — to put one BEHIND the image/other layers, follow with setLayerDepth …"back". (For images use generateImage.)' },
   { op: 'removeLayer', hint: 'Delete a layer by id. target = layer id.' },
+  { op: 'setLayerDepth', hint: 'Change a layer\'s stacking depth (z-order). target = layer id; args: { to: "back" | "front" }. "back" puts it BEHIND every other layer including the connected/wired image — use this for "put the headline BEHIND the image". "front" brings it to the top.' },
   { op: 'setBackground', hint: 'Set the FRAME background that sits behind every layer. args: { paint } — a "#RRGGBB" colour, a gradient object, or "none". Use for "make the background blue / a sunset gradient".' },
   { op: 'generateImage', hint: 'Generate a PHOTOGRAPHIC/illustrative AI image and add it as a layer — "generate a picture of a dog", "add a city photo". Not for gradients/colours (use setBackground/setFill). args: { prompt (vivid), aspectRatio? }.' },
   { op: 'removeImageBackground', hint: 'Cut out the subject of an existing IMAGE layer (transparent background). target = image layer id.' },
@@ -192,6 +193,18 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       if (!state.layers.some(l => l.id === cmd.target)) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
       return { ok: true, template: { ...state, layers: state.layers.filter(l => l.id !== cmd.target) }, inverse: snapshot() }
     }
+    case 'setLayerDepth': {
+      // Reorder among the LOCAL layers; the composable also writes the unified
+      // wired+local stack order so "back" sits behind a connected image too.
+      const to = String(cmd.args?.to ?? '')
+      if (to !== 'back' && to !== 'front') return { ok: false, reason: 'invalid', detail: 'args.to must be "back" | "front"' }
+      const idx = state.layers.findIndex(l => l.id === cmd.target)
+      if (idx < 0) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
+      const [moved] = state.layers.splice(idx, 1)
+      if (to === 'back') state.layers.unshift(moved!)
+      else state.layers.push(moved!)
+      return { ok: true, template: state, inverse: snapshot() }
+    }
     case 'setBackground': {
       const paint = cmd.args?.paint
       if (paint == null) return { ok: false, reason: 'invalid', detail: 'missing args.paint' }
@@ -271,6 +284,7 @@ export function summarizeCompositorChange(state: CompositorState, cmd: Command):
     case 'setSize': return { label: `${name} size`, before: '', after: ['w', 'h', 'scale'].filter(k => k in a).map(k => `${k}: ${String((a as Record<string, unknown>)[k])}`).join(', ') }
     case 'addLayer': { const l = a.layer as { kind?: string; text?: string } | undefined; return { label: 'Add layer', before: '', after: l?.kind === 'text' ? `text “${String(l.text ?? '')}”` : (l?.kind ?? 'layer') } }
     case 'removeLayer': return { label: 'Remove layer', before: name, after: 'deleted' }
+    case 'setLayerDepth': return { label: `${name} order`, before: '', after: String(a.to ?? '') === 'back' ? 'behind everything' : 'bring to front' }
     case 'setBackground': return { label: 'Frame background', before: paintLabel(state.background), after: paintLabel(a.paint as Paint) }
     case 'generateImage': return { label: 'Add image', before: '', after: String(a.prompt ?? 'generated') }
     case 'removeImageBackground': return { label: name, before: '', after: 'cut out' }

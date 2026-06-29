@@ -40,10 +40,21 @@ function writeState(node: any, s: CompositorState) {
   else node.data.properties.comfynext_localBg = bg
 }
 
+/** The unified wired+local z-order (`comfynext_stackOrder`, bottom→top, keys
+ *  `l:<id>` / `w:<slot>`). Needed so "send to back" sits a local layer behind the
+ *  CONNECTED image — which lives outside CompositorState. */
+function readStackOrder(node: any): string[] { return [...((node?.data?.properties?.comfynext_stackOrder as string[]) ?? [])] }
+function writeStackOrder(node: any, order: string[]) {
+  if (!node.data.properties) node.data.properties = {}
+  if (order.length) node.data.properties.comfynext_stackOrder = order
+  else delete node.data.properties.comfynext_stackOrder
+}
+
 /** Plan + apply a natural-language tweak to a Frame (Compositor) node in place. */
 export async function tuneCompositorNode(node: any, request: string, apiKey: string, tier = 'plan'): Promise<TuneResult> {
   const prior = readState(node)
-  const restore = () => writeState(node, prior)
+  const priorOrder = readStackOrder(node)
+  const restore = () => { writeState(node, prior); writeStackOrder(node, priorOrder) }
   let state = readState(node)
   const snapshot = describeCompositor(state)
   const res = await $fetch<{ text: string }>('/api/agent-plan', {
@@ -53,6 +64,8 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
   })
   const { commands, changeRationales, message } = parseAgentResponse(res.text)
   const rows: TuneRow[] = []
+  const backIds: string[] = []
+  const frontIds: string[] = []
   let droppedMedia = false
   commands.forEach((cmd, i) => {
     if (MEDIA_OPS.has(cmd.op)) { droppedMedia = true; return }
@@ -61,8 +74,23 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
     const sum = summarizeCompositorChange(state, cmd) ?? { label: cmd.op, before: '', after: '' }
     rows.push({ ...sum, rationale: changeRationales[i] ?? '' })
     state = test.template
+    if (cmd.op === 'setLayerDepth' && cmd.target) {
+      const to = String(cmd.args?.to ?? '')
+      if (to === 'back') backIds.push(String(cmd.target))
+      else if (to === 'front') frontIds.push(String(cmd.target))
+    }
   })
-  if (rows.length) writeState(node, state) // apply as preview — the frame re-bakes
+  if (rows.length) {
+    writeState(node, state) // apply as preview — the frame re-bakes
+    // Push "back" layers behind the connected image in the unified stack. The Frame
+    // reconciles: listed keys keep their order, present-but-unlisted keys (the wired
+    // image, "front" layers) float ON TOP — so listing only the back keys is enough.
+    if (backIds.length || frontIds.length) {
+      const backKeys = backIds.map(id => `l:${id}`)
+      const drop = new Set([...backKeys, ...frontIds.map(id => `l:${id}`)])
+      writeStackOrder(node, [...backKeys, ...readStackOrder(node).filter(k => !drop.has(k))])
+    }
+  }
   const notice = droppedMedia
     ? 'Generating or editing images inside a frame isn’t available from the canvas yet — open the frame to do that.'
     : (rows.length ? undefined : (message || undefined))
