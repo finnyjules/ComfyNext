@@ -25,6 +25,8 @@ const {
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
   commit: () => props.vueCanvas.agentCommit(),
   discard: () => props.vueCanvas.agentDiscard(),
+  tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
+  tuneRevert: () => props.vueCanvas.agentTuneRevert(),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 

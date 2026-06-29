@@ -30,6 +30,11 @@ export function useCanvasAgent(opts: {
   commit: () => void
   /** Remove the ghosts. Called on Dismiss. */
   discard: () => void
+  /** Delegate tuneNode commands to each target node's OWN studio surface (applied
+   *  in place). Returns proposal rows + an optional notice. */
+  tune?: (cmds: { target: string; request: string }[]) => Promise<{ changes: ProposedChange[]; notice?: string }>
+  /** Undo the in-place studio-tune edits. Called on Dismiss. */
+  tuneRevert?: () => void
   apiKey: () => string
   tier?: string
 }) {
@@ -82,34 +87,56 @@ export function useCanvasAgent(opts: {
     if (!p || busy.value) return
     if (!opts.apiKey()) { error.value = 'Add your Anthropic key in Settings → AI.'; return }
     busy.value = true; error.value = ''; reasoning.value = ''; answer.value = ''; issues.value = []; lastPhrase.value = p
-    opts.discard(); changes.value = [] // clear any prior un-kept ghost preview
+    opts.discard(); opts.tuneRevert?.(); changes.value = [] // clear any prior un-kept ghost / tune preview
     try {
       original = clone(opts.getSnapshot(p))
       const desc = describeCanvas(original)
       const { commands, changeRationales, message } = await callModel(buildAgentPrompt(desc, p), desc.commands)
-      const built: ProposedChange[] = []
+      // Graph ops are ghost-previewed; tuneNode is delegated to a node's OWN studio
+      // surface (e.g. a Frame's background) and applied in place.
+      const graphBuilt: ProposedChange[] = []
+      const tuneInputs: { target: string; request: string }[] = []
       let probe = clone(original)
       commands.forEach((cmd, i) => {
+        if (cmd.op === 'tuneNode') {
+          const req = typeof cmd.args?.request === 'string' ? cmd.args.request : ''
+          if (cmd.target && req) tuneInputs.push({ target: cmd.target, request: req })
+          return
+        }
         const ch = buildChange(probe, cmd, changeRationales[i] ?? '')
         if (!ch) return
-        built.push(ch)
+        graphBuilt.push(ch)
         const r = applyCanvasCommand(probe, cmd)
         if (r.ok) probe = r.template
       })
+      // Graph-health readout is about graph structure — only when graph changed.
+      issues.value = graphBuilt.length ? verifyCanvas(probe) : []
+      // Blueprint first (for ADDED graph nodes) — this materialises the ghost nodes
+      // AND populates the placeholder→real id map, so a tuneNode targeting a
+      // just-added Frame ($new1) can resolve it. Keep `busy` true so the grid sparks
+      // animate through the blueprint.
+      if (graphBuilt.length) {
+        opts.preview(graphBuilt.map(c => c.command), true)
+        await new Promise(r => setTimeout(r, 1800)) // matches the blueprint duration
+      }
+      // Studio-tune delegations run AFTER the ghosts exist (applied in place).
+      let tuneBuilt: ProposedChange[] = []
+      let tuneNotice = ''
+      if (tuneInputs.length && opts.tune) {
+        const res = await opts.tune(tuneInputs)
+        tuneBuilt = res.changes
+        tuneNotice = res.notice ?? ''
+      }
+      const built = [...graphBuilt, ...tuneBuilt]
       if (!built.length) {
-        answer.value = message || (commands.length ? 'I couldn’t apply those edits to this graph.' : 'No changes for that — try rephrasing.')
+        answer.value = tuneNotice || message || (commands.length ? 'I couldn’t apply those edits to this graph.' : 'No changes for that — try rephrasing.')
         return
       }
-      issues.value = verifyCanvas(probe)
-      // Play the blueprint on the canvas BEFORE the result card appears. Keep
-      // `busy` true so the grid sparks keep animating through the blueprint; the
-      // card (and sparks-off) land together when the delay ends.
-      opts.preview(built.map(c => c.command), true)
-      await new Promise(r => setTimeout(r, 1800)) // matches the blueprint duration
+      if (tuneNotice) answer.value = tuneNotice
       changes.value = built
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
-      opts.discard()
+      opts.discard(); opts.tuneRevert?.()
     } finally {
       busy.value = false
     }
@@ -147,8 +174,8 @@ export function useCanvasAgent(opts: {
     opts.commit()
     changes.value = []; original = null; issues.value = []
   }
-  /** Dismiss: remove the ghost preview from the canvas. */
-  function dismiss() { opts.discard(); changes.value = []; original = null; issues.value = []; answer.value = '' }
+  /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
+  function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = '' }
 
   return { busy, error, reasoning, answer, changes, issues, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, dismiss }
 }

@@ -11,6 +11,8 @@ import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
 import { capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
+import { tuneCompositorNode } from '~/lib/agent/studioTune'
+import type { ProposedChange } from '~/composables/useLayoutAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
@@ -366,6 +368,9 @@ const overlayNodeIds = ref<string[]>([])
 const agentIdMap: Record<string, string> = {} // placeholder id → real ghost node id
 const hoverNodeIds = ref<string[]>([])
 const hoverRects = ref<OverlayRect[]>([])
+// Studio-tune (headless): undo closures for in-place changes the agent made to a
+// node's internals (e.g. a Frame's background). Run on Dismiss; cleared on Keep.
+let tuneRestores: (() => void)[] = []
 const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
 const glimmPeriod = ref(0.55) // sweep speed: slow during the blueprint, fast on commit
 let ghostDrawTimer = 0
@@ -415,6 +420,9 @@ function agentDiscard() {
   glimmOn.value = false
   overlayNodeIds.value = []
   hoverNodeIds.value = []; hoverRects.value = []
+  // NOTE: tune edits are NOT reverted here — agentDiscard also runs on every
+  // recompute()/preview refresh, which must not wipe an applied frame edit. The
+  // explicit agentTuneRevert() (Dismiss only) undoes them.
   if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
   ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
   ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
@@ -450,6 +458,7 @@ function agentCommit() {
   if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
   blueprintRects.value = []
   hoverNodeIds.value = []; hoverRects.value = []
+  tuneRestores = [] // keep the in-place studio-tune edits
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
   for (const e of edges.value as any[]) if (e.data?.ghost) { e.data.ghost = false; e.data.blueprint = false }
@@ -467,6 +476,42 @@ function glimmBurstOver(nodeIds: string[]) {
   overlayNodeIds.value = nodeIds // re-track on pan/zoom during the burst
   if (glimmTimer) clearTimeout(glimmTimer)
   glimmTimer = window.setTimeout(() => { glimmOn.value = false; overlayNodeIds.value = [] }, 1150) // keep the rect; fade out via opacity
+}
+
+/** Headless studio-tune: for each tuneNode command, run the target node's OWN
+ *  agent surface against the request and apply it IN PLACE (the node re-bakes
+ *  itself). Returns proposal rows + a notice; pushes undo closures onto
+ *  tuneRestores so Dismiss reverts. Slice 1: Frame (Compositor) only. */
+async function agentTune(tuneCmds: { target: string; request: string }[], apiKey: string): Promise<{ changes: ProposedChange[]; notice?: string }> {
+  const changes: ProposedChange[] = []
+  const notices: string[] = []
+  const tunedIds: string[] = []
+  for (const tc of tuneCmds) {
+    // Resolve a just-added node's placeholder id ($new1) → its real ghost id.
+    const realId = agentIdMap[String(tc.target)] ?? String(tc.target)
+    const node = (nodes.value as any[]).find(n => String(n.id) === realId)
+    if (!node) continue
+    if (node.data?.nodeType !== 'Compositor') { notices.push('I can only tune a Frame’s internals from the canvas for now.'); continue }
+    try {
+      const res = await tuneCompositorNode(node, tc.request, apiKey)
+      if (res.restore) tuneRestores.push(res.restore)
+      if (res.notice) notices.push(res.notice)
+      if (res.ok) {
+        tunedIds.push(String(node.id))
+        for (const row of res.rows) {
+          changes.push({ command: { op: 'tuneNode', target: String(node.id), args: { request: tc.request } }, label: row.label, before: row.before, after: row.after, rationale: row.rationale, rerollable: false, accepted: true })
+        }
+      }
+    } catch (e) { notices.push(e instanceof Error ? e.message : String(e)) }
+  }
+  if (tunedIds.length) glimmBurstOver(tunedIds) // glimm the frame to show the in-place change
+  return { changes, notice: notices.length ? notices.join(' ') : undefined }
+}
+
+/** Undo all headless studio-tune edits from the current proposal (Dismiss). */
+function agentTuneRevert() {
+  for (const r of tuneRestores) { try { r() } catch { /* best-effort */ } }
+  tuneRestores = []
 }
 
 /** Hover a proposal row → ring the node(s) it points at (and brighten its wire).
@@ -4890,6 +4935,8 @@ defineExpose({
   agentCommit,
   agentDiscard,
   agentHighlight,
+  agentTune,
+  agentTuneRevert,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
