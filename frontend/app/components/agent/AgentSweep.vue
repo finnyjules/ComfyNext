@@ -23,16 +23,16 @@ async function ensure() {
   } catch { /* glimm unavailable — sweep just stays off */ }
 }
 
+let cur = 0 // eased alpha so the sweep fades in/out instead of popping
 function loop() {
   if (ctrl) {
     if (props.active) {
       const period = props.period ?? 1.6 // seconds per sweep cycle
       const t = (performance.now() - t0) / 1000
       ctrl.setProgress((t % period) / period)
-      ctrl.setAlpha(PEAK_ALPHA)
-    } else {
-      ctrl.setAlpha(0)
     }
+    cur += ((props.active ? PEAK_ALPHA : 0) - cur) * 0.12
+    ctrl.setAlpha(cur)
   }
   raf = requestAnimationFrame(loop)
 }

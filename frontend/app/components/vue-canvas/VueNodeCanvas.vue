@@ -355,6 +355,7 @@ const canvasRootRef = ref<HTMLElement | null>(null)
 interface OverlayRect { left: number; top: number; w: number; h: number; radius: string }
 const blueprintRects = ref<OverlayRect[]>([])
 const glimmBurst = ref<OverlayRect | null>(null)
+const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
 let ghostDrawTimer = 0
 let glimmTimer = 0
 const BLUEPRINT_MS = 1000
@@ -433,8 +434,9 @@ function glimmBurstOver(nodeIds: string[]) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const r of rects) { minX = Math.min(minX, r.left); minY = Math.min(minY, r.top); maxX = Math.max(maxX, r.left + r.w); maxY = Math.max(maxY, r.top + r.h) }
   glimmBurst.value = { left: minX, top: minY, w: maxX - minX, h: maxY - minY, radius: rects[0]!.radius }
+  glimmOn.value = true
   if (glimmTimer) clearTimeout(glimmTimer)
-  glimmTimer = window.setTimeout(() => { glimmBurst.value = null }, 1150)
+  glimmTimer = window.setTimeout(() => { glimmOn.value = false }, 1150) // keep the rect; fade out via opacity
 }
 
 const {
@@ -4843,24 +4845,27 @@ defineExpose({
     <!-- Dot grid behind everything -->
     <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
 
-    <!-- Blueprint draw-in: a white hairline contour traces each proposed node. -->
-    <div
-      v-for="(b, i) in blueprintRects" :key="'bp' + i"
-      class="agent-blueprint-ring absolute pointer-events-none z-30"
-      :style="{ left: b.left + 'px', top: b.top + 'px', width: b.w + 'px', height: b.h + 'px', borderRadius: b.radius }"
-    />
+    <!-- Blueprint preview: a white hairline rotating contour over each proposed
+         node. TransitionGroup fades each ring in/out. -->
+    <TransitionGroup name="bp-fade">
+      <div
+        v-for="(b, i) in blueprintRects" :key="'bp' + i"
+        class="agent-blueprint-ring absolute pointer-events-none z-30"
+        :style="{ left: b.left + 'px', top: b.top + 'px', width: b.w + 'px', height: b.h + 'px', borderRadius: b.radius }"
+      />
+    </TransitionGroup>
 
     <!-- Glimm "citrus" sweep over a just-committed agent node + its connection.
-         Persistently mounted (display toggled) so glimm initialises on the
-         active false→true change with the canvas already sized — a v-if + constant
-         active would run AgentSweep's immediate watch before the canvas mounts. -->
+         Persistently mounted; glimmOn fades it via opacity + AgentSweep's eased
+         alpha (a v-if + constant active would run AgentSweep's immediate watch
+         before the canvas mounts). -->
     <div
       class="absolute pointer-events-none z-30"
       :style="glimmBurst
-        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', clipPath: `inset(0 round ${glimmBurst.radius})` }
+        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', clipPath: `inset(0 round ${glimmBurst.radius})`, opacity: glimmOn ? 1 : 0, transition: 'opacity 0.4s ease' }
         : { display: 'none' }"
     >
-      <AgentSweep :active="!!glimmBurst" :period="0.55" />
+      <AgentSweep :active="glimmOn" :period="0.55" />
     </div>
 
     <VueFlow

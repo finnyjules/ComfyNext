@@ -363,3 +363,6 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   stroke-dasharray: 10 10;
   animation: ghost-dash 0.9s linear infinite;
 }
+/* Fade the blueprint contour rings in and out. */
+.bp-fade-enter-active, .bp-fade-leave-active { transition: opacity 0.4s ease; }
+.bp-fade-enter-from, .bp-fade-leave-to { opacity: 0; }

@@ -29,6 +29,7 @@ let rainbowOffset = 0 // horizontal scroll offset for rainbow
 interface Spark { gx: number; gy: number; dx: number; dy: number; p: number; speed: number; hueBase: number; trail: { wx: number; wy: number }[] }
 let sparks: Spark[] = []
 let sparkHue = 0 // global flowing offset so the rainbow drifts over time
+let thinkFade = 0 // 0..1 eased opacity so the synapse field fades in/out
 const TRAIL_LEN = 64 // points of history → a long comet
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 function spawnSpark(gxMin: number, gxMax: number, gyMin: number, gyMax: number): Spark {
@@ -117,16 +118,18 @@ function draw() {
     }
   }
 
-  // Thinking sparks — little segments firing dot-to-dot like synapses.
-  if (props.thinking) {
-    const gxMin = Math.floor((0 - offsetX) / g) - 1
-    const gxMax = Math.ceil((w - offsetX) / g) + 1
-    const gyMin = Math.floor((0 - offsetY) / g) - 1
-    const gyMax = Math.ceil((h - offsetY) / g) + 1
-    if (!sparks.length) {
-      const n = Math.min(22, Math.max(10, Math.round((gxMax - gxMin) / 4)))
-      sparks = Array.from({ length: n }, () => spawnSpark(gxMin, gxMax, gyMin, gyMax))
-    }
+  // Thinking sparks — little segments firing dot-to-dot like synapses. The whole
+  // field fades in/out via thinkFade (eased toward 0/1) so it never pops.
+  thinkFade += ((props.thinking ? 1 : 0) - thinkFade) * 0.06
+  const gxMin = Math.floor((0 - offsetX) / g) - 1
+  const gxMax = Math.ceil((w - offsetX) / g) + 1
+  const gyMin = Math.floor((0 - offsetY) / g) - 1
+  const gyMax = Math.ceil((h - offsetY) / g) + 1
+  if (props.thinking && !sparks.length) {
+    const n = Math.min(22, Math.max(10, Math.round((gxMax - gxMin) / 4)))
+    sparks = Array.from({ length: n }, () => spawnSpark(gxMin, gxMax, gyMin, gyMax))
+  }
+  if (sparks.length && (props.thinking || thinkFade > 0.02)) {
     sparkHue = (sparkHue + 0.7) % 360
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
@@ -149,8 +152,9 @@ function draw() {
         const a = s.trail[i - 1]!, b = s.trail[i]!
         const t = i / s.trail.length // 0 tail → 1 head
         const hue = (sparkHue + s.hueBase + i * 7) % 360
-        // Steep (quadratic) falloff so the tail fades out fast behind the head.
-        ctx.strokeStyle = `hsla(${hue}, 75%, 82%, ${(0.9 * t * t).toFixed(3)})`
+        // Steep (quadratic) falloff so the tail fades out fast behind the head;
+        // × thinkFade so the whole field eases in/out.
+        ctx.strokeStyle = `hsla(${hue}, 75%, 82%, ${(0.9 * t * t * thinkFade).toFixed(3)})`
         ctx.lineWidth = 0.4 + 2.6 * t * t
         ctx.beginPath()
         ctx.moveTo(offsetX + a.wx * g, offsetY + a.wy * g)
@@ -162,11 +166,11 @@ function draw() {
       const headHue = (sparkHue + s.hueBase + s.trail.length * 7) % 360
       ctx.beginPath()
       ctx.arc(offsetX + head.wx * g, offsetY + head.wy * g, 2.2, 0, Math.PI * 2)
-      ctx.fillStyle = `hsla(${headHue}, 80%, 90%, 0.95)`
+      ctx.fillStyle = `hsla(${headHue}, 80%, 90%, ${(0.95 * thinkFade).toFixed(3)})`
       ctx.fill()
     }
-  } else if (sparks.length) {
-    sparks = []
+  } else if (sparks.length && !props.thinking && thinkFade <= 0.02) {
+    sparks = [] // fully faded out → release
   }
 
   // Reset transform for next frame
