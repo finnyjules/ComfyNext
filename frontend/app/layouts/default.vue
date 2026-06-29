@@ -18,6 +18,7 @@ import LoraTrainerSurface from '~/components/LoraTrainerSurface.vue'
 import AllProjectsView from '~/components/AllProjectsView.vue'
 import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
+import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
@@ -2966,6 +2967,14 @@ function dismissRunResult() {
           @dismiss-result="dismissRunResult"
         />
 
+        <!-- Canvas agent prompt — persistent, sits just above the toolbar -->
+        <div
+          v-if="activeTab.type === 'project' && vueNodesEnabled"
+          class="absolute bottom-[5.25rem] left-1/2 -translate-x-1/2 z-40"
+        >
+          <AgentCanvasPromptBar :vue-canvas="vueCanvasRef" />
+        </div>
+
         <!-- Floating toolbar overlay (only visible on project tabs) -->
         <div
           v-if="activeTab.type === 'project'"
@@ -3180,7 +3189,7 @@ function dismissRunResult() {
         </Transition>
 
         <!-- Explain panel -->
-        <ExplainPanel :vue-canvas="vueCanvasRef" />
+        <ExplainPanel />
       </main>
     </div>
 

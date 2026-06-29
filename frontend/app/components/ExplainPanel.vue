@@ -1,29 +1,8 @@
 <script setup lang="ts">
 import { X, RefreshCw } from 'lucide-vue-next'
 import { marked } from 'marked'
-import AgentBar from '~/components/agent/AgentBar.vue'
-import AgentProgress from '~/components/agent/AgentProgress.vue'
-import AgentProposal from '~/components/agent/AgentProposal.vue'
-import { useCanvasAgent } from '~/composables/useCanvasAgent'
-
-// vueCanvas is the VueNodeCanvas ref — present in Vue Flow mode. When it exposes
-// agentSnapshot/applyCanvasOps the panel gains an interactive command bar that
-// can edit the graph (Phase 3, Slice 1), folding the canvas agent into Explain.
-const props = defineProps<{ vueCanvas?: any }>()
 
 const { explainPanelOpen, graphData, explanation, loading, error, reset, submitExplanation, highlightedNodeId } = useExplain()
-const { getLocalSetting } = useLocalSettings()
-
-const canEdit = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.applyCanvasOps === 'function')
-const {
-  busy: caBusy, error: caError, reasoning: caReasoning, answer: caAnswer,
-  changes: caChanges, issues: caIssues, hasProposal: caHasProposal, hovered: caHovered,
-  ask: caAsk, acceptChange: caAccept, rejectChange: caReject, reroll: caReroll, keep: caKeep, dismiss: caDismiss,
-} = useCanvasAgent({
-  getSnapshot: () => props.vueCanvas.agentSnapshot(),
-  materialise: (cmds) => props.vueCanvas.applyCanvasOps(cmds),
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
-})
 
 const nodeCount = computed(() => graphData.value?.nodes?.length ?? 0)
 
@@ -148,29 +127,6 @@ function retry() {
           @mouseover="onExplanationMouseOver"
           @mouseout="onExplanationMouseOut"
         />
-      </div>
-
-      <!-- Interactive command bar (Vue Flow mode): ask or tell it to edit nodes. -->
-      <div v-if="canEdit" class="border-t border-[#2a2a2a] p-3 space-y-2.5">
-        <AgentBar
-          :busy="caBusy" :error="caError"
-          :chips="['What does this do?', 'Set steps to 30', 'Mute the upscaler']"
-          placeholder="Ask, or tell me to change a node — e.g. set the seed to 42…"
-          @submit="caAsk" @chip="caAsk"
-        />
-        <div v-if="caBusy"><AgentProgress :active="caBusy" /></div>
-        <template v-else>
-          <div v-if="caAnswer">
-            <p v-if="caReasoning" class="mb-1 text-[11px] leading-snug text-white/40">{{ caReasoning }}</p>
-            <p class="whitespace-pre-line text-[12.5px] leading-relaxed text-white/80">{{ caAnswer }}</p>
-          </div>
-          <AgentProposal
-            v-if="caHasProposal"
-            :changes="caChanges" :busy="caBusy" :issues="caIssues"
-            @accept="caAccept" @reject="caReject" @reroll="caReroll"
-            @keep="caKeep" @revert="caDismiss" @hover="(i: number | null) => caHovered = i"
-          />
-        </template>
       </div>
     </div>
   </Transition>
