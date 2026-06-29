@@ -68,7 +68,7 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
 
 <style scoped>
 /* Dark prompt box with a pastel gradient ring that is INVISIBLE at rest and fades
-   to full when the field is active (focused). The ring is a masked pseudo-element
+   to full when the field is active (focused), muted (~40%) at rest. The ring is a masked pseudo-element
    so its opacity can transition — you can't fade a background-image gradient — and
    a full-pixel `padding` keeps it even on all sides despite the centred (fractional
    x) position. It slowly drifts regardless (paused for reduced-motion). */
@@ -88,7 +88,7 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  opacity: 0;                         /* transparent at rest */
+  opacity: 0.4;                       /* muted at rest */
   transition: opacity 0.4s ease;
   animation: prompt-pastel-pan 9s ease-in-out infinite alternate;
   pointer-events: none;
