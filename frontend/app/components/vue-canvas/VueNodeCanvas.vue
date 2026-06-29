@@ -4806,9 +4806,9 @@ defineExpose({
          active false→true change with the canvas already sized — a v-if + constant
          active would run AgentSweep's immediate watch before the canvas mounts. -->
     <div
-      class="absolute pointer-events-none z-30 overflow-hidden"
+      class="absolute pointer-events-none z-30"
       :style="glimmBurst
-        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', borderRadius: glimmBurst.radius }
+        ? { left: glimmBurst.left + 'px', top: glimmBurst.top + 'px', width: glimmBurst.w + 'px', height: glimmBurst.h + 'px', clipPath: `inset(0 round ${glimmBurst.radius})` }
         : { display: 'none' }"
     >
       <AgentSweep :active="!!glimmBurst" />
