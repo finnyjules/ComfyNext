@@ -1,3 +1,5 @@
+import { modelForTier } from '../lib/aiModels'
+
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const { graphData, apiKey } = body || {}
@@ -19,7 +21,7 @@ export default defineEventHandler(async (event) => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: modelForTier('plan'),
         max_tokens: 1024,
         messages: [
           {
