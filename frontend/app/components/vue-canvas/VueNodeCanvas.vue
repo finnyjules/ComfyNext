@@ -260,8 +260,10 @@ function wireEdge(from: any, to: any, fromPort?: string, toPort?: string, ghost 
  *  Returns the ids it created so the caller can commit/discard them. */
 async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
   // Placeholder ids ($new1…) the model assigned in addNode → the real ids we mint
-  // here, so a later connect can reference the just-added node.
-  const idMap: Record<string, string> = {}
+  // here, so a later connect can reference the just-added node. Persisted on the
+  // component so hover-highlight can resolve a proposal row back to its ghost node.
+  for (const k of Object.keys(agentIdMap)) delete agentIdMap[k]
+  const idMap = agentIdMap
   const sel = (nodes.value as any[]).find(n => n.selected)
   const newIds: string[] = []
   const realId = (id: unknown): string => { const s = String(id); return idMap[s] ?? s }
@@ -360,6 +362,10 @@ const glimmBurst = ref<OverlayRect | null>(null)
 // The node(s) the overlays currently sit on — kept so the blueprint rings + glimm
 // re-track the cards when the canvas pans/zooms (the overlays are screen-space).
 const overlayNodeIds = ref<string[]>([])
+// Hover-highlight: ring the node(s) a proposal row points at while it's hovered.
+const agentIdMap: Record<string, string> = {} // placeholder id → real ghost node id
+const hoverNodeIds = ref<string[]>([])
+const hoverRects = ref<OverlayRect[]>([])
 const glimmOn = ref(false) // gates the glimm opacity so it fades in/out
 const glimmPeriod = ref(0.55) // sweep speed: slow during the blueprint, fast on commit
 let ghostDrawTimer = 0
@@ -408,6 +414,7 @@ function agentDiscard() {
   blueprintRects.value = []
   glimmOn.value = false
   overlayNodeIds.value = []
+  hoverNodeIds.value = []; hoverRects.value = []
   if (!(nodes.value as any[]).some(n => n.data?.ghost) && !(edges.value as any[]).some(e => e.data?.ghost)) return
   ;(nodes.value as any[]).splice(0, nodes.value.length, ...(nodes.value as any[]).filter(n => !n.data?.ghost))
   ;(edges.value as any[]).splice(0, edges.value.length, ...(edges.value as any[]).filter(e => !e.data?.ghost))
@@ -442,6 +449,7 @@ async function agentPreview(commands: Command[], animate = false) {
 function agentCommit() {
   if (ghostDrawTimer) { clearTimeout(ghostDrawTimer); ghostDrawTimer = 0 }
   blueprintRects.value = []
+  hoverNodeIds.value = []; hoverRects.value = []
   const ghostNodeIds = (nodes.value as any[]).filter(n => n.data?.ghost).map(n => String(n.id))
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
   for (const e of edges.value as any[]) if (e.data?.ghost) { e.data.ghost = false; e.data.blueprint = false }
@@ -459,6 +467,31 @@ function glimmBurstOver(nodeIds: string[]) {
   overlayNodeIds.value = nodeIds // re-track on pan/zoom during the burst
   if (glimmTimer) clearTimeout(glimmTimer)
   glimmTimer = window.setTimeout(() => { glimmOn.value = false; overlayNodeIds.value = [] }, 1150) // keep the rect; fade out via opacity
+}
+
+/** Hover a proposal row → ring the node(s) it points at (and brighten its wire).
+ *  Pass null to clear. Resolves addNode/connect placeholder ids via agentIdMap. */
+function agentHighlight(command: { op?: string; target?: unknown; args?: any } | null) {
+  for (const e of edges.value as any[]) if (e.data?.hi) e.data.hi = false // clear prior wire highlight
+  if (!command) { hoverNodeIds.value = []; hoverRects.value = []; return }
+  const resolve = (id: unknown): string => { const s = String(id); return agentIdMap[s] ?? s }
+  const ids: string[] = []
+  if (command.op === 'connect') {
+    const from = resolve(command.args?.from), to = resolve(command.args?.to)
+    const edge = (edges.value as any[]).find(e => String(e.source) === from && String(e.target) === to)
+    if (edge) { if (!edge.data) edge.data = {}; edge.data.hi = true }
+    if (from) ids.push(from)
+    if (to) ids.push(to)
+  } else if (command.op === 'addNode') {
+    const direct = command.args?.id != null ? agentIdMap[String(command.args.id)] : undefined
+    const byType = direct ? null : (nodes.value as any[]).find(n => n.data?.ghost && n.data?.nodeType === command.args?.nodeType)
+    const id = direct ?? (byType ? String(byType.id) : undefined)
+    if (id) ids.push(id)
+  } else if (command.target != null) {
+    ids.push(resolve(command.target))
+  }
+  hoverNodeIds.value = ids
+  hoverRects.value = cardRects(ids)
 }
 
 const {
@@ -517,6 +550,7 @@ const {
 // cards whenever the canvas pans/zooms — otherwise they'd stay pinned to the
 // screen while the nodes move under them.
 watch(vfViewport, () => {
+  if (hoverNodeIds.value.length) hoverRects.value = cardRects(hoverNodeIds.value)
   if (!overlayNodeIds.value.length) return
   const rects = cardRects(overlayNodeIds.value)
   if (!rects.length) return
@@ -4855,6 +4889,7 @@ defineExpose({
   agentPreview,
   agentCommit,
   agentDiscard,
+  agentHighlight,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
@@ -4885,6 +4920,15 @@ defineExpose({
         v-for="(b, i) in blueprintRects" :key="'bp' + i"
         class="agent-blueprint-ring absolute pointer-events-none z-30"
         :style="{ left: b.left + 'px', top: b.top + 'px', width: b.w + 'px', height: b.h + 'px', borderRadius: b.radius }"
+      />
+    </TransitionGroup>
+
+    <!-- Hover-highlight: ring the node(s) a hovered proposal row points at. -->
+    <TransitionGroup name="bp-fade">
+      <div
+        v-for="(b, i) in hoverRects" :key="'hi' + i"
+        class="agent-hover-ring absolute pointer-events-none z-30"
+        :style="{ left: (b.left - 3) + 'px', top: (b.top - 3) + 'px', width: (b.w + 6) + 'px', height: (b.h + 6) + 'px', borderRadius: `calc(${b.radius} + 3px)` }"
       />
     </TransitionGroup>
 

@@ -32,6 +32,12 @@ const { thinking } = useAgentActivity()
 watch(busy, (v) => { thinking.value = v })
 onBeforeUnmount(() => { thinking.value = false })
 
+// Hovering a proposal row highlights the node/wire it refers to on the canvas.
+watch(hovered, (i) => {
+  if (typeof props.vueCanvas?.agentHighlight !== 'function') return
+  props.vueCanvas.agentHighlight(i != null ? changes.value[i]?.command ?? null : null)
+})
+
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
 const hasResult = computed(() => busy.value || hasProposal.value || !!answer.value || !!error.value)
