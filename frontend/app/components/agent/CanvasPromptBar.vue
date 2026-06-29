@@ -74,4 +74,21 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
   border-width: 1px;
   filter: saturate(1);
 }
+
+/* Slowly drift the pastel along the ring. .pastel-hairline paints two background
+   layers — the solid inner fill (layer 1, kept static) and the pastel gradient
+   (layer 2). Widen + pan only the gradient layer; ease-in-out + alternate so it
+   flows back and forth with no seam jump (same idea as .gen-pastel-flow). */
+.pastel-hairline {
+  background-size: 100% 100%, 200% 100%;
+  background-position: 0% 0%, 0% 50%;
+  animation: prompt-pastel-pan 9s ease-in-out infinite alternate;
+}
+@keyframes prompt-pastel-pan {
+  from { background-position: 0% 0%, 0% 50%; }
+  to { background-position: 0% 0%, 100% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pastel-hairline { animation: none; }
+}
 </style>
