@@ -2983,7 +2983,7 @@ function dismissRunResult() {
 
           <!-- Floating toolbar -->
           <div
-            class="flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg"
+            class="flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1 border border-[#2a2a2a] shadow-lg"
           >
           <template v-for="(item) in sidebarItems" :key="item.label">
             <div
@@ -2992,11 +2992,11 @@ function dismissRunResult() {
             />
             <div class="relative">
               <button
-                class="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-[8px] cursor-pointer transition-colors group"
+                class="flex flex-col items-center gap-0.5 px-3 py-1 rounded-[8px] cursor-pointer transition-colors group"
                 :class="isSidebarItemActive(item) ? 'bg-white/10' : 'hover:bg-white/5'"
                 @click="toggleSidebarItem(item.label)"
               >
-                <component :is="item.icon" class="size-5 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
+                <component :is="item.icon" class="size-4 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
                 <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': isSidebarItemActive(item) }">
                   {{ item.label }}
                 </span>
