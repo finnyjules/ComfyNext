@@ -637,17 +637,41 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
  *  Picks the most-downstream run node that produced an image. */
 async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
   if (typeof document === 'undefined') return null
-  const ids = new Set(nodeIds.map(String))
-  // The rendered image often lives on a downstream result CARD (generator → Image
-  // card), not on the target itself — include direct downstream neighbours so the
-  // review/repair sees the actual output rather than nothing.
-  for (const e of edges.value as any[]) if (ids.has(String(e.source))) ids.add(String(e.target))
-  const withImg = (nodes.value as any[]).filter(n => ids.has(String(n.id)) && typeof n.data?.images?.[0] === 'string')
-  const node = withImg[withImg.length - 1] || withImg[0] // last = most-downstream of the run
+  const eds = edges.value as any[]
+  const byId = (id: string) => (nodes.value as any[]).find(n => String(n.id) === String(id))
+  const hasImg = (n: any) => typeof n?.data?.images?.[0] === 'string'
+
+  // 1) Of the nodes we were handed, keep only the DOWNSTREAM-most — drop any that
+  //    feed another target. This is what fixes "re-review reads the OLD image": a
+  //    fix (e.g. EditImage) is wired result→effect, and the auto-captured INPUT
+  //    card (holding the previous image) rides along in the target set; without
+  //    this it could win over the freshly-produced output.
+  let targets = nodeIds.map(String)
+  const tset = new Set(targets)
+  targets = targets.filter(id => !eds.some(e => String(e.source) === id && tset.has(String(e.target))))
+
+  // 2) Candidate result nodes: each target that has an image; if a target has no
+  //    image yet, follow ONE hop downstream (generator → result card / run sink).
+  const cands = new Set<string>()
+  for (const id of targets) {
+    if (hasImg(byId(id))) { cands.add(id); continue }
+    for (const e of eds) if (String(e.source) === id && hasImg(byId(String(e.target)))) cands.add(String(e.target))
+  }
+  const withImg = [...cands].map(byId).filter(hasImg)
+  if (!withImg.length) return null
+
+  // 3) Most-downstream candidate (one that doesn't feed another candidate) = the
+  //    freshest result.
+  const cset = new Set(withImg.map(n => String(n.id)))
+  const feedsAnother = (id: string) => eds.some(e => String(e.source) === id && cset.has(String(e.target)))
+  const node = withImg.filter(n => !feedsAnother(String(n.id))).pop() || withImg[withImg.length - 1]
   const url = node?.data?.images?.[0]
   if (typeof url !== 'string') return null
   try {
-    const res = await fetch(url)
+    // Cache-bust so a re-review never gets a STALE cached blob (overwritten files
+    // can reuse a filename).
+    const bust = url + (url.includes('?') ? '&' : '?') + '_r=' + Date.now()
+    const res = await fetch(bust)
     if (!res.ok) return null
     const blob = await res.blob()
     return await new Promise<string>((resolve, reject) => {
