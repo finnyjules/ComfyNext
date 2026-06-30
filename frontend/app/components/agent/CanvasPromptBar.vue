@@ -34,6 +34,8 @@ const {
   // truly-unchanged upstream stays cached.
   run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
   runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
+  repairAnatomy: (target: string, spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string }) =>
+    props.vueCanvas.agentRepairAnatomy(target, spec, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 

@@ -688,6 +688,137 @@ function agentTuneRevert() {
   tuneRestores = []
 }
 
+// ── repairAnatomy helpers ─────────────────────────────────────────────────────
+
+/** Load a data URL into a hidden Image element and return its pixel dimensions. */
+function imageDims(dataUrl: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => resolve({ w: 0, h: 0 })
+    img.src = dataUrl
+  })
+}
+
+/** Write a repaired result image back onto the node — same path as InpaintModal's
+ *  acceptInpaint: upload to ComfyUI input dir, set the 'image' widget value,
+ *  update node.data.images, and lock the node so it doesn't re-run. */
+async function writeResultImage(nodeId: string, dataUrl: string): Promise<void> {
+  const node = (nodes.value as any[]).find(n => String(n.id) === String(nodeId))
+  if (!node) return
+  // Upload via ComfyUI's /upload/image endpoint (mirrors useInpaint.uploadDataUrl).
+  const safe = `repaired_${nodeId}_${Date.now()}.png`
+  const blob = await fetch(dataUrl).then(r => r.blob())
+  const fd = new FormData()
+  fd.append('image', new File([blob], safe, { type: 'image/png' }))
+  fd.append('overwrite', 'true')
+  const up = await fetch('/upload/image', { method: 'POST', body: fd })
+  if (!up.ok) throw new Error(`upload ${up.status}`)
+  const filename: string = (await up.json())?.name ?? safe
+  // Mirror acceptInpaint's write-back path: widget value + options list + images + lock.
+  const defs: any[] = node.data?.widgetDefs ?? []
+  const vals: any[] = node.data?.widgetsValues ?? []
+  const wi = defs.findIndex((d: any) => d?.name === 'image')
+  if (wi >= 0 && vals) vals[wi] = filename
+  const def = defs.find((d: any) => d?.name === 'image')
+  if (def && Array.isArray(def.options) && !def.options.includes(filename)) def.options.push(filename)
+  node.data.images = [`/view?${new URLSearchParams({ filename, type: 'input' })}`]
+  if (!node.data.properties) node.data.properties = {}
+  node.data.properties.locked = true
+}
+
+/**
+ * Per-variation vision check: POST each candidate to /api/agent-review with a
+ * tight yes/no schema and return the first that gets ok=true. Returns null if
+ * none pass. Keeps cost low (Haiku tier, max_tokens inherited from route default).
+ *
+ * Schema: { ok: boolean }  — the model answers whether the anatomy looks correct.
+ */
+async function pickRepairedVariation(
+  urls: string[],
+  spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string },
+  apiKey: string,
+): Promise<string | null> {
+  const yesNoSchema = {
+    type: 'object',
+    properties: { ok: { type: 'boolean' } },
+    required: ['ok'],
+    additionalProperties: false,
+  }
+  const kindLabel = spec.kind === 'hand' ? 'a hand (five fingers, natural anatomy)' : spec.kind === 'face' ? 'a face (natural proportions)' : 'a limb (natural anatomy)'
+  const prompt = `Look at this image. Does it show ${kindLabel} that looks correct and natural, with no obvious defects or extra/missing digits? Answer with JSON {"ok": true} if yes, {"ok": false} if no.`
+  for (const url of urls) {
+    try {
+      const res = await $fetch<{ text: string }>('/api/agent-review', {
+        method: 'POST',
+        body: { apiKey, tier: 'tune', prompt, schema: yesNoSchema, image: url },
+        timeout: 30_000,
+      })
+      const parsed = JSON.parse(res.text ?? '{}') as { ok?: boolean }
+      if (parsed.ok === true) return url
+    } catch {
+      // If a single variation check fails, move on to the next.
+    }
+  }
+  return null
+}
+
+/**
+ * Canvas-level repairAnatomy: fetch the target node's current result image,
+ * call /api/inpaint/fix-anatomy with the defect bbox, verify each variation
+ * via a vision check, and write the first passing result back onto the node.
+ *
+ * Called by useCanvasAgent when a kept fixAnatomy proposal is applied.
+ * On a SAM miss (409) or any route error the original image is left untouched.
+ *
+ * apiKey is supplied by the caller (CanvasPromptBar wraps this into the
+ * repairAnatomy option so the signature matches what useCanvasAgent expects).
+ */
+async function agentRepairAnatomy(
+  target: string,
+  spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string },
+  apiKey: string,
+): Promise<void> {
+  // 1) Get the target node's current result image (same source as the review loop).
+  //    agentRunOutputImage reads node.data.images[0] and converts it to a data URL.
+  const image = await agentRunOutputImage([target])
+  if (!image) return
+  const dims = await imageDims(image)
+  if (!dims.w || !dims.h) return
+
+  const MAX_ATTEMPTS = 2
+  let seed = Math.floor(Math.random() * 2_000_000_000)
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let res: { images: string[]; mask: string } | null = null
+    try {
+      res = await $fetch<{ images: string[]; mask: string }>('/api/inpaint/fix-anatomy', {
+        method: 'POST',
+        body: { image, bbox: spec.bbox, imageW: dims.w, imageH: dims.h, kind: spec.kind, count: 2, seed },
+      })
+    } catch (err: any) {
+      // 409 = SAM couldn't isolate the region — leave original untouched.
+      const reason: string = err?.data?.reason ?? ''
+      console.warn(`[repairAnatomy] fix-anatomy failed (${reason || (err?.status ?? 'unknown')}); leaving original intact.`)
+      return
+    }
+    if (!res?.images?.length) break
+
+    const picked = await pickRepairedVariation(res.images, spec, apiKey)
+    if (picked) {
+      try {
+        await writeResultImage(target, picked)
+      } catch (err: any) {
+        console.warn('[repairAnatomy] write-back failed:', err?.message ?? err)
+      }
+      return
+    }
+    seed += 1 // next attempt with a different seed
+  }
+  // All attempts exhausted with no passing variation — leave original untouched.
+  console.warn('[repairAnatomy] no passing variation found after', MAX_ATTEMPTS, 'attempt(s); leaving original intact.')
+}
+
 /** Hover a proposal row → ring the node(s) it points at (and brighten its wire).
  *  Pass null to clear. Resolves addNode/connect placeholder ids via agentIdMap. */
 function agentHighlight(command: { op?: string; target?: unknown; args?: any } | null) {
@@ -5156,6 +5287,7 @@ defineExpose({
   agentTuneRevert,
   agentRunOutputImage,
   agentNodeIntent,
+  agentRepairAnatomy,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
