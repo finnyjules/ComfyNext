@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Layers2, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -46,7 +46,7 @@ provide('layerControls', {
   isLocked: ctx.isLocked,
 })
 
-const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand } = ctx
+const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand, selectedStack, wrapSelectionInStack } = ctx
 
 // In-product agent (last-mile of F1): drives the template through the command
 // surface. Gated to v3 templates in the UI below.
@@ -364,6 +364,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
             </div>
           </Transition>
           <TemplatesGridPropertyPanel v-if="selectedElement && !agentBusy" />
+          <TemplatesStackInspector v-if="selectedStack && !agentBusy" />
         </div>
       </div>
 
@@ -577,6 +578,15 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
           @click="ctx.addShape()"
         >
           <Square class="size-3.5" /> Shape
+        </button>
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+          :class="selectedId ? 'text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200' : 'text-white/70'"
+          :disabled="!selectedId"
+          title="Wrap selected element in a Stack (auto-layout group)"
+          @click="wrapSelectionInStack()"
+        >
+          <Layers2 class="size-3.5" /> Stack
         </button>
         </div>
 

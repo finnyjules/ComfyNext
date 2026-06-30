@@ -9,6 +9,7 @@ import type { GridEditorContext } from '~/composables/useGridEditor'
 import { colorToRgba } from '~~/shared/template-grid/color'
 import { dragRegion, resizeRegion } from '~~/shared/template-grid/editor'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
+import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
@@ -16,6 +17,7 @@ const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion, patchElement,
   isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
+  moveChildIntoStack, moveChildOutOfStack,
   scale, zoomBy, setContainerSize,
 } = ctx
 
@@ -300,6 +302,11 @@ function onElementPointerMove(e: PointerEvent) {
   }
 }
 
+/** True when point p lies within rect r (all in canvas/template px). */
+function pointInRect(p: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+}
+
 function onElementPointerUp(e: PointerEvent) {
   if (panState) {
     ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
@@ -307,8 +314,45 @@ function onElementPointerUp(e: PointerEvent) {
     return
   }
   if (!dragState) return
+  const finishedDrag = dragState
   ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
   dragState = null
+
+  // Drag-reparent: after a move, hit-test the element's centre against each
+  // resolved Stack section and move it in/out as needed.
+  if (finishedDrag.moved && isV3Mode.value) {
+    const elementId = finishedDrag.id
+    const el = resolved.value.elements.find(r => r.el.id === elementId)
+    if (el) {
+      const centre = { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 }
+
+      // Determine which stack (if any) this element already belongs to.
+      const tpl = template.value
+      let currentStackId: string | null = null
+      if (isV3(tpl)) {
+        for (const sec of tpl.sections) {
+          if (isLayoutStack(sec) && sec.children.some(c => c.id === elementId)) {
+            currentStackId = sec.id
+            break
+          }
+        }
+      }
+
+      // Find the target stack under the drop point.
+      let targetStackId: string | null = null
+      for (const rs of resolvedSections.value) {
+        if (rs.section.layout != null && pointInRect(centre, rs.rect)) {
+          targetStackId = rs.section.id
+          break
+        }
+      }
+
+      if (targetStackId !== currentStackId) {
+        if (currentStackId) moveChildOutOfStack(currentStackId, elementId)
+        if (targetStackId) moveChildIntoStack(targetStackId, elementId)
+      }
+    }
+  }
 }
 
 // -- Resize handles (snap spans to cells) ------------------------------------
