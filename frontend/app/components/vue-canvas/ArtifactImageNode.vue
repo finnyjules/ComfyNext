@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Hand } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
+import { useInpaint } from '~/composables/useInpaint'
 
 // The visual half of the unified `Image` artifact node. State is derived from
 // (upstream connection, file widget, execution output) rather than the node
@@ -336,6 +337,118 @@ function unlockArtifact() {
   ;(props.data.properties as any).locked = false
 }
 
+// --- Fix hands (manual anatomy repair) ------------------------------------
+// Clicking the hand icon enters a one-shot "tap the bad hand" capture mode.
+// The user clicks the bad hand; we convert that click to source-pixel coords,
+// POST to /api/inpaint/fix-anatomy, and show the 2 variation thumbnails.
+// Hover-to-preview + click-to-accept mirrors InpaintModal's history picker
+// (lines 612-621 of InpaintModal.vue).
+
+const inpaint = useInpaint()
+const fixHandsMode = ref(false)          // one-shot pointer-capture mode active
+const fixHandsBusy = ref(false)
+const fixHandsVariations = ref<string[]>([])
+const fixHandsError = ref('')
+const fixHandsPreview = ref<string | null>(null)   // hover preview (mirrors previewResult in InpaintModal)
+const imageRef = ref<HTMLImageElement | null>(null) // ref on the displayed <img>
+
+function enterFixHandsMode() {
+  if (!displayedUrl.value) return
+  fixHandsVariations.value = []
+  fixHandsError.value = ''
+  fixHandsPreview.value = null
+  fixHandsMode.value = true
+}
+
+function cancelFixHandsMode() {
+  fixHandsMode.value = false
+  fixHandsBusy.value = false
+}
+
+async function onFixHandsClick(e: MouseEvent) {
+  if (!fixHandsMode.value || fixHandsBusy.value) return
+  // Exit capture mode immediately so a second accidental click is ignored.
+  fixHandsMode.value = false
+  fixHandsBusy.value = true
+  fixHandsError.value = ''
+  fixHandsVariations.value = []
+  fixHandsPreview.value = null
+
+  try {
+    // Convert client-space click → source-image pixel coords.
+    // Mirrors InpaintModal's clientToNorm pattern (line 200-203) adapted for a
+    // plain <img> that is object-contain fitted inside its container.
+    const imgEl = imageRef.value
+    if (!imgEl) throw new Error('image not mounted')
+    const rect = imgEl.getBoundingClientRect()
+    // The <img> is object-contain; the rendered content may be letterboxed.
+    // Compute the actual rendered size + offset of the image content inside the element.
+    const natW = imgEl.naturalWidth || rect.width
+    const natH = imgEl.naturalHeight || rect.height
+    const scaleX = rect.width / natW
+    const scaleY = rect.height / natH
+    const renderScale = Math.min(scaleX, scaleY)
+    const renderedW = natW * renderScale
+    const renderedH = natH * renderScale
+    const offsetX = (rect.width - renderedW) / 2
+    const offsetY = (rect.height - renderedH) / 2
+    // Click position relative to the image content origin, in source pixels.
+    const xPx = Math.round((e.clientX - rect.left - offsetX) / renderScale)
+    const yPx = Math.round((e.clientY - rect.top - offsetY) / renderScale)
+
+    const res = await $fetch<{ images: string[] }>('/api/inpaint/fix-anatomy', {
+      method: 'POST',
+      body: {
+        image: displayedUrl.value,
+        point: { xPx, yPx },
+        kind: 'hand',
+        count: 2,
+      },
+    })
+    fixHandsVariations.value = res.images
+  } catch (err: any) {
+    const reason = err?.data?.reason as string | undefined
+    if (reason === 'segment-failed' || reason === 'empty-mask') {
+      fixHandsError.value = "Couldn't isolate the hand — try clicking right on it"
+    } else {
+      fixHandsError.value = err?.data?.message || err?.message || 'Fix hands failed'
+    }
+  } finally {
+    fixHandsBusy.value = false
+  }
+}
+
+// Write a picked variation back to the node — mirrors acceptInpaint in
+// InpaintModal.vue (lines 341-357): upload → set widgetsValues + images + lock.
+async function acceptHandFix(dataUrl: string) {
+  fixHandsError.value = ''
+  try {
+    const filename = await inpaint.uploadDataUrl(dataUrl, `fixhands_${props.id}`)
+    const idx = imageWidgetIdx.value
+    if (idx >= 0 && props.data.widgetsValues) props.data.widgetsValues[idx] = filename
+    const def = props.data.widgetDefs?.find((d: any) => d.name === 'image')
+    if (def && Array.isArray(def.options) && !def.options.includes(filename)) def.options.push(filename)
+    ;(props.data as any).images = [`/view?${new URLSearchParams({ filename, type: 'input' })}`]
+    if (!props.data.properties) (props.data as any).properties = {}
+    ;(props.data.properties as any).locked = true
+    // Clear picker
+    fixHandsVariations.value = []
+    fixHandsPreview.value = null
+  } catch (err: any) {
+    fixHandsError.value = err?.data?.message || err?.message || 'Could not save result'
+  }
+}
+
+// Escape cancels fix-hands capture mode (registered after fixHandsMode is declared).
+function onFixHandsEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape' && fixHandsMode.value) {
+    e.stopPropagation()
+    cancelFixHandsMode()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onFixHandsEscape, true))
+onUnmounted(() => window.removeEventListener('keydown', onFixHandsEscape, true))
+
 // --- Takes (non-destructive variation loop) --------------------------------
 // Outputs materialize into this artifact node, so this is where takes land.
 // projectTake mirrors the chosen take onto data.images → imageUrl recomputes.
@@ -422,11 +535,61 @@ function discardTake(id: string) {
 
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
+        <!-- Fix-hands click capture overlay (one-shot; shown over the image) -->
+        <div
+          v-if="fixHandsMode || fixHandsBusy"
+          class="absolute inset-0 z-30 flex items-center justify-center"
+          :class="fixHandsBusy ? 'cursor-wait' : 'cursor-crosshair'"
+          @click.stop="onFixHandsClick"
+        >
+          <div
+            v-if="!fixHandsBusy"
+            class="pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/70 px-2 py-1 text-[10px] text-white/80"
+          >
+            Click the bad hand — <span class="text-white/50 cursor-pointer" @click.stop="cancelFixHandsMode">Esc to cancel</span>
+          </div>
+          <Loader2 v-if="fixHandsBusy" class="size-6 animate-spin text-white/70" />
+        </div>
+        <!-- Main image (fades out when a variation is being previewed) -->
         <img
+          ref="imageRef"
           :src="displayedUrl"
-          class="block w-full max-h-[280px] object-contain bg-black/50"
+          class="block w-full max-h-[280px] object-contain bg-black/50 transition-opacity duration-150"
+          :class="fixHandsPreview ? 'opacity-0' : ''"
           loading="lazy"
         />
+        <!-- Variation hover preview layered above the main image -->
+        <img
+          v-if="fixHandsPreview"
+          :src="fixHandsPreview"
+          class="absolute inset-0 w-full h-full object-contain pointer-events-none z-10"
+        />
+        <!-- Fix-hands variation picker (mirrors InpaintModal history grid lines 605-621) -->
+        <div v-if="fixHandsVariations.length" class="px-2 py-1.5 border-t border-white/5">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] text-white/40">Pick a fix — hover to preview</span>
+            <button
+              class="nopan nodrag text-[10px] text-white/40 hover:text-white/70 cursor-pointer"
+              @click.stop="fixHandsVariations = []; fixHandsPreview = null"
+            >Dismiss</button>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button
+              v-for="(url, i) in fixHandsVariations"
+              :key="i"
+              class="nopan nodrag relative group rounded overflow-hidden border cursor-pointer"
+              :class="fixHandsPreview === url ? 'border-emerald-400/80 ring-1 ring-emerald-400/30' : 'border-white/10 hover:border-white/35'"
+              title="Hover to preview · click to apply"
+              @mouseenter="fixHandsPreview = url"
+              @mouseleave="fixHandsPreview = null"
+              @click.stop="acceptHandFix(url)"
+            >
+              <img :src="url" class="w-full aspect-square object-cover" draggable="false" />
+              <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="fixHandsError" class="px-2 py-1 border-t border-white/5 text-[10px] text-rose-400">{{ fixHandsError }}</div>
         <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
           <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
@@ -470,6 +633,19 @@ function discardTake(id: string) {
             @click.stop="critiqueResult"
           >
             <Sparkles class="size-2.5" />
+          </button>
+          <button
+            v-if="data.images?.length"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
+            :class="fixHandsMode
+              ? 'text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25'
+              : 'text-white/45 hover:text-emerald-400 hover:bg-white/[0.08]'"
+            :disabled="fixHandsBusy"
+            title="Fix hands — click the bad hand to repair it"
+            @click.stop="fixHandsMode ? cancelFixHandsMode() : enterFixHandsMode()"
+          >
+            <Loader2 v-if="fixHandsBusy" class="size-3 animate-spin" />
+            <Hand v-else class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
