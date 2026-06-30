@@ -17,7 +17,9 @@ import type { TokenScope } from './tokens'
 import type {
   AnyGridTemplate, ElementV2, FormatClass, FormatSpec, OutputSpec, Region, TemplateV2,
 } from './types'
-import { isV3 } from './types'
+import { isV3, isLayoutStack } from './types'
+import { solveStack } from './autolayout'
+import type { StackBox, StackItem } from './autolayout'
 
 /** The deliverables to render. Uses the template's explicit `outputs` when
  * present; otherwise derives one output per format key in `aspectsCsv`
@@ -104,6 +106,41 @@ function fitElementAtRect(
   return { el, region, rect: outRect, culled: false }
 }
 
+/** Build StackItems for a layout section at the current metrics, measuring
+ * text height for hug. Single-format (Slice 1): child regions are in this
+ * format's grid, so regionToRect(child.region, m) is exact. */
+function stackItemsFor(
+  children: ElementV2[],
+  m: GridMetrics,
+  innerCrossPx: number,
+  direction: 'horizontal' | 'vertical',
+  ctx: { template: AnyGridTemplate; formatKey: string },
+  props: TokenScope,
+  brand: TokenScope,
+): StackItem[] {
+  return children.map((child) => {
+    const r = regionToRect(child.region, m)
+    const sizing = child.layoutSizing
+      ?? (child.type === 'text'
+        ? { main: 'hug' as const, cross: 'fill' as const }
+        : { main: 'fixed' as const, cross: 'fill' as const })
+    let main = direction === 'horizontal' ? r.w : r.h
+    const cross = direction === 'horizontal' ? r.h : r.w
+    if (child.type === 'text' && sizing.main === 'hug') {
+      const lineHeight = child.style?.lineHeight ?? 1.1
+      let content = String(resolveTokens(child.content, props, brand) ?? '')
+      if (child.style?.transform === 'uppercase') content = content.toUpperCase()
+      const fontSize = typeSize(child.level, ctx.template, ctx.formatKey, child.style?.fontSize)
+      const measureW = sizing.cross === 'fill' && direction === 'vertical'
+        ? innerCrossPx
+        : (direction === 'horizontal' ? Infinity : r.w)
+      const lines = wrapLines(content, fontSize, measureW)
+      main = lines.length * fontSize * lineHeight
+    }
+    return { id: child.id, main, cross, mainMode: sizing.main, crossMode: sizing.cross }
+  })
+}
+
 export function resolveFormat(
   template: AnyGridTemplate,
   formatKey: string,
@@ -169,12 +206,52 @@ export function resolveFormat(
 
   // v3: resolve sections — the section box adapts per format/output, and each
   // child's master-grid rect is projected proportionally into that box.
+  // Layout-bearing sections (isLayoutStack) use the auto-layout solver instead.
   if (isV3(template)) {
-    const masterMetrics = gridMetrics(template, template.master)
     for (const section of template.sections) {
       const sectionHidden = section.hidden || section.overrides?.[oid]?.hidden
       const sectionRegion = sectionRegionFor(template, section, formatKey, oid)
       const sectionRectTarget = regionToRect(sectionRegion, m)
+
+      if (isLayoutStack(section) && section.layout) {
+        const lay = section.layout
+        const visible = section.children.filter(c => !(sectionHidden || c.hidden || c.overrides?.[oid]?.hidden))
+        // Push hidden children as culled (parity with the proportional path).
+        for (const c of section.children) {
+          if (sectionHidden || c.hidden || c.overrides?.[oid]?.hidden) {
+            elements.push({ el: c, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
+          }
+        }
+        const padPx = {
+          top: lay.padding.top * m.cellH,
+          bottom: lay.padding.bottom * m.cellH,
+          left: lay.padding.left * m.cellW,
+          right: lay.padding.right * m.cellW,
+        }
+        const innerCrossPx = lay.direction === 'vertical'
+          ? sectionRectTarget.w - padPx.left - padPx.right
+          : sectionRectTarget.h - padPx.top - padPx.bottom
+        const items = stackItemsFor(visible, m, innerCrossPx, lay.direction,
+          { template, formatKey }, props, brand)
+        const box: StackBox = {
+          x: sectionRectTarget.x, y: sectionRectTarget.y,
+          w: sectionRectTarget.w, h: sectionRectTarget.h,
+          direction: lay.direction,
+          gap: lay.gap * (lay.direction === 'vertical' ? m.cellH : m.cellW),
+          padTop: padPx.top, padRight: padPx.right, padBottom: padPx.bottom, padLeft: padPx.left,
+          mainAlign: lay.mainAlign, crossAlign: lay.crossAlign,
+        }
+        const placed = solveStack(box, items)
+        const rectById = new Map(placed.map(p => [p.id, p.rect]))
+        for (const child of visible) {
+          const rect = rectById.get(child.id)!
+          elements.push(fitElementAtRect(child, child.region, rect, ctx, props, brand, false))
+        }
+        continue
+      }
+
+      // --- Proportional projection (unchanged) ---
+      const masterMetrics = gridMetrics(template, template.master)
       const sectionRectMaster = regionToRect(section.region, masterMetrics)
       for (const child of section.children) {
         if (sectionHidden || child.hidden || child.overrides?.[oid]?.hidden) {
