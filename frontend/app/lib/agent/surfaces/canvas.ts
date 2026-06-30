@@ -71,6 +71,7 @@ const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'deleteNode', hint: 'Delete a node from the graph. target = node id. Edges touching it are removed too.' },
   { op: 'tuneNode', hint: 'Adjust the INTERNALS of an existing STUDIO node in place — its own knobs, NOT the graph. Supported now: a Frame (a node whose nodeType is "Compositor") — its background colour/gradient, the fill/colour/stroke of its layers, text content + style, and adding/removing/moving layers. target = that node id; args: { request: a plain-language instruction for the frame, e.g. "make the background blue", "add a centred white headline SALE", "make the title bigger" }. STRONGLY prefer this over adding a Gradient/Shader/Texture node when the user wants to change what is INSIDE an existing frame (a solid background colour is a frame background, not a new node).' },
   { op: 'restore', hint: 'internal — undo support.' },
+  { op: 'fixAnatomy', hint: 'Repair botched ANATOMY in the generated RESULT image IN PLACE, without touching the rest of the image — the right fix for mangled hands/faces/limbs. target = the result node id. args: { kind: "hand" | "face" | "limb", bbox: [x, y, w, h] (the defect\'s location as fractions 0..1 of the image — x,y = top-left corner, w,h = size), note: a short description of what is wrong (e.g. "left hand has six fingers") }. PREFER this over a re-roll or a full-image edit for any hand/face/limb defect, because it regenerates ONLY the masked region. Only fall back to a seed re-roll if you cannot localize the defect with a bbox.' },
 ]
 
 /** Many nodes declare a long fan of inputs as "required" that are additive in
@@ -244,6 +245,11 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       if (cmd.args && 'nodes' in cmd.args) next.nodes = clone(cmd.args.nodes as NodeLite[])
       if (cmd.args && 'edges' in cmd.args) next.edges = clone(cmd.args.edges as EdgeLite[])
       return { ok: true, template: next, inverse: snapshot() }
+    }
+    case 'fixAnatomy': {
+      // Out-of-band image repair — no graph edit. Pass the snapshot through so the
+      // review loop's probe stays valid.
+      return { ok: true, template: input, inverse: snapshot() }
     }
     default:
       return { ok: false, reason: 'out-of-vocabulary', detail: `unknown op '${cmd.op}'` }
