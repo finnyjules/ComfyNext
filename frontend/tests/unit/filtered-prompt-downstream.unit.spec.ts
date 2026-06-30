@@ -3,6 +3,7 @@ import {
   collectKeepSet,
   collectKeepSetDownstream,
   buildFilteredWorkflow,
+  applyArtifactLocks,
 } from '~/composables/useFilteredPrompt'
 import type { LiteGraphWorkflow } from '~/composables/useVueNodes'
 
@@ -28,6 +29,22 @@ const DIAMOND = wf(
     [14, 5, 0, 4, 2, '*'],
   ],
 )
+
+describe('applyArtifactLocks extraFrozenIds (auto-freeze upstream results)', () => {
+  // 1 → 2 → 3 : freezing node 2 (an upstream artifact with a result) must drop the
+  // 1→2 link so node 2 serializes as a leaf (loads its frozen image), keeping 2→3.
+  it('strips incoming links of an extra-frozen node, keeps its outgoing link', () => {
+    const w = wf([1, 2, 3], [[10, 1, 0, 2, 0, 'IMAGE'], [11, 2, 0, 3, 0, 'IMAGE']])
+    const out = applyArtifactLocks(w, [], new Set([2]))
+    const ids = (out.links as number[][]).map(l => l[0])
+    expect(ids).not.toContain(10) // 1→2 dropped: node 2 is frozen (no upstream re-run)
+    expect(ids).toContain(11)     // 2→3 kept: the frozen result still feeds downstream
+  })
+  it('is a no-op with no user locks and no extra-frozen ids', () => {
+    const w = wf([1, 2], [[10, 1, 0, 2, 0, 'IMAGE']])
+    expect((applyArtifactLocks(w, []).links as unknown[]).length).toBe(1)
+  })
+})
 
 describe('collectKeepSetDownstream', () => {
   it('keeps the target and everything it transitively feeds', () => {

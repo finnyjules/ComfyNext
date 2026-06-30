@@ -4584,6 +4584,38 @@ function randomizeSeedsOnLiveState(onlyNodeIds?: Set<string>) {
 
 // Build a filtered workflow snapshot from current canvas + target ids. Used
 // by the layout when it receives the runFiltered event.
+/** Walk upstream from the run targets and collect artifact (Image) nodes that
+ *  already hold a result — these get frozen so a targeted run reuses them instead
+ *  of re-executing the generators that produced them. Returns numeric node ids. */
+function upstreamArtifactsWithResults(targetIds: string[]): Set<number> {
+  const targets = new Set(targetIds.map(String))
+  const up = new Set<string>()
+  const stack = [...targets]
+  while (stack.length) {
+    const id = stack.pop()!
+    for (const e of edges.value as any[]) {
+      if (String(e.target) === id) {
+        const s = String(e.source)
+        if (!up.has(s)) { up.add(s); stack.push(s) }
+      }
+    }
+  }
+  const byId = new Map((nodes.value as any[]).map(n => [String(n.id), n]))
+  const out = new Set<number>()
+  for (const id of up) {
+    if (targets.has(id)) continue
+    const n = byId.get(id)
+    // Only nodes backfill can re-feed: a backend 'Image' artifact whose result is a
+    // view URL (filename=…) that backfillStandaloneArtifactImages can load.
+    const img = n?.data?.images?.[0]
+    if (n?.data?.nodeType === 'Image' && typeof img === 'string' && img.includes('filename=')) {
+      const num = Number(id)
+      if (Number.isFinite(num)) out.add(num)
+    }
+  }
+  return out
+}
+
 function getFilteredWorkflow(
   targetIds: string[],
   opts: { rerollScope?: 'self'; direction?: 'downstream' } = {},
@@ -4609,9 +4641,16 @@ function getFilteredWorkflow(
   // which would land e.g. camera_fixed's `false` in resolution's combo
   // slot and break validation. Everything downstream assumes aligned data.
   const aligned = realignWidgetValues(wf, objectInfo.value)
+  // "Run this node / run here→end" should reuse upstream results as-is, not
+  // re-execute (and re-bill) the chain that made them. Auto-freeze UPSTREAM
+  // artifact nodes that already hold a result so they feed it like a locked node —
+  // no manual lock needed. Skipped for a full "rebuild from start" (default scope).
+  const autoFreeze = (targetIds.length && (opts.rerollScope === 'self' || opts.direction === 'downstream'))
+    ? upstreamArtifactsWithResults(targetIds)
+    : undefined
   // Then locks drop upstream links so collectKeepSet walks a graph where
   // locked artifacts look like leaves.
-  const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
+  const unlocked = applyArtifactLocks(aligned, nodes.value as any[], autoFreeze)
   const filtered = targetIds.length
     ? buildFilteredWorkflow(unlocked, targetIds, opts.direction === 'downstream' ? 'downstream' : 'upstream')
     : unlocked

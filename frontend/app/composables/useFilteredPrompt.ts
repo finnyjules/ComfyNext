@@ -539,8 +539,12 @@ export function realignWidgetValues(
 export function applyArtifactLocks(
   workflow: LiteGraphWorkflow,
   liveNodes: any[],
+  /** Extra node ids to freeze for THIS run (not user-locked) — e.g. upstream
+   *  artifacts that already have a result, so a targeted "run this node" reuses
+   *  them instead of re-executing the chain that produced them. */
+  extraFrozenIds?: Set<number>,
 ): LiteGraphWorkflow {
-  const lockedIds = new Set<number>()
+  const lockedIds = new Set<number>(extraFrozenIds ?? [])
   for (const n of liveNodes || []) {
     if (n?.data?.properties?.locked) {
       const id = Number(n.id)
