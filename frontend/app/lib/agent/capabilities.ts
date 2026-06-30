@@ -56,6 +56,12 @@ export function capabilityBoost(c: AgentCapability): number {
   return c.boost ?? DEFAULT_BOOST[c.kind]
 }
 
+/** The set of nodeTypes that are OUR curated capabilities (vs raw /object_info
+ *  nodes) — used to mark + prioritise them in the agent palette. */
+export function capabilityNodeTypes(caps: AgentCapability[] = AGENT_CAPABILITIES): Set<string> {
+  return new Set(caps.map(c => c.nodeType))
+}
+
 /** Raw node ids that a capability replaces — excluded from the agent palette so a
  *  redundant provider node can't be picked over the curated dispatcher. */
 export function supersededNodeTypes(caps: AgentCapability[] = AGENT_CAPABILITIES): Set<string> {

@@ -10,7 +10,7 @@ import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
-import { capabilityBoosts, capabilityKeywords, studioNodeTypes, supersededNodeTypes } from '~/lib/agent/capabilities'
+import { capabilityBoosts, capabilityKeywords, capabilityNodeTypes, studioNodeTypes, supersededNodeTypes } from '~/lib/agent/capabilities'
 import { tuneCompositorNode } from '~/lib/agent/studioTune'
 import type { ProposedChange } from '~/composables/useLayoutAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -256,7 +256,10 @@ function agentCatalog(intent?: string): CatalogEntry[] {
   // Pin GenerateImage (bare prompts) + the trained-LoRA generator when the user
   // has styles (so "in my <style>" can always reach it even on a weak intent match).
   const pins = ['GenerateImageNode', ...(agentStyles.value.length ? ['FluxLoRARemoteNode', 'RestyleWithLoRANode'] : [])]
-  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: pins })
+  const entries = buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: pins })
+  // Tag our curated capabilities so the surface can list them first as "preferred".
+  const capSet = capabilityNodeTypes()
+  return entries.map(e => (capSet.has(e.type) ? { ...e, capability: true } : e))
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {

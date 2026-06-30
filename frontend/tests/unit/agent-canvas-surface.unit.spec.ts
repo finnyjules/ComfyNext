@@ -42,6 +42,19 @@ describe('describeCanvas', () => {
     expect(palette).toBeTruthy()
     expect((palette.current as { type: string }[]).map(c => c.type)).toContain('UpscaleImage')
   })
+  it('splits the palette into PREFERRED capabilities vs raw nodes', () => {
+    const g = graph()
+    g.catalog = [
+      { type: 'UpscaleImageNode', name: 'Upscale an image', description: '', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }], widgets: [], capability: true },
+      { type: 'WavespeedImageUpscaleNode', name: 'WaveSpeed Image Upscale', description: '', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }], widgets: [] },
+    ]
+    const objs = describeCanvas(g).objects
+    const preferred = objs.find(o => o.id === 'palette')!
+    const raw = objs.find(o => o.id === 'palette_raw')!
+    expect((preferred.current as { type: string }[]).map(c => c.type)).toEqual(['UpscaleImageNode'])
+    expect((raw.current as { type: string }[]).map(c => c.type)).toEqual(['WavespeedImageUpscaleNode'])
+    expect(preferred.label).toMatch(/preferred/i)
+  })
   it('exposes the user\'s trained styles/characters as a library (name, kind, trigger, file)', () => {
     const g = graph(); g.styles = [
       { name: 'Watercolor', kind: 'style', trigger: 'wtrclr', file: 'watercolor_v2.safetensors' },

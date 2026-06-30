@@ -19,6 +19,10 @@ export interface CatalogEntry {
   inputs: { name: string; type: string; optional?: boolean }[]
   outputs: { name: string; type: string }[]
   widgets: CatalogWidget[]
+  /** True when this is one of OUR curated capabilities (a high-level generator/
+   *  studio/effect) rather than a raw provider/ComfyUI node. Set by the caller;
+   *  the agent prompt prefers these as a hard rule. */
+  capability?: boolean
 }
 
 /** Widget definitions derived from an /object_info entry. Enum option lists are
