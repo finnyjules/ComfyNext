@@ -3,7 +3,7 @@
  * mutates its input. The editor calls these on user actions. */
 
 import { classifyFormat, fineGridDims, formatDims, remapRegion } from './grid'
-import type { AnyGridTemplate, ElementV2, Region, SectionV3, TemplateV2, TemplateV3 } from './types'
+import type { AnyGridTemplate, AutoLayout, ElementV2, Region, SectionV3, SizeMode, TemplateV2, TemplateV3 } from './types'
 import { isV3 } from './types'
 
 /** The section box region for a target format/output, mirroring the resolver's
@@ -125,4 +125,69 @@ export function ungroupSection(t: TemplateV3, sectionId: string): TemplateV3 {
     ],
     sections: t.sections.filter(s => s.id !== sectionId).map(s => clone(s)),
   }
+}
+
+export const DEFAULT_AUTOLAYOUT: AutoLayout = {
+  direction: 'vertical',
+  padding: { top: 2, right: 2, bottom: 2, left: 2 },
+  gap: 1,
+  mainAlign: 'start',
+  crossAlign: 'stretch',
+}
+
+/** Default child sizing by element type (text hugs its content). */
+function seedSizing(el: ElementV2): { main: SizeMode; cross: SizeMode } {
+  return el.type === 'text' ? { main: 'hug', cross: 'fill' } : { main: 'fixed', cross: 'fill' }
+}
+
+/** Group elements into a NEW auto-layout Stack (default layout + seeded child
+ * sizing). Builds on groupIntoSection, then attaches layout + sizing. */
+export function wrapInStack(t: TemplateV3, elementIds: string[], name = 'Stack'): TemplateV3 {
+  const grouped = groupIntoSection(t, elementIds, name)
+  const section = grouped.sections[grouped.sections.length - 1]
+  if (!section || section.children.length === 0) return t   // nothing grouped
+  section.layout = clone(DEFAULT_AUTOLAYOUT)
+  section.children = section.children.map(c => ({ ...c, layoutSizing: c.layoutSizing ?? seedSizing(c) }))
+  return grouped
+}
+
+export function setStackLayout(t: TemplateV3, sectionId: string, patch: Partial<AutoLayout>): TemplateV3 {
+  const next = clone(t)
+  const s = next.sections.find(sec => sec.id === sectionId)
+  if (!s || !s.layout) return t
+  s.layout = { ...s.layout, ...patch, padding: { ...s.layout.padding, ...(patch.padding ?? {}) } }
+  return next
+}
+
+export function setChildSizing(
+  t: TemplateV3, sectionId: string, childId: string, sizing: { main: SizeMode; cross: SizeMode },
+): TemplateV3 {
+  const next = clone(t)
+  const child = next.sections.find(s => s.id === sectionId)?.children.find(c => c.id === childId)
+  if (!child) return t
+  child.layoutSizing = sizing
+  return next
+}
+
+export function addChildToStack(t: TemplateV3, sectionId: string, elementId: string): TemplateV3 {
+  const next = clone(t)
+  const s = next.sections.find(sec => sec.id === sectionId)
+  const idx = next.elements.findIndex(e => e.id === elementId)
+  if (!s || idx < 0) return t
+  const [el] = next.elements.splice(idx, 1)
+  el.layoutSizing = el.layoutSizing ?? seedSizing(el)
+  s.children.push(el)
+  return next
+}
+
+export function removeChildFromStack(t: TemplateV3, sectionId: string, childId: string): TemplateV3 {
+  const next = clone(t)
+  const s = next.sections.find(sec => sec.id === sectionId)
+  if (!s) return t
+  const idx = s.children.findIndex(c => c.id === childId)
+  if (idx < 0) return t
+  const [child] = s.children.splice(idx, 1)
+  delete child.layoutSizing
+  next.elements.push(child)
+  return next
 }
