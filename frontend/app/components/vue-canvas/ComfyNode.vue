@@ -1268,6 +1268,16 @@ watch(previewImages, (urls) => {
       >
         <component :is="seedLocked ? Lock : LockOpen" class="size-3.5" />
       </button>
+      <!-- Critique: have the agent LOOK at this node's result and suggest fixes
+           (run→look→fix, on-demand). Only once there's an output to judge. -->
+      <button
+        v-if="data.images?.length"
+        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        title="Critique result — look at the output and suggest fixes"
+        @click.stop="critiqueResult"
+      >
+        <Sparkles class="size-3.5" />
+      </button>
       <!-- Node settings: opens the right-hand inspector for this node's
            mechanical params (seed / aspect / advanced). Only when it has some. -->
       <button
@@ -1815,14 +1825,6 @@ watch(previewImages, (urls) => {
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run here → end</span>
             <span class="block text-[10px] text-white/45 leading-snug">Push this result through everything after</span>
-          </span>
-        </button>
-        <!-- Critique the result — only once there's something to look at. -->
-        <button v-if="data.images?.length" class="nopan nodrag mt-0.5 w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer border-t border-white/5" @click.stop="critiqueResult">
-          <Sparkles class="size-3.5 mt-0.5 text-white/80 shrink-0" />
-          <span class="min-w-0">
-            <span class="block text-[11px] font-medium text-white/90">Critique result</span>
-            <span class="block text-[10px] text-white/45 leading-snug">Look at the output + suggest fixes</span>
           </span>
         </button>
       </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
@@ -260,6 +260,11 @@ function runThisNode() {
   )
 }
 
+// Critique: have the agent LOOK at this result and suggest fixes (run→look→fix).
+function critiqueResult() {
+  window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
+}
+
 // Browser-side download — same blob trick SmartLayout's carousel uses, so the
 // saved filename is the real one instead of "view".
 async function downloadImage() {
@@ -457,6 +462,14 @@ function discardTake(id: string) {
             @click.stop="downloadImage"
           >
             <Download class="size-2.5" />
+          </button>
+          <button
+            v-if="data.images?.length"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Critique result — look at the output and suggest fixes"
+            @click.stop="critiqueResult"
+          >
+            <Sparkles class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
