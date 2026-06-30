@@ -4605,10 +4605,11 @@ function upstreamArtifactsWithResults(targetIds: string[]): Set<number> {
   for (const id of up) {
     if (targets.has(id)) continue
     const n = byId.get(id)
-    // Only nodes backfill can re-feed: a backend 'Image' artifact whose result is a
-    // view URL (filename=…) that backfillStandaloneArtifactImages can load.
-    const img = n?.data?.images?.[0]
-    if (n?.data?.nodeType === 'Image' && typeof img === 'string' && img.includes('filename=')) {
+    // Artifact loaders backfill can re-feed: Image/Video (result in data.images[0])
+    // and Audio (data.audios[0]) whose result is a loadable view URL (filename=…).
+    const nt = n?.data?.nodeType
+    const ref = (nt === 'Audio') ? n?.data?.audios?.[0] : n?.data?.images?.[0]
+    if ((nt === 'Image' || nt === 'Video' || nt === 'Audio') && typeof ref === 'string' && ref.includes('filename=')) {
       const num = Number(id)
       if (Number.isFinite(num)) out.add(num)
     }

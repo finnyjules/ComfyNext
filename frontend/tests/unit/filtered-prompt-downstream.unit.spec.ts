@@ -4,6 +4,7 @@ import {
   collectKeepSetDownstream,
   buildFilteredWorkflow,
   applyArtifactLocks,
+  backfillStandaloneArtifactImages,
 } from '~/composables/useFilteredPrompt'
 import type { LiteGraphWorkflow } from '~/composables/useVueNodes'
 
@@ -43,6 +44,28 @@ describe('applyArtifactLocks extraFrozenIds (auto-freeze upstream results)', () 
   it('is a no-op with no user locks and no extra-frozen ids', () => {
     const w = wf([1, 2], [[10, 1, 0, 2, 0, 'IMAGE']])
     expect((applyArtifactLocks(w, []).links as unknown[]).length).toBe(1)
+  })
+})
+
+describe('backfillStandaloneArtifactImages feeds Image/Video/Audio loaders', () => {
+  const oi = {
+    Image: { input: { required: { image: [['', 'a.png'], {}] }, optional: {} } },
+    Video: { input: { required: { video: [['', 'a.mp4'], {}] }, optional: {} } },
+    Audio: { input: { required: { audio: [['', 'a.flac'], {}] }, optional: {} } },
+  }
+  const run = (type: string, data: any) => {
+    const w = { nodes: [{ id: 1, type, widgets_values: [] }], links: [] } as any
+    const out = backfillStandaloneArtifactImages(w, [{ id: 1, data: { nodeType: type, ...data } }], oi)
+    return (out.nodes[0] as any).widgets_values[0]
+  }
+  it('feeds a standalone Video artifact its result (data.images[0]) into the video widget', () => {
+    expect(run('Video', { images: ['/view?filename=clip.mp4&type=output'] })).toBe('clip.mp4 [output]')
+  })
+  it('feeds a standalone Audio artifact its result (data.audios[0]) into the audio widget', () => {
+    expect(run('Audio', { audios: ['/view?filename=track.flac&type=output'] })).toBe('track.flac [output]')
+  })
+  it('still feeds Image artifacts (unchanged)', () => {
+    expect(run('Image', { images: ['/view?filename=pic.png&type=output'] })).toBe('pic.png [output]')
   })
 })
 

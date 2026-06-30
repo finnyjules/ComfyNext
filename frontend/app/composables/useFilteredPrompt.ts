@@ -754,14 +754,23 @@ export function backfillStandaloneArtifactImages(
     return type && type !== 'input' ? `${name} [${type}]` : name
   }
 
+  // Image / Video / Audio artifacts are dual save/load nodes — feed their shown
+  // result into the load widget so they serialize as a leaf instead of re-running
+  // upstream. (Video URL lives in data.images[0]; audio in data.audios[0].)
+  const LOADERS: { type: string; widget: string; src: (d: any) => unknown }[] = [
+    { type: 'Image', widget: 'image', src: d => d?.images?.[0] },
+    { type: 'Video', widget: 'video', src: d => d?.images?.[0] },
+    { type: 'Audio', widget: 'audio', src: d => d?.audios?.[0] },
+  ]
   for (const node of (cloned.nodes as LiteGraphNode[]) || []) {
-    if ((node as any).type !== 'Image') continue
+    const loader = LOADERS.find(l => l.type === (node as any).type)
+    if (!loader) continue
     if (hasIncoming.has(Number(node.id))) continue        // upstream drives it
-    if (getNamedWidget(node, 'image', objectInfo)) continue // explicit pick/lock — leave it
-    const shown = liveById.get(Number(node.id))?.data?.images?.[0]
+    if (getNamedWidget(node, loader.widget, objectInfo)) continue // explicit pick/lock — leave it
+    const shown = loader.src(liveById.get(Number(node.id))?.data)
     if (typeof shown !== 'string') continue
     const annotated = annotate(shown)
-    if (annotated) setNamedWidget(node, 'image', annotated, objectInfo)
+    if (annotated) setNamedWidget(node, loader.widget, annotated, objectInfo)
   }
   return cloned
 }
