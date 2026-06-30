@@ -16,7 +16,7 @@ export interface CatalogEntry {
   type: string
   name: string
   description: string
-  inputs: { name: string; type: string }[]
+  inputs: { name: string; type: string; optional?: boolean }[]
   outputs: { name: string; type: string }[]
   widgets: CatalogWidget[]
 }

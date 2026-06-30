@@ -47,13 +47,16 @@ export function anchorCandidates(
 
 /** Inputs that render as ports — mirrors createNodeData's filter in VueNodeCanvas.vue.
  *  Enum specs (array type) are widgets; scalar types are widgets unless forceInput. */
-export function linkInputPorts(info: any): { name: string; type: string }[] {
+export function linkInputPorts(info: any): { name: string; type: string; optional?: boolean }[] {
+  // Tag by which dict each input came from (REQUIRED vs OPTIONAL) so the agent's
+  // add-node + verify know which inputs actually need wiring — a generator's
+  // optional `image` (img2img) must NOT read as a required input.
   const entries = [
-    ...Object.entries((info?.input?.required ?? {}) as Record<string, any>),
-    ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>),
+    ...Object.entries((info?.input?.required ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: false })),
+    ...Object.entries((info?.input?.optional ?? {}) as Record<string, any>).map(([n, s]) => ({ n, s, optional: true })),
   ]
   return entries
-    .filter(([, s]) => {
+    .filter(({ s }) => {
       const arr = Array.isArray(s) ? s : [s]
       const t = arr[0]
       const cfg = arr[1] || {}
@@ -61,9 +64,9 @@ export function linkInputPorts(info: any): { name: string; type: string }[] {
       if (cfg.forceInput) return true
       return !['INT', 'FLOAT', 'STRING', 'BOOLEAN', 'COMBO'].includes(String(t))
     })
-    .map(([n, s]) => {
+    .map(({ n, s, optional }) => {
       const arr = Array.isArray(s) ? s : [s]
-      return { name: n, type: String(arr[0]) }
+      return { name: n, type: String(arr[0]), ...(optional ? { optional: true } : {}) }
     })
 }
 

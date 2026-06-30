@@ -55,11 +55,11 @@ describe('object_info port derivation', () => {
     output: ['IMAGE'],
     output_name: ['IMAGE'],
   }
-  it('linkInputPorts keeps link types, drops widgets and enums', () => {
+  it('linkInputPorts keeps link types, drops widgets and enums, and tags optional inputs', () => {
     expect(linkInputPorts(info)).toEqual([
       { name: 'image', type: 'IMAGE' },
       { name: 'upscale_model', type: 'UPSCALE_MODEL' },
-      { name: 'mask', type: 'MASK' },
+      { name: 'mask', type: 'MASK', optional: true }, // from the optional dict
     ])
   })
   it('linkInputPorts honors forceInput on scalar types', () => {

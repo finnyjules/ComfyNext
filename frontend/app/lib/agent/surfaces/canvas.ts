@@ -193,7 +193,9 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       if (overrides) for (const [k, v] of Object.entries(overrides)) if (k in widgets) widgets[k] = v
       const node: NodeLite = {
         id, nodeType, title: entry.name, widgets,
-        inputs: entry.inputs.map(p => ({ name: p.name, type: p.type })),
+        // Preserve `optional` so verify doesn't flag a generator's optional image
+        // (img2img) input as required when the node is added for text-to-image.
+        inputs: entry.inputs.map(p => ({ name: p.name, type: p.type, ...(p.optional ? { optional: true } : {}) })),
         outputs: entry.outputs.map(p => ({ name: p.name, type: p.type })),
       }
       return { ok: true, template: { ...state, nodes: [...state.nodes, node] }, inverse: snapshot() }
@@ -245,9 +247,10 @@ export function verifyCanvas(s: CanvasSnapshot): LayoutIssue[] {
     for (const p of n.inputs) {
       if (!effectivelyOptional(p) && !conn.has(p.name)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} has no “${p.name}” connected (required input)` })
     }
-    // Only flag isolation for CONSUMERS (nodes with inputs). A pure source/generator
-    // with no inputs is a legitimate standalone root mid-build, not an error.
-    if (s.nodes.length > 1 && n.inputs.length > 0 && !linked.has(n.id)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} is not connected to anything` })
+    // Only flag isolation for genuine CONSUMERS — a node with at least one
+    // effectively-REQUIRED input. A generator whose only input is optional (e.g.
+    // FluxLoRA's img2img image) is a valid standalone root, not an error.
+    if (s.nodes.length > 1 && n.inputs.some(p => !effectivelyOptional(p)) && !linked.has(n.id)) issues.push({ level: 'warn', target: n.id, message: `${nodeName(n)} is not connected to anything` })
   }
   return issues
 }

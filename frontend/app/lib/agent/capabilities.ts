@@ -33,8 +33,9 @@ export interface AgentCapability {
   /** Rich natural-language phrases/synonyms a user might say to request this.
    *  THE most important field — the agent's recall depends on it. */
   intents: string[]
-  /** Link ports the agent can wire. */
-  inputs: { name: string; type: string }[]
+  /** Link ports the agent can wire. `optional` inputs don't read as "required" in
+   *  verify (e.g. a generator's img2img image). */
+  inputs: { name: string; type: string; optional?: boolean }[]
   outputs: { name: string; type: string }[]
   /** Studios are frontend-only (no /object_info) → synthesize a NodeTypeLite +
    *  catalog entry so buildCatalog can include them. */
@@ -107,9 +108,9 @@ const GENERATORS: AgentCapability[] = [
   // ---- Image · generation ----
   { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt.', inputs: [], outputs: IMG,
     intents: ['generate an image', 'make a picture', 'create an image', 'text to image', 'draw me', 'render a photo', 'make art', 'generate a photo of', 'imagine', 'dream up', 'conjure an image', 'produce an image', 'ai image', 'picture of a', 'visualize', 'make me a graphic', 'generate a dog', 'create artwork', 'create a painting of', 'render an illustration', 'wallpaper of a', 'make a wallpaper of', 'background image of'] },
-  { nodeType: 'FluxLoRARemoteNode', kind: 'generator', title: 'Generate with your LoRA', summary: 'Generate with a trained LoRA (character/style), or img2img-restyle with it.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+  { nodeType: 'FluxLoRARemoteNode', kind: 'generator', title: 'Generate with your LoRA', summary: 'Generate with a trained LoRA (character/style), or img2img-restyle with it.', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['generate with my lora', 'use my trained model', 'make an image of my character', 'generate my character', 'use my finetune', 'lora generation', 'my model image', 'personalized generation', 'generate using my training', 'generate in my style', 'make this in my style', 'an image in my own style', 'use my trained style', 'my character in a scene'] },
-  { nodeType: 'FluxMultiLoRARemoteNode', kind: 'generator', title: 'Generate with two LoRAs', summary: 'Stack two LoRAs (character + style) in one Flux generation.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+  { nodeType: 'FluxMultiLoRARemoteNode', kind: 'generator', title: 'Generate with two LoRAs', summary: 'Stack two LoRAs (character + style) in one Flux generation.', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['combine two loras', 'my character in a style', 'stack loras', 'character plus style', 'use two trained models', 'mix loras', 'apply character and style lora', 'my character in watercolor style'] },
   { nodeType: 'GenerateAnimeNode', kind: 'generator', title: 'Generate an anime image', summary: 'Anime-style image generation (Animagine XL).', inputs: [], outputs: IMG,
     intents: ['make an anime image', 'anime art', 'generate manga style', 'draw anime', 'anime character', 'waifu', 'anime girl', 'manga drawing', 'make it anime', 'anime portrait'] },

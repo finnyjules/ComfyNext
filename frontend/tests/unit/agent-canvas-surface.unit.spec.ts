@@ -146,6 +146,25 @@ describe('verifyCanvas', () => {
     expect(msgs).not.toMatch(/layer2|layer1_mask|keep_subject/) // optional in practice
     expect(msgs).toMatch(/layer1/) // the first layer IS required
   })
+  it('does not flag a text-to-image generator whose only input is OPTIONAL (img2img image)', () => {
+    // The scenario from "generate a dog in the style of GTA": FluxLoRA added for
+    // text-to-image — its `image` input is optional, so no required/isolation warns.
+    const g: CanvasSnapshot = { nodes: [
+      { id: 'img', nodeType: 'Image', title: 'Image', widgets: {}, inputs: [], outputs: [{ name: 'image', type: 'IMAGE' }] },
+      { id: 'lora', nodeType: 'FluxLoRARemoteNode', title: 'Flux Dev + LoRA', widgets: { prompt: 'grand_theft_auto a dog', lora_name: 'gta.safetensors' },
+        inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }] },
+    ], edges: [] }
+    const msgs = verifyCanvas(g).map(i => i.message).join(' ')
+    expect(msgs).not.toMatch(/image.*required|not connected/)
+  })
+  it('addNode preserves a catalog input\'s optional flag (so verify is correct)', () => {
+    const s: CanvasSnapshot = { nodes: [], edges: [], catalog: [
+      { type: 'FluxLoRARemoteNode', name: 'Flux + LoRA', description: '', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }], widgets: [{ name: 'prompt', type: 'STRING' }] },
+    ] }
+    const r = applyCanvasCommand(s, { op: 'addNode', args: { nodeType: 'FluxLoRARemoteNode', id: '$n1' } })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    expect(r.template.nodes[0]!.inputs[0]).toMatchObject({ name: 'image', optional: true })
+  })
   it('does not flag a pure-source node (no inputs) as "not connected"', () => {
     const g: CanvasSnapshot = { nodes: [
       { id: 'gen', nodeType: 'GenerateImageNode', title: 'Generate', widgets: {}, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE' }] },
