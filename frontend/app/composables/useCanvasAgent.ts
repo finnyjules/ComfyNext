@@ -103,6 +103,7 @@ export function useCanvasAgent(opts: {
     if (!p || busy.value) return
     if (!opts.apiKey()) { error.value = 'Add your Anthropic key in Settings → AI.'; return }
     busy.value = true; error.value = ''; reasoning.value = ''; answer.value = ''; issues.value = []; lastPhrase.value = p
+    review.value = null // drop any stale run→look→fix critique so it doesn't bleed into a fresh request
     opts.discard(); opts.tuneRevert?.(); changes.value = [] // clear any prior un-kept ghost / tune preview
     try {
       original = clone(opts.getSnapshot(p))
