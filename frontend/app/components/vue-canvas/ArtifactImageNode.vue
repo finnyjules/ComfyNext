@@ -546,7 +546,7 @@ function discardTake(id: string) {
             v-if="!fixHandsBusy"
             class="pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/70 px-2 py-1 text-[10px] text-white/80"
           >
-            Click the bad hand — <span class="text-white/50 cursor-pointer" @click.stop="cancelFixHandsMode">Esc to cancel</span>
+            Click the bad hand — <span class="text-white/50 cursor-pointer pointer-events-auto" @click.stop="cancelFixHandsMode">Esc to cancel</span>
           </div>
           <Loader2 v-if="fixHandsBusy" class="size-6 animate-spin text-white/70" />
         </div>
