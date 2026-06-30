@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, Play, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -172,6 +172,11 @@ function playThisNode() { dispatchRun({ rerollScope: 'self' }) }
 function runFromStart() { dispatchRun({}) }
 // Variant: push this node's current result through everything downstream.
 function runDownstream() { dispatchRun({ direction: 'downstream' }) }
+// Ask the agent to LOOK at this result and suggest fixes (run→look→fix, on-demand).
+function critiqueResult() {
+  runMenuOpen.value = false
+  window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
+}
 
 function onRunMenuDocPointer(e: MouseEvent) {
   if (runMenuRoot.value && !runMenuRoot.value.contains(e.target as Node)) runMenuOpen.value = false
@@ -1810,6 +1815,14 @@ watch(previewImages, (urls) => {
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run here → end</span>
             <span class="block text-[10px] text-white/45 leading-snug">Push this result through everything after</span>
+          </span>
+        </button>
+        <!-- Critique the result — only once there's something to look at. -->
+        <button v-if="data.images?.length" class="nopan nodrag mt-0.5 w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer border-t border-white/5" @click.stop="critiqueResult">
+          <Sparkles class="size-3.5 mt-0.5 text-white/80 shrink-0" />
+          <span class="min-w-0">
+            <span class="block text-[11px] font-medium text-white/90">Critique result</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Look at the output + suggest fixes</span>
           </span>
         </button>
       </div>

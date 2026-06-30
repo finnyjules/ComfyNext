@@ -208,18 +208,17 @@ export function useCanvasAgent(opts: {
     }
   }
 
-  /** Run→look→fix (suggest-only): after a Keep & Run finishes, look at the actual
-   *  output and, if it falls short of the intent, propose fixes as Keep/Dismiss
-   *  cards. The user decides — nothing is auto-applied or auto-re-run. */
-  async function reviewLastRun() {
-    if (!pendingReview || busy.value || reviewing.value) return
-    const { targets, intent } = pendingReview
-    pendingReview = null // one pass; the user re-arms by Keep & Run-ing a fix
-    if (!opts.runOutputImage) return
+  /** Run→look→fix core (suggest-only): look at a run's actual output for `targets`,
+   *  and if it falls short of `intent` propose fixes as Keep/Dismiss cards. The user
+   *  decides — nothing is auto-applied or auto-re-run. Used by the Keep & Run loop
+   *  AND by on-demand "Critique" on any result node. */
+  async function runReview(targets: string[], intent: string, manual = false) {
+    if (busy.value || reviewing.value || !opts.runOutputImage) return
+    opts.discard(); opts.tuneRevert?.(); changes.value = []; review.value = null; answer.value = ''; error.value = ''
     reviewing.value = true
     try {
       const image = await opts.runOutputImage(targets)
-      if (!image) return
+      if (!image) { if (manual) answer.value = 'No result on that node yet — run it first, then critique.'; return }
       const snap = clone(opts.getSnapshot(intent))
       original = snap
       const desc = describeCanvas(snap)
@@ -242,11 +241,24 @@ export function useCanvasAgent(opts: {
       })
       if (built.length) { changes.value = built; recompute() }
       else if (!found.length) answer.value = '✓ Looks right — the result matches what you asked.'
-    } catch { /* review is best-effort — never block the run */ }
+    } catch (e) { if (manual) error.value = e instanceof Error ? e.message : 'Couldn’t review the result.' }
     finally { reviewing.value = false }
+  }
+
+  /** Auto: fires when a Keep & Run finishes (a review is armed). */
+  async function reviewLastRun() {
+    if (!pendingReview) return
+    const { targets, intent } = pendingReview
+    pendingReview = null // one pass; the user re-arms by Keep & Run-ing a fix
+    await runReview(targets, intent)
+  }
+
+  /** On-demand: critique ANY result node (its output vs the prompt that made it). */
+  async function reviewNode(nodeId: string, intent: string) {
+    await runReview([nodeId], intent || 'this image', true)
   }
   /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
   function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = ''; review.value = null; pendingReview = null }
 
-  return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, dismiss }
+  return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss }
 }

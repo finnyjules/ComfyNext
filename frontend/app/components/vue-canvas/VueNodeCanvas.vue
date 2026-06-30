@@ -646,6 +646,34 @@ async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
   } catch { return null }
 }
 
+/** The intent behind a node's result — its own prompt, else the nearest upstream
+ *  prompt — so an on-demand "Critique" judges the output against what made it. */
+function agentNodeIntent(nodeId: string): string {
+  const byId = new Map((nodes.value as any[]).map(n => [String(n.id), n]))
+  const PROMPT_KEYS = ['prompt', 'text', 'instruction', 'positive_prompt', 'positive']
+  const promptOf = (n: any): string => {
+    const defs = (n?.data?.widgetDefs ?? []) as any[]
+    const vals = (n?.data?.widgetsValues ?? []) as any[]
+    for (const k of PROMPT_KEYS) {
+      const i = defs.findIndex(d => d?.name === k)
+      if (i >= 0 && typeof vals[i] === 'string' && vals[i].trim()) return String(vals[i]).trim()
+    }
+    return ''
+  }
+  const seen = new Set<string>()
+  const stack = [String(nodeId)]
+  while (stack.length) {
+    const id = stack.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    const n = byId.get(id)
+    const p = promptOf(n)
+    if (p) return p
+    for (const e of edges.value as any[]) if (String(e.target) === id) stack.push(String(e.source))
+  }
+  return ''
+}
+
 /** Undo all headless studio-tune edits from the current proposal (Dismiss). */
 function agentTuneRevert() {
   for (const r of tuneRestores) { try { r() } catch { /* best-effort */ } }
@@ -5119,6 +5147,7 @@ defineExpose({
   agentTune,
   agentTuneRevert,
   agentRunOutputImage,
+  agentNodeIntent,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),

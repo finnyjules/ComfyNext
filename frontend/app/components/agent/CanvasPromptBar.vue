@@ -19,7 +19,7 @@ const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function
 
 const {
   busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
-  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, dismiss,
+  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
@@ -40,8 +40,21 @@ const {
 // Run→look→fix: when a Keep & Run finishes, review its output (reviewLastRun is a
 // no-op unless a review is armed). VueNodeCanvas fires this on execution_complete.
 function onRunComplete() { reviewLastRun() }
-onMounted(() => window.addEventListener('comfynext:agentRunComplete', onRunComplete))
-onBeforeUnmount(() => window.removeEventListener('comfynext:agentRunComplete', onRunComplete))
+// On-demand "Critique" on any result node — judges its output against the prompt
+// that made it (resolved by VueNodeCanvas). Fired from the node's run menu.
+function onCritiqueNode(e: Event) {
+  const id = (e as CustomEvent).detail?.nodeId
+  if (!id || !ready.value) return
+  reviewNode(String(id), props.vueCanvas.agentNodeIntent?.(String(id)) ?? '')
+}
+onMounted(() => {
+  window.addEventListener('comfynext:agentRunComplete', onRunComplete)
+  window.addEventListener('comfynext:critiqueNode', onCritiqueNode)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('comfynext:agentRunComplete', onRunComplete)
+  window.removeEventListener('comfynext:critiqueNode', onCritiqueNode)
+})
 
 // Drive the dot-grid "thinking" animation off the agent's busy state.
 const { thinking } = useAgentActivity()
