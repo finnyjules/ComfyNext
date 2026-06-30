@@ -8,6 +8,21 @@ export type FormatClass = 'square' | 'portrait' | 'landscape' | 'strip' | 'skysc
 export type TextLevel = 'caption' | 'body' | 'subhead' | 'headline' | 'display'
 export type TextOverflow = 'shrink' | 'shrink-then-truncate' | 'grow'
 
+export type LayoutAxis = 'horizontal' | 'vertical'
+export type MainAlign = 'start' | 'center' | 'end' | 'space-between'
+export type CrossAlign = 'start' | 'center' | 'end' | 'stretch'
+export type SizeMode = 'hug' | 'fill' | 'fixed'
+
+export interface AutoLayout {
+  direction: LayoutAxis
+  /** Inner insets, in fine-grid cells. */
+  padding: { top: number; right: number; bottom: number; left: number }
+  /** Gap between children, in fine-grid cells. */
+  gap: number
+  mainAlign: MainAlign
+  crossAlign: CrossAlign
+}
+
 export interface SafeArea { top: number; right: number; bottom: number; left: number }
 
 export interface FormatSpec {
@@ -44,6 +59,8 @@ export interface ElementV2Base {
    *  outer sides, keeps the grid line on the inner side. Ignores safe
    *  areas — for backgrounds that should fill behind platform UI chrome. */
   bleed?: boolean
+  /** Consulted only when this element is a Stack child. */
+  layoutSizing?: { main: SizeMode; cross: SizeMode }
 }
 
 export interface TextStyleV2 {
@@ -136,6 +153,9 @@ export interface SectionV3 {
   overrides?: Record<string, { region?: Region; hidden?: boolean }>
   hidden?: boolean                        // culls the whole section + its children
   children: ElementV2[]                   // child regions are in the master fine grid
+  /** Present → auto-layout Stack (engine computes child rects). Absent →
+   *  absolute-region section (unchanged). */
+  layout?: AutoLayout
 }
 
 /** v3 is a superset of v2: same top-level shape plus `sections`. Ungrouped
@@ -150,4 +170,9 @@ export type AnyGridTemplate = TemplateV2 | TemplateV3
 /** Narrow an AnyGridTemplate to v3 on its version discriminant. */
 export function isV3(t: AnyGridTemplate): t is TemplateV3 {
   return t.version === 3
+}
+
+/** True when a section is an auto-layout Stack (has layout rules). */
+export function isLayoutStack(section: SectionV3): boolean {
+  return section.layout != null
 }
