@@ -16,6 +16,7 @@ import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import { applyCanvasCommand, describeCanvas, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
 import type { LayoutIssue } from '~/lib/agent/verify'
+import { useAgentActivity } from '~/composables/useAgentActivity'
 
 const REROLLABLE = new Set(['setWidget', 'setMode', 'addNode'])
 const clone = (s: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(s)) as CanvasSnapshot
@@ -55,6 +56,8 @@ export function useCanvasAgent(opts: {
   /** Run→look→fix: a designer's-eye critique of the RUN's actual output. */
   const review = ref<VisualReview | null>(null)
   const reviewing = ref(false)
+  /** Shared set of node ids under review — drives each node's scanning overlay. */
+  const { analyzingNodeIds } = useAgentActivity()
   /** Set by Keep & Run; consumed once when the run completes. */
   let pendingReview: { targets: string[]; intent: string } | null = null
   let original: CanvasSnapshot | null = null
@@ -216,6 +219,8 @@ export function useCanvasAgent(opts: {
     if (busy.value || reviewing.value || !opts.runOutputImage) return
     opts.discard(); opts.tuneRevert?.(); changes.value = []; review.value = null; answer.value = ''; error.value = ''
     reviewing.value = true
+    // Mark the node(s) under review so each renders the white "scanning" overlay.
+    analyzingNodeIds.value = new Set(targets.map(String))
     try {
       const image = await opts.runOutputImage(targets)
       if (!image) { if (manual) answer.value = 'No result on that node yet — run it first, then critique.'; return }
@@ -242,7 +247,7 @@ export function useCanvasAgent(opts: {
       if (built.length) { changes.value = built; recompute() }
       else if (!found.length) answer.value = '✓ Looks right — the result matches what you asked.'
     } catch (e) { if (manual) error.value = e instanceof Error ? e.message : 'Couldn’t review the result.' }
-    finally { reviewing.value = false }
+    finally { reviewing.value = false; analyzingNodeIds.value = new Set() }
   }
 
   /** Auto: fires when a Keep & Run finishes (a review is armed). */

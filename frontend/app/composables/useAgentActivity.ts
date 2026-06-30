@@ -6,10 +6,11 @@ import { ref } from 'vue'
  * plans. Module-level ref = one shared instance across components.
  */
 const thinking = ref(false)
-/** The agent is looking at a generated RESULT (the review/critique pass). Drives
- *  the dot-grid's white "scanning" fade-in + swiping shimmer. */
-const analyzing = ref(false)
+/** Ids of the node(s) the agent is currently looking at in the review/critique
+ *  pass. Each such node renders the white "scanning" dot-grid + shimmer overlay
+ *  so it's clear WHICH result is under review. Empty = no review in flight. */
+const analyzingNodeIds = ref<Set<string>>(new Set())
 
 export function useAgentActivity() {
-  return { thinking, analyzing }
+  return { thinking, analyzingNodeIds }
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
+import { useAgentActivity } from '~/composables/useAgentActivity'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
@@ -177,6 +178,9 @@ function critiqueResult() {
   runMenuOpen.value = false
   window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
 }
+// The agent is reviewing THIS node → show the white scanning overlay.
+const { analyzingNodeIds } = useAgentActivity()
+const isAnalyzing = computed(() => analyzingNodeIds.value.has(props.id))
 
 function onRunMenuDocPointer(e: MouseEvent) {
   if (runMenuRoot.value && !runMenuRoot.value.contains(e.target as Node)) runMenuOpen.value = false
@@ -1220,6 +1224,8 @@ watch(previewImages, (urls) => {
       '--border-color-right': borderColorRight,
     } as any"
   >
+    <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
+    <VueCanvasAgentScanOverlay :active="isAnalyzing" />
     <!-- Mode overlay: bypass shows diagonal stripes; mute shows soft scrim -->
     <div
       v-if="isMuted || isBypassed"

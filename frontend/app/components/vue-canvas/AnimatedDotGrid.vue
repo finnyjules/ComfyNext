@@ -5,9 +5,6 @@ const props = defineProps<{
   running?: boolean
   /** Agent is planning — animate sparks travelling dot-to-dot. */
   thinking?: boolean
-  /** Agent is analyzing a result — fade the grid up to white + sweep a soft
-   *  white shimmer band across it. */
-  analyzing?: boolean
   gap?: number
   dotRadius?: number
   baseColor?: string
@@ -25,8 +22,6 @@ const { viewport } = useVueFlow()
 let animFrame = 0
 let sweepX = -0.3 // normalized 0-1 sweep position across viewport
 let rainbowOffset = 0 // horizontal scroll offset for rainbow
-let analyzeAmt = 0 // eased 0→1 fade of the white "analyzing" grid
-let analyzeSweep = -0.3 // normalized white-shimmer sweep position
 
 // ── "Thinking" sparks: comet segments that wander dot-to-dot along the grid,
 //    trailing a flowing rainbow-pastel tail. The trail is kept in world-grid
@@ -96,18 +91,6 @@ function draw() {
   const sweepScreenX = sweepX * w
   const sweepWidth = w * 0.25 // width of the glow band
 
-  // "Analyzing the result" — ease the whole grid up to white (fade in) and sweep
-  // a soft white shimmer band across it. Eased so it fades in/out, not pops.
-  analyzeAmt += ((props.analyzing ? 1 : 0) - analyzeAmt) * 0.06
-  if (props.analyzing) {
-    analyzeSweep += 0.006
-    if (analyzeSweep > 1.3) analyzeSweep = -0.3
-  } else if (analyzeAmt < 0.01) {
-    analyzeSweep = -0.3
-  }
-  const analyzeSweepScreenX = analyzeSweep * w
-  const analyzeBandW = w * 0.26 // width of the shimmer band
-
   for (let x = startX; x < w; x += g) {
     for (let y = startY; y < h; y += g) {
       let alpha = baseAlpha
@@ -124,17 +107,11 @@ function draw() {
 
       ctx.beginPath()
       ctx.arc(x, y, r, 0, Math.PI * 2)
-      if (props.running && alpha > baseAlpha) {
+      if (alpha > baseAlpha) {
         // Rainbow tint based on horizontal position + scrolling offset
         const t = (alpha - baseAlpha) / (glowAlpha - baseAlpha)
         const hue = ((x / w) + rainbowOffset) * 360 % 360
         ctx.fillStyle = `hsla(${hue}, 80%, 75%, ${alpha * t + baseAlpha * (1 - t)})`
-      } else if (analyzeAmt > 0.01) {
-        // White grid fades in (lift), brighter where the shimmer band passes.
-        const lift = 0.16 * analyzeAmt
-        const d = Math.abs(x - analyzeSweepScreenX) / analyzeBandW
-        const shimmer = d < 1 ? 0.5 * (1 + Math.cos(d * Math.PI)) * 0.7 * analyzeAmt : 0
-        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.95, baseAlpha + lift + shimmer)})`
       } else {
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
       }

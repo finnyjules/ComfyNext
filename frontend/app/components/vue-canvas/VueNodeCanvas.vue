@@ -153,7 +153,7 @@ const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = u
 // history. Both exposed for the canvas prompt.
 
 // Background dot-grid "thinking" animation, driven by the prompt's agent.
-const { thinking: agentThinking, analyzing: agentAnalyzing } = useAgentActivity()
+const { thinking: agentThinking } = useAgentActivity()
 
 // NodeTypeLite[] = the cached /object_info nodes (incl. the backend generators +
 // Compositor/SmartLayout) PLUS the frontend-only studios (which have no
@@ -5181,7 +5181,7 @@ defineExpose({
     @contextmenu.prevent
   >
     <!-- Dot grid behind everything -->
-    <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" :analyzing="agentAnalyzing" />
+    <VueCanvasAnimatedDotGrid :running="isRunning" :thinking="agentThinking" />
 
     <!-- Blueprint preview: a white hairline rotating contour over each proposed
          node. TransitionGroup fades each ring in/out. -->

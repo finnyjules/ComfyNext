@@ -2,6 +2,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
 
@@ -34,6 +35,10 @@ const isBypassed = computed(() => props.data.mode === 4)
 
 const imageColor = computed(() => getTypeColor('IMAGE'))
 const maskColor = computed(() => getTypeColor('MASK'))
+
+// The agent is reviewing THIS node → show the white scanning overlay.
+const { analyzingNodeIds } = useAgentActivity()
+const isAnalyzing = computed(() => analyzingNodeIds.value.has(props.id))
 
 // Vue Flow injects nodes/edges so we can ask "is anything wired to my image
 // input right now?" — `inputs[i].link` lags behind in-session connections.
@@ -401,6 +406,8 @@ function discardTake(id: string) {
         class="absolute inset-0 w-full h-full pointer-events-none z-20 rounded-lg"
         :style="{ opacity: upstreamRunning ? 1 : 0, transition: 'opacity 240ms ease' }"
       />
+      <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
+      <VueCanvasAgentScanOverlay :active="isAnalyzing" />
       <!-- File picker — always mounted so Replace works in any state. -->
       <input
         ref="fileInputRef"
