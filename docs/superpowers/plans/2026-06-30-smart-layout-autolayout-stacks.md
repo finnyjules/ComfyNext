@@ -583,9 +583,9 @@ describe('stack ops', () => {
   })
 
   it('setStackLayout patches direction without dropping other fields', () => {
-    const t = setStackLayout(wrapInStack(base(), ['a']), 's', {}) // s id resolved below
-    const sid = wrapInStack(base(), ['a']).sections[0].id
-    const t2 = setStackLayout(wrapInStack(base(), ['a']), sid, { direction: 'horizontal' })
+    const t0 = wrapInStack(base(), ['a'])
+    const sid = t0.sections[0].id
+    const t2 = setStackLayout(t0, sid, { direction: 'horizontal' })
     expect(t2.sections[0].layout!.direction).toBe('horizontal')
     expect(t2.sections[0].layout!.gap).toBe(DEFAULT_AUTOLAYOUT.gap)
   })
