@@ -397,4 +397,21 @@ describe('buildCatalog assembles the right palette', () => {
     const b = cat60('restore the old photo and fix the faces')
     expect(b).toContain('RestorePhotoNode'); expect(b).toContain('FixFacesNode')
   })
+
+  // Bare descriptive prompts (no command verb, no image anchor) — users typing a
+  // prompt straight into the bar expecting an image. The pin guarantees
+  // GenerateImage is always reachable so the agent can generate it.
+  it('a bare descriptive prompt always keeps GenerateImage discoverable (pinned)', () => {
+    const noAnchor = { portType: '*', direction: 'output' as const }
+    const cat = (intent: string) => buildCatalog(nodeTypes, {}, noAnchor, { intent, keywords, boosts, maxNodes: 60, maxIntent: 24, alwaysInclude: ['GenerateImageNode'] }).map(e => e.type)
+    for (const p of ['a neon cyberpunk alley at night, cinematic', 'sunset over a calm ocean', 'SHURI poster, bold', 'a golden retriever puppy in a field, studio ghibli style']) {
+      expect(cat(p), p).toContain('GenerateImageNode')
+    }
+  })
+  it('the pin does NOT displace the intent-relevant result for a real command', () => {
+    const noAnchor = { portType: '*', direction: 'output' as const }
+    const cat = buildCatalog(nodeTypes, {}, noAnchor, { intent: 'make a gradient', keywords, boosts, maxNodes: 60, maxIntent: 24, alwaysInclude: ['GenerateImageNode'] }).map(e => e.type)
+    expect(cat[0]).toBe('GradientStudio') // pin is appended, not prepended
+    expect(cat).toContain('GenerateImageNode')
+  })
 })

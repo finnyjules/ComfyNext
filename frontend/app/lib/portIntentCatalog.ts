@@ -66,6 +66,10 @@ export interface BuildCatalogOpts {
   boosts?: Record<string, number>
   /** Cap on the intent bucket. */
   maxIntent?: number
+  /** Node types to GUARANTEE in the result (within maxNodes) regardless of intent/
+   *  anchor — e.g. the flagship GenerateImage, so a bare descriptive prompt
+   *  ("a neon alley, cinematic") can always be turned into a generation. */
+  alwaysInclude?: string[]
 }
 
 /** Trimmed catalog for the AI request: nodes directly compatible with the anchor
@@ -77,7 +81,7 @@ export function buildCatalog(
   anchor: Pick<PortAnchor, 'portType' | 'direction'>,
   opts: BuildCatalogOpts = {},
 ): CatalogEntry[] {
-  const { maxEnum = 20, maxNodes = 150, intent, keywords, boosts, maxIntent = 10 } = opts
+  const { maxEnum = 20, maxNodes = 150, intent, keywords, boosts, maxIntent = 10, alwaysInclude = [] } = opts
   const hop1 = nodeTypes.filter(n => matchingPort(n, anchor))
   const hop1Names = new Set(hop1.map(n => n.name))
 
@@ -107,7 +111,18 @@ export function buildCatalog(
   const hop1Rest = hop1.filter(n => !ranked.has(n.name))
   const hop2Rest = hop2.filter(n => !ranked.has(n.name))
 
-  return [...intentRanked, ...hop1Rest, ...hop2Rest].slice(0, maxNodes).map((n) => {
+  // Guarantee pinned flagships are present (within the cap) without displacing the
+  // intent-relevant results: take the normal list, then append any missing pins,
+  // trimming the tail to stay within maxNodes.
+  const base = [...intentRanked, ...hop1Rest, ...hop2Rest]
+  const pinSet = new Set(alwaysInclude)
+  if (pinSet.size) {
+    const present = new Set(base.map(n => n.name))
+    const missing = nodeTypes.filter(n => pinSet.has(n.name) && !present.has(n.name))
+    if (missing.length) base.splice(Math.max(0, maxNodes - missing.length), base.length, ...missing)
+  }
+
+  return base.slice(0, maxNodes).map((n) => {
     const info = objectInfo[n.name]
     return {
       type: n.name,

@@ -185,7 +185,9 @@ function agentCatalog(intent?: string): CatalogEntry[] {
   const anchor = { portType: String(out?.type ?? '*'), direction: 'output' as const }
   const keywords = { ...NODE_KEYWORDS, ...capabilityKeywords() }
   const boosts = { ...NODE_BOOST, ...capabilityBoosts() }
-  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24 })
+  // Pin GenerateImage so a bare descriptive prompt ("a neon alley, cinematic")
+  // can always be turned into a generation even when it matches no intent.
+  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: ['GenerateImageNode'] })
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {
