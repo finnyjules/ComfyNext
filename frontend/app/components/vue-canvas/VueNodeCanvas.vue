@@ -540,6 +540,7 @@ function agentCommit() {
   for (const n of nodes.value as any[]) if (n.data?.ghost) { n.class = undefined; n.data.ghost = false }
   for (const e of edges.value as any[]) if (e.data?.ghost) { e.data.ghost = false; e.data.blueprint = false }
   glimmBurstOver(ghostNodeIds) // just the new node(s), not the connection
+  return ghostNodeIds // the just-committed node ids (so the caller can run them)
 }
 
 /** Glimm "citrus" sweep over the just-committed node(s) — their exact on-screen

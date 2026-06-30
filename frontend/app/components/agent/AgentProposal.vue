@@ -3,16 +3,17 @@
 // old struck) with its rationale and centred per-change actions (dismiss · re-roll
 // · keep). Hovering a row asks the host to highlight that section on the canvas.
 // Presentational; parent owns useLayoutAgent.
-import { Check, Dices, X } from 'lucide-vue-next'
+import { Check, Dices, Play, X } from 'lucide-vue-next'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import type { LayoutIssue } from '~/lib/agent/verify'
 
-defineProps<{ changes: ProposedChange[]; busy: boolean; issues?: LayoutIssue[]; review?: VisualReview | null; reviewing?: boolean }>()
+defineProps<{ changes: ProposedChange[]; busy: boolean; issues?: LayoutIssue[]; review?: VisualReview | null; reviewing?: boolean; runnable?: boolean }>()
 const emit = defineEmits<{
   accept: [i: number]
   reject: [i: number]
   reroll: [i: number]
   keep: []
+  keepRun: []
   revert: []
   hover: [i: number | null]
 }>()
@@ -76,7 +77,20 @@ const emit = defineEmits<{
         :disabled="busy" class="flex-1 rounded-[8px] px-3.5 py-1.5 text-center text-[11.5px] text-white/50 hover:bg-white/[0.05] hover:text-white/85 disabled:opacity-40"
         @click="emit('revert')"
       >Dismiss all</button>
+      <!-- Runnable surface (the canvas): Keep is the quiet option; Keep & Run is
+           the primary, since running the just-built graph is the usual next step. -->
+      <template v-if="runnable">
+        <button
+          :disabled="busy" class="flex-1 rounded-[8px] px-3.5 py-1.5 text-center text-[11.5px] text-white/75 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40"
+          @click="emit('keep')"
+        >Keep all</button>
+        <button
+          :disabled="busy" class="keep-all flex-1 inline-flex items-center justify-center gap-1.5 rounded-[8px] px-3.5 py-1.5 text-center text-[11.5px] font-semibold text-neutral-900 disabled:opacity-40"
+          @click="emit('keepRun')"
+        ><Play class="size-3" fill="currentColor" /> Keep &amp; Run</button>
+      </template>
       <button
+        v-else
         :disabled="busy" class="keep-all flex-1 rounded-[8px] px-3.5 py-1.5 text-center text-[11.5px] font-semibold text-neutral-900 disabled:opacity-40"
         @click="emit('keep')"
       >Keep all</button>

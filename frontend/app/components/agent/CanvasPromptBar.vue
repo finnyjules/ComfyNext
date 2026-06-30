@@ -19,7 +19,7 @@ const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function
 
 const {
   busy, error, reasoning, answer, changes, issues, hasProposal, hovered,
-  ask, acceptChange, rejectChange, reroll, keep, dismiss,
+  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
@@ -27,6 +27,8 @@ const {
   discard: () => props.vueCanvas.agentDiscard(),
   tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   tuneRevert: () => props.vueCanvas.agentTuneRevert(),
+  // Keep & Run: run the just-built node(s); self-scope so existing upstream stays cached.
+  run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, rerollScope: 'self' } })),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 
@@ -71,9 +73,9 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
         </div>
         <AgentProposal
           v-if="hasProposal"
-          :changes="changes" :busy="busy" :issues="issues"
+          :changes="changes" :busy="busy" :issues="issues" runnable
           @accept="acceptChange" @reject="rejectChange" @reroll="reroll"
-          @keep="keep" @revert="dismiss" @hover="(i: number | null) => hovered = i"
+          @keep="keep" @keep-run="keepAndRun" @revert="dismiss" @hover="(i: number | null) => hovered = i"
         />
       </template>
     </div>

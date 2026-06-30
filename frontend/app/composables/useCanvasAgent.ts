@@ -26,8 +26,11 @@ export function useCanvasAgent(opts: {
   /** Render the accepted commands on the canvas as semi-transparent ghosts.
    *  animate plays the ~1s blueprint draw-in (used on the first proposal). */
   preview: (commands: Command[], animate?: boolean) => void
-  /** Promote the ghosts to real nodes/edges (+ glimm). Called on Keep. */
-  commit: () => void
+  /** Promote the ghosts to real nodes/edges (+ glimm). Called on Keep. Returns the
+   *  ids of the nodes it committed (so Keep & Run can run them). */
+  commit: () => string[] | void
+  /** Run the given nodes (Keep & Run). Optional — only the canvas surface runs. */
+  run?: (targetIds: string[]) => void
   /** Remove the ghosts. Called on Dismiss. */
   discard: () => void
   /** Delegate tuneNode commands to each target node's OWN studio surface (applied
@@ -169,13 +172,31 @@ export function useCanvasAgent(opts: {
     }
   }
 
+  /** The nodes a Keep should be able to run: the just-committed (added/tuned) nodes
+   *  plus any existing node a setWidget/setMode/tuneNode targeted. Excludes deletes
+   *  and unresolved "$new" placeholders (committed ids already cover added nodes). */
+  function runTargets(committed: string[]): string[] {
+    const touched = changes.value
+      .filter(c => ['setWidget', 'setMode', 'tuneNode'].includes(c.command.op))
+      .map(c => c.command.target)
+      .filter((t): t is string => typeof t === 'string' && !t.startsWith('$'))
+    return Array.from(new Set([...committed, ...touched]))
+  }
+
   /** Commit: promote the on-canvas ghosts to real nodes/edges (+ glimm). */
   function keep() {
     opts.commit()
     changes.value = []; original = null; issues.value = []
   }
+  /** Keep, then run the resulting node(s) — one click for the common build→run flow. */
+  function keepAndRun() {
+    const committed = opts.commit() || []
+    const targets = runTargets(committed)
+    changes.value = []; original = null; issues.value = []
+    if (targets.length) opts.run?.(targets)
+  }
   /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
   function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = '' }
 
-  return { busy, error, reasoning, answer, changes, issues, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, dismiss }
+  return { busy, error, reasoning, answer, changes, issues, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, dismiss }
 }
