@@ -233,23 +233,3 @@ describe('summarizeCanvasChange', () => {
     expect(s?.before).toBe('20'); expect(s?.after).toBe('30')
   })
 })
-
-describe('fixAnatomy command', () => {
-  const snap = { nodes: [], edges: [] }
-
-  it('is exposed as a result-review command op', () => {
-    const ops = describeCanvas(snap).commands.map(c => c.op)
-    expect(ops).toContain('fixAnatomy')
-  })
-
-  it('is a no-op on the graph snapshot (image is edited out-of-band)', () => {
-    const r = applyCanvasCommand(snap, {
-      op: 'fixAnatomy',
-      target: 'node-1',
-      args: { kind: 'hand', bbox: [0.4, 0.5, 0.2, 0.1], note: 'left hand has six fingers' },
-    })
-    expect(r.ok).toBe(true)
-    expect(r.template.nodes).toEqual(snap.nodes)
-    expect(r.template.edges).toEqual(snap.edges)
-  })
-})

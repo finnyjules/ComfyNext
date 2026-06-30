@@ -18,7 +18,7 @@ const { getLocalSetting } = useLocalSettings()
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
 const {
-  busy, error, reasoning, answer, changes, issues, review, reviewing, repairing, hasProposal, hovered,
+  busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
   ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
@@ -27,6 +27,7 @@ const {
   discard: () => props.vueCanvas.agentDiscard(),
   tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   tuneRevert: () => props.vueCanvas.agentTuneRevert(),
+  // (anatomy repairs now go through an EditImageNode the review proposes, not a route)
   // Keep & Run: run the agent's result AND anything it feeds into (direction:
   // 'downstream') — so an inserted node re-renders the output it connects to —
   // but only that affected branch, never unrelated nodes (the top Run does the
@@ -34,8 +35,6 @@ const {
   // truly-unchanged upstream stays cached.
   run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
   runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
-  repairAnatomy: (target: string, spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string }) =>
-    props.vueCanvas.agentRepairAnatomy(target, spec, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 
@@ -77,7 +76,7 @@ watch(busy, async (v) => { if (v) { await nextTick(); glimmActive.value = true }
 
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
-const hasResult = computed(() => busy.value || reviewing.value || repairing.value || hasProposal.value || !!answer.value || !!error.value)
+const hasResult = computed(() => busy.value || reviewing.value || hasProposal.value || !!answer.value || !!error.value)
 </script>
 
 <template>
@@ -97,10 +96,9 @@ const hasResult = computed(() => busy.value || reviewing.value || repairing.valu
           <p v-if="reasoning" class="mb-1 text-[11px] leading-snug text-white/40">{{ reasoning }}</p>
           <p class="whitespace-pre-line text-[12.5px] leading-relaxed text-white/85">{{ answer }}</p>
         </div>
-        <!-- Run→look→fix: repairing the region, or looking at the result before any
-             fixes are surfaced. -->
-        <div v-if="(reviewing || repairing) && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-          <span class="text-white/75">✦</span> {{ repairing ? 'Repairing the region' : 'Looking at the result' }}<span class="animate-pulse">…</span>
+        <!-- Run→look→fix: looking at the result before any fixes are surfaced. -->
+        <div v-if="reviewing && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+          <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
         </div>
         <AgentProposal
           v-if="hasProposal"
