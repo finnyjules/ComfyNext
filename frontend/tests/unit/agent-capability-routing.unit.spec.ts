@@ -422,4 +422,11 @@ describe('buildCatalog assembles the right palette', () => {
       expect(cat(p), p).toContain('FluxLoRARemoteNode')
     }
   })
+  it('"restyle this in my <style>" keeps the trained-LoRA RESTYLE node reachable on an image', () => {
+    // When the user has styles AND an image is selected, restyle-existing pins too.
+    const cat = (intent: string) => buildCatalog(nodeTypes, {}, imageAnchor, { intent, keywords, boosts, maxNodes: 60, maxIntent: 24, alwaysInclude: ['GenerateImageNode', 'FluxLoRARemoteNode', 'RestyleWithLoRANode'] }).map(e => e.type)
+    for (const p of ['restyle this in my watercolor style', 'apply my trained style to this photo']) {
+      expect(cat(p), p).toContain('RestyleWithLoRANode')
+    }
+  })
 })

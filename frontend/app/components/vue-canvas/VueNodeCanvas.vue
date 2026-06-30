@@ -181,6 +181,10 @@ function agentNodeTypes(): NodeTypeLite[] {
 // agent so "in my <style>" / "my character X" resolve to a real lora_name + trigger.
 // Fetched once (rarely changes); agentSnapshot reads the cached value.
 const agentStyles = ref<StyleLite[]>([])
+// The user's last request phrase — a recovery signal for the lora backstop on nodes
+// with NO prompt widget (RestyleWithLoRANode captions internally), where the style
+// is named in the REQUEST ("restyle this in my watercolor style"), not the prompt.
+let lastAgentPhrase = ''
 async function refreshAgentStyles() {
   try {
     const res = await $fetch<{ loras: any[] }>('/api/loras-local')
@@ -208,10 +212,11 @@ function ensureLoraSelected(node: any) {
   const vals = (node.data?.widgetsValues ?? []) as any[]
   const idxOf = (name: string) => defs.findIndex(d => d?.name === name)
   const pIdx = idxOf('prompt')
-  const prompt = String(pIdx >= 0 ? vals[pIdx] ?? '' : '').toLowerCase()
-  if (!prompt) return
+  const prompt = String(pIdx >= 0 ? vals[pIdx] ?? '' : '')
+  // Search the node's prompt (trigger word, for generators) AND the user's request
+  // (style name, for restyle nodes that have no prompt) so either path recovers.
   const known = (v: string) => agentStyles.value.some(s => s.file === v)
-  const matches = matchStylesInText(prompt, agentStyles.value)
+  const matches = matchStylesInText(`${prompt} ${lastAgentPhrase}`, agentStyles.value)
   if (!matches.length) return
   const loraWidgets = nt === 'FluxMultiLoRARemoteNode' ? ['lora_a', 'lora_b'] : ['lora_name']
   let ci = 0
@@ -237,11 +242,12 @@ function agentCatalog(intent?: string): CatalogEntry[] {
   const boosts = { ...NODE_BOOST, ...capabilityBoosts() }
   // Pin GenerateImage (bare prompts) + the trained-LoRA generator when the user
   // has styles (so "in my <style>" can always reach it even on a weak intent match).
-  const pins = ['GenerateImageNode', ...(agentStyles.value.length ? ['FluxLoRARemoteNode'] : [])]
+  const pins = ['GenerateImageNode', ...(agentStyles.value.length ? ['FluxLoRARemoteNode', 'RestyleWithLoRANode'] : [])]
   return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: pins })
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {
+  lastAgentPhrase = phrase ?? ''
   const ns = nodes.value as any[]
   const byId = new Map(ns.map(n => [String(n.id), n]))
   const portName = (node: any, handle: string | null | undefined, kind: 'output' | 'input'): string | undefined => {
