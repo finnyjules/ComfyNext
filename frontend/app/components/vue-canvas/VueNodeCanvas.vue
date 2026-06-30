@@ -10,7 +10,7 @@ import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
-import { capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
+import { capabilityBoosts, capabilityKeywords, studioNodeTypes, supersededNodeTypes } from '~/lib/agent/capabilities'
 import { tuneCompositorNode } from '~/lib/agent/studioTune'
 import type { ProposedChange } from '~/composables/useLayoutAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -160,7 +160,10 @@ const { thinking: agentThinking } = useAgentActivity()
 // /object_info, so they're synthesized from the capability registry).
 function agentNodeTypes(): NodeTypeLite[] {
   const oi = (objectInfo.value || {}) as Record<string, any>
-  const fromInfo = Object.keys(oi).map((name) => {
+  // Drop raw nodes a capability supersedes (e.g. provider upscalers → UpscaleImageNode)
+  // so the agent never offers a redundant low-level node over the curated one.
+  const hidden = supersededNodeTypes()
+  const fromInfo = Object.keys(oi).filter(name => !hidden.has(name)).map((name) => {
     const info = oi[name]
     return {
       name,

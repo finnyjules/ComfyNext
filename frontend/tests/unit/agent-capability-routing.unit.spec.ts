@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { AGENT_CAPABILITIES, capabilityBoosts, capabilityKeywords, studioNodeTypes } from '~/lib/agent/capabilities'
+import { AGENT_CAPABILITIES, capabilityBoosts, capabilityKeywords, studioNodeTypes, supersededNodeTypes } from '~/lib/agent/capabilities'
 import { searchNodes } from '~/lib/nodeMatch'
 import { buildCatalog } from '~/lib/portIntentCatalog'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
@@ -62,6 +62,24 @@ const boosts = { ...NODE_BOOST, ...capabilityBoosts() }
 function topN(phrase: string, n = 3): string[] {
   return searchNodes(ALL, phrase, { keywords, boosts, limit: n }).map(x => x.name)
 }
+
+describe('superseded raw nodes are hidden from the agent palette', () => {
+  it('UpscaleImageNode supersedes the redundant provider/core upscalers', () => {
+    const hidden = supersededNodeTypes()
+    for (const n of ['WavespeedImageUpscaleNode', 'MagnificImageUpscalerCreativeNode', 'ImageUpscaleWithModel', 'ImageScale']) {
+      expect(hidden.has(n), n).toBe(true)
+    }
+  })
+  it('the upscale palette (with superseded hidden) only offers our UpscaleImageNode', () => {
+    const hidden = supersededNodeTypes()
+    // Simulate object_info containing both our node and the raw provider upscalers.
+    const rawUpscalers = ['WavespeedImageUpscaleNode', 'MagnificImageUpscalerCreativeNode', 'ImageScale'].map(n => ({ name: n, displayName: n.replace(/Node$/, ''), description: 'Upscale an image.', category: 'image' }))
+    const nodeTypes = [...CAP_NODES, ...rawUpscalers].filter(n => !hidden.has(n.name))
+    const top = searchNodes(nodeTypes, 'upscale this image', { keywords, boosts, limit: 3 }).map(x => x.name)
+    expect(top).toContain('UpscaleImageNode')
+    expect(top).not.toContain('WavespeedImageUpscaleNode')
+  })
+})
 
 describe('capability registry sanity', () => {
   it('every nodeType is unique', () => {

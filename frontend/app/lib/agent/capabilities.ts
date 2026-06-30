@@ -42,6 +42,10 @@ export interface AgentCapability {
   frontendOnly?: boolean
   /** Additive rank bonus (kept small per nodeMatch's contract). Defaults by kind. */
   boost?: number
+  /** Raw /object_info node ids this capability REPLACES — hidden from the agent
+   *  palette so it never picks a redundant provider node (e.g. WaveSpeed/Magnific
+   *  upscalers) over this curated dispatcher. */
+  supersedes?: string[]
 }
 
 /** Default rank bonus by kind — studios + generators edge out raw nodes on ties
@@ -50,6 +54,14 @@ const DEFAULT_BOOST: Record<CapabilityKind, number> = { studio: 3, generator: 2.
 
 export function capabilityBoost(c: AgentCapability): number {
   return c.boost ?? DEFAULT_BOOST[c.kind]
+}
+
+/** Raw node ids that a capability replaces — excluded from the agent palette so a
+ *  redundant provider node can't be picked over the curated dispatcher. */
+export function supersededNodeTypes(caps: AgentCapability[] = AGENT_CAPABILITIES): Set<string> {
+  const out = new Set<string>()
+  for (const c of caps) for (const n of c.supersedes ?? []) out.add(n)
+  return out
 }
 
 /** nodeType → intent phrases, for searchNodes/buildCatalog `keywords`. */
@@ -144,6 +156,9 @@ const GENERATORS: AgentCapability[] = [
 
   // ---- Image · restore, enhance, upscale ----
   { nodeType: 'UpscaleImageNode', kind: 'effect', title: 'Upscale an image', summary: 'Upscale with a selectable engine (Clarity, Real-ESRGAN, Topaz…).', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+    // This is the curated dispatcher — hide the redundant provider/core upscale
+    // nodes from the agent so it never picks a raw one (e.g. WaveSpeed) over us.
+    supersedes: ['WavespeedImageUpscaleNode', 'ClarityUpscaleRemoteNode', 'MagnificImageUpscalerCreativeNode', 'MagnificImageUpscalerPreciseV2Node', 'RecraftCrispUpscaleNode', 'RecraftCreativeUpscaleNode', 'StabilityUpscaleConservativeNode', 'StabilityUpscaleCreativeNode', 'StabilityUpscaleFastNode', 'ImageUpscaleWithModel', 'ImageScale', 'ImageScaleBy'],
     intents: ['upscale this', 'make it higher resolution', 'increase resolution', 'enlarge the image', 'make it bigger', '4k upscale', 'improve resolution', 'hd this image', 'super resolution', 'upres', 'make it high res', 'scale up the photo'] },
   { nodeType: 'EnhanceDetailNode', kind: 'effect', title: 'Enhance detail', summary: 'Add realistic fine detail in place (no resize).', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
     intents: ['enhance the detail', 'add detail', 'make it sharper', 'sharpen this', 'sharpen up', 'sharpen the image', 'deblur', 'fix blurry photo', 'improve the quality', 'add realism', 'refine this image', 'make it more detailed', 'add fine detail', 'increase clarity', 'make it crisper', 'polish the image'] },
