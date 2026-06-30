@@ -39,7 +39,7 @@ export interface EdgeLite { source: string; sourcePort?: string; target: string;
 /** A user's TRAINED LoRA — a personal style or character they can generate with
  *  ("in my watercolor style", "my character Mia"). `file` is the lora_name widget
  *  value; `trigger` (if any) must go in the prompt to activate the LoRA. */
-export interface StyleLite { name: string; kind: 'style' | 'character'; trigger?: string; file: string }
+export interface StyleLite { name: string; kind: 'style' | 'character'; trigger?: string; file: string; model?: string }
 /** `catalog` = addable node types (trimmed by buildCatalog to what's relevant to
  *  the selection + the request), so the agent can pick a real nodeType and wire
  *  its real ports. `styles` = the user's trained style/character LoRAs. Both are

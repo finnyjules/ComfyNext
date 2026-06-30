@@ -30,6 +30,7 @@ export default defineEventHandler(async () => {
     trigger: string | null
     aesthetic: string | null
     kind: 'character' | 'style' | null
+    model: string | null
     url: string | null
     coverUrl: string | null
     canGenerateCover: boolean
@@ -84,6 +85,10 @@ export default defineEventHandler(async () => {
       // 'character' = usable as an identity LoRA in the Characters panel;
       // anything else (incl. legacy untagged) is treated as a style.
       kind: meta.kind === 'character' ? 'character' : (meta.kind === 'style' ? 'style' : null),
+      // The runnable trained Replicate model ref (<owner>/<model>[:<version>]) — the
+      // robust way to run this LoRA (the agent sets it as lora_url, which the backend
+      // resolves directly, bypassing fragile filename→sidecar lookup).
+      model: meta.replicate_model ?? null,
       url: meta.replicate_url ?? null,
       coverUrl,
       canGenerateCover: !!meta.replicate_model,

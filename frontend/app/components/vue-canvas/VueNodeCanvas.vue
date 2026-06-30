@@ -195,6 +195,7 @@ async function refreshAgentStyles() {
         kind: (l.kind === 'character' ? 'character' : 'style') as 'character' | 'style',
         ...(l.trigger ? { trigger: String(l.trigger) } : {}),
         file: String(l.filename),
+        ...(l.model ? { model: String(l.model) } : {}),
       }))
   } catch { /* no styles / offline — agent just won't offer personal styles */ }
 }
@@ -218,16 +219,25 @@ function ensureLoraSelected(node: any) {
   const known = (v: string) => agentStyles.value.some(s => s.file === v)
   const matches = matchStylesInText(`${prompt} ${lastAgentPhrase}`, agentStyles.value)
   if (!matches.length) return
+  const setVal = (i: number, v: unknown) => {
+    if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
+    while (node.data.widgetsValues.length <= i) node.data.widgetsValues.push(null)
+    node.data.widgetsValues[i] = v
+  }
+  // name widget → its matching url-override widget (lora_url "wins over lora_name").
+  const urlFor: Record<string, string> = { lora_name: 'lora_url', lora_a: 'lora_a_url', lora_b: 'lora_b_url' }
   const loraWidgets = nt === 'FluxMultiLoRARemoteNode' ? ['lora_a', 'lora_b'] : ['lora_name']
   let ci = 0
   for (const w of loraWidgets) {
     if (ci >= matches.length) break
     const i = idxOf(w)
     if (i < 0) continue
-    if (known(String(vals[i] ?? ''))) continue // already a valid pick — leave it
-    if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
-    while (node.data.widgetsValues.length <= i) node.data.widgetsValues.push(null)
-    node.data.widgetsValues[i] = matches[ci]!.file
+    const m = matches[ci]!
+    if (!known(String(vals[i] ?? ''))) setVal(i, m.file) // pick the file (for the picker + sidecar path)
+    // Bulletproof: also set the url override to the trained-model ref — the backend
+    // resolves that DIRECTLY (its first check), bypassing filename/sidecar lookup.
+    const ui = idxOf(urlFor[w] ?? '')
+    if (ui >= 0 && m.model) setVal(ui, m.model)
     ci++
   }
 }
