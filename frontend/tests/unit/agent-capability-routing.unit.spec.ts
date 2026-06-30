@@ -414,4 +414,12 @@ describe('buildCatalog assembles the right palette', () => {
     expect(cat[0]).toBe('GradientStudio') // pin is appended, not prepended
     expect(cat).toContain('GenerateImageNode')
   })
+  it('"in my <style>" keeps the trained-LoRA generator reachable (pinned when the user has styles)', () => {
+    const noAnchor = { portType: '*', direction: 'output' as const }
+    // Live path: when the user has trained styles, FluxLoRARemoteNode is pinned too.
+    const cat = (intent: string) => buildCatalog(nodeTypes, {}, noAnchor, { intent, keywords, boosts, maxNodes: 60, maxIntent: 24, alwaysInclude: ['GenerateImageNode', 'FluxLoRARemoteNode'] }).map(e => e.type)
+    for (const p of ['a fox in my watercolor style', 'make my character mia on a beach', 'generate something in my own style']) {
+      expect(cat(p), p).toContain('FluxLoRARemoteNode')
+    }
+  })
 })

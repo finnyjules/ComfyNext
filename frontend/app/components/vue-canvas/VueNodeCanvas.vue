@@ -5,7 +5,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
-import type { CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import type { CanvasSnapshot, StyleLite } from '~/lib/agent/surfaces/canvas'
 import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
@@ -177,6 +177,25 @@ function agentNodeTypes(): NodeTypeLite[] {
 // a wildcard when nothing's selected) + intent-matched nodes for the phrase.
 // Capability intents/boosts make the studios + generators surface and rank above
 // raw ComfyUI nodes for creative requests.
+// The user's TRAINED styles & characters (runnable trained LoRAs), surfaced to the
+// agent so "in my <style>" / "my character X" resolve to a real lora_name + trigger.
+// Fetched once (rarely changes); agentSnapshot reads the cached value.
+const agentStyles = ref<StyleLite[]>([])
+async function refreshAgentStyles() {
+  try {
+    const res = await $fetch<{ loras: any[] }>('/api/loras-local')
+    agentStyles.value = (res?.loras ?? [])
+      .filter(l => l && l.canGenerateCover) // has a runnable trained (Replicate) model
+      .map(l => ({
+        name: String(l.name || l.filename),
+        kind: (l.kind === 'character' ? 'character' : 'style') as 'character' | 'style',
+        ...(l.trigger ? { trigger: String(l.trigger) } : {}),
+        file: String(l.filename),
+      }))
+  } catch { /* no styles / offline — agent just won't offer personal styles */ }
+}
+onMounted(refreshAgentStyles)
+
 function agentCatalog(intent?: string): CatalogEntry[] {
   const oi = (objectInfo.value || {}) as Record<string, any>
   if (!Object.keys(oi).length) return []
@@ -185,9 +204,10 @@ function agentCatalog(intent?: string): CatalogEntry[] {
   const anchor = { portType: String(out?.type ?? '*'), direction: 'output' as const }
   const keywords = { ...NODE_KEYWORDS, ...capabilityKeywords() }
   const boosts = { ...NODE_BOOST, ...capabilityBoosts() }
-  // Pin GenerateImage so a bare descriptive prompt ("a neon alley, cinematic")
-  // can always be turned into a generation even when it matches no intent.
-  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: ['GenerateImageNode'] })
+  // Pin GenerateImage (bare prompts) + the trained-LoRA generator when the user
+  // has styles (so "in my <style>" can always reach it even on a weak intent match).
+  const pins = ['GenerateImageNode', ...(agentStyles.value.length ? ['FluxLoRARemoteNode'] : [])]
+  return buildCatalog(agentNodeTypes(), oi, anchor, { intent, keywords, boosts, maxNodes: 60, maxEnum: 6, maxIntent: 24, alwaysInclude: pins })
 }
 
 function agentSnapshot(phrase?: string): CanvasSnapshot {
@@ -228,6 +248,7 @@ function agentSnapshot(phrase?: string): CanvasSnapshot {
       targetPort: portName(byId.get(String(e.target)), e.targetHandle, 'input'),
     })),
     catalog: agentCatalog(phrase),
+    ...(agentStyles.value.length ? { styles: agentStyles.value } : {}),
   }
 }
 

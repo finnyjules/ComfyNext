@@ -42,6 +42,20 @@ describe('describeCanvas', () => {
     expect(palette).toBeTruthy()
     expect((palette.current as { type: string }[]).map(c => c.type)).toContain('UpscaleImage')
   })
+  it('exposes the user\'s trained styles/characters as a library (name, kind, trigger, file)', () => {
+    const g = graph(); g.styles = [
+      { name: 'Watercolor', kind: 'style', trigger: 'wtrclr', file: 'watercolor_v2.safetensors' },
+      { name: 'Mia', kind: 'character', file: 'mia.safetensors' },
+    ]
+    const lib = describeCanvas(g).objects.find(o => o.type === 'library')!
+    expect(lib).toBeTruthy()
+    const items = lib.current as { name: string; kind: string; trigger?: string; file: string }[]
+    expect(items.find(i => i.name === 'Watercolor')).toMatchObject({ kind: 'style', trigger: 'wtrclr', file: 'watercolor_v2.safetensors' })
+    expect(items.find(i => i.name === 'Mia')).toMatchObject({ kind: 'character', file: 'mia.safetensors' })
+  })
+  it('omits the library when the user has no trained styles', () => {
+    expect(describeCanvas(graph()).objects.find(o => o.type === 'library')).toBeUndefined()
+  })
 })
 
 describe('applyCanvasCommand', () => {

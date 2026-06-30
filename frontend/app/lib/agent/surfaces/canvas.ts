@@ -36,10 +36,15 @@ export interface NodeLite {
   selected?: boolean
 }
 export interface EdgeLite { source: string; sourcePort?: string; target: string; targetPort?: string }
+/** A user's TRAINED LoRA — a personal style or character they can generate with
+ *  ("in my watercolor style", "my character Mia"). `file` is the lora_name widget
+ *  value; `trigger` (if any) must go in the prompt to activate the LoRA. */
+export interface StyleLite { name: string; kind: 'style' | 'character'; trigger?: string; file: string }
 /** `catalog` = addable node types (trimmed by buildCatalog to what's relevant to
  *  the selection + the request), so the agent can pick a real nodeType and wire
- *  its real ports. Absent in read/edit-only contexts. */
-export interface CanvasSnapshot { nodes: NodeLite[]; edges: EdgeLite[]; catalog?: CatalogEntry[] }
+ *  its real ports. `styles` = the user's trained style/character LoRAs. Both are
+ *  absent in read/edit-only contexts. */
+export interface CanvasSnapshot { nodes: NodeLite[]; edges: EdgeLite[]; catalog?: CatalogEntry[]; styles?: StyleLite[] }
 
 const MODE_BY_NAME: Record<string, number> = { normal: 0, mute: 2, muted: 2, bypass: 4, bypassed: 4 }
 const MODE_LABEL: Record<number, string> = { 0: 'normal', 2: 'muted', 4: 'bypassed' }
@@ -61,7 +66,7 @@ function connectedInputs(s: CanvasSnapshot, nodeId: string): Set<string> {
 const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'setWidget', hint: 'Set a node\'s parameter (widget) by name. target = node id; args: { name, value }. name MUST be one of that node\'s widget keys (see its "widgets"). For a CHOICE widget (the node lists its allowed values under "choices"), value MUST be EXACTLY one of those options — never invent one (a wrong sampler/model/scheduler name breaks the run). Numeric widgets take a number, not a string. e.g. steps → {name:"steps", value:30}. This is what "set the seed to 42", "30 steps", "use the euler sampler" mean.' },
   { op: 'setMode', hint: 'Mute or bypass a node (or re-enable it). target = node id; args: { mode: "normal" | "mute" | "bypass" }. Muted = does not run; bypass = passes input through.' },
-  { op: 'addNode', hint: 'Add a NEW node from the palette. args: { nodeType (a "type" from the palette — NOT a display name), id (a placeholder you assign, e.g. "$new1", so you can connect it), widgetOverrides? (set the node\'s widgets, e.g. {prompt:"…"}) }. The palette is ranked by relevance and leads with the app\'s high-level GENERATORS (generate/edit/upscale/remove-background/restore an image, generate video/music/speech/3D, …) and STUDIOS (Gradient, Shader, Texture, Smart Layout, Frame/Compositor, Type). STRONGLY prefer a single such capability over wiring up low-level ComfyUI nodes. To act on an existing image, addNode the capability then connect the image to it. DIRECT GENERATION: if the user\'s whole message is just a DESCRIPTION of an image/scene with no command verb (e.g. "a neon cyberpunk alley, cinematic", "sunset over the ocean", "a golden retriever in a field"), treat it as "generate this": addNode GenerateImageNode with widgetOverrides {prompt: the full description}. Put any STYLE words ("watercolor", "vaporwave", "studio ghibli") into that prompt. Leave the model widget at its default unless the user names a specific model.' },
+  { op: 'addNode', hint: 'Add a NEW node from the palette. args: { nodeType (a "type" from the palette — NOT a display name), id (a placeholder you assign, e.g. "$new1", so you can connect it), widgetOverrides? (set the node\'s widgets, e.g. {prompt:"…"}) }. The palette is ranked by relevance and leads with the app\'s high-level GENERATORS (generate/edit/upscale/remove-background/restore an image, generate video/music/speech/3D, …) and STUDIOS (Gradient, Shader, Texture, Smart Layout, Frame/Compositor, Type). STRONGLY prefer a single such capability over wiring up low-level ComfyUI nodes. To act on an existing image, addNode the capability then connect the image to it. DIRECT GENERATION: if the user\'s whole message is just a DESCRIPTION of an image/scene with no command verb (e.g. "a neon cyberpunk alley, cinematic", "sunset over the ocean", "a golden retriever in a field"), treat it as "generate this": addNode GenerateImageNode with widgetOverrides {prompt: the full description}. Put any descriptive STYLE words ("watercolor", "vaporwave", "studio ghibli") into that prompt. Leave the model widget at its default unless the user names a specific model. PERSONAL STYLES/CHARACTERS: the "library" object lists the user\'s OWN trained styles & characters. When they reference one ("in my <style> style", "make my character <name> …", "use my trained model"), match it by name to a library item and use FluxLoRARemoteNode with widgetOverrides { lora_name: <that item\'s file>, prompt: <the description> } — and if the item has a trigger word, INCLUDE that trigger word in the prompt. To restyle an EXISTING image with a trained style, use RestyleWithLoRANode instead (connect the image). For a personal character AND style together, use FluxMultiLoRARemoteNode. If they reference a personal style/character that is NOT in the library, say so in "message" instead of guessing a lora_name.' },
   { op: 'connect', hint: 'Wire two nodes. args: { from, to, fromPort?, toPort? }. from/to are node ids — existing ids OR a placeholder you gave a just-added node (e.g. "$new1"). Omit the ports to auto-pick the first type-compatible pair. When the request is "do X to this/it", "this" is the node with selected:true — emit addNode for the effect then connect { from: <selected id>, to: "$new1" }.' },
   { op: 'deleteNode', hint: 'Delete a node from the graph. target = node id. Edges touching it are removed too.' },
   { op: 'tuneNode', hint: 'Adjust the INTERNALS of an existing STUDIO node in place — its own knobs, NOT the graph. Supported now: a Frame (a node whose nodeType is "Compositor") — its background colour/gradient, the fill/colour/stroke of its layers, text content + style, and adding/removing/moving layers. target = that node id; args: { request: a plain-language instruction for the frame, e.g. "make the background blue", "add a centred white headline SALE", "make the title bigger" }. STRONGLY prefer this over adding a Gradient/Shader/Texture node when the user wants to change what is INSIDE an existing frame (a solid background colour is a frame background, not a new node).' },
@@ -123,6 +128,15 @@ export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {
         out: c.outputs.map(p => `${p.name}:${p.type}`),
         widgets: c.widgets.map(w => w.name),
       })),
+    })
+  }
+  // The user's trained styles/characters — so "in my <style>" / "my character X"
+  // can resolve to a real lora_name + trigger word.
+  if (s.styles?.length) {
+    objects.push({
+      id: 'library', label: 'Your trained styles & characters', type: 'library',
+      // Cap so a big LoRA library can't blow up the prompt (list is newest-first).
+      current: s.styles.slice(0, 40).map(st => ({ name: st.name, kind: st.kind, ...(st.trigger ? { trigger: st.trigger } : {}), file: st.file })),
     })
   }
   return { surface: 'canvas', objects, commands: CANVAS_COMMANDS }
