@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeCanvas, applyCanvasCommand, verifyCanvas, summarizeCanvasChange, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import { describeCanvas, applyCanvasCommand, verifyCanvas, summarizeCanvasChange, matchStylesInText, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import type { CatalogEntry } from '~/lib/portIntentCatalog'
 
 const CATALOG: CatalogEntry[] = [
@@ -55,6 +55,23 @@ describe('describeCanvas', () => {
   })
   it('omits the library when the user has no trained styles', () => {
     expect(describeCanvas(graph()).objects.find(o => o.type === 'library')).toBeUndefined()
+  })
+})
+
+describe('matchStylesInText (lora_name backstop)', () => {
+  const styles = [
+    { name: 'Grand Theft Auto', kind: 'style' as const, trigger: 'grand_theft_auto', file: 'gta.safetensors' },
+    { name: 'Mia', kind: 'character' as const, file: 'mia.safetensors' },
+  ]
+  it('recovers the LoRA from the trigger word in the prompt (the GTA case)', () => {
+    const m = matchStylesInText('grand_theft_auto a dog, GTA art style, cel-shaded', styles)
+    expect(m[0]?.file).toBe('gta.safetensors')
+  })
+  it('falls back to the display name when no trigger word is present', () => {
+    expect(matchStylesInText('a portrait of mia on a beach', styles)[0]?.file).toBe('mia.safetensors')
+  })
+  it('returns nothing when no style is referenced', () => {
+    expect(matchStylesInText('a generic golden retriever', styles)).toEqual([])
   })
 })
 

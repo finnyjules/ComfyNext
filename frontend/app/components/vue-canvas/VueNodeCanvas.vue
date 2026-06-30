@@ -5,7 +5,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
-import type { CanvasSnapshot, StyleLite } from '~/lib/agent/surfaces/canvas'
+import { matchStylesInText, type CanvasSnapshot, type StyleLite } from '~/lib/agent/surfaces/canvas'
 import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
@@ -196,6 +196,37 @@ async function refreshAgentStyles() {
 }
 onMounted(refreshAgentStyles)
 
+// Backstop for trained-LoRA generators: the model reliably puts a style's TRIGGER
+// WORD in the prompt but sometimes forgets (or mis-types) the lora_name picker. If
+// the lora widget isn't a valid library file, recover it from the trigger word (or
+// style name) present in the prompt — so the right LoRA is actually loaded.
+const LORA_GEN_TYPES = new Set(['FluxLoRARemoteNode', 'RestyleWithLoRANode', 'FluxMultiLoRARemoteNode'])
+function ensureLoraSelected(node: any) {
+  const nt = node?.data?.nodeType
+  if (!LORA_GEN_TYPES.has(nt) || !agentStyles.value.length) return
+  const defs = (node.data?.widgetDefs ?? []) as any[]
+  const vals = (node.data?.widgetsValues ?? []) as any[]
+  const idxOf = (name: string) => defs.findIndex(d => d?.name === name)
+  const pIdx = idxOf('prompt')
+  const prompt = String(pIdx >= 0 ? vals[pIdx] ?? '' : '').toLowerCase()
+  if (!prompt) return
+  const known = (v: string) => agentStyles.value.some(s => s.file === v)
+  const matches = matchStylesInText(prompt, agentStyles.value)
+  if (!matches.length) return
+  const loraWidgets = nt === 'FluxMultiLoRARemoteNode' ? ['lora_a', 'lora_b'] : ['lora_name']
+  let ci = 0
+  for (const w of loraWidgets) {
+    if (ci >= matches.length) break
+    const i = idxOf(w)
+    if (i < 0) continue
+    if (known(String(vals[i] ?? ''))) continue // already a valid pick — leave it
+    if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
+    while (node.data.widgetsValues.length <= i) node.data.widgetsValues.push(null)
+    node.data.widgetsValues[i] = matches[ci]!.file
+    ci++
+  }
+}
+
 function agentCatalog(intent?: string): CatalogEntry[] {
   const oi = (objectInfo.value || {}) as Record<string, any>
   if (!Object.keys(oi).length) return []
@@ -323,6 +354,7 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
       // Unique NUMERIC id — the run serializer parses node ids as numbers, so a
       // hyphenated id (e.g. "171…-0") would be truncated and break its links.
       node.id = String(Date.now() + (agentNodeSeq++))
+      ensureLoraSelected(node) // backstop: pick the trained LoRA from the prompt's trigger word
       if (ghost) { node.class = 'agent-ghost'; node.data.ghost = true }
       ;(nodes.value as any[]).push(node)
       if (typeof cmd.args.id === 'string') idMap[cmd.args.id] = node.id
