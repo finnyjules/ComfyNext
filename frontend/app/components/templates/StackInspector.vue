@@ -15,7 +15,6 @@ const { selectedStack, updateStackLayout, updateChildSizing } = ctx
 
 const stack = selectedStack
 
-const inputCls = 'w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30'
 const labelCls = 'panel-label'
 const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-pointer'
 
@@ -123,7 +122,7 @@ function onPadding(e: Event) {
     </StudioSection>
 
     <!-- Per-child sizing -->
-    <StudioSection v-if="stack.children.length" title="Children">
+    <StudioSection title="Children">
       <div
         v-for="child in stack.children"
         :key="child.id"

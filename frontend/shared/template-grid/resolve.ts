@@ -108,12 +108,15 @@ function fitElementAtRect(
 
 /** Build StackItems for a layout section at the current metrics, measuring
  * text height for hug. Single-format (Slice 1): child regions are in this
- * format's grid, so regionToRect(child.region, m) is exact. */
+ * format's grid, so regionToRect(child.region, m) is exact.
+ * `crossAlign` must match the stack box's crossAlign so the measurement width
+ * mirrors the solver's stretch predicate (crossMode==='fill' OR crossAlign==='stretch'). */
 function stackItemsFor(
   children: ElementV2[],
   m: GridMetrics,
   innerCrossPx: number,
   direction: 'horizontal' | 'vertical',
+  crossAlign: 'start' | 'center' | 'end' | 'stretch',
   ctx: { template: AnyGridTemplate; formatKey: string },
   props: TokenScope,
   brand: TokenScope,
@@ -131,7 +134,9 @@ function stackItemsFor(
       let content = String(resolveTokens(child.content, props, brand) ?? '')
       if (child.style?.transform === 'uppercase') content = content.toUpperCase()
       const fontSize = typeSize(child.level, ctx.template, ctx.formatKey, child.style?.fontSize)
-      const measureW = sizing.cross === 'fill' && direction === 'vertical'
+      // Mirror the solver's stretch predicate: crossMode==='fill' OR crossAlign==='stretch'
+      const stretched = sizing.cross === 'fill' || crossAlign === 'stretch'
+      const measureW = stretched && direction === 'vertical'
         ? innerCrossPx
         : (direction === 'horizontal' ? Infinity : r.w)
       const lines = wrapLines(content, fontSize, measureW)
@@ -231,7 +236,7 @@ export function resolveFormat(
         const innerCrossPx = lay.direction === 'vertical'
           ? sectionRectTarget.w - padPx.left - padPx.right
           : sectionRectTarget.h - padPx.top - padPx.bottom
-        const items = stackItemsFor(visible, m, innerCrossPx, lay.direction,
+        const items = stackItemsFor(visible, m, innerCrossPx, lay.direction, lay.crossAlign,
           { template, formatKey }, props, brand)
         const box: StackBox = {
           x: sectionRectTarget.x, y: sectionRectTarget.y,
