@@ -12,9 +12,9 @@
 import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
-import type { ProposedChange } from '~/composables/useLayoutAgent'
+import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import { applyCanvasCommand, describeCanvas, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
-import { buildAgentPrompt, buildCommandSchema, parseAgentResponse } from '~/lib/agent/protocol'
+import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
 import type { LayoutIssue } from '~/lib/agent/verify'
 
 const REROLLABLE = new Set(['setWidget', 'setMode', 'addNode'])
@@ -31,6 +31,8 @@ export function useCanvasAgent(opts: {
   commit: () => string[] | void
   /** Run the given nodes (Keep & Run). Optional — only the canvas surface runs. */
   run?: (targetIds: string[]) => void
+  /** The run's output image as a data URL, for the run→look→fix review loop. */
+  runOutputImage?: (targetIds: string[]) => Promise<string | null>
   /** Remove the ghosts. Called on Dismiss. */
   discard: () => void
   /** Delegate tuneNode commands to each target node's OWN studio surface (applied
@@ -50,6 +52,11 @@ export function useCanvasAgent(opts: {
   const issues = ref<LayoutIssue[]>([])
   const hovered = ref<number | null>(null)
   const lastPhrase = ref('')
+  /** Run→look→fix: a designer's-eye critique of the RUN's actual output. */
+  const review = ref<VisualReview | null>(null)
+  const reviewing = ref(false)
+  /** Set by Keep & Run; consumed once when the run completes. */
+  let pendingReview: { targets: string[]; intent: string } | null = null
   let original: CanvasSnapshot | null = null
   const hasProposal = computed(() => changes.value.length > 0)
 
@@ -186,17 +193,60 @@ export function useCanvasAgent(opts: {
   /** Commit: promote the on-canvas ghosts to real nodes/edges (+ glimm). */
   function keep() {
     opts.commit()
-    changes.value = []; original = null; issues.value = []
+    changes.value = []; original = null; issues.value = []; review.value = null
   }
   /** Keep, then run the resulting node(s) — one click for the common build→run flow. */
   function keepAndRun() {
     const committed = opts.commit() || []
     const targets = runTargets(committed)
-    changes.value = []; original = null; issues.value = []
-    if (targets.length) opts.run?.(targets)
+    const intent = lastPhrase.value
+    changes.value = []; original = null; issues.value = []; review.value = null
+    if (targets.length) {
+      opts.run?.(targets)
+      // Arm the run→look→fix loop: when this run finishes, review its output.
+      if (opts.runOutputImage) pendingReview = { targets, intent }
+    }
+  }
+
+  /** Run→look→fix (suggest-only): after a Keep & Run finishes, look at the actual
+   *  output and, if it falls short of the intent, propose fixes as Keep/Dismiss
+   *  cards. The user decides — nothing is auto-applied or auto-re-run. */
+  async function reviewLastRun() {
+    if (!pendingReview || busy.value || reviewing.value) return
+    const { targets, intent } = pendingReview
+    pendingReview = null // one pass; the user re-arms by Keep & Run-ing a fix
+    if (!opts.runOutputImage) return
+    reviewing.value = true
+    try {
+      const image = await opts.runOutputImage(targets)
+      if (!image) return
+      const snap = clone(opts.getSnapshot(intent))
+      original = snap
+      const desc = describeCanvas(snap)
+      const res = await $fetch<{ text: string }>('/api/agent-review', {
+        method: 'POST',
+        body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildResultReviewPrompt(desc, intent), schema: buildReviewSchema(desc.commands), image },
+        timeout: 60_000,
+      })
+      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
+      review.value = { assessment, issues: found }
+      const built: ProposedChange[] = []
+      let probe = clone(snap)
+      fixes.forEach((cmd, i) => {
+        const ch = buildChange(probe, cmd, fixRationales[i] || 'From the visual review')
+        if (!ch) return
+        ch.fromReview = true
+        built.push(ch)
+        const r = applyCanvasCommand(probe, cmd)
+        if (r.ok) probe = r.template
+      })
+      if (built.length) { changes.value = built; recompute() }
+      else if (!found.length) answer.value = '✓ Looks right — the result matches what you asked.'
+    } catch { /* review is best-effort — never block the run */ }
+    finally { reviewing.value = false }
   }
   /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
-  function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = '' }
+  function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = ''; review.value = null; pendingReview = null }
 
-  return { busy, error, reasoning, answer, changes, issues, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, dismiss }
+  return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, dismiss }
 }

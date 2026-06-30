@@ -4,7 +4,7 @@
 // nodes; results (answer / proposal / progress) expand UPWARD above the input,
 // which stays anchored just above the toolbar. Owns useCanvasAgent; the parent
 // supplies the VueNodeCanvas ref (agentSnapshot + applyCanvasOps).
-import { computed, nextTick, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Sparkles, ArrowUp } from 'lucide-vue-next'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
@@ -18,8 +18,8 @@ const { getLocalSetting } = useLocalSettings()
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
 const {
-  busy, error, reasoning, answer, changes, issues, hasProposal, hovered,
-  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, dismiss,
+  busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
+  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
@@ -33,8 +33,15 @@ const {
   // whole canvas). New nodes execute (uncached) and edited nodes cache-miss;
   // truly-unchanged upstream stays cached.
   run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
+  runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
+
+// Run→look→fix: when a Keep & Run finishes, review its output (reviewLastRun is a
+// no-op unless a review is armed). VueNodeCanvas fires this on execution_complete.
+function onRunComplete() { reviewLastRun() }
+onMounted(() => window.addEventListener('comfynext:agentRunComplete', onRunComplete))
+onBeforeUnmount(() => window.removeEventListener('comfynext:agentRunComplete', onRunComplete))
 
 // Drive the dot-grid "thinking" animation off the agent's busy state.
 const { thinking } = useAgentActivity()
@@ -55,7 +62,7 @@ watch(busy, async (v) => { if (v) { await nextTick(); glimmActive.value = true }
 
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
-const hasResult = computed(() => busy.value || hasProposal.value || !!answer.value || !!error.value)
+const hasResult = computed(() => busy.value || reviewing.value || hasProposal.value || !!answer.value || !!error.value)
 </script>
 
 <template>
@@ -75,9 +82,13 @@ const hasResult = computed(() => busy.value || hasProposal.value || !!answer.val
           <p v-if="reasoning" class="mb-1 text-[11px] leading-snug text-white/40">{{ reasoning }}</p>
           <p class="whitespace-pre-line text-[12.5px] leading-relaxed text-white/85">{{ answer }}</p>
         </div>
+        <!-- Run→look→fix: looking at the result before any fixes are surfaced. -->
+        <div v-if="reviewing && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+          <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+        </div>
         <AgentProposal
           v-if="hasProposal"
-          :changes="changes" :busy="busy" :issues="issues" runnable
+          :changes="changes" :busy="busy" :issues="issues" :review="review" :reviewing="reviewing" runnable
           @accept="acceptChange" @reject="rejectChange" @reroll="reroll"
           @keep="keep" @keep-run="keepAndRun" @revert="dismiss" @hover="(i: number | null) => hovered = i"
         />

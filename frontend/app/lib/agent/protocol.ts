@@ -142,6 +142,25 @@ export function buildReviewPrompt(snapshot: SurfaceSnapshot, intent: string): st
   ].join('\n\n')
 }
 
+/** Review prompt for a GENERATED RESULT (not a layout) — judges whether the image
+ *  the graph produced achieves the user's request, without imposing a design style
+ *  the user didn't ask for. Fixes are graph commands (strengthen an effect, swap a
+ *  model, add an enhance/upscale node, re-roll, …). */
+export function buildResultReviewPrompt(snapshot: SurfaceSnapshot, intent: string): string {
+  const objects = snapshot.objects.map((o) => {
+    const cur = o.current !== null && o.current !== undefined ? ` — current ${JSON.stringify(o.current)}` : ''
+    return `- ${o.id} ("${o.label}", ${o.type})${cur}`
+  }).join('\n')
+  const commands = snapshot.commands.map(c => `- ${c.op}${c.hint ? `: ${c.hint}` : ''}`).join('\n')
+  return [
+    `You are a sharp creative director reviewing the IMAGE a node graph just generated for this request: "${intent}".`,
+    `Nodes you can adjust (id, label, kind, current value):\n${objects}`,
+    `Commands you may propose as fixes:\n${commands}`,
+    'Look at the ATTACHED IMAGE and judge ONLY whether it ACHIEVES THE REQUEST. Flag only concrete problems you can SEE: the content/subject is wrong or missing; a requested style or effect is weak or absent; the subject is cropped or cut off at an edge; visible artifacts/distortion; wrong colours; obvious low quality or blur; the wrong number of things. Do NOT invent problems, and do NOT impose any style, polish, or "design" the user did not ask for. Then propose the FEWEST fixes using the commands — e.g. setWidget to strengthen an effect (raise a scale/strength), swap a model, edit the prompt, add an upscale/enhance/fix-faces node, or re-roll by changing the seed. If the image already achieves the request, return empty issues and empty fixes.',
+    'Return JSON with: "assessment" (one sentence on how well it matches the request), "issues" (array of short concrete problems, empty if good), and "fixes" (array of commands; args as a JSON-encoded string). Use ONLY the ops and node ids listed above.',
+  ].join('\n\n')
+}
+
 /** Parse the visual-review reply. */
 export function parseReviewResponse(text: string): { assessment: string; issues: string[]; fixes: Command[]; fixRationales: string[] } {
   let data: { assessment?: unknown; issues?: unknown; fixes?: unknown }

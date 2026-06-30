@@ -625,6 +625,27 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
   return { changes, notice: notices.length ? notices.join(' ') : undefined }
 }
 
+/** The output image of an agent run, as a data URL, for the visual-review loop.
+ *  Picks the most-downstream run node that produced an image. */
+async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
+  if (typeof document === 'undefined') return null
+  const ids = new Set(nodeIds.map(String))
+  const withImg = (nodes.value as any[]).filter(n => ids.has(String(n.id)) && typeof n.data?.images?.[0] === 'string')
+  const node = withImg[withImg.length - 1] || withImg[0] // last = most-downstream of the run
+  const url = node?.data?.images?.[0]
+  if (typeof url !== 'string') return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(String(r.result)); r.onerror = () => reject(new Error('read failed'))
+      r.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+
 /** Undo all headless studio-tune edits from the current proposal (Dismiss). */
 function agentTuneRevert() {
   for (const r of tuneRestores) { try { r() } catch { /* best-effort */ } }
@@ -2190,6 +2211,9 @@ function handleBridgeMessage(event: MessageEvent) {
     }
     // Drop the captured run set — next Run captures fresh.
     activeRunNodeIds.value = new Set()
+    // Let the agent close its run→look→fix loop (the prompt bar gates on whether a
+    // Keep & Run is awaiting review).
+    if (import.meta.client) window.dispatchEvent(new CustomEvent('comfynext:agentRunComplete'))
   }
 
   if (evt === 'gate_paused') {
@@ -5094,6 +5118,7 @@ defineExpose({
   agentHighlight,
   agentTune,
   agentTuneRevert,
+  agentRunOutputImage,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
