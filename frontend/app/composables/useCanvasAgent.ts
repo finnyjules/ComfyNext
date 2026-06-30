@@ -96,7 +96,8 @@ export function useCanvasAgent(opts: {
 
   function buildChange(probe: CanvasSnapshot, cmd: Command, rationale: string): ProposedChange | null {
     if (cmd.op === 'fixAnatomy') {
-      const a = (cmd.args ?? {}) as { kind?: string; note?: string }
+      const a = (cmd.args ?? {}) as { kind?: string; bbox?: unknown; note?: string }
+      if (!(Array.isArray(a.bbox) && a.bbox.length === 4 && a.bbox.every(n => Number.isFinite(n)))) return null
       return {
         command: cmd,
         label: a.note ? `Repair: ${a.note}` : 'Repair anatomy',
