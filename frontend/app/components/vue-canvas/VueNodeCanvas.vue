@@ -323,6 +323,25 @@ function resolveLivePorts(fromNode: any, toNode: any, fromPort?: string, toPort?
 }
 
 function wireEdge(from: any, to: any, fromPort?: string, toPort?: string, ghost = false): string | null {
+  if (!from || !to || String(from.id) === String(to.id)) return null
+  // Cycle guard — the graph is a DAG. Refuse any edge that would close a loop,
+  // i.e. `to` already reaches `from` downstream (e.g. an agent wiring an
+  // EditImage's output back into the generator that produced its input). Walk
+  // downstream from `to`; if we reach `from`, adding from→to would loop.
+  {
+    const fromId = String(from.id)
+    const seen = new Set<string>([String(to.id)])
+    const stack = [String(to.id)]
+    while (stack.length) {
+      const cur = stack.pop() as string
+      if (cur === fromId) return null
+      for (const e of edges.value as any[]) {
+        if (String(e.source) !== cur) continue
+        const t = String(e.target)
+        if (!seen.has(t)) { seen.add(t); stack.push(t) }
+      }
+    }
+  }
   const pair = resolveLivePorts(from, to, fromPort, toPort)
   if (!pair) return null
   // One link per input slot — drop any existing edge into it first.
