@@ -391,7 +391,14 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
   for (const cmd of commands) {
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
       const pos = anchorFor(cmd.args?.id)
-      const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, cmd.args.widgetOverrides as Record<string, unknown> | undefined)
+      let overrides = cmd.args.widgetOverrides as Record<string, unknown> | undefined
+      // An agent-added EditImageNode is for surgical repair (anatomy/text), which
+      // Nano Banana does best — force it onto a Nano Banana model unless the agent
+      // explicitly picked a Nano Banana variant (never leave it on Flux Kontext).
+      if (cmd.args.nodeType === 'EditImageNode' && !/nano banana/i.test(String((overrides as any)?.model ?? ''))) {
+        overrides = { ...(overrides ?? {}), model: 'Nano Banana 2' }
+      }
+      const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, overrides)
       // Unique NUMERIC id — the run serializer parses node ids as numbers, so a
       // hyphenated id (e.g. "171…-0") would be truncated and break its links.
       node.id = String(Date.now() + (agentNodeSeq++))
@@ -465,6 +472,10 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
     const node = findNode(cmd.target)
     if (!node) continue
     if (cmd.op === 'setWidget' && typeof cmd.args?.name === 'string') {
+      // Don't let the agent flip an EditImageNode off Nano Banana — that node is
+      // for surgical repair, which Nano Banana handles best (see addNode above).
+      if (cmd.args.name === 'model' && String(node.data?.nodeType) === 'EditImageNode'
+        && !/nano banana/i.test(String(cmd.args.value ?? ''))) continue
       const defs = (node.data?.widgetDefs ?? []) as any[]
       const idx = defs.findIndex(w => w?.name === cmd.args!.name)
       if (idx >= 0) {
