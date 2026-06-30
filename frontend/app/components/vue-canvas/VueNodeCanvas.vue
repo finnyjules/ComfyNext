@@ -654,8 +654,7 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
 
 /** The output image of an agent run, as a data URL, for the visual-review loop.
  *  Picks the most-downstream run node that produced an image. */
-async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
-  if (typeof document === 'undefined') return null
+function agentResultNode(nodeIds: string[]): any | null {
   const eds = edges.value as any[]
   const byId = (id: string) => (nodes.value as any[]).find(n => String(n.id) === String(id))
   const hasImg = (n: any) => typeof n?.data?.images?.[0] === 'string'
@@ -683,7 +682,20 @@ async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
   //    freshest result.
   const cset = new Set(withImg.map(n => String(n.id)))
   const feedsAnother = (id: string) => eds.some(e => String(e.source) === id && cset.has(String(e.target)))
-  const node = withImg.filter(n => !feedsAnother(String(n.id))).pop() || withImg[withImg.length - 1]
+  return withImg.filter(n => !feedsAnother(String(n.id))).pop() || withImg[withImg.length - 1]
+}
+
+/** The id of the node whose IMAGE a review of `nodeIds` would judge — i.e. the
+ *  OUTPUT/result node, resolved past a generator to its result card. Used to put
+ *  the "scanning" overlay on the actual output, not the generator. */
+function agentResolveResultNode(nodeIds: string[]): string | null {
+  const n = agentResultNode(nodeIds)
+  return n ? String(n.id) : null
+}
+
+async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
+  if (typeof document === 'undefined') return null
+  const node = agentResultNode(nodeIds)
   const url = node?.data?.images?.[0]
   if (typeof url !== 'string') return null
   try {
@@ -5202,6 +5214,7 @@ defineExpose({
   agentTune,
   agentTuneRevert,
   agentRunOutputImage,
+  agentResolveResultNode,
   agentNodeIntent,
   isApplyingWorkflow: () => applyingWorkflow.value,
   zoomIn: () => vfZoomIn(),

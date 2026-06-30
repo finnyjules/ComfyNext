@@ -35,6 +35,7 @@ const {
   // truly-unchanged upstream stays cached.
   run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
   runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
+  resolveResultNode: (targetIds: string[]) => props.vueCanvas.agentResolveResultNode?.(targetIds) ?? null,
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 

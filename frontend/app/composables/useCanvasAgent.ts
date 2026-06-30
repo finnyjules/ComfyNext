@@ -34,6 +34,9 @@ export function useCanvasAgent(opts: {
   run?: (targetIds: string[]) => void
   /** The run's output image as a data URL, for the run→look→fix review loop. */
   runOutputImage?: (targetIds: string[]) => Promise<string | null>
+  /** Resolve review targets → the OUTPUT/result node id (past a generator to its
+   *  result card), so the "scanning" overlay lands on the output, not the generator. */
+  resolveResultNode?: (targetIds: string[]) => string | null
   /** Remove the ghosts. Called on Dismiss. */
   discard: () => void
   /** Delegate tuneNode commands to each target node's OWN studio surface (applied
@@ -219,8 +222,10 @@ export function useCanvasAgent(opts: {
     if (busy.value || reviewing.value || !opts.runOutputImage) return
     opts.discard(); opts.tuneRevert?.(); changes.value = []; review.value = null; answer.value = ''; error.value = ''
     reviewing.value = true
-    // Mark the node(s) under review so each renders the white "scanning" overlay.
-    analyzingNodeIds.value = new Set(targets.map(String))
+    // Mark the OUTPUT node under review so the white "scanning" overlay lands on
+    // the result (past a generator to its result card), not the generator itself.
+    const resultNode = opts.resolveResultNode?.(targets)
+    analyzingNodeIds.value = new Set(resultNode ? [resultNode] : targets.map(String))
     try {
       const image = await opts.runOutputImage(targets)
       if (!image) { if (manual) answer.value = 'No result on that node yet — run it first, then critique.'; return }
