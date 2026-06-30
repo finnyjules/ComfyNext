@@ -6,7 +6,10 @@ import { ref } from 'vue'
  * plans. Module-level ref = one shared instance across components.
  */
 const thinking = ref(false)
+/** The agent is looking at a generated RESULT (the review/critique pass). Drives
+ *  the dot-grid's white "scanning" fade-in + swiping shimmer. */
+const analyzing = ref(false)
 
 export function useAgentActivity() {
-  return { thinking }
+  return { thinking, analyzing }
 }

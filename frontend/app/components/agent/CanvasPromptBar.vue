@@ -57,10 +57,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:critiqueNode', onCritiqueNode)
 })
 
-// Drive the dot-grid "thinking" animation off the agent's busy state.
-const { thinking } = useAgentActivity()
+// Drive the dot-grid "thinking" animation off the agent's busy state, and the
+// white "analyzing" scan off the result-review state.
+const { thinking, analyzing } = useAgentActivity()
 watch(busy, (v) => { thinking.value = v })
-onBeforeUnmount(() => { thinking.value = false })
+watch(reviewing, (v) => { analyzing.value = v })
+onBeforeUnmount(() => { thinking.value = false; analyzing.value = false })
 
 // Hovering a proposal row highlights the node/wire it refers to on the canvas.
 watch(hovered, (i) => {
