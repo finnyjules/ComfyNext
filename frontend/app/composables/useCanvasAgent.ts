@@ -40,6 +40,12 @@ export function useCanvasAgent(opts: {
   tune?: (cmds: { target: string; request: string }[]) => Promise<{ changes: ProposedChange[]; notice?: string }>
   /** Undo the in-place studio-tune edits. Called on Dismiss. */
   tuneRevert?: () => void
+  /** Repair botched anatomy in a result image in-region (SAM mask + flux-fill).
+   *  Implemented by the canvas; called when a `fixAnatomy` review fix is kept. */
+  repairAnatomy?: (
+    target: string,
+    spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string },
+  ) => Promise<void>
   apiKey: () => string
   tier?: string
 }) {
@@ -72,21 +78,35 @@ export function useCanvasAgent(opts: {
   }
 
   const acceptedCommands = () => changes.value.filter(c => c.accepted).map(c => c.command)
+  /** Graph-only accepted commands: excludes fixAnatomy (no graph diff, handled via repairAnatomy). */
+  const acceptedGraphCommands = () => acceptedCommands().filter(c => c.op !== 'fixAnatomy')
 
   /** Re-derive the dry-run health readout AND refresh the on-canvas ghost preview
    *  from the currently-accepted commands. */
   function recompute() {
     if (!original) return
     let s = clone(original)
-    for (const cmd of acceptedCommands()) {
+    for (const cmd of acceptedGraphCommands()) {
       const r = applyCanvasCommand(s, cmd)
       if (r.ok) s = r.template
     }
     issues.value = verifyCanvas(s)
-    opts.preview(acceptedCommands(), false) // ghosts on the canvas (instant — no re-blueprint on toggle)
+    opts.preview(acceptedGraphCommands(), false) // ghosts on the canvas (instant — no re-blueprint on toggle)
   }
 
   function buildChange(probe: CanvasSnapshot, cmd: Command, rationale: string): ProposedChange | null {
+    if (cmd.op === 'fixAnatomy') {
+      const a = (cmd.args ?? {}) as { kind?: string; note?: string }
+      return {
+        command: cmd,
+        label: a.note ? `Repair: ${a.note}` : 'Repair anatomy',
+        before: '',
+        after: '',
+        rationale,
+        rerollable: false,
+        accepted: true,
+      }
+    }
     if (!applyCanvasCommand(probe, cmd).ok) return null
     const sum = summarizeCanvasChange(probe, cmd) ?? { label: cmd.op, before: '', after: '' }
     return { command: cmd, label: sum.label, before: sum.before, after: sum.after, rationale, rerollable: REROLLABLE.has(cmd.op), accepted: true }
@@ -190,16 +210,34 @@ export function useCanvasAgent(opts: {
     return Array.from(new Set([...committed, ...touched]))
   }
 
+  /** Fire repairAnatomy for any accepted fixAnatomy changes. */
+  async function applyRepairChanges() {
+    if (!opts.repairAnatomy) return
+    for (const ch of changes.value) {
+      if (!ch.accepted || ch.command.op !== 'fixAnatomy') continue
+      const a = (ch.command.args ?? {}) as { kind?: 'hand' | 'face' | 'limb'; bbox?: [number, number, number, number]; note?: string }
+      if (a.bbox) {
+        await opts.repairAnatomy(ch.command.target as string, {
+          kind: a.kind ?? 'hand',
+          bbox: a.bbox,
+          note: a.note ?? '',
+        })
+      }
+    }
+  }
+
   /** Commit: promote the on-canvas ghosts to real nodes/edges (+ glimm). */
-  function keep() {
+  async function keep() {
     opts.commit()
+    await applyRepairChanges()
     changes.value = []; original = null; issues.value = []; review.value = null
   }
   /** Keep, then run the resulting node(s) — one click for the common build→run flow. */
-  function keepAndRun() {
+  async function keepAndRun() {
     const committed = opts.commit() || []
     const targets = runTargets(committed)
     const intent = lastPhrase.value
+    await applyRepairChanges()
     changes.value = []; original = null; issues.value = []; review.value = null
     if (targets.length) {
       opts.run?.(targets)
