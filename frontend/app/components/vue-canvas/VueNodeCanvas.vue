@@ -751,7 +751,7 @@ async function pickRepairedVariation(
     try {
       const res = await $fetch<{ text: string }>('/api/agent-review', {
         method: 'POST',
-        body: { apiKey, tier: 'tune', prompt, schema: yesNoSchema, image: url },
+        body: { apiKey, tier: 'patch', prompt, schema: yesNoSchema, image: url },
         timeout: 30_000,
       })
       const parsed = JSON.parse(res.text ?? '{}') as { ok?: boolean }
@@ -813,7 +813,7 @@ async function agentRepairAnatomy(
       }
       return
     }
-    seed += 1 // next attempt with a different seed
+    seed = Math.floor(Math.random() * 2_000_000_000) // fresh random seed for each retry
   }
   // All attempts exhausted with no passing variation — leave original untouched.
   console.warn('[repairAnatomy] no passing variation found after', MAX_ATTEMPTS, 'attempt(s); leaving original intact.')
