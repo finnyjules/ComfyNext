@@ -27,8 +27,12 @@ const {
   discard: () => props.vueCanvas.agentDiscard(),
   tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   tuneRevert: () => props.vueCanvas.agentTuneRevert(),
-  // Keep & Run: run the just-built node(s); self-scope so existing upstream stays cached.
-  run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, rerollScope: 'self' } })),
+  // Keep & Run: run the agent's result AND anything it feeds into (direction:
+  // 'downstream') — so an inserted node re-renders the output it connects to —
+  // but only that affected branch, never unrelated nodes (the top Run does the
+  // whole canvas). New nodes execute (uncached) and edited nodes cache-miss;
+  // truly-unchanged upstream stays cached.
+  run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
 })
 
