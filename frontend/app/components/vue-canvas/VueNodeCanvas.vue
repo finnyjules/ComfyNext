@@ -389,6 +389,7 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
   // re-running the generator. Build the card NODE here (pre-nextTick); wire it in
   // phase 2. Maps the connect command → its inserted card.
   const cardForConnect = new Map<Command, any>()
+  const newCardIds = new Set<string>() // cards WE created (need a from→card wire); reused ones already are
   const LOADER_FOR_TYPE: Record<string, string> = { IMAGE: 'Image', VIDEO: 'Video', AUDIO: 'Audio' }
   for (const cmd of commands) {
     if (cmd.op !== 'connect') continue
@@ -401,6 +402,11 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
     if (!loader) continue // not a media producer
     const ref = outType === 'AUDIO' ? from.data?.audios?.[0] : from.data?.images?.[0]
     if (typeof ref !== 'string' || !ref.includes('filename=')) continue // no loadable result
+    const hasResult = (n: any) => loader === 'Audio' ? n.data?.audios?.length : n.data?.images?.length
+    // Reuse an EXISTING result card this generator already feeds — don't mint a duplicate.
+    const existing = (nodes.value as any[]).find(n => String(n.data?.nodeType) === loader && hasResult(n)
+      && (edges.value as any[]).some(e => String(e.source) === String(from.id) && String(e.target) === String(n.id)))
+    if (existing) { cardForConnect.set(cmd, existing); continue }
     const card = createNodeData(loader, { x: (from.position?.x ?? 0) + 360, y: (from.position?.y ?? 0) + 230 })
     card.id = String(Date.now() + (agentNodeSeq++))
     if (outType === 'AUDIO') card.data.audios = [...(from.data.audios ?? [])]
@@ -408,6 +414,7 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
     if (ghost) { card.class = 'agent-ghost'; card.data.ghost = true }
     ;(nodes.value as any[]).push(card)
     newIds.push(card.id)
+    newCardIds.add(card.id)
     cardForConnect.set(cmd, card)
   }
   // VueFlow must register the new nodes (and mount their handles) before any edge
@@ -423,8 +430,9 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
       const to = findNode(cmd.args?.to)
       const card = cardForConnect.get(cmd)
       if (from && card && to) {
-        // generator → card (kept; freeze strips it on a targeted run) → target.
-        const e1 = wireEdge(from, card, undefined, undefined, ghost); if (e1) edgeIds.push(e1)
+        // generator → card (only if WE made the card; a reused one is already wired)
+        // → target. The freeze strips generator→card on a targeted run.
+        if (newCardIds.has(String(card.id))) { const e1 = wireEdge(from, card, undefined, undefined, ghost); if (e1) edgeIds.push(e1) }
         const e2 = wireEdge(card, to, undefined, cmd.args?.toPort as string | undefined, ghost)
         if (e2) { wiredInputs.add(String(to.id)); edgeIds.push(e2) }
       } else if (from && to) {
