@@ -387,10 +387,27 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
 
   const edgeIds: string[] = []
 
+  // Nudge a candidate position down (then right) until it clears every existing
+  // node AND any new node we just placed — so an added node never lands on top of
+  // one already on the canvas. Approximate node footprint; conservative on purpose.
+  const NODE_W = 360, NODE_H = 320, NUDGE = 200
+  const placed: { x: number; y: number }[] = []
+  function avoidOverlap(p: { x: number; y: number }): { x: number; y: number } {
+    const occupied = (q: { x: number; y: number }) =>
+      [...existing, ...placed].some((n: any) => {
+        const nx = n.position?.x ?? n.x ?? 0, ny = n.position?.y ?? n.y ?? 0
+        return Math.abs(nx - q.x) < NODE_W && Math.abs(ny - q.y) < NODE_H
+      })
+    let q = { ...p }, guard = 0
+    while (occupied(q) && guard++ < 40) q = { x: q.x, y: q.y + NUDGE }
+    if (occupied(q)) q = { x: q.x + NODE_W, y: p.y } // column full → start a new column
+    return q
+  }
+
   // PHASE 1 — create all new nodes first.
   for (const cmd of commands) {
     if (cmd.op === 'addNode' && typeof cmd.args?.nodeType === 'string') {
-      const pos = anchorFor(cmd.args?.id)
+      const pos = avoidOverlap(anchorFor(cmd.args?.id))
       let overrides = cmd.args.widgetOverrides as Record<string, unknown> | undefined
       // An agent-added EditImageNode is for surgical repair (anatomy/text), which
       // Nano Banana does best — force it onto a Nano Banana model unless the agent
@@ -398,7 +415,8 @@ async function applyCanvasOps(commands: Command[], ghost = false): Promise<{ nod
       if (cmd.args.nodeType === 'EditImageNode' && !/nano banana/i.test(String((overrides as any)?.model ?? ''))) {
         overrides = { ...(overrides ?? {}), model: 'Nano Banana 2' }
       }
-      const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y + newIds.length * 180 }, overrides)
+      const node = createNodeData(cmd.args.nodeType, { x: pos.x, y: pos.y }, overrides)
+      placed.push({ x: pos.x, y: pos.y })
       // Unique NUMERIC id — the run serializer parses node ids as numbers, so a
       // hyphenated id (e.g. "171…-0") would be truncated and break its links.
       node.id = String(Date.now() + (agentNodeSeq++))
