@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // force HMR reload
-import { VueFlow, useVueFlow } from '@vue-flow/core'
+import { VueFlow, useVueFlow, type NodeTypesObject, type EdgeTypesObject } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
@@ -154,6 +154,26 @@ const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = u
 
 // Background dot-grid "thinking" animation, driven by the prompt's agent.
 const { thinking: agentThinking } = useAgentActivity()
+
+// Stable VueFlow config. These MUST be constant references: an inline object/array
+// literal in the <VueFlow> template binding is rebuilt on every render, and VueFlow
+// treats a new node-types/edge-types reference as "types changed" → it remounts
+// EVERY node. Combined with any idle re-render, that reads as constant canvas
+// flicker. Hoisted here so re-renders never churn VueFlow's type registration.
+const nodeTypes = {
+  comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode),
+  'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode),
+  'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode),
+  'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode),
+  'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode),
+  'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
+  'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
+  'texture-studio': markRaw(TextureStudioNode), 'subgraph-io': markRaw(SubgraphIONode),
+} as NodeTypesObject
+const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
+const defaultEdgeOptions = { type: 'comfy' }
+const connectionLineStyle = { stroke: '#818cf8', strokeWidth: 2 }
+const snapGrid: [number, number] = [16, 16]
 
 // NodeTypeLite[] = the cached /object_info nodes (incl. the backend generators +
 // Compositor/SmartLayout) PLUS the frontend-only studios (which have no
@@ -5303,9 +5323,9 @@ defineExpose({
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
-      :node-types="{ comfy: markRaw(ComfyNode), note: markRaw(ComfyNoteNode), gate: markRaw(ComfyGateNode), 'artifact-image': markRaw(ArtifactImageNode), 'artifact-text': markRaw(ArtifactTextNode), 'artifact-audio': markRaw(ArtifactAudioNode), 'artifact-video': markRaw(ArtifactVideoNode), 'artifact-frame': markRaw(ArtifactFrameNode), 'artifact-timeline': markRaw(ArtifactTimelineNode), 'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode), 'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode), 'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode), 'texture-studio': markRaw(TextureStudioNode), 'subgraph-io': markRaw(SubgraphIONode) }"
-      :edge-types="{ comfy: markRaw(ComfyEdge) }"
-      :default-edge-options="{ type: 'comfy' }"
+      :node-types="nodeTypes"
+      :edge-types="edgeTypes"
+      :default-edge-options="defaultEdgeOptions"
       :pan-on-drag="panOnDrag"
       :selection-key-code="selectionKeyCode"
       pan-on-scroll
@@ -5313,10 +5333,10 @@ defineExpose({
       :zoom-on-scroll="true"
       :prevent-scrolling="true"
       :snap-to-grid="true"
-      :snap-grid="[16, 16]"
+      :snap-grid="snapGrid"
       :min-zoom="0.1"
       :max-zoom="4"
-      :connection-line-style="{ stroke: '#818cf8', strokeWidth: 2 }"
+      :connection-line-style="connectionLineStyle"
       :delete-key-code="vfDeleteKeyCode"
       class="vue-node-canvas"
       fit-view-on-init
