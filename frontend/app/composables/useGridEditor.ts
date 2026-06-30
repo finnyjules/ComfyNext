@@ -18,12 +18,13 @@ import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
-  groupIntoSection, sectionRegionFor, toV3, ungroupSection,
+  addChildToStack, groupIntoSection, removeChildFromStack, sectionRegionFor,
+  setChildSizing, setStackLayout, toV3, ungroupSection, wrapInStack,
 } from '~~/shared/template-grid/sections'
-import { isV3 } from '~~/shared/template-grid/types'
+import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
 import type {
-  AnyGridTemplate, ElementV2, ImageElementV2, OutputSpec, Region, SectionV3,
-  ShapeElementV2, TemplateV2, TemplateV3, TextElementV2,
+  AnyGridTemplate, AutoLayout, ElementV2, ImageElementV2, OutputSpec, Region, SectionV3,
+  ShapeElementV2, SizeMode, TemplateV2, TemplateV3, TextElementV2,
 } from '~~/shared/template-grid/types'
 
 const WORST_CASE_COPY
@@ -595,6 +596,50 @@ export function useGridEditor(
     dirty.value = true
   }
 
+  // -- Auto-layout stacks -----------------------------------------------------
+
+  /** Wrap elements (default: the current selectedId) into a new Stack section,
+   * converting to v3 first if needed. Selects the new section. */
+  function wrapSelectionInStack(ids?: string[]) {
+    const targetIds = ids ?? (selectedId.value ? [selectedId.value] : [])
+    if (!targetIds.length) return
+    if (!isV3(template.value)) template.value = toV3(template.value as TemplateV2)
+    const before = new Set((template.value as TemplateV3).sections.map(s => s.id))
+    template.value = wrapInStack(template.value as TemplateV3, targetIds)
+    const created = (template.value as TemplateV3).sections.find(s => !before.has(s.id))
+    selectedSectionId.value = created?.id ?? null
+    selectedId.value = null
+    dirty.value = true
+  }
+
+  /** Patch the AutoLayout config of a stack section. */
+  function updateStackLayout(sectionId: string, patch: Partial<AutoLayout>) {
+    template.value = setStackLayout(template.value as TemplateV3, sectionId, patch)
+    dirty.value = true
+  }
+
+  /** Update the main/cross sizing of a child element inside a stack. */
+  function updateChildSizing(sectionId: string, childId: string, sizing: { main: SizeMode; cross: SizeMode }) {
+    template.value = setChildSizing(template.value as TemplateV3, sectionId, childId, sizing)
+    dirty.value = true
+  }
+
+  /** Move a top-level element into an existing stack section. */
+  function moveChildIntoStack(sectionId: string, elementId: string) {
+    template.value = addChildToStack(template.value as TemplateV3, sectionId, elementId)
+    dirty.value = true
+  }
+
+  /** Remove a child from a stack section (returns it to top-level elements). */
+  function moveChildOutOfStack(sectionId: string, childId: string) {
+    template.value = removeChildFromStack(template.value as TemplateV3, sectionId, childId)
+    dirty.value = true
+  }
+
+  /** The selected section if it is an auto-layout Stack, otherwise null. */
+  const selectedStack = computed<SectionV3 | null>(() =>
+    selectedSection.value && isLayoutStack(selectedSection.value) ? selectedSection.value : null)
+
   // -- Undo / redo ------------------------------------------------------------
   // History holds JSON snapshots of `template`. `cursor` points at the entry
   // matching the last *committed* state; the live template may have drifted
@@ -676,6 +721,7 @@ export function useGridEditor(
     duplicateElement, nudgeSelected,
     isV3Mode, sections, selectedSectionId, selectedSection, resolvedSections,
     setSectionRegion, convertToV3, addSection, groupSelectedInto, ungroupSelectedSection,
+    wrapSelectionInStack, updateStackLayout, updateChildSizing, moveChildIntoStack, moveChildOutOfStack, selectedStack,
     commitNow, undo, redo, canUndo, canRedo,
   }
 }
