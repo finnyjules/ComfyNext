@@ -8,7 +8,7 @@ const box = (over: Partial<StackBox> = {}): StackBox => ({
   mainAlign: 'start', crossAlign: 'stretch', ...over,
 })
 const item = (id: string, over: Partial<StackItem> = {}): StackItem => ({
-  id, main: 20, cross: 20, mainMode: 'fixed', crossMode: 'stretch', ...over,
+  id, main: 20, cross: 20, mainMode: 'fixed', crossMode: 'fill', ...over,
 })
 
 describe('solveStack', () => {
@@ -65,8 +65,13 @@ describe('solveStack', () => {
     expect(end[0].rect).toMatchObject({ x: 60, w: 40 })
   })
 
-  it('cross stretch fills the cross extent', () => {
-    const out = solveStack(box({ crossAlign: 'start' }), [item('a', { cross: 40, crossMode: 'stretch' })])
+  it('cross stretch fills the cross extent via crossMode fill', () => {
+    const out = solveStack(box({ crossAlign: 'start' }), [item('a', { cross: 40, crossMode: 'fill' })])
+    expect(out[0].rect).toMatchObject({ x: 0, w: 100 })
+  })
+
+  it('crossAlign stretch overrides crossMode hug to fill the cross extent', () => {
+    const out = solveStack(box({ crossAlign: 'stretch' }), [item('a', { cross: 40, crossMode: 'hug' })])
     expect(out[0].rect).toMatchObject({ x: 0, w: 100 })
   })
 

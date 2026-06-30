@@ -59,9 +59,10 @@ export function solveStack(box: StackBox, items: StackItem[]): Array<{ id: strin
 
   return items.map((it) => {
     const m = mainExtent(it)
-    const c = it.crossMode === 'stretch' ? crossTotal : Math.min(it.cross, crossTotal)
+    const stretch = it.crossMode === 'fill' || box.crossAlign === 'stretch'
+    const c = stretch ? crossTotal : Math.min(it.cross, crossTotal)
     let crossPos = crossOrigin
-    if (it.crossMode !== 'stretch') {
+    if (!stretch) {
       if (box.crossAlign === 'center') crossPos = crossOrigin + (crossTotal - c) / 2
       else if (box.crossAlign === 'end') crossPos = crossOrigin + (crossTotal - c)
     }
