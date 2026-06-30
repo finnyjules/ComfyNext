@@ -18,7 +18,7 @@ const { getLocalSetting } = useLocalSettings()
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
 const {
-  busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
+  busy, error, reasoning, answer, changes, issues, review, reviewing, repairing, hasProposal, hovered,
   ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
@@ -77,7 +77,7 @@ watch(busy, async (v) => { if (v) { await nextTick(); glimmActive.value = true }
 
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
-const hasResult = computed(() => busy.value || reviewing.value || hasProposal.value || !!answer.value || !!error.value)
+const hasResult = computed(() => busy.value || reviewing.value || repairing.value || hasProposal.value || !!answer.value || !!error.value)
 </script>
 
 <template>
@@ -97,9 +97,10 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
           <p v-if="reasoning" class="mb-1 text-[11px] leading-snug text-white/40">{{ reasoning }}</p>
           <p class="whitespace-pre-line text-[12.5px] leading-relaxed text-white/85">{{ answer }}</p>
         </div>
-        <!-- Run→look→fix: looking at the result before any fixes are surfaced. -->
-        <div v-if="reviewing && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-          <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+        <!-- Run→look→fix: repairing the region, or looking at the result before any
+             fixes are surfaced. -->
+        <div v-if="(reviewing || repairing) && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+          <span class="text-white/75">✦</span> {{ repairing ? 'Repairing the region' : 'Looking at the result' }}<span class="animate-pulse">…</span>
         </div>
         <AgentProposal
           v-if="hasProposal"

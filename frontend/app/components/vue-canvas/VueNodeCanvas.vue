@@ -638,6 +638,10 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
 async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
   if (typeof document === 'undefined') return null
   const ids = new Set(nodeIds.map(String))
+  // The rendered image often lives on a downstream result CARD (generator → Image
+  // card), not on the target itself — include direct downstream neighbours so the
+  // review/repair sees the actual output rather than nothing.
+  for (const e of edges.value as any[]) if (ids.has(String(e.source))) ids.add(String(e.target))
   const withImg = (nodes.value as any[]).filter(n => ids.has(String(n.id)) && typeof n.data?.images?.[0] === 'string')
   const node = withImg[withImg.length - 1] || withImg[0] // last = most-downstream of the run
   const url = node?.data?.images?.[0]
@@ -778,13 +782,13 @@ async function agentRepairAnatomy(
   target: string,
   spec: { kind: 'hand' | 'face' | 'limb'; bbox: [number, number, number, number]; note: string },
   apiKey: string,
-): Promise<void> {
+): Promise<{ ok: boolean; reason?: string }> {
   // 1) Get the target node's current result image (same source as the review loop).
   //    agentRunOutputImage reads node.data.images[0] and converts it to a data URL.
   const image = await agentRunOutputImage([target])
-  if (!image) return
+  if (!image) return { ok: false, reason: 'no-image' }
   const dims = await imageDims(image)
-  if (!dims.w || !dims.h) return
+  if (!dims.w || !dims.h) return { ok: false, reason: 'no-dims' }
 
   const MAX_ATTEMPTS = 2
   let seed = Math.floor(Math.random() * 2_000_000_000)
@@ -800,7 +804,7 @@ async function agentRepairAnatomy(
       // 409 = SAM couldn't isolate the region — leave original untouched.
       const reason: string = err?.data?.reason ?? ''
       console.warn(`[repairAnatomy] fix-anatomy failed (${reason || (err?.status ?? 'unknown')}); leaving original intact.`)
-      return
+      return { ok: false, reason: reason || 'route-error' }
     }
     if (!res?.images?.length) break
 
@@ -808,15 +812,17 @@ async function agentRepairAnatomy(
     if (picked) {
       try {
         await writeResultImage(target, picked)
+        return { ok: true }
       } catch (err: any) {
         console.warn('[repairAnatomy] write-back failed:', err?.message ?? err)
+        return { ok: false, reason: 'writeback' }
       }
-      return
     }
     seed = Math.floor(Math.random() * 2_000_000_000) // fresh random seed for each retry
   }
   // All attempts exhausted with no passing variation — leave original untouched.
   console.warn('[repairAnatomy] no passing variation found after', MAX_ATTEMPTS, 'attempt(s); leaving original intact.')
+  return { ok: false, reason: 'no-variation' }
 }
 
 /** Hover a proposal row → ring the node(s) it points at (and brighten its wire).
