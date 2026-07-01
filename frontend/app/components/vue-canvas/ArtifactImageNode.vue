@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, ChevronDown } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -445,13 +445,12 @@ function discardTake(id: string) {
              right-edge output handle (which sits at vertical centre). -->
         <div ref="editMenuRef" class="nopan nodrag absolute top-1 right-1 z-30">
           <button
-            class="gen-pastel flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] font-semibold text-neutral-900 cursor-pointer backdrop-blur-sm"
+            class="gen-pastel flex items-center gap-1 h-6 px-1.5 rounded-md text-[9px] font-semibold text-neutral-900 cursor-pointer backdrop-blur-sm"
             style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
             title="Edit"
             @click.stop="editMenuOpen = !editMenuOpen"
           >
-            <Pencil class="size-3" /> Edit
-            <ChevronDown class="size-2.5 -mr-0.5 transition-transform" :class="{ 'rotate-180': editMenuOpen }" />
+            <Pencil class="size-3" /> Edit…
           </button>
           <div
             v-if="editMenuOpen"
