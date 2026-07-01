@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, ChevronDown } from 'lucide-vue-next'
+import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
@@ -266,8 +267,19 @@ function runThisNode() {
 }
 
 // Critique: have the agent LOOK at this result and suggest fixes (run→look→fix).
+// Surfaced in the Edit menu as "Fix" (label only — the pipeline is unchanged).
 function critiqueResult() {
   window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
+}
+
+// Top-right "Edit" menu: Remove BG / Inpaint / Fix. Each item runs an existing
+// action and closes the menu; clicking anywhere outside dismisses it.
+const editMenuOpen = ref(false)
+const editMenuRef = ref<HTMLElement | null>(null)
+onClickOutside(editMenuRef, () => { editMenuOpen.value = false })
+function runEdit(action: () => void) {
+  editMenuOpen.value = false
+  action()
 }
 
 // Browser-side download — same blob trick SmartLayout's carousel uses, so the
@@ -429,6 +441,43 @@ function discardTake(id: string) {
 
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
+        <!-- Edit menu (top-right): Remove BG / Inpaint / Fix. Clear of the
+             right-edge output handle (which sits at vertical centre). -->
+        <div ref="editMenuRef" class="nopan nodrag absolute top-1 right-1 z-30">
+          <button
+            class="flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/55 hover:bg-black/75 text-[10px] transition-colors cursor-pointer"
+            :class="editMenuOpen ? 'bg-black/75 text-white' : 'text-white/65 hover:text-white'"
+            title="Edit"
+            @click.stop="editMenuOpen = !editMenuOpen"
+          >
+            <Pencil class="size-3" /> Edit
+            <ChevronDown class="size-2.5 -mr-0.5 transition-transform" :class="{ 'rotate-180': editMenuOpen }" />
+          </button>
+          <div
+            v-if="editMenuOpen"
+            class="absolute top-full right-0 mt-1 min-w-[136px] rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+          >
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+              @click.stop="runEdit(removeBackground)"
+            >
+              <Eraser class="size-3 shrink-0" /> Remove BG
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+              @click.stop="runEdit(openInpaint)"
+            >
+              <Brush class="size-3 shrink-0" /> Inpaint
+            </button>
+            <button
+              v-if="data.images?.length"
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+              @click.stop="runEdit(critiqueResult)"
+            >
+              <Sparkles class="size-3 shrink-0" /> Fix
+            </button>
+          </div>
+        </div>
         <!-- Main image -->
         <img
           :src="displayedUrl"
@@ -452,32 +501,10 @@ function discardTake(id: string) {
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
-            title="Remove background (transparent)"
-            @click.stop="removeBackground"
-          >
-            <Eraser class="size-2.5" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer"
-            title="Inpaint — paint a region and describe the change"
-            @click.stop="openInpaint"
-          >
-            <Brush class="size-2.5" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
             title="Download"
             @click.stop="downloadImage"
           >
             <Download class="size-2.5" />
-          </button>
-          <button
-            v-if="data.images?.length"
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
-            title="Critique result — look at the output and suggest fixes"
-            @click.stop="critiqueResult"
-          >
-            <Sparkles class="size-2.5" />
           </button>
           <button
             class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
