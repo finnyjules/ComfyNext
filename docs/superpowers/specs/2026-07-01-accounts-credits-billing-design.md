@@ -113,12 +113,41 @@ The two systems are independent **by construction**: comfy.org credentials trave
 | Provider spend alerts | Launch | Hard daily ceiling on Replicate/Anthropic spend |
 | ToS terms | Launch | Credit expiry (~12 mo), repriceable action costs |
 
-## 9. Frontend
+## 9. Surfaces
 
-- Auth pages (Clerk components) + route guard.
-- Wallet: balance, credit-pack picker → Stripe Checkout, transaction history from `ledger_entries`.
-- Paywall states: preflight "costs N credits" affordance on run buttons; graceful insufficient-credits → top-up interruption. Balance stays non-ambient.
-- Cost transparency: each run/training shows its settled debit.
+### 9.1 User-facing
+
+| Surface | What it is | Build vs vendor |
+|---|---|---|
+| Sign-up / sign-in / reset / email verify | Clerk components + route guard | Vendor (Clerk), thin wrapper pages |
+| Account/profile management | Email, password, sessions, delete account | Vendor (Clerk `UserProfile`) |
+| Wallet page | Balance, credit-pack picker → Stripe Checkout, transaction history from `ledger_entries` | Build |
+| Checkout return pages | Success ("credits arriving" — webhook grants, so may lag seconds) and cancel states | Build (small) |
+| Paywall states in the canvas | Preflight "costs N credits" affordance on run buttons; insufficient-credits interruption → top-up. Balance non-ambient | Build — touches every run entry point (node Play buttons, studio Render cascade, training enqueue) |
+| Cost transparency | Each run/training result shows its settled debit; training-queue panel shows held amount | Build |
+| Onboarding | First-run signup-bonus notice, what credits are | Build (small) |
+| Legacy comfy.org key | Settings → field to paste their own comfy.org key (pass-through per §7), labeled "legacy". Reuses the existing Settings→AI masked-token pattern (`secrets.ts` UI), but stored client-side, never server-side | Build (small) |
+| Moderation feedback | Blocked-prompt / blocked-output error states — clear, non-accusatory, no charge | Build (small) |
+| Pricing page | What actions cost in credits; credit-pack pricing; repriceable-costs + expiry ToS surface | Build (static) |
+| Payment receipts / emails | Purchase receipts | Vendor (Stripe emails) at launch |
+
+### 9.2 Admin / operator
+
+Principle at launch: lean on vendor dashboards (Clerk, Stripe, Neon console) wherever possible; build only what no vendor can see — anything touching the internal ledger. Minimal internal admin routes (gated to operator role), not a polished dashboard.
+
+| Surface | What it is | Build vs vendor |
+|---|---|---|
+| User lookup | By email → wallet balance, reserved, ledger history, open holds, recent jobs | Build — first admin surface needed (support + Phase-2 testing) |
+| Manual credit grant / clawback | Support tool posting ledger entries with reason + operator id. Required by Phase 2 ("manually granted balances") — this is how those grants happen | Build |
+| Price book editor | View versions, publish a new version | SQL at launch; build later |
+| Reconciliation report | Nightly ledger-vs-`provider_usage` drift output + alert history | Build (read-only page over the cron's output) |
+| Moderation review | Flagged prompts/outputs queue, allow/ban decisions | Minimal build (list + action); grows with §12.2 |
+| Ban / freeze user | Kill switch: block sign-in (Clerk) + freeze wallet (ledger flag) | Half vendor (Clerk ban) + small build (wallet freeze) |
+| Provider spend / margin | Daily Replicate/Anthropic/GPU spend vs credits sold | Vendor dashboards + spend alerts at launch; margin view later |
+| Refunds / disputes | Issue refunds, see disputes (webhook claws back credits automatically) | Vendor (Stripe dashboard) |
+| Auth operations | Sessions, MFA resets, impersonation | Vendor (Clerk dashboard) |
+
+Admin build phasing: user lookup + manual grant land **in Phase 2** (they're how you test the ledger); reconciliation view in Phase 6; the rest as needed.
 
 ## 10. Build order
 
@@ -137,7 +166,7 @@ Effort: Phases 1–3 are well-trodden (~a week-ish each solo); Phase 5 is sized 
 
 ## 11. Out of scope (launch)
 
-Subscriptions/auto-top-up, teams/orgs/seats, multi-currency, referral credits, admin dashboard beyond SQL. The hosted-GPU infrastructure build itself (provisioning, scaling, multi-tenant Comfy deployment) is a separate track — Phase −1 only *decides* its shape as far as metering needs it.
+Subscriptions/auto-top-up, teams/orgs/seats, multi-currency, referral credits, polished admin dashboard beyond the minimal internal routes in §9.2. The hosted-GPU infrastructure build itself (provisioning, scaling, multi-tenant Comfy deployment) is a separate track — Phase −1 only *decides* its shape as far as metering needs it.
 
 ## 12. Open questions
 
