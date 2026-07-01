@@ -128,7 +128,22 @@ Levers, in order of power:
 2. **Video share drives ARPPU** ($10 image-only plateau vs $30 video users): prosumer scenario needs half the payers of base. Product emphasis on video > conversion optimization.
 3. **Signup-grant growth tax**: each free signup costs $0.30–0.80 COGS (150-credit grant; capped ~$0.80 even if spent on premium edits). Sustaining 33k actives ⇒ thousands of signups/mo ⇒ ~$1–3k/mo — velocity/abuse guardrails are economically load-bearing.
 
-## 6. Risks & caveats
+## 6. Product levers for ARPU
+
+Margin is uniform across actions, so ARPU is a volume game: build **escalators** (cheap action → expensive next step at the moment of investment). Ranked; build order for 1–3 in `2026-07-01-arpu-levers-build-order.md`:
+
+1. **Finish Shot Director v1** — the image→video bridge; ~70% built, missing generation wiring.
+2. **"Animate this" on every image** — ambient image→video escalator (Film a Shot / Shot Director spawn), cheapest build.
+3. **Takes & variations mechanics** — video takes strip + "×4 variations" images; multiplies actions per session.
+4. **Proactive finishing stack** — critique-loop/enhance/upscale surfaced as one-tap next steps after finals (12–28cr each).
+5. **Variables & data-merge (un-park)** — the only ×N batch lever; targets the $75+ persona.
+6. **Character/brand LoRA flywheel** — chunky purchase → high-margin recurring inference + lock-in.
+7. **Agent as orchestrator** — one request executes a bundle of billable actions.
+8. **Auto-top-up** (post-launch) — ARPU protection at the run-out moment.
+
+Boundary: escalators are offers, not traps — trust (non-expiring credits, no charge on failures) is the wedge.
+
+## 7. Risks & caveats
 
 - All prices retrieved 2026-07-01; Replicate/GPU prices drift — `price_book` versioning exists precisely for this. Re-verify at Phase-3 build time.
 - Seedance 1080p retail ($0.80/s) sits above the flagship market anchor; either accept (premium positioning) or thin the margin on that one row.
