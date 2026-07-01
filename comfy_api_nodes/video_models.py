@@ -232,18 +232,29 @@ def _b_kling_v2_5_turbo_pro(prompt, ar, dur, seed, image, audio, adv):
 # ===== ByteDance (Seedance) =================================================
 
 def _b_seedance_2_0(prompt, ar, dur, seed, image, audio, adv):
+    # Live schema (verified 2026-06-30): no fps / camera_fixed. References
+    # arrive via the FilmShotNode's model_options JSON (adv) — the Shot
+    # Director forwards data URLs there. Refs XOR first/last-frame image.
     inp: dict[str, Any] = {
         "prompt": prompt,
         "duration": _dur_or([3, 5, 10, 15], dur, 5),
         "resolution": _opt_str(adv, "resolution", "1080p"),
-        "camera_fixed": _opt_bool(adv, "camera_fixed", False),
-        "fps": _opt_int(adv, "fps", 24),
     }
-    # Seedance: image input replaces aspect_ratio with the input's dimensions.
-    if image:
-        inp["image"] = image
+    if "generate_audio" in adv:
+        inp["generate_audio"] = bool(adv["generate_audio"])
+    # First frame: a wired IMAGE tensor (already a data URL here) wins over a
+    # Shot Director data URL in adv.
+    first = image or _opt_str(adv, "image", "")
+    if first:
+        inp["image"] = first
+        if last := _opt_str(adv, "last_frame_image", ""):
+            inp["last_frame_image"] = last
     else:
         inp["aspect_ratio"] = _ar_or(_SEEDANCE_AR, ar, "16:9")
+        for key in ("reference_images", "reference_videos", "reference_audios"):
+            vals = adv.get(key)
+            if isinstance(vals, list) and vals:
+                inp[key] = vals
     _maybe_set_seed(inp, seed)
     return inp
 
