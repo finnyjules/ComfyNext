@@ -151,4 +151,36 @@ describe('useShotDirector', () => {
     // persist should be called once, not watched+called again
     expect(persistCalls).toBe(1)
   })
+
+  it('rerollSeed sets a visible integer seed in [1, 2_147_483_646] and calls persist', () => {
+    const initial = createDefaultShotSheet()
+    let lastPersistedSheet: ShotSheet | undefined
+    const persist = (s: ShotSheet) => { lastPersistedSheet = s }
+
+    const { sheet, rerollSeed } = useShotDirector(initial, persist)
+
+    rerollSeed()
+
+    const seed = sheet.value.format.seed
+    expect(Number.isInteger(seed)).toBe(true)
+    expect(seed as number).toBeGreaterThanOrEqual(1)
+    expect(seed as number).toBeLessThanOrEqual(2_147_483_646)
+    expect(lastPersistedSheet?.format.seed).toBe(seed)
+  })
+
+  it('rerollSeed changes the seed on successive calls', () => {
+    const initial = createDefaultShotSheet()
+    const persist = () => {}
+
+    const { sheet, rerollSeed } = useShotDirector(initial, persist)
+
+    const seeds = new Set<number>()
+    for (let i = 0; i < 20; i++) {
+      rerollSeed()
+      seeds.add(sheet.value.format.seed as number)
+    }
+
+    // Overwhelmingly likely to produce more than one distinct value across 20 rerolls.
+    expect(seeds.size).toBeGreaterThan(1)
+  })
 })

@@ -24,10 +24,24 @@ function persist(s: any) {
   n.data.properties.comfynext_shotDirector = s
 }
 
-const { sheet, result, addReference, removeReference, update } = useShotDirector(
+const { sheet, result, addReference, removeReference, update, rerollSeed } = useShotDirector(
   node.value?.data?.properties?.comfynext_shotDirector,
   persist,
 )
+
+// ── Generate / New take ───────────────────────────────────────────────────────
+// `update`/`rerollSeed` call `persist` synchronously (no debounce), so by the time
+// we dispatch the canvas event the node's properties already hold the fresh sheet.
+const hasErrors = computed(() => result.value.issues.some(i => i.level === 'error'))
+
+function onGenerate() {
+  window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
+}
+
+function onNewTake() {
+  rerollSeed()
+  onGenerate()
+}
 
 // ── Copy actions ──────────────────────────────────────────────────────────────
 const copiedPrompt = ref(false)
@@ -810,6 +824,27 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
         </div><!-- /right column -->
 
       </div><!-- /two-column body -->
+
+      <!-- Footer -->
+      <div class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-4 py-2.5">
+        <button
+          type="button"
+          class="rounded bg-white/[0.06] px-2.5 py-1.5 text-[12px] text-white/70 transition hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+          :disabled="hasErrors"
+          title="Reroll the seed and generate a new variant"
+          @click="onNewTake"
+        >
+          New take
+        </button>
+        <button
+          type="button"
+          class="rounded bg-emerald-500/15 px-3 py-1.5 text-[12px] font-medium text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          :disabled="hasErrors"
+          @click="onGenerate"
+        >
+          Generate
+        </button>
+      </div>
     </div>
   </div>
 </template>

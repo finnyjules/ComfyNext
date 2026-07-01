@@ -16,6 +16,7 @@ export interface UseShotDirectorReturn {
   update: (mutator: (s: ShotSheet) => ShotSheet) => void
   addReference: (kind: RefKind, src: string, role: ShotSheet['references'][number]['role']) => void
   removeReference: (kind: RefKind, slot: number) => void
+  rerollSeed: () => void
 }
 
 /**
@@ -45,6 +46,11 @@ export function useShotDirector(
     update(s => removeRef(s, kind, slot))
   }
 
+  /** New take: a fresh visible seed so the same sheet renders a new variant. */
+  const rerollSeed = () => {
+    update(s => ({ ...s, format: { ...s.format, seed: Math.floor(Math.random() * 2_147_483_646) + 1 } }))
+  }
+
   return {
     sheet,
     result,
@@ -52,5 +58,6 @@ export function useShotDirector(
     update,
     addReference,
     removeReference,
+    rerollSeed,
   }
 }
