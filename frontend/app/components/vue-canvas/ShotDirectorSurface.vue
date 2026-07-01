@@ -9,6 +9,7 @@ import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
   type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole,
 } from '~/lib/shotdirector/types'
+import { formatShotUSD } from '~/lib/shotdirector/price'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -827,6 +828,9 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
       <!-- Footer -->
       <div class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-4 py-2.5">
+        <span class="text-[11px] tabular-nums text-white/40" :title="'Estimated provider cost for this shot'">
+          {{ formatShotUSD(sheet) }}
+        </span>
         <button
           type="button"
           class="rounded bg-white/[0.06] px-2.5 py-1.5 text-[12px] text-white/70 transition hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
