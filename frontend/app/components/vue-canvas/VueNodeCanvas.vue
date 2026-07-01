@@ -2485,11 +2485,20 @@ function handleShotDirectorGenerate(e: Event) {
 
   const film = (nodes.value as any[]).find(n => String(n.id) === targetId)
   if (!film) return
-  for (const [name, value] of Object.entries(patch)) {
-    if (!setNodeWidget(film, name, value)) {
+
+  // Validate all patch keys exist in film's widgetDefs before writing anything
+  const filmWidgetDefs = (film.data?.widgetDefs ?? []) as { name: string }[]
+  const filmWidgetNames = new Set(filmWidgetDefs.map(w => w.name))
+  for (const name of Object.keys(patch)) {
+    if (!filmWidgetNames.has(name)) {
       studio.data.shotError = `FilmShotNode has no '${name}' widget — is the backend catalog stale?`
       return
     }
+  }
+
+  // All keys validated; write the patch
+  for (const [name, value] of Object.entries(patch)) {
+    setNodeWidget(film, name, value)
   }
   window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
     detail: { targetIds: [targetId], direction: 'downstream' },
