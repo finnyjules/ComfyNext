@@ -75,7 +75,9 @@ watch(hovered, (i) => {
 // mounts so AgentSweep measures a sized canvas (an immediate true-at-mount never
 // starts the sweep — same gotcha as the on-canvas glimm).
 const glimmActive = ref(false)
-watch(busy, async (v) => { if (v) { await nextTick(); glimmActive.value = true } else { glimmActive.value = false } })
+// Active while the agent is planning (busy) AND while it critiques the result
+// (reviewing) — so the sweep runs across the whole generate→look→fix pass.
+watch(() => busy.value || reviewing.value, async (v) => { if (v) { await nextTick(); glimmActive.value = true } else { glimmActive.value = false } })
 
 const phrase = ref('')
 function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
@@ -90,7 +92,7 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
            mounted (active gated reactively) and painted ON TOP via z-10 so the screen
            blend reads over the card. -->
       <div class="pointer-events-none absolute inset-0 z-10" style="clip-path: inset(0 round 12px)">
-        <AgentSweep :active="glimmActive" :period="3" />
+        <AgentSweep :active="glimmActive" :period="3" palette="lagoon" />
       </div>
       <div v-if="busy"><AgentProgress :active="busy" /></div>
       <template v-else>

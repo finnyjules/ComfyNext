@@ -6,7 +6,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 type ShaderController = import('glimm').ShaderController
 
-const props = defineProps<{ active: boolean; period?: number }>()
+const props = defineProps<{ active: boolean; period?: number; palette?: string }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let ctrl: ShaderController | null = null
@@ -19,7 +19,7 @@ async function ensure() {
   try {
     const { createShader, resolvePalette } = await import('glimm')
     if (!canvas.value || ctrl) return
-    ctrl = createShader({ canvas: canvas.value, palette: resolvePalette('citrus'), brightness: 0.85, swellAmount: 0.7 })
+    ctrl = createShader({ canvas: canvas.value, palette: resolvePalette((props.palette ?? 'citrus') as any), brightness: 0.85, swellAmount: 0.7 })
   } catch { /* glimm unavailable — sweep just stays off */ }
 }
 

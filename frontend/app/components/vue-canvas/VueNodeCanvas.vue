@@ -717,21 +717,23 @@ function agentResultNode(nodeIds: string[]): any | null {
   const tset = new Set(targets)
   targets = targets.filter(id => !eds.some(e => String(e.source) === id && tset.has(String(e.target))))
 
-  // 2) Candidate result nodes: each target that has an image; if a target has no
-  //    image yet, follow ONE hop downstream (generator → result card / run sink).
-  const cands = new Set<string>()
-  for (const id of targets) {
-    if (hasImg(byId(id))) { cands.add(id); continue }
-    for (const e of eds) if (String(e.source) === id && hasImg(byId(String(e.target)))) cands.add(String(e.target))
+  // 2) Walk the FULL downstream subgraph from those targets, tracking depth. A
+  //    review fix can insert a CHAIN (generator → EditImage → new result card), so
+  //    a single hop isn't enough — the freshest result is the DEEPEST node that has
+  //    an image. This is what makes a re-critique's scan land on the NEW output
+  //    rather than the original card. `seen` guards against cycles.
+  const seen = new Set<string>()
+  const queue: Array<{ id: string; d: number }> = targets.map(id => ({ id, d: 0 }))
+  let best: any = null, bestDepth = -1
+  while (queue.length) {
+    const { id, d } = queue.shift()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    const node = byId(id)
+    if (hasImg(node) && d >= bestDepth) { best = node; bestDepth = d }
+    for (const e of eds) if (String(e.source) === id) queue.push({ id: String(e.target), d: d + 1 })
   }
-  const withImg = [...cands].map(byId).filter(hasImg)
-  if (!withImg.length) return null
-
-  // 3) Most-downstream candidate (one that doesn't feed another candidate) = the
-  //    freshest result.
-  const cset = new Set(withImg.map(n => String(n.id)))
-  const feedsAnother = (id: string) => eds.some(e => String(e.source) === id && cset.has(String(e.target)))
-  return withImg.filter(n => !feedsAnother(String(n.id))).pop() || withImg[withImg.length - 1]
+  return best
 }
 
 /** The id of the node whose IMAGE a review of `nodeIds` would judge — i.e. the

@@ -230,6 +230,11 @@ export function useCanvasAgent(opts: {
     try {
       const image = await opts.runOutputImage(targets)
       if (!image) { if (manual) answer.value = 'No result on that node yet — run it first, then critique.'; return }
+      // The output is definitely present now — re-resolve so the scan lands on a
+      // freshly-produced downstream output (e.g. a re-run's new EditImage result)
+      // that may not have existed when we first set analyzingNodeIds above.
+      const freshNode = opts.resolveResultNode?.(targets)
+      if (freshNode) analyzingNodeIds.value = new Set([freshNode])
       const snap = clone(opts.getSnapshot(intent))
       original = snap
       const desc = describeCanvas(snap)
