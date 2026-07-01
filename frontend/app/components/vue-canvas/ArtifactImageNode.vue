@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2 } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -272,8 +272,22 @@ function critiqueResult() {
   window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
 }
 
-// Top-right "Edit" menu: Remove BG / Inpaint / Fix. Each item runs an existing
-// action and closes the menu; clicking anywhere outside dismisses it.
+// Wire an "Edit an image" (Nano Banana) generator downstream of this image, so
+// the user can describe an edit in natural language. Same splice path Remove BG
+// uses; the model is forced to Nano Banana 2 (EditImageNode's strong editor).
+function editWithNanoBanana() {
+  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+    detail: {
+      nodeId: props.id,
+      nodeType: 'EditImageNode',
+      output: 'IMAGE',
+      widgetOverrides: { model: 'Nano Banana 2' },
+    },
+  }))
+}
+
+// Top-right "Edit" menu: Remove BG / Inpaint / Edit (Nano Banana) / Fix. Each item
+// runs an existing action and closes the menu; clicking outside dismisses it.
 const editMenuOpen = ref(false)
 const editMenuRef = ref<HTMLElement | null>(null)
 onClickOutside(editMenuRef, () => { editMenuOpen.value = false })
@@ -467,6 +481,12 @@ function discardTake(id: string) {
               @click.stop="runEdit(openInpaint)"
             >
               <Brush class="size-3 shrink-0" /> Inpaint
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+              @click.stop="runEdit(editWithNanoBanana)"
+            >
+              <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
             </button>
             <button
               v-if="data.images?.length"
