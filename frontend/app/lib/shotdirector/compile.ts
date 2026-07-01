@@ -44,8 +44,9 @@ function beatLine(sheet: ShotSheet, b: Beat): string {
 /** "Use [Image1] for …; [Video1] for …." — reference mode only. */
 function referenceSentence(sheet: ShotSheet, profile: ModelProfile): string {
   if (sheet.mode !== 'reference' || sheet.references.length === 0) return ''
+  const KIND_RANK = { image: 0, video: 1, audio: 2 } as const
   const parts = [...sheet.references]
-    .sort((a, b) => (a.kind.localeCompare(b.kind) || a.slot - b.slot))
+    .sort((a, b) => (KIND_RANK[a.kind] - KIND_RANK[b.kind]) || (a.slot - b.slot))
     .map(r => {
       const purpose = ROLE_PURPOSE[r.role]
       const note = r.note ? ` (${r.note.trim()})` : ''
@@ -75,18 +76,18 @@ export function buildPrompt(sheet: ShotSheet, profile: ModelProfile): string {
   else if (opener) opener = `${opener}.`
   if (opener) segments.push(opener)
 
-  // Lighting + Style.
-  const look = [sheet.lighting.trim(), sheet.style.trim()].filter(Boolean)
-  if (look.length) {
-    look[0]! = capitalize(look[0]!)
-    segments.push(`${look.join('; ')}.`)
-  }
-
   // Camera — timed beats replace the single camera line when present.
   if (sheet.beats.length > 0) {
     for (const b of sheet.beats) segments.push(beatLine(sheet, b))
   } else {
     segments.push(cameraLine(sheet.camera.shotType, sheet.camera.move, sheet.camera.pacing))
+  }
+
+  // Lighting + Style.
+  const look = [sheet.lighting.trim(), sheet.style.trim()].filter(Boolean)
+  if (look.length) {
+    look[0]! = capitalize(look[0]!)
+    segments.push(`${look.join('; ')}.`)
   }
 
   // References, Dialogue, Constraints.

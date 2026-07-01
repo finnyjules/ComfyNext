@@ -33,8 +33,8 @@ describe('buildPrompt — reference mode, no beats', () => {
     expect(buildPrompt(s, SEEDANCE_PROFILE)).toBe(
       'A jazz singer in a red dress steps up to the microphone and begins to sing, '
       + 'in a dim, smoky 1950s jazz club. '
-      + 'Warm rim light from a single spotlight; grainy 16mm film. '
       + 'Medium shot, slow push-in. '
+      + 'Warm rim light from a single spotlight; grainy 16mm film. '
       + "Use [Image1] for the character's identity and wardrobe; [Video1] for the camera movement. "
       + '"Good evening, everyone." '
       + 'Avoid jitter, bent limbs.',
@@ -84,6 +84,14 @@ describe('compileShot', () => {
     const r = compileShot(s, SEEDANCE_PROFILE)
     expect(r.wordCount).toBeGreaterThan(100)
     expect(r.issues.some(i => i.level === 'warning' && i.code === 'word-budget-warning')).toBe(true)
+  })
+
+  it('adds a hard error when the prompt exceeds the hard word budget', () => {
+    const s = baseSheet()
+    s.action = 'sings ' + 'la '.repeat(700)
+    const r = compileShot(s, SEEDANCE_PROFILE)
+    expect(r.wordCount).toBeGreaterThan(600)
+    expect(r.issues.some(i => i.level === 'error' && i.code === 'word-budget-exceeded')).toBe(true)
   })
 
   it('surfaces validation errors from the sheet', () => {
