@@ -317,7 +317,14 @@ async function runInpaint(removeMode = false) {
     inpaintError.value = removeMode ? 'Mark the area to remove first.' : 'Paint or click-select a region first.'
     return
   }
-  const p = removeMode ? '' : prompt.value.trim()
+  // "remove the gun" is a REMOVAL instruction, not a description of what to paint:
+  // fed to the model as a positive prompt it just re-draws the thing ("gun" → a
+  // new gun). So a pure-removal prompt on Regenerate runs the empty-prompt content
+  // fill (identical to the Remove button). Guard against "remove X and add Y".
+  const raw = prompt.value.trim()
+  const isPureRemoval = /^(remove|delete|erase|get rid of|take out|clear away|clean up)\b/i.test(raw)
+    && !/\b(add|replace|with|into|instead|put|give|make|turn|change)\b/i.test(raw)
+  const p = (removeMode || isPureRemoval) ? '' : raw
   try {
     const source = imageToDataUrl(sourceImg.value, out.value.w, out.value.h)
     let images: string[]
@@ -331,8 +338,10 @@ async function runInpaint(removeMode = false) {
     }
     const stamp = Date.now()
     const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: mode.value }))
-    previewResult.value = null // drop any stale hover-preview from the prior batch
     history.value = [...items, ...history.value]
+    // Show the newest result on the canvas immediately, instead of leaving the
+    // source up and making the user hunt for it in History.
+    previewResult.value = items[0]?.url ?? null
   } catch (err: any) {
     inpaintError.value = err?.data?.message || err?.message || 'Inpaint failed'
   }
