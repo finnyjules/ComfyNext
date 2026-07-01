@@ -14,5 +14,6 @@ export default defineConfig({
   test: {
     include: ['tests/unit/**/*.unit.spec.ts'],
     environment: 'node',
+    setupFiles: ['tests/unit/__setup__/vue-reactivity.ts'],
   },
 })

@@ -176,6 +176,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Texture Studio: client-side WebGL tileable texture generator. Frontend-only
   // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
   TextureStudio: 'texture-studio',
+  // Shot Director: frontend-only config node for driving video models (Seedance etc.)
+  // via a guardrailed shot-sheet UI — no backend class_type, reopen to re-edit.
+  ShotDirector: 'shot-director',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

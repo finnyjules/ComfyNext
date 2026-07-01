@@ -47,6 +47,8 @@ import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
 import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
 import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
+import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
+import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -168,7 +170,8 @@ const nodeTypes = {
   'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode),
   'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
-  'texture-studio': markRaw(TextureStudioNode), 'subgraph-io': markRaw(SubgraphIONode),
+  'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
+  'subgraph-io': markRaw(SubgraphIONode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1368,7 +1371,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
   // empty. Give it ONE wildcard output so the generated Image/Video artifact can
   // be wired from it (visual/provenance link only — SpaceType never executes).
-  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
+  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShotDirector') && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'output', type: '*', links: null }]
   }
   // Shader Studio consumes an image — give it one input handle (input-0).
@@ -2423,6 +2426,13 @@ function handleOpenShaderStudio(e: Event) {
   shaderStudioWiredUrl.value = resolveWiredInput(String(detail.nodeId), nodes.value as any[], edges.value as any[])
 }
 
+// Shot Director editor open-state (same pattern as Texture Studio).
+const shotDirectorOpenForId = ref<string | null>(null)
+function handleOpenShotDirector(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) shotDirectorOpenForId.value = String(detail.nodeId)
+}
+
 // Space Type "Generate as image/video": create the artifact node to the right of
 // the SpaceType node and draw a provenance edge from the SpaceType node's single
 // wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
@@ -2772,7 +2782,8 @@ const anyEditorModalOpen = computed(() => !!(
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
   voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
-  shaderStudioOpenForId.value || textureStudioOpenForId.value
+  shaderStudioOpenForId.value || textureStudioOpenForId.value ||
+  shotDirectorOpenForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
 // modal is open (e.g. the Compositor), the node behind it is still selected, so a
@@ -2933,6 +2944,9 @@ onMounted(() => {
   window.addEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
   // Shader Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('comfynext:openShotDirector', handleOpenShotDirector)
+  // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:studioRender', handleStudioRender)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
@@ -2969,6 +2983,8 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:textureStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
   window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('comfynext:openShotDirector', handleOpenShotDirector)
+  window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:studioRender', handleStudioRender)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
@@ -5590,6 +5606,16 @@ defineExpose({
         :nodes="nodes as any[]"
         :wired-url="shaderStudioWiredUrl"
         @close="shaderStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Shot Director editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <ShotDirectorSurface
+        v-if="shotDirectorOpenForId"
+        :node-id="shotDirectorOpenForId"
+        :nodes="nodes as any[]"
+        @close="shotDirectorOpenForId = null"
       />
     </Teleport>
 
