@@ -111,7 +111,24 @@ The model is safe-by-construction: prepaid (no receivables), COGS scales with re
 2. **Packs + light subscription later.** Market standard ($9–15/mo with monthly credit drop at ~15–20% discount + perks). Adds MRR and retention; the monetization plan already earmarks this as a post-launch tier with auto-top-up as the stepping stone. Revisit at traction, not launch.
 3. **Daily free drafts instead of one-time grant.** Krea/Leonardo-style retention lever; COGS is tiny (drafts ~$0.001–0.003) but it invites farm abuse — needs the velocity/abuse layer proven first. Candidate for post-launch experiment.
 
-## 5. Risks & caveats
+## 5. Path to $10k/mo profit
+
+Net margin ≈ **36–38%** of revenue (COGS 57% at 1.75× blended + ~1–2% pack-bonus credits + ~5% blended Stripe/Tax), so $10k profit ⟹ **~$27–28k/mo revenue** (incl. fixed floor).
+
+Persona mix 70% casual ($10/mo) / 25% regular ($25) / 5% power ($75) → **ARPPU ≈ $17/mo**.
+
+| Scenario | ARPPU | Payers needed | Conversion | Monthly actives |
+|---|---|---|---|---|
+| Casual-heavy | $12 | ~2,350 | 3% | ~78,000 |
+| **Base** | **$17** | **~1,650** | **5%** | **~33,000** |
+| Video/prosumer-heavy | $30 | ~930 | 8% | ~12,000 |
+
+Levers, in order of power:
+1. **Markup 1.75×→2.0×**: net margin ~44%, revenue needed drops to ~$23.5k → ~1,400 payers (base mix). Still market-normal.
+2. **Video share drives ARPPU** ($10 image-only plateau vs $30 video users): prosumer scenario needs half the payers of base. Product emphasis on video > conversion optimization.
+3. **Signup-grant growth tax**: each free signup costs $0.30–0.80 COGS (150-credit grant; capped ~$0.80 even if spent on premium edits). Sustaining 33k actives ⇒ thousands of signups/mo ⇒ ~$1–3k/mo — velocity/abuse guardrails are economically load-bearing.
+
+## 6. Risks & caveats
 
 - All prices retrieved 2026-07-01; Replicate/GPU prices drift — `price_book` versioning exists precisely for this. Re-verify at Phase-3 build time.
 - Seedance 1080p retail ($0.80/s) sits above the flagship market anchor; either accept (premium positioning) or thin the margin on that one row.
