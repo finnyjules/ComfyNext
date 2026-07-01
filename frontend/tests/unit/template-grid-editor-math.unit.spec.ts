@@ -59,4 +59,19 @@ describe('resizeRegion', () => {
   it('clamps growth at the grid edge', () => {
     expect(resizeRegion(r, 'se', 5000, 5000, m)).toEqual({ col: 2, colSpan: 5, row: 2, rowSpan: 5 })
   })
+
+  // Single-axis edge handles: each touches ONLY its own axis, ignoring the
+  // orthogonal delta (so dragging an edge changes width or height alone).
+  it('east edge grows only the width, ignoring the vertical delta', () => {
+    expect(resizeRegion(r, 'e', 170, 330, m)).toEqual({ col: 2, colSpan: 3, row: 2, rowSpan: 2 })
+  })
+  it('west edge moves/grows only the width, ignoring the vertical delta', () => {
+    expect(resizeRegion(r, 'w', -160, 330, m)).toEqual({ col: 1, colSpan: 3, row: 2, rowSpan: 2 })
+  })
+  it('south edge grows only the height, ignoring the horizontal delta', () => {
+    expect(resizeRegion(r, 's', 330, 330, m)).toEqual({ col: 2, colSpan: 2, row: 2, rowSpan: 4 })
+  })
+  it('north edge moves/grows only the height, ignoring the horizontal delta', () => {
+    expect(resizeRegion(r, 'n', 330, -160, m)).toEqual({ col: 2, colSpan: 2, row: 1, rowSpan: 3 })
+  })
 })

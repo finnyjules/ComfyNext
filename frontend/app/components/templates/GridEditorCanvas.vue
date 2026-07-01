@@ -357,7 +357,30 @@ function onElementPointerUp(e: PointerEvent) {
 
 // -- Resize handles (snap spans to cells) ------------------------------------
 
-type HandleDir = 'nw' | 'ne' | 'sw' | 'se'
+type HandleDir = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
+const HANDLE_DIRS = ['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] as const
+
+// Position a resize handle on the element's edge/corner. Corners pin to two
+// sides; edge handles pin to one side and centre on the free axis. Cursor
+// reflects the axis: corners diagonal, edges single-axis.
+function handleStyle(dir: HandleDir): Record<string, string> {
+  const n = dir.includes('n'), s = dir.includes('s'), e = dir.includes('e'), w = dir.includes('w')
+  const style: Record<string, string> = {}
+  const transforms: string[] = []
+  if (n) style.top = '-6px'
+  else if (s) style.bottom = '-6px'
+  else { style.top = '50%'; transforms.push('translateY(-50%)') }
+  if (w) style.left = '-6px'
+  else if (e) style.right = '-6px'
+  else { style.left = '50%'; transforms.push('translateX(-50%)') }
+  if (transforms.length) style.transform = transforms.join(' ')
+  const corner = (n || s) && (e || w)
+  style.cursor = corner
+    ? (dir === 'nw' || dir === 'se' ? 'nwse-resize' : 'nesw-resize')
+    : (e || w ? 'ew-resize' : 'ns-resize')
+  return style
+}
+
 let resizeState: {
   id: string
   dir: HandleDir
@@ -561,16 +584,10 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <!-- Resize handles — hidden while repositioning so they don't fight the pan drag. -->
         <template v-if="selectedId === r.el.id && !r.el.locked && repositionId !== r.el.id">
           <div
-            v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
+            v-for="dir in HANDLE_DIRS"
             :key="dir"
             class="absolute size-3 bg-white border border-[#96b4ff] rounded-sm"
-            :style="{
-              top:    dir.startsWith('n') ? '-6px' : 'auto',
-              bottom: dir.startsWith('s') ? '-6px' : 'auto',
-              left:   dir.endsWith('w')   ? '-6px' : 'auto',
-              right:  dir.endsWith('e')   ? '-6px' : 'auto',
-              cursor: dir === 'nw' || dir === 'se' ? 'nwse-resize' : 'nesw-resize',
-            }"
+            :style="handleStyle(dir)"
             @pointerdown="(e) => onHandlePointerDown(e, r, dir)"
           />
         </template>
