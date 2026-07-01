@@ -292,11 +292,8 @@ export const VIDEO_MODELS: VideoModel[] = [
     defaultDuration: 5,
     resolutions: ['720p', '1080p'],
     defaultResolution: '1080p',
-    advanced: [
-      CAMERA_FIXED,
-      { name: 'fps', type: 'select', label: 'Frame rate',
-        default: '24', options: ['24', '30'] },
-    ],
+    // Live schema has no camera_fixed / fps (verified 2026-06-30).
+    advanced: [],
   },
   {
     id: 'seedance-2.0-fast',
