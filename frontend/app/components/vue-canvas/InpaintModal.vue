@@ -74,7 +74,7 @@ const loadingSrc = ref(false)
 // initial load is kicked off from onMounted (after setup finishes) to avoid a
 // temporal-dead-zone crash.
 async function applySource(url: string | null) {
-  brush.clear(); brush.resetHistory(); clearSamMask(); boxRect.value = null; history.value = []; previewResult.value = null; maskOnly.value = false
+  brush.clear(); brush.resetHistory(); clearSamMask(); boxRect.value = null; history.value = []; previewResult.value = null; lastResult.value = null; maskOnly.value = false
   if (!url) { sourceImg.value = null; return }
   loadingSrc.value = true
   try {
@@ -275,6 +275,10 @@ watch(() => [disp.w, disp.h, JSON.stringify(brush.strokes.value), brush.inverted
 
 // ── Candidate-result preview ─────────────────────────────────────────────────
 const previewResult = ref<string | null>(null)
+// The most recent generated result — kept as the persistent "current" result so
+// the canvas keeps showing it (rather than snapping back to the source) once a
+// batch lands, and so Apply always has a target.
+const lastResult = ref<string | null>(null)
 const previewImgEl = ref<HTMLImageElement | null>(null)
 watch(previewResult, async (url) => {
   if (!url) { previewImgEl.value = null; renderOverlay(); return }
@@ -340,11 +344,20 @@ async function runInpaint(removeMode = false) {
     const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: mode.value }))
     history.value = [...items, ...history.value]
     // Show the newest result on the canvas immediately, instead of leaving the
-    // source up and making the user hunt for it in History.
-    previewResult.value = items[0]?.url ?? null
+    // source up and making the user hunt for it in History. It stays shown (via
+    // lastResult) until the user Applies or generates again.
+    lastResult.value = items[0]?.url ?? null
+    previewResult.value = lastResult.value
   } catch (err: any) {
     inpaintError.value = err?.data?.message || err?.message || 'Inpaint failed'
   }
+}
+
+// Commit whatever result is currently on the canvas (a hovered preview, else the
+// latest generated result) back onto the node.
+function applyResult() {
+  const url = previewResult.value ?? lastResult.value
+  if (url) acceptInpaint(url)
 }
 
 async function acceptInpaint(dataUrl: string) {
@@ -608,6 +621,14 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p v-if="mode === 'mask' && !hasRegion" class="text-[10px] text-white/30 mt-1.5">Mark a region on the image to enable Generate.</p>
+            <!-- Apply the result showing on the canvas back onto the node. Appears
+                 once a result exists so the save action isn't buried in History. -->
+            <button v-if="lastResult"
+              class="mt-1.5 w-full h-8 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-neutral-900 text-[12px] font-semibold cursor-pointer transition-colors"
+              title="Apply the result shown on the canvas to the node"
+              @click="applyResult">
+              Apply to canvas
+            </button>
           </div>
 
           <!-- History -->
@@ -622,7 +643,7 @@ onBeforeUnmount(() => {
                 class="relative group rounded-md overflow-hidden border cursor-pointer"
                 :class="previewResult === item.url ? 'border-white/90 ring-1 ring-white/30' : 'border-white/10 hover:border-white/40'"
                 :title="item.prompt || (item.mode === 'describe' ? 'described edit' : 'inpaint')"
-                @mouseenter="previewResult = item.url" @mouseleave="previewResult = null" @click="acceptInpaint(item.url)">
+                @mouseenter="previewResult = item.url" @mouseleave="previewResult = lastResult" @click="acceptInpaint(item.url)">
                 <img :src="item.url" class="w-full aspect-square object-cover" draggable="false" />
                 <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100">Use</span>
               </button>
