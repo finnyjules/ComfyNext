@@ -49,6 +49,10 @@ import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
+import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
+import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
+import { compileShot } from '~/lib/shotdirector/compile'
+import { getProfile } from '~/lib/shotdirector/profiles'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -2435,6 +2439,63 @@ function handleOpenShotDirector(e: Event) {
   if (detail?.nodeId) shotDirectorOpenForId.value = String(detail.nodeId)
 }
 
+/** Shot Director "Generate": compile the sheet, patch the (found-or-spawned)
+ *  FilmShotNode's widgets, and hand off to the normal filtered run. No studio
+ *  edge — ShotDirector bakes nothing, so we remember the target id instead. */
+function setNodeWidget(node: any, name: string, value: unknown): boolean {
+  const defs = (node.data?.widgetDefs ?? []) as { name: string }[]
+  const i = defs.findIndex(w => w.name === name)
+  if (i < 0) return false
+  if (!Array.isArray(node.data.widgetsValues)) node.data.widgetsValues = []
+  node.data.widgetsValues[i] = value
+  return true
+}
+
+function handleShotDirectorGenerate(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string }>).detail
+  const studio = (nodes.value as any[]).find(n => String(n.id) === String(detail?.sourceNodeId))
+  if (!studio) return
+  if (!studio.data) studio.data = {}
+  studio.data.shotError = null
+
+  const sheet = hydrateShotSheet(studio.data?.properties?.comfynext_shotDirector)
+  const result = compileShot(sheet, getProfile('seedance-2.0'))
+  const errors = result.issues.filter(i => i.level === 'error')
+  if (errors.length) {
+    studio.data.shotError = errors[0]!.message
+    return
+  }
+
+  const patch = buildFilmShotPatch(sheet, result)
+  const lite = (nodes.value as any[]).map(n => ({ id: String(n.id), nodeType: n.data?.nodeType as string | undefined }))
+  const liteEdges = (edges.value as any[]).map(e => ({ source: String(e.source), target: String(e.target) }))
+  let targetId = findShotTarget(lite, liteEdges, String(studio.id), studio.data?.properties?.comfynext_shotDirectorTargetId)
+
+  if (!targetId) {
+    const pos = {
+      x: (studio.position?.x ?? 0) + (studio.data?.size?.[0] ?? 280) + 80,
+      y: studio.position?.y ?? 0,
+    }
+    const film = createNodeData('FilmShotNode', pos)
+    nodes.value.push(film)
+    targetId = String(film.id)
+    if (!studio.data.properties) studio.data.properties = {}
+    studio.data.properties.comfynext_shotDirectorTargetId = targetId
+  }
+
+  const film = (nodes.value as any[]).find(n => String(n.id) === targetId)
+  if (!film) return
+  for (const [name, value] of Object.entries(patch)) {
+    if (!setNodeWidget(film, name, value)) {
+      studio.data.shotError = `FilmShotNode has no '${name}' widget — is the backend catalog stale?`
+      return
+    }
+  }
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    detail: { targetIds: [targetId], direction: 'downstream' },
+  }))
+}
+
 // Space Type "Generate as image/video": create the artifact node to the right of
 // the SpaceType node and draw a provenance edge from the SpaceType node's single
 // wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
@@ -2949,6 +3010,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openShotDirector', handleOpenShotDirector)
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
+  window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.addEventListener('comfynext:studioRender', handleStudioRender)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
@@ -2987,6 +3049,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:openShotDirector', handleOpenShotDirector)
   window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
+  window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:studioRender', handleStudioRender)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)

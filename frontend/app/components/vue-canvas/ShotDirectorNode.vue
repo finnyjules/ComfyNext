@@ -16,6 +16,7 @@ const props = defineProps<{
     title?: string
     properties?: Record<string, any>
     studioBusy?: boolean
+    shotError?: string | null
   }
 }>()
 
@@ -56,6 +57,10 @@ onBeforeUnmount(() => {
 
 function openEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openShotDirector', { detail: { nodeId: props.id } }))
+}
+
+function generate() {
+  window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.id } }))
 }
 </script>
 
@@ -111,14 +116,25 @@ function openEditor() {
       </div>
     </div>
 
-    <!-- Edit button -->
-    <div class="border-t border-white/10 p-2">
+    <!-- Edit + Generate buttons -->
+    <div class="flex gap-1.5 border-t border-white/10 p-2">
       <button
-        class="flex w-full items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
         <Pencil class="h-3 w-3" /> Edit
       </button>
+      <button
+        class="rounded bg-emerald-500/15 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25"
+        title="Compile the shot and run Seedance"
+        @click.stop="generate"
+      >
+        Generate
+      </button>
+    </div>
+
+    <div v-if="data?.shotError" class="px-2 pb-1.5 text-[10px] leading-tight text-red-400/90">
+      {{ data.shotError }}
     </div>
   </div>
 </template>
