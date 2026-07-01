@@ -445,8 +445,7 @@ function discardTake(id: string) {
              right-edge output handle (which sits at vertical centre). -->
         <div ref="editMenuRef" class="nopan nodrag absolute top-1 right-1 z-30">
           <button
-            class="flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/55 hover:bg-black/75 text-[10px] transition-colors cursor-pointer"
-            :class="editMenuOpen ? 'bg-black/75 text-white' : 'text-white/65 hover:text-white'"
+            class="gen-pastel flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] font-semibold text-neutral-900 cursor-pointer"
             title="Edit"
             @click.stop="editMenuOpen = !editMenuOpen"
           >
