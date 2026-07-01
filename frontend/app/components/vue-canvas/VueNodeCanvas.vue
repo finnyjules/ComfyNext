@@ -11,7 +11,7 @@ import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
 import { NODE_BOOST, NODE_KEYWORDS } from '~/lib/nodeKeywords'
 import { capabilityBoosts, capabilityKeywords, capabilityNodeTypes, studioNodeTypes, supersededNodeTypes } from '~/lib/agent/capabilities'
-import { tuneCompositorNode } from '~/lib/agent/studioTune'
+import { studioTunerFor } from '~/lib/agent/studioTune'
 import type { ProposedChange } from '~/composables/useLayoutAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
@@ -677,7 +677,8 @@ function glimmBurstOver(nodeIds: string[]) {
 /** Headless studio-tune: for each tuneNode command, run the target node's OWN
  *  agent surface against the request and apply it IN PLACE (the node re-bakes
  *  itself). Returns proposal rows + a notice; pushes undo closures onto
- *  tuneRestores so Dismiss reverts. Slice 1: Frame (Compositor) only. */
+ *  tuneRestores so Dismiss reverts. Studios: Frame, Gradient, Shader, Texture,
+ *  Smart Layout (dispatched by nodeType via studioTunerFor). */
 async function agentTune(tuneCmds: { target: string; request: string }[], apiKey: string): Promise<{ changes: ProposedChange[]; notice?: string }> {
   const changes: ProposedChange[] = []
   const notices: string[] = []
@@ -687,9 +688,10 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
     const realId = agentIdMap[String(tc.target)] ?? String(tc.target)
     const node = (nodes.value as any[]).find(n => String(n.id) === realId)
     if (!node) continue
-    if (node.data?.nodeType !== 'Compositor') { notices.push('I can only tune a Frame’s internals from the canvas for now.'); continue }
+    const tuner = studioTunerFor(node.data?.nodeType)
+    if (!tuner) { notices.push(`I can’t tune “${node.data?.title || node.data?.nodeType || 'that node'}” from the canvas yet.`); continue }
     try {
-      const res = await tuneCompositorNode(node, tc.request, apiKey)
+      const res = await tuner(node, tc.request, apiKey)
       if (res.restore) tuneRestores.push(res.restore)
       if (res.notice) notices.push(res.notice)
       if (res.ok) {
