@@ -440,7 +440,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6" @click.self="emit('close')">
+  <div class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center p-6" @click.self="emit('close')">
     <div class="w-full h-full max-w-[1200px] max-h-[860px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl flex text-white/85 overflow-hidden">
       <!-- Stage -->
       <div class="flex-1 relative flex items-center justify-center overflow-hidden bg-[#0d0d0d]">
