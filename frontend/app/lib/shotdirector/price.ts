@@ -17,7 +17,12 @@ const PER_SECOND_USD: Record<string, [plain: number, videoRef: number]> = {
 export function estimateShotUSD(sheet: ShotSheet): number {
   const tier = PER_SECOND_USD[sheet.format.resolution.toLowerCase()] ?? PER_SECOND_USD['1080p']!
   const hasVideoRef = sheet.mode === 'reference' && sheet.references.some(r => r.kind === 'video')
-  return (hasVideoRef ? tier[1] : tier[0]) * sheet.format.durationS
+  // Same effective-duration rule as buildFilmShotPatch in dispatch.ts:
+  // durationS <= 0 covers -1 ("Auto") and any other invalid/unset value,
+  // which map to the profile default (5s) at dispatch time. Pricing must
+  // use the same effective duration or Auto prices as a negative number.
+  const dur = sheet.format.durationS <= 0 ? 5 : sheet.format.durationS
+  return (hasVideoRef ? tier[1] : tier[0]) * dur
 }
 
 export function formatShotUSD(sheet: ShotSheet): string {

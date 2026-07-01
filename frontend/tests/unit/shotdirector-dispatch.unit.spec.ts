@@ -23,7 +23,7 @@ describe('buildFilmShotPatch', () => {
     const patch = buildFilmShotPatch(sheet, compileShot(sheet, SEEDANCE_PROFILE))
     expect(patch.model).toBe('seedance-2.0')
     expect(patch.prompt.length).toBeGreaterThan(0)
-    expect(patch.duration).toBe(10)
+    expect(patch.duration).toBe('10')
     expect(patch.seed).toBe(42)
     expect(patch.aspect_ratio).toBe(sheet.format.aspectRatio)
     const opts = JSON.parse(patch.model_options)
@@ -33,6 +33,22 @@ describe('buildFilmShotPatch', () => {
     for (const k of ['prompt', 'duration', 'aspect_ratio', 'seed']) {
       expect(opts).not.toHaveProperty(k)
     }
+  })
+
+  it('maps duration -1 ("Auto") to the profile default "5" — FilmShotNode\'s '
+    + 'duration combo only accepts string members and would otherwise silently '
+    + 'coerce an unmatched value', () => {
+    const sheet = referenceSheet()
+    sheet.format.durationS = -1
+    const patch = buildFilmShotPatch(sheet, compileShot(sheet, SEEDANCE_PROFILE))
+    expect(patch.duration).toBe('5')
+  })
+
+  it('sets __shot_directed in model_options so FilmShotNode skips its preset phrase', () => {
+    const sheet = referenceSheet()
+    const patch = buildFilmShotPatch(sheet, compileShot(sheet, SEEDANCE_PROFILE))
+    const opts = JSON.parse(patch.model_options)
+    expect(opts.__shot_directed).toBe(true)
   })
 
   it('carries first/last frame through model_options in firstLastFrame mode', () => {

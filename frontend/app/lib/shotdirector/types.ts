@@ -69,7 +69,7 @@ export interface ShotAudio {
 }
 
 export interface ShotFormat {
-  aspectRatio: string   // includes 'adaptive'
+  aspectRatio: string   // 'adaptive' excluded for v1 (unsupported by FilmShotNode/_SEEDANCE_AR); surface options in ShotDirectorSurface.vue
   durationS: number     // Seedance set; -1 allowed (intelligent)
   resolution: string
   seed?: number

@@ -197,7 +197,11 @@ function patchBeat(id: string, patch: Record<string, unknown>) {
 }
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
-const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive']
+// 'adaptive' removed for v1: neither the FilmShotNode combo
+// (_VIDEO_GEN_ASPECT_RATIOS) nor _SEEDANCE_AR accepts it — it silently
+// coerces to 16:9. Re-add once the FilmShotNode combo + _SEEDANCE_AR are
+// widened to support it (follow-up).
+const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
 const DURATIONS = [3, 5, 10, 15]
 const RESOLUTIONS = ['720p', '1080p']
 

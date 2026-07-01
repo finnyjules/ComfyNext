@@ -62,3 +62,14 @@ def test_seedance_wired_image_wins_over_adv():
     wired = "data:image/png;base64,wired"
     inp = _b_seedance_2_0("p", "16:9", 5, 0, wired, None, {"image": DATA_URL})
     assert inp["image"] == wired
+
+
+def test_seedance_ignores_shot_directed_marker():
+    # __shot_directed is a Shot Director → FilmShotNode signal consumed (and
+    # popped) by FilmShotNode.execute before `adv` ever reaches this builder.
+    # Defensive: _b_seedance_2_0 only reads known keys via adv.get/_opt_str,
+    # so even if the marker somehow survived into adv it must never appear
+    # in the Replicate payload.
+    adv = {"resolution": "720p", "__shot_directed": True}
+    inp = _b_seedance_2_0("p", "16:9", 5, 0, None, None, adv)
+    assert "__shot_directed" not in inp

@@ -12,7 +12,7 @@ export interface FilmShotWidgetPatch {
   prompt: string
   model: string
   aspect_ratio: string
-  duration: number
+  duration: string
   seed: number
   model_options: string
 }
@@ -26,13 +26,30 @@ export function buildFilmShotPatch(sheet: ShotSheet, result: CompileResult): Fil
   for (const [key, value] of Object.entries(result.input)) {
     if (!WIDGET_NATIVE.has(key)) extras[key] = value
   }
+  // FilmShotNode.execute always prepends a shot-preset camera phrase (e.g.
+  // "push-in") to the prompt — appropriate for its own gallery UI, but Shot
+  // Director already compiles a complete, deliberate prompt of its own.
+  // This marker tells FilmShotNode to skip the preset phrase and use the
+  // prompt verbatim; the node pops it out of `adv` before it ever reaches
+  // the Seedance builder, so it never leaks into the Replicate payload.
+  extras.__shot_directed = true
+  // FilmShotNode's duration widget is a Combo with STRING options
+  // ["3","5","6","8","9","10","15","60"] — the pre-run combo sweep
+  // (realignWidgetValues in useFilteredPrompt.ts) silently coerces any
+  // non-member value to the default "5", so a raw number here (e.g. 10)
+  // never matches and always regresses to 5s clips. durationS === -1 also
+  // means "Auto" in the surface, a legal sheet state with no numeric
+  // meaning — map it to the profile default (5) until intelligent duration
+  // selection is supported. Same String()-of-combo-value pattern as
+  // snapWidgetsToModel in lib/videoModelAdapt.ts.
+  const durationS = sheet.format.durationS
   return {
     prompt: result.prompt,
     model: 'seedance-2.0',
     // In firstLastFrame mode the compiled input has no aspect_ratio (image
     // dims win); send the sheet's anyway — the builder ignores it then.
     aspect_ratio: sheet.format.aspectRatio,
-    duration: sheet.format.durationS,
+    duration: String(durationS <= 0 ? 5 : durationS),
     seed: sheet.format.seed && sheet.format.seed > 0 ? sheet.format.seed : 0,
     model_options: JSON.stringify(extras),
   }

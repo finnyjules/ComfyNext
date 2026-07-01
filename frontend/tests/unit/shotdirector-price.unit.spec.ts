@@ -31,4 +31,11 @@ describe('estimateShotUSD', () => {
     sheet.format.durationS = 5
     expect(formatShotUSD(sheet)).toBe('~$0.90')
   })
+
+  it('prices durationS -1 ("Auto") using the same 5s fallback as dispatch, not a negative price', () => {
+    const sheet = createDefaultShotSheet()
+    sheet.format.resolution = '720p'
+    sheet.format.durationS = -1
+    expect(estimateShotUSD(sheet)).toBeCloseTo(0.90)
+  })
 })

@@ -3138,18 +3138,30 @@ class FilmShotNode(IO.ComfyNode):
                 f"Connect an Image to the optional `image` input."
             )
 
-        recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,
-                                      camera_movement, lens_look, composition)
-        dialect = _shot_dialect_for_model(model)
-        shot_phrase = _build_shot_phrase(recipe, dialect)
-        full_prompt = f"{shot_phrase} {(prompt or '').strip()}".strip()
-
         try:
             advanced = json.loads(model_options or "{}")
             if not isinstance(advanced, dict):
                 advanced = {}
         except json.JSONDecodeError:
             advanced = {}
+
+        # Shot Director drives this node with its own fully-compiled prompt
+        # (subject/action/scene + explicit camera language already baked
+        # in). FilmShotNode's default behaviour of prepending a shot-preset
+        # phrase (e.g. "push-in") would silently contradict that compiled
+        # prompt on every dispatch. dispatch.ts sets this marker in
+        # model_options; pop it here so it never reaches the Seedance
+        # builder or Replicate.
+        shot_directed = bool(advanced.pop("__shot_directed", False))
+
+        recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,
+                                      camera_movement, lens_look, composition)
+        dialect = _shot_dialect_for_model(model)
+        shot_phrase = _build_shot_phrase(recipe, dialect)
+        if shot_directed:
+            full_prompt = (prompt or "").strip()
+        else:
+            full_prompt = f"{shot_phrase} {(prompt or '').strip()}".strip()
 
         try:
             dur_int = int(duration)
