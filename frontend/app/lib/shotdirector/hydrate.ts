@@ -36,7 +36,7 @@ export function hydrateShotSheet(raw: unknown): ShotSheet {
       .filter(c =>
         c && typeof c.slug === 'string' && typeof c.name === 'string'
         && (c.via === 'wire' || c.via === 'picker'))
-      .map(c => typeof c.variantId === 'string' ? c : { slug: c.slug, name: c.name, via: c.via }),
+      .map(c => ({ slug: c.slug, name: c.name, via: c.via, ...(typeof c.variantId === 'string' && c.variantId !== 'default' ? { variantId: c.variantId } : {}) })),
     references: arr<Ref>(r.references),
     firstFrame: typeof r.firstFrame === 'string' ? r.firstFrame : undefined,
     lastFrame: typeof r.lastFrame === 'string' ? r.lastFrame : undefined,

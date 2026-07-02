@@ -66,6 +66,7 @@ export function useShotDirector(
   }
 
   const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker', variantId?: string) => {
+    if (variantId === 'default') variantId = undefined
     if (sheet.value.cast.some(m => m.slug === slug)) return
     update(s => ({ ...s, cast: [...s.cast, { slug, name, via, ...(variantId ? { variantId } : {}) }] }))
   }

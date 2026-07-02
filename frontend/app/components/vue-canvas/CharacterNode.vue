@@ -37,7 +37,7 @@ function pick(s: string, name: string, pickedVariantId?: string) {
 function onVariantChange(e: Event) {
   if (!props.data.properties) props.data.properties = {}
   const v = (e.target as HTMLSelectElement).value
-  props.data.properties.comfynext_characterVariantId = v || null
+  props.data.properties.comfynext_characterVariantId = (v && v !== 'default') ? v : null
   window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
 }
 </script>
@@ -76,11 +76,10 @@ function onVariantChange(e: Event) {
         <!-- Variant select: only when the character has more than one variant -->
         <select
           v-if="character.variants.length > 1"
-          :value="variantId ?? ''"
+          :value="variantId ?? character.variants.find(v => v.id === 'default')?.id ?? ''"
           class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
           @change="onVariantChange"
         >
-          <option value="" class="bg-neutral-900">Default</option>
           <option v-for="v in character.variants" :key="v.id" :value="v.id" class="bg-neutral-900">{{ v.label }}</option>
         </select>
         <p v-if="!refCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">

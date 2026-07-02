@@ -36,7 +36,7 @@ function onCardClick(c: CharacterClient) {
 }
 
 function pickVariant(c: CharacterClient, variantId: string) {
-  emit('pick', c.slug, c.name, variantId)
+  emit('pick', c.slug, c.name, variantId === 'default' ? undefined : variantId)
 }
 </script>
 

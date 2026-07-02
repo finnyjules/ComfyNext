@@ -232,4 +232,18 @@ describe('useShotDirector cast', () => {
     void result.value // force the computed to evaluate resolveCast
     expect(seenPicks).toEqual([{ slug: 'reva', variantId: 'raincoat' }])
   })
+
+  it('addCastMember normalizes variantId "default" to undefined', () => {
+    let seenPicks: { slug: string; variantId?: string }[] = []
+    const resolve = (picks: { slug: string; variantId?: string }[]) => {
+      seenPicks = picks
+      return Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
+    }
+    const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, resolve)
+
+    addCastMember('reva', 'Reva', 'picker', 'default')
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    void result.value // force the computed to evaluate resolveCast
+    expect(seenPicks).toEqual([{ slug: 'reva' }])
+  })
 })
