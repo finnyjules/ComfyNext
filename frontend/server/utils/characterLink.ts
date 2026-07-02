@@ -4,12 +4,33 @@
  *
  * Extracted so both finalize paths — the legacy /api/cloud-train/status
  * poll endpoint and the training-queue's pollLora() in trainingProviders.ts
- * — flip a matching draft to ready (or create a fresh record) the same way,
- * instead of only one of them doing it.
+ * — apply the same collision policy: auto-link may claim drafts, never
+ * repoint a ready character.
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+
+export interface LinkDecisionInput {
+  loraName: string | null
+}
+
+/**
+ * Pure decision logic: given an existing registry record's loraName and a
+ * new weights filename, determine the linking action.
+ *
+ * Policy (auto-link may claim drafts, never repoint a ready character):
+ * - 'claim-draft': matched record with loraName === null → flip to ready
+ * - 'update-same': matched record already ready with same loraName → idempotent update
+ * - 'collide-new': matched record already ready with different loraName → create new with de-collided slug
+ * - 'create': no existing record → create fresh record
+ */
+export function linkDecision(existing: LinkDecisionInput | null, weightsFilename: string): 'create' | 'claim-draft' | 'update-same' | 'collide-new' {
+  if (!existing) return 'create'
+  if (existing.loraName === null) return 'claim-draft'
+  if (existing.loraName === weightsFilename) return 'update-same'
+  return 'collide-new'
+}
 
 /**
  * Pure match: does an existing registry record correspond to a just-trained
@@ -23,9 +44,31 @@ function matchesTrainedCharacter(record: CharacterRecord, displayNameSlug: strin
 }
 
 /**
- * Link a just-succeeded character-kind LoRA training to the registry: flip a
- * matching draft to ready (loraName/trigger only — variants are untouched),
- * or create a fresh record with an empty Default variant if none exists.
+ * Find the first available de-collided slug by appending -2, -3, etc.
+ * (assumes caller has already tried the base slug).
+ */
+async function findAvailableSlug(baseSlug: string, dir: string, maxAttempts: number = 100): Promise<string> {
+  for (let i = 2; i <= maxAttempts; i++) {
+    const candidate = `${baseSlug}-${i}`
+    try {
+      await fs.access(path.join(dir, `${candidate}.json`))
+    } catch {
+      // File does not exist — this slug is available
+      return candidate
+    }
+  }
+  // Fallback to timestamp-based if we somehow hit maxAttempts (very unlikely)
+  return `${baseSlug}-${Date.now()}`
+}
+
+/**
+ * Link a just-succeeded character-kind LoRA training to the registry:
+ * - Claim a matching draft (loraName === null) → flip to ready
+ * - Idempotently update a ready record with the same loraName
+ * - On a collision (ready record with different loraName), create a new
+ *   record with a de-collided slug (-2, -3, etc.) and console.warn the user
+ * - Create a fresh record if no slug match exists
+ *
  * Best-effort — callers should catch and log rather than let a failure here
  * fail the finalize path, since the weights are already safely on disk by
  * the time this runs.
@@ -49,14 +92,36 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
   }
 
   const now = new Date().toISOString()
-  if (match) {
-    match.loraName = weightsFilename
-    match.trigger = trigger
-    match.updatedAt = now
-    await fs.writeFile(path.join(dir, `${match.slug}.json`), JSON.stringify(match, null, 2))
+  const decision = linkDecision(match, weightsFilename)
+
+  if (decision === 'claim-draft' || decision === 'update-same') {
+    // Auto-link may claim drafts, never repoint a ready character
+    match!.loraName = weightsFilename
+    match!.trigger = trigger
+    match!.updatedAt = now
+    await fs.writeFile(path.join(dir, `${match!.slug}.json`), JSON.stringify(match, null, 2))
     return
   }
 
+  if (decision === 'collide-new') {
+    // Ready character with a different loraName: create a new record with de-collided slug
+    console.warn(`[characterLink] Slug collision: "${slug}" already ready with loraName="${match!.loraName}", creating new record with de-collided slug`)
+    const newSlug = await findAvailableSlug(slug, dir)
+    const record: CharacterRecord = {
+      name: displayName,
+      slug: newSlug,
+      variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }],
+      loraName: weightsFilename,
+      trigger,
+      notes: '',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await fs.writeFile(path.join(dir, `${newSlug}.json`), JSON.stringify(record, null, 2))
+    return
+  }
+
+  // decision === 'create': no existing record
   const record: CharacterRecord = {
     name: displayName,
     slug,
