@@ -1,10 +1,10 @@
-"""Input-shape tests for the Seedance 2.0 builder.
+"""Input-shape tests for the Seedance 2.0 builder, now targeting fal.ai.
 
-Replicate's bytedance/seedance-2.0 schema (verified live 2026-06-30, see
-docs/superpowers/specs/2026-06-30-shot-director-design.md) has NO fps and NO
-camera_fixed fields, takes reference_images/videos/audios (mutually exclusive
-with first/last-frame image), and generate_audio. The Shot Director forwards
-those via the FilmShotNode's model_options JSON, which reaches the builder as
+fal's bytedance/seedance-2.0 takes reference refs in image_urls (array), a
+first frame in image_url with optional end_image_url, resolution default 720p,
+duration as a STRING, generate_audio, and NO seed input (seed is output-only).
+Refs are tagged @Image1 in the prompt (done in the frontend). The Shot Director
+forwards these via the FilmShotNode model_options JSON, reaching the builder as
 `adv`.
 """
 from comfy_api_nodes.video_models import _b_seedance_2_0
@@ -12,64 +12,50 @@ from comfy_api_nodes.video_models import _b_seedance_2_0
 DATA_URL = "data:image/png;base64,x"
 
 
-def test_seedance_omits_schema_invalid_fields():
-    inp = _b_seedance_2_0("a dog", "16:9", 5, 0, None, None, {})
-    assert "fps" not in inp, "bytedance/seedance-2.0 has no fps input"
-    assert "camera_fixed" not in inp, "bytedance/seedance-2.0 has no camera_fixed input"
-
-
 def test_seedance_plain_t2v_baseline():
     inp = _b_seedance_2_0("a dog", "16:9", 5, 0, None, None, {})
     assert inp["prompt"] == "a dog"
-    assert inp["duration"] == 5
-    assert inp["resolution"] == "1080p"
+    assert inp["duration"] == "5"          # STRING for fal
+    assert inp["resolution"] == "720p"     # fal default
     assert inp["aspect_ratio"] == "16:9"
-    # generate_audio only sent when explicitly set — keeps plain Film a Shot
-    # payloads unchanged.
+    assert "seed" not in inp               # fal has no seed input
     assert "generate_audio" not in inp
+    # never emit Replicate-shaped keys
+    assert "reference_images" not in inp
 
 
-def test_seedance_forwards_reference_arrays():
+def test_seedance_forwards_reference_url_arrays():
     adv = {
-        "reference_images": [DATA_URL, DATA_URL],
-        "reference_videos": [DATA_URL],
-        "reference_audios": [DATA_URL],
+        "image_urls": [DATA_URL, DATA_URL],
+        "video_urls": [DATA_URL],
+        "audio_urls": [DATA_URL],
         "resolution": "720p",
         "generate_audio": True,
     }
     inp = _b_seedance_2_0("p", "9:16", 10, 7, None, None, adv)
-    assert inp["reference_images"] == [DATA_URL, DATA_URL]
-    assert inp["reference_videos"] == [DATA_URL]
-    assert inp["reference_audios"] == [DATA_URL]
+    assert inp["image_urls"] == [DATA_URL, DATA_URL]
+    assert inp["video_urls"] == [DATA_URL]
+    assert inp["audio_urls"] == [DATA_URL]
     assert inp["resolution"] == "720p"
     assert inp["generate_audio"] is True
     assert inp["aspect_ratio"] == "9:16"
-    assert inp["seed"] == 7
+    assert inp["duration"] == "10"
+    assert "seed" not in inp
 
 
 def test_seedance_first_last_frame_via_adv():
-    adv = {"image": DATA_URL, "last_frame_image": DATA_URL,
-           "reference_images": [DATA_URL]}
+    adv = {"image_url": DATA_URL, "end_image_url": DATA_URL,
+           "image_urls": [DATA_URL]}
     inp = _b_seedance_2_0("p", "16:9", 5, 0, None, None, adv)
-    assert inp["image"] == DATA_URL
-    assert inp["last_frame_image"] == DATA_URL
-    # image dims replace aspect_ratio; refs are mutually exclusive with image
+    assert inp["image_url"] == DATA_URL
+    assert inp["end_image_url"] == DATA_URL
+    # first-frame image mode: aspect_ratio dropped, refs mutually exclusive
     assert "aspect_ratio" not in inp
-    assert "reference_images" not in inp
+    assert "image_urls" not in inp
 
 
-def test_seedance_wired_image_wins_over_adv():
-    wired = "data:image/png;base64,wired"
-    inp = _b_seedance_2_0("p", "16:9", 5, 0, wired, None, {"image": DATA_URL})
-    assert inp["image"] == wired
-
-
-def test_seedance_ignores_shot_directed_marker():
-    # __shot_directed is a Shot Director → FilmShotNode signal consumed (and
-    # popped) by FilmShotNode.execute before `adv` ever reaches this builder.
-    # Defensive: _b_seedance_2_0 only reads known keys via adv.get/_opt_str,
-    # so even if the marker somehow survived into adv it must never appear
-    # in the Replicate payload.
-    adv = {"resolution": "720p", "__shot_directed": True}
-    inp = _b_seedance_2_0("p", "16:9", 5, 0, None, None, adv)
-    assert "__shot_directed" not in inp
+def test_seedance_wired_first_frame_beats_adv():
+    # A wired IMAGE tensor (already a data URL) wins over an adv image_url.
+    inp = _b_seedance_2_0("p", "16:9", 5, 0, "data:image/png;base64,WIRED", None,
+                          {"image_url": DATA_URL})
+    assert inp["image_url"] == "data:image/png;base64,WIRED"

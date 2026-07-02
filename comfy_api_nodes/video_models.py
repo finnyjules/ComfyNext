@@ -63,6 +63,9 @@ class VideoModel:
     modes: list[str]              # ['t2v'], ['i2v'], or ['t2v', 'i2v']
     build_input: VideoModelInputBuilder
     default_duration: int = 5
+    provider: str = "replicate"                 # 'replicate' | 'fal'
+    fal_app: str | None = None                  # e.g. 'bytedance/seedance-2.0'
+    fal_fn_by_mode: dict | None = None          # mode -> fal function name
 
 
 # ---------- Advanced bag helpers --------------------------------------------
@@ -249,30 +252,29 @@ def _b_kling_v2_5_turbo_pro(prompt, ar, dur, seed, image, audio, adv):
 # ===== ByteDance (Seedance) =================================================
 
 def _b_seedance_2_0(prompt, ar, dur, seed, image, audio, adv):
-    # Live schema (verified 2026-06-30): no fps / camera_fixed. References
-    # arrive via the FilmShotNode's model_options JSON (adv) — the Shot
-    # Director forwards data URLs there. Refs XOR first/last-frame image.
+    # fal.ai bytedance/seedance-2.0 (verified 2026-07-02). References arrive as
+    # image_urls/video_urls/audio_urls; first/last frame as image_url/end_image_url.
+    # duration is a STRING, resolution defaults to 720p, no seed input. The Shot
+    # Director forwards these via model_options (adv). Refs XOR first-frame image.
     inp: dict[str, Any] = {
         "prompt": prompt,
-        "duration": _dur_or([3, 5, 10, 15], dur, 5),
-        "resolution": _opt_str(adv, "resolution", "1080p"),
+        "duration": str(_dur_or([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15], dur, 5)),
+        "resolution": _opt_str(adv, "resolution", "720p"),
     }
     if "generate_audio" in adv:
         inp["generate_audio"] = bool(adv["generate_audio"])
-    # First frame: a wired IMAGE tensor (already a data URL here) wins over a
-    # Shot Director data URL in adv.
-    first = image or _opt_str(adv, "image", "")
+    # First frame: a wired IMAGE tensor (already a data URL) wins over adv.
+    first = image or _opt_str(adv, "image_url", "")
     if first:
-        inp["image"] = first
-        if last := _opt_str(adv, "last_frame_image", ""):
-            inp["last_frame_image"] = last
+        inp["image_url"] = first
+        if last := _opt_str(adv, "end_image_url", ""):
+            inp["end_image_url"] = last
     else:
         inp["aspect_ratio"] = _ar_or(_SEEDANCE_AR, ar, "16:9")
-        for key in ("reference_images", "reference_videos", "reference_audios"):
+        for key in ("image_urls", "video_urls", "audio_urls"):
             vals = adv.get(key)
             if isinstance(vals, list) and vals:
                 inp[key] = vals
-    _maybe_set_seed(inp, seed)
     return inp
 
 
@@ -461,8 +463,14 @@ MODELS: list[VideoModel] = [
         id="seedance-2.0", label="Seedance 2.0", brand="ByteDance",
         replicate_slug="bytedance/seedance-2.0",
         aspect_ratios=["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        durations=[3, 5, 10, 15], default_duration=5,
+        durations=[5, 10, 15], default_duration=5,
         modes=["t2v", "i2v"], build_input=_b_seedance_2_0,
+        provider="fal", fal_app="bytedance/seedance-2.0",
+        fal_fn_by_mode={
+            "reference": "reference-to-video",
+            "firstLast": "image-to-video",
+            "t2v": "text-to-video",
+        },
     ),
     VideoModel(
         id="seedance-2.0-fast", label="Seedance 2.0 Fast", brand="ByteDance",
