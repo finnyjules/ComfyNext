@@ -5,13 +5,15 @@
 import { computed, ref } from 'vue'
 import { X, Plus, Copy, Check, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
+import { useCharacters } from '~/composables/useCharacters'
 import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
-  type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole,
+  type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole, type CastMember,
 } from '~/lib/shotdirector/types'
 import { formatShotUSD } from '~/lib/shotdirector/price'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -26,10 +28,28 @@ function persist(s: any) {
   n.data.properties.comfynext_shotDirector = s
 }
 
-const { sheet, result, addReference, removeReference, update, rerollSeed } = useShotDirector(
+const { resolveRefs, coverUrl, characters } = useCharacters()
+const { sheet, result, addReference, removeReference, update, rerollSeed, addCastMember, removeCastMember } = useShotDirector(
   node.value?.data?.properties?.comfynext_shotDirector,
   persist,
+  slugs => resolveRefs(slugs),
 )
+
+// ── Cast ───────────────────────────────────────────────────────────────────────
+const castPickerOpen = ref(false)
+function castCover(slug: string): string | null {
+  const c = characters.value.find(x => x.slug === slug)
+  return c ? coverUrl(c) : null
+}
+function onRemoveCast(m: CastMember) {
+  if (m.via === 'wire') {
+    // One gesture, both representations: ask the canvas to drop the edge;
+    // the edge-sync (Slice B Task 11) removes the cast entry. Until Task 11
+    // lands, fall through to direct removal.
+    window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
+  }
+  removeCastMember(m.slug)
+}
 
 // ── Generate / New take ───────────────────────────────────────────────────────
 // `update`/`rerollSeed` call `persist` synchronously (no debounce), so by the time
@@ -290,6 +310,37 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
               <input ref="fileInputImage" type="file" accept="image/*" class="hidden" @change="onFileAdd('image', $event)" />
               <input ref="fileInputVideo" type="file" accept="video/*" class="hidden" @change="onFileAdd('video', $event)" />
               <input ref="fileInputAudio" type="file" accept="audio/*" class="hidden" @change="onFileAdd('audio', $event)" />
+
+              <!-- Cast: registry-linked characters; refs materialize at compile time -->
+              <div class="mb-3">
+                <div class="mb-1.5 flex items-center justify-between">
+                  <span class="text-[11px] font-medium uppercase tracking-wide text-white/50">Cast <span class="normal-case">≤3</span></span>
+                  <button
+                    class="rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/70 hover:bg-white/10 disabled:opacity-40"
+                    :disabled="sheet.cast.length >= 3"
+                    @click="castPickerOpen = true"
+                  >+ Cast</button>
+                </div>
+                <div v-if="sheet.cast.length" class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="m in sheet.cast" :key="m.slug"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-0.5 pl-0.5 pr-2 text-[11px] text-white/80"
+                  >
+                    <img v-if="castCover(m.slug)" :src="castCover(m.slug)!" class="h-5 w-5 rounded-full object-cover" :alt="m.name">
+                    {{ m.name }}
+                    <span v-if="m.via === 'wire'" class="text-[9px] text-white/35" title="Cast by canvas wire — remove by unwiring or here">⌁</span>
+                    <button class="text-white/35 hover:text-white/80" @click="onRemoveCast(m)">×</button>
+                  </span>
+                </div>
+                <p v-else class="text-[11px] text-white/30">No cast — the shot uses manual references only.</p>
+              </div>
+
+              <CharacterPickerModal
+                v-if="castPickerOpen"
+                :exclude-slugs="sheet.cast.map(m => m.slug)"
+                @pick="(slug, name) => { addCastMember(slug, name); castPickerOpen = false }"
+                @close="castPickerOpen = false"
+              />
 
               <!-- Images (≤9) -->
               <div>
