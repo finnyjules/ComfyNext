@@ -14,6 +14,7 @@ import path from 'node:path'
 import os from 'node:os'
 import type { TrainingJob } from './trainingQueue'
 import type { ProviderResult, RunnerProvider } from './trainingRunner'
+import { linkTrainedCharacter } from './characterLink'
 
 const exec = promisify(execCb)
 
@@ -174,6 +175,15 @@ async function pollLora(job: TrainingJob, token: string): Promise<ProviderResult
         trained_on: new Date().toISOString(),
       }
       await fs.writeFile(localPath.replace(/\.safetensors$/, '.json'), JSON.stringify(sidecar, null, 2))
+      // Link the character registry so this identity shows up in the
+      // Characters panel (ready, with a LoRA chip) without a manual step.
+      // Best-effort: the weights + sidecar are already safely on disk, so a
+      // registry hiccup here shouldn't fail the poll/finalize.
+      if (job.loraKind === 'character') {
+        await linkTrainedCharacter({ displayName: job.displayName, weightsFilename: filename, trigger: job.trigger ?? null }).catch((err) => {
+          console.warn('[training] registry link failed', err)
+        })
+      }
     }
     return { status: 'succeeded', progressPct: 100, localFilename: filename, logsTail }
   }
