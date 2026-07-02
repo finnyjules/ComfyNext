@@ -1,0 +1,119 @@
+"""Minimal fal.ai queue client for video models whose provider is 'fal'.
+
+Mirrors the shape of replicate_refs.py. fal's queue REST API:
+  POST  queue.fal.run/{app}/{fn}            -> {request_id, status, ...}
+  GET   queue.fal.run/{app}/requests/{rid}/status
+  GET   queue.fal.run/{app}/requests/{rid}  -> result payload
+
+Auth is 'Authorization: Key <id:secret>'. The app namespace is two segments
+(e.g. 'bytedance/seedance-2.0'); the function is the trailing segment
+(e.g. 'reference-to-video'). Status/result are polled under the APP base
+(queue.fal.run/{app}/requests/...), NOT under the function path.
+"""
+import asyncio
+import os
+import time
+
+import aiohttp
+
+FAL_QUEUE_BASE = "https://queue.fal.run"
+_TOKEN_CACHE: str | None = None
+
+
+def _dotenv_paths() -> list[str]:
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    return [os.path.join(root, "frontend", ".env"), os.path.join(root, ".env")]
+
+
+def _read_token_from_dotenv() -> str | None:
+    for path in _dotenv_paths():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    for name in ("FAL_KEY", "NUXT_FAL_TOKEN"):
+                        if line.startswith(name + "="):
+                            v = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if v:
+                                return v
+        except OSError:
+            continue
+    return None
+
+
+def get_fal_token() -> str:
+    global _TOKEN_CACHE
+    if _TOKEN_CACHE:
+        return _TOKEN_CACHE
+    for env_name in ("FAL_KEY", "NUXT_FAL_TOKEN"):
+        token = os.environ.get(env_name, "").strip()
+        if token:
+            _TOKEN_CACHE = token
+            return token
+    token = _read_token_from_dotenv()
+    if token:
+        _TOKEN_CACHE = token
+        return token
+    raise RuntimeError(
+        "fal API token not found. Set FAL_KEY (or NUXT_FAL_TOKEN) in your shell, "
+        "or add FAL_KEY=<id:secret> to frontend/.env. See https://fal.ai/dashboard/keys"
+    )
+
+
+def first_fal_video_url(result: dict) -> str:
+    url = ((result or {}).get("video") or {}).get("url")
+    if not url:
+        raise RuntimeError(f"fal result had no video url: {result!r}")
+    return url
+
+
+async def run_fal_prediction(
+    app: str, fn: str, input_dict: dict, *, poll_deadline_sec: int = 900,
+) -> dict:
+    token = get_fal_token()
+    headers = {"Authorization": f"Key {token}", "Content-Type": "application/json"}
+    submit_url = f"{FAL_QUEUE_BASE}/{app}/{fn}"
+    app_base = f"{FAL_QUEUE_BASE}/{app}"
+
+    async with aiohttp.ClientSession() as session:
+        # Submit.
+        for attempt in range(3):
+            async with session.post(submit_url, headers=headers, json=input_dict) as r:
+                if r.status in (200, 201):
+                    submit = await r.json()
+                    break
+                if r.status == 429 and attempt < 2:
+                    await asyncio.sleep(5.5)
+                    continue
+                raise RuntimeError(f"fal submit HTTP {r.status}: {await r.text()}")
+        else:
+            raise RuntimeError("fal submit rate-limited; gave up")
+
+        rid = submit["request_id"]
+        status_url = f"{app_base}/requests/{rid}/status"
+        result_url = f"{app_base}/requests/{rid}"
+
+        deadline = time.time() + poll_deadline_sec
+        while time.time() < deadline:
+            await asyncio.sleep(2.0)
+            async with session.get(status_url, headers=headers) as r:
+                if r.status != 200:
+                    continue
+                status = await r.json()
+            state = status.get("status")
+            if state in ("IN_QUEUE", "IN_PROGRESS"):
+                continue
+            if state == "COMPLETED":
+                async with session.get(result_url, headers=headers) as r:
+                    if r.status != 200:
+                        # No-op routing failure: 'completed' but nothing to fetch.
+                        raise RuntimeError(
+                            f"fal request {rid} completed but result fetch failed "
+                            f"(HTTP {r.status}) — likely a bad app/function path "
+                            f"({app}/{fn}): {await r.text()}"
+                        )
+                    return await r.json()
+            raise RuntimeError(f"fal request {rid} ended: {status}")
+
+    raise RuntimeError(f"fal request timed out after {poll_deadline_sec}s (id={rid})")
