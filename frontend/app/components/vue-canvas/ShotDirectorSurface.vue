@@ -260,7 +260,7 @@ function patchBeat(id: string, patch: Record<string, unknown>) {
 // coerces to 16:9. Re-add once the FilmShotNode combo + _SEEDANCE_AR are
 // widened to support it (follow-up).
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
-const DURATIONS = [3, 5, 10, 15]
+const DURATIONS = [5, 10, 15]
 const RESOLUTIONS = ['720p', '1080p']
 
 const durationLabel = computed(() =>

@@ -2950,6 +2950,29 @@ def _fal_fn_for_input(input_dict: dict, fn_by_mode: dict) -> str:
         return fn_by_mode["reference"]
     return fn_by_mode["t2v"]
 
+
+async def _dispatch_video_prediction(spec, input_dict, *, cls, log_prefix, model):
+    """Run a built video-model input through its provider (fal or Replicate)
+    and return a downloaded video output. Shared by FilmShotNode and
+    GenerateVideoNode so both honor spec.provider."""
+    if spec.provider == "fal":
+        fn = _fal_fn_for_input(input_dict, spec.fal_fn_by_mode or {})
+        print(
+            f"[{log_prefix}] provider=fal app={spec.fal_app!r} fn={fn!r} "
+            f"model={model!r} input_keys={list(input_dict)}",
+            flush=True,
+        )
+        pred = await fal_refs.run_fal_prediction(
+            spec.fal_app, fn, input_dict, poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        url = fal_refs.first_fal_video_url(pred)
+    else:
+        pred = await _run_prediction(
+            spec.replicate_slug, input_dict, poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+        )
+        url = _first_output_url(pred)
+    return await download_url_to_video_output(url, cls=cls)
+
 # Combo serializes the model `id` (e.g. "veo-3.1") so we can rename labels
 # without breaking saved workflows.
 _VIDEO_GEN_MODEL_IDS = [m.id for m in _VIDEO_MODELS]
@@ -3070,9 +3093,9 @@ class GenerateVideoNode(IO.ComfyNode):
             f"input_keys={list(input_dict)} advanced={advanced}",
             flush=True,
         )
-        pred = await _run_prediction(spec.replicate_slug, input_dict,
-                                     poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        video = await _dispatch_video_prediction(
+            spec, input_dict, cls=cls, log_prefix="GenerateVideo", model=model,
+        )
         return IO.NodeOutput(video)
 
 
@@ -3237,23 +3260,9 @@ class FilmShotNode(IO.ComfyNode):
             f"slug={spec.replicate_slug!r} advanced={advanced} phrase={shot_phrase!r}",
             flush=True,
         )
-        if spec.provider == "fal":
-            fn = _fal_fn_for_input(input_dict, spec.fal_fn_by_mode or {})
-            print(
-                f"[FilmShot] provider=fal app={spec.fal_app!r} fn={fn!r} "
-                f"model={model!r} advanced_keys={list(input_dict)}",
-                flush=True,
-            )
-            pred = await fal_refs.run_fal_prediction(
-                spec.fal_app, fn, input_dict,
-                poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
-            )
-            url = fal_refs.first_fal_video_url(pred)
-        else:
-            pred = await _run_prediction(spec.replicate_slug, input_dict,
-                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-            url = _first_output_url(pred)
-        video = await download_url_to_video_output(url, cls=cls)
+        video = await _dispatch_video_prediction(
+            spec, input_dict, cls=cls, log_prefix="FilmShot", model=model,
+        )
         return IO.NodeOutput(video)
 
 

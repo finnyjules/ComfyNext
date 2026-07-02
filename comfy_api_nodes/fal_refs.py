@@ -95,25 +95,41 @@ async def run_fal_prediction(
         result_url = f"{app_base}/requests/{rid}"
 
         deadline = time.time() + poll_deadline_sec
+        consecutive_errors = 0
         while time.time() < deadline:
             await asyncio.sleep(2.0)
             async with session.get(status_url, headers=headers) as r:
                 if r.status != 200:
+                    body = await r.text()
+                    if 400 <= r.status < 500:
+                        raise RuntimeError(
+                            f"fal status poll {rid} got HTTP {r.status} (not retryable): {body}"
+                        )
+                    consecutive_errors += 1
+                    if consecutive_errors >= 10:
+                        raise RuntimeError(
+                            f"fal status poll {rid} failed {consecutive_errors}× "
+                            f"(last HTTP {r.status}): {body}"
+                        )
                     continue
+                consecutive_errors = 0
                 status = await r.json()
             state = status.get("status")
             if state in ("IN_QUEUE", "IN_PROGRESS"):
                 continue
             if state == "COMPLETED":
+                inf = (status.get("metrics") or {}).get("inference_time")
                 async with session.get(result_url, headers=headers) as r:
-                    if r.status != 200:
-                        # No-op routing failure: 'completed' but nothing to fetch.
+                    if r.status == 200:
+                        return await r.json()
+                    body = await r.text()
+                    if isinstance(inf, (int, float)) and inf < 1.0:
                         raise RuntimeError(
-                            f"fal request {rid} completed but result fetch failed "
+                            f"fal request {rid} completed in {inf:.2f}s with no result "
                             f"(HTTP {r.status}) — likely a bad app/function path "
-                            f"({app}/{fn}): {await r.text()}"
+                            f"({app}/{fn}): {body}"
                         )
-                    return await r.json()
+                    raise RuntimeError(f"fal request {rid} failed (HTTP {r.status}): {body}")
             raise RuntimeError(f"fal request {rid} ended: {status}")
 
     raise RuntimeError(f"fal request timed out after {poll_deadline_sec}s (id={rid})")
