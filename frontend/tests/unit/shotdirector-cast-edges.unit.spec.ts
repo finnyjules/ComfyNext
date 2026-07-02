@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 
-const N = (id: string, slug: string | null, name = slug ?? '') =>
-  ({ id, nodeType: 'Character', characterSlug: slug, characterName: name })
+const N = (id: string, slug: string | null, name = slug ?? '', nodeType: 'Character' | 'CharacterSheet' = 'Character') =>
+  ({ id, nodeType, characterSlug: slug, characterName: name })
 const SD = { id: 'sd1', nodeType: 'ShotDirector' }
 const E = (source: string, handle: string) => ({ source, target: 'sd1', targetHandle: handle })
 
@@ -18,6 +18,12 @@ describe('wireCastFor', () => {
   it('skips slugless Character nodes and non-character sources', () => {
     const nodes = [SD, N('c1', null), { id: 'img', nodeType: 'Image' }]
     expect(wireCastFor('sd1', nodes, [E('c1', 'input-0'), E('img', 'input-1')])).toEqual([])
+  })
+  it('treats a saved CharacterSheet node like a Character node', () => {
+    const nodes = [SD, N('c1', 'reva', 'Reva', 'CharacterSheet')]
+    expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
+      { slug: 'reva', name: 'Reva', via: 'wire' },
+    ])
   })
   it('dedupes same node wired into multiple cast inputs, keeping first occurrence', () => {
     const nodes = [SD, N('c1', 'reva', 'Reva')]

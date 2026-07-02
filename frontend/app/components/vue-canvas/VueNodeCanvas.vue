@@ -50,6 +50,7 @@ import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
+import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
@@ -179,6 +180,7 @@ const nodeTypes = {
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
   'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
+  'character-sheet': markRaw(CharacterSheetNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1390,6 +1392,16 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Character: frontend-only card, one CHARACTER output for casting into a Shot Director.
   if (nodeType === 'Character' && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'character', type: 'CHARACTER', links: null }]
+  }
+  // Character Sheet: optional IMAGE source input + one CHARACTER output, once
+  // the sheet is expanded and saved (mirrors Character above).
+  if (nodeType === 'CharacterSheet') {
+    if (!data.data.inputs || data.data.inputs.length === 0) {
+      data.data.inputs = [{ name: 'image', type: 'IMAGE', link: null, optional: true }]
+    }
+    if (!data.data.outputs || data.data.outputs.length === 0) {
+      data.data.outputs = [{ name: 'character', type: 'CHARACTER', links: null }]
+    }
   }
   // Shot Director: three optional CHARACTER cast slots (Task 11 syncs them into the shot sheet).
   if (nodeType === 'ShotDirector' && (!data.data.inputs || data.data.inputs.length === 0)) {

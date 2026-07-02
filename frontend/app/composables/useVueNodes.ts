@@ -183,6 +183,10 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Character: frontend-only card representing a castable person from the
   // registry (Task 5) — no backend class_type, wires CHARACTER into ShotDirector.
   Character: 'character',
+  // Character Sheet: frontend-only card that expands one photo (or a trained
+  // LoRA) into a canonical 4-shot reference sheet, then saves it as a castable
+  // Character — no backend class_type, reopen to re-edit.
+  CharacterSheet: 'character-sheet',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

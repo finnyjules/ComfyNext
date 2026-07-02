@@ -109,3 +109,16 @@ export function aspectForFraming(framing: Framing, idx: number): string {
 export function syntheticCount(datasetCount: number, realIncluded: number): number {
   return Math.max(0, datasetCount - realIncluded)
 }
+
+/**
+ * The Character Sheet Builder's fixed 4-shot canonical set — not a training
+ * dataset (that's CHARACTER_SHOT_SCENES above), but a small, consistent
+ * reference sheet: front, three-quarter, profile, full-body. Always exactly
+ * these 4, in this order, so "Expand sheet" is a flat, predictable ~$0.32.
+ */
+export const CHARACTER_SHEET_CANONICAL: CharacterShotScene[] = [
+  { prompt: 'close-up portrait, facing camera directly, neutral expression, soft even light, plain background', framing: 'closeup' },
+  { prompt: 'three-quarter view medium shot, natural relaxed pose, soft daylight, plain background', framing: 'medium' },
+  { prompt: 'profile view close-up, looking to the side, soft even light, plain background', framing: 'closeup' },
+  { prompt: 'full-body shot, standing naturally, arms relaxed, soft daylight, plain seamless background', framing: 'full' },
+]
