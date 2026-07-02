@@ -108,3 +108,32 @@ describe('useCharacters', () => {
     ])).toBe('ready')
   })
 })
+
+describe('useTrainingJobs', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules() })
+
+  it('refreshJobs populates jobs from /api/training-queue', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        jobs: [
+          { id: '1', kind: 'lora', status: 'processing', loraKind: 'character', displayName: 'Vera', outputName: 'vera', progressPct: 40 },
+        ],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useTrainingJobs } = await import('~/composables/useCharacters')
+    const { jobs, refreshJobs } = useTrainingJobs()
+    await refreshJobs()
+    expect(jobs.value).toHaveLength(1)
+    expect(jobs.value[0]?.displayName).toBe('Vera')
+  })
+
+  it('refreshJobs is offline-safe', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    const { useTrainingJobs } = await import('~/composables/useCharacters')
+    const { jobs, refreshJobs } = useTrainingJobs()
+    await expect(refreshJobs()).resolves.toBeUndefined()
+    expect(jobs.value).toEqual([])
+  })
+})
