@@ -179,7 +179,8 @@ async function expandSheet() {
     for (let i = 0; i < shots.value.length; i++) {
       await runShot(i)
       // Failed shot usually means the rest would fail too — don't spend on them.
-      if (shots.value[i].error) break
+      const shot = shots.value[i]
+      if (!shot || shot.error) break
     }
   } finally {
     expanding.value = false
