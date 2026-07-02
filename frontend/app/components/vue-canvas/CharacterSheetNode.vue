@@ -178,6 +178,8 @@ async function expandSheet() {
     // Sequential — concurrency 1 is fine for 4 shots.
     for (let i = 0; i < shots.value.length; i++) {
       await runShot(i)
+      // Failed shot usually means the rest would fail too — don't spend on them.
+      if (shots.value[i].error) break
     }
   } finally {
     expanding.value = false

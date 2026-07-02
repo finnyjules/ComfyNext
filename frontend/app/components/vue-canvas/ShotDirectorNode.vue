@@ -77,16 +77,15 @@ function generate() {
     />
 
     <!-- Cast input handles (CHARACTER) — plain handles without text labels -->
-    <div class="absolute left-0 top-8 flex flex-col gap-0.5">
-      <Handle
-        v-for="i in 3" :key="i"
-        :id="`input-${i - 1}`"
-        type="target"
-        :position="Position.Left"
-        class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]"
-        :title="`Cast ${i}`"
-      />
-    </div>
+    <Handle
+      v-for="i in 3" :key="i"
+      :id="`input-${i - 1}`"
+      type="target"
+      :position="Position.Left"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]"
+      :style="{ top: `${38 + (i - 1) * 18}px` }"
+      :title="`Cast ${i}`"
+    />
 
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
