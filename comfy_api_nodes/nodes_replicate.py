@@ -2892,6 +2892,7 @@ from comfy_api_nodes.video_models import (
     DEFAULT_VIDEO_MODEL_ID as _VIDEO_DEFAULT_MODEL_ID,
     parse_view_ref as _parse_view_ref,
 )
+from comfy_api_nodes import fal_refs
 
 
 # Shot Director references arrive in model_options as small local
@@ -2899,8 +2900,14 @@ from comfy_api_nodes.video_models import (
 # multi-MB data URLs — see frontend/app/lib/shotdirector/refUpload.ts. Replicate
 # can't fetch 127.0.0.1, so resolve them to data URLs here, at execute time.
 # data:/https: refs pass through untouched.
-_LOCAL_REF_LIST_KEYS = ("reference_images", "reference_videos", "reference_audios")
-_LOCAL_REF_STR_KEYS = ("image", "last_frame_image")
+_LOCAL_REF_LIST_KEYS = (
+    "reference_images", "reference_videos", "reference_audios",  # Replicate
+    "image_urls", "video_urls", "audio_urls",                    # fal
+)
+_LOCAL_REF_STR_KEYS = (
+    "image", "last_frame_image",   # Replicate
+    "image_url", "end_image_url",  # fal
+)
 
 
 def _local_ref_to_data_url(filename: str) -> str:
@@ -2931,6 +2938,17 @@ def _resolve_local_refs(advanced: dict) -> dict:
         if isinstance(val, str) and val:
             out[key] = resolve(val)
     return out
+
+
+def _fal_fn_for_input(input_dict: dict, fn_by_mode: dict) -> str:
+    """Pick the fal Seedance function from the built payload: a first-frame
+    image_url => image-to-video; any *_urls reference arrays => reference-to-video;
+    otherwise text-to-video."""
+    if input_dict.get("image_url"):
+        return fn_by_mode["firstLast"]
+    if any(input_dict.get(k) for k in ("image_urls", "video_urls", "audio_urls")):
+        return fn_by_mode["reference"]
+    return fn_by_mode["t2v"]
 
 # Combo serializes the model `id` (e.g. "veo-3.1") so we can rename labels
 # without breaking saved workflows.
@@ -3219,9 +3237,23 @@ class FilmShotNode(IO.ComfyNode):
             f"slug={spec.replicate_slug!r} advanced={advanced} phrase={shot_phrase!r}",
             flush=True,
         )
-        pred = await _run_prediction(spec.replicate_slug, input_dict,
-                                     poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
-        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        if spec.provider == "fal":
+            fn = _fal_fn_for_input(input_dict, spec.fal_fn_by_mode or {})
+            print(
+                f"[FilmShot] provider=fal app={spec.fal_app!r} fn={fn!r} "
+                f"model={model!r} advanced_keys={list(input_dict)}",
+                flush=True,
+            )
+            pred = await fal_refs.run_fal_prediction(
+                spec.fal_app, fn, input_dict,
+                poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
+            )
+            url = fal_refs.first_fal_video_url(pred)
+        else:
+            pred = await _run_prediction(spec.replicate_slug, input_dict,
+                                         poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
+            url = _first_output_url(pred)
+        video = await download_url_to_video_output(url, cls=cls)
         return IO.NodeOutput(video)
 
 
