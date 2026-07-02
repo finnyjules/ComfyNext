@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest'
+import { CAST_MAX, castClause, materializeCast } from '~/lib/shotdirector/cast'
+import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
+import { SEEDANCE_PROFILE } from '~/lib/shotdirector/profiles'
+import { createDefaultShotSheet } from '~/lib/shotdirector/types'
+
+const U = (n: string) => `/view?filename=${n}&type=input`
+
+function sheetWithCast() {
+  const s = createDefaultShotSheet()
+  s.cast = [
+    { slug: 'reva', name: 'Reva', via: 'picker' },
+    { slug: 'marcus', name: 'Marcus', via: 'wire' },
+  ]
+  return s
+}
+
+describe('materializeCast', () => {
+  it('injects identity-lock refs cast-first and renumbers manual refs after', () => {
+    const s = sheetWithCast()
+    s.references = [{ kind: 'image', slot: 1, src: U('manual.png'), role: 'style-transfer' }]
+    const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    const imgs = sheet.references.filter(r => r.kind === 'image')
+    expect(imgs.map(r => [r.slot, r.src, r.castSlug ?? null])).toEqual([
+      [1, U('r1'), 'reva'], [2, U('r2'), 'reva'], [3, U('m1'), 'marcus'], [4, U('manual.png'), null],
+    ])
+    expect(imgs[0]!.role).toBe('identity-lock')
+  })
+
+  it('caps refs per member at 3', () => {
+    const s = sheetWithCast()
+    s.cast = [s.cast[0]!]
+    const { sheet } = materializeCast(s, { reva: [U('1'), U('2'), U('3'), U('4')] }, SEEDANCE_PROFILE)
+    expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(3)
+  })
+
+  it('is idempotent — re-materializing replaces cast refs, never duplicates', () => {
+    const s = sheetWithCast()
+    const once = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE).sheet
+    const twice = materializeCast(once, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE).sheet
+    expect(twice.references).toHaveLength(2)
+  })
+
+  it('squeezes per-member caps when manual refs crowd the budget, min 1, with a warning', () => {
+    const s = sheetWithCast()
+    s.references = Array.from({ length: 5 }, (_, i) => ({
+      kind: 'image' as const, slot: i + 1, src: U(`man${i}`), role: 'style-transfer' as const,
+    }))
+    // budget 9 − 5 manual = 4; 2 members → floor(4/2)=2 each
+    const { sheet, issues } = materializeCast(s, { reva: [U('1'), U('2'), U('3')], marcus: [U('4'), U('5'), U('6')] }, SEEDANCE_PROFILE)
+    expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(2)
+    expect(issues.some(i => i.level === 'warning' && i.code === 'cast-refs-squeezed')).toBe(true)
+  })
+
+  it('errors on a member with zero resolved refs and on unknown slugs', () => {
+    const s = sheetWithCast()
+    const { issues } = materializeCast(s, { reva: [] }, SEEDANCE_PROFILE)
+    const errs = issues.filter(i => i.level === 'error' && i.code === 'cast-member-no-refs')
+    expect(errs).toHaveLength(2) // reva empty + marcus missing entirely
+    expect(errs[0]!.message).toContain('Reva')
+  })
+
+  it('errors on duplicates and on more than CAST_MAX members', () => {
+    const s = createDefaultShotSheet()
+    s.cast = [
+      { slug: 'a', name: 'A', via: 'picker' }, { slug: 'a', name: 'A', via: 'wire' },
+      { slug: 'b', name: 'B', via: 'picker' }, { slug: 'c', name: 'C', via: 'picker' },
+      { slug: 'd', name: 'D', via: 'picker' },
+    ]
+    const { issues } = materializeCast(s, { a: [U('1')], b: [U('2')], c: [U('3')], d: [U('4')] }, SEEDANCE_PROFILE)
+    expect(issues.some(i => i.code === 'cast-duplicate')).toBe(true)
+    expect(issues.some(i => i.code === 'cast-too-many')).toBe(true)
+    expect(CAST_MAX).toBe(3)
+  })
+})
+
+describe('castClause', () => {
+  it('names each member with their bracket tags in slot order', () => {
+    const s = sheetWithCast()
+    const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE)).toBe('Characters: Reva [Image1] [Image2]; Marcus [Image3].')
+  })
+  it('is empty with no cast refs', () => {
+    expect(castClause(createDefaultShotSheet(), SEEDANCE_PROFILE)).toBe('')
+  })
+})
+
+describe('hydrate back-compat', () => {
+  it('old sheets without cast hydrate to []', () => {
+    expect(hydrateShotSheet({ subject: 'x' }).cast).toEqual([])
+  })
+  it('cast entries survive hydration', () => {
+    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker' }]
+    expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
+  })
+})

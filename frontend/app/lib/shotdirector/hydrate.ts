@@ -2,7 +2,7 @@
 // Defensive hydration of a persisted ShotSheet (node.data.properties.comfynext_shotDirector)
 // and pure reference-list helpers. Mirrors the shaderstudio hydrateConfig pattern.
 
-import { createDefaultShotSheet, type Ref, type RefKind, type ShotSheet } from './types'
+import { createDefaultShotSheet, type CastMember, type Ref, type RefKind, type ShotSheet } from './types'
 
 function obj(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
@@ -32,6 +32,9 @@ export function hydrateShotSheet(raw: unknown): ShotSheet {
       pacing: str(cam.pacing, d.camera.pacing) as ShotSheet['camera']['pacing'],
     },
     constraints: arr<string>(r.constraints),
+    cast: arr<CastMember>(r.cast).filter(c =>
+      c && typeof c.slug === 'string' && typeof c.name === 'string'
+      && (c.via === 'wire' || c.via === 'picker')),
     references: arr<Ref>(r.references),
     firstFrame: typeof r.firstFrame === 'string' ? r.firstFrame : undefined,
     lastFrame: typeof r.lastFrame === 'string' ? r.lastFrame : undefined,

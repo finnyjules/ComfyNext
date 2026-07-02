@@ -35,6 +35,8 @@ export interface Ref {
   role: RefRole
   /** freeform refinement folded into the purpose phrase. */
   note?: string
+  /** set when this ref was injected from a cast member — materializeCast owns these. */
+  castSlug?: string
 }
 
 export interface Beat {
@@ -86,6 +88,7 @@ export interface ShotSheet {
   style: string
   camera: ShotCamera
   constraints: string[]
+  cast: CastMember[]
 
   references: Ref[]
   firstFrame?: string
@@ -136,6 +139,12 @@ export const ROLES_BY_KIND: Record<RefKind, RefRole[]> = {
   audio: ['beat-sync', 'lip-sync', 'mood'],
 }
 
+export interface CastMember {
+  slug: string
+  name: string
+  via: 'wire' | 'picker'
+}
+
 export function createDefaultShotSheet(): ShotSheet {
   return {
     intent: '',
@@ -147,6 +156,7 @@ export function createDefaultShotSheet(): ShotSheet {
     style: '',
     camera: { shotType: 'medium', move: 'locked-off', pacing: 'smooth' },
     constraints: [],
+    cast: [],
     references: [],
     beats: [],
     audio: { generate: true },
