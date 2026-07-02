@@ -53,6 +53,7 @@ import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
+import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 import { getProfile } from '~/lib/shotdirector/profiles'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import { runStudioCascade } from '~/lib/studio/cascade'
@@ -2533,6 +2534,45 @@ async function handleShotDirectorGenerate(e: Event) {
   }))
 }
 
+/** Edge ⇄ cast sync: canvas wires (Character → Shot Director input-N) are one
+ *  editor of sheet.cast (via:'wire'); the picker (Task 10) is the other.
+ *  Recomputed on every edge/property change so the two stay consistent. */
+function syncAllShotDirectorCasts() {
+  const liteNodes = (nodes.value as any[]).map(n => ({
+    id: String(n.id), nodeType: n.data?.nodeType as string | undefined,
+    characterSlug: n.data?.properties?.comfynext_characterSlug ?? null,
+    characterName: n.data?.properties?.comfynext_characterName ?? null,
+  }))
+  const liteEdges = (edges.value as any[]).map(e => ({
+    source: String(e.source), target: String(e.target), targetHandle: e.targetHandle ?? null,
+  }))
+  for (const n of nodes.value as any[]) {
+    if (n.data?.nodeType !== 'ShotDirector') continue
+    const raw = n.data?.properties?.comfynext_shotDirector
+    const sheet = hydrateShotSheet(raw)
+    const next = syncCast(sheet.cast, wireCastFor(String(n.id), liteNodes, liteEdges))
+    if (next) {
+      if (!n.data.properties) n.data.properties = {}
+      n.data.properties.comfynext_shotDirector = { ...sheet, cast: next }
+    }
+  }
+}
+
+/** Uncast from the surface (Task 7's chip 'x'): remove the actual wire so the
+ *  canvas stays the source of truth for wired members. */
+function handleUncastCharacter(e: Event) {
+  const { nodeId, slug } = (e as CustomEvent<{ nodeId: string, slug: string }>).detail ?? {}
+  if (!nodeId || !slug) return
+  const drop = (edges.value as any[]).filter((ed) => {
+    if (String(ed.target) !== String(nodeId)) return false
+    const src = (nodes.value as any[]).find(n => String(n.id) === String(ed.source))
+    return src?.data?.properties?.comfynext_characterSlug === slug
+  })
+  if (drop.length) removeEdges(drop.map((d: any) => d.id))
+}
+
+watch(edges, () => syncAllShotDirectorCasts(), { deep: true })
+
 // Space Type "Generate as image/video": create the artifact node to the right of
 // the SpaceType node and draw a provenance edge from the SpaceType node's single
 // wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
@@ -3048,6 +3088,8 @@ onMounted(() => {
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
+  window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.addEventListener('comfynext:studioRender', handleStudioRender)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
@@ -3087,6 +3129,8 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openShotDirector', handleOpenShotDirector)
   window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.removeEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
+  window.removeEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:studioRender', handleStudioRender)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
