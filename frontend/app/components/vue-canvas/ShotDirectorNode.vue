@@ -76,15 +76,15 @@ function generate() {
       :style="{ top: '50%' }"
     />
 
-    <!-- Cast input handles (CHARACTER) -->
+    <!-- Cast input handles (CHARACTER) — plain handles without text labels -->
     <div class="absolute left-0 top-8 flex flex-col gap-0.5">
-      <VueCanvasComfyNodePort
+      <Handle
         v-for="i in 3" :key="i"
         :id="`input-${i - 1}`"
         type="target"
-        position="left"
-        data-type="CHARACTER"
-        :label="`cast_${i}`"
+        :position="Position.Left"
+        class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]"
+        :title="`Cast ${i}`"
       />
     </div>
 

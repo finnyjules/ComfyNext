@@ -46,6 +46,7 @@ export const TYPE_COLORS: Record<string, string> = {
   VAE: '#f87171',         // Red
   CONDITIONING: '#fbbf24', // Amber
   MASK: '#34d399',        // Emerald
+  CHARACTER: '#f59e0b',   // Amber (cast character reference)
   // Scalar types
   INT: '#94a3b8',         // Slate
   FLOAT: '#94a3b8',       // Slate
