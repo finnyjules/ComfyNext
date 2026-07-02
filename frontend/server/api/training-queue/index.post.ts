@@ -1,0 +1,47 @@
+/**
+ * POST /api/training-queue
+ *
+ * Enqueue a training job. The browser has already zipped + uploaded the dataset
+ * (→ datasetUrl) and, for LoRA, generated the aesthetic. We just persist the
+ * job as `queued`; the runner (server/plugins/trainingQueue.ts) starts it.
+ *
+ * Body: {
+ *   kind: 'lora' | 'voice',
+ *   datasetUrl: string,
+ *   outputName: string,
+ *   displayName?: string,
+ *   params?: Record<string, unknown>,
+ *   trigger?: string,
+ *   aesthetic?: string,
+ *   loraKind?: 'style' | 'character',
+ * }
+ */
+import { jobStore, type NewTrainingJob } from '../../utils/trainingQueue'
+
+function sanitize(name: string): string {
+  return (name || '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'my_lora'
+}
+
+export default defineEventHandler(async (event) => {
+  const body = await readBody(event) as Partial<NewTrainingJob> & { displayName?: string }
+
+  if (body.kind !== 'lora' && body.kind !== 'voice') {
+    throw createError({ statusCode: 400, message: "kind must be 'lora' or 'voice'" })
+  }
+  if (!body.datasetUrl) throw createError({ statusCode: 400, message: 'datasetUrl is required' })
+  if (!body.outputName) throw createError({ statusCode: 400, message: 'outputName is required' })
+
+  const outputName = sanitize(body.outputName)
+  const job = await jobStore().add({
+    kind: body.kind,
+    outputName,
+    displayName: (body.displayName || body.outputName || outputName).trim(),
+    datasetUrl: body.datasetUrl,
+    params: body.params ?? {},
+    trigger: body.trigger ?? null,
+    aesthetic: body.aesthetic ?? null,
+    loraKind: body.loraKind,
+  })
+
+  return { job }
+})
