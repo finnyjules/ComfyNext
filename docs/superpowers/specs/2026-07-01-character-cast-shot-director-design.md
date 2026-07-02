@@ -1,7 +1,7 @@
 # Character Cast for Shot Director — design spec
 
 **Date:** 2026-07-01
-**Status:** Draft for review
+**Status:** Implemented (slices A+B) — 2026-07-01
 **Goal:** person consistency across video generations. A durable **character** (named reference-image set, optionally LoRA-backed) that can be **cast** into Shot Director shots — via canvas wiring or an in-editor picker — so every generation of that person uses the same canonical references.
 
 ## Problem
