@@ -35,6 +35,14 @@ const { sheet, result, addReference, removeReference, update, rerollSeed, addCas
   slugs => resolveRefs(slugs),
 )
 
+// ── First-open guide ───────────────────────────────────────────────────────────
+// Visible only on a blank sheet; disappears the moment any real input lands.
+const showIntro = computed(() =>
+  !sheet.value.subject.trim() && !sheet.value.action.trim()
+  && !sheet.value.cast.length && !sheet.value.references.length
+  && !sheet.value.firstFrame,
+)
+
 // ── Cast ───────────────────────────────────────────────────────────────────────
 const castPickerOpen = ref(false)
 function castCover(slug: string): string | null {
@@ -286,6 +294,16 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
         <!-- LEFT: editing controls (scrollable) -->
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-r border-white/[0.06] p-4">
 
+          <!-- First-open guide: teaches the flow, disappears the moment work starts -->
+          <div v-if="showIntro" class="rounded-lg border border-white/[0.08] bg-white/[0.02] p-3">
+            <p class="text-[12px] font-medium text-white/80">Direct a shot in three steps</p>
+            <ol class="mt-2 space-y-1.5 text-[11px] leading-relaxed text-white/50">
+              <li><span class="mr-1.5 text-white/30">1</span><span class="text-white/70">Cast a character</span> or add reference photos — the model follows images far more than words.</li>
+              <li><span class="mr-1.5 text-white/30">2</span><span class="text-white/70">Describe the shot</span> — a subject and one clear action. Everything else is optional.</li>
+              <li><span class="mr-1.5 text-white/30">3</span><span class="text-white/70">Generate</span> — the cost shows on the button; a failed run isn't charged.</li>
+            </ol>
+          </div>
+
           <!-- ═══ REFERENCE RAIL (primary, top) ═════════════════════════════ -->
           <div class="rounded-lg border border-white/[0.12] bg-white/[0.03]">
             <!-- Mode toggle -->
@@ -333,7 +351,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                     <button class="text-white/35 hover:text-white/80" @click="onRemoveCast(m)">×</button>
                   </span>
                 </div>
-                <p v-else class="text-[11px] text-white/30">No cast — the shot uses manual references only.</p>
+                <p v-else class="text-[11px] text-white/30">No one cast yet — pick a saved character and their reference photos attach automatically.</p>
               </div>
 
               <CharacterPickerModal
@@ -355,7 +373,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                   ><Plus class="h-3 w-3" /> Add</button>
                 </div>
                 <div v-if="imageRefs.length === 0" class="rounded border border-dashed border-white/10 py-3 text-center text-[11px] text-white/25">
-                  No images — click Add or paste a URL below
+                  No images — Add uploads a photo. References steer the result more than words do.
                 </div>
                 <div class="space-y-1.5">
                   <div
@@ -501,6 +519,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
           <!-- ═══ SHOT FIELDS ═══════════════════════════════════════════════ -->
           <StudioSection title="Shot">
+            <p class="text-[11px] leading-relaxed text-white/35">Who + one clear action — short beats long, under 100 words reads best. Cast members are referred to by name.</p>
             <!-- Subject -->
             <div>
               <label class="mb-1 block text-[11px] text-white/45">Subject</label>
@@ -571,6 +590,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
           <!-- ═══ CAMERA ═════════════════════════════════════════════════════ -->
           <StudioSection title="Camera">
+            <p class="text-[11px] leading-relaxed text-white/35">One move per shot — real cinematography doesn't combine a dolly with a pan, and neither does the model.</p>
             <!-- Shot type -->
             <div>
               <label class="mb-1 block text-[11px] text-white/45">Shot type</label>
@@ -846,9 +866,9 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
           <!-- Compiled prompt -->
           <div class="flex min-h-0 flex-1 flex-col gap-1.5">
-            <span class="text-[11px] text-white/40">Compiled prompt</span>
+            <span class="text-[11px] text-white/40">Compiled prompt <span class="text-white/25">— what gets sent; edit the fields on the left to change it</span></span>
             <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-white/[0.08] bg-black/30 p-3">
-              <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-white/75">{{ result.prompt || '(empty — fill in Shot fields to the left)' }}</pre>
+              <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-white/75">{{ result.prompt || '(empty — fill in Subject and Action on the left and the prompt builds itself)' }}</pre>
             </div>
           </div>
 
