@@ -1678,11 +1678,15 @@ async function handleAddAssetNode(e: Event) {
 
 async function handleDrop(event: DragEvent) {
   event.preventDefault()
+  // Capture before any await: the DOM nulls currentTarget once synchronous
+  // dispatch ends, so reading it after `await fetchObjectInfo()` below would
+  // return null on every cache-miss drop (e.g. right after a ComfyUI restart).
+  const canvasEl = event.currentTarget as HTMLElement
   // Assets panel drops carry our custom MIME type with a JSON payload.
   if (event.dataTransfer?.types.includes('application/x-comfynext-asset')) {
     try {
       const a = JSON.parse(event.dataTransfer.getData('application/x-comfynext-asset')) as DroppedAsset
-      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const rect = canvasEl.getBoundingClientRect()
       const position = project({ x: event.clientX - rect.left, y: event.clientY - rect.top })
       nodes.value.push(await addAssetNodeData(a, position))
     } catch { /* malformed payload — ignore */ }
@@ -1717,7 +1721,6 @@ async function handleDrop(event: DragEvent) {
     await fetchObjectInfo()
   }
 
-  const canvasEl = (event.currentTarget as HTMLElement)
   const rect = canvasEl.getBoundingClientRect()
   const position = project({
     x: event.clientX - rect.left,
