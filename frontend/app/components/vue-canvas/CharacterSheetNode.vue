@@ -11,6 +11,7 @@ import { useCharacters } from '~/composables/useCharacters'
 import { useInpaint } from '~/composables/useInpaint'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { CHARACTER_SHEET_CANONICAL, type CharacterShotScene } from '~/data/character-shot-scenes'
+import { toast } from 'vue-sonner'
 
 const props = defineProps<{
   id: string
@@ -70,6 +71,7 @@ watch(upstream, async (url) => {
     usingWiredSource.value = true
   } catch (e) {
     console.warn('[CharacterSheet] wired source fetch failed', e)
+    toast.error('Couldn\'t load the wired source image', { description: 'Upload a photo instead, or re-run the upstream node' })
   }
 }, { immediate: true })
 
@@ -271,6 +273,7 @@ async function save() {
     properties.comfynext_characterName = name
     window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
     window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+    toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
   } catch (e: any) {
     console.warn('[CharacterSheet] save failed', e)
     saveError.value = e?.message || 'Save failed'

@@ -43,27 +43,37 @@ async function createCharacter() {
   const res = await fetch('/api/characters-local', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
   })
-  if (res.ok) { changed(); expandedSlug.value = (await res.json()).slug }
+  if (res.ok) {
+    changed()
+    expandedSlug.value = (await res.json()).slug
+    toast.success(`Created ${name}`, { description: 'Add reference photos to make them castable' })
+  }
+  else if (res.status === 409) toast.error(`A character named "${name}" already exists`)
+  else toast.error('Couldn\'t create the character — try again')
 }
 
-async function patchChar(slug: string, patch: Record<string, unknown>) {
+async function patchChar(slug: string, patch: Record<string, unknown>): Promise<boolean> {
   const res = await fetch('/api/characters-local', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug, ...patch }),
   })
   if (res.ok) changed()
+  else toast.error('Couldn\'t update the character — try again')
+  return res.ok
 }
 
 async function addRefFiles(c: CharacterClient, e: Event) {
   const files = Array.from((e.target as HTMLInputElement).files ?? [])
   if (!files.length) return
   const names: string[] = []
+  let failed = 0
   for (const f of files) {
     try {
       const url = await uploadRefFile(f)
       names.push(new URLSearchParams(url.split('?')[1]).get('filename')!)
-    } catch { /* skip failed upload */ }
+    } catch { failed++ }
   }
+  if (failed) toast.error(`${failed} of ${files.length} upload${files.length === 1 ? '' : 's'} failed`, { description: names.length ? 'The rest were added' : undefined })
   if (names.length) await patchChar(c.slug, { refImages: [...c.refImages, ...names] })
   ;(e.target as HTMLInputElement).value = ''
 }
@@ -82,9 +92,14 @@ async function makeCastable(lora: { name: string, filename: string, trigger: str
   const res = await fetch('/api/characters-local', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: lora.name }),
   })
-  if (!res.ok) return
+  if (!res.ok) {
+    toast.error(res.status === 409 ? `A castable character named "${lora.name}" already exists` : 'Couldn\'t make the character castable — try again')
+    return
+  }
   const { slug } = await res.json() as { slug: string }
-  await patchChar(slug, { loraName: lora.filename, trigger: lora.trigger })
+  if (await patchChar(slug, { loraName: lora.filename, trigger: lora.trigger })) {
+    toast.success(`${lora.name} is now castable`, { description: 'Add reference photos for video shots' })
+  }
   expandedSlug.value = slug
 }
 

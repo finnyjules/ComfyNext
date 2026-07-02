@@ -7,6 +7,7 @@ import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { toast } from 'vue-sonner'
 
 // The visual half of the unified `Image` artifact node. State is derived from
 // (upstream connection, file widget, execution output) rather than the node
@@ -318,8 +319,10 @@ async function saveAsCharacter() {
       throw new Error(`attach ref ${patched.status}`)
     }
     window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
+    toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
   } catch (e) {
     console.warn('[saveAsCharacter]', e)
+    toast.error(`Couldn't save ${name} as a character — try again`)
   } finally {
     savingAsCharacter.value = false
   }
