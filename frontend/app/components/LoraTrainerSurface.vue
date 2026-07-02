@@ -13,7 +13,7 @@
  *      → MakeTrainingDataset → TrainLoraNode → SaveLoRA
  *   4. POST /prompt, poll /history/<id>
  */
-import { ArrowRight, ChevronDown, ChevronRight, Cloud, Cpu, Download, Drama, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
+import { ArrowRight, Check, ChevronDown, ChevronRight, Cloud, Cpu, Download, Drama, Loader2, Plus, RefreshCcw, Sparkles, Upload, Wand, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { assembleAesthetic } from '~/lib/lora/aesthetic'
 import JSZip from 'jszip'
@@ -197,7 +197,9 @@ interface DatasetImage {
 
 const sessionFolder = `lora_dataset_${Date.now()}`
 const images = ref<DatasetImage[]>([])
-const status = ref<'idle' | 'uploading' | 'captioning' | 'submitting' | 'training' | 'done' | 'error'>('idle')
+const status = ref<'idle' | 'uploading' | 'captioning' | 'submitting' | 'training' | 'done' | 'queued' | 'error'>('idle')
+// Name of the last style added to the cloud queue, shown in the confirmation.
+const queuedName = ref<string | null>(null)
 const errorMessage = ref<string | null>(null)
 const progressLabel = ref('')
 const progressPct = ref(0)
@@ -974,6 +976,15 @@ function onStartClicked() {
   else startTraining()
 }
 
+// Cloud trainings are queued (server-side, survive window close); local ones run
+// in-process. The button reflects which.
+const submitButtonLabel = computed(() => {
+  if (computeMode.value === 'cloud') {
+    return (status.value === 'submitting' || status.value === 'uploading') ? 'Adding…' : 'Add to queue'
+  }
+  return status.value === 'training' ? 'Training…' : 'Start training'
+})
+
 function buildTrainingPrompt() {
   const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
   const prefix = `loras/${safeName}`
@@ -1301,6 +1312,10 @@ async function startCloudTraining() {
   cloudJob.value = null
   cloudAesthetic.value = null
 
+  // Capture the human name now — clearDataset() runs after enqueue.
+  const displayName = form.outputName.trim() || 'my style'
+  const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
+
   try {
     status.value = 'submitting'
     progressLabel.value = 'Zipping dataset…'
@@ -1316,113 +1331,50 @@ async function startCloudTraining() {
     }
     const upJson = await upRes.json() as { url: string }
 
-    progressLabel.value = 'Starting Replicate training…'
-    const safeName = form.outputName.trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'my_style'
-    const startRes = await fetch('/api/cloud-train/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        family: cloudFamily.value,
-        datasetUrl: upJson.url,
-        outputName: safeName,
-        triggerWord: form.triggerWord || undefined,
-        steps: form.steps,
-        learningRate: form.learningRate,
-        loraRank: form.rank,
-        batchSize: form.batchSize,
-        seed: form.seed,
-      }),
-    })
-    if (!startRes.ok) {
-      const text = await startRes.text()
-      throw new Error(text || `Start failed: ${startRes.status}`)
-    }
-    const startJson = await startRes.json() as { id: string; status: any }
-    cloudJob.value = { predictionId: startJson.id, status: startJson.status }
-
-    // Analyze the dataset's aesthetic once, while the GPU is still provisioning.
-    // Non-fatal and quick (~few s); result is threaded into /status → sidecar.
+    // Analyze the dataset's aesthetic now, while we still hold the images. It's
+    // stored on the job so the server can finalize the sidecar headlessly.
     progressLabel.value = 'Analyzing dataset style…'
     await generateAesthetic()
 
-    status.value = 'training'
-    progressLabel.value = 'Replicate is provisioning a GPU…'
-    const final = await pollCloudJob(startJson.id, safeName, cloudFamily.value)
-    if (!final) throw new Error('Polling stopped without a final status.')
-
-    cloudJob.value = final
-    if (final.status === 'succeeded') {
-      outputFilename.value = final.localFilename ?? safeName
-      status.value = 'done'
-      progressLabel.value = 'Done.'
-      progressPct.value = 100
-    } else if (final.status === 'failed') {
-      throw new Error(final.error || 'Training failed on Replicate.')
-    } else if (final.status === 'canceled') {
-      throw new Error('Training was canceled.')
+    // Hand the job to the durable server-side queue. It starts/polls/finalizes
+    // independently, so closing this tab (or the whole app) no longer aborts it.
+    progressLabel.value = 'Adding to the training queue…'
+    const res = await fetch('/api/training-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'lora',
+        datasetUrl: upJson.url,
+        outputName: safeName,
+        displayName,
+        trigger: form.triggerWord || undefined,
+        aesthetic: cloudAesthetic.value || undefined,
+        loraKind: trainingKind.value === 'character' ? 'character' : 'style',
+        params: {
+          family: cloudFamily.value,
+          steps: form.steps,
+          learningRate: form.learningRate,
+          loraRank: form.rank,
+          batchSize: form.batchSize,
+          seed: form.seed,
+        },
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || `Could not queue training: ${res.status}`)
     }
+
+    // Tell the Queue panel to refresh, then reset for the next style.
+    window.dispatchEvent(new CustomEvent('comfynext:trainingQueueUpdated'))
+    clearDataset() // resets the form + sets status back to 'idle'
+    status.value = 'queued'
+    queuedName.value = displayName
+    progressLabel.value = ''
   } catch (e: any) {
     errorMessage.value = humanizeError(e?.message ?? String(e))
     status.value = 'error'
   }
-}
-
-async function pollCloudJob(
-  predictionId: string,
-  outputName: string,
-  family: CloudFamily,
-): Promise<CloudJob | null> {
-  const deadline = Date.now() + 2 * 60 * 60 * 1000 // 2 hours
-  let lastStatus = ''
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000))
-    try {
-      const r = await fetch(`/api/cloud-train/status?id=${predictionId}&outputName=${encodeURIComponent(outputName)}&family=${family}&triggerWord=${encodeURIComponent(form.triggerWord || '')}&aesthetic=${encodeURIComponent(cloudAesthetic.value || '')}&kind=${trainingKind.value}`)
-      if (!r.ok) continue
-      const data = await r.json() as {
-        id: string
-        status: CloudJob['status']
-        output: string | string[] | null
-        replicateModel?: string | null
-        error: string | null
-        logs?: string
-        localFilename: string | null
-      }
-
-      const replicateUrl = Array.isArray(data.output) ? data.output[0] : data.output
-      const job: CloudJob = {
-        predictionId: data.id,
-        status: data.status,
-        logs: data.logs,
-        error: data.error,
-        localFilename: data.localFilename,
-        replicateUrl,
-        replicateModel: data.replicateModel ?? null,
-      }
-      cloudJob.value = job
-
-      if (data.status !== lastStatus) {
-        if (data.status === 'starting') progressLabel.value = 'Replicate is provisioning a GPU…'
-        else if (data.status === 'processing') progressLabel.value = 'Training in progress on Replicate…'
-        else if (data.status === 'succeeded') progressLabel.value = 'Downloading Style…'
-        else if (data.status === 'failed') progressLabel.value = 'Training failed.'
-        else if (data.status === 'canceled') progressLabel.value = 'Training canceled.'
-        lastStatus = data.status
-      }
-
-      // Inch the progress bar so the user knows we're alive.
-      if (data.status === 'processing' && progressPct.value < 90) {
-        progressPct.value = Math.min(90, progressPct.value + 0.7)
-      }
-
-      if (data.status === 'succeeded' || data.status === 'failed' || data.status === 'canceled') {
-        return job
-      }
-    } catch {
-      // network blip — keep polling
-    }
-  }
-  return null
 }
 
 // ----- Error message normalization --------------------------------------
@@ -2298,6 +2250,10 @@ onBeforeUnmount(() => {
           <p v-else-if="status === 'done'" class="text-emerald-400 flex items-center gap-2">
             <span>Done — your Style was saved.</span>
           </p>
+          <p v-else-if="status === 'queued'" class="text-emerald-400 flex items-center gap-2">
+            <Check class="size-3.5" />
+            <span>“{{ queuedName }}” added to the queue — it’ll keep training even if you close this. Track it in the Queue panel.</span>
+          </p>
           <span v-else class="text-white/35">
             {{
               images.length < 2
@@ -2305,7 +2261,7 @@ onBeforeUnmount(() => {
                 : computeMode === 'local' && !form.checkpoint
                   ? 'Select a base model.'
                   : computeMode === 'cloud'
-                    ? `Ready to train on Replicate (${cloudFamily === 'flux' ? 'Flux Dev' : 'SDXL'}).`
+                    ? `Ready to queue on Replicate (${cloudFamily === 'flux' ? 'Flux Dev' : 'SDXL'}).`
                     : 'Ready to train.'
             }}
           </span>
@@ -2324,8 +2280,8 @@ onBeforeUnmount(() => {
             :disabled="!canRun"
             @click="onStartClicked"
           >
-            <span>{{ status === 'training' ? 'Training…' : 'Start training' }}</span>
-            <ArrowRight v-if="status !== 'training'" class="size-4" />
+            <span>{{ submitButtonLabel }}</span>
+            <ArrowRight v-if="status !== 'training' && status !== 'submitting' && status !== 'uploading'" class="size-4" />
             <Loader2 v-else class="size-4 animate-spin" />
           </button>
         </div>

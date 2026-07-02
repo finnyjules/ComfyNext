@@ -1658,6 +1658,80 @@ const statusColor = (status?: string) => {
 const queueOpen = ref(false)
 const queueData = ref<{ running: any[], pending: any[] }>({ running: [], pending: [] })
 
+// --- Persistent training queue (style/character LoRA + voice) ---------------
+// Jobs live server-side (server/plugins/trainingQueue.ts) and survive the
+// window closing. The browser is a viewer: we poll /api/training-queue, show
+// the jobs in the Queue panel, badge the toolbar, and toast on completion.
+interface TrainingJobView {
+  id: string
+  kind: 'lora' | 'voice'
+  status: 'queued' | 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled'
+  displayName: string
+  loraKind?: 'style' | 'character'
+  progressPct: number
+  error?: string | null
+}
+const trainingJobs = ref<TrainingJobView[]>([])
+const trainingActiveStatuses = ['queued', 'starting', 'processing'] as const
+const activeTrainingCount = computed(() =>
+  trainingJobs.value.filter(j => trainingActiveStatuses.includes(j.status as any)).length)
+// Sort: active first (by nothing in particular), then terminal — newest API
+// order is already newest-first, so keep relative order within each group.
+const sortedTrainingJobs = computed(() => {
+  const active = trainingJobs.value.filter(j => trainingActiveStatuses.includes(j.status as any))
+  const done = trainingJobs.value.filter(j => !trainingActiveStatuses.includes(j.status as any))
+  return [...active, ...done]
+})
+let trainingPollTimer: ReturnType<typeof setInterval> | null = null
+// id → last seen status, to detect transitions for toasts. Plain object (not a
+// Map — `Map` is shadowed by an imported icon component in this file).
+const trainingPrevStatus: Record<string, string> = {}
+
+async function fetchTrainingJobs() {
+  try {
+    const res = await fetch('/api/training-queue').then(r => r.json()) as { jobs?: TrainingJobView[] }
+    const jobs = res.jobs ?? []
+    for (const j of jobs) {
+      const prev = trainingPrevStatus[j.id]
+      // Only toast on a real transition (skip the first sighting, which would
+      // re-announce jobs that finished while the app was closed).
+      if (prev && prev !== j.status) {
+        if (j.status === 'succeeded') {
+          toast.success(`Training finished: ${j.displayName}`, {
+            description: j.kind === 'voice' ? 'Voice ready in Generate speech.' : 'Style ready in your library.',
+          })
+          window.dispatchEvent(new CustomEvent(j.kind === 'voice' ? 'comfynext:voicesUpdated' : 'comfynext:lorasUpdated'))
+        } else if (j.status === 'failed') {
+          toast.error(`Training failed: ${j.displayName}`, { description: j.error || undefined })
+        }
+      }
+      trainingPrevStatus[j.id] = j.status
+    }
+    trainingJobs.value = jobs
+  } catch {
+    // Server not ready / offline — keep last known state.
+  }
+}
+
+async function cancelTraining(id: string) {
+  try { await fetch(`/api/training-queue/${id}/cancel`, { method: 'POST' }) } catch {}
+  fetchTrainingJobs()
+}
+async function dismissTraining(id: string) {
+  try { await fetch(`/api/training-queue/${id}`, { method: 'DELETE' }) } catch {}
+  fetchTrainingJobs()
+}
+function trainingStatusLabel(j: TrainingJobView): string {
+  switch (j.status) {
+    case 'queued': return 'Queued'
+    case 'starting': return 'Starting…'
+    case 'processing': return 'Training…'
+    case 'succeeded': return 'Done'
+    case 'failed': return 'Failed'
+    case 'canceled': return 'Canceled'
+  }
+}
+
 // Rich history items for the queue modal
 interface HistoryItem {
   promptId: string
@@ -1836,6 +1910,7 @@ function toggleQueue() {
   queueOpen.value = !queueOpen.value
   if (queueOpen.value) {
     fetchQueueAndHistory()
+    fetchTrainingJobs()
     queuePollTimer = setInterval(fetchQueueAndHistory, 2000)
   } else {
     if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null }
@@ -1954,6 +2029,13 @@ onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
 
+  // Persistent training queue: poll for status (badge + toasts) regardless of
+  // whether the Queue panel is open, and refresh immediately when a job is
+  // enqueued from the Train tab.
+  fetchTrainingJobs()
+  trainingPollTimer = setInterval(fetchTrainingJobs, 5000)
+  window.addEventListener('comfynext:trainingQueueUpdated', fetchTrainingJobs)
+
   // Also check bridge iframe loaded after delay and request client ID
   setTimeout(() => {
     const bridge = document.getElementById('comfynext-bridge-iframe') as HTMLIFrameElement
@@ -1969,7 +2051,9 @@ onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('keydown', handleGlobalKeydown)
   window.removeEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
+  window.removeEventListener('comfynext:trainingQueueUpdated', fetchTrainingJobs)
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null }
+  if (trainingPollTimer) { clearInterval(trainingPollTimer); trainingPollTimer = null }
 })
 
 const { settingsOpen, openSettings, closeSettings } = useSettingsModal()
@@ -2621,6 +2705,13 @@ function dismissRunResult() {
           >
             <Play class="size-3 text-white/70" />
             <span class="text-xs font-medium text-white/70">{{ runningCount }} running</span>
+            <span
+              v-if="activeTrainingCount"
+              class="flex items-center gap-1 text-xs font-medium text-white/70 pl-1.5 ml-0.5 border-l border-[#2a2a2a]"
+            >
+              <span class="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              {{ activeTrainingCount }} training
+            </span>
           </button>
         </div>
       </div>
@@ -3115,6 +3206,68 @@ function dismissRunResult() {
 
             <!-- Content -->
             <div class="flex-1 overflow-y-auto">
+              <!-- Trainings (cloud LoRA / voice) — server-side queue -->
+              <div v-if="sortedTrainingJobs.length" class="px-4 pt-3 pb-1">
+                <div class="text-[11px] font-medium text-white/30 uppercase tracking-wider mb-2">Trainings</div>
+                <div
+                  v-for="job in sortedTrainingJobs"
+                  :key="job.id"
+                  class="bg-[#252525] rounded-lg p-3 mb-2"
+                >
+                  <div class="flex items-center gap-2 mb-1">
+                    <span
+                      class="size-2 rounded-full shrink-0"
+                      :class="{
+                        'bg-emerald-400 animate-pulse': job.status === 'starting' || job.status === 'processing',
+                        'bg-white/20': job.status === 'queued',
+                        'bg-emerald-400': job.status === 'succeeded',
+                        'bg-red-400': job.status === 'failed',
+                        'bg-white/15': job.status === 'canceled',
+                      }"
+                    />
+                    <span class="text-xs font-medium text-white/90 truncate">{{ job.displayName }}</span>
+                    <span class="text-[10px] uppercase tracking-wide text-white/30 shrink-0">{{ job.kind === 'voice' ? 'Voice' : (job.loraKind === 'character' ? 'Character' : 'Style') }}</span>
+                    <span class="text-xs text-white/40 ml-auto shrink-0">{{ trainingStatusLabel(job) }}</span>
+                    <button
+                      v-if="job.status === 'queued' || job.status === 'starting' || job.status === 'processing'"
+                      class="text-white/30 hover:text-white/80 transition-colors cursor-pointer shrink-0"
+                      title="Cancel training"
+                      @click="cancelTraining(job.id)"
+                    >
+                      <X class="size-3.5" />
+                    </button>
+                    <button
+                      v-else
+                      class="text-white/30 hover:text-white/80 transition-colors cursor-pointer shrink-0"
+                      title="Dismiss"
+                      @click="dismissTraining(job.id)"
+                    >
+                      <X class="size-3.5" />
+                    </button>
+                  </div>
+                  <div v-if="job.status === 'failed' && job.error" class="text-[11px] text-red-400/80 mb-2 ml-4 line-clamp-2">{{ job.error }}</div>
+                  <!-- Progress bar for in-flight jobs -->
+                  <div
+                    v-if="job.status === 'starting' || job.status === 'processing'"
+                    class="h-1.5 bg-white/10 rounded-full overflow-hidden"
+                  >
+                    <div
+                      v-if="job.progressPct > 0"
+                      class="h-full bg-emerald-400 rounded-full transition-all duration-300"
+                      :style="{ width: `${job.progressPct}%` }"
+                    />
+                    <div
+                      v-else
+                      class="h-full w-full rounded-full animate-queue-shimmer"
+                      style="background: linear-gradient(90deg, transparent 0%, #34d399 50%, transparent 100%); background-size: 200% 100%;"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Divider between trainings and the run queue -->
+              <div v-if="sortedTrainingJobs.length && (queueData.running.length || queueData.pending.length || groupedHistory.length)" class="border-t border-[#2a2a2a] mx-4" />
+
               <!-- Running -->
               <div v-if="queueData.running.length" class="px-4 pt-3 pb-1">
                 <div
@@ -3198,7 +3351,7 @@ function dismissRunResult() {
 
               <!-- Empty state -->
               <div
-                v-if="!queueData.running.length && !queueData.pending.length && !groupedHistory.length"
+                v-if="!queueData.running.length && !queueData.pending.length && !groupedHistory.length && !sortedTrainingJobs.length"
                 class="flex flex-col items-center justify-center py-8 text-center"
               >
                 <Play class="size-8 text-white/20 mb-2" />
