@@ -177,6 +177,32 @@ async def test_run_fal_prediction_instant_completion_non200_result_blames_app_pa
 
 
 @pytest.mark.asyncio
+async def test_run_fal_prediction_202_in_progress_is_not_an_error(monkeypatch):
+    # fal's queue status endpoint returns HTTP 202 (not 200) while a job is
+    # IN_QUEUE/IN_PROGRESS — those polls must be treated as normal, not counted
+    # toward the consecutive-error cap. Regression for a live-smoke bug where
+    # 15 normal 202 polls aborted the run after 10.
+    _patch_no_sleep(monkeypatch)
+    result = {"video": {"url": "https://v3b.fal.media/x/video.mp4"}}
+    session = _FakeSession(
+        post_responses=[_FakeResponse(200, {"request_id": "rid-202"})],
+        get_responses=[
+            _FakeResponse(202, {"status": "IN_QUEUE"}),
+            _FakeResponse(202, {"status": "IN_PROGRESS"}),
+            _FakeResponse(202, {"status": "IN_PROGRESS"}),
+            _FakeResponse(200, {"status": "COMPLETED", "metrics": {"inference_time": 42.0}}),
+            _FakeResponse(200, result),
+        ],
+    )
+    _patch_session(monkeypatch, session)
+
+    out = await fal_refs.run_fal_prediction(
+        "bytedance/seedance-2.0", "reference-to-video", {"prompt": "x"}, poll_deadline_sec=60,
+    )
+    assert out == result
+
+
+@pytest.mark.asyncio
 async def test_run_fal_prediction_status_poll_4xx_fails_fast(monkeypatch):
     _patch_no_sleep(monkeypatch)
     session = _FakeSession(

@@ -99,7 +99,15 @@ async def run_fal_prediction(
         while time.time() < deadline:
             await asyncio.sleep(2.0)
             async with session.get(status_url, headers=headers) as r:
-                if r.status != 200:
+                # fal's queue status endpoint returns 202 while a job is
+                # IN_QUEUE/IN_PROGRESS and 200 once COMPLETED — both carry the
+                # authoritative `status` field. Only a genuine error code is a
+                # problem: 4xx is unrecoverable (bad rid / revoked key), other
+                # non-2xx (5xx) is transient up to a cap.
+                if r.status in (200, 202):
+                    consecutive_errors = 0
+                    status = await r.json()
+                else:
                     body = await r.text()
                     if 400 <= r.status < 500:
                         raise RuntimeError(
@@ -112,8 +120,6 @@ async def run_fal_prediction(
                             f"(last HTTP {r.status}): {body}"
                         )
                     continue
-                consecutive_errors = 0
-                status = await r.json()
             state = status.get("status")
             if state in ("IN_QUEUE", "IN_PROGRESS"):
                 continue
