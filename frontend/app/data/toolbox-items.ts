@@ -54,6 +54,8 @@ import {
   UserRoundCog,
   // SmartLayout (compose section)
   LayoutTemplate,
+  // Character Cast
+  Drama,
 } from 'lucide-vue-next'
 
 // Phosphor icons — mixed in where a library has a more semantic match for a
@@ -453,6 +455,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
       { nodeType: 'GenerateVideoNode',    label: 'Generate Video',     description: 'Text or image to video — 16 models (Veo 3.1, Sora 2, Runway, Kling, Seedance, Wan, Fabric…) picked in the gallery. Cloud.', icon: Film },
       { nodeType: 'FilmShotNode',         label: 'Film a Shot',        description: 'Direct a video like a cinematographer — 28 shot presets (push-in, dolly zoom, god shot…) write the camera language for you. Cloud.', icon: Clapperboard },
       { nodeType: 'AnimatedNoise',        label: 'Animated Noise',     description: 'Generate a clip of evolving value noise — pans, breathes, or swirls.', icon: Hourglass },
+      { nodeType: 'Character',            label: 'Character',          description: 'A castable person — wire into a Shot Director.', icon: Drama },
     ],
   },
 ]

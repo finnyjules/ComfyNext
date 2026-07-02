@@ -49,6 +49,7 @@ import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
+import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
@@ -176,7 +177,7 @@ const nodeTypes = {
   'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
   'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
-  'subgraph-io': markRaw(SubgraphIONode),
+  'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1384,6 +1385,14 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Shader Studio consumes an image — give it one input handle (input-0).
   if (nodeType === 'ShaderStudio' && (!data.data.inputs || data.data.inputs.length === 0)) {
     data.data.inputs = [{ name: 'image', type: 'IMAGE', link: null }]
+  }
+  // Character: frontend-only card, one CHARACTER output for casting into a Shot Director.
+  if (nodeType === 'Character' && (!data.data.outputs || data.data.outputs.length === 0)) {
+    data.data.outputs = [{ name: 'character', type: 'CHARACTER', links: null }]
+  }
+  // Shot Director: three optional CHARACTER cast slots (Task 11 syncs them into the shot sheet).
+  if (nodeType === 'ShotDirector' && (!data.data.inputs || data.data.inputs.length === 0)) {
+    data.data.inputs = [1, 2, 3].map(i => ({ name: `cast_${i}`, type: 'CHARACTER', link: null, optional: true }))
   }
   return data
 }

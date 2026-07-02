@@ -76,6 +76,18 @@ function generate() {
       :style="{ top: '50%' }"
     />
 
+    <!-- Cast input handles (CHARACTER) -->
+    <div class="absolute left-0 top-8 flex flex-col gap-0.5">
+      <VueCanvasComfyNodePort
+        v-for="i in 3" :key="i"
+        :id="`input-${i - 1}`"
+        type="target"
+        position="left"
+        data-type="CHARACTER"
+        :label="`cast_${i}`"
+      />
+    </div>
+
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Clapperboard class="h-3.5 w-3.5 text-white/70" />

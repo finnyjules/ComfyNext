@@ -179,6 +179,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Shot Director: frontend-only config node for driving video models (Seedance etc.)
   // via a guardrailed shot-sheet UI — no backend class_type, reopen to re-edit.
   ShotDirector: 'shot-director',
+  // Character: frontend-only card representing a castable person from the
+  // registry (Task 5) — no backend class_type, wires CHARACTER into ShotDirector.
+  Character: 'character',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,
