@@ -51,7 +51,10 @@ export function materializeCast(
   for (const m of members) {
     const srcs = (resolved[m.slug] ?? []).slice(0, perMember)
     if (!srcs.length) {
-      issues.push({ level: 'error', code: 'cast-member-no-refs', message: `${m.name} has no reference photos — add some to their character sheet.` })
+      const message = m.variantId
+        ? `${m.name} has no reference photos in the selected variant — add some to their character sheet.`
+        : `${m.name} has no reference photos — add some to their character sheet.`
+      issues.push({ level: 'error', code: 'cast-member-no-refs', message })
       continue
     }
     for (const src of srcs) {

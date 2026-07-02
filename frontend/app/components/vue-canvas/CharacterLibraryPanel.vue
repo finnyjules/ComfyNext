@@ -1,4 +1,6 @@
 <script lang="ts">
+import { ref } from 'vue'
+
 /**
  * True module-level state for the absorb-on-load + one-time sheet auto-gen
  * orchestration (see the block below in <script setup> for the logic). This
@@ -11,9 +13,18 @@
  * module scope, closing and reopening the panel would silently re-run
  * absorb + auto-gen every time, defeating the one-time-per-session and
  * sanctioned-spend guarantees.
+ *
+ * `autoGenQueue` lives here too for the same reason: it holds the failed
+ * rows the Retry UI reads from. If it were `<script setup>` state (re-created
+ * per mount), closing the panel while a row was still showing "failed" would
+ * wipe the queue on remount — and since `absorbRanThisSession` above already
+ * blocks runAbsorbOnce from firing again, that failed row would vanish with
+ * no way to retry it until a full page reload.
  */
 let absorbRanThisSession = false
 const autoGenInFlight = new Set<string>() // slugs currently generating (guards re-entrancy)
+interface AutoGenRow { slug: string, name: string, error: boolean }
+const autoGenQueue = ref<AutoGenRow[]>([])
 </script>
 
 <script setup lang="ts">
@@ -32,7 +43,7 @@ import { Drama, Images, Loader2, RefreshCcw, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
 import {
-  useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES,
+  useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES, slugish,
   type CharacterClient, type CharacterVariantClient, type CharacterStatus,
 } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
@@ -58,8 +69,8 @@ function changed() { window.dispatchEvent(new CustomEvent('comfynext:charactersC
 // `absorbRanThisSession` / `autoGenInFlight` are true module-level state
 // (declared in the plain <script> block above) so this fires once per app
 // session, not once per panel open.
-interface AutoGenRow { slug: string, name: string, error: boolean }
-const autoGenQueue = ref<AutoGenRow[]>([])
+// AutoGenRow / autoGenQueue live in the module-level <script> block above
+// (see the comment there for why) — not re-declared here.
 const autoGenActive = ref(false)
 
 async function runAbsorbOnce() {
@@ -200,11 +211,18 @@ function statusFor(c: CharacterClient): CharacterStatus {
 }
 function trainingPct(c: CharacterClient): number | null {
   // Same active-status semantics as characterStatus() — only an in-flight job
-  // counts, so a finished/failed job with a matching name can't surface stale progress.
+  // counts, so a finished/failed job with a matching name can't surface stale
+  // progress. Also mirror its outputName fallback: a job kicked off with a
+  // sanitized/slugified outputName that doesn't match displayName verbatim
+  // (e.g. spaces stripped) would otherwise show "Training…" with no percent.
+  const nameSlug = slugish(c.name)
   const job = jobs.value.find(j =>
     IN_FLIGHT_STATUSES.has(j.status)
     && j.loraKind === 'character'
-    && (j.displayName ?? '').toLowerCase() === c.name.toLowerCase())
+    && (
+      (j.displayName ?? '').toLowerCase() === c.name.toLowerCase()
+      || slugish(j.outputName ?? '') === nameSlug
+    ))
   return typeof job?.progressPct === 'number' ? Math.round(job.progressPct) : null
 }
 function loraChip(c: CharacterClient): string {
@@ -218,7 +236,16 @@ function useInImage(c: CharacterClient) {
   window.dispatchEvent(new CustomEvent('comfynext:addCharacterImageGen', { detail: { slug: c.slug } }))
 }
 function castInShot(c: CharacterClient) {
-  const variantId = selectedVariantId.value[c.slug]
+  // Normalize the sentinel 'default' selection away before dispatching — the
+  // Character node's own UI (CharacterNode.vue) already strips 'default' to
+  // null when the user picks it there, but syncCast's kept/wire comparison
+  // (castEdges.ts) checks variantId by strict equality against hydrated cast
+  // members, which never carry the literal string 'default' (hydrate strips
+  // it). If this node's property still had 'default', wireCastFor would keep
+  // producing a member with variantId:'default' that never matches the
+  // hydrated one, forcing a permanent cast-sync rewrite every tick.
+  const raw = selectedVariantId.value[c.slug]
+  const variantId = raw === 'default' ? undefined : raw
   window.dispatchEvent(new CustomEvent('comfynext:addCharacterCastNode', {
     detail: { slug: c.slug, name: c.name, variantId },
   }))
@@ -281,7 +308,13 @@ async function addRefFiles(c: CharacterClient, variant: CharacterVariantClient, 
 }
 
 async function removeRef(c: CharacterClient, variant: CharacterVariantClient, idx: number) {
-  await replaceVariant(c, variant.id, { refImages: variant.refImages.filter((_, i) => i !== idx) })
+  // Live-read the variant's refImages before filtering — same stale-closure
+  // race as addRefFiles/rerollTile: `variant` is a click-time closure, and a
+  // concurrent charactersChanged refresh (e.g. another edit in flight) can
+  // reassign characters.value before this runs, so filtering the stale array
+  // would silently resurrect whatever the concurrent edit removed/changed.
+  const liveVariant = characters.value.find(x => x.slug === c.slug)?.variants.find(v => v.id === variant.id) ?? variant
+  await replaceVariant(c, variant.id, { refImages: liveVariant.refImages.filter((_, i) => i !== idx) })
 }
 
 async function setCover(c: CharacterClient, variant: CharacterVariantClient, idx: number) {

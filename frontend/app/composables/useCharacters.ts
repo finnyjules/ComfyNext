@@ -102,7 +102,7 @@ export interface TrainingJobLike {
 export const IN_FLIGHT_STATUSES = new Set(['queued', 'starting', 'processing'])
 
 /** Loosely normalize a name for outputName comparison (lowercase, alnum-only). */
-function slugish(name: string): string {
+export function slugish(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 

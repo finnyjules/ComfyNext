@@ -2660,8 +2660,11 @@ async function handleAddCharacterImageGen(e: Event) {
     const res = await fetch('/api/characters-local')
     const data = res.ok ? await res.json() as { characters?: CharacterLite[] } : {}
     character = (data.characters ?? []).find(c => c.slug === slug)
-  } catch { /* character stays undefined — no-op below */ }
-  if (!character) return
+  } catch { /* character stays undefined — toast below */ }
+  if (!character) {
+    toast.error('Couldn\'t load the character — try again')
+    return
+  }
 
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
 
@@ -2704,8 +2707,12 @@ async function handleAddCharacterImageGen(e: Event) {
 // Character Library panel "Cast in shot": drop a picked Character card on the
 // canvas so it can be wired into a Shot Director's cast slots (Task 11 syncs the edge).
 function handleAddCharacterCastNode(e: Event) {
-  const { slug, name, variantId } = (e as CustomEvent<{ slug: string, name: string, variantId?: string }>).detail ?? {}
+  const { slug, name, variantId: rawVariantId } = (e as CustomEvent<{ slug: string, name: string, variantId?: string }>).detail ?? {}
   if (!slug || !name) return
+  // Defense in depth: normalize the 'default' sentinel away here too, in case
+  // some other caller of this event forgets to (see CharacterLibraryPanel's
+  // castInShot for why 'default' must never reach comfynext_characterVariantId).
+  const variantId = rawVariantId === 'default' ? undefined : rawVariantId
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   nodes.value.push(createNodeData('Character', pos, undefined, {
     comfynext_characterSlug: slug,

@@ -84,6 +84,15 @@ describe('materializeCast', () => {
     const errs = issues.filter(i => i.level === 'error' && i.code === 'cast-member-no-refs')
     expect(errs).toHaveLength(2) // reva empty + marcus missing entirely
     expect(errs[0]!.message).toContain('Reva')
+    expect(errs[0]!.message).toBe('Reva has no reference photos — add some to their character sheet.')
+  })
+
+  it('mentions the selected variant in the zero-refs error when the member has a variantId', () => {
+    const s = createDefaultShotSheet()
+    s.cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }]
+    const { issues } = materializeCast(s, { reva: [] }, SEEDANCE_PROFILE)
+    const err = issues.find(i => i.level === 'error' && i.code === 'cast-member-no-refs')
+    expect(err!.message).toBe('Reva has no reference photos in the selected variant — add some to their character sheet.')
   })
 
   it('errors on duplicates and on more than CAST_MAX members', () => {
