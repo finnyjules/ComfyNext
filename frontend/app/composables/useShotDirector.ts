@@ -8,6 +8,7 @@ import { hydrateShotSheet, addRef, removeRef } from '~/lib/shotdirector/hydrate'
 import { compileShot, type CompileResult } from '~/lib/shotdirector/compile'
 import { getProfile, type ModelProfile } from '~/lib/shotdirector/profiles'
 import type { RefKind, ShotSheet } from '~/lib/shotdirector/types'
+import { materializeCast } from '~/lib/shotdirector/cast'
 
 export interface UseShotDirectorReturn {
   sheet: Ref<ShotSheet>
@@ -17,21 +18,34 @@ export interface UseShotDirectorReturn {
   addReference: (kind: RefKind, src: string, role: ShotSheet['references'][number]['role']) => void
   removeReference: (kind: RefKind, slot: number) => void
   rerollSeed: () => void
+  addCastMember: (slug: string, name: string, via?: 'wire' | 'picker') => void
+  removeCastMember: (slug: string) => void
 }
 
 /**
  * Creates a reactive Shot Director sheet with compilation and persistence.
  * @param initial - Raw data to hydrate (e.g., node.data.properties.comfynext_shotDirector)
  * @param persist - Callback to persist the sheet after mutations
+ * @param resolveCast - Optional callback to resolve cast member slugs to reference URLs
  */
 export function useShotDirector(
   initial: unknown,
   persist: (sheet: ShotSheet) => void,
+  resolveCast?: (slugs: string[]) => Record<string, string[]>,
 ): UseShotDirectorReturn {
   const sheet = ref<ShotSheet>(hydrateShotSheet(initial))
   const profile = getProfile('seedance-2.0')
 
-  const result = computed(() => compileShot(sheet.value, profile))
+  const result = computed(() => {
+    const s = sheet.value
+    if (!s.cast.length || !resolveCast) {
+      return compileShot(s, profile)
+    }
+    const resolved = resolveCast(s.cast.map(m => m.slug))
+    const { sheet: materialized, issues: castIssues } = materializeCast(s, resolved, profile)
+    const compiled = compileShot(materialized, profile)
+    return { ...compiled, issues: [...castIssues, ...compiled.issues] }
+  })
 
   const update = (mutator: (s: ShotSheet) => ShotSheet) => {
     sheet.value = mutator(sheet.value)
@@ -51,6 +65,15 @@ export function useShotDirector(
     update(s => ({ ...s, format: { ...s.format, seed: Math.floor(Math.random() * 2_147_483_646) + 1 } }))
   }
 
+  const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker') => {
+    if (sheet.value.cast.some(m => m.slug === slug)) return
+    update(s => ({ ...s, cast: [...s.cast, { slug, name, via }] }))
+  }
+
+  const removeCastMember = (slug: string) => {
+    update(s => ({ ...s, cast: s.cast.filter(m => m.slug !== slug) }))
+  }
+
   return {
     sheet,
     result,
@@ -59,5 +82,7 @@ export function useShotDirector(
     addReference,
     removeReference,
     rerollSeed,
+    addCastMember,
+    removeCastMember,
   }
 }

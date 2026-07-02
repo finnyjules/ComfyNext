@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { useShotDirector } from '~/composables/useShotDirector'
 import { createDefaultShotSheet, type ShotSheet } from '~/lib/shotdirector/types'
+import { materializeCast } from '~/lib/shotdirector/cast'
 
 describe('useShotDirector', () => {
   it('hydrates initial data into a reactive ShotSheet', () => {
@@ -182,5 +183,38 @@ describe('useShotDirector', () => {
 
     // Overwhelmingly likely to produce more than one distinct value across 20 rerolls.
     expect(seeds.size).toBeGreaterThan(1)
+  })
+})
+
+describe('useShotDirector cast', () => {
+  const U = (n: string) => `/view?filename=${n}&type=input`
+
+  it('addCastMember persists cast and result materializes refs + clause', () => {
+    let persisted: ShotSheet | undefined
+    const resolve = (slugs: string[]) => Object.fromEntries(slugs.map(s => [s, [U(`${s}.png`)]]))
+    const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), (s) => { persisted = s }, resolve)
+
+    addCastMember('reva', 'Reva')
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    expect(persisted?.cast).toHaveLength(1)
+    // persisted sheet holds NO materialized cast refs
+    expect(persisted?.references.some(r => r.castSlug)).toBe(false)
+    // but the compiled result does
+    expect(result.value.prompt).toContain('Characters: Reva [Image1].')
+  })
+
+  it('addCastMember dedupes; removeCastMember removes', () => {
+    const { sheet, addCastMember, removeCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, () => ({}))
+    addCastMember('reva', 'Reva')
+    addCastMember('reva', 'Reva', 'wire')
+    expect(sheet.value.cast).toHaveLength(1)
+    removeCastMember('reva')
+    expect(sheet.value.cast).toHaveLength(0)
+  })
+
+  it('zero-ref cast member surfaces as an error issue in result', () => {
+    const { result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, () => ({ reva: [] }))
+    addCastMember('reva', 'Reva')
+    expect(result.value.issues.some(i => i.code === 'cast-member-no-refs' && i.level === 'error')).toBe(true)
   })
 })
