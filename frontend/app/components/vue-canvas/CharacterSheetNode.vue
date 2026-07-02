@@ -219,14 +219,35 @@ async function save() {
     }
     if (uploads.length === 0) throw new Error('nothing to save — add a source photo or generate a sheet first')
 
-    const created = await fetch('/api/characters-local', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-    })
-    if (!created.ok) throw new Error(`create ${created.status}`)
-    const { slug: newSlug } = await created.json() as { slug: string }
-    createdSlug = newSlug
+    // LoRA mode attaches to the character that already owns this LoRA
+    // (post-unification, absorb guarantees one exists) — POSTing would 409.
+    // The registry record's identity wins over whatever name was typed.
+    let targetSlug: string | null = null
+    let targetName = name
+    if (sourceMode.value === 'lora' && selectedLora.value) {
+      try {
+        const res = await fetch('/api/characters-local')
+        if (res.ok) {
+          const data = await res.json() as { characters?: { slug: string, name: string, loraName: string | null }[] }
+          const existing = (data.characters ?? []).find(c => c.loraName === selectedLora.value!.filename)
+          if (existing) { targetSlug = existing.slug; targetName = existing.name }
+        }
+      } catch { /* registry unreachable — fall through to create */ }
+    }
 
-    const patchBody: Record<string, any> = { slug: newSlug, refImages: uploads }
+    if (!targetSlug) {
+      const created = await fetch('/api/characters-local', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      })
+      if (!created.ok) throw new Error(`create ${created.status}`)
+      const { slug: newSlug } = await created.json() as { slug: string }
+      createdSlug = newSlug
+      targetSlug = newSlug
+    }
+
+    // Legacy refImages alias writes through to the Default variant — a full
+    // replace, same semantics as the panel's "Regenerate sheet".
+    const patchBody: Record<string, any> = { slug: targetSlug, refImages: uploads }
     if (sourceMode.value === 'lora' && selectedLora.value) {
       patchBody.loraName = selectedLora.value.filename
       patchBody.trigger = selectedLora.value.trigger
@@ -235,21 +256,27 @@ async function save() {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody),
     })
     if (!patched.ok) {
-      // Don't leave an orphan zero-ref character behind.
-      await fetch('/api/characters-local', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: newSlug, remove: true }),
-      }).catch(() => {})
+      // Don't leave an orphan zero-ref character behind — but ONLY clean up a
+      // record this save created; never delete a pre-existing character.
+      if (createdSlug) {
+        await fetch('/api/characters-local', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: createdSlug, remove: true }),
+        }).catch(() => {})
+      }
       throw new Error(`attach refs ${patched.status}`)
     }
 
     if (!props.data.properties) (props.data as any).properties = {}
     const properties = props.data.properties as Record<string, any>
-    properties.comfynext_characterSlug = newSlug
-    properties.comfynext_characterName = name
+    properties.comfynext_characterSlug = targetSlug
+    properties.comfynext_characterName = targetName
     window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
     window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
-    toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
+    toast.success(
+      createdSlug ? `Saved ${targetName} to characters` : `Updated ${targetName}'s reference sheet`,
+      { description: 'Castable in the Shot Director' },
+    )
   } catch (e: any) {
     console.warn('[CharacterSheet] save failed', e)
     saveError.value = e?.message || 'Save failed'
