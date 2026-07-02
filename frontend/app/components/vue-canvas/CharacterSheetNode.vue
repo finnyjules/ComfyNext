@@ -8,9 +8,9 @@ import { computed, inject, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Images, Loader2, RefreshCcw, Upload } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
-import { useInpaint } from '~/composables/useInpaint'
+import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
-import { CHARACTER_SHEET_CANONICAL, type CharacterShotScene } from '~/data/character-shot-scenes'
+import { CHARACTER_SHEET_CANONICAL } from '~/data/character-shot-scenes'
 import { toast } from 'vue-sonner'
 
 const props = defineProps<{
@@ -23,11 +23,19 @@ const props = defineProps<{
 }>()
 
 const { characters, coverUrl } = useCharacters()
-const { loraGen } = useInpaint()
 
 // ── Saved state ──────────────────────────────────────────────────────────
 const slug = computed<string | null>(() => props.data?.properties?.comfynext_characterSlug ?? null)
 const savedCharacter = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
+// This node only ever populates the character's default variant (see save()
+// below), so the reference count for the saved-state summary comes from
+// that variant specifically — mirrors useCharacters' own default-variant fallback.
+const savedRefCount = computed(() => {
+  const c = savedCharacter.value
+  if (!c) return 0
+  const variant = c.variants.find(v => v.id === 'default') ?? c.variants[0]
+  return variant?.refImages.length ?? 0
+})
 
 // ── Wired upstream source (optional IMAGE input) ────────────────────────
 const nodesInj = inject<any>('vueFlowNodes', null)
@@ -123,67 +131,35 @@ const hasSource = computed(() => sourceMode.value === 'photo' ? !!sourceDataUrl.
 const charName = ref('')
 
 // ── Shots ────────────────────────────────────────────────────────────────
-interface Shot { dataUrl: string | null, scene: CharacterShotScene, loading: boolean, error: boolean }
-const shots = ref<Shot[]>(CHARACTER_SHEET_CANONICAL.map(scene => ({ dataUrl: null, scene, loading: false, error: false })))
+const { shots, reset: resetShots, runShot: runShotOn, expandAll } = useSheetGeneration(CHARACTER_SHEET_CANONICAL)
 const expanding = ref(false)
 
 const hasAnyShot = computed(() => shots.value.some(s => s.dataUrl))
 const canExpand = computed(() => hasSource.value && charName.value.trim().length > 0 && !expanding.value)
 
-async function generatePhotoShot(scene: CharacterShotScene): Promise<string> {
-  const res = await fetch('/api/cloud-train/character-shot', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      referenceImageDataUrl: sourceDataUrl.value,
-      prompt: scene.prompt,
-      aspectRatio: scene.framing === 'full' ? '3:4' : '1:1',
-    }),
-  })
-  if (!res.ok) throw new Error(`character-shot ${res.status}`)
-  const { imageDataUrl } = await res.json() as { imageDataUrl?: string }
-  if (!imageDataUrl) throw new Error('no image returned')
-  return imageDataUrl
-}
-
-async function generateLoraShot(scene: CharacterShotScene): Promise<string> {
-  const lora = selectedLora.value
-  if (!lora) throw new Error('no LoRA selected')
-  const prompt = `${lora.trigger ?? ''}, ${scene.prompt}`.trim().replace(/^,\s*/, '')
-  const aspectRatio = scene.framing === 'full' ? '3:4' : '1:1'
-  const images = await loraGen(lora.filename, prompt, aspectRatio)
-  const url = images?.[0]
-  if (!url) throw new Error('no image returned')
-  return url
+function currentSource(): SheetSource | null {
+  if (sourceMode.value === 'lora') {
+    const lora = selectedLora.value
+    if (!lora) return null
+    return { mode: 'lora', loraFilename: lora.filename, trigger: lora.trigger }
+  }
+  if (!sourceDataUrl.value) return null
+  return { mode: 'photo', referenceImageDataUrl: sourceDataUrl.value }
 }
 
 async function runShot(idx: number) {
-  const shot = shots.value[idx]
-  if (!shot) return
-  shot.loading = true
-  shot.error = false
-  try {
-    const dataUrl = sourceMode.value === 'lora' ? await generateLoraShot(shot.scene) : await generatePhotoShot(shot.scene)
-    shot.dataUrl = dataUrl
-  } catch (e) {
-    console.warn('[CharacterSheet] shot failed', e)
-    shot.error = true
-  } finally {
-    shot.loading = false
-  }
+  const source = currentSource()
+  if (!source) return
+  await runShotOn(idx, source)
 }
 
 async function expandSheet() {
   if (!canExpand.value) return
+  const source = currentSource()
+  if (!source) return
   expanding.value = true
   try {
-    // Sequential — concurrency 1 is fine for 4 shots.
-    for (let i = 0; i < shots.value.length; i++) {
-      await runShot(i)
-      // Failed shot usually means the rest would fail too — don't spend on them.
-      const shot = shots.value[i]
-      if (!shot || shot.error) break
-    }
+    await expandAll(source)
   } finally {
     expanding.value = false
   }
@@ -289,7 +265,7 @@ function resetToNewSheet() {
   charName.value = ''
   uploadedDataUrl.value = null
   usingWiredSource.value = false
-  shots.value = CHARACTER_SHEET_CANONICAL.map(scene => ({ dataUrl: null, scene, loading: false, error: false }))
+  resetShots()
   saveError.value = null
   window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
 }
@@ -330,7 +306,7 @@ function resetToNewSheet() {
           </div>
           <div class="min-w-0">
             <p class="truncate text-[12px] text-white/90" :title="savedCharacter.name">{{ savedCharacter.name }}</p>
-            <p class="text-[10px] text-white/40">{{ savedCharacter.refImages.length }} reference{{ savedCharacter.refImages.length === 1 ? '' : 's' }}</p>
+            <p class="text-[10px] text-white/40">{{ savedRefCount }} reference{{ savedRefCount === 1 ? '' : 's' }}</p>
           </div>
         </div>
       </template>
