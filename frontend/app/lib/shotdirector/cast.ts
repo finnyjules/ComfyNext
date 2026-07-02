@@ -73,7 +73,7 @@ function renumber(refs: Ref[]): Ref[] {
   })
 }
 
-/** "Characters: Reva [Image1] [Image2]; Marcus [Image3]." from cast-tagged refs. */
+/** "Characters: Reva @Image1 @Image2; Marcus @Image3." from cast-tagged refs. */
 export function castClause(sheet: ShotSheet, profile: ModelProfile): string {
   const bySlug = new Map<string, string[]>()
   for (const r of sheet.references) {

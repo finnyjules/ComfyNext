@@ -42,7 +42,7 @@ function beatLine(sheet: ShotSheet, b: Beat): string {
   return `[${b.startS}s] ${cam} ${capitalize(action)}.`
 }
 
-/** "Use [Image1] for …; [Video1] for …." — reference mode only. */
+/** "Use @Image1 for …; @Video1 for …." — reference mode only. */
 function referenceSentence(sheet: ShotSheet, profile: ModelProfile): string {
   if (sheet.mode !== 'reference' || sheet.references.length === 0) return ''
   const KIND_RANK = { image: 0, video: 1, audio: 2 } as const
