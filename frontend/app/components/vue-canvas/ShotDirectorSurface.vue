@@ -28,11 +28,11 @@ function persist(s: any) {
   n.data.properties.comfynext_shotDirector = s
 }
 
-const { resolveRefs, coverUrl, characters } = useCharacters()
+const { resolveVariantRefs, coverUrl, characters } = useCharacters()
 const { sheet, result, addReference, removeReference, update, rerollSeed, addCastMember, removeCastMember } = useShotDirector(
   node.value?.data?.properties?.comfynext_shotDirector,
   persist,
-  slugs => resolveRefs(slugs),
+  picks => resolveVariantRefs(picks),
 )
 
 // ── First-open guide ───────────────────────────────────────────────────────────
@@ -45,19 +45,27 @@ const showIntro = computed(() =>
 
 // ── Cast ───────────────────────────────────────────────────────────────────────
 const castPickerOpen = ref(false)
-function castCover(slug: string): string | null {
-  const c = characters.value.find(x => x.slug === slug)
-  return c ? coverUrl(c) : null
+function castCover(m: CastMember): string | null {
+  const c = characters.value.find(x => x.slug === m.slug)
+  return c ? coverUrl(c, m.variantId) : null
+}
+/** Variant label for a non-default pick, e.g. "Vera · Raincoat" in the chip. */
+function variantLabel(m: CastMember): string | null {
+  if (!m.variantId) return null
+  const c = characters.value.find(x => x.slug === m.slug)
+  const v = c?.variants.find(x => x.id === m.variantId)
+  return v ? v.label : null
 }
 /** The photos each cast member contributes, with their [ImageN] tag range —
  *  so "what is [Image2]?" is answerable by looking at the Cast section. */
 const castRefRows = computed(() => {
   let tag = 1
+  const resolved = resolveVariantRefs(sheet.value.cast.map(m => ({ slug: m.slug, variantId: m.variantId })))
   return sheet.value.cast.map((m) => {
-    const urls = resolveRefs([m.slug])[m.slug]?.slice(0, 3) ?? []
+    const urls = resolved[m.slug]?.slice(0, 3) ?? []
     const start = tag
     tag += urls.length
-    return { slug: m.slug, name: m.name, urls, start, end: tag - 1 }
+    return { slug: m.slug, name: m.name, variantLabel: variantLabel(m), urls, start, end: tag - 1 }
   })
 })
 function onRemoveCast(m: CastMember) {
@@ -356,8 +364,8 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                     v-for="m in sheet.cast" :key="m.slug"
                     class="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-0.5 pl-0.5 pr-2 text-[11px] text-white/80"
                   >
-                    <img v-if="castCover(m.slug)" :src="castCover(m.slug)!" class="h-5 w-5 rounded-full object-cover" :alt="m.name">
-                    {{ m.name }}
+                    <img v-if="castCover(m)" :src="castCover(m)!" class="h-5 w-5 rounded-full object-cover" :alt="m.name">
+                    {{ m.name }}<span v-if="variantLabel(m)" class="text-white/50"> · {{ variantLabel(m) }}</span>
                     <span v-if="m.via === 'wire'" class="text-[9px] text-white/35" title="Cast by canvas wire — remove by unwiring or here">⌁</span>
                     <button class="text-white/35 hover:text-white/80" @click="onRemoveCast(m)">×</button>
                   </span>
@@ -374,7 +382,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                       :title="`[Image${row.start + i}]`"
                     >
                     <span v-if="row.urls.length" class="text-[10px] tabular-nums text-white/30">[Image{{ row.start }}{{ row.end > row.start ? `–${row.end}` : '' }}]</span>
-                    <span v-else class="text-[10px] text-red-400/80">no photos yet — add some to their sheet</span>
+                    <span v-else class="text-[10px] text-red-400/80">{{ row.variantLabel ? `${row.variantLabel} — ` : '' }}no photos yet — add some to their sheet</span>
                   </div>
                   <p class="text-[10px] leading-relaxed text-white/35">
                     Face and clothing follow these photos. Change the look in their character sheet (Characters panel) —
@@ -386,7 +394,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
               <CharacterPickerModal
                 v-if="castPickerOpen"
                 :exclude-slugs="sheet.cast.map(m => m.slug)"
-                @pick="(slug, name) => { addCastMember(slug, name); castPickerOpen = false }"
+                @pick="(slug, name, variantId) => { addCastMember(slug, name, 'picker', variantId); castPickerOpen = false }"
                 @close="castPickerOpen = false"
               />
 

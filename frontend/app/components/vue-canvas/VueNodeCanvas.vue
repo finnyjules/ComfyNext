@@ -2502,15 +2502,21 @@ async function handleShotDirectorGenerate(e: Event) {
   let effectiveSheet = sheet
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
   if (sheet.cast.length) {
-    // Live link: resolve cast refs from the registry at generate time.
+    // Live link: resolve cast refs from the registry at generate time, honoring
+    // each member's variantId (mirrors useCharacters' resolveVariantRefs: named
+    // variant if present, else the 'default' variant, else the first one).
     let resolved: Record<string, string[]> = {}
     try {
       const res = await fetch('/api/characters-local')
-      const data = res.ok ? await res.json() as { characters?: { slug: string, refImages: string[] }[] } : {}
+      type VariantLite = { id: string, refImages: string[] }
+      const data = res.ok ? await res.json() as { characters?: { slug: string, variants?: VariantLite[] }[] } : {}
       const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
-      resolved = Object.fromEntries(sheet.cast.map(m => [
-        m.slug, (bySlug.get(m.slug)?.refImages ?? []).map(f => viewRefUrl(f)),
-      ]))
+      resolved = Object.fromEntries(sheet.cast.map((m) => {
+        const variants = bySlug.get(m.slug)?.variants ?? []
+        const variant = (m.variantId ? variants.find(v => v.id === m.variantId) : undefined)
+          ?? variants.find(v => v.id === 'default') ?? variants[0]
+        return [m.slug, (variant?.refImages ?? []).map(f => viewRefUrl(f))]
+      }))
     } catch { /* resolved stays empty → zero-ref errors below */ }
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
     effectiveSheet = mat.sheet
@@ -2570,6 +2576,7 @@ function syncAllShotDirectorCasts() {
     id: String(n.id), nodeType: n.data?.nodeType as string | undefined,
     characterSlug: n.data?.properties?.comfynext_characterSlug ?? null,
     characterName: n.data?.properties?.comfynext_characterName ?? null,
+    characterVariantId: n.data?.properties?.comfynext_characterVariantId ?? null,
   }))
   const liteEdges = (edges.value as any[]).map(e => ({
     source: String(e.source), target: String(e.target), targetHandle: e.targetHandle ?? null,

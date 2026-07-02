@@ -21,13 +21,23 @@ const pickerOpen = ref(false)
 
 const slug = computed<string | null>(() => props.data?.properties?.comfynext_characterSlug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
+const variantId = computed<string | null>(() => props.data?.properties?.comfynext_characterVariantId ?? null)
+const refCount = computed(() => character.value?.variants.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
 
-function pick(s: string, name: string) {
+function pick(s: string, name: string, pickedVariantId?: string) {
   if (!props.data.properties) props.data.properties = {}
   props.data.properties.comfynext_characterSlug = s
   props.data.properties.comfynext_characterName = name
+  props.data.properties.comfynext_characterVariantId = pickedVariantId ?? null
   pickerOpen.value = false
   // Nudge any wired Shot Directors to re-sync their cast (Task 11 listens).
+  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+}
+
+function onVariantChange(e: Event) {
+  if (!props.data.properties) props.data.properties = {}
+  const v = (e.target as HTMLSelectElement).value
+  props.data.properties.comfynext_characterVariantId = v || null
   window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
 }
 </script>
@@ -52,7 +62,7 @@ function pick(s: string, name: string) {
       <template v-if="character">
         <div class="flex items-center gap-2">
           <img
-            v-if="coverUrl(character)" :src="coverUrl(character)!" :alt="character.name"
+            v-if="coverUrl(character, variantId ?? undefined)" :src="coverUrl(character, variantId ?? undefined)!" :alt="character.name"
             class="h-10 w-10 shrink-0 rounded object-cover"
           >
           <div v-else class="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white/[0.06]">
@@ -60,10 +70,20 @@ function pick(s: string, name: string) {
           </div>
           <div class="min-w-0">
             <p class="truncate text-[12px] text-white/90" :title="character.name">{{ character.name }}</p>
-            <p class="text-[10px] text-white/40">{{ character.refImages.length }} reference{{ character.refImages.length === 1 ? '' : 's' }}</p>
+            <p class="text-[10px] text-white/40">{{ refCount }} reference{{ refCount === 1 ? '' : 's' }}</p>
           </div>
         </div>
-        <p v-if="!character.refImages.length" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
+        <!-- Variant select: only when the character has more than one variant -->
+        <select
+          v-if="character.variants.length > 1"
+          :value="variantId ?? ''"
+          class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
+          @change="onVariantChange"
+        >
+          <option value="" class="bg-neutral-900">Default</option>
+          <option v-for="v in character.variants" :key="v.id" :value="v.id" class="bg-neutral-900">{{ v.label }}</option>
+        </select>
+        <p v-if="!refCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
           No reference photos — add some in the Characters panel.
         </p>
       </template>

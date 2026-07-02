@@ -137,6 +137,14 @@ describe('hydrate back-compat', () => {
     const cast = [{ slug: 'reva', name: 'Reva', via: 'picker' }]
     expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
   })
+  it('cast entries keep a string variantId', () => {
+    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }]
+    expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
+  })
+  it('drops a non-string variantId', () => {
+    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 42 }]
+    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+  })
 })
 
 describe('compiled prompt noise suppression', () => {

@@ -143,6 +143,8 @@ export interface CastMember {
   slug: string
   name: string
   via: 'wire' | 'picker'
+  /** which of the character's variants to use; omitted = default variant. */
+  variantId?: string
 }
 
 export function createDefaultShotSheet(): ShotSheet {

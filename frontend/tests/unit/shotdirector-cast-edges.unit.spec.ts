@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 
-const N = (id: string, slug: string | null, name = slug ?? '', nodeType: 'Character' | 'CharacterSheet' = 'Character') =>
-  ({ id, nodeType, characterSlug: slug, characterName: name })
+const N = (
+  id: string, slug: string | null, name = slug ?? '',
+  nodeType: 'Character' | 'CharacterSheet' = 'Character',
+  variantId?: string | null,
+) => ({ id, nodeType, characterSlug: slug, characterName: name, characterVariantId: variantId ?? null })
 const SD = { id: 'sd1', nodeType: 'ShotDirector' }
 const E = (source: string, handle: string) => ({ source, target: 'sd1', targetHandle: handle })
 
@@ -32,6 +35,18 @@ describe('wireCastFor', () => {
       { slug: 'reva', name: 'Reva', via: 'wire' },
     ])
   })
+  it('carries characterVariantId through as variantId', () => {
+    const nodes = [SD, N('c1', 'reva', 'Reva', 'Character', 'raincoat')]
+    expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
+      { slug: 'reva', name: 'Reva', via: 'wire', variantId: 'raincoat' },
+    ])
+  })
+  it('omits variantId when the node has none', () => {
+    const nodes = [SD, N('c1', 'reva', 'Reva')]
+    expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
+      { slug: 'reva', name: 'Reva', via: 'wire' },
+    ])
+  })
 })
 
 describe('syncCast', () => {
@@ -56,5 +71,13 @@ describe('syncCast', () => {
   })
   it('appends genuinely new wire members at the end, keeping prior order', () => {
     expect(syncCast([marcusWire], [marcusWire, zoeWire])).toEqual([marcusWire, zoeWire])
+  })
+  it('treats a variantId change on a wire member as a change, updating in place', () => {
+    const marcusRaincoat = { ...marcusWire, variantId: 'raincoat' }
+    expect(syncCast([marcusWire], [marcusRaincoat])).toEqual([marcusRaincoat])
+  })
+  it('no change when the wire member variantId is identical', () => {
+    const marcusRaincoat = { ...marcusWire, variantId: 'raincoat' }
+    expect(syncCast([marcusRaincoat], [{ ...marcusRaincoat }])).toBeNull()
   })
 })

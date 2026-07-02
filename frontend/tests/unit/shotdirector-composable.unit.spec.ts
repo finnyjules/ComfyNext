@@ -191,7 +191,8 @@ describe('useShotDirector cast', () => {
 
   it('addCastMember persists cast and result materializes refs + clause', () => {
     let persisted: ShotSheet | undefined
-    const resolve = (slugs: string[]) => Object.fromEntries(slugs.map(s => [s, [U(`${s}.png`)]]))
+    const resolve = (picks: { slug: string; variantId?: string }[]) =>
+      Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
     const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), (s) => { persisted = s }, resolve)
 
     addCastMember('reva', 'Reva')
@@ -216,5 +217,19 @@ describe('useShotDirector cast', () => {
     const { result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, () => ({ reva: [] }))
     addCastMember('reva', 'Reva')
     expect(result.value.issues.some(i => i.code === 'cast-member-no-refs' && i.level === 'error')).toBe(true)
+  })
+
+  it('addCastMember stores an optional variantId and passes it to resolveCast', () => {
+    let seenPicks: { slug: string; variantId?: string }[] = []
+    const resolve = (picks: { slug: string; variantId?: string }[]) => {
+      seenPicks = picks
+      return Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
+    }
+    const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, resolve)
+
+    addCastMember('reva', 'Reva', 'picker', 'raincoat')
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }])
+    void result.value // force the computed to evaluate resolveCast
+    expect(seenPicks).toEqual([{ slug: 'reva', variantId: 'raincoat' }])
   })
 })

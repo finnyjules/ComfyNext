@@ -32,9 +32,11 @@ export function hydrateShotSheet(raw: unknown): ShotSheet {
       pacing: str(cam.pacing, d.camera.pacing) as ShotSheet['camera']['pacing'],
     },
     constraints: arr<string>(r.constraints),
-    cast: arr<CastMember>(r.cast).filter(c =>
-      c && typeof c.slug === 'string' && typeof c.name === 'string'
-      && (c.via === 'wire' || c.via === 'picker')),
+    cast: arr<CastMember>(r.cast)
+      .filter(c =>
+        c && typeof c.slug === 'string' && typeof c.name === 'string'
+        && (c.via === 'wire' || c.via === 'picker'))
+      .map(c => typeof c.variantId === 'string' ? c : { slug: c.slug, name: c.name, via: c.via }),
     references: arr<Ref>(r.references),
     firstFrame: typeof r.firstFrame === 'string' ? r.firstFrame : undefined,
     lastFrame: typeof r.lastFrame === 'string' ? r.lastFrame : undefined,

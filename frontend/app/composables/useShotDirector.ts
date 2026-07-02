@@ -18,7 +18,7 @@ export interface UseShotDirectorReturn {
   addReference: (kind: RefKind, src: string, role: ShotSheet['references'][number]['role']) => void
   removeReference: (kind: RefKind, slot: number) => void
   rerollSeed: () => void
-  addCastMember: (slug: string, name: string, via?: 'wire' | 'picker') => void
+  addCastMember: (slug: string, name: string, via?: 'wire' | 'picker', variantId?: string) => void
   removeCastMember: (slug: string) => void
 }
 
@@ -26,12 +26,12 @@ export interface UseShotDirectorReturn {
  * Creates a reactive Shot Director sheet with compilation and persistence.
  * @param initial - Raw data to hydrate (e.g., node.data.properties.comfynext_shotDirector)
  * @param persist - Callback to persist the sheet after mutations
- * @param resolveCast - Optional callback to resolve cast member slugs to reference URLs
+ * @param resolveCast - Optional callback to resolve cast member { slug, variantId? } picks to reference URLs, keyed by slug
  */
 export function useShotDirector(
   initial: unknown,
   persist: (sheet: ShotSheet) => void,
-  resolveCast?: (slugs: string[]) => Record<string, string[]>,
+  resolveCast?: (picks: { slug: string; variantId?: string }[]) => Record<string, string[]>,
 ): UseShotDirectorReturn {
   const sheet = ref<ShotSheet>(hydrateShotSheet(initial))
   const profile = getProfile('seedance-2.0')
@@ -41,7 +41,7 @@ export function useShotDirector(
     if (!s.cast.length || !resolveCast) {
       return compileShot(s, profile)
     }
-    const resolved = resolveCast(s.cast.map(m => m.slug))
+    const resolved = resolveCast(s.cast.map(m => ({ slug: m.slug, variantId: m.variantId })))
     const { sheet: materialized, issues: castIssues } = materializeCast(s, resolved, profile)
     const compiled = compileShot(materialized, profile)
     return { ...compiled, issues: [...castIssues, ...compiled.issues] }
@@ -65,9 +65,9 @@ export function useShotDirector(
     update(s => ({ ...s, format: { ...s.format, seed: Math.floor(Math.random() * 2_147_483_646) + 1 } }))
   }
 
-  const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker') => {
+  const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker', variantId?: string) => {
     if (sheet.value.cast.some(m => m.slug === slug)) return
-    update(s => ({ ...s, cast: [...s.cast, { slug, name, via }] }))
+    update(s => ({ ...s, cast: [...s.cast, { slug, name, via, ...(variantId ? { variantId } : {}) }] }))
   }
 
   const removeCastMember = (slug: string) => {
