@@ -13,6 +13,7 @@ export function wireCastFor(studioId: string, nodes: CastNodeLite[], edges: Cast
     .map(e => byId.get(e.source))
     .filter((n): n is CastNodeLite => !!n && n.nodeType === 'Character' && !!n.characterSlug)
     .map(n => ({ slug: n.characterSlug!, name: n.characterName || n.characterSlug!, via: 'wire' as const }))
+    .filter((m, i, arr) => arr.findIndex(x => x.slug === m.slug) === i) // dedupe by slug, keeping first occurrence (lowest input order)
 }
 
 export function syncCast(existing: CastMember[], wire: CastMember[]): CastMember[] | null {

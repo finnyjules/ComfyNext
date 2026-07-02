@@ -44,8 +44,7 @@ function castCover(slug: string): string | null {
 function onRemoveCast(m: CastMember) {
   if (m.via === 'wire') {
     // One gesture, both representations: ask the canvas to drop the edge;
-    // the edge-sync (Slice B Task 11) removes the cast entry. Until Task 11
-    // lands, fall through to direct removal.
+    // the edge-sync reconciles the cast entry. Direct removal keeps the surface instant.
     window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
   }
   removeCastMember(m.slug)

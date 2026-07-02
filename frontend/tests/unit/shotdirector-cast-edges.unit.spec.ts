@@ -19,6 +19,13 @@ describe('wireCastFor', () => {
     const nodes = [SD, N('c1', null), { id: 'img', nodeType: 'Image' }]
     expect(wireCastFor('sd1', nodes, [E('c1', 'input-0'), E('img', 'input-1')])).toEqual([])
   })
+  it('dedupes same node wired into multiple cast inputs, keeping first occurrence', () => {
+    const nodes = [SD, N('c1', 'reva', 'Reva')]
+    const edges = [E('c1', 'input-0'), E('c1', 'input-1')]
+    expect(wireCastFor('sd1', nodes, edges)).toEqual([
+      { slug: 'reva', name: 'Reva', via: 'wire' },
+    ])
+  })
 })
 
 describe('syncCast', () => {
