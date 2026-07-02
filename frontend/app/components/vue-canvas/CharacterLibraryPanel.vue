@@ -24,10 +24,73 @@ import {
   type LoRALibraryEntry,
 } from '~/data/lora-library'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import { useCharacters, type CharacterClient } from '~/composables/useCharacters'
+import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 
 defineEmits<{ close: [] }>()
 
 const { addNode } = useNodeSearch()
+
+// ── Castable characters (registry) ─────────────────────────────────────────
+const { characters: castChars, coverUrl } = useCharacters()
+const expandedSlug = ref<string | null>(null)
+
+function changed() { window.dispatchEvent(new CustomEvent('comfynext:charactersChanged')) }
+
+async function createCharacter() {
+  const name = window.prompt('Character name')?.trim()
+  if (!name) return
+  const res = await fetch('/api/characters-local', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+  })
+  if (res.ok) { changed(); expandedSlug.value = (await res.json()).slug }
+}
+
+async function patchChar(slug: string, patch: Record<string, unknown>) {
+  const res = await fetch('/api/characters-local', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, ...patch }),
+  })
+  if (res.ok) changed()
+}
+
+async function addRefFiles(c: CharacterClient, e: Event) {
+  const files = Array.from((e.target as HTMLInputElement).files ?? [])
+  if (!files.length) return
+  const names: string[] = []
+  for (const f of files) {
+    try {
+      const url = await uploadRefFile(f)
+      names.push(new URLSearchParams(url.split('?')[1]).get('filename')!)
+    } catch { /* skip failed upload */ }
+  }
+  if (names.length) await patchChar(c.slug, { refImages: [...c.refImages, ...names] })
+  ;(e.target as HTMLInputElement).value = ''
+}
+
+async function removeRef(c: CharacterClient, idx: number) {
+  await patchChar(c.slug, { refImages: c.refImages.filter((_, i) => i !== idx) })
+}
+
+async function deleteCharacter(c: CharacterClient) {
+  if (!window.confirm(`Delete character "${c.name}"? Shots casting them will show an error.`)) return
+  await patchChar(c.slug, { remove: true })
+}
+
+/** LoRA character (kind==='character') without a registry record → create + link. */
+async function makeCastable(lora: { name: string, filename: string, trigger: string | null }) {
+  const res = await fetch('/api/characters-local', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: lora.name }),
+  })
+  if (!res.ok) return
+  const { slug } = await res.json() as { slug: string }
+  await patchChar(slug, { loraName: lora.filename, trigger: lora.trigger })
+  expandedSlug.value = slug
+}
+
+function isCastable(lora: { filename: string }): boolean {
+  return castChars.value.some(c => c.loraName === lora.filename)
+}
 
 // ── Your trained LoRAs ─────────────────────────────────────────────────────
 interface LocalLora {
@@ -216,6 +279,49 @@ function tileColor(seed: string): string {
     </div>
 
     <div class="flex-1 overflow-y-auto">
+      <!-- ── 0 · Castable characters (registry) ──────────────────────────── -->
+      <div class="px-3 pt-3">
+        <div class="mb-4">
+          <div class="mb-2 flex items-center justify-between">
+            <h4 class="text-[11px] font-medium uppercase tracking-wide text-white/50">Castable characters</h4>
+            <button class="rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/70 hover:bg-white/10" @click="createCharacter">New</button>
+          </div>
+          <div v-for="c in castChars" :key="c.slug" class="mb-1.5 rounded-lg border border-white/10 bg-white/[0.03]">
+            <button class="flex w-full items-center gap-2 p-2 text-left" @click="expandedSlug = expandedSlug === c.slug ? null : c.slug">
+              <img v-if="coverUrl(c)" :src="coverUrl(c)!" class="h-8 w-8 rounded object-cover" :alt="c.name">
+              <div v-else class="h-8 w-8 rounded bg-white/[0.06]" />
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-[12px] text-white/85">{{ c.name }}</div>
+                <div class="text-[10px] text-white/40">{{ c.refImages.length }} refs{{ c.loraName ? ' · LoRA-linked' : '' }}</div>
+              </div>
+            </button>
+            <div v-if="expandedSlug === c.slug" class="border-t border-white/[0.06] p-2">
+              <div class="grid grid-cols-4 gap-1.5">
+                <div v-for="(f, i) in c.refImages" :key="f" class="group relative aspect-square overflow-hidden rounded">
+                  <img :src="`/view?filename=${encodeURIComponent(f)}&type=input`" class="h-full w-full object-cover">
+                  <button
+                    class="absolute right-0.5 top-0.5 hidden rounded bg-black/70 px-1 text-[10px] text-white/80 group-hover:block"
+                    @click="removeRef(c, i)"
+                  >×</button>
+                  <button
+                    v-if="i !== c.coverIndex"
+                    class="absolute bottom-0.5 left-0.5 hidden rounded bg-black/70 px-1 text-[9px] text-white/70 group-hover:block"
+                    @click="patchChar(c.slug, { coverIndex: i })"
+                  >cover</button>
+                </div>
+                <label class="flex aspect-square cursor-pointer items-center justify-center rounded border border-dashed border-white/15 text-[16px] text-white/40 hover:border-white/30">
+                  +<input type="file" accept="image/*" multiple class="hidden" @change="addRefFiles(c, $event)">
+                </label>
+              </div>
+              <div class="mt-2 flex justify-end">
+                <button class="text-[10px] text-white/35 hover:text-red-400/80" @click="deleteCharacter(c)">Delete character</button>
+              </div>
+            </div>
+          </div>
+          <p v-if="!castChars.length" class="text-[11px] text-white/30">None yet — "New", or save one from any image on the canvas.</p>
+        </div>
+      </div>
+
       <!-- ── 1 · Character ─────────────────────────────────────────────── -->
       <div class="px-3 pt-3">
         <div class="flex items-center justify-between mb-2">
@@ -254,8 +360,14 @@ function tileColor(seed: string): string {
             >
               <Check class="size-3 text-white" />
             </div>
-            <div class="absolute inset-x-0 bottom-0 px-2 pt-5 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent">
+            <div class="absolute inset-x-0 bottom-0 px-2 pt-5 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent flex items-end justify-between gap-1">
               <div class="text-[11px] font-medium text-white truncate">{{ c.name }}</div>
+              <span
+                v-if="!isCastable(c)"
+                class="shrink-0 rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-white/80 hover:bg-white/25 cursor-pointer"
+                title="Make this character castable in Shot Director"
+                @click.stop="makeCastable(c)"
+              >Make castable</span>
             </div>
           </button>
         </div>
