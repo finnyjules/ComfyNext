@@ -2646,6 +2646,75 @@ function handleSpaceTypeOutput(e: Event) {
   }
 }
 
+// Character Library panel "Use in image": ready characters (linked LoRA) get a
+// prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
+// seeded from the default variant's cover photo. Always re-fetches the registry
+// (same pattern as handleShotDirectorGenerate) rather than trusting the panel's cache.
+async function handleAddCharacterImageGen(e: Event) {
+  const { slug } = (e as CustomEvent<{ slug: string }>).detail ?? {}
+  if (!slug) return
+  type VariantLite = { id: string, refImages: string[], coverIndex: number }
+  type CharacterLite = { slug: string, name: string, loraName: string | null, trigger: string | null, variants?: VariantLite[] }
+  let character: CharacterLite | undefined
+  try {
+    const res = await fetch('/api/characters-local')
+    const data = res.ok ? await res.json() as { characters?: CharacterLite[] } : {}
+    character = (data.characters ?? []).find(c => c.slug === slug)
+  } catch { /* character stays undefined — no-op below */ }
+  if (!character) return
+
+  const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+
+  if (character.loraName) {
+    nodes.value.push(createNodeData('FluxLoRARemoteNode', pos, {
+      prompt: character.trigger ? `${character.trigger}, ` : '',
+      lora_name: character.loraName,
+      lora_scale: 1.0,
+    }))
+    return
+  }
+
+  const variants = character.variants ?? []
+  const def = variants.find(v => v.id === 'default') ?? variants[0]
+  const cover = def?.refImages[def.coverIndex] ?? def?.refImages[0]
+  if (!cover) {
+    toast.error(`Add a photo to ${character.name} first`)
+    return
+  }
+
+  const imgNode = createNodeData('Image', pos, { image: cover })
+  const faceNode = createNodeData('ConsistentFaceNode', { x: pos.x + (imgNode.data?.size?.[0] ?? 220) + 80, y: pos.y })
+  nodes.value.push(imgNode, faceNode)
+
+  const ins = (faceNode.data?.inputs ?? []) as any[]
+  const inIdx = ins.findIndex((i) => i.name === 'reference_image')
+  if (inIdx >= 0) {
+    edges.value.push({
+      id: 'e-' + mintNodeId(),
+      source: imgNode.id,
+      sourceHandle: 'output-0',
+      target: faceNode.id,
+      targetHandle: `input-${inIdx}`,
+      type: 'comfy',
+      data: { dataType: ins[inIdx]?.type ?? 'IMAGE' },
+    } as any)
+  }
+}
+
+// Character Library panel "Cast in shot": drop a picked Character card on the
+// canvas so it can be wired into a Shot Director's cast slots (Task 11 syncs the edge).
+function handleAddCharacterCastNode(e: Event) {
+  const { slug, name, variantId } = (e as CustomEvent<{ slug: string, name: string, variantId?: string }>).detail ?? {}
+  if (!slug || !name) return
+  const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  nodes.value.push(createNodeData('Character', pos, undefined, {
+    comfynext_characterSlug: slug,
+    comfynext_characterName: name,
+    ...(variantId ? { comfynext_characterVariantId: variantId } : {}),
+  }))
+  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+}
+
 // Studio render cascade: a studio node's footer "Render" button re-bakes it and
 // (for the downstream scope) every chained studio, updating the image node between
 // each, then hands any real backend tail to the existing filtered run.
@@ -3125,6 +3194,8 @@ onMounted(() => {
   window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
+  window.addEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
+  window.addEventListener('comfynext:addCharacterCastNode', handleAddCharacterCastNode)
   window.addEventListener('comfynext:studioRender', handleStudioRender)
   window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
   window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
@@ -3166,6 +3237,8 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.removeEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.removeEventListener('comfynext:uncastCharacter', handleUncastCharacter)
+  window.removeEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
+  window.removeEventListener('comfynext:addCharacterCastNode', handleAddCharacterCastNode)
   window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:studioRender', handleStudioRender)
   window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
