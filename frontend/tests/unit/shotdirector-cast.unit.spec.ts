@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CAST_MAX, castClause, materializeCast } from '~/lib/shotdirector/cast'
+import { compileShot } from '~/lib/shotdirector/compile'
 import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
 import { SEEDANCE_PROFILE } from '~/lib/shotdirector/profiles'
 import { createDefaultShotSheet } from '~/lib/shotdirector/types'
@@ -49,7 +50,32 @@ describe('materializeCast', () => {
     // budget 9 − 5 manual = 4; 2 members → floor(4/2)=2 each
     const { sheet, issues } = materializeCast(s, { reva: [U('1'), U('2'), U('3')], marcus: [U('4'), U('5'), U('6')] }, SEEDANCE_PROFILE)
     expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(2)
-    expect(issues.some(i => i.level === 'warning' && i.code === 'cast-refs-squeezed')).toBe(true)
+    const warning = issues.find(i => i.level === 'warning' && i.code === 'cast-refs-squeezed')
+    expect(warning).toBeDefined()
+    expect(warning!.message).toContain('crowd the')
+  })
+
+  it('warns with "remove manual references" when budget < members (overcap)', () => {
+    const s = sheetWithCast()
+    s.cast = [
+      { slug: 'a', name: 'Alice', via: 'picker' },
+      { slug: 'b', name: 'Bob', via: 'picker' },
+      { slug: 'c', name: 'Charlie', via: 'picker' },
+    ]
+    // 8 manual image refs + 3 members: budget 9 − 8 = 1; min 1 per member → would need 3 total,
+    // but only 1 available, so budget < members (1 < 3)
+    s.references = Array.from({ length: 8 }, (_, i) => ({
+      kind: 'image' as const, slot: i + 1, src: U(`man${i}`), role: 'style-transfer' as const,
+    }))
+    const { sheet, issues } = materializeCast(s, { a: [U('1')], b: [U('2')], c: [U('3')] }, SEEDANCE_PROFILE)
+    const warning = issues.find(i => i.level === 'warning' && i.code === 'cast-refs-squeezed')
+    expect(warning).toBeDefined()
+    expect(warning!.message).toContain('remove some manual references')
+    // Verify downstream compile catches the overflow
+    const compiled = compileShot(sheet, SEEDANCE_PROFILE)
+    const err = compiled.issues.find(i => i.code === 'too-many-image-refs')
+    expect(err).toBeDefined()
+    expect(err!.message).toContain('9 image references')
   })
 
   it('errors on a member with zero resolved refs and on unknown slugs', () => {

@@ -36,10 +36,14 @@ export function materializeCast(
   const manualImages = manual.filter(r => r.kind === 'image').length
   const budget = Math.max(0, profile.maxRefImages - manualImages)
   const perMember = Math.min(CAST_REF_CAP, Math.max(1, Math.floor(budget / Math.max(1, members.length))))
-  if (perMember < CAST_REF_CAP && members.some(m => (resolved[m.slug] ?? []).length > perMember)) {
+  const squeezed = perMember < CAST_REF_CAP && members.some(m => (resolved[m.slug] ?? []).length > 0)
+  if (squeezed) {
+    const overCap = budget < members.length
     issues.push({
       level: 'warning', code: 'cast-refs-squeezed',
-      message: `Manual references crowd the ${profile.maxRefImages}-image budget — cast members are limited to ${perMember} reference(s) each.`,
+      message: overCap
+        ? `Manual references leave no room in the ${profile.maxRefImages}-image budget for ${members.length} cast member(s) — remove some manual references.`
+        : `Manual references crowd the ${profile.maxRefImages}-image budget — cast members are limited to ${perMember} reference(s) each.`,
     })
   }
 
@@ -76,6 +80,7 @@ export function castClause(sheet: ShotSheet, profile: ModelProfile): string {
     bySlug.set(r.castSlug, tags)
   }
   if (!bySlug.size) return ''
+  // Deliberately follow sheet.cast order (identity source of truth), not reference slot order.
   const parts = sheet.cast
     .filter(m => bySlug.has(m.slug))
     .map(m => `${m.name} ${bySlug.get(m.slug)!.join(' ')}`)
