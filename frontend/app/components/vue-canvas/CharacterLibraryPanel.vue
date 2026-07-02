@@ -14,7 +14,7 @@ import { Drama, Images, Loader2, RefreshCcw, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
 import {
-  useCharacters, useTrainingJobs, characterStatus,
+  useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES,
   type CharacterClient, type CharacterVariantClient, type CharacterStatus,
 } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
@@ -74,11 +74,13 @@ function statusFor(c: CharacterClient): CharacterStatus {
   return characterStatus(c, jobs.value)
 }
 function trainingPct(c: CharacterClient): number | null {
+  // Same active-status semantics as characterStatus() — only an in-flight job
+  // counts, so a finished/failed job with a matching name can't surface stale progress.
   const job = jobs.value.find(j =>
-    (j.displayName ?? '').toLowerCase() === c.name.toLowerCase()
+    IN_FLIGHT_STATUSES.has(j.status)
     && j.loraKind === 'character'
-    && (j as any).progress !== undefined) as any
-  return typeof job?.progress === 'number' ? Math.round(job.progress * 100) : null
+    && (j.displayName ?? '').toLowerCase() === c.name.toLowerCase())
+  return typeof job?.progressPct === 'number' ? Math.round(job.progressPct) : null
 }
 function loraChip(c: CharacterClient): string {
   if (!c.loraName) return ''
@@ -113,7 +115,14 @@ function activeVariant(c: CharacterClient): CharacterVariantClient | undefined {
 
 // ── Variant ref upload / cover / remove ────────────────────────────────
 async function replaceVariant(c: CharacterClient, variantId: string, patch: Partial<CharacterVariantClient>) {
-  const variants = c.variants.map(v => v.id === variantId ? { ...v, ...patch } : v)
+  // Race: `c` is a click-time closure over `characters.value`. A
+  // `charactersChanged` refresh during any await before this point (e.g. a
+  // concurrent edit on this or another variant) reassigns `characters.value`,
+  // and this PATCH does a full-array replace server-side — so building from
+  // the stale `c.variants` would silently clobber that concurrent edit.
+  // Re-derive the live character right before building the patch body.
+  const live = characters.value.find(x => x.slug === c.slug) ?? c
+  const variants = live.variants.map(v => v.id === variantId ? { ...v, ...patch } : v)
   await patchChar(c.slug, { variants })
 }
 
@@ -129,7 +138,13 @@ async function addRefFiles(c: CharacterClient, variant: CharacterVariantClient, 
     } catch { failed++ }
   }
   if (failed) toast.error(`${failed} of ${files.length} upload${files.length === 1 ? '' : 's'} failed`, { description: names.length ? 'The rest were added' : undefined })
-  if (names.length) await replaceVariant(c, variant.id, { refImages: [...variant.refImages, ...names] })
+  // Re-read the live variant's refImages before appending — the upload loop
+  // above can be long-running, so `variant` may be a stale closure (same
+  // stale-closure race as replaceVariant/rerollTile).
+  if (names.length) {
+    const liveVariant = characters.value.find(x => x.slug === c.slug)?.variants.find(v => v.id === variant.id) ?? variant
+    await replaceVariant(c, variant.id, { refImages: [...liveVariant.refImages, ...names] })
+  }
   ;(e.target as HTMLInputElement).value = ''
 }
 
@@ -143,8 +158,13 @@ async function setCover(c: CharacterClient, variant: CharacterVariantClient, idx
 
 async function deleteVariant(c: CharacterClient, variant: CharacterVariantClient) {
   if (variant.id === 'default') return
+  // window.confirm blocks synchronously but can sit open indefinitely while
+  // the user reads it, during which characters.value can be reassigned —
+  // same stale-closure race as replaceVariant, and this builds its own
+  // array directly (not via replaceVariant), so re-derive live here too.
   if (!window.confirm(`Delete variant "${variant.label}"?`)) return
-  const variants = c.variants.filter(v => v.id !== variant.id)
+  const live = characters.value.find(x => x.slug === c.slug) ?? c
+  const variants = live.variants.filter(v => v.id !== variant.id)
   if (await patchChar(c.slug, { variants })) {
     selectedVariantId.value[c.slug] = 'default'
   }
@@ -174,7 +194,10 @@ async function createVariant(c: CharacterClient) {
     refImages: [],
     coverIndex: 0,
   }
-  const variants = [...c.variants, variant]
+  // Same stale-closure race as replaceVariant — re-derive the live character
+  // right before building the patch body.
+  const live = characters.value.find(x => x.slug === c.slug) ?? c
+  const variants = [...live.variants, variant]
   if (await patchChar(c.slug, { variants })) {
     addingVariant.value.delete(c.slug)
     selectedVariantId.value[c.slug] = variant.id
@@ -262,7 +285,12 @@ async function rerollTile(c: CharacterClient, variant: CharacterVariantClient, i
   const file = dataUrlToFile(shot.dataUrl, `sheet_${Date.now()}_${idx}.png`)
   const url = await uploadRefFile(file)
   const name = new URLSearchParams(url.split('?')[1]).get('filename')!
-  const refImages = [...variant.refImages]
+  // Re-read the live variant's refImages (not the captured `variant` closure)
+  // before splicing — same stale-closure race as replaceVariant, but here the
+  // patch itself is derived from refImages, so replaceVariant's own live-read
+  // of `variants` isn't enough to protect it.
+  const liveVariant = characters.value.find(x => x.slug === c.slug)?.variants.find(v => v.id === variant.id) ?? variant
+  const refImages = [...liveVariant.refImages]
   refImages[idx] = name
   await replaceVariant(c, variant.id, { refImages })
 }

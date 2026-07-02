@@ -96,9 +96,10 @@ export interface TrainingJobLike {
   loraKind?: string
   displayName?: string
   outputName?: string
+  progressPct?: number
 }
 
-const IN_FLIGHT_STATUSES = new Set(['queued', 'starting', 'processing'])
+export const IN_FLIGHT_STATUSES = new Set(['queued', 'starting', 'processing'])
 
 /** Loosely normalize a name for outputName comparison (lowercase, alnum-only). */
 function slugish(name: string): string {
