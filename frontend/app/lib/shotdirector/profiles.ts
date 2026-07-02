@@ -29,6 +29,11 @@ function bracketTag(kind: RefKind, slot: number): string {
   return `[${label}${slot}]`
 }
 
+function atTag(kind: RefKind, slot: number): string {
+  const label = kind === 'image' ? 'Image' : kind === 'video' ? 'Video' : 'Audio'
+  return `@${label}${slot}`
+}
+
 function srcsByKind(sheet: ShotSheet, kind: RefKind): string[] {
   return sheet.references
     .filter(r => r.kind === kind)
@@ -46,7 +51,7 @@ export const SEEDANCE_PROFILE: ModelProfile = {
   supportsGenerateAudio: true,
   wordBudgetWarn: 100,
   wordBudgetHard: 600,
-  refTag: bracketTag,
+  refTag: atTag,
   buildInput(sheet, prompt) {
     const input: ModelInput = {
       prompt,
@@ -58,15 +63,15 @@ export const SEEDANCE_PROFILE: ModelProfile = {
       const images = srcsByKind(sheet, 'image')
       const videos = srcsByKind(sheet, 'video')
       const audios = srcsByKind(sheet, 'audio')
-      if (images.length) input.reference_images = images
-      if (videos.length) input.reference_videos = videos
-      if (audios.length) input.reference_audios = audios
+      if (images.length) input.image_urls = images
+      if (videos.length) input.video_urls = videos
+      if (audios.length) input.audio_urls = audios
     } else {
-      if (sheet.firstFrame) input.image = sheet.firstFrame
-      if (sheet.lastFrame) input.last_frame_image = sheet.lastFrame
+      if (sheet.firstFrame) input.image_url = sheet.firstFrame
+      if (sheet.lastFrame) input.end_image_url = sheet.lastFrame
     }
     input.generate_audio = sheet.audio.generate
-    if (sheet.format.seed && sheet.format.seed > 0) input.seed = sheet.format.seed
+    // fal Seedance has no seed input — omit it.
     return input
   },
 }

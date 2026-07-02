@@ -18,7 +18,7 @@ describe('useShotDirector', () => {
     expect(sheet.value.references).toEqual([])
   })
 
-  it('addReference adds an image reference, emits [Image1] tag, and calls persist', () => {
+  it('addReference adds an image reference, emits @Image1 tag, and calls persist', () => {
     const initial = createDefaultShotSheet()
     let lastPersistedSheet: ShotSheet | undefined
     const persist = (s: ShotSheet) => { lastPersistedSheet = s }
@@ -27,10 +27,10 @@ describe('useShotDirector', () => {
 
     addReference('image', 'http://example.com/photo.jpg', 'identity-lock')
 
-    // Check result has [Image1] tag
-    expect(result.value.prompt).toContain('[Image1]')
-    // Check input has reference_images array
-    expect(result.value.input.reference_images).toEqual(['http://example.com/photo.jpg'])
+    // Check result has @Image1 tag
+    expect(result.value.prompt).toContain('@Image1')
+    // Check input has image_urls array
+    expect(result.value.input.image_urls).toEqual(['http://example.com/photo.jpg'])
     // Check persist was called with updated sheet
     expect(lastPersistedSheet?.references).toHaveLength(1)
     expect(lastPersistedSheet?.references[0]).toMatchObject({
@@ -50,9 +50,9 @@ describe('useShotDirector', () => {
     addReference('image', 'http://example.com/a.jpg', 'identity-lock')
     addReference('image', 'http://example.com/b.jpg', 'lighting-copy')
 
-    expect(result.value.prompt).toContain('[Image1]')
-    expect(result.value.prompt).toContain('[Image2]')
-    expect(result.value.input.reference_images).toEqual([
+    expect(result.value.prompt).toContain('@Image1')
+    expect(result.value.prompt).toContain('@Image2')
+    expect(result.value.input.image_urls).toEqual([
       'http://example.com/a.jpg',
       'http://example.com/b.jpg',
     ])
@@ -70,9 +70,9 @@ describe('useShotDirector', () => {
 
     removeReference('image', 1)
 
-    expect(result.value.prompt).not.toContain('[Image1]')
-    expect(result.value.prompt).toContain('[Image2]')
-    expect(result.value.input.reference_images).toEqual(['http://example.com/b.jpg'])
+    expect(result.value.prompt).not.toContain('@Image1')
+    expect(result.value.prompt).toContain('@Image2')
+    expect(result.value.input.image_urls).toEqual(['http://example.com/b.jpg'])
     expect(lastPersistedSheet?.references).toHaveLength(1)
   })
 
@@ -102,13 +102,13 @@ describe('useShotDirector', () => {
 
     // Start in reference mode, add an image
     addReference('image', 'http://example.com/a.jpg', 'identity-lock')
-    expect(result.value.prompt).toContain('[Image1]')
+    expect(result.value.prompt).toContain('@Image1')
 
     // Switch to firstLastFrame mode
     update(s => ({ ...s, mode: 'firstLastFrame' }))
 
     // Reference tags should no longer appear in prompt
-    expect(result.value.prompt).not.toContain('[Image')
+    expect(result.value.prompt).not.toContain('@Image')
   })
 
   it('profile is fixed to seedance-2.0', () => {
@@ -201,7 +201,7 @@ describe('useShotDirector cast', () => {
     // persisted sheet holds NO materialized cast refs
     expect(persisted?.references.some(r => r.castSlug)).toBe(false)
     // but the compiled result does
-    expect(result.value.prompt).toContain('Characters: Reva [Image1].')
+    expect(result.value.prompt).toContain('Characters: Reva @Image1.')
   })
 
   it('addCastMember dedupes; removeCastMember removes', () => {

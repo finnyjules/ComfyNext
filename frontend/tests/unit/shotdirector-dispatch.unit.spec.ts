@@ -28,7 +28,7 @@ describe('buildFilmShotPatch', () => {
     expect(patch.aspect_ratio).toBe(sheet.format.aspectRatio)
     const opts = JSON.parse(patch.model_options)
     expect(opts.resolution).toBe('720p')
-    expect(opts.reference_images).toEqual([DATA_URL])
+    expect(opts.image_urls).toEqual([DATA_URL])
     // widget-native keys must NOT leak into model_options
     for (const k of ['prompt', 'duration', 'aspect_ratio', 'seed']) {
       expect(opts).not.toHaveProperty(k)
@@ -60,9 +60,9 @@ describe('buildFilmShotPatch', () => {
     sheet.lastFrame = DATA_URL
     const patch = buildFilmShotPatch(sheet, compileShot(sheet, SEEDANCE_PROFILE))
     const opts = JSON.parse(patch.model_options)
-    expect(opts.image).toBe(DATA_URL)
-    expect(opts.last_frame_image).toBe(DATA_URL)
-    expect(opts.reference_images).toBeUndefined()
+    expect(opts.image_url).toBe(DATA_URL)
+    expect(opts.end_image_url).toBe(DATA_URL)
+    expect(opts.image_urls).toBeUndefined()
   })
 
   it('sends seed 0 when the sheet has no seed', () => {

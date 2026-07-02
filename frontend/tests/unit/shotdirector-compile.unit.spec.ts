@@ -35,7 +35,7 @@ describe('buildPrompt — reference mode, no beats', () => {
       + 'in a dim, smoky 1950s jazz club. '
       + 'Medium shot, slow push-in. '
       + 'Warm rim light from a single spotlight; grainy 16mm film. '
-      + "Use [Image1] for the character's identity and wardrobe; [Video1] for the camera movement. "
+      + "Use @Image1 for the character's identity and wardrobe; @Video1 for the camera movement. "
       + '"Good evening, everyone." '
       + 'Avoid jitter, bent limbs.',
     )
@@ -46,7 +46,7 @@ describe('buildPrompt — reference mode, no beats', () => {
     s.mode = 'firstLastFrame'
     s.firstFrame = 'FIRST'
     const prompt = buildPrompt(s, SEEDANCE_PROFILE)
-    expect(prompt).not.toContain('[Image')
+    expect(prompt).not.toContain('@Image')
     expect(prompt).toContain('Medium shot, slow push-in.')
   })
 })
@@ -75,7 +75,7 @@ describe('compileShot', () => {
     expect(r.issues).toEqual([])
     expect(r.wordCount).toBeGreaterThan(0)
     expect(r.input.prompt).toBe(r.prompt)
-    expect(r.input.reference_images).toEqual(['img1'])
+    expect(r.input.image_urls).toEqual(['img1'])
   })
 
   it('adds a warning when the prompt exceeds the word budget', () => {

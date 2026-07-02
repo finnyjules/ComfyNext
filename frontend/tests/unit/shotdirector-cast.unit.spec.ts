@@ -113,7 +113,7 @@ describe('castClause', () => {
   it('names each member with their bracket tags in slot order', () => {
     const s = sheetWithCast()
     const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
-    expect(castClause(sheet, SEEDANCE_PROFILE)).toBe('Characters: Reva [Image1] [Image2]; Marcus [Image3].')
+    expect(castClause(sheet, SEEDANCE_PROFILE)).toBe('Characters: Reva @Image1 @Image2; Marcus @Image3.')
   })
   it('is empty with no cast refs', () => {
     expect(castClause(createDefaultShotSheet(), SEEDANCE_PROFILE)).toBe('')
@@ -127,7 +127,7 @@ describe('compileShot cast integration', () => {
     s.action = 'walk along a pier'
     const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
     const res = compileShot(sheet, SEEDANCE_PROFILE)
-    expect(res.prompt.startsWith('Characters: Reva [Image1]; Marcus [Image2].')).toBe(true)
+    expect(res.prompt.startsWith('Characters: Reva @Image1; Marcus @Image2.')).toBe(true)
     expect(res.prompt).toContain('two friends')
   })
   it('prompt is unchanged for sheets with no cast', () => {
@@ -165,7 +165,7 @@ describe('compiled prompt noise suppression', () => {
     const s = sheetWithCast()
     const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
     const res = compileShot(sheet, SEEDANCE_PROFILE)
-    expect(res.prompt).not.toContain('Use [Image')
+    expect(res.prompt).not.toContain('Use @Image')
     expect(res.prompt).not.toContain('identity and wardrobe')
   })
 
@@ -174,9 +174,9 @@ describe('compiled prompt noise suppression', () => {
     s.references = [{ kind: 'image', slot: 1, src: U('style.png'), role: 'style-transfer' }]
     const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
     const res = compileShot(sheet, SEEDANCE_PROFILE)
-    // cast refs occupy [Image1][Image2]; the manual ref renumbers to [Image3]
-    expect(res.prompt).toContain('Use [Image3] for the visual style.')
-    expect(res.prompt).not.toContain('[Image1] for')
+    // cast refs occupy @Image1@Image2; the manual ref renumbers to @Image3
+    expect(res.prompt).toContain('Use @Image3 for the visual style.')
+    expect(res.prompt).not.toContain('@Image1 for')
   })
 
   it('blank dialogue rows emit no stray empty quotes', () => {
