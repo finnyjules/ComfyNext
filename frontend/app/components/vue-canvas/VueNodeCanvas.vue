@@ -1328,6 +1328,18 @@ const rootWorkflow = ref<any>(null) // Full workflow with definitions
 // Single source of truth for building a fresh node's data from object_info.
 // Used by drag-drop-from-sidebar, the node-search dialog, and wire splicing so
 // they never drift (the port/widget derivation used to be copy-pasted).
+/** Numeric node id that is unique against the CURRENT canvas. Date.now() alone
+ *  collides when two nodes are minted in the same millisecond (e.g. Shot
+ *  Director spawning a FilmShotNode and the run-path materializing its video
+ *  sink) — LiteGraph then renames one on sync and the filtered run targets a
+ *  ghost id ("Prompt has no outputs"). */
+function mintNodeId(from = Date.now()): string {
+  let id = from
+  const taken = new Set((nodes.value as any[]).map(n => String(n.id)))
+  while (taken.has(String(id))) id++
+  return String(id)
+}
+
 function createNodeData(nodeType: string, position: { x: number, y: number }, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>) {
   const info = objectInfo.value[nodeType]
   const widgetDefs = getWidgetDefs(nodeType)
@@ -1340,7 +1352,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
     }
   }
   const data = {
-    id: String(Date.now()),
+    id: mintNodeId(),
     type: vueFlowType,
     position,
     data: {
@@ -5194,7 +5206,7 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
       const alreadyWired = (edges.value as any[]).some((e) => e.source === id && e.sourceHandle === handle)
       if (alreadyWired) continue
 
-      const newId = String(idSeed++)
+      const newId = mintNodeId(idSeed++)
       // Slot multi-output cases vertically so they don't overlap.
       const position = { x: srcPos.x + srcW + 80, y: srcPos.y + stacked * 320 }
       stacked++
