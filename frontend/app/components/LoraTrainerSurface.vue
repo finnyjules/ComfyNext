@@ -298,6 +298,7 @@ watch(trainingKind, (kind, prev) => {
 // FluxLoRARemoteNode resolves the local filename to its CDN url via the sidecar
 // JSON our cloud-train route wrote, so the LoRA "just works" in the new graph.
 const { openTab, activeTabId } = useTabs()
+const { seedVersion } = usePendingTrainerSeed()
 function useTrainedLoraInWorkflow() {
   const fname = cloudJob.value?.localFilename
   if (!fname) return
@@ -484,11 +485,10 @@ onMounted(() => {
 
 // The trainer surface is kept mounted (v-show) once the singleton 'train' tab
 // is first opened, so a later "Train identity" click won't remount it and
-// onMounted above won't fire again — catch that case by also checking for a
-// pending seed whenever the train tab becomes the active tab.
-watch(activeTabId, (id) => {
-  if (id === 'train') consumePendingSeed()
-})
+// onMounted above won't fire again — catch that case by watching seedVersion,
+// which increments on each set() call, ensuring we detect new seeds even when
+// the tab is already active (avoiding the same-value-assignment dead zone).
+watch(seedVersion, () => consumePendingSeed())
 
 // ----- Upload helpers ----------------------------------------------------
 

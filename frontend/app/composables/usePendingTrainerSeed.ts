@@ -6,7 +6,13 @@
  * reference photos. Module-level singleton (not component state) so it
  * survives the navigation from panel → fresh tab mount. `consume()` clears
  * it so a later manual visit to the trainer starts blank.
+ *
+ * `seedVersion` is a version signal that increments on each `set()` call,
+ * allowing the trainer to detect a new seed even if the tab is already active
+ * (avoiding the watch(activeTabId) same-value-assignment dead zone).
  */
+
+import { ref, readonly } from 'vue'
 
 export interface TrainerSeed {
   kind: 'character'
@@ -16,10 +22,12 @@ export interface TrainerSeed {
 }
 
 let pending: TrainerSeed | null = null
+const seedVersion = ref(0)
 
 export function usePendingTrainerSeed() {
   function set(seed: TrainerSeed): void {
     pending = seed
+    seedVersion.value++
   }
 
   function consume(): TrainerSeed | null {
@@ -28,5 +36,5 @@ export function usePendingTrainerSeed() {
     return seed
   }
 
-  return { set, consume }
+  return { set, consume, seedVersion: readonly(seedVersion) }
 }

@@ -40,4 +40,28 @@ describe('usePendingTrainerSeed', () => {
     expect(consume()?.name).toBe('Second')
     expect(consume()).toBeNull()
   })
+
+  it('set() bumps seedVersion each call', () => {
+    const { set, seedVersion } = usePendingTrainerSeed()
+    const initial = seedVersion.value
+    set({ kind: 'character', name: 'Test1', refViewUrls: [] })
+    expect(seedVersion.value).toBe(initial + 1)
+    set({ kind: 'character', name: 'Test2', refViewUrls: [] })
+    expect(seedVersion.value).toBe(initial + 2)
+  })
+
+  it('consume-after-set returns the seed once then null', () => {
+    const { set, consume, seedVersion } = usePendingTrainerSeed()
+    const vBefore = seedVersion.value
+    set({ kind: 'character', name: 'Test', refViewUrls: [] })
+    expect(seedVersion.value).toBe(vBefore + 1)
+
+    const seed = consume()
+    expect(seed?.name).toBe('Test')
+
+    // Consuming clears it — subsequent consume returns null
+    expect(consume()).toBeNull()
+    // seedVersion does not change on consume, only on set
+    expect(seedVersion.value).toBe(vBefore + 1)
+  })
 })
