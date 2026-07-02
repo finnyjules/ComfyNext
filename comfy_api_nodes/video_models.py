@@ -21,6 +21,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
+
+
+def parse_view_ref(src: Any) -> str | None:
+    """Shot Director stores uploaded references as small '/view?filename=X&type=input'
+    URLs instead of multi-MB data URLs. Return the input-dir filename for such a ref,
+    or None for anything else (data:/https:/other paths pass through untouched).
+    Rejects path separators and '..' so a widget string can't escape the input dir."""
+    if not isinstance(src, str) or not src.startswith("/view?"):
+        return None
+    q = parse_qs(urlsplit(src).query)
+    if q.get("type", [""])[0] != "input":
+        return None
+    name = q.get("filename", [""])[0]
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    return name
 
 
 # (prompt, aspect_ratio, duration, seed, image_data_url|None,

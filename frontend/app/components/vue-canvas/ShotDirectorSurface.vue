@@ -10,6 +10,7 @@ import {
   type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole,
 } from '~/lib/shotdirector/types'
 import { formatShotUSD } from '~/lib/shotdirector/price'
+import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
@@ -111,17 +112,23 @@ function triggerFileAdd(kind: RefKind) {
   fileInputForKind(kind)?.click()
 }
 
-async function onFileAdd(kind: RefKind, e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  const dataUrl = await new Promise<string>((resolve, reject) => {
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result as string)
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
-  addReference(kind, dataUrl, DEFAULT_ROLE_BY_KIND[kind])
+}
+
+async function onFileAdd(kind: RefKind, e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  // Upload to the input dir and store the small /view URL; data-URL fallback
+  // only when the backend is unreachable (keeps the surface usable offline).
+  const src = await uploadRefFile(file).catch(() => fileToDataUrl(file))
+  addReference(kind, src, DEFAULT_ROLE_BY_KIND[kind])
   input.value = ''
 }
 
@@ -142,13 +149,8 @@ async function onFrameFile(which: 'firstFrame' | 'lastFrame', e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-  update(s => ({ ...s, [which]: dataUrl }))
+  const src = await uploadRefFile(file).catch(() => fileToDataUrl(file))
+  update(s => ({ ...s, [which]: src }))
   input.value = ''
 }
 

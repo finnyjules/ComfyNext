@@ -45,6 +45,8 @@ import asyncio
 import base64
 import io
 import json
+import mimetypes
+import os
 import time
 
 import aiohttp
@@ -2888,7 +2890,47 @@ from comfy_api_nodes.video_models import (
     ALL_VIDEO_ASPECT_RATIOS as _VIDEO_GEN_ASPECT_RATIOS,
     ALL_VIDEO_DURATIONS as _VIDEO_GEN_DURATIONS,
     DEFAULT_VIDEO_MODEL_ID as _VIDEO_DEFAULT_MODEL_ID,
+    parse_view_ref as _parse_view_ref,
 )
+
+
+# Shot Director references arrive in model_options as small local
+# '/view?filename=X&type=input' URLs (uploaded via /upload/image) instead of
+# multi-MB data URLs — see frontend/app/lib/shotdirector/refUpload.ts. Replicate
+# can't fetch 127.0.0.1, so resolve them to data URLs here, at execute time.
+# data:/https: refs pass through untouched.
+_LOCAL_REF_LIST_KEYS = ("reference_images", "reference_videos", "reference_audios")
+_LOCAL_REF_STR_KEYS = ("image", "last_frame_image")
+
+
+def _local_ref_to_data_url(filename: str) -> str:
+    path = os.path.join(folder_paths.get_input_directory(), filename)
+    if not os.path.isfile(path):
+        raise RuntimeError(
+            f"Reference file {filename!r} is missing from the input folder — "
+            "re-add the reference in the Shot Director."
+        )
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
+def _resolve_local_refs(advanced: dict) -> dict:
+    def resolve(src):
+        name = _parse_view_ref(src)
+        return _local_ref_to_data_url(name) if name else src
+
+    out = dict(advanced)
+    for key in _LOCAL_REF_LIST_KEYS:
+        vals = out.get(key)
+        if isinstance(vals, list):
+            out[key] = [resolve(s) for s in vals]
+    for key in _LOCAL_REF_STR_KEYS:
+        val = out.get(key)
+        if isinstance(val, str) and val:
+            out[key] = resolve(val)
+    return out
 
 # Combo serializes the model `id` (e.g. "veo-3.1") so we can rename labels
 # without breaking saved workflows.
@@ -3153,6 +3195,7 @@ class FilmShotNode(IO.ComfyNode):
         # model_options; pop it here so it never reaches the Seedance
         # builder or Replicate.
         shot_directed = bool(advanced.pop("__shot_directed", False))
+        advanced = _resolve_local_refs(advanced)
 
         recipe = _resolve_shot_recipe(preset, shot_size, camera_angle,
                                       camera_movement, lens_look, composition)
