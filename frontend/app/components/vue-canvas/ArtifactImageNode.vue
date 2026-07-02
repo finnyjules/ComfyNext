@@ -305,10 +305,18 @@ async function saveAsCharacter() {
     })
     if (!created.ok) throw new Error(`create ${created.status}`)
     const { slug } = await created.json() as { slug: string }
-    await fetch('/api/characters-local', {
+    const patched = await fetch('/api/characters-local', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug, refImages: [filename] }),
     })
+    if (!patched.ok) {
+      // Don't leave an orphan zero-ref character behind.
+      await fetch('/api/characters-local', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, remove: true }),
+      }).catch(() => {})
+      throw new Error(`attach ref ${patched.status}`)
+    }
     window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
   } catch (e) {
     console.warn('[saveAsCharacter]', e)
