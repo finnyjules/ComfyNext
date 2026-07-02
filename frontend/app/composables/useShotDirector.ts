@@ -9,6 +9,7 @@ import { compileShot, type CompileResult } from '~/lib/shotdirector/compile'
 import { getProfile, type ModelProfile } from '~/lib/shotdirector/profiles'
 import type { RefKind, ShotSheet } from '~/lib/shotdirector/types'
 import { materializeCast } from '~/lib/shotdirector/cast'
+import type { ValidationIssue } from '~/lib/shotdirector/rules'
 
 export interface UseShotDirectorReturn {
   sheet: Ref<ShotSheet>
@@ -27,11 +28,13 @@ export interface UseShotDirectorReturn {
  * @param initial - Raw data to hydrate (e.g., node.data.properties.comfynext_shotDirector)
  * @param persist - Callback to persist the sheet after mutations
  * @param resolveCast - Optional callback to resolve cast member { slug, variantId? } picks to reference URLs, keyed by slug
+ * @param castWarnings - Optional callback producing extra warning issues for the cast (e.g. a deleted variant that silently fell back to Default)
  */
 export function useShotDirector(
   initial: unknown,
   persist: (sheet: ShotSheet) => void,
   resolveCast?: (picks: { slug: string; variantId?: string }[]) => Record<string, string[]>,
+  castWarnings?: (picks: { slug: string; name: string; variantId?: string }[]) => ValidationIssue[],
 ): UseShotDirectorReturn {
   const sheet = ref<ShotSheet>(hydrateShotSheet(initial))
   const profile = getProfile('seedance-2.0')
@@ -41,10 +44,12 @@ export function useShotDirector(
     if (!s.cast.length || !resolveCast) {
       return compileShot(s, profile)
     }
-    const resolved = resolveCast(s.cast.map(m => ({ slug: m.slug, variantId: m.variantId })))
+    const picks = s.cast.map(m => ({ slug: m.slug, name: m.name, variantId: m.variantId }))
+    const resolved = resolveCast(picks)
+    const warnings = castWarnings?.(picks) ?? []
     const { sheet: materialized, issues: castIssues } = materializeCast(s, resolved, profile)
     const compiled = compileShot(materialized, profile)
-    return { ...compiled, issues: [...castIssues, ...compiled.issues] }
+    return { ...compiled, issues: [...warnings, ...castIssues, ...compiled.issues] }
   })
 
   const update = (mutator: (s: ShotSheet) => ShotSheet) => {

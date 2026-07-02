@@ -230,7 +230,8 @@ describe('useShotDirector cast', () => {
     addCastMember('reva', 'Reva', 'picker', 'raincoat')
     expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }])
     void result.value // force the computed to evaluate resolveCast
-    expect(seenPicks).toEqual([{ slug: 'reva', variantId: 'raincoat' }])
+    // picks also carry `name` for the castWarnings channel — assert structurally
+    expect(seenPicks).toMatchObject([{ slug: 'reva', variantId: 'raincoat' }])
   })
 
   it('addCastMember normalizes variantId "default" to undefined', () => {
@@ -244,6 +245,25 @@ describe('useShotDirector cast', () => {
     addCastMember('reva', 'Reva', 'picker', 'default')
     expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
     void result.value // force the computed to evaluate resolveCast
-    expect(seenPicks).toEqual([{ slug: 'reva' }])
+    expect(seenPicks).toMatchObject([{ slug: 'reva' }])
+    expect(seenPicks[0].variantId).toBeUndefined()
+  })
+})
+
+describe('useShotDirector castWarnings channel', () => {
+  it('merges warning issues from the castWarnings callback into result.issues', () => {
+    const U = (n: string) => `/view?filename=${n}&type=input`
+    const { result, addCastMember } = useShotDirector(
+      createDefaultShotSheet(),
+      () => {},
+      () => ({ vera: [U('r1.png')] }),
+      picks => picks.some(p => p.variantId === 'v-gone')
+        ? [{ level: 'warning' as const, code: 'cast-variant-missing', message: 'Vera\'s selected look no longer exists — using their Default look.' }]
+        : [],
+    )
+    addCastMember('vera', 'Vera', 'picker', 'v-gone')
+    expect(result.value.issues.some(i => i.code === 'cast-variant-missing' && i.level === 'warning')).toBe(true)
+    // warnings do not gate: no error-level issue from the warning itself
+    expect(result.value.issues.filter(i => i.level === 'error')).toHaveLength(0)
   })
 })

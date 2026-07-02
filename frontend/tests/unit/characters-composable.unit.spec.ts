@@ -137,3 +137,25 @@ describe('useTrainingJobs', () => {
     expect(jobs.value).toEqual([])
   })
 })
+
+describe('missingVariantIssues', () => {
+  const catalog = [
+    { slug: 'vera', variants: [{ id: 'default' }, { id: 'v-abc' }] },
+  ]
+
+  it('warns when a picked variant no longer exists on a known character', async () => {
+    const { missingVariantIssues } = await import('~/composables/useCharacters')
+    const issues = missingVariantIssues([{ slug: 'vera', name: 'Vera', variantId: 'v-deleted' }], catalog)
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({ level: 'warning', code: 'cast-variant-missing' })
+    expect(issues[0]!.message).toContain('Vera')
+  })
+
+  it('stays silent for existing variants, default picks, and unknown characters', async () => {
+    const { missingVariantIssues } = await import('~/composables/useCharacters')
+    expect(missingVariantIssues([{ slug: 'vera', name: 'Vera', variantId: 'v-abc' }], catalog)).toEqual([])
+    expect(missingVariantIssues([{ slug: 'vera', name: 'Vera' }], catalog)).toEqual([])
+    // unknown slug: zero-refs error covers it downstream — no duplicate warning
+    expect(missingVariantIssues([{ slug: 'ghost', name: 'Ghost', variantId: 'v-x' }], catalog)).toEqual([])
+  })
+})

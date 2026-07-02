@@ -46,6 +46,33 @@ function pickVariant(c: CharacterClient, variantId?: string): CharacterVariantCl
   return byId ?? c.variants.find(v => v.id === 'default') ?? c.variants[0]
 }
 
+/**
+ * Warning issues for cast picks whose variant no longer exists (deleted from
+ * the character) — resolution silently falls back to the Default look, so the
+ * shot renders differently than the sheet says; surface that. Unknown SLUGS
+ * are not warned here: they already produce the zero-refs error downstream.
+ * Pure over the given catalog so it unit-tests without module state.
+ */
+export function missingVariantIssues(
+  picks: { slug: string; name: string; variantId?: string }[],
+  catalog: { slug: string; variants: { id: string }[] }[],
+): { level: 'warning'; code: string; message: string }[] {
+  const bySlug = new Map(catalog.map(c => [c.slug, c]))
+  const issues: { level: 'warning'; code: string; message: string }[] = []
+  for (const p of picks) {
+    if (!p.variantId) continue
+    const c = bySlug.get(p.slug)
+    if (c && !c.variants.some(v => v.id === p.variantId)) {
+      issues.push({
+        level: 'warning',
+        code: 'cast-variant-missing',
+        message: `${p.name}'s selected look no longer exists — using their Default look.`,
+      })
+    }
+  }
+  return issues
+}
+
 export function useCharacters() {
   if (!listenerBound && typeof window !== 'undefined') {
     listenerBound = true

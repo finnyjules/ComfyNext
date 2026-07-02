@@ -5,7 +5,7 @@
 import { computed, ref } from 'vue'
 import { X, Plus, Copy, Check, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
-import { useCharacters } from '~/composables/useCharacters'
+import { useCharacters, missingVariantIssues } from '~/composables/useCharacters'
 import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
   type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole, type CastMember,
@@ -33,7 +33,15 @@ const { sheet, result, addReference, removeReference, update, rerollSeed, addCas
   node.value?.data?.properties?.comfynext_shotDirector,
   persist,
   picks => resolveVariantRefs(picks),
+  picks => missingVariantIssues(picks, characters.value),
 )
+
+/** True when this member's picked variant was deleted (falls back to Default). */
+function variantMissing(m: CastMember): boolean {
+  if (!m.variantId) return false
+  const c = characters.value.find(x => x.slug === m.slug)
+  return !!c && !c.variants.some(v => v.id === m.variantId)
+}
 
 // ── First-open guide ───────────────────────────────────────────────────────────
 // Visible only on a blank sheet; disappears the moment any real input lands.
@@ -366,6 +374,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                   >
                     <img v-if="castCover(m)" :src="castCover(m)!" class="h-5 w-5 rounded-full object-cover" :alt="m.name">
                     {{ m.name }}<span v-if="variantLabel(m)" class="text-white/50"> · {{ variantLabel(m) }}</span>
+                    <span v-if="variantMissing(m)" class="text-[10px] text-amber-400/90" title="The selected look was deleted — this shot will use their Default look">· Default (look deleted)</span>
                     <span v-if="m.via === 'wire'" class="text-[9px] text-white/35" title="Cast by canvas wire — remove by unwiring or here">⌁</span>
                     <button class="text-white/35 hover:text-white/80" @click="onRemoveCast(m)">×</button>
                   </span>
