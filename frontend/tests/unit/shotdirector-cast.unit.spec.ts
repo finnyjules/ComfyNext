@@ -111,6 +111,24 @@ describe('castClause', () => {
   })
 })
 
+describe('compileShot cast integration', () => {
+  it('prepends the cast clause to the compiled prompt and counts it in the word budget', () => {
+    const s = sheetWithCast()
+    s.subject = 'two friends'
+    s.action = 'walk along a pier'
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    const res = compileShot(sheet, SEEDANCE_PROFILE)
+    expect(res.prompt.startsWith('Characters: Reva [Image1]; Marcus [Image2].')).toBe(true)
+    expect(res.prompt).toContain('two friends')
+  })
+  it('prompt is unchanged for sheets with no cast', () => {
+    const s = createDefaultShotSheet()
+    s.subject = 'a lighthouse'
+    s.action = 'stands in fog'
+    expect(compileShot(s, SEEDANCE_PROFILE).prompt.startsWith('Characters:')).toBe(false)
+  })
+})
+
 describe('hydrate back-compat', () => {
   it('old sheets without cast hydrate to []', () => {
     expect(hydrateShotSheet({ subject: 'x' }).cast).toEqual([])

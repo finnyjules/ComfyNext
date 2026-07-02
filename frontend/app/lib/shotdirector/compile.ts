@@ -10,6 +10,7 @@ import {
 } from './types'
 import { validateShotSheet, type RefCaps, type ValidationIssue } from './rules'
 import type { ModelInput, ModelProfile } from './profiles'
+import { castClause } from './cast'
 
 export interface CompileResult {
   prompt: string
@@ -108,7 +109,9 @@ export function compileShot(sheet: ShotSheet, profile: ModelProfile): CompileRes
     supportsFirstLastFrame: profile.supportsFirstLastFrame,
   }
   const issues = validateShotSheet(sheet, caps)
-  const prompt = buildPrompt(sheet, profile)
+  const clause = castClause(sheet, profile)
+  const base = buildPrompt(sheet, profile)
+  const prompt = clause ? `${clause} ${base}` : base
   const wordCount = countWords(prompt)
 
   if (wordCount > profile.wordBudgetHard) {
