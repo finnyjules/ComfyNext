@@ -1,7 +1,7 @@
 # Character Unification + Variants — design spec
 
 **Date:** 2026-07-02
-**Status:** Draft for review
+**Status:** Implemented — 2026-07-02
 **Supersedes:** the "reference-first, LoRA optional" entity model of `2026-07-01-character-cast-shot-director-design.md` (the cast *pipeline* from that spec is unchanged; only the entity model and panel evolve).
 
 ## Problem
