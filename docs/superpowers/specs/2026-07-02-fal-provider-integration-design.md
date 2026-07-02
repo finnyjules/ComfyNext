@@ -110,3 +110,4 @@ VideoModelSpec:
 - Requires a ComfyUI restart to load the new Python (spec fields + runner).
 - `FAL_KEY` must be present in `frontend/.env` before the first fal run.
 - Existing saved workflows keep model id `seedance-2.0`; the provider flip is transparent to them.
+- `seedance-2.0-fast` stays on Replicate — fal exposes no fast Seedance endpoint (probed 2026-07-02).
