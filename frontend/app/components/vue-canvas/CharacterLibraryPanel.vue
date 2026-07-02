@@ -18,13 +18,15 @@ import {
   type CharacterClient, type CharacterVariantClient, type CharacterStatus,
 } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
-import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { uploadRefFile, viewRefUrl } from '~/lib/shotdirector/refUpload'
 import { CHARACTER_SHEET_CANONICAL } from '~/data/character-shot-scenes'
+import { usePendingTrainerSeed } from '~/composables/usePendingTrainerSeed'
 
 defineEmits<{ close: [] }>()
 
 const { characters, loading, coverUrl } = useCharacters()
 const { jobs, setPolling } = useTrainingJobs()
+const { openTab } = useTabs()
 
 onMounted(() => setPolling(true))
 onUnmounted(() => setPolling(false))
@@ -99,7 +101,14 @@ function castInShot(c: CharacterClient) {
   }))
 }
 function trainIdentity(c: CharacterClient) {
-  window.dispatchEvent(new CustomEvent('comfynext:trainCharacterIdentity', { detail: { slug: c.slug } }))
+  const defaultVariant = c.variants.find(v => v.id === 'default') ?? c.variants[0]
+  usePendingTrainerSeed().set({
+    kind: 'character',
+    name: c.name,
+    trigger: c.trigger,
+    refViewUrls: (defaultVariant?.refImages ?? []).map(viewRefUrl),
+  })
+  openTab({ type: 'train', label: `Train: ${c.name}` })
 }
 
 // ── Variant selection ───────────────────────────────────────────────────

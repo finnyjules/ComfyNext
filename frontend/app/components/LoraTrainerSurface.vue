@@ -297,7 +297,7 @@ watch(trainingKind, (kind, prev) => {
 // Open a fresh workflow with a Flux generator preloaded to use the trained LoRA.
 // FluxLoRARemoteNode resolves the local filename to its CDN url via the sidecar
 // JSON our cloud-train route wrote, so the LoRA "just works" in the new graph.
-const { openTab } = useTabs()
+const { openTab, activeTabId } = useTabs()
 function useTrainedLoraInWorkflow() {
   const fname = cloudJob.value?.localFilename
   if (!fname) return
@@ -450,9 +450,44 @@ watch(downloadStates, () => {
   if (flux?.phase === 'done') fluxReady.value = true
 }, { deep: true })
 
+// Set when the trainer opens pre-seeded from a draft character with fewer
+// than 3 reference photos (via "Train identity" in the Characters panel) —
+// shown inline near the dataset so the user knows why it's thin.
+const seedLowPhotoWarning = ref(false)
+
+/** Consume a pending trainer seed (see usePendingTrainerSeed) and prefill the form + dataset. */
+async function consumePendingSeed() {
+  const seed = usePendingTrainerSeed().consume()
+  if (!seed) return
+  trainingKind.value = seed.kind
+  if (seed.name) form.outputName = seed.name
+  if (seed.trigger) form.triggerWord = seed.trigger
+  const files: File[] = []
+  for (const url of seed.refViewUrls) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      const blob = await res.blob()
+      const filename = new URLSearchParams(url.split('?')[1]).get('filename') || `ref_${files.length}.png`
+      files.push(new File([blob], filename, { type: blob.type || 'image/png' }))
+    } catch { /* skip a failed fetch */ }
+  }
+  if (files.length) await addFiles(files)
+  if (seed.refViewUrls.length < 3) seedLowPhotoWarning.value = true
+}
+
 onMounted(() => {
   loadCheckpoints()
   probeFluxReady()
+  consumePendingSeed()
+})
+
+// The trainer surface is kept mounted (v-show) once the singleton 'train' tab
+// is first opened, so a later "Train identity" click won't remount it and
+// onMounted above won't fire again — catch that case by also checking for a
+// pending seed whenever the train tab becomes the active tab.
+watch(activeTabId, (id) => {
+  if (id === 'train') consumePendingSeed()
 })
 
 // ----- Upload helpers ----------------------------------------------------
@@ -1645,6 +1680,10 @@ onBeforeUnmount(() => {
               Auto-caption all
             </button>          </div>
         </div>
+
+        <p v-if="seedLowPhotoWarning" class="mb-3 text-[12px] text-amber-300/80">
+          More photos train a stronger identity — the dataset builder below can expand from one.
+        </p>
 
         <input
           ref="fileInputRef"
