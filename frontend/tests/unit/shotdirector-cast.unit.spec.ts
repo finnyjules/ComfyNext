@@ -138,3 +138,31 @@ describe('hydrate back-compat', () => {
     expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
   })
 })
+
+describe('compiled prompt noise suppression', () => {
+  it('cast refs emit NO per-ref purpose sentence — the Characters clause covers them', () => {
+    const s = sheetWithCast()
+    const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    const res = compileShot(sheet, SEEDANCE_PROFILE)
+    expect(res.prompt).not.toContain('Use [Image')
+    expect(res.prompt).not.toContain('identity and wardrobe')
+  })
+
+  it('manual refs still get their purpose sentence alongside cast refs', () => {
+    const s = sheetWithCast()
+    s.references = [{ kind: 'image', slot: 1, src: U('style.png'), role: 'style-transfer' }]
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    const res = compileShot(sheet, SEEDANCE_PROFILE)
+    // cast refs occupy [Image1][Image2]; the manual ref renumbers to [Image3]
+    expect(res.prompt).toContain('Use [Image3] for the visual style.')
+    expect(res.prompt).not.toContain('[Image1] for')
+  })
+
+  it('blank dialogue rows emit no stray empty quotes', () => {
+    const s = createDefaultShotSheet()
+    s.subject = 'a lighthouse'
+    s.action = 'stands in fog'
+    s.audio.dialogue = [{ speaker: '', line: '' }, { speaker: 'Vera', line: '' }]
+    expect(compileShot(s, SEEDANCE_PROFILE).prompt).not.toContain('""')
+  })
+})

@@ -49,6 +49,17 @@ function castCover(slug: string): string | null {
   const c = characters.value.find(x => x.slug === slug)
   return c ? coverUrl(c) : null
 }
+/** The photos each cast member contributes, with their [ImageN] tag range —
+ *  so "what is [Image2]?" is answerable by looking at the Cast section. */
+const castRefRows = computed(() => {
+  let tag = 1
+  return sheet.value.cast.map((m) => {
+    const urls = resolveRefs([m.slug])[m.slug]?.slice(0, 3) ?? []
+    const start = tag
+    tag += urls.length
+    return { slug: m.slug, name: m.name, urls, start, end: tag - 1 }
+  })
+})
 function onRemoveCast(m: CastMember) {
   // One gesture, both representations: ask the canvas to drop any same-slug edge
   // (it no-ops when there isn't one), then remove the cast entry directly for an
@@ -352,6 +363,24 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                   </span>
                 </div>
                 <p v-else class="text-[11px] text-white/30">No one cast yet — pick a saved character and their reference photos attach automatically.</p>
+
+                <!-- What the cast actually sends: each member's photos + their [ImageN] tags -->
+                <div v-if="sheet.cast.length" class="mt-2 space-y-1.5">
+                  <div v-for="row in castRefRows" :key="'refs-' + row.slug" class="flex items-center gap-2">
+                    <span class="w-16 shrink-0 truncate text-[10px] text-white/40">{{ row.name }}</span>
+                    <img
+                      v-for="(u, i) in row.urls" :key="u" :src="u"
+                      class="h-9 w-9 rounded border border-white/[0.08] object-cover"
+                      :title="`[Image${row.start + i}]`"
+                    >
+                    <span v-if="row.urls.length" class="text-[10px] tabular-nums text-white/30">[Image{{ row.start }}{{ row.end > row.start ? `–${row.end}` : '' }}]</span>
+                    <span v-else class="text-[10px] text-red-400/80">no photos yet — add some to their sheet</span>
+                  </div>
+                  <p class="text-[10px] leading-relaxed text-white/35">
+                    Face and clothing follow these photos. Change the look in their character sheet (Characters panel) —
+                    or restyle just this shot by describing the outfit in Subject (e.g. “{{ sheet.cast[0]?.name }} in a yellow raincoat”).
+                  </p>
+                </div>
               </div>
 
               <CharacterPickerModal

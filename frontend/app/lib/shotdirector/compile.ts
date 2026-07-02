@@ -47,17 +47,23 @@ function referenceSentence(sheet: ShotSheet, profile: ModelProfile): string {
   if (sheet.mode !== 'reference' || sheet.references.length === 0) return ''
   const KIND_RANK = { image: 0, video: 1, audio: 2 } as const
   const parts = [...sheet.references]
+    // Cast-injected refs are already declared by the Characters clause
+    // ("Characters: Vera [Image1] …") — a per-ref purpose phrase for each
+    // of them is redundant noise that burns the word budget.
+    .filter(r => !r.castSlug)
     .sort((a, b) => (KIND_RANK[a.kind] - KIND_RANK[b.kind]) || (a.slot - b.slot))
     .map(r => {
       const purpose = ROLE_PURPOSE[r.role]
       const note = r.note ? ` (${r.note.trim()})` : ''
       return `${profile.refTag(r.kind, r.slot)} for ${purpose}${note}`
     })
+  if (!parts.length) return ''
   return `Use ${parts.join('; ')}.`
 }
 
 function dialogueSentence(sheet: ShotSheet): string {
-  const lines = sheet.audio.dialogue ?? []
+  // Blank rows (added in the UI but never filled) must not emit a stray `""`.
+  const lines = (sheet.audio.dialogue ?? []).filter(d => d.line.trim())
   if (lines.length === 0) return ''
   return lines
     .map(d => (d.speaker ? `${d.speaker}: "${d.line.trim()}"` : `"${d.line.trim()}"`))
