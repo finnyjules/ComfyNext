@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2 } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
+import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 
 // The visual half of the unified `Image` artifact node. State is derived from
 // (upstream connection, file widget, execution output) rather than the node
@@ -286,6 +287,36 @@ function editWithNanoBanana() {
   }))
 }
 
+// Save the current image as a character in the registry (phase 1: image-only,
+// refs are stored in the input dir as /view URLs to avoid JSON bloat).
+const savingAsCharacter = ref(false)
+async function saveAsCharacter() {
+  const src = (props.data as any)?.images?.[0]
+  if (!src) return
+  const name = window.prompt('Character name')?.trim()
+  if (!name) return
+  savingAsCharacter.value = true
+  try {
+    const blob = await (await fetch(src)).blob()
+    const refUrl = await uploadRefFile(new File([blob], 'character.png', { type: blob.type || 'image/png' }))
+    const filename = new URLSearchParams(refUrl.split('?')[1]).get('filename')!
+    const created = await fetch('/api/characters-local', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    })
+    if (!created.ok) throw new Error(`create ${created.status}`)
+    const { slug } = await created.json() as { slug: string }
+    await fetch('/api/characters-local', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, refImages: [filename] }),
+    })
+    window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
+  } catch (e) {
+    console.warn('[saveAsCharacter]', e)
+  } finally {
+    savingAsCharacter.value = false
+  }
+}
+
 // Top-right "Edit" menu: Remove BG / Inpaint / Edit (Nano Banana) / Fix. Each item
 // runs an existing action and closes the menu; clicking outside dismisses it.
 const editMenuOpen = ref(false)
@@ -546,6 +577,15 @@ function discardTake(id: string) {
           >
             <Loader2 v-if="data.running" class="size-3 animate-spin" />
             <RefreshCw v-else class="size-3" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="savingAsCharacter"
+            title="Save as character"
+            @click.stop="saveAsCharacter"
+          >
+            <Loader2 v-if="savingAsCharacter" class="size-3 animate-spin" />
+            <Drama v-else class="size-3" />
           </button>
         </div>
       </template>
