@@ -17,9 +17,16 @@ export function wireCastFor(studioId: string, nodes: CastNodeLite[], edges: Cast
 }
 
 export function syncCast(existing: CastMember[], wire: CastMember[]): CastMember[] | null {
-  const picker = existing.filter(m => m.via === 'picker')
-  const pickerSlugs = new Set(picker.map(m => m.slug))
-  const next = [...picker, ...wire.filter(m => !pickerSlugs.has(m.slug))]
+  // Preserve EXISTING order (don't reshuffle [wireA, pickerB] to [pickerB, wireA]
+  // on every edge change — cast order maps to [Image1]/[Image2]/… in the prompt,
+  // so reordering silently reassigns references between takes). Keep every
+  // existing member that still survives (picker members always; wire members
+  // only if still present in the new wire list), then append genuinely new wire
+  // members — ones not already represented — at the end.
+  const wireSlugs = new Set(wire.map(m => m.slug))
+  const kept = existing.filter(m => m.via === 'picker' || wireSlugs.has(m.slug))
+  const keptSlugs = new Set(kept.map(m => m.slug))
+  const next = [...kept, ...wire.filter(m => !keptSlugs.has(m.slug))]
   const same = next.length === existing.length
     && next.every((m, i) => existing[i]!.slug === m.slug && existing[i]!.via === m.via)
   return same ? null : next

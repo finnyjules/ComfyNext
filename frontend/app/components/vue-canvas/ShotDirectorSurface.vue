@@ -42,11 +42,13 @@ function castCover(slug: string): string | null {
   return c ? coverUrl(c) : null
 }
 function onRemoveCast(m: CastMember) {
-  if (m.via === 'wire') {
-    // One gesture, both representations: ask the canvas to drop the edge;
-    // the edge-sync reconciles the cast entry. Direct removal keeps the surface instant.
-    window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
-  }
+  // One gesture, both representations: ask the canvas to drop any same-slug edge
+  // (it no-ops when there isn't one), then remove the cast entry directly for an
+  // instant surface. Dispatch UNCONDITIONALLY — even for a picker-via member, a
+  // same-slug wire can be lingering (picker-add then wire: dedupe keeps the
+  // picker entry but the edge stays), and a stray edge left behind would
+  // resurrect the cast member on the next edge sync.
+  window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
   removeCastMember(m.slug)
 }
 

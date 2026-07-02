@@ -57,6 +57,7 @@ import { compileShot } from '~/lib/shotdirector/compile'
 import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 import { getProfile } from '~/lib/shotdirector/profiles'
 import { materializeCast } from '~/lib/shotdirector/cast'
+import { viewRefUrl } from '~/lib/shotdirector/refUpload'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -2493,7 +2494,7 @@ async function handleShotDirectorGenerate(e: Event) {
       const data = res.ok ? await res.json() as { characters?: { slug: string, refImages: string[] }[] } : {}
       const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
       resolved = Object.fromEntries(sheet.cast.map(m => [
-        m.slug, (bySlug.get(m.slug)?.refImages ?? []).map(f => `/view?${new URLSearchParams({ filename: f, type: 'input' })}`),
+        m.slug, (bySlug.get(m.slug)?.refImages ?? []).map(f => viewRefUrl(f)),
       ]))
     } catch { /* resolved stays empty → zero-ref errors below */ }
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
