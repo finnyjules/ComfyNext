@@ -40,6 +40,11 @@ import {
   UsersRound,
   PersonStanding,
   Lightbulb,
+  Type,
+  RotateCw,
+  Gem,
+  Boxes,
+  AudioLines,
 } from 'lucide-vue-next'
 
 export const GENERATOR_NODE_ICONS: Record<string, Component> = {
@@ -53,6 +58,8 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   PersonSwap:           UsersRound,
   PoseMannequin:        PersonStanding,
   RelightNode:          Lightbulb,
+  FluxMultiLoRARemoteNode: Sparkles,
+  TextEffectNode:       Type,
 
   // ----- Image · manipulation -----
   EditImageNode:        Pencil,
@@ -64,6 +71,8 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   LayerizeGraphicNode:  Layers,
   SplitPhotoLayersNode: SquareStack,
   OutpaintImageNode:    Expand,
+  RotateCameraNode:     RotateCw,
+  EnhanceDetailNode:    Gem,
 
   // ----- Image · analysis -----
   DescribeImageNode:    MessageSquareText,
@@ -76,6 +85,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   EnhanceVideoNode:     Wand2,
   DescribeVideoNode:    MessageSquareText,
   LipsyncNode:          Mic,
+  LipSyncNode:          AudioLines,
 
   // ----- Audio -----
   TranscribeAudioNode:  Captions,
@@ -86,6 +96,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
 
   // ----- 3D -----
   Generate3DNode:       Box,
+  Hunyuan3DMultiViewNode: Boxes,
 
   // ----- Text / LLM -----
   ChatLLMNode:          MessageCircle,

@@ -25,6 +25,8 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   GenerateEmojiNode:     { useCase: 'Generate an emoji',              model: 'Flux Kontext + Emoji LoRA',                intent: 'create' },
   ConsistentFaceNode:    { useCase: 'Generate a consistent face',     model: 'Ideogram Character',                       intent: 'create' },
   SketchToImageNode:     { useCase: 'Sketch to image',                model: 'Nano Banana',                              intent: 'create' },
+  FluxMultiLoRARemoteNode: { useCase: 'Generate with two LoRAs',      model: 'Flux Dev + 2 LoRAs',                       intent: 'create' },
+  TextEffectNode:        { useCase: 'Render a text effect',           model: 'Typographic art gallery',                  intent: 'create' },
   // -- Image · edit -----------------------------------------------------------
   EditImageNode:         { useCase: 'Edit an image',                  model: 'Nano Banana 2 / Flux Kontext',             intent: 'edit' },
   RestyleFromImageNode:  { useCase: 'Restyle from an image',          model: 'Nano Banana / IP-Adapter',                 intent: 'edit' },
@@ -37,17 +39,22 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   LayerizeGraphicNode:   { useCase: 'Layerize a graphic',             model: 'Ideogram Layerize',                        intent: 'edit' },
   SplitPhotoLayersNode:  { useCase: 'Split photo into layers',        model: 'BG Remover + LaMa / Bria Eraser',          intent: 'edit' },
   OutpaintImageNode:     { useCase: 'Expand / outpaint an image',     model: 'Flux Fill / Bria Expand',                  intent: 'edit' },
+  BlendSceneNode:        { useCase: 'Blend a composite into a scene', model: 'Flux Kontext Pro / Nano Banana',           intent: 'edit' },
+  RotateCameraNode:      { useCase: 'Rotate the camera',              model: 'Qwen-Image-Edit-Plus',                     intent: 'edit' },
   // -- Image · enhance --------------------------------------------------------
   UpscaleImageNode:      { useCase: 'Upscale an image',               model: 'Clarity',                                  intent: 'enhance' },
   RestorePhotoNode:      { useCase: 'Restore an old photo',           model: 'Flux Kontext · Restore',                   intent: 'enhance' },
   FixFacesNode:          { useCase: 'Fix faces in a photo',           model: 'CodeFormer',                               intent: 'enhance' },
+  EnhanceDetailNode:     { useCase: 'Enhance detail in an image',     model: 'Clarity / Topaz / Magic Refiner',          intent: 'enhance' },
   // -- Image · analyze --------------------------------------------------------
   DescribeImageNode:     { useCase: 'Describe an image',              model: 'Moondream 2',                              intent: 'analyze' },
   ExtractTextNode:       { useCase: 'Extract text from image',        model: 'ByteDance Dolphin (OCR)',                  intent: 'analyze' },
   FindObjectsNode:       { useCase: 'Find objects in an image',       model: 'YOLO-World',                               intent: 'analyze' },
   // -- Video -------------------------------------------------------------------
   GenerateVideoNode:     { useCase: 'Generate a video',               model: 'Seedance / Veo 3 / Kling',                 intent: 'create' },
+  FilmShotNode:          { useCase: 'Film a shot',                    model: 'Kling v2.5 Turbo Pro + shot presets',      intent: 'create' },
   LipsyncNode:           { useCase: 'Sync lips to audio',             model: 'sync.so 2-pro',                            intent: 'edit' },
+  LipSyncNode:           { useCase: 'Lip-sync a character',           model: 'VEED Fabric 1.0 / sync.so 2-pro',          intent: 'edit' },
   EnhanceVideoNode:      { useCase: 'Enhance a video',                model: 'Topaz',                                    intent: 'enhance' },
   DescribeVideoNode:     { useCase: 'Describe a video',               model: 'Gemini 2.5 Flash',                         intent: 'analyze' },
   // -- Audio -------------------------------------------------------------------
@@ -58,6 +65,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   IdentifySpeakersNode:  { useCase: 'Identify speakers in audio',     model: 'Whisper Diarization',                      intent: 'analyze' },
   // -- 3D ----------------------------------------------------------------------
   Generate3DNode:        { useCase: 'Generate a 3D model',            model: 'Hunyuan3D 2',                              intent: 'create' },
+  Hunyuan3DMultiViewNode: { useCase: 'Reconstruct 3D from multi-view', model: 'TRELLIS / Rodin / Hunyuan3D-2mv',         intent: 'create' },
   // -- Text / LLM ---------------------------------------------------------------
   ChatLLMNode:           { useCase: 'Chat with an LLM',               model: 'GPT-5 / Claude / Gemini',                  intent: 'create' },
   BrainstormIdeasNode:   { useCase: 'Brainstorm ideas',               model: 'GPT-5 mini',                               intent: 'create' },
