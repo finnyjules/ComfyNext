@@ -64,8 +64,65 @@ def main() -> int:
     if not os.path.isfile(final) or os.path.getsize(final) == 0:
         print("no audio produced (check the URL and timestamps)", file=sys.stderr)
         return 1
-    print(final)
+
+    # Host on fal (public CDN) so MiniMax voice-cloning — a proxy that fetches
+    # voice_file externally — can download it. A Replicate Files URL is auth-gated
+    # and fails ("invalid file ext"). Print the public URL prefixed so the route
+    # picks it out cleanly.
+    try:
+        url_out = _upload_fal(final)
+    except Exception as e:  # noqa: BLE001
+        print(f"upload failed: {e}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            os.remove(final)
+        except OSError:
+            pass
+    print(f"FALURL:{url_out}")
     return 0
+
+
+def _fal_token() -> str:
+    for name in ("FAL_KEY", "NUXT_FAL_TOKEN"):
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    for p in (os.path.join(root, "frontend", ".env"), os.path.join(root, ".env")):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    for name in ("FAL_KEY", "NUXT_FAL_TOKEN"):
+                        if s.startswith(name + "="):
+                            v = s.split("=", 1)[1].strip().strip('"').strip("'")
+                            if v:
+                                return v
+        except OSError:
+            continue
+    raise RuntimeError("FAL_KEY not found (set it in frontend/.env)")
+
+
+def _upload_fal(path: str) -> str:
+    import json
+    import urllib.request
+    key = _fal_token()
+    init_req = urllib.request.Request(
+        "https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+        data=json.dumps({"content_type": "audio/mpeg", "file_name": os.path.basename(path)}).encode(),
+        headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+    )
+    init = json.loads(urllib.request.urlopen(init_req).read().decode())
+    file_url, upload_url = init.get("file_url"), init.get("upload_url")
+    if not (file_url and upload_url):
+        raise RuntimeError(f"fal initiate returned no urls: {init}")
+    with open(path, "rb") as f:
+        data = f.read()
+    urllib.request.urlopen(urllib.request.Request(
+        upload_url, data=data, method="PUT", headers={"Content-Type": "audio/mpeg"}))
+    return file_url
 
 
 if __name__ == "__main__":

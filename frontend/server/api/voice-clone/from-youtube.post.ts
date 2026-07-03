@@ -15,15 +15,13 @@
  * Allowlisted via the '/api/voice-clone' prefix in server/middleware/comfyui-proxy.ts.
  */
 import { execFile } from 'node:child_process'
-import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 const CLIP_CAP_SEC = 60
+const CLIP_MIN_SEC = 10  // MiniMax voice cloning rejects clips shorter than this ("too short")
 
 export default defineEventHandler(async (event) => {
-  const token = requireReplicateToken()
-
   const body = await readBody(event) as { url?: string, startSec?: number, endSec?: number }
   const url = (body?.url || '').trim()
   const startSec = Number(body?.startSec)
@@ -35,6 +33,9 @@ export default defineEventHandler(async (event) => {
   if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) {
     throw createError({ statusCode: 400, message: 'endSec must be greater than startSec' })
   }
+  if (endSec - startSec < CLIP_MIN_SEC) {
+    throw createError({ statusCode: 400, message: `Pick at least ${CLIP_MIN_SEC}s of speech — shorter clips fail to clone` })
+  }
   if (endSec - startSec > CLIP_CAP_SEC) {
     throw createError({ statusCode: 400, message: `Clip must be ${CLIP_CAP_SEC}s or shorter` })
   }
@@ -45,43 +46,27 @@ export default defineEventHandler(async (event) => {
   const script = path.join(root, 'scripts', 'youtube_voice_clip.py')
   const outPath = path.join(os.tmpdir(), `voice-yt_${Date.now()}.mp3`)
 
-  // The helper writes the clip to exactly `outPath` and exits 0 on success; use
-  // that path directly rather than parsing stdout (yt-dlp's \r progress pollutes
-  // it). Errors come back on stderr.
-  await new Promise<void>((resolve, reject) => {
+  // The helper clips the segment, uploads it to fal storage (a PUBLIC CDN URL —
+  // MiniMax voice-cloning proxies the fetch externally and can't read an
+  // auth-gated Replicate Files URL), and prints "FALURL:<url>". Errors → stderr.
+  const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       python,
       [script, url, String(startSec), String(endSec), outPath],
       { timeout: 120_000, maxBuffer: 1 << 20 },
-      (err, _stdout, stderr) => {
+      (err, out, stderr) => {
         if (err) return reject(new Error((stderr || '').trim().split('\n').pop() || err.message))
-        resolve()
+        resolve(out || '')
       },
     )
   }).catch((e: Error) => {
     throw createError({ statusCode: 502, message: `Could not capture that segment: ${e.message}` })
   })
-  const clipPath = outPath
 
-  try {
-    const data = await fs.readFile(clipPath)
-    if (data.byteLength === 0) throw new Error('empty clip')
-
-    const upstream = new FormData()
-    upstream.append('content', new Blob([data], { type: 'audio/mpeg' }), 'youtube-voice.mp3')
-    const res = await fetch('https://api.replicate.com/v1/files', {
-      method: 'POST',
-      headers: { Authorization: `Token ${token}` },
-      body: upstream,
-    })
-    if (!res.ok) {
-      throw createError({ statusCode: 502, message: `Upload failed: ${res.status} ${await res.text().catch(() => '')}` })
-    }
-    const j = await res.json() as { urls?: { get?: string } }
-    const voiceFileUrl = j.urls?.get
-    if (!voiceFileUrl) throw createError({ statusCode: 502, message: 'Upload returned no url' })
-    return { voiceFileUrl, durationSec: Math.round(endSec - startSec) }
-  } finally {
-    await fs.unlink(clipPath).catch(() => {})
+  const line = stdout.split('\n').map(l => l.trim()).find(l => l.startsWith('FALURL:'))
+  const voiceFileUrl = line?.slice('FALURL:'.length).trim()
+  if (!voiceFileUrl) {
+    throw createError({ statusCode: 502, message: 'Capture succeeded but produced no audio URL' })
   }
+  return { voiceFileUrl, durationSec: Math.round(endSec - startSec) }
 })
