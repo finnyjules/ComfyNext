@@ -15,6 +15,7 @@ import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
 import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
+import type { ActionDomain } from '~/data/action-catalog'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -319,7 +320,7 @@ const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
 // `comfynext:openActions` with an optional domain to open the panel on that
 // tab (selection chips' "All actions…" uses this). ts forces the watcher to
 // re-fire on repeated same-domain opens.
-const actionsFocusDomain = ref<{ domain: string; ts: number } | null>(null)
+const actionsFocusDomain = ref<{ domain: ActionDomain; ts: number } | null>(null)
 function handleOpenActions(e: Event) {
   const domain = (e as CustomEvent).detail?.domain
   if (domain) actionsFocusDomain.value = { domain, ts: Date.now() }
