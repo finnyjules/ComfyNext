@@ -45,8 +45,8 @@ export function parseDelimited(text: string): string[][] {
 /** Replace the collection's columns+rows from pasted tabular text (first row = headers). */
 export function importTable(c: CollectionData, text: string): void {
   const grid = parseDelimited(text)
-  if (grid.length < 1) return
   const headers = grid[0]
+  if (!headers) return
   const body = grid.slice(1)
   c.columns = []
   c.rows = []
