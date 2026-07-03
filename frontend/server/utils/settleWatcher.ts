@@ -26,7 +26,10 @@ export async function settleOnCompletion(opts: SettleOpts): Promise<'success' | 
   const maxPolls = opts.maxPolls ?? 120
 
   for (let n = 0; n < maxPolls; n++) {
-    const entry = await pollHistory(promptId)
+    let entry: HistoryEntry | null = null
+    try {
+      entry = await pollHistory(promptId)
+    } catch { /* transient poll failure — keep polling; maxPolls timeout is the backstop */ }
     if (entry?.status?.completed) {
       if (entry.status.status_str === 'success') { onSuccess(promptId); return 'success' }
       onError(promptId); return 'error'

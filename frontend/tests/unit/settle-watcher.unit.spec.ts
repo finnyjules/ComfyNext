@@ -38,4 +38,20 @@ describe('settleOnCompletion', () => {
     expect(onSuccess).not.toHaveBeenCalled()
     expect(onError).toHaveBeenCalledWith('p1')
   })
+
+  it('treats a throwing pollHistory as a transient failure and keeps polling', async () => {
+    const seq = [
+      () => Promise.reject(new Error('engine restarting')),
+      () => Promise.resolve({ status: { status_str: 'success' as const, completed: true } }),
+    ]
+    let i = 0
+    const onSuccess = vi.fn(); const onError = vi.fn()
+    const r = await settleOnCompletion({
+      promptId: 'p1', pollHistory: () => seq[Math.min(i++, seq.length - 1)]!(),
+      onSuccess, onError, sleep: noSleep, intervalMs: 0,
+    })
+    expect(r).toBe('success')
+    expect(onSuccess).toHaveBeenCalledWith('p1')
+    expect(onError).not.toHaveBeenCalled()
+  })
 })
