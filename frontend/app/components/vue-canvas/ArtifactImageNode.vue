@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import { toast } from 'vue-sonner'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -288,6 +289,32 @@ function editWithNanoBanana() {
   }))
 }
 
+// ── Escalator actions (ARPU levers 2+5) ─────────────────────────────────────
+// Enhance/Relight/Lens spawn their generator pre-wired and focused but UN-RUN
+// (the user aims first, then pays). Upscale is a true one-tap: spawn + run,
+// upstream artifact frozen so only the upscaler bills.
+function spliceEffect(nodeType: string, opts: { run?: boolean; focus?: boolean } = {}, widgetOverrides?: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+    detail: { nodeId: props.id, nodeType, output: 'IMAGE', widgetOverrides, ...opts },
+  }))
+}
+function spawnEnhanceDetail() { spliceEffect('EnhanceDetailNode', { focus: true }) }
+function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true }) }
+function spawnRelight() { spliceEffect('RelightNode', { focus: true }) }
+function spawnLensReframe() { spliceEffect('LensReframe', { focus: true }) }
+
+// Variations ×4: sequential re-runs of the producing generator with fresh
+// seeds; results accumulate in the Takes strip. Needs something upstream to
+// re-run, hence the hasUpstream gate (mirrored as a disabled menu row).
+function runVariations() {
+  window.dispatchEvent(new CustomEvent('comfynext:runVariations', { detail: { nodeId: props.id, count: 4 } }))
+}
+
+// Animate: spawn a Shot Director seeded with this image as reference.
+function animateArtifact() {
+  window.dispatchEvent(new CustomEvent('comfynext:animateArtifact', { detail: { nodeId: props.id } }))
+}
+
 // Save the current image as a character in the registry (phase 1: image-only,
 // refs are stored in the input dir as /view URLs to avoid JSON bloat).
 const savingAsCharacter = ref(false)
@@ -510,32 +537,54 @@ function discardTake(id: string) {
           </button>
           <div
             v-if="editMenuOpen"
-            class="absolute top-full right-0 mt-1 min-w-[136px] rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+            class="absolute top-full right-0 mt-1 min-w-[190px] rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
           >
-            <button
-              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
-              @click.stop="runEdit(removeBackground)"
-            >
+            <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Retouch</div>
+            <button class="edit-menu-item" @click.stop="runEdit(removeBackground)">
               <Eraser class="size-3 shrink-0" /> Remove BG
             </button>
-            <button
-              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
-              @click.stop="runEdit(openInpaint)"
-            >
+            <button class="edit-menu-item" @click.stop="runEdit(openInpaint)">
               <Brush class="size-3 shrink-0" /> Inpaint
             </button>
-            <button
-              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
-              @click.stop="runEdit(editWithNanoBanana)"
-            >
+            <button class="edit-menu-item" @click.stop="runEdit(editWithNanoBanana)">
               <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
+              <span class="edit-menu-hint">{{ ACTION_HINTS['nano-banana'] }}</span>
             </button>
-            <button
-              v-if="data.images?.length"
-              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/75 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
-              @click.stop="runEdit(critiqueResult)"
-            >
+            <button v-if="data.images?.length" class="edit-menu-item" @click.stop="runEdit(critiqueResult)">
               <Sparkles class="size-3 shrink-0" /> Fix
+            </button>
+
+            <div class="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Enhance</div>
+            <button class="edit-menu-item" @click.stop="runEdit(spawnEnhanceDetail)">
+              <Gem class="size-3 shrink-0" /> Enhance Detail
+              <span class="edit-menu-hint">{{ ACTION_HINTS.enhance }}</span>
+            </button>
+            <button class="edit-menu-item" @click.stop="runEdit(spawnUpscale)">
+              <ZoomIn class="size-3 shrink-0" /> Upscale
+              <span class="edit-menu-hint">{{ ACTION_HINTS.upscale }}</span>
+            </button>
+            <button class="edit-menu-item" @click.stop="runEdit(spawnRelight)">
+              <Lamp class="size-3 shrink-0" /> Relight
+              <span class="edit-menu-hint">{{ ACTION_HINTS.relight }}</span>
+            </button>
+            <button class="edit-menu-item" @click.stop="runEdit(spawnLensReframe)">
+              <Aperture class="size-3 shrink-0" /> Lens · Reframe
+              <span class="edit-menu-hint">{{ ACTION_HINTS.lens }}</span>
+            </button>
+
+            <div class="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Create</div>
+            <button
+              class="edit-menu-item disabled:opacity-35 disabled:cursor-default"
+              :disabled="!hasUpstream"
+              :title="hasUpstream ? 'Re-run the generator 4× with fresh seeds' : 'Nothing upstream to re-run — this image was uploaded'"
+              @click.stop="runEdit(runVariations)"
+            >
+              <Shuffle class="size-3 shrink-0" /> Variations ×4
+              <span class="edit-menu-hint">{{ ACTION_HINTS.variations }}</span>
+            </button>
+            <button class="edit-menu-item" @click.stop="runEdit(animateArtifact)">
+              <Clapperboard class="size-3 shrink-0" /> Animate
+              <span class="edit-menu-hint">{{ ACTION_HINTS.animate }}</span>
             </button>
           </div>
         </div>
@@ -690,5 +739,29 @@ function discardTake(id: string) {
     0 0 0 1px rgba(251, 191, 36, 0.4),
     0 4px 16px rgba(0, 0, 0, 0.4);
   border-color: rgba(251, 191, 36, 0.25);
+}
+
+/* Edit… dropdown rows — shared by all three sections. */
+.edit-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 11px;
+  color: rgb(255 255 255 / 0.75);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+.edit-menu-item:hover:not(:disabled) {
+  color: #fff;
+  background-color: rgb(255 255 255 / 0.08);
+}
+.edit-menu-hint {
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: rgb(255 255 255 / 0.35);
 }
 </style>
