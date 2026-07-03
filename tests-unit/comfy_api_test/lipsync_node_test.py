@@ -34,9 +34,10 @@ def test_build_fabric_input():
 
 
 def test_build_sync_input():
+    # Video-relip engine → Kling (kwaivgi/kling-lip-sync): video_url + audio_file.
     slug, inp = _lipsync_build_input("sync", None, DATA, AUD, "720p", "loop")
-    assert slug == "sync/lipsync-2-pro"
-    assert inp == {"video": DATA, "audio": AUD, "sync_mode": "loop"}
+    assert slug == "kwaivgi/kling-lip-sync"
+    assert inp == {"video_url": DATA, "audio_file": AUD}
 
 
 def test_build_fabric_requires_image():
@@ -54,9 +55,9 @@ def test_build_requires_audio():
 @pytest.mark.asyncio
 async def test_hosted_video_passthrough_public_url():
     # A public URL is already fetchable by Replicate — no upload.
-    assert await nr._lipsync_hosted_video_url("https://x/v.mp4") == "https://x/v.mp4"
-    assert await nr._lipsync_hosted_video_url("http://x/v.mp4") == "http://x/v.mp4"
-    assert await nr._lipsync_hosted_video_url("") == ""
+    assert await nr._lipsync_hosted_media_url("https://x/v.mp4", "video/mp4", "x.mp4") == "https://x/v.mp4"
+    assert await nr._lipsync_hosted_media_url("http://x/v.mp4", "video/mp4", "x.mp4") == "http://x/v.mp4"
+    assert await nr._lipsync_hosted_media_url("", "video/mp4", "x.mp4") == ""
 
 
 @pytest.mark.asyncio
@@ -69,7 +70,7 @@ async def test_hosted_video_uploads_view_ref(monkeypatch, tmp_path):
         captured["filename"] = filename
         return "https://api.replicate.com/v1/files/abc/content"
     monkeypatch.setattr(nr, "_upload_public_file", fake_upload)
-    out = await nr._lipsync_hosted_video_url("/view?filename=clip.mp4&type=input")
+    out = await nr._lipsync_hosted_media_url("/view?filename=clip.mp4&type=input", "video/mp4", "x.mp4")
     assert out == "https://api.replicate.com/v1/files/abc/content"
     assert captured["data"] == b"VIDEODATA"
     assert captured["filename"] == "clip.mp4"
@@ -85,6 +86,6 @@ async def test_hosted_video_uploads_data_url(monkeypatch):
     monkeypatch.setattr(nr, "_upload_public_file", fake_upload)
     payload = b"RAWVIDEO"
     data_url = "data:video/mp4;base64," + _b64.b64encode(payload).decode()
-    out = await nr._lipsync_hosted_video_url(data_url)
+    out = await nr._lipsync_hosted_media_url(data_url, "video/mp4", "x.mp4")
     assert out == "https://api.replicate.com/v1/files/xyz/content"
     assert captured["data"] == payload

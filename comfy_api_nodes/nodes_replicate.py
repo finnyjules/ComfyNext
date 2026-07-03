@@ -1922,9 +1922,13 @@ def _lipsync_build_input(engine, image, video, audio, resolution, sync_mode):
     if not audio:
         raise RuntimeError("Lip-sync requires an audio clip.")
     if engine == "sync":
+        # Video-relip engine. Uses kwaivgi/kling-lip-sync (Kling/Kuaishou) — a
+        # different provider from sync.so, whose lipsync-2-pro was returning
+        # backend errors. Kling takes video_url + audio_file (both public URLs;
+        # hosted in execute). It has no sync_mode.
         if not video:
-            raise RuntimeError("sync/lipsync-2-pro requires a source video.")
-        return "sync/lipsync-2-pro", {"video": video, "audio": audio, "sync_mode": sync_mode}
+            raise RuntimeError("Video lip-sync requires a source video.")
+        return "kwaivgi/kling-lip-sync", {"video_url": video, "audio_file": audio}
     if not image:
         raise RuntimeError("Fabric 1.0 requires an input image (face).")
     return "veed/fabric-1.0", {"image": image, "audio": audio, "resolution": resolution}
@@ -1957,10 +1961,11 @@ async def _upload_public_file(data: bytes, filename: str, content_type: str = "a
     return file_url
 
 
-async def _lipsync_hosted_video_url(src: str) -> str:
-    """Resolve a source-video ref to a publicly-fetchable URL. A public http(s)
-    URL passes through; a /view input ref or a data: URL is uploaded to fal storage.
-    Empty/unknown forms pass through unchanged."""
+async def _lipsync_hosted_media_url(src: str, content_type: str, fallback_name: str) -> str:
+    """Resolve a media ref to a publicly-fetchable URL. A public http(s) URL passes
+    through; a /view input ref or a data: URL is uploaded to fal storage. Empty/
+    unknown forms pass through unchanged. Used for the video-relip (Kling) engine,
+    whose proxy fetches both the video and audio from public URLs."""
     if not src:
         return src
     if src.startswith("http://") or src.startswith("https://"):
@@ -1969,14 +1974,14 @@ async def _lipsync_hosted_video_url(src: str) -> str:
     if name:
         path = os.path.join(folder_paths.get_input_directory(), name)
         if not os.path.isfile(path):
-            raise RuntimeError(f"Source video {name!r} is missing from the input folder.")
+            raise RuntimeError(f"Source media {name!r} is missing from the input folder.")
         with open(path, "rb") as f:
             data = f.read()
-        return await _upload_public_file(data, name, "video/mp4")
+        return await _upload_public_file(data, name, content_type)
     if src.startswith("data:"):
         b64 = src.split(",", 1)[1] if "," in src else ""
         data = base64.b64decode(b64)
-        return await _upload_public_file(data, "lipsync-source.mp4", "video/mp4")
+        return await _upload_public_file(data, fallback_name, content_type)
     return src
 
 
@@ -4130,16 +4135,23 @@ class LipSyncNode(IO.ComfyNode):
         # Wired ports win over studio-supplied URLs.
         face_image = _image_tensor_to_data_url(image) if image is not None else _resolve(opts.get("face_image"))
         video_src = opts.get("face_video")
-        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else _resolve(opts.get("audio"))
+        audio_src = opts.get("audio")
         resolution = opts.get("resolution", resolution)
         sync_mode = opts.get("sync_mode", sync_mode)
         engine = opts.get("engine", engine)
 
         eng = _lipsync_resolve_engine(engine, bool(face_image), bool(video_src))
-        # The sync engine's video must be a URL Replicate can fetch — upload it to
-        # Replicate Files rather than inlining megabytes of base64 (which sync
-        # rejects). Fabric/image never needs a video, so it's skipped there.
-        face_video = await _lipsync_hosted_video_url(video_src) if eng == "sync" else _resolve(video_src)
+        if eng == "sync":
+            # Kling video-relip fetches BOTH the video and the audio from public
+            # URLs — host each to fal storage (a data URL/local /view URL isn't
+            # reachable). A wired AUDIO tensor is encoded to WAV first, then hosted.
+            face_video = await _lipsync_hosted_media_url(video_src, "video/mp4", "lipsync-source.mp4")
+            audio_raw = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else audio_src
+            audio_url = await _lipsync_hosted_media_url(audio_raw, "audio/mpeg", "lipsync-voice.mp3")
+        else:
+            # Fabric (image) accepts data URLs — images are small.
+            face_video = _resolve(video_src)
+            audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else _resolve(audio_src)
         slug, input_dict = _lipsync_build_input(
             eng, face_image, face_video, audio_url, resolution, sync_mode)
         print(f"[LipSync] engine={eng!r} slug={slug!r} keys={list(input_dict)}", flush=True)
