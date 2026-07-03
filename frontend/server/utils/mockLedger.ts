@@ -26,18 +26,20 @@ export const mockLedger = {
     return this.getBalance(userId)
   },
   credit(userId: string, amount: number, _reason: string, idempotencyKey: string): LedgerResult {
-    if (seenKeys.has(idempotencyKey)) return { ok: true, balance: seenKeys.get(idempotencyKey)! }
+    const cacheKey = `${userId}|credit|${idempotencyKey}`
+    if (seenKeys.has(cacheKey)) return { ok: true, balance: seenKeys.get(cacheKey)! }
     const w = wallet(userId)
     w.balance += amount
-    seenKeys.set(idempotencyKey, w.balance)
+    seenKeys.set(cacheKey, w.balance)
     return { ok: true, balance: w.balance }
   },
   debit(userId: string, amount: number, _reason: string, idempotencyKey: string): LedgerResult {
-    if (seenKeys.has(idempotencyKey)) return { ok: true, balance: seenKeys.get(idempotencyKey)! }
+    const cacheKey = `${userId}|debit|${idempotencyKey}`
+    if (seenKeys.has(cacheKey)) return { ok: true, balance: seenKeys.get(cacheKey)! }
     const w = wallet(userId)
     if (amount > w.balance) return { ok: false, reason: 'insufficient' }
     w.balance -= amount
-    seenKeys.set(idempotencyKey, w.balance)
+    seenKeys.set(cacheKey, w.balance)
     return { ok: true, balance: w.balance }
   },
   __reset(): void { wallets.clear(); seenKeys.clear() },

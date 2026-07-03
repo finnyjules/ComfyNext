@@ -30,4 +30,14 @@ describe('mockLedger', () => {
     expect(mockLedger.getAvailable('nobody')).toBe(0)
     expect(mockLedger.debit('nobody', 1, 'generation', 'x')).toEqual({ ok: false, reason: 'insufficient' })
   })
+
+  it('scopes idempotency keys per user and per operation', () => {
+    mockLedger.__seed('u1', 10)
+    mockLedger.__seed('u2', 10)
+    // Same key string, different users → both debits apply.
+    expect(mockLedger.debit('u1', 3, 'generation', 'shared-key')).toEqual({ ok: true, balance: 7 })
+    expect(mockLedger.debit('u2', 3, 'generation', 'shared-key')).toEqual({ ok: true, balance: 7 })
+    // Same key string, same user, different operation → credit still applies.
+    expect(mockLedger.credit('u1', 5, 'refund', 'shared-key')).toEqual({ ok: true, balance: 12 })
+  })
 })
