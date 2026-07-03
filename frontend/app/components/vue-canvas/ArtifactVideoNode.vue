@@ -2,6 +2,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Upload, Loader2, Film, Play, RefreshCw, Download } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import SelectionActionChips from '~/components/vue-canvas/SelectionActionChips.vue'
 
 // Visual half of the unified `Video` artifact node. Same state machine as
 // the Image / Audio cards. Result lands in `data.images` (PreviewVideo's
