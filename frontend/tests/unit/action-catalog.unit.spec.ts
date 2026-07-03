@@ -1,0 +1,86 @@
+import { describe, it, expect } from 'vitest'
+import {
+  ACTION_CATALOG, DEPRECATED_NODES, HERO_BY_DOMAIN, INTENT_ORDER, groupByIntent,
+} from '~/data/action-catalog'
+
+const VALID_INTENTS = ['create', 'edit', 'enhance', 'analyze']
+
+function fake(nodeType: string, label = nodeType) {
+  return { nodeType, label }
+}
+
+describe('ACTION_CATALOG integrity', () => {
+  it('every entry has a valid intent', () => {
+    for (const [nodeType, entry] of Object.entries(ACTION_CATALOG)) {
+      expect(VALID_INTENTS, `${nodeType} intent "${entry.intent}"`).toContain(entry.intent)
+      expect(entry.useCase.length, `${nodeType} useCase`).toBeGreaterThan(0)
+    }
+  })
+
+  it('every hero nodeType exists in the catalog', () => {
+    for (const [domain, nodeTypes] of Object.entries(HERO_BY_DOMAIN)) {
+      for (const nt of nodeTypes) {
+        expect(ACTION_CATALOG[nt], `${domain} hero ${nt}`).toBeDefined()
+      }
+    }
+  })
+
+  it('deprecated nodes are not in the catalog', () => {
+    for (const nt of DEPRECATED_NODES) {
+      expect(ACTION_CATALOG[nt], `${nt} is deprecated AND in catalog`).toBeUndefined()
+    }
+  })
+
+  it('INTENT_ORDER is the four intents then More models', () => {
+    expect(INTENT_ORDER.map(s => s.id)).toEqual(['create', 'edit', 'enhance', 'analyze', 'other'])
+    expect(INTENT_ORDER[4]!.label).toBe('More models')
+  })
+})
+
+describe('groupByIntent', () => {
+  it('buckets items by intent in fixed section order and drops empty sections', () => {
+    const items = [
+      fake('UpscaleImageNode'),     // enhance
+      fake('GenerateImageNode'),    // create
+      fake('EditImageNode'),        // edit
+      fake('DescribeImageNode'),    // analyze
+    ]
+    const { hero, sections } = groupByIntent(items, [])
+    expect(hero).toEqual([])
+    expect(sections.map(s => s.label)).toEqual(['Create', 'Edit', 'Enhance', 'Analyze'])
+    expect(sections[0]!.items.map(i => i.nodeType)).toEqual(['GenerateImageNode'])
+  })
+
+  it('unmapped nodes land in a trailing "More models" section', () => {
+    const items = [fake('SomeLegacyPartnerNode', 'Kling 3.0'), fake('GenerateImageNode')]
+    const { sections } = groupByIntent(items, [])
+    expect(sections.map(s => s.label)).toEqual(['Create', 'More models'])
+    expect(sections[1]!.items[0]!.nodeType).toBe('SomeLegacyPartnerNode')
+  })
+
+  it('hero items follow heroNodeTypes order and are excluded from sections', () => {
+    const items = [
+      fake('EditImageNode'), fake('GenerateImageNode'), fake('UpscaleImageNode'),
+    ]
+    const { hero, sections } = groupByIntent(items, ['GenerateImageNode', 'EditImageNode'])
+    expect(hero.map(i => i.nodeType)).toEqual(['GenerateImageNode', 'EditImageNode'])
+    const sectioned = sections.flatMap(s => s.items.map(i => i.nodeType))
+    expect(sectioned).toEqual(['UpscaleImageNode'])
+  })
+
+  it('hero nodeTypes absent from items are skipped without error', () => {
+    const { hero } = groupByIntent([fake('GenerateImageNode')], ['MissingNode', 'GenerateImageNode'])
+    expect(hero.map(i => i.nodeType)).toEqual(['GenerateImageNode'])
+  })
+
+  it('sorts section items by display title (useCase when mapped, label otherwise)', () => {
+    const items = [
+      fake('SketchToImageNode'),   // "Sketch to image"
+      fake('GenerateAnimeNode'),   // "Generate an anime image"
+      fake('GenerateImageNode'),   // "Generate an image"
+    ]
+    const { sections } = groupByIntent(items, [])
+    expect(sections[0]!.items.map(i => i.nodeType))
+      .toEqual(['GenerateAnimeNode', 'GenerateImageNode', 'SketchToImageNode'])
+  })
+})
