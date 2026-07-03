@@ -163,6 +163,24 @@ describe('keepRow', () => {
     expect(swept.every(r => !c.rows.includes(r))).toBe(true)
   })
 
+  it('keeping row 0 itself, when it is a sweep row, still survives the purge with its values intact', () => {
+    const c = createCollection('t')
+    addColumn(c, 'n', 'number')
+    const base = addRow(c)
+    setCell(c, base.id, 'n', 1)
+    const swept = addSweepRows(c, 'n', [2, 3]) // swept[0] is row 0's sibling, not row 0
+    // Force row 0 itself to become a sweep row (e.g. a base row that got swept
+    // over), so keepRow(c, row0.id) exercises the "kept row IS row 0" path.
+    c.rows[0].sweep = true
+
+    keepRow(c, c.rows[0].id)
+
+    expect(c.rows).toHaveLength(1)
+    expect(c.rows[0].values.n).toBe(1)
+    expect(c.rows[0].sweep).toBeFalsy()
+    expect(swept.every(r => !c.rows.includes(r))).toBe(true)
+  })
+
   it('clamps the preview row after removing sweep rows', () => {
     const c = createCollection('t')
     addColumn(c, 'n', 'number')

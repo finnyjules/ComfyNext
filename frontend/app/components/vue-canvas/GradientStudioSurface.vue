@@ -21,7 +21,10 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { typeCompatible } from '~/lib/collection/bindables'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
+import { addSweepRows } from '~/lib/collection/model'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
+import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import {
   ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
@@ -98,6 +101,37 @@ const wiredColumns = computed<CollectionColumn[]>(() => {
   return c?.columns ?? []
 })
 
+// Wired collection NODE (not just its columns) — the sweep flow needs to
+// mutate the actual CollectionData object once the popover's Apply fires.
+function findWiredCollectionNode(): any | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return null
+  return props.nodes.find((n: any) => String(n.id) === String(edge.source)) ?? null
+}
+
+// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
+// control; on Apply, turns the entered values into sweep rows on the wired
+// collection and hands off to the drawer + a follow-up run event (see
+// runSweepRows dispatch below and VueNodeCanvas's pending-sweep stash).
+const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
+function applySweep(values: (string | number)[]) {
+  const control = sweepPopover.value?.control
+  sweepPopover.value = null
+  if (!control) return
+  const colNode = findWiredCollectionNode()
+  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  if (!colNode || !collection) return
+  const columnKey = boundColumnFor(control.key)
+  if (!columnKey) return
+
+  const added = addSweepRows(collection, columnKey, values)
+  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
+  }))
+}
+
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
   const type = controlKindToVariableType(control.kind)
@@ -128,7 +162,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
         if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
       },
     })
-    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
     items.push({ divider: true })
     items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
   }
@@ -466,8 +500,8 @@ async function generateImage() {
   baking.value = true; bakeMsg.value = 'Rendering…'
   stopPreview()
   try {
-    const { w, h } = exportDims.value
-    const blob = await gradientFx.renderToBlob(config.value, Math.min(w, 4096), Math.min(h, 4096), 0)
+    const blob = await renderCurrentBlob()
+    if (!blob) return
     const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
     const [filename] = await uploadFrameBatch([blob], 'gradient_img')
     if (filename) {
@@ -481,6 +515,43 @@ async function generateImage() {
     }
   } catch (e) { console.error('[gradient] image generate failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
+}
+
+// Shared full-res blob capture — same render call `generateImage` uses, factored
+// out so the param baker below (and any future caller) stays byte-identical.
+async function renderCurrentBlob(): Promise<Blob | null> {
+  const { w, h } = exportDims.value
+  return await gradientFx.renderToBlob(config.value, Math.min(w, 4096), Math.min(h, 4096), 0)
+}
+
+// Studio param-baker (Slice 2a Task 8b) — bakes ONE frame with a set of
+// `params.*` overrides applied (a collection sweep/generate row), without
+// disturbing the studio's live on-screen config: snapshot the current value
+// of every overridden key via the same dotted-path proxy the agent/onEdit
+// paths use (`paramsProxy`), write the overrides through that same proxy
+// (mutating the reactive `config` — identical to a user edit), render one
+// full-res frame, then restore the snapshots in `finally` regardless of
+// success/failure. `gradientFx.renderToBlob` draws straight to its own
+// internal canvas (not the on-screen preview `<canvas>` ref) and is fully
+// synchronous up to the `toBlob` callback, so there's no Vue render tick to
+// wait out here — writing `config` then calling `renderToBlob` immediately
+// sees the new values with no `nextTick`/rAF needed.
+async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+  const keys = Object.keys(overrides)
+  const snapshot = new Map<string, string | number | undefined>()
+  for (const key of keys) snapshot.set(key, paramsProxy[key] as string | number | undefined)
+  try {
+    for (const key of keys) paramsProxy[key] = overrides[key]!
+    return await renderCurrentBlob()
+  } catch (e) {
+    console.error('[gradient] param-baker render failed', e)
+    return null
+  } finally {
+    for (const key of keys) {
+      const prev = snapshot.get(key)
+      if (prev !== undefined) paramsProxy[key] = prev
+    }
+  }
 }
 
 async function generateVideo() {
@@ -540,6 +611,7 @@ onMounted(() => {
   startPreview()
   watchPreviewResize()
   window.addEventListener('keydown', onKey)
+  registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
 })
 onBeforeUnmount(() => {
   saveConfig(); stopPreview()
@@ -547,6 +619,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pointermove', onHandleMove)
   window.removeEventListener('pointerup', onHandleUp)
+  unregisterStudioParamBaker(props.nodeId)
 })
 
 function setLayout(l: LayoutKind) {
@@ -1086,5 +1159,12 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     :y="varMenu.y"
     :items="varMenu.items"
     @close="varMenu = null"
+  />
+  <SweepPopover
+    v-if="sweepPopover"
+    :control="sweepPopover.control"
+    :anchor="sweepPopover.anchor"
+    @apply="applySweep"
+    @close="sweepPopover = null"
   />
 </template>

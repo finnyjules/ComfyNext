@@ -3186,6 +3186,24 @@ function handleOpenCollection(e: Event) {
   collectionDrawerForId.value = String((e as CustomEvent).detail?.nodeId ?? '') || null
 }
 
+// Sweep auto-run handoff (Slice 2a Task 8b): a studio surface's Sweep popover
+// appends rows to the wired collection, dispatches `comfynext:openCollection`
+// to open the drawer for that collection, then immediately dispatches
+// `comfynext:runSweepRows` with the new row ids + the target studio's node id.
+// The drawer that's about to mount (openCollection above) isn't listening yet
+// when runSweepRows fires synchronously right after it — both events land in
+// the same tick, before Vue has re-rendered `v-if="collectionDrawerForId"`.
+// Simplest reliable fix: VueNodeCanvas (always mounted) is the one guaranteed
+// listener, so it stashes the pending sweep detail here and hands it to
+// CollectionDrawer as a prop; the drawer consumes-and-clears it once mounted
+// (see CollectionDrawer's `pendingSweep` prop + onMounted watcher).
+const pendingSweep = ref<{ collectionNodeId: string; rowIds: string[]; targetNodeId: string } | null>(null)
+function handleRunSweepRows(e: Event) {
+  const detail = (e as CustomEvent).detail as { collectionNodeId?: string; rowIds?: string[]; targetNodeId?: string } | undefined
+  if (!detail?.collectionNodeId || !detail.rowIds?.length || !detail.targetNodeId) return
+  pendingSweep.value = { collectionNodeId: String(detail.collectionNodeId), rowIds: detail.rowIds, targetNodeId: String(detail.targetNodeId) }
+}
+
 // Collection row scrub (node scrubber, not the drawer) — push the newly
 // scrubbed preview row onto any wired Smart Layout targets' live preview.
 function handleCollectionScrub(e: Event) {
@@ -3504,6 +3522,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openCollection', handleOpenCollection)
+  window.addEventListener('comfynext:runSweepRows', handleRunSweepRows)
   window.addEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.addEventListener('comfynext:promoteControl', handlePromoteControl)
   window.addEventListener('comfynext:bindControl', handleBindControl)
@@ -3556,6 +3575,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openCollection', handleOpenCollection)
+  window.removeEventListener('comfynext:runSweepRows', handleRunSweepRows)
   window.removeEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.removeEventListener('comfynext:promoteControl', handlePromoteControl)
   window.removeEventListener('comfynext:bindControl', handleBindControl)
@@ -6289,7 +6309,9 @@ defineExpose({
         :node-id="collectionDrawerForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
+        :pending-sweep="pendingSweep"
         @close="collectionDrawerForId = null"
+        @sweep-consumed="pendingSweep = null"
       />
     </Teleport>
 

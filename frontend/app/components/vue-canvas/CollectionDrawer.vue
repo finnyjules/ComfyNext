@@ -1,11 +1,11 @@
 <!-- frontend/app/components/vue-canvas/CollectionDrawer.vue -->
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import JSZip from 'jszip'
-import { X, Plus, Upload, ClipboardPaste, Trash2, Play } from 'lucide-vue-next'
+import { X, Plus, Upload, ClipboardPaste, Trash2, Play, Check } from 'lucide-vue-next'
 import { deriveOutputs } from '~~/shared/template-grid/resolve'
-import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type VarBinding, type VariableType } from '~/lib/collection/types'
-import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel } from '~/lib/collection/model'
+import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type CollectionRow, type VarBinding, type VariableType } from '~/lib/collection/types'
+import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel, keepRow } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
 import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
 import { listStudioBindables } from '~/lib/collection/studioBindables'
@@ -14,10 +14,16 @@ import { VARS_TARGET_NODE_TYPES } from '~/lib/collection/varsInput'
 import { resolveBindings, validateRun } from '~/lib/collection/resolve'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
-import { buildRenderItem, estimateBatch, sanitize } from '~/lib/collection/generate'
+import { buildRenderItem, buildStudioRenderItem, estimateBatch, sanitize } from '~/lib/collection/generate'
+import { getStudioParamBaker } from '~/lib/studio/cascade'
 
-const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const props = defineProps<{
+  nodeId: string
+  nodes: any[]
+  edges: any[]
+  pendingSweep?: { collectionNodeId: string; rowIds: string[]; targetNodeId: string } | null
+}>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'sweep-consumed'): void }>()
 
 const node = computed(() => props.nodes.find(n => String(n.id) === String(props.nodeId)))
 const collection = computed<CollectionData | null>(() =>
@@ -170,6 +176,24 @@ function selectItem(item: BatchItem) {
   collection.value.previewRow = item.rowIndex
 }
 
+// Results view "Keep" — promotes a sweep row's values onto row 0, drops every
+// sweep row (including the kept one — keepRow copies its values in first),
+// then re-pushes the resolved preview so wired targets snap to the kept look.
+function isSweepRow(item: BatchItem): boolean {
+  return !!collection.value?.rows[item.rowIndex]?.sweep
+}
+function keepItem(item: BatchItem) {
+  if (!collection.value || !node.value) return
+  const row = collection.value.rows[item.rowIndex]
+  if (!row) return
+  const sweptRowIds = new Set(collection.value.rows.filter(r => r.sweep).map(r => r.id))
+  keepRow(collection.value, row.id)
+  // keepRow removed every `sweep: true` row (row 0 survives even if it was
+  // the kept row) — drop any now-stale result items that pointed at them.
+  items.value = items.value.filter(i => !sweptRowIds.has(i.rowId))
+  pushVarPreview(node.value, targets.value)
+}
+
 async function retryItem(item: BatchItem) {
   item.status = 'queued'
   item.error = undefined
@@ -217,13 +241,31 @@ function openConfirm() {
   confirmOpen.value = true
 }
 
+// Picks the right per-item render fn for `target`: Smart Layout renders via
+// the template-grid backend (buildRenderItem); every other VARS target is a
+// studio surface baked client-side via its registered StudioParamBaker
+// (buildStudioRenderItem). Kept as a tiny seam so runRows/runItems never
+// special-case the target kind themselves.
+function renderItemFor(targetNode: any, runStamp: string) {
+  if (!collection.value) throw new Error('no collection')
+  return targetNode.data?.nodeType === 'SmartLayout'
+    ? buildRenderItem(targetNode, collection.value, targetBindings(), runStamp)
+    : buildStudioRenderItem(String(targetNode.id), collection.value, targetBindings(), runStamp)
+}
+
+// `runItems` always renders against the currently wired `target.value` — true
+// for every entry point today (confirmGenerate/retryFailed/retryItem/the sweep
+// auto-run all act on rows of THIS collection, and a collection only has the
+// one wired target the bindings strip shows). `runRows` takes an explicit
+// `targetNode` anyway (rather than silently trusting `target.value`) so a
+// future multi-target collection can't quietly render against the wrong node.
 async function runItems(toRun: BatchItem[]) {
   if (!collection.value || !target.value) return
   running.value = true
   const signal = { cancelled: false }
   runSignal.value = signal
   const runStamp = Date.now().toString(36)
-  const renderItem = buildRenderItem(target.value, collection.value, targetBindings(), runStamp)
+  const renderItem = renderItemFor(target.value, runStamp)
   try {
     await runBatch(toRun, renderItem, {
       concurrency: 3,
@@ -236,13 +278,24 @@ async function runItems(toRun: BatchItem[]) {
   }
 }
 
-async function confirmGenerate() {
-  if (!collection.value) return
-  confirmOpen.value = false
-  const planned = planBatch(collection.value.rows, outputs.value)
+// Core batch-planning entry point: plans BatchItems for exactly the given row
+// subset (all rows for a normal Generate run, or just the freshly-swept rows
+// for a sweep auto-run) against the given target + output list, then hands
+// off to runItems. confirmGenerate/retryFailed/the sweep auto-run handler all
+// funnel through this so status column/results/cancel all behave identically
+// regardless of entry point.
+async function runRows(rows: CollectionRow[], targetNode: any, outputList: { id: string }[]) {
+  if (!collection.value || !targetNode || String(targetNode.id) !== String(target.value?.id)) return
+  const planned = planBatch(rows, outputList)
   items.value = planned
   autoShowResults.value = true
   await runItems(planned)
+}
+
+async function confirmGenerate() {
+  if (!collection.value || !target.value) return
+  confirmOpen.value = false
+  await runRows(collection.value.rows, target.value, outputs.value)
 }
 
 function cancelRun() {
@@ -256,6 +309,52 @@ async function retryFailed() {
   autoShowResults.value = true
   await runItems(failed)
 }
+
+// --- Sweep auto-run (Slice 2a Task 8b) ------------------------------------
+// A studio surface's Sweep popover appends rows then dispatches
+// `comfynext:openCollection` (opens this drawer) immediately followed by
+// `comfynext:runSweepRows`. VueNodeCanvas is the only listener guaranteed to
+// already be mounted when runSweepRows fires, so it stashes the detail and
+// passes it down as `pendingSweep`; this drawer consumes it once mounted
+// (its own key-based remount means onMounted always sees a fresh instance)
+// and immediately tells the parent to clear the stash so a later reopen of
+// the same collection doesn't replay a stale sweep.
+const sweepWarning = ref('')
+async function consumePendingSweep() {
+  const pending = props.pendingSweep
+  if (!pending || !collection.value) return
+  if (String(pending.collectionNodeId) !== String(props.nodeId)) return
+  emit('sweep-consumed')
+
+  const rows = collection.value.rows.filter(r => pending.rowIds.includes(r.id))
+  if (!rows.length) return
+
+  const targetNode = props.nodes.find((n: any) => String(n.id) === String(pending.targetNodeId))
+  if (!targetNode) return
+
+  // Studio targets must be mounted (registered baker) to bake anything —
+  // mirrors buildStudioRenderItem's own guard, checked up front so a sweep
+  // against a closed studio surfaces one clear warning instead of N
+  // per-item failures.
+  if (targetNode.data?.nodeType !== 'SmartLayout' && !getStudioParamBaker(String(targetNode.id))) {
+    sweepWarning.value = 'Open the studio to generate its sweep.'
+    return
+  }
+  // Sweep runs skip the confirm modal (no user to read the warning list
+  // there) but must still respect validateRun — an invalid binding (e.g. a
+  // non-hex color cell) should abort the same way it would block a normal
+  // confirm-modal Generate, not silently render garbage.
+  if (validateRun(collection.value, targetBindings()).length) {
+    sweepWarning.value = 'Fix the row values flagged in the table before sweeping.'
+    return
+  }
+  sweepWarning.value = ''
+
+  const outputList = targetNode.data?.nodeType === 'SmartLayout' ? outputs.value : [{ id: 'output' }]
+  await runRows(rows, targetNode, outputList)
+}
+onMounted(() => { consumePendingSweep() })
+watch(() => props.pendingSweep, () => { consumePendingSweep() })
 
 const pasteOpen = ref(false)
 const pasteText = ref('')
@@ -373,6 +472,10 @@ function isImageUrl(v: unknown): boolean {
         <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout or studio node to bind columns</span>
       </div>
 
+      <div v-if="sweepWarning" class="px-4 py-1.5 border-b border-amber-400/20 bg-amber-500/10 text-[11px] text-amber-300/90 shrink-0">
+        {{ sweepWarning }}
+      </div>
+
       <div v-if="view === 'results'" class="flex-1 overflow-auto p-3">
         <div class="grid grid-cols-6 gap-2">
           <div
@@ -388,6 +491,13 @@ function isImageUrl(v: unknown): boolean {
               @click="selectItem(item)"
             >
               <img :src="item.url" class="w-full h-full object-cover" />
+              <span
+                v-if="isSweepRow(item)"
+                class="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white/80 opacity-0 transition group-hover:opacity-100 hover:!bg-emerald-500/80 hover:text-white"
+                @click.stop="keepItem(item)"
+              >
+                <Check class="size-3" /> Keep
+              </span>
             </button>
             <div
               v-else-if="item.status === 'failed'"
