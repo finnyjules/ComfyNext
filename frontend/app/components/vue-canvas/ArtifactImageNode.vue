@@ -359,11 +359,41 @@ async function saveAsCharacter() {
   }
 }
 
-// Top-right "Edit" menu: Remove BG / Inpaint / Edit (Nano Banana) / Fix. Each item
-// runs an existing action and closes the menu; clicking outside dismisses it.
+// Top-right "Edit" menu. Each item runs an existing action and closes the
+// menu; clicking outside dismisses it. The panel is TELEPORTED to <body> in
+// screen space — inside the node it gets clipped by the card's overflow and
+// the node bounds (10 rows never fit) — and clamped to the viewport with its
+// own scroll. Screen-space also means it stays readable at low canvas zoom.
 const editMenuOpen = ref(false)
 const editMenuRef = ref<HTMLElement | null>(null)
-onClickOutside(editMenuRef, () => { editMenuOpen.value = false })
+const editMenuPanelRef = ref<HTMLElement | null>(null)
+const editMenuStyle = ref<Record<string, string>>({})
+onClickOutside(editMenuRef, () => { editMenuOpen.value = false }, { ignore: [editMenuPanelRef] })
+function closeEditMenuOnWheel() { editMenuOpen.value = false }
+watch(editMenuOpen, (open) => {
+  if (open) {
+    const r = editMenuRef.value?.getBoundingClientRect()
+    if (r) {
+      // Below the button when there's room, flipped above when the node sits
+      // near the viewport bottom; either way capped to the available space.
+      // ~380px = the full 10-row menu; prefer whichever side shows it whole,
+      // falling back to the roomier side with internal scroll.
+      const below = window.innerHeight - r.bottom - 16
+      const flip = below < 380 && r.top - 16 > below
+      editMenuStyle.value = {
+        right: `${Math.max(8, window.innerWidth - r.right)}px`,
+        ...(flip
+          ? { bottom: `${window.innerHeight - r.top + 4}px`, maxHeight: `${r.top - 16}px` }
+          : { top: `${r.bottom + 4}px`, maxHeight: `${below}px` }),
+      }
+    }
+    // Pan/zoom would leave the fixed panel floating at a stale spot — close instead.
+    window.addEventListener('wheel', closeEditMenuOnWheel, { passive: true })
+  } else {
+    window.removeEventListener('wheel', closeEditMenuOnWheel)
+  }
+})
+onBeforeUnmount(() => window.removeEventListener('wheel', closeEditMenuOnWheel))
 function runEdit(action: () => void) {
   editMenuOpen.value = false
   action()
@@ -553,9 +583,12 @@ function openEditMenuFromStrip() {
           >
             <Pencil class="size-3" /> Edit…
           </button>
+          <Teleport to="body">
           <div
             v-if="editMenuOpen"
-            class="absolute top-full right-0 mt-1 min-w-[190px] rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+            ref="editMenuPanelRef"
+            class="nopan nodrag fixed z-[9999] min-w-[190px] overflow-y-auto rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+            :style="editMenuStyle"
           >
             <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Retouch</div>
             <button class="edit-menu-item" @click.stop="runEdit(removeBackground)">
@@ -605,6 +638,7 @@ function openEditMenuFromStrip() {
               <span class="edit-menu-hint">{{ ACTION_HINTS.animate }}</span>
             </button>
           </div>
+          </Teleport>
         </div>
         <!-- Main image -->
         <img
