@@ -187,6 +187,13 @@ onMounted(loadPartnerNodes)
 const activeDomain = ref<Domain>('image')
 const searchQuery = ref('')
 
+const props = defineProps<{ focusDomain?: { domain: ActionDomain; ts: number } | null }>()
+watch(() => props.focusDomain, (f) => {
+  if (!f) return
+  activeDomain.value = f.domain
+  searchQuery.value = ''
+}, { immediate: true })
+
 function domainItemCount(d: Domain): number {
   return allItems.value.filter(it => it.domain === d).length
 }

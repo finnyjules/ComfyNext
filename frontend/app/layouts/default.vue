@@ -315,6 +315,22 @@ const charactersPanelOpen = ref(false) // tracks whether the Character Library p
 const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library panel is visible
 const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
 
+// Canvas → Actions panel deep-link: anything on the canvas can dispatch
+// `comfynext:openActions` with an optional domain to open the panel on that
+// tab (selection chips' "All actions…" uses this). ts forces the watcher to
+// re-fire on repeated same-domain opens.
+const actionsFocusDomain = ref<{ domain: string; ts: number } | null>(null)
+function handleOpenActions(e: Event) {
+  const domain = (e as CustomEvent).detail?.domain
+  if (domain) actionsFocusDomain.value = { domain, ts: Date.now() }
+  openSubmenu.value = null
+  toolboxPanelOpen.value = false
+  loraLibraryPanelOpen.value = false
+  charactersPanelOpen.value = false
+  blockLibraryPanelOpen.value = false
+  generatorsPanelOpen.value = true
+}
+
 // Whether a sidebar item is currently the "active" one (highlighted).
 // Single source of truth for the chevron/button highlight logic — used by
 // the template instead of nested ternaries that got unreadable as we added
@@ -931,6 +947,7 @@ onMounted(() => {
   window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.addEventListener('comfynext:runVariations', handleRunVariations)
   window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
+  window.addEventListener('comfynext:openActions', handleOpenActions)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
@@ -944,6 +961,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
   window.removeEventListener('comfynext:runVariations', handleRunVariations)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
+  window.removeEventListener('comfynext:openActions', handleOpenActions)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
 })
@@ -2942,7 +2960,7 @@ function dismissRunResult() {
           leave-to-class="-translate-x-full"
         >
           <div v-if="generatorsPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
-            <VueCanvasGeneratorsPanel @close="generatorsPanelOpen = false" />
+            <VueCanvasGeneratorsPanel :focus-domain="actionsFocusDomain" @close="generatorsPanelOpen = false" />
           </div>
         </Transition>
 
