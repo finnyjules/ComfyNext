@@ -20,6 +20,17 @@ export function unregisterStudioBaker(id: string): void { _bakers.delete(id) }
 export function getStudioBaker(id: string): StudioBaker | undefined { return _bakers.get(id) }
 export function hasStudioBaker(id: string): boolean { return _bakers.has(id) }
 
+/** Bakes one frame with a set of param overrides applied (e.g. one row of a
+ * collection sweep/generate run) — distinct from `StudioBaker`, which bakes the
+ * studio's currently-live config. Implementations apply overrides, render once,
+ * capture the blob, then restore the prior values (snapshot/restore in try/finally). */
+export type StudioParamBaker = (overrides: Record<string, string | number>) => Promise<Blob | null>
+
+const _paramBakers = new Map<string, StudioParamBaker>()
+export function registerStudioParamBaker(id: string, fn: StudioParamBaker): void { _paramBakers.set(id, fn) }
+export function unregisterStudioParamBaker(id: string): void { _paramBakers.delete(id) }
+export function getStudioParamBaker(id: string): StudioParamBaker | undefined { return _paramBakers.get(id) }
+
 export interface WalkNode { id: string; type?: string; data?: { nodeType?: string } | null }
 export interface WalkEdge { source: string | number; target: string | number; sourceHandle?: string | null; targetHandle?: string | null }
 

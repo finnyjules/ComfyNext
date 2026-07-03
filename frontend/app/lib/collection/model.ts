@@ -62,3 +62,32 @@ export function rowLabel(c: CollectionData, index: number): string {
   }
   return `Row ${index + 1}`
 }
+
+/** Appends one new row per value: each copies the CURRENT preview row's values
+ * (preview clamped first; {} if the collection has no rows), overrides `columnKey`
+ * with that value, and is flagged `sweep: true`. Returns the newly appended rows. */
+export function addSweepRows(c: CollectionData, columnKey: string, values: (string | number)[]): CollectionRow[] {
+  clampPreviewRow(c)
+  const baseValues = c.rows[c.previewRow]?.values ?? {}
+  const added: CollectionRow[] = []
+  for (const v of values) {
+    const row: CollectionRow = { id: uid('row'), sweep: true, values: { ...baseValues, [columnKey]: v } }
+    c.rows.push(row)
+    added.push(row)
+  }
+  return added
+}
+
+/** Promotes a sweep (or any) row's values onto row 0 — creating row 0 via addRow
+ * if the collection is empty — then removes ALL `sweep: true` rows (including the
+ * kept row itself, since it was one), and clamps the preview row into range. */
+export function keepRow(c: CollectionData, rowId: string): void {
+  const source = c.rows.find(r => r.id === rowId)
+  const values = source ? { ...source.values } : {}
+  let row0 = c.rows[0]
+  if (!row0) row0 = addRow(c)
+  row0.values = values
+  delete row0.sweep
+  c.rows = c.rows.filter(r => r === row0 || !r.sweep)
+  clampPreviewRow(c)
+}
