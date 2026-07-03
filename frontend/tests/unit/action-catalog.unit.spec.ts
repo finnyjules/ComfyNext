@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ACTION_CATALOG, DEPRECATED_NODES, HERO_BY_DOMAIN, INTENT_ORDER, groupByIntent,
+  ACTION_CATALOG, DEPRECATED_NODES, HERO_BY_DOMAIN, INTENT_ORDER, groupByIntent, CHIPS_BY_DOMAIN,
 } from '~/data/action-catalog'
 
 const VALID_INTENTS = ['create', 'edit', 'enhance', 'analyze']
@@ -34,6 +34,18 @@ describe('ACTION_CATALOG integrity', () => {
   it('INTENT_ORDER is the four intents then More models', () => {
     expect(INTENT_ORDER.map(s => s.id)).toEqual(['create', 'edit', 'enhance', 'analyze', 'other'])
     expect(INTENT_ORDER[4]!.label).toBe('More models')
+  })
+
+  it('every chip nodeType exists in the catalog and is a takes-input intent', () => {
+    for (const [domain, chips] of Object.entries(CHIPS_BY_DOMAIN)) {
+      for (const chip of chips) {
+        const entry = ACTION_CATALOG[chip.nodeType]
+        expect(entry, `${domain} chip ${chip.nodeType}`).toBeDefined()
+        expect(entry!.intent, `${domain} chip ${chip.nodeType} must not be create`).not.toBe('create')
+        expect(chip.chipLabel.length).toBeGreaterThan(0)
+        expect(chip.chipLabel.length, `${chip.nodeType} chipLabel is a short verb`).toBeLessThanOrEqual(14)
+      }
+    }
   })
 })
 

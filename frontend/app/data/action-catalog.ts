@@ -107,6 +107,28 @@ export const HERO_BY_DOMAIN: Record<ActionDomain, string[]> = {
   text:  ['ChatLLMNode', 'ImprovePromptNode'],
 }
 
+// Selection chips — the 2–3 takes-input actions surfaced on a selected media
+// node (spec §3: a sampler, never the whole store; "All actions…" opens the
+// panel). chipLabel = the short verb form of the useCase for a 1-line strip.
+export const CHIPS_BY_DOMAIN: Record<ActionDomain, { nodeType: string; chipLabel: string }[]> = {
+  image: [
+    { nodeType: 'EditImageNode',        chipLabel: 'Edit' },
+    { nodeType: 'UpscaleImageNode',     chipLabel: 'Upscale' },
+    { nodeType: 'RemoveBackgroundNode', chipLabel: 'Remove BG' },
+  ],
+  video: [
+    { nodeType: 'LipsyncNode',     chipLabel: 'Sync lips' },
+    { nodeType: 'EnhanceVideoNode', chipLabel: 'Enhance' },
+    { nodeType: 'DescribeVideoNode', chipLabel: 'Describe' },
+  ],
+  audio: [
+    { nodeType: 'TranscribeAudioNode',  chipLabel: 'Transcribe' },
+    { nodeType: 'IdentifySpeakersNode', chipLabel: 'Speakers' },
+  ],
+  '3d': [],
+  text: [],
+}
+
 export const INTENT_ORDER: { id: ActionIntent | 'other'; label: string }[] = [
   { id: 'create',  label: 'Create' },
   { id: 'edit',    label: 'Edit' },
