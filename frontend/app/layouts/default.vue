@@ -4,7 +4,7 @@ import {
   MousePointer2, Hand, LayoutGrid, GitFork, Image, Workflow, AppWindow, LayoutTemplate, Sparkles, Toolbox, WandSparkles, Boxes,
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
-  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis,
+  StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
@@ -115,6 +115,7 @@ const loadOptions = [
   { label: 'Gradient', icon: Sparkles, nodeType: 'GradientStudio' },
   { label: 'Shader', icon: Sparkles, nodeType: 'ShaderStudio' },
   { label: 'Pattern', icon: Sparkles, nodeType: 'TextureStudio' },
+  { label: 'Collection', icon: Table2, nodeType: 'Collection' },
   { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector' },
   { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
