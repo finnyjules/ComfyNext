@@ -51,11 +51,12 @@ export function buildRenderItem(
     const meta = await up.json() as { name?: string; subfolder?: string }
     const rel = meta.subfolder ? `${meta.subfolder}/${meta.name}` : (meta.name ?? fname)
 
-    await fetch('/comfynext/asset_import', {
+    const importRes = await fetch('/comfynext/asset_import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: rel }),
     })
+    if (!importRes.ok) throw new Error('asset_import failed: ' + importRes.status)
 
     item.assetName = rel
     item.url = `/view?${new URLSearchParams({

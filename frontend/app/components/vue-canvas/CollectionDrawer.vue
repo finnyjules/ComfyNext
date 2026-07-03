@@ -176,25 +176,27 @@ const pasteOpen = ref(false)
 const pasteText = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 
-function onAddRow() { if (collection.value) addRow(collection.value) }
-function onAddColumn() { if (collection.value) addColumn(collection.value, `Column ${collection.value.columns.length + 1}`, 'text') }
+function onAddRow() { if (!running.value && collection.value) addRow(collection.value) }
+function onAddColumn() { if (!running.value && collection.value) addColumn(collection.value, `Column ${collection.value.columns.length + 1}`, 'text') }
 function onRemoveRow(rowId: string) {
-  if (!collection.value) return
+  if (running.value || !collection.value) return
   removeRow(collection.value, rowId)
   clampPreviewRow(collection.value)
 }
-function onRemoveColumn(key: string) { if (collection.value) removeColumn(collection.value, key) }
+function onRemoveColumn(key: string) { if (!running.value && collection.value) removeColumn(collection.value, key) }
 function onCell(rowId: string, key: string, e: Event) {
   if (!collection.value) return
   setCell(collection.value, rowId, key, (e.target as HTMLInputElement).value)
 }
 function selectRow(i: number) { if (collection.value) collection.value.previewRow = i }
 function applyPaste() {
-  if (collection.value && pasteText.value.trim()) importTable(collection.value, pasteText.value)
+  if (running.value || !collection.value || !pasteText.value.trim()) return
+  importTable(collection.value, pasteText.value)
   pasteOpen.value = false
   pasteText.value = ''
 }
 async function onFile(e: Event) {
+  if (running.value) return
   const f = (e.target as HTMLInputElement).files?.[0]
   if (!f || !collection.value) return
   importTable(collection.value, await f.text())
@@ -221,14 +223,14 @@ function isImageUrl(v: unknown): boolean {
           {{ collection.rows.length }} rows · {{ collection.columns.length }} columns
         </span>
         <div class="flex-1" />
-        <button class="drawer-btn" @click="pasteOpen = !pasteOpen">
+        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="pasteOpen = !pasteOpen">
           <ClipboardPaste class="size-3.5" /> Paste data
         </button>
-        <button class="drawer-btn" @click="fileInput?.click()">
+        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="fileInput?.click()">
           <Upload class="size-3.5" /> Import CSV
         </button>
         <input ref="fileInput" type="file" accept=".csv,.tsv,.txt" class="hidden" @change="onFile" />
-        <button class="drawer-btn" @click="onAddColumn"><Plus class="size-3.5" /> Column</button>
+        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="onAddColumn"><Plus class="size-3.5" /> Column</button>
         <button class="p-1.5 rounded hover:bg-white/10" @click="emit('close')"><X class="size-4" /></button>
       </div>
 
@@ -329,14 +331,14 @@ function isImageUrl(v: unknown): boolean {
                 </div>
               </td>
               <td class="border-b border-white/5 pr-2 text-right">
-                <button class="opacity-0 group-hover:opacity-40 hover:!opacity-100" @click.stop="onRemoveRow(row.id)">
+                <button class="opacity-0 group-hover:opacity-40 hover:!opacity-100" :class="{ 'opacity-0 cursor-not-allowed': running }" :disabled="running" @click.stop="onRemoveRow(row.id)">
                   <Trash2 class="size-3" />
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
-        <button class="drawer-btn m-2" @click="onAddRow"><Plus class="size-3.5" /> Row</button>
+        <button class="drawer-btn m-2" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="onAddRow"><Plus class="size-3.5" /> Row</button>
       </div>
 
       <div class="relative flex items-center gap-3 px-4 h-9 border-t border-white/10 shrink-0 text-[11px] text-white/40">
