@@ -220,7 +220,8 @@ const visibleGroups = computed(() => {
       || it.description.toLowerCase().includes(q)
       || it.provider.toLowerCase().includes(q)
       || it.nodeType.toLowerCase().includes(q)
-      || (ACTION_CATALOG[it.nodeType]?.useCase.toLowerCase().includes(q) ?? false))
+      || (ACTION_CATALOG[it.nodeType]?.useCase.toLowerCase().includes(q) ?? false)
+      || (ACTION_CATALOG[it.nodeType]?.model.toLowerCase().includes(q) ?? false))
   return groupByIntent(items, q ? [] : HERO_BY_DOMAIN[activeDomain.value])
 })
 
