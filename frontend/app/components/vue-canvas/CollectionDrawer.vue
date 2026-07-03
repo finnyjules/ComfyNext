@@ -1,13 +1,16 @@
 <!-- frontend/app/components/vue-canvas/CollectionDrawer.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { X, Plus, Upload, ClipboardPaste, Trash2 } from 'lucide-vue-next'
+import { X, Plus, Upload, ClipboardPaste, Trash2, Play } from 'lucide-vue-next'
+import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type VarBinding, type VariableType } from '~/lib/collection/types'
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
 import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
-import { resolveBindings } from '~/lib/collection/resolve'
+import { resolveBindings, validateRun } from '~/lib/collection/resolve'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
+import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
+import { buildRenderItem, estimateBatch } from '~/lib/collection/generate'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -88,6 +91,86 @@ watch(
   () => { if (node.value) pushVarPreview(node.value, targets.value) },
   { deep: true, immediate: true },
 )
+
+// --- Generate ---------------------------------------------------------
+const outputs = computed(() => {
+  if (!target.value) return []
+  const template = readTemplateFromNode(target.value)
+  if (!template) return []
+  try { return deriveOutputs(template as any) } catch { return [] }
+})
+const generateN = computed(() => (collection.value?.rows.length ?? 0) * outputs.value.length)
+
+const confirmOpen = ref(false)
+const items = ref<BatchItem[]>([])
+const running = ref(false)
+const runSignal = ref<{ cancelled: boolean } | null>(null)
+
+const estimate = computed(() => estimateBatch(generateN.value))
+const warnings = computed(() => (collection.value ? validateRun(collection.value, targetBindings()) : []))
+const warningsShown = computed(() => warnings.value.slice(0, 5))
+const warningsMore = computed(() => Math.max(0, warnings.value.length - 5))
+
+const STATUS_RANK: Record<BatchStatus, number> = { queued: 0, rendering: 1, done: 2, failed: 3 }
+const rowStatus = computed(() => {
+  const map = new Map<string, BatchStatus>()
+  for (const item of items.value) {
+    const prev = map.get(item.rowId)
+    if (!prev || STATUS_RANK[item.status] > STATUS_RANK[prev]) map.set(item.rowId, item.status)
+  }
+  return map
+})
+const rowError = computed(() => {
+  const map = new Map<string, string>()
+  for (const item of items.value) {
+    if (item.status === 'failed' && item.error) map.set(item.rowId, item.error)
+  }
+  return map
+})
+const hasFailed = computed(() => items.value.some(i => i.status === 'failed'))
+
+function openConfirm() {
+  if (!collection.value || !target.value || !generateN.value) return
+  confirmOpen.value = true
+}
+
+async function runItems(toRun: BatchItem[]) {
+  if (!collection.value || !target.value) return
+  running.value = true
+  const signal = { cancelled: false }
+  runSignal.value = signal
+  const runStamp = Date.now().toString(36)
+  const renderItem = buildRenderItem(target.value, collection.value, targetBindings(), runStamp)
+  try {
+    await runBatch(toRun, renderItem, {
+      concurrency: 3,
+      signal,
+      onUpdate: () => { items.value = [...items.value] },
+    })
+  } finally {
+    running.value = false
+    runSignal.value = null
+  }
+}
+
+async function confirmGenerate() {
+  if (!collection.value) return
+  confirmOpen.value = false
+  const planned = planBatch(collection.value.rows, outputs.value)
+  items.value = planned
+  await runItems(planned)
+}
+
+function cancelRun() {
+  if (runSignal.value) runSignal.value.cancelled = true
+}
+
+async function retryFailed() {
+  const failed = items.value.filter(i => i.status === 'failed')
+  for (const item of failed) { item.status = 'queued'; item.error = undefined }
+  items.value = [...items.value]
+  await runItems(failed)
+}
 
 const pasteOpen = ref(false)
 const pasteText = ref('')
@@ -185,6 +268,7 @@ function isImageUrl(v: unknown): boolean {
           <thead>
             <tr class="text-white/40 sticky top-0 bg-[#141414]">
               <th class="w-9 border-b border-white/10" />
+              <th v-if="items.length" class="w-6 border-b border-white/10" />
               <th v-for="col in collection.columns" :key="col.key" class="text-left font-normal px-2 py-1.5 border-b border-white/10 min-w-[140px]">
                 <div class="flex items-center gap-1.5">
                   <input v-model="col.label" class="bg-transparent outline-none w-24 text-white/70" />
@@ -208,6 +292,18 @@ function isImageUrl(v: unknown): boolean {
               @click="selectRow(i)"
             >
               <td class="px-2 py-1 text-white/30 tabular-nums border-b border-white/5 text-right">{{ i + 1 }}</td>
+              <td v-if="items.length" class="px-1 py-1 border-b border-white/5 text-center">
+                <span
+                  class="inline-block size-2 rounded-full"
+                  :class="{
+                    'bg-white/20': rowStatus.get(row.id) === 'queued',
+                    'bg-white/60 animate-pulse': rowStatus.get(row.id) === 'rendering',
+                    'bg-emerald-400': rowStatus.get(row.id) === 'done',
+                    'bg-red-400': rowStatus.get(row.id) === 'failed',
+                  }"
+                  :title="rowError.get(row.id) ?? ''"
+                />
+              </td>
               <td v-for="col in collection.columns" :key="col.key" class="px-2 py-1 border-b border-white/5">
                 <div class="flex items-center gap-1.5">
                   <template v-if="col.type === 'color'">
@@ -243,9 +339,44 @@ function isImageUrl(v: unknown): boolean {
         <button class="drawer-btn m-2" @click="onAddRow"><Plus class="size-3.5" /> Row</button>
       </div>
 
-      <div class="flex items-center gap-3 px-4 h-9 border-t border-white/10 shrink-0 text-[11px] text-white/40">
+      <div class="relative flex items-center gap-3 px-4 h-9 border-t border-white/10 shrink-0 text-[11px] text-white/40">
         <span>Click a row to preview it on canvas</span>
         <div class="flex-1" />
+
+        <span v-if="running" class="text-white/50">Generating…</span>
+        <button v-if="running" class="drawer-btn" @click="cancelRun">Cancel</button>
+        <button v-if="!running && hasFailed" class="drawer-btn" @click="retryFailed">Retry failed</button>
+
+        <button
+          v-if="!running"
+          class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          :disabled="!generateN"
+          @click="openConfirm"
+        >
+          <Play class="size-3.5" /> Generate {{ generateN }}
+        </button>
+
+        <div
+          v-if="confirmOpen"
+          class="absolute bottom-10 right-4 w-72 rounded-lg border border-white/10 bg-[#1a1a1a] shadow-xl p-3 text-white/80 z-10"
+        >
+          <div class="text-[12px] font-medium text-white/90">{{ estimate.label }}</div>
+          <div v-if="warnings.length" class="mt-2 space-y-1 max-h-32 overflow-auto">
+            <div v-for="(w, wi) in warningsShown" :key="wi" class="text-[11px] text-amber-300/80">
+              Row {{ w.rowIndex + 1 }}: {{ w.message }}
+            </div>
+            <div v-if="warningsMore" class="text-[11px] text-white/40">…and {{ warningsMore }} more</div>
+          </div>
+          <div class="flex justify-end gap-2 mt-3">
+            <button class="drawer-btn" @click="confirmOpen = false">Cancel</button>
+            <button
+              class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-300 transition hover:bg-emerald-500/25"
+              @click="confirmGenerate"
+            >
+              <Play class="size-3.5" /> Generate
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </Teleport>
