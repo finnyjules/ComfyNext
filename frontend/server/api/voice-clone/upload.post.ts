@@ -2,11 +2,15 @@
  * POST /api/voice-clone/upload
  *
  * Accepts a multipart form with field 'file' containing the voice sample
- * (MP3/M4A/WAV). Forwards it to Replicate's files API and returns the public
- * URL, which we hand to minimax/voice-cloning as `voice_file`.
+ * (MP3/M4A/WAV). Hosts it on fal storage (a PUBLIC v3.fal.media CDN URL) and
+ * returns that URL, which the training queue hands to minimax/voice-cloning as
+ * `voice_file`.
  *
- * Mirrors /api/cloud-train/upload, but preserves the audio content-type so
- * MiniMax can detect the format. The Replicate token is server-only.
+ * fal — NOT Replicate Files — because minimax/voice-cloning is a PROXY that
+ * fetches voice_file from MiniMax's own external servers; an auth-gated
+ * Replicate Files URL 401s there and surfaces as the misleading "invalid
+ * params, invalid file ext for voice clone". Same fix the /from-youtube route
+ * and the lip-sync Kling path use. See server/utils/falStorage.ts.
  */
 const AUDIO_TYPES: Record<string, string> = {
   mp3: 'audio/mpeg',
@@ -15,8 +19,6 @@ const AUDIO_TYPES: Record<string, string> = {
 }
 
 export default defineEventHandler(async (event) => {
-  const token = requireReplicateToken()
-
   const parts = await readMultipartFormData(event)
   const filePart = parts?.find((p) => p.name === 'file')
   if (!filePart || !filePart.data || filePart.data.byteLength === 0) {
@@ -27,24 +29,11 @@ export default defineEventHandler(async (event) => {
   const ext = filename.split('.').pop()?.toLowerCase() ?? 'mp3'
   const contentType = filePart.type || AUDIO_TYPES[ext] || 'audio/mpeg'
 
-  const upstream = new FormData()
-  const blob = new Blob([filePart.data], { type: contentType })
-  upstream.append('content', blob, filename)
-
-  const res = await fetch('https://api.replicate.com/v1/files', {
-    method: 'POST',
-    headers: { Authorization: `Token ${token}` },
-    body: upstream,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw createError({ statusCode: res.status, message: `Replicate files API: ${text || res.statusText}` })
+  try {
+    const url = await uploadToFalStorage(filePart.data, filename, contentType)
+    return { url }
   }
-
-  const data = await res.json() as { id: string; urls?: { get?: string } }
-  const url = data.urls?.get
-  if (!url) {
-    throw createError({ statusCode: 502, message: 'Replicate files API returned no URL' })
+  catch (err: any) {
+    throw createError({ statusCode: 502, message: `Voice upload failed: ${err?.message ?? String(err)}` })
   }
-  return { id: data.id, url }
 })
