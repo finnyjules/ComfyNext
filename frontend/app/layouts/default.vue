@@ -5,7 +5,7 @@ import {
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
-  Shapes, Blend, Aperture, Grid3x3, CaseSensitive,
+  Shapes, Blend, Aperture, Grid3x3, CaseSensitive, ListVideo,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
@@ -105,21 +105,24 @@ const sidebarItems = [
   { label: 'Explain', icon: Sparkles, tool: 'explain', dividerBefore: true },
 ]
 
-// Submenu shown when "Load…" is active. Each option drops the matching
-// unified artifact node onto the canvas via the standard addNode event.
-// 3D is here as a placeholder — the Mesh artifact node isn't shipped yet,
-// so its option stays disabled until that lands.
-const loadOptions = [
-  // Composition surfaces — spatial (Frame, Smart Layout) + temporal (Timeline) — grouped up top.
-  { label: 'Frame',    icon: Frame,          nodeType: 'Compositor' },
-  { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
-  { label: 'Collection', icon: Table2, nodeType: 'Collection' },
-  { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
-  { label: 'Image', icon: Image,          nodeType: 'Image' },
-  { label: 'Text',  icon: Type,           nodeType: 'Text' },
-  { label: 'Audio', icon: AudioWaveform,  nodeType: 'Audio' },
-  { label: 'Video', icon: Film,           nodeType: 'Video' },
-  { label: '3D',    icon: Box,            nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
+// Add menu — starting points only (spec §1: inert scaffolding). Two groups:
+// Surfaces = places where work composes; Sources = media/data you bring in.
+// Studios and Generate verbs live behind their own toolbar doors. 3D stays a
+// disabled placeholder until the Mesh artifact node ships.
+const loadSections = [
+  { label: 'Surfaces', items: [
+    { label: 'Frame', icon: Frame, nodeType: 'Compositor' },
+    { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
+    { label: 'Timeline', icon: ListVideo, nodeType: 'Timeline' },
+  ] },
+  { label: 'Sources', items: [
+    { label: 'Image', icon: Image, nodeType: 'Image' },
+    { label: 'Text', icon: Type, nodeType: 'Text' },
+    { label: 'Audio', icon: AudioWaveform, nodeType: 'Audio' },
+    { label: 'Video', icon: Film, nodeType: 'Video' },
+    { label: 'Collection', icon: Table2, nodeType: 'Collection' },
+    { label: '3D', icon: Box, nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
+  ] },
 ]
 
 // One submenu open at a time. 'load' = Add, plus the Studios / Generate doors
@@ -3143,8 +3146,14 @@ function dismissRunResult() {
                 class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
-                <template v-for="opt in loadOptions" :key="opt.label">
+                <template v-for="(section, si) in loadSections" :key="section.label">
+                  <div v-if="si > 0" class="h-px bg-white/10 mx-1 my-1" />
+                  <p class="px-3 pt-0.5 pb-1 text-[9px] uppercase tracking-wider text-white/35">
+                    {{ section.label }}
+                  </p>
                   <button
+                    v-for="opt in section.items"
+                    :key="opt.label"
                     class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors"
                     :class="opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/[0.08] cursor-pointer'"
                     :disabled="opt.disabled"
@@ -3154,7 +3163,6 @@ function dismissRunResult() {
                     <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
                     <span v-if="opt.hint" class="text-[9px] uppercase tracking-wider text-white/35">{{ opt.hint }}</span>
                   </button>
-                  <div v-if="opt.dividerAfter" class="h-px bg-white/10 mx-1 my-1" />
                 </template>
               </div>
               <!-- Studios door: craft places. Same popup shell as the Add menu. -->
