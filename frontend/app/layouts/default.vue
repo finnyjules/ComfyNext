@@ -6,6 +6,7 @@ import {
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
   Shapes, Blend, Aperture, Grid3x3, CaseSensitive, ListVideo,
+  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
@@ -90,6 +91,7 @@ const sidebarItems = [
   // Sources
   { label: 'Add', icon: Plus, submenu: 'load', dividerBefore: true },
   { label: 'Studios', icon: Shapes, submenu: 'studios' },
+  { label: 'Generate', icon: Sparkle, submenu: 'generate', pastel: true },
   { label: 'Assets', icon: LayoutGrid, panel: 'assets' },
   // Make + edit
   { label: 'Actions', icon: WandSparkles, panel: 'generators', dividerBefore: true },
@@ -158,6 +160,21 @@ const studiosOptions = [
   { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector', pastel: true },
   { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio', pastel: true },
 ]
+
+// Generate door — the curated zero-input AI verbs (spec §2). The fast lane,
+// not the store: the full catalog lives in the Actions panel. Audio expands
+// inline to its two nodes rather than widening the door to five items.
+const generateOptions = [
+  { label: 'Image', icon: ImagePlus, nodeType: 'GenerateImageNode' },
+  { label: 'Styled image', icon: Brush, nodeType: 'FluxLoRARemoteNode' },
+  { label: 'Video', icon: Film, nodeType: 'GenerateVideoNode' },
+]
+const generateAudioOptions = [
+  { label: 'Music', icon: Music, nodeType: 'GenerateMusicNode' },
+  { label: 'Speech', icon: Mic, nodeType: 'GenerateSpeechNode' },
+]
+const generateAudioExpanded = ref(false)
+watch(openSubmenu, (v) => { if (v !== 'generate') generateAudioExpanded.value = false })
 
 // Gallery → canvas: a placed slate is a Compositor (Frame) node whose
 // properties carry the instantiated local layers + motion doc. VueNodeCanvas's
@@ -3134,7 +3151,14 @@ function dismissRunResult() {
                 :class="isSidebarItemActive(item) ? 'bg-white/10' : 'hover:bg-white/5'"
                 @click="toggleSidebarItem(item.label)"
               >
-                <component :is="item.icon" class="size-4 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
+                <span class="relative">
+                  <component :is="item.icon" class="size-4 text-white/70 group-hover:text-white transition-colors" :class="{ 'text-white': isSidebarItemActive(item) }" />
+                  <span
+                    v-if="item.pastel"
+                    class="gen-pastel absolute -top-0.5 -right-1 size-1.5 rounded-full"
+                    style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.85), rgba(207,232,255,.85), rgba(214,255,224,.85), rgba(255,244,204,.85), rgba(231,214,255,.85), rgba(255,214,231,.85));"
+                  />
+                </span>
                 <span class="text-[10px] text-white/50 group-hover:text-white/70 transition-colors" :class="{ 'text-white/80': isSidebarItemActive(item) }">
                   {{ item.label }}
                 </span>
@@ -3186,6 +3210,41 @@ function dismissRunResult() {
                     title="Uses AI credits"
                   />
                 </button>
+              </div>
+              <!-- Generate door: curated zero-input AI verbs. Full catalog = Actions panel. -->
+              <div
+                v-if="item.submenu === 'generate' && openSubmenu === 'generate'"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                @click.stop
+              >
+                <button
+                  v-for="opt in generateOptions"
+                  :key="opt.label"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                  @click="addLoadNode(opt.nodeType)"
+                >
+                  <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
+                  <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
+                </button>
+                <button
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                  @click.stop="generateAudioExpanded = !generateAudioExpanded"
+                >
+                  <AudioWaveform class="size-4 text-white/70" :stroke-width="1.75" />
+                  <span class="text-xs text-white/85 flex-1">Audio</span>
+                  <ChevronDown class="size-3 text-white/40 transition-transform" :class="generateAudioExpanded ? '' : '-rotate-90'" />
+                </button>
+                <template v-if="generateAudioExpanded">
+                  <button
+                    v-for="opt in generateAudioOptions"
+                    :key="opt.label"
+                    class="flex items-center gap-2 pl-8 pr-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                    @click="addLoadNode(opt.nodeType)"
+                  >
+                    <component :is="opt.icon" class="size-3.5 text-white/60" :stroke-width="1.75" />
+                    <span class="text-xs text-white/80 flex-1">{{ opt.label }}</span>
+                  </button>
+                </template>
               </div>
               <!-- "More" overflow popup: power-user actions (Nodes, Blocks) +
                    the annotate options, folded behind one toolbar item. -->
