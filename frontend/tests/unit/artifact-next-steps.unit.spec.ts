@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ACTION_HINTS, ARTIFACT_ACTION_IDS, upstreamSeedScope } from '~/lib/artifact/nextSteps'
+import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
 
 describe('ACTION_HINTS', () => {
   it('covers every action id (null = deliberately no hint)', () => {
@@ -46,5 +47,23 @@ describe('upstreamSeedScope', () => {
     expect(scope.has('a1')).toBe(true)
     expect(scope.has('g2')).toBe(true)
     expect(scope.has('g3')).toBe(true)
+  })
+})
+
+describe('useNextStepsStrip', () => {
+  it('is a singleton: a fresh take on B replaces the strip on A', () => {
+    const a = useNextStepsStrip()
+    const b = useNextStepsStrip()
+    a.announceFreshTake('node-A')
+    expect(a.active.value?.nodeId).toBe('node-A')
+    b.announceFreshTake('node-B')
+    expect(a.active.value?.nodeId).toBe('node-B') // same shared state
+  })
+
+  it('dismiss clears the strip', () => {
+    const s = useNextStepsStrip()
+    s.announceFreshTake('node-A')
+    s.dismiss()
+    expect(s.active.value).toBeNull()
   })
 })
