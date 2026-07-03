@@ -3139,7 +3139,7 @@ function dismissRunResult() {
               <!-- Popup anchored above the Load… button. Drops the matching
                    unified artifact node onto the canvas. -->
               <div
-                v-if="item.submenu === 'load' && loadMenuOpen"
+                v-if="item.submenu === 'load' && openSubmenu === 'load'"
                 class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
@@ -3157,10 +3157,32 @@ function dismissRunResult() {
                   <div v-if="opt.dividerAfter" class="h-px bg-white/10 mx-1 my-1" />
                 </template>
               </div>
+              <!-- Studios door: craft places. Same popup shell as the Add menu. -->
+              <div
+                v-if="item.submenu === 'studios' && openSubmenu === 'studios'"
+                class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[160px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
+                @click.stop
+              >
+                <button
+                  v-for="opt in studiosOptions"
+                  :key="opt.label"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-left transition-colors hover:bg-white/[0.08] cursor-pointer"
+                  @click="onLoadOption(opt)"
+                >
+                  <component :is="opt.icon" class="size-4 text-white/70" :stroke-width="1.75" />
+                  <span class="text-xs text-white/85 flex-1">{{ opt.label }}</span>
+                  <span
+                    v-if="opt.pastel"
+                    class="gen-pastel size-1.5 rounded-full shrink-0"
+                    style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.85), rgba(207,232,255,.85), rgba(214,255,224,.85), rgba(255,244,204,.85), rgba(231,214,255,.85), rgba(255,214,231,.85));"
+                    title="Uses AI credits"
+                  />
+                </button>
+              </div>
               <!-- "More" overflow popup: power-user actions (Nodes, Blocks) +
                    the annotate options, folded behind one toolbar item. -->
               <div
-                v-if="item.submenu === 'more' && moreMenuOpen"
+                v-if="item.submenu === 'more' && openSubmenu === 'more'"
                 class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex flex-col gap-0.5 min-w-[180px] bg-[#1a1a1a]/95 border border-[#2a2a2a] rounded-[12px] p-1.5 shadow-xl whitespace-nowrap"
                 @click.stop
               >
