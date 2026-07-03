@@ -44,6 +44,12 @@ const statusDotClass = computed(() => {
 function openEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openLipSync', { detail: { nodeId: props.id } }))
 }
+
+const hasError = computed(() => compiled.value.issues.some(i => i.level === 'error'))
+function generate() {
+  if (hasError.value) return
+  window.dispatchEvent(new CustomEvent('comfynext:lipSyncGenerate', { detail: { sourceNodeId: props.id } }))
+}
 </script>
 
 <template>
@@ -90,13 +96,21 @@ function openEditor() {
       </div>
     </div>
 
-    <!-- Edit button -->
+    <!-- Edit + Generate buttons -->
     <div class="flex gap-1.5 border-t border-white/10 p-2">
       <button
         class="flex flex-1 items-center justify-center gap-1.5 rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"
         @click.stop="openEditor"
       >
-        <Pencil class="h-3 w-3" /> Open Lip-Sync
+        <Pencil class="h-3 w-3" /> Open
+      </button>
+      <button
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-emerald-500/90 px-2.5 py-1.5 text-[11px] font-medium text-black transition enabled:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="hasError"
+        title="Generate the lip-synced clip"
+        @click.stop="generate"
+      >
+        Generate
       </button>
     </div>
   </div>

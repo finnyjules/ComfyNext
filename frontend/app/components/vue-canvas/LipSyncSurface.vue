@@ -35,6 +35,13 @@ const { characters, coverUrl } = useCharacters()
 // ── First-open guide ────────────────────────────────────────────────────────
 const showIntro = computed(() => !sheet.value.face.src && !sheet.value.voice.text && !sheet.value.voice.src)
 
+// ── Generate ─────────────────────────────────────────────────────────────────
+const hasError = computed(() => result.value.issues.some(i => i.level === 'error'))
+function onGenerate() {
+  if (hasError.value) return
+  window.dispatchEvent(new CustomEvent('comfynext:lipSyncGenerate', { detail: { sourceNodeId: props.nodeId } }))
+}
+
 // ── Face panel ───────────────────────────────────────────────────────────────
 type FaceTab = 'character' | 'image' | 'video'
 const faceTab = ref<FaceTab>(sheet.value.face.kind ?? 'image')
@@ -397,9 +404,22 @@ function humanizeSyncMode(m: string): string {
 
       </div><!-- /body -->
 
-      <!-- Footer (Generate wiring is Task 6 — placeholder only) -->
+      <!-- Footer -->
       <div class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-4 py-2.5">
-        <span class="text-[11px] text-white/25">Generate coming soon</span>
+        <span class="mr-auto text-[11px] text-white/30" title="Both engines bill about $1 per 30 seconds of output">~$1 / 30s</span>
+        <button
+          type="button"
+          class="rounded-md border border-white/10 px-3 py-1.5 text-[12px] text-white/70 transition enabled:hover:border-white/25 enabled:hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="hasError"
+          title="Regenerate — a fresh voice + take"
+          @click="onGenerate"
+        >New take</button>
+        <button
+          type="button"
+          class="rounded-md bg-emerald-500/90 px-3.5 py-1.5 text-[12px] font-medium text-black transition enabled:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="hasError"
+          @click="onGenerate"
+        >Generate</button>
       </div>
     </div>
   </div>

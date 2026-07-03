@@ -2533,6 +2533,79 @@ function handleOpenLipSync(e: Event) {
   if (detail?.nodeId) lipSyncOpenForId.value = String(detail.nodeId)
 }
 
+// Lip-Sync Studio Generate: resolve the voice (TTS → audio, else the supplied
+// clip), compile the sheet, then find-or-spawn a LipSyncNode render target
+// (class_type 'LipSyncNode', distinct from the 'LipSyncStudio' studio node),
+// patch its widgets, and run it. Mirrors handleShotDirectorGenerate.
+async function handleLipSyncGenerate(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string }>).detail
+  const studio = (nodes.value as any[]).find(n => String(n.id) === String(detail?.sourceNodeId))
+  if (!studio) return
+  if (!studio.data) studio.data = {}
+  studio.data.lipSyncError = null
+
+  const sheet = hydrateLipSyncSheet(studio.data?.properties?.comfynext_lipSync)
+  const compiled = compileLipSync(sheet)
+  const errors = compiled.issues.filter(i => i.level === 'error')
+  if (errors.length) { studio.data.lipSyncError = errors[0]!.message; return }
+
+  // Resolve the voice audio.
+  let audioUrl = String((compiled.modelOptions as Record<string, unknown>).audio || '')
+  if (sheet.voice.kind === 'tts') {
+    try {
+      const res = await fetch('/api/lipsync/speech', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: sheet.voice.text ?? '', voiceId: sheet.voice.voiceId ?? '' }),
+      })
+      if (!res.ok) { studio.data.lipSyncError = `Voice generation failed (${res.status}).`; return }
+      const data = await res.json() as { viewUrl?: string }
+      if (!data.viewUrl) { studio.data.lipSyncError = 'Voice generation returned no audio.'; return }
+      audioUrl = data.viewUrl
+    } catch { studio.data.lipSyncError = 'Voice generation failed.'; return }
+  }
+  if (!audioUrl) { studio.data.lipSyncError = 'No voice audio to sync.'; return }
+
+  const modelOptions = { ...compiled.modelOptions, audio: audioUrl }
+  const patch: Record<string, unknown> = {
+    engine: compiled.engine,
+    resolution: compiled.resolution,
+    sync_mode: sheet.syncMode,
+    model_options: JSON.stringify(modelOptions),
+  }
+
+  // Find-or-spawn the LipSyncNode render target (remembered on the studio node).
+  let targetId: string | null = studio.data?.properties?.comfynext_lipSyncTargetId ?? null
+  if (targetId && !(nodes.value as any[]).some(n => String(n.id) === String(targetId) && n.data?.nodeType === 'LipSyncNode')) {
+    targetId = null
+  }
+  if (!targetId) {
+    const pos = {
+      x: (studio.position?.x ?? 0) + (studio.data?.size?.[0] ?? 280) + 80,
+      y: studio.position?.y ?? 0,
+    }
+    const target = createNodeData('LipSyncNode', pos)
+    nodes.value.push(target)
+    targetId = String(target.id)
+    if (!studio.data.properties) studio.data.properties = {}
+    studio.data.properties.comfynext_lipSyncTargetId = targetId
+  }
+
+  const target = (nodes.value as any[]).find(n => String(n.id) === String(targetId))
+  if (!target) return
+
+  const wnames = new Set(((target.data?.widgetDefs ?? []) as { name: string }[]).map(w => w.name))
+  for (const name of Object.keys(patch)) {
+    if (!wnames.has(name)) {
+      studio.data.lipSyncError = `LipSyncNode has no '${name}' widget — restart ComfyUI to load it.`
+      return
+    }
+  }
+  for (const [name, value] of Object.entries(patch)) setNodeWidget(target, name, value)
+  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    detail: { targetIds: [targetId], direction: 'downstream' },
+  }))
+}
+
 /** Shot Director "Generate": compile the sheet, patch the (found-or-spawned)
  *  FilmShotNode's widgets, and hand off to the normal filtered run. No studio
  *  edge — ShotDirector bakes nothing, so we remember the target id instead. */
@@ -3255,6 +3328,7 @@ onMounted(() => {
   window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.addEventListener('comfynext:openLipSync', handleOpenLipSync)
+  window.addEventListener('comfynext:lipSyncGenerate', handleLipSyncGenerate)
   window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.addEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
@@ -3300,6 +3374,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
   window.removeEventListener('comfynext:openLipSync', handleOpenLipSync)
+  window.removeEventListener('comfynext:lipSyncGenerate', handleLipSyncGenerate)
   window.removeEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.removeEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.removeEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
