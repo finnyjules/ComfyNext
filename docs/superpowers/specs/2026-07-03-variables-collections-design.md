@@ -34,8 +34,9 @@ type VariableType = 'text' | 'color' | 'number' | 'select' | 'image' | 'font'
 interface CollectionColumn {
   key: string              // stable key, e.g. "team_name", "accent"
   label: string
-  type: VariableType
+  type: VariableType | 'link'
   options?: string[]       // for 'select'
+  linkTo?: string          // for 'link': the referenced collection id (see §5.5)
 }
 
 interface CollectionRow {
@@ -132,6 +133,10 @@ The collection node carries a preview-row widget (`‹ 7/32 · France ›`, seed
 bound targets resolve against that row live. Drawer row click sets the same state. 1-row
 collections have nothing to scrub.
 
+When a collection's first column is text keys, the widget renders as a **named picker**
+(`Team: France ▾`) instead of a row index — the same machine doubles as the modes UI
+(light/dark, Brand A/B) and as the "pick a team, get its colors" experience for single designs.
+
 ### 5.4 Sweep
 
 Chip menu → "Sweep…" → color: N AI-suggested values or manual list; number: min/max/steps; text:
@@ -140,7 +145,35 @@ row varying only that column, then runs the batch path on those rows. From resul
 one" promotes the row's values to row 1 and sweep rows clean up. One machine — a sweep is just
 rows you didn't type.
 
-### 5.5 Generate
+### 5.5 Linked collections (link columns)
+
+The relational case: a Players collection has a `team` column of type **link → Teams**. A link
+cell's value is a *row reference* (the Teams row id), not a string. Two consequences:
+
+- **The cell is a row picker.** In the drawer, clicking a link cell opens a dropdown of the
+  linked collection's rows, each previewing its key + carried values (swatches, thumbnails).
+  Pick France → done.
+- **The link re-exports the linked collection's columns**, namespaced: a target wired to Players
+  can bind controls to `team → primary`, `team → crest` (nested in the same "Bind to" menu).
+  Resolution is one lookup: for row N, `team.primary` = the referenced Teams row's `primary`.
+  Bind the poster's accent to `team → primary` once; selecting a team for any player applies its
+  palette instantly — live, so editing France's primary in Teams updates every French player.
+
+Rules and touchpoints:
+
+- **Live by default; apply-once = Unbind.** Freezing current values is the existing chip-level
+  unbind (literal), not a new concept.
+- **Canvas honesty:** a link column draws a thin automatic wire Teams → Players between the
+  collection nodes (flow gets a wire). Targets still need only one wire, to Players.
+- **CSV inference:** an imported column whose values match another collection's key column offers
+  "matches Teams — convert to link?".
+- **AI-fill composes:** the LLM fills link cells by key; unmatched keys flag as warning cells.
+- **Dangle:** deleting a referenced row → warning-state cells; bindings through the link degrade
+  to `lastLiteral`, same as every other dangle.
+- **v1 guardrail: one level of linking** (no link-to-link chains) — no cycles, single-lookup
+  resolution.
+
+### 5.6 Generate
 
 - CTA on the drawer footer and collection node footer ("Generate 32"). Target picker only when the
   collection drives >1 renderable target (default: all).
@@ -156,7 +189,7 @@ rows you didn't type.
 - Each success → `save_generation_output` tagged with batch id + row key (Assets survive
   independently of any grid).
 
-### 5.6 Results
+### 5.7 Results
 
 - **Drawer Results view:** thumbnail grid labeled by row key; click to enlarge; per-row
   regenerate; export-all zip; clicking a thumbnail scrubs the canvas preview row to match.
@@ -199,13 +232,17 @@ v1 registers only `SmartLayoutBatchTarget` (props sockets + brand keys). Phase 2
 studio-controls producer over `ControlSpec`; Phase 3 adds generative/workflow inputs. The
 collection node, chips, drawer, runner, and results never know what a Smart Layout is.
 
+The bindable set offered for a wired collection includes its own columns plus, for each link
+column, the linked collection's columns namespaced (`team → primary`), resolved per row via the
+link (§5.5).
+
 **Resolution order:** binding values (preview row or batch row) override the control's stored
 value, then flow through the existing paths — for Smart Layout, into `props` / `brand` on
 `/api/render-template` (wired-socket brand already merges last via `effectiveBrand`).
 
 ## 8. Error handling
 
-- Row isolation (per 5.5); failed rows flagged in the drawer, retryable.
+- Row isolation (per 5.6); failed rows flagged in the drawer, retryable.
 - Pre-run validation in the confirm modal; run-with-defaults or cancel.
 - Dangling bindings (deleted column/collection, cross-canvas paste) → literal fallback + warning
   chip (per 5.2). Deleting a collection node is an ordinary undoable graph act.
@@ -228,7 +265,8 @@ value, then flow through the existing paths — for Smart Layout, into `props` /
   sockets and brand keys + preview-row scrub + generate (confirm, runner, drawer progress) +
   drawer results + Assets.
 - **Slice 2 — first-class feel:** promote/bind from studio controls (`ControlSpec` producer) +
-  inspector form + sweep + AI-fill (incl. image auto-fill) + Batch results artifact node.
+  inspector form + sweep + AI-fill (incl. image auto-fill) + Batch results artifact node +
+  link columns (§5.5) with named-picker widget.
 - **Slice 3 — reach:** panel-as-lens + ghost wires; agent ops (create/edit collections, patch
   variables, trigger sweeps); modes UX (named rows).
 - **Phase 3 (unchanged from June):** generative/paid targets (prompt/seed/LoRA) on the durable
