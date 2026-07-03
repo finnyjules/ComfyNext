@@ -17,7 +17,7 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { clampForControl, controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { BINDINGS_PROP, COLLECTION_PROP, VAR_PREVIEW_PROP } from '~/lib/collection/types'
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
-import { addColumn, addRow, setCell } from '~/lib/collection/model'
+import { addColumn, addRow, clampPreviewRow, setCell } from '~/lib/collection/model'
 import { resolveBindings } from '~/lib/collection/resolve'
 
 export interface VarPreviewPayload {
@@ -92,6 +92,19 @@ export function writeThroughEdit(
   const row = c.rows[c.previewRow]
   if (!row) return false
 
+  // Convergence guard (layer 2 of 2 — see the `applying` flag in
+  // useStudioVarBindings' watch for layer 1): if the target cell already
+  // strictly equals the incoming value, don't touch the collection at all.
+  // The watch/apply/write-through cycle can re-fire across an async hop that
+  // the `applying` flag can't cover (e.g. a producer stamping a fresh
+  // `ts: Date.now()` on an otherwise-identical preview payload); a no-op
+  // write here stops that from looping forever instead of relying solely on
+  // the flag.
+  if (row.values[binding.columnKey] === value) {
+    binding.lastLiteral = value
+    return true
+  }
+
   setCell(c, row.id, binding.columnKey, value)
   binding.lastLiteral = value
   return true
@@ -126,6 +139,10 @@ export function promoteControl(
   const type = controlKindToVariableType(control.kind) ?? 'text'
   const column = addColumn(c, control.label, type)
 
+  // A stale/out-of-range previewRow (e.g. rows were removed elsewhere) must
+  // not silently append an orphan row on a non-empty collection — clamp
+  // first and only create a row when the collection is genuinely empty.
+  clampPreviewRow(c)
   let row = c.rows[c.previewRow]
   if (!row) row = addRow(c)
   setCell(c, row.id, column.key, currentValue)
@@ -157,6 +174,17 @@ export function useStudioVarBindings(
 ) {
   const { nodes, edges, createCollectionNode } = accessors
 
+  // Convergence guard (layer 1 of 2 — see writeThroughEdit for layer 2): the
+  // cycle is watch(VAR_PREVIEW_PROP) -> applyParamsPreview -> surface apply
+  // -> control update handler -> onEdit -> writeThroughEdit -> (studio
+  // pushVarPreview producer) -> watch again. `applying` marks the window
+  // where the watch callback is driving control updates itself, so onEdit
+  // can tell an apply-driven update apart from a real user edit and skip the
+  // write-through that would otherwise re-trigger the producer. Mirrors the
+  // loop-warning convention in CollectionDrawer.vue (~lines 87-89) for the
+  // sibling collection -> target preview watch.
+  let applying = false
+
   function currentNode(): any | undefined {
     return findNode(nodes(), nodeId)
   }
@@ -170,10 +198,14 @@ export function useStudioVarBindings(
     return bindings.value[path]?.columnKey ?? null
   }
 
-  function onEdit(controlKey: string, value: string | number): void {
+  function onEdit(controlKey: string, value: string | number): boolean {
+    // Apply-driven control updates (the watch below pushing a resolved
+    // preview value onto the control) are not user edits — writing them
+    // through would re-trigger the collection preview producer and loop.
+    if (applying) return false
     const path = `params.${controlKey}`
-    if (!bindings.value[path]) return
-    writeThroughEdit(nodes, edges, nodeId, path, value)
+    if (!bindings.value[path]) return false
+    return writeThroughEdit(nodes, edges, nodeId, path, value)
   }
 
   function promote(control: StudioControlDesc, currentValue: string | number): { columnKey: string } | null {
@@ -189,7 +221,14 @@ export function useStudioVarBindings(
     return promoteControl(nodes, edges, nodeId, control, currentValue, createCollectionNode ?? (() => null))
   }
 
-  function unbind(controlKey: string): void {
+  /** Unbind a control from its collection column, freezing its last value so
+   *  the control doesn't lose its value once the binding is gone. Freeze
+   *  order: (1) the resolved collection value if the wired collection is
+   *  still reachable, (2) the caller-supplied `currentValue` (the control's
+   *  live on-screen value — surfaces pass this so an unbind after the wired
+   *  collection has already vanished still freezes something sane), (3)
+   *  fall back to whatever `lastLiteral` was already recorded. */
+  function unbind(controlKey: string, currentValue?: string | number): void {
     const path = `params.${controlKey}`
     const node = currentNode()
     const nodeBindings = node?.data?.properties?.[BINDINGS_PROP] as VarBindings | undefined
@@ -201,6 +240,9 @@ export function useStudioVarBindings(
     if (c) {
       const { values } = resolveBindings(c, { [path]: binding }, c.previewRow)
       if (values[path] !== undefined) binding.lastLiteral = values[path]
+      else if (currentValue !== undefined) binding.lastLiteral = currentValue
+    } else if (currentValue !== undefined) {
+      binding.lastLiteral = currentValue
     }
     delete nodeBindings![path]
   }
@@ -208,7 +250,12 @@ export function useStudioVarBindings(
   watch(
     () => currentNode()?.data?.properties?.[VAR_PREVIEW_PROP],
     (preview) => {
-      applyParamsPreview(preview as VarPreviewPayload | undefined, controls(), applyParam)
+      applying = true
+      try {
+        applyParamsPreview(preview as VarPreviewPayload | undefined, controls(), applyParam)
+      } finally {
+        applying = false
+      }
     },
     { deep: true },
   )

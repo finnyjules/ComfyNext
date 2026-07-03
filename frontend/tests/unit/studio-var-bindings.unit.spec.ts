@@ -49,6 +49,17 @@ describe('writeThroughEdit', () => {
     const { nodes, edges } = scene()
     expect(writeThroughEdit(() => nodes, () => edges, '2', 'params.nope', 1)).toBe(false)
   })
+
+  it('converges on repeated writes of the same value without touching the collection again', () => {
+    const { c, nodes, edges } = scene()
+    const first = writeThroughEdit(() => nodes, () => edges, '2', 'params.flow.intensity', 77)
+    expect(first).toBe(true)
+    const snapshotAfterFirst = JSON.parse(JSON.stringify(c.rows))
+
+    const second = writeThroughEdit(() => nodes, () => edges, '2', 'params.flow.intensity', 77)
+    expect(second).toBe(true)
+    expect(JSON.parse(JSON.stringify(c.rows))).toEqual(snapshotAfterFirst)
+  })
 })
 
 describe('promoteControl', () => {
@@ -60,5 +71,16 @@ describe('promoteControl', () => {
     expect(c.columns.find(x => x.key === 'background')?.type).toBe('color')
     expect(c.rows[0]!.values.background).toBe('#112233')
     expect((studio.data.properties as any)[BINDINGS_PROP]['params.canvas.background']).toMatchObject({ columnKey: 'background', lastLiteral: '#112233' })
+  })
+
+  it('clamps a stale out-of-range previewRow to the existing row instead of appending an orphan row', () => {
+    const { c, nodes, edges } = scene()
+    c.previewRow = 5 // stale — only 1 row exists
+    const res = promoteControl(() => nodes, () => edges, '2',
+      { key: 'canvas.background', label: 'Background', kind: 'color' }, '#112233', () => { throw new Error('should reuse wired collection') })
+    expect(res?.columnKey).toBe('background')
+    expect(c.rows.length).toBe(1)
+    expect(c.previewRow).toBe(0)
+    expect(c.rows[0]!.values.background).toBe('#112233')
   })
 })
