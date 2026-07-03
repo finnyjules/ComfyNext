@@ -501,9 +501,29 @@ function discardTake(id: string) {
 // at mount so restoring a saved canvas never pops strips.
 const nextSteps = useNextStepsStrip()
 watch(() => props.data.takes?.length ?? 0, (now, before) => {
-  if (now > (before ?? 0)) nextSteps.announceFreshTake(props.id)
+  if (now > (before ?? 0)) {
+    nextSteps.announceFreshTake(props.id)
+    // Paid renders get a quiet critique pass; the gate lives in CanvasPromptBar.
+    const takeId = props.data.takes?.[props.data.takes.length - 1]?.id
+    if (takeId) {
+      window.dispatchEvent(new CustomEvent('comfynext:autoReview', {
+        detail: { nodeId: props.id, takeId: String(takeId) },
+      }))
+    }
+  }
 })
-const showNextSteps = computed(() => nextSteps.active.value?.nodeId === props.id)
+const showGenericSteps = computed(() => nextSteps.active.value?.nodeId === props.id)
+const fixChipsForMe = computed(() => nextSteps.fixes.value?.nodeId === props.id ? nextSteps.fixes.value.chips : [])
+const showNextSteps = computed(() => showGenericSteps.value || fixChipsForMe.value.length > 0)
+function onStripTimeout() {
+  // The 12s timer retires only the generic suggestions; reviewer fixes are
+  // sticky (they ARRIVE ~10s late by nature) until clicked/dismissed/stale.
+  nextSteps.dismiss()
+}
+function onStripDismiss() {
+  nextSteps.dismiss()
+  nextSteps.clearFixes(props.id)
+}
 function openEditMenuFromStrip() {
   nextSteps.dismiss()
   editMenuOpen.value = true
@@ -654,11 +674,14 @@ function openEditMenuFromStrip() {
         <NextStepsStrip
           v-if="showNextSteps && displayedUrl"
           :can-vary="hasUpstream"
+          :show-generic="showGenericSteps"
+          :fix-chips="fixChipsForMe"
           @variations="runVariations"
           @upscale="spawnUpscale"
           @animate="animateArtifact"
           @more="openEditMenuFromStrip"
-          @dismiss="nextSteps.dismiss()"
+          @timeout="onStripTimeout"
+          @dismiss="onStripDismiss"
         />
         <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">

@@ -11,6 +11,7 @@ import AgentProposal from '~/components/agent/AgentProposal.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasAgent } from '~/composables/useCanvasAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { paidProducerFor } from '~/lib/artifact/nextSteps'
 
 const props = defineProps<{ vueCanvas?: any }>()
 const { getLocalSetting } = useLocalSettings()
@@ -19,7 +20,7 @@ const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function
 
 const {
   busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
-  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss,
+  ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, autoReviewNode, dismiss,
 } = useCanvasAgent({
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
@@ -49,13 +50,36 @@ function onCritiqueNode(e: Event) {
   if (!id || !ready.value) return
   reviewNode(String(id), props.vueCanvas.agentNodeIntent?.(String(id)) ?? '')
 }
+// Auto-critique: a fresh take landed on an image artifact. Gate hard —
+// paid producer only, once per take, 3s settle so a Variations ×4 burst
+// reviews the final state once instead of four times.
+const reviewedTakes = new Map<string, string>()
+const autoReviewTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function onAutoReview(e: Event) {
+  const { nodeId, takeId } = (e as CustomEvent).detail || {}
+  if (!nodeId || !takeId || !ready.value) return
+  const id = String(nodeId)
+  if (reviewedTakes.get(id) === String(takeId)) return
+  clearTimeout(autoReviewTimers.get(id))
+  autoReviewTimers.set(id, setTimeout(() => {
+    autoReviewTimers.delete(id)
+    const nodes = props.vueCanvas?.getNodes?.() ?? []
+    const edges = props.vueCanvas?.getEdges?.() ?? []
+    if (!paidProducerFor(id, nodes, edges)) return
+    reviewedTakes.set(id, String(takeId))
+    autoReviewNode(id, props.vueCanvas?.agentNodeIntent?.(id) ?? '')
+  }, 3000))
+}
 onMounted(() => {
   window.addEventListener('comfynext:agentRunComplete', onRunComplete)
   window.addEventListener('comfynext:critiqueNode', onCritiqueNode)
+  window.addEventListener('comfynext:autoReview', onAutoReview)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comfynext:agentRunComplete', onRunComplete)
   window.removeEventListener('comfynext:critiqueNode', onCritiqueNode)
+  window.removeEventListener('comfynext:autoReview', onAutoReview)
+  for (const t of autoReviewTimers.values()) clearTimeout(t)
 })
 
 // Drive the dot-grid "thinking" animation off the agent's busy state. (The white
