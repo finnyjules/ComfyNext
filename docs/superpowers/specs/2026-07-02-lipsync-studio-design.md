@@ -43,7 +43,7 @@ Rationale for a new node over reusing two: the studio pattern dispatches to ONE 
 
 "Type to speak" needs text → audio at Generate time. Mirror the existing server-route pattern (`cloud-train/caption.post.ts`, `cloud-train/aesthetic.post.ts`): POST `{ text, voiceId }` → generate speech, save the audio into the ComfyUI input dir, return a `/view?filename=…&type=input` URL. That URL rides the exact ref-resolution rails FilmShotNode/LipSyncNode already use (resolved to a data URL at execute). Must be allowlisted in `server/middleware/comfyui-proxy.ts` (`NITRO_API_PATHS`).
 
-**Provider dispatch:** the route resolves the voice's provider from its record, not a fixed one — a cloned voice from `/api/voices-local` carries its provider/model in its sidecar (the voice-clone flow is MiniMax), so cloned voices generate via MiniMax with their `voice_id`; a built-in catalog voice (`voiceCatalog.ts`) uses that catalog entry's provider. This keeps "your cloned voice" faithful. If a voice's provider can't be resolved, fall back to the app's default speech provider with a generic voice and surface a note.
+**Provider is uniform — MiniMax.** Both built-in and cloned voices are MiniMax Speech-02 `voice_id`s: built-in system voices come from the backend `_MINIMAX_VOICES` list (surfaced via `voiceCatalog.ts`), and cloned voices from `/api/voices-local` are trained MiniMax `voice_id`s. So the route always calls MiniMax Speech-02 (`minimax/speech-02-turbo`, validated this session) with `{ text, voice_id }` — no per-provider branching. (ElevenLabs nodes exist but the in-app voice library and clones are all MiniMax; ElevenLabs is out of scope for v1.)
 
 ### Frontend
 
