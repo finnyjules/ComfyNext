@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { paidProducerFor } from '~/lib/artifact/nextSteps'
 import { parseReviewResponse } from '~/lib/agent/protocol'
+import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
 
 describe('paidProducerFor', () => {
   const paid = { id: 'g1', data: { priceBadge: { expr: '0.03' } } }
@@ -37,5 +38,30 @@ describe('parseReviewResponse fixLabels', () => {
       assessment: '', issues: [], fixes: [{ op: 'setWidget', args: '{}' }],
     }))
     expect(res.fixLabels).toEqual([''])
+  })
+})
+
+describe('useNextStepsStrip fixes channel', () => {
+  const chip = { id: 0, label: 'Fix hands', hint: '~$0.12', apply: () => {} }
+  it('announceFixes publishes; clearFixes(nodeId) clears only that node', () => {
+    const s = useNextStepsStrip()
+    s.announceFixes('n1', [chip])
+    expect(s.fixes.value?.nodeId).toBe('n1')
+    s.clearFixes('other') // wrong node — no-op
+    expect(s.fixes.value?.nodeId).toBe('n1')
+    s.clearFixes('n1')
+    expect(s.fixes.value).toBeNull()
+  })
+  it('a fresh take on the same node clears stale fixes', () => {
+    const s = useNextStepsStrip()
+    s.announceFixes('n1', [chip])
+    s.announceFreshTake('n1')
+    expect(s.fixes.value).toBeNull()
+  })
+  it('a fresh take on ANOTHER node leaves fixes alone', () => {
+    const s = useNextStepsStrip()
+    s.announceFixes('n1', [chip])
+    s.announceFreshTake('n2')
+    expect(s.fixes.value?.nodeId).toBe('n1')
   })
 })
