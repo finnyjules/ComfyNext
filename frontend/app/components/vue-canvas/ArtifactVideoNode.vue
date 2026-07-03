@@ -9,6 +9,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 // `data.images[0]` as the video URL.
 const props = defineProps<{
   id: string
+  selected?: boolean
   data: {
     nodeType: string
     title: string
@@ -295,6 +296,8 @@ async function downloadVideo() {
         </div>
       </template>
     </div>
+
+    <SelectionActionChips v-if="selected" :node-id="id" domain="video" output="VIDEO" />
   </div>
 </template>
 

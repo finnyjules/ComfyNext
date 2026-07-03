@@ -8,6 +8,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 // run yet = "render"; populated = native <audio> controls.
 const props = defineProps<{
   id: string
+  selected?: boolean
   data: {
     nodeType: string
     title: string
@@ -298,6 +299,8 @@ async function downloadAudio() {
         </div>
       </template>
     </div>
+
+    <SelectionActionChips v-if="selected" :node-id="id" domain="audio" output="AUDIO" />
   </div>
 </template>
 
