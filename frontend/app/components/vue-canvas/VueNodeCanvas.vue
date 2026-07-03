@@ -6180,6 +6180,7 @@ defineExpose({
         v-if="textureStudioOpenForId"
         :node-id="textureStudioOpenForId"
         :nodes="nodes as any[]"
+        :edges="edges as any[]"
         @close="textureStudioOpenForId = null"
       />
     </Teleport>

@@ -19,8 +19,16 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import { useTextureAgent } from '~/composables/useTextureAgent'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import BindableControlChip from '~/components/vue-canvas/studio/BindableControlChip.vue'
+import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
+import { controlsForStudio } from '~/lib/collection/studioControls'
+import type { StudioControlDesc } from '~/lib/collection/studioBindables'
+import { controlKindToVariableType } from '~/lib/collection/studioBindables'
+import { typeCompatible } from '~/lib/collection/bindables'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
 
-const props = defineProps<{ nodeId: string; nodes: any[] }>()
+const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 // Record generated stills as the current project's assets (Assets panel).
@@ -159,6 +167,74 @@ async function onImportFile(e: Event) {
 }
 
 function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
+
+// Collections variable binding (Slice 2a, Task 7b) — same recipe as Gradient/Shader
+// (Tasks 6/7a). `studioControls` mirrors what the agent tuner offers (via
+// `controlsForStudio`, loaded once since the composable wants a synchronous
+// accessor) purely for the bind-menu's control descriptions (label/kind/min/max/
+// step/options), matched by dotted key `params.<key>` against `TEXTURE_CONTROLS`.
+// applyParam mirrors the SAME setter every control in the main loop already uses
+// (`params[key] = value; onParam()`) so onEdit's write-through behaves exactly like
+// a user edit. Only the flat TEXTURE_CONTROLS loop is wrapped — the per-role Fills
+// panel below is not driven by StudioControlDesc (dynamic role keys, not
+// `params.<key>` dotted paths) and controlsForStudio() doesn't describe it, so it's
+// out of scope here.
+const studioControls = ref<StudioControlDesc[]>([])
+onMounted(async () => { studioControls.value = await controlsForStudio(currentNode()) })
+
+const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+  props.nodeId,
+  () => studioControls.value,
+  (key, value) => { (params as Record<string, unknown>)[key] = value; onParam() },
+  { nodes: () => props.nodes, edges: () => props.edges ?? [] },
+)
+
+// Wired collection lookup (studio -> collection) for the "Bind to" submenu.
+const wiredColumns = computed<CollectionColumn[]>(() => {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return []
+  const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
+  const c = colNode?.data?.properties?.[COLLECTION_PROP]
+  return c?.columns ?? []
+})
+
+const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
+function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
+  const type = controlKindToVariableType(control.kind)
+  if (type === null) return
+  const liveValue = (params as Record<string, unknown>)[control.key] as string | number
+  const bound = boundColumnFor(control.key)
+  const items: MenuItem[] = []
+  if (!bound) {
+    items.push({ label: 'Turn into variable', action: () => promote(control, liveValue) })
+    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
+    if (compatCols.length) {
+      items.push({
+        label: 'Bind to',
+        children: compatCols.map(col => ({
+          label: col.label,
+          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+            detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
+          })),
+        })),
+      })
+    }
+  } else {
+    items.push({
+      label: 'Go to collection',
+      action: () => {
+        const edgeList = props.edges ?? []
+        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
+      },
+    })
+    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ divider: true })
+    items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
+  }
+  varMenu.value = { x: e.clientX, y: e.clientY, items }
+}
 
 function loadParams() {
   const p = currentNode()?.data?.properties?.comfynext_textureStudio
@@ -507,8 +583,11 @@ onBeforeUnmount(() => {
 
     <template #controls>
       <StudioSection v-for="s in sections" :key="s.title" :title="s.title">
-        <div v-for="c in s.controls" :key="c.key">
+        <div v-for="c in s.controls" :key="c.key" @contextmenu.prevent="openVarMenu($event, c)">
           <template v-if="c.kind === 'slider'">
+            <div v-if="boundColumnFor(c.key)" class="mb-1 flex justify-end">
+              <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+            </div>
             <!-- StudioSlider uses defineModel<number> — bind with v-model -->
             <StudioSlider
               :label="c.label"
@@ -517,25 +596,31 @@ onBeforeUnmount(() => {
               :step="Number(c.step)"
               :default="Number(c.default)"
               :model-value="Number(params[c.key])"
-              @update:model-value="(v: number) => { params[c.key] = v; onParam() }"
+              @update:model-value="(v: number) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
             />
           </template>
           <template v-else-if="c.kind === 'select'">
-            <label class="mb-1 block text-[11px] text-white/55">{{ c.label }}</label>
+            <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55">
+              <span>{{ c.label }}</span>
+              <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+            </label>
             <!-- StudioSelect uses defineModel<string> — bind with v-model -->
             <StudioSelect
               :options="c.options as string[]"
               :model-value="String(params[c.key])"
-              @update:model-value="(v: string) => { params[c.key] = v; onParam() }"
+              @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
             />
           </template>
           <template v-else-if="c.kind === 'color'">
             <div class="flex items-center gap-2">
-              <label class="text-[11px] text-white/55">{{ c.label }}</label>
+              <label class="flex items-center gap-1.5 text-[11px] text-white/55">
+                <span>{{ c.label }}</span>
+                <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+              </label>
               <!-- StudioColor uses defineModel<string> — bind with v-model -->
               <StudioColor
                 :model-value="String(params[c.key])"
-                @update:model-value="(v: string) => { params[c.key] = v; onParam() }"
+                @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
               />
             </div>
           </template>
@@ -823,4 +908,11 @@ onBeforeUnmount(() => {
       </StudioSection>
     </template>
   </StudioModalShell>
+  <CanvasContextMenu
+    v-if="varMenu"
+    :x="varMenu.x"
+    :y="varMenu.y"
+    :items="varMenu.items"
+    @close="varMenu = null"
+  />
 </template>
