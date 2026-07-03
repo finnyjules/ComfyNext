@@ -1,16 +1,17 @@
 <!-- frontend/app/components/vue-canvas/CollectionDrawer.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import JSZip from 'jszip'
 import { X, Plus, Upload, ClipboardPaste, Trash2, Play } from 'lucide-vue-next'
 import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type VarBinding, type VariableType } from '~/lib/collection/types'
-import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow } from '~/lib/collection/model'
+import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
 import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
 import { resolveBindings, validateRun } from '~/lib/collection/resolve'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
-import { buildRenderItem, estimateBatch } from '~/lib/collection/generate'
+import { buildRenderItem, estimateBatch, sanitize } from '~/lib/collection/generate'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -129,6 +130,52 @@ const rowError = computed(() => {
 })
 const hasFailed = computed(() => items.value.some(i => i.status === 'failed'))
 
+// --- Table / Results view toggle -----------------------------------------
+const view = ref<'table' | 'results'>('table')
+const hasResults = computed(() => items.value.length > 0 && !running.value)
+
+// Auto-switch to Results the moment a run finishes; the user can always
+// click back to Table manually afterwards.
+watch(running, (isRunning, wasRunning) => {
+  if (wasRunning && !isRunning && items.value.length) view.value = 'results'
+})
+
+function selectItem(item: BatchItem) {
+  if (item.status !== 'done' || !collection.value) return
+  collection.value.previewRow = item.rowIndex
+}
+
+async function retryItem(item: BatchItem) {
+  item.status = 'queued'
+  item.error = undefined
+  items.value = [...items.value]
+  await runItems([item])
+}
+
+const exporting = ref(false)
+async function exportZip() {
+  if (!collection.value || exporting.value) return
+  const done = items.value.filter(i => i.status === 'done' && i.url)
+  if (!done.length) return
+  exporting.value = true
+  try {
+    const zip = new JSZip()
+    for (const item of done) {
+      const blob = await fetch(item.url!).then(r => r.blob())
+      zip.file(`${sanitize(rowLabel(collection.value!, item.rowIndex))}_${item.outputId}.png`, blob)
+    }
+    const out = await zip.generateAsync({ type: 'blob' })
+    const url = URL.createObjectURL(out)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${sanitize(collection.value.name)}_batch.zip`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  } finally {
+    exporting.value = false
+  }
+}
+
 function openConfirm() {
   if (!collection.value || !target.value || !generateN.value) return
   confirmOpen.value = true
@@ -222,19 +269,42 @@ function isImageUrl(v: unknown): boolean {
         <span class="text-[11px] text-white/40">
           {{ collection.rows.length }} rows · {{ collection.columns.length }} columns
         </span>
+
+        <div v-if="hasResults" class="flex items-center gap-0.5 rounded-md bg-white/5 border border-white/10 p-0.5 ml-2">
+          <button
+            class="px-2 h-5 rounded text-[11px] leading-5 transition"
+            :class="view === 'table' ? 'bg-white/15 text-white/90' : 'text-white/50 hover:text-white/70'"
+            @click="view = 'table'"
+          >
+            Table
+          </button>
+          <button
+            class="px-2 h-5 rounded text-[11px] leading-5 transition"
+            :class="view === 'results' ? 'bg-white/15 text-white/90' : 'text-white/50 hover:text-white/70'"
+            @click="view = 'results'"
+          >
+            Results
+          </button>
+        </div>
+
         <div class="flex-1" />
-        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="pasteOpen = !pasteOpen">
-          <ClipboardPaste class="size-3.5" /> Paste data
+        <button v-if="view === 'results'" class="drawer-btn" :disabled="exporting" :class="{ 'opacity-40 cursor-not-allowed': exporting }" @click="exportZip">
+          <Upload class="size-3.5" /> Export zip
         </button>
-        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="fileInput?.click()">
-          <Upload class="size-3.5" /> Import CSV
-        </button>
-        <input ref="fileInput" type="file" accept=".csv,.tsv,.txt" class="hidden" @change="onFile" />
-        <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="onAddColumn"><Plus class="size-3.5" /> Column</button>
+        <template v-if="view === 'table'">
+          <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="pasteOpen = !pasteOpen">
+            <ClipboardPaste class="size-3.5" /> Paste data
+          </button>
+          <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="fileInput?.click()">
+            <Upload class="size-3.5" /> Import CSV
+          </button>
+          <input ref="fileInput" type="file" accept=".csv,.tsv,.txt" class="hidden" @change="onFile" />
+          <button class="drawer-btn" :disabled="running" :class="{ 'opacity-40 cursor-not-allowed': running }" @click="onAddColumn"><Plus class="size-3.5" /> Column</button>
+        </template>
         <button class="p-1.5 rounded hover:bg-white/10" @click="emit('close')"><X class="size-4" /></button>
       </div>
 
-      <div v-if="pasteOpen" class="px-4 py-2 border-b border-white/10 shrink-0">
+      <div v-if="pasteOpen && view === 'table'" class="px-4 py-2 border-b border-white/10 shrink-0">
         <textarea
           v-model="pasteText"
           rows="4"
@@ -247,7 +317,7 @@ function isImageUrl(v: unknown): boolean {
         </div>
       </div>
 
-      <div class="flex items-center gap-3 px-4 py-2 border-b border-white/10 shrink-0 overflow-x-auto">
+      <div v-if="view === 'table'" class="flex items-center gap-3 px-4 py-2 border-b border-white/10 shrink-0 overflow-x-auto">
         <span class="text-[11px] text-white/40 shrink-0">Bindings</span>
         <template v-if="target">
           <div v-for="b in bindables" :key="b.path" class="flex items-center gap-1.5 shrink-0">
@@ -265,7 +335,43 @@ function isImageUrl(v: unknown): boolean {
         <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout node to bind columns</span>
       </div>
 
-      <div class="flex-1 overflow-auto">
+      <div v-if="view === 'results'" class="flex-1 overflow-auto p-3">
+        <div class="grid grid-cols-6 gap-2">
+          <div
+            v-for="item in items"
+            :key="item.id"
+            class="rounded-md border overflow-hidden"
+            :class="item.status === 'failed' ? 'border-red-400/30 bg-red-500/10' : 'border-white/10 bg-white/5'"
+          >
+            <button
+              v-if="item.status === 'done' && item.url"
+              class="block w-full aspect-square cursor-pointer group relative"
+              :class="{ 'ring-2 ring-white/40': item.rowIndex === collection.previewRow }"
+              @click="selectItem(item)"
+            >
+              <img :src="item.url" class="w-full h-full object-cover" />
+            </button>
+            <div
+              v-else-if="item.status === 'failed'"
+              class="w-full aspect-square flex flex-col items-center justify-center gap-1.5 p-2 text-center"
+            >
+              <span class="text-[10px] text-red-300/90 line-clamp-3">{{ item.error || 'Failed' }}</span>
+              <button class="drawer-btn !h-5 !px-1.5 !text-[10px]" @click="retryItem(item)">Retry</button>
+            </div>
+            <div v-else class="w-full aspect-square flex items-center justify-center">
+              <span
+                class="inline-block size-2 rounded-full"
+                :class="item.status === 'rendering' ? 'bg-white/60 animate-pulse' : 'bg-white/20'"
+              />
+            </div>
+            <div class="px-1.5 py-1 text-[10px] text-white/50 truncate">
+              {{ rowLabel(collection, item.rowIndex) }} · {{ item.outputId }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="view === 'table'" class="flex-1 overflow-auto">
         <table class="w-full text-[12px] border-collapse">
           <thead>
             <tr class="text-white/40 sticky top-0 bg-[#141414]">
