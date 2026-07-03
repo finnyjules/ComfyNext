@@ -5,7 +5,7 @@ import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { apiKey, controls, phrase, effectLabel } = body || {}
+  const { apiKey, controls, phrase, effectLabel, guidance } = body || {}
 
   if (!apiKey || typeof apiKey !== 'string') {
     throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'Missing controls or phrase' })
   }
 
-  const prompt = buildVibePrompt(controls, phrase, typeof effectLabel === 'string' ? effectLabel : 'effect')
+  const prompt = buildVibePrompt(controls, phrase, typeof effectLabel === 'string' ? effectLabel : 'effect', typeof guidance === 'string' ? guidance : undefined)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {

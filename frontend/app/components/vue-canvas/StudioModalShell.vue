@@ -6,10 +6,22 @@
 //
 // The controls column publishes its scroll offset as the `--studio-scroll` CSS var so the
 // frosted-glass StudioSection cards can drift their specular/refraction as you scroll.
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import AgentBar from '~/components/agent/AgentBar.vue'
+import AgentProgress from '~/components/agent/AgentProgress.vue'
+import AgentProposal from '~/components/agent/AgentProposal.vue'
 
-defineProps<{ title?: string; breadcrumb?: string }>()
+// `agent` is the useStudioAgent() return (an object of refs + actions). When
+// provided, the shell renders a bare prompt docked under the preview and lets the
+// agent's progress / proposal take over the controls column — the same layout the
+// Compositor uses, so every studio behaves consistently.
+const props = defineProps<{ title?: string; breadcrumb?: string; agent?: any; agentPlaceholder?: string }>()
 const emit = defineEmits<{ close: [] }>()
+
+const agentActive = computed(() => {
+  const a = props.agent
+  return !!a && (a.busy.value || a.reviewing?.value || a.hasProposal.value)
+})
 
 const rootEl = ref<HTMLElement | null>(null)
 const controlsEl = ref<HTMLElement | null>(null)
@@ -52,9 +64,39 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       <div class="flex min-h-0 flex-1 gap-4 p-4">
         <div class="flex min-h-0 flex-1 flex-col">
           <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
+          <!-- Agent prompt: bare (no container), docked under the preview — mirrors
+               the Compositor. Its output renders in the controls column at right. -->
+          <div v-if="agent" class="mt-3 shrink-0">
+            <AgentBar
+              :busy="agent.busy.value" :error="agent.error.value" :notice="agent.notice.value"
+              :chips="[]" :placeholder="agentPlaceholder"
+              @submit="agent.ask" @chip="agent.ask"
+            />
+          </div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
-        <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0"><slot name="controls" /></div>
+        <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
+          <!-- Assistant takeover: the agent's progress / proposal replace the controls
+               while it's working, then hand back the controls when done. -->
+          <template v-if="agentActive">
+            <div class="flex items-center gap-2 pb-1">
+              <span class="text-white/70">✦</span>
+              <span class="text-sm font-medium">Assistant</span>
+            </div>
+            <AgentProgress v-if="agent.busy.value" :active="agent.busy.value" />
+            <div v-else-if="agent.reviewing?.value && !agent.hasProposal.value" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+              <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+            </div>
+            <AgentProposal
+              v-else-if="agent.hasProposal.value"
+              :changes="agent.changes.value" :busy="agent.busy.value" :issues="agent.issues?.value"
+              :review="agent.review.value" :reviewing="agent.reviewing?.value"
+              @accept="agent.acceptChange" @reject="agent.rejectChange" @reroll="agent.reroll"
+              @keep="agent.keep" @revert="agent.revert" @hover="(i: number | null) => agent.hovered.value = i"
+            />
+          </template>
+          <slot v-else name="controls" />
+        </div>
       </div>
     </div>
   </div>

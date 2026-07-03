@@ -9,6 +9,7 @@ export function useVibeControl() {
     params: Params,
     effectLabel: string,
     phrase: string,
+    guidance?: string,
   ): Promise<{ patch: Record<string, ParamValue>; rationale: string }> {
     const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
     if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
@@ -18,7 +19,7 @@ export function useVibeControl() {
 
     const res = await $fetch<{ changes: { key: string; value: ParamValue }[]; rationale: string }>('/api/vibe', {
       method: 'POST',
-      body: { apiKey, controls: described, phrase, effectLabel },
+      body: { apiKey, controls: described, phrase, effectLabel, guidance },
     })
 
     const raw: Record<string, ParamValue> = {}

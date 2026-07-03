@@ -26,7 +26,7 @@ export const VIBE_SCHEMA = {
 
 /** Build the user prompt: the effect, its AI-editable controls (with ranges,
  *  options, hints, and current values), and the user's phrase. */
-export function buildVibePrompt(described: DescribedControl[], phrase: string, effectLabel: string): string {
+export function buildVibePrompt(described: DescribedControl[], phrase: string, effectLabel: string, guidance?: string): string {
   const lines = described.map((c) => {
     const range = c.kind === 'slider' ? ` range ${c.min}..${c.max} step ${c.step}` : ''
     const opts = c.kind === 'select' ? ` options [${c.options!.join(', ')}]` : ''
@@ -34,9 +34,11 @@ export function buildVibePrompt(described: DescribedControl[], phrase: string, e
     return `- ${c.path} ("${c.label}", ${c.kind})${range}${opts}; current ${JSON.stringify(c.current)}${hint}`
   }).join('\n')
 
-  return `You are a visual-design copilot for a typography effect called "${effectLabel}".
-The user describes a vibe and you propose parameter changes that achieve it.
+  const guide = guidance ? `\n${guidance}\n` : ''
 
+  return `You are a visual-design copilot for a visual effect called "${effectLabel}".
+The user describes a vibe and you propose parameter changes that achieve it.
+${guide}
 CONTROLS YOU MAY CHANGE (you may ONLY use these keys):
 ${lines}
 
@@ -45,6 +47,6 @@ USER REQUEST: "${phrase}"
 Rules:
 - Return only the controls that should change to achieve the request — leave everything else alone.
 - Slider values must be numbers within the stated range. Select values must be one of the listed options. Color values must be 6-digit hex like "#RRGGBB".
-- Do not invent keys. Do not change the text content.
+- Do not invent keys — only use keys from the list above.
 - "rationale" is one short sentence the user will read.`
 }

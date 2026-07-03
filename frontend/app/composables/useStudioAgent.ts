@@ -20,7 +20,7 @@ import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 /** opts.render returns a PNG data URL of the current studio canvas (enables the
  *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
  *  optional — omit them and the agent is tune-only (no review). */
-export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null; apiKey?: () => string; tier?: string }) {
+export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null; apiKey?: () => string; tier?: string; guidance?: () => string }) {
   const { requestPatch } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
@@ -103,7 +103,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     busy.value = true; error.value = ''; notice.value = ''; review.value = null; lastPhrase.value = p
     clearOriginal()
     try {
-      const { patch, rationale } = await requestPatch(opts.controls(), opts.params, opts.label(), p)
+      const { patch, rationale } = await requestPatch(opts.controls(), opts.params, opts.label(), p, opts.guidance?.())
       const built: ProposedChange[] = []
       for (const [key, value] of Object.entries(patch)) {
         if (value === opts.params[key]) continue // skip no-ops
@@ -133,7 +133,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       const ctrl = opts.controls().find(c => c.key === key)
       const nonce = Math.random().toString(36).slice(2, 7)
       const phrase = `${lastPhrase.value ? `For "${lastPhrase.value}": ` : ''}give a DISTINCTLY DIFFERENT value for "${ctrl?.label ?? key}" (currently ${ch.after}) — not ${ch.after}. Change nothing else. (variation ${nonce})`
-      const { patch } = await requestPatch(opts.controls(), opts.params, opts.label(), phrase)
+      const { patch } = await requestPatch(opts.controls(), opts.params, opts.label(), phrase, opts.guidance?.())
       if (key in patch && patch[key] !== undefined) {
         ch.command.args!.value = patch[key]
         ch.after = String(patch[key])
