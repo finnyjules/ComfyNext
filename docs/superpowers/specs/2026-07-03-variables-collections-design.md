@@ -240,6 +240,12 @@ link (§5.5).
 value, then flow through the existing paths — for Smart Layout, into `props` / `brand` on
 `/api/render-template` (wired-socket brand already merges last via `effectiveBrand`).
 
+- **Normal (non-batch) runs** — the Run button, cascades, agent-triggered renders — resolve
+  bindings against the **preview row**. Batch is the only path that iterates rows.
+- **Brand kit precedence:** an explicit binding on a brand key wins over the active kit (it rides
+  the wired-socket slot, which `effectiveBrand` merges last). Conceptually a brand kit is a 1-row
+  collection — a possible future unification, deliberately untouched here.
+
 ## 8. Error handling
 
 - Row isolation (per 5.6); failed rows flagged in the drawer, retryable.
@@ -278,8 +284,10 @@ value, then flow through the existing paths — for Smart Layout, into `props` /
 - ❌ Project-wide variable store (graph-scoped collections; brand kit covers the common
   cross-canvas case; library-save is Phase 3).
 - ❌ One canvas node per batch row.
-- ❌ Cross-row aggregation; computed/expression variables.
+- ❌ Cross-row aggregation; computed/expression variables; number/date formatting options.
 - ❌ Editor modal of any kind.
+- ❌ Batch over motion/video exports (Slice 2 makes studio controls bindable, but batch stays
+  static-renders-only; N×10s motion bakes need a different runner — later, with the durable queue).
 
 ## 12. Open questions / risks
 
@@ -293,3 +301,8 @@ value, then flow through the existing paths — for Smart Layout, into `props` /
   collapse behavior need tuning during build.
 - **Image cell values:** asset refs or URLs (as June PRD); local file paths out of scope.
 - **Results grid scale:** hundreds of thumbnails → virtualize later; not a v1 blocker.
+- **Variable text vs layout (the data-merge disease):** long values ("Switzerland" where the
+  template was tuned on "Peru") can break compositions. v1 leans on Smart Layout's per-element
+  `overflow`/`maxLines` plus results-grid review; future tie-in: run the existing critique/
+  auto-review loop over batch results to flag clipped/broken rows.
+- **Runner concurrency:** cap parallel `/api/render-template` calls (2–4) — tune in the plan.
