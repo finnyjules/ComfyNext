@@ -29,8 +29,14 @@ import { useVibeControl } from '~/composables/useVibeControl'
 import { loadSpaceDefaults, spaceDefaultFor, saveSpaceDefault } from '~/composables/useSpaceDefaults'
 import { saveEffectThumbnail } from '~/composables/useEffectThumbnails'
 import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import BindableControlChip from '~/components/vue-canvas/studio/BindableControlChip.vue'
+import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
+import { controlKindToVariableType, type StudioControlDesc } from '~/lib/collection/studioBindables'
+import { typeCompatible } from '~/lib/collection/bindables'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
 
-const props = defineProps<{ nodeId: string; nodes: any[] }>()
+const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 // Record generated stills/videos as the current project's assets (Assets panel).
@@ -247,6 +253,77 @@ function controlIsVisible(c: ControlSpec): boolean {
   return true
 }
 
+// Collections variable binding — Type Studio is the first surface to get promote/bind
+// chips (collections Slice 2a, Task 5). `activeControls` maps the active effect's
+// ControlSpec[] to the composable's StudioControlDesc shape; `applyParam` mirrors the
+// structural-control write pattern (assign + rebuild) so a resolved preview value
+// behaves exactly like a user edit for rebuild purposes.
+// ControlSpec is a discriminated union (min/max/step/options only exist on some
+// members) — read them via a loose cast rather than narrowing per-kind here.
+function controlDesc(c: ControlSpec): StudioControlDesc {
+  const any = c as any
+  return { key: c.key, label: c.label, kind: c.kind, min: any.min, max: any.max, step: any.step, options: any.options }
+}
+function activeControls(): StudioControlDesc[] {
+  return effect.value.controls.map(controlDesc)
+}
+const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+  props.nodeId,
+  activeControls,
+  (key, value) => { (params as Record<string, unknown>)[key] = value; rebuild() },
+  { nodes: () => props.nodes, edges: () => props.edges ?? [] },
+)
+
+// Wired collection lookup (studio -> collection, the inverse of wiredTargets) for the
+// "Bind to" submenu — finds the Collection node feeding this studio's `vars` input.
+const wiredColumns = computed<CollectionColumn[]>(() => {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return []
+  const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
+  const c = colNode?.data?.properties?.[COLLECTION_PROP]
+  return c?.columns ?? []
+})
+
+const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
+function openVarMenu(e: MouseEvent, c: ControlSpec) {
+  const type = controlKindToVariableType(c.kind)
+  if (type === null) return
+  const desc = controlDesc(c)
+  const liveValue = params[c.key] as string | number
+  const bound = boundColumnFor(c.key)
+  const items: MenuItem[] = []
+  if (!bound) {
+    items.push({ label: 'Turn into variable', action: () => promote(desc, liveValue) })
+    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
+    if (compatCols.length) {
+      items.push({
+        label: 'Bind to',
+        children: compatCols.map(col => ({
+          label: col.label,
+          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+            detail: { nodeId: props.nodeId, path: `params.${c.key}`, columnKey: col.key },
+          })),
+        })),
+      })
+    }
+  }
+  else {
+    items.push({
+      label: 'Go to collection',
+      action: () => {
+        const edgeList = props.edges ?? []
+        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
+      },
+    })
+    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ divider: true })
+    items.push({ label: 'Unbind', action: () => unbind(c.key, liveValue) })
+  }
+  varMenu.value = { x: e.clientX, y: e.clientY, items }
+}
+
 const gradientStops = reactive<GradientStop[]>([
   { color: '#3b5bff', on: true },
   { color: '#ff3b3b', on: true },
@@ -278,6 +355,7 @@ function selectFont(key: string, family: string) {
   ;(params as Record<string, unknown>)[key] = family
   fontPickerOpen.value = false
   fontSearch.value = ''
+  onEdit(key, family)
 }
 
 // ✨ Describe-a-font search: type a description ("fonts like the Knicks logo"),
@@ -837,16 +915,23 @@ async function generateVideo() {
               v-show="!(c.key === 'typeWeight' && !fontIsVariable) && controlIsVisible(c)"
               :data-control-key="c.key"
               :class="{ 'rounded-md ring-1 ring-amber-400/30 px-1 -mx-1': vibeMoved.has(c.key) }"
-              data-control class="text-xs">
-              <label v-if="c.kind !== 'slider'" class="mb-1 block text-white/60">{{ c.label }}</label>
+              data-control class="text-xs"
+              @contextmenu.prevent="openVarMenu($event, c)">
+              <label v-if="c.kind !== 'slider'" class="mb-1 flex items-center gap-1.5 text-white/60">
+                <span>{{ c.label }}</span>
+                <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+              </label>
+              <div v-else class="mb-1.5 flex items-center gap-1.5">
+                <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+              </div>
               <span v-if="vibeMoved.has(c.key) && vibeSnapshot && c.kind !== 'slider'" class="ml-1 text-[10px] text-amber-400/80">was {{ fmt(vibeSnapshot[c.key]) }}</span>
               <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
                             :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
                             :default="Number(c.default ?? 0)"
                             :model-value="Number(params[c.key])"
-                            @update:model-value="(v: number) => { params[c.key] = v }" />
+                            @update:model-value="(v: number) => { params[c.key] = v; onEdit(c.key, v) }" />
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
-                     class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" />
+                     class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" @change="onEdit(c.key, String(params[c.key]))" />
               <template v-else-if="c.kind === 'textList'">
                 <div v-for="(_, i) in textLines" :key="i" data-row
                      class="mb-1 flex items-center gap-1 rounded transition-shadow"
@@ -919,13 +1004,13 @@ async function generateVideo() {
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
               <StudioColor v-else-if="c.kind === 'color'" :model-value="String(params[c.key])"
-                           @update:model-value="(val: string) => { params[c.key] = val; rebuild() }" />
+                           @update:model-value="(val: string) => { params[c.key] = val; rebuild(); onEdit(c.key, val) }" />
               <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"
                                :options="c.options ?? []" :model-value="String(params[c.key])"
-                               @update:model-value="(v: string) => { params[c.key] = v; rebuild() }" />
+                               @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <StudioSelect v-else-if="c.kind === 'select'"
                             :options="c.options ?? []" :model-value="String(params[c.key])"
-                            @update:model-value="(v: string) => { params[c.key] = v; rebuild() }" />
+                            @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <template v-else-if="c.kind === 'font'">
                 <button type="button" @click="fontPickerOpen = !fontPickerOpen"
                         class="flex w-full items-center justify-between rounded bg-white/10 px-2 py-1 text-left">
@@ -1076,5 +1161,12 @@ async function generateVideo() {
     :selected-id="effectId"
     @select="onPickEffect"
     @close="showEffectGallery = false"
+  />
+  <CanvasContextMenu
+    v-if="varMenu"
+    :x="varMenu.x"
+    :y="varMenu.y"
+    :items="varMenu.items"
+    @close="varMenu = null"
   />
 </template>

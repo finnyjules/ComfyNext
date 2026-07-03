@@ -6158,6 +6158,7 @@ defineExpose({
         v-if="spaceTypeOpenForId"
         :node-id="spaceTypeOpenForId"
         :nodes="nodes as any[]"
+        :edges="edges as any[]"
         @close="spaceTypeOpenForId = null; window.dispatchEvent(new CustomEvent('comfynext:closeSpaceType'))"
       />
     </Teleport>
