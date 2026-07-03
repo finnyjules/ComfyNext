@@ -5,6 +5,8 @@ import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
+import NextStepsStrip from '~/components/vue-canvas/NextStepsStrip.vue'
+import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
 import { projectTake, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
@@ -456,6 +458,20 @@ function discardTake(id: string) {
     Object.assign(props.data, projectTake(props.data, fallback))
   }
 }
+
+// --- Post-render next-steps chip strip (ARPU lever 5) -----------------------
+// Shows on THIS artifact only when a take lands while the canvas is open and
+// this is the most recently rendered artifact (singleton). Baseline is taken
+// at mount so restoring a saved canvas never pops strips.
+const nextSteps = useNextStepsStrip()
+watch(() => props.data.takes?.length ?? 0, (now, before) => {
+  if (now > (before ?? 0)) nextSteps.announceFreshTake(props.id)
+})
+const showNextSteps = computed(() => nextSteps.active.value?.nodeId === props.id)
+function openEditMenuFromStrip() {
+  nextSteps.dismiss()
+  editMenuOpen.value = true
+}
 </script>
 
 <template>
@@ -593,6 +609,16 @@ function discardTake(id: string) {
           :src="displayedUrl"
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
+        />
+        <!-- Transient post-render escalator chips (latest-rendered artifact only). -->
+        <NextStepsStrip
+          v-if="showNextSteps && displayedUrl"
+          :can-vary="hasUpstream"
+          @variations="runVariations"
+          @upscale="spawnUpscale"
+          @animate="animateArtifact"
+          @more="openEditMenuFromStrip"
+          @dismiss="nextSteps.dismiss()"
         />
         <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
