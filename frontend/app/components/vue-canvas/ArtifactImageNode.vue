@@ -372,19 +372,23 @@ onClickOutside(editMenuRef, () => { editMenuOpen.value = false }, { ignore: [edi
 function closeEditMenuOnWheel() { editMenuOpen.value = false }
 watch(editMenuOpen, (open) => {
   if (open) {
-    const r = editMenuRef.value?.getBoundingClientRect()
-    if (r) {
-      // Below the button when there's room, flipped above when the node sits
-      // near the viewport bottom; either way capped to the available space.
-      // ~380px = the full 10-row menu; prefer whichever side shows it whole,
-      // falling back to the roomier side with internal scroll.
-      const below = window.innerHeight - r.bottom - 16
-      const flip = below < 380 && r.top - 16 > below
+    const nodeR = (editMenuRef.value?.closest('.artifact-image') as HTMLElement | null)?.getBoundingClientRect()
+    const btnR = editMenuRef.value?.getBoundingClientRect()
+    if (nodeR && btnR) {
+      // Beside the node's right edge, top-aligned with the Edit button;
+      // flips to the node's left when the viewport runs out. ~380px = the
+      // full 10-row menu; vertical position clamps so it always fits,
+      // scrolling internally as a last resort on short viewports.
+      const MENU_W = 210
+      const MENU_H = 380
+      const left = nodeR.right + 8 + MENU_W <= window.innerWidth
+        ? nodeR.right + 8
+        : Math.max(8, nodeR.left - 8 - MENU_W)
+      const top = Math.max(8, Math.min(btnR.top, window.innerHeight - MENU_H - 8))
       editMenuStyle.value = {
-        right: `${Math.max(8, window.innerWidth - r.right)}px`,
-        ...(flip
-          ? { bottom: `${window.innerHeight - r.top + 4}px`, maxHeight: `${r.top - 16}px` }
-          : { top: `${r.bottom + 4}px`, maxHeight: `${below}px` }),
+        left: `${left}px`,
+        top: `${top}px`,
+        maxHeight: `${window.innerHeight - top - 8}px`,
       }
     }
     // Pan/zoom would leave the fixed panel floating at a stale spot — close instead.

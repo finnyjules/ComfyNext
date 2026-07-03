@@ -11,17 +11,19 @@ export const ARTIFACT_ACTION_IDS = [
 ] as const
 export type ArtifactActionId = typeof ARTIFACT_ACTION_IDS[number]
 
+// Dollar amounts until the credits system ships (billing spec's price_book
+// will replace these constants; credits = $ × 100 when that lands).
 export const ACTION_HINTS: Record<ArtifactActionId, string | null> = {
   'remove-bg': null,
   'inpaint': null,
-  'nano-banana': '~12cr',
+  'nano-banana': '~$0.12',
   'fix': null,
-  'enhance': '14–28cr',
-  'upscale': '~14cr',
-  'relight': '~12cr',
-  'lens': '~12cr',
+  'enhance': '$0.14–0.28',
+  'upscale': '~$0.14',
+  'relight': '~$0.12',
+  'lens': '~$0.12',
   'variations': '4 runs',
-  'animate': 'from 160cr',
+  'animate': 'from $1.60',
 }
 
 interface MinimalNode { id: string; data?: { nodeType?: string; images?: unknown[]; audios?: unknown[] } }
