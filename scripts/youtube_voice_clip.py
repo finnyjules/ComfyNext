@@ -50,6 +50,7 @@ def main() -> int:
         "outtmpl": base + ".%(ext)s",
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
         "noplaylist": True,
     }
     try:

@@ -45,21 +45,23 @@ export default defineEventHandler(async (event) => {
   const script = path.join(root, 'scripts', 'youtube_voice_clip.py')
   const outPath = path.join(os.tmpdir(), `voice-yt_${Date.now()}.mp3`)
 
-  const clipPath = await new Promise<string>((resolve, reject) => {
+  // The helper writes the clip to exactly `outPath` and exits 0 on success; use
+  // that path directly rather than parsing stdout (yt-dlp's \r progress pollutes
+  // it). Errors come back on stderr.
+  await new Promise<void>((resolve, reject) => {
     execFile(
       python,
       [script, url, String(startSec), String(endSec), outPath],
       { timeout: 120_000, maxBuffer: 1 << 20 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(stderr?.trim() || err.message))
-        const p = stdout.trim().split('\n').pop() || ''
-        if (!p) return reject(new Error('clip helper produced no output'))
-        resolve(p)
+      (err, _stdout, stderr) => {
+        if (err) return reject(new Error((stderr || '').trim().split('\n').pop() || err.message))
+        resolve()
       },
     )
   }).catch((e: Error) => {
     throw createError({ statusCode: 502, message: `Could not capture that segment: ${e.message}` })
   })
+  const clipPath = outPath
 
   try {
     const data = await fs.readFile(clipPath)
