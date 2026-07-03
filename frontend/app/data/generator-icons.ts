@@ -7,7 +7,7 @@
  *   2. `ComfyNode.vue` — to show the same icon on the canvas title bar so
  *      a dropped generator immediately tells you what it does.
  *
- * Keyed by Comfy `nodeType` (matches `USE_CASE_BY_NODE` in GeneratorsPanel).
+ * Keyed by Comfy `nodeType` (matches `ACTION_CATALOG` in `~/data/action-catalog`).
  * Add a new generator → add an entry here. No build step.
  */
 import type { Component } from 'vue'

@@ -40,27 +40,30 @@ test.describe('Generators panel + use-case nodes', () => {
     await openBlankWorkflow(page)
   })
 
-  test('panel shows the new use-case cards under their correct domain tabs', async ({ page }) => {
-    await page.getByRole('button', { name: /^Generators$/ }).click()
-    // Panel root carries this specific bg class — most reliable selector.
+  test('panel shows hero tier + intent sections on the image tab', async ({ page }) => {
+    await page.getByRole('button', { name: /^Actions$/ }).click()
     const panel = page.locator('div.bg-\\[\\#1a1a1a\\]\\/95').first()
     await expect(panel).toBeVisible({ timeout: 5_000 })
 
-    // Card titles render in .line-clamp-2 spans.
-    const titles = panel.locator('.line-clamp-2')
+    // Hero tier (image tab is default): the pinned high-frequency actions.
+    const hero = panel.locator('.line-clamp-2')
+    await expect(hero.filter({ hasText: /^Generate an image$/ })).toBeVisible()
+    await expect(hero.filter({ hasText: /^Edit an image$/ })).toBeVisible()
+    await expect(hero.filter({ hasText: /^Upscale an image$/ })).toBeVisible()
 
-    // Image tab is selected by default.
-    await expect(titles.filter({ hasText: /^Generate an image$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Edit an image$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Upscale an image$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Remove background$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Restore an old photo$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Fix faces in a photo$/ })).toBeVisible()
-    await expect(titles.filter({ hasText: /^Describe an image$/ })).toBeVisible()
+    // Intent section headers replace provider names.
+    for (const label of ['Create', 'Edit', 'Enhance', 'Analyze']) {
+      await expect(panel.getByRole('button', { name: new RegExp(`^${label}( \\d+)?$`) })).toBeVisible()
+    }
+
+    // Non-hero use-case cards render inside their sections.
+    await expect(panel.getByText('Remove background', { exact: true })).toBeVisible()
+    await expect(panel.getByText('Restore an old photo', { exact: true })).toBeVisible()
+    await expect(panel.getByText('Describe an image', { exact: true })).toBeVisible()
   })
 
   test('deprecated per-model cards are hidden from the panel', async ({ page }) => {
-    await page.getByRole('button', { name: /^Generators$/ }).click()
+    await page.getByRole('button', { name: /^Actions$/ }).click()
     const panel = page.locator('div.bg-\\[\\#1a1a1a\\]\\/95').first()
     await expect(panel).toBeVisible({ timeout: 5_000 })
 
@@ -71,7 +74,7 @@ test.describe('Generators panel + use-case nodes', () => {
     for (const tabLabel of tabs) {
       await panel.getByRole('button', { name: new RegExp(`^${tabLabel}( \\d+)?$`) }).click().catch(() => {})
       await page.waitForTimeout(150)
-      const titles = await panel.locator('.line-clamp-2').allInnerTexts()
+      const titles = await panel.locator('.line-clamp-2, .flex-col > span:first-child').allInnerTexts()
       titles.forEach((t) => seenTitles.add(t.trim()))
     }
 

@@ -88,7 +88,7 @@ const sidebarItems = [
   { label: 'Add', icon: Plus, submenu: 'load', dividerBefore: true },
   { label: 'Assets', icon: LayoutGrid, panel: 'assets' },
   // Make + edit
-  { label: 'Generators', icon: WandSparkles, panel: 'generators', dividerBefore: true },
+  { label: 'Actions', icon: WandSparkles, panel: 'generators', dividerBefore: true },
   { label: 'Styles', icon: Library, panel: 'loras' },
   { label: 'Characters', icon: Drama, panel: 'characters' },
   { label: 'Toolbox', icon: Toolbox, panel: 'toolbox' },
