@@ -1,0 +1,38 @@
+export type VariableType = 'text' | 'color' | 'number' | 'select' | 'image' | 'font'
+
+export interface CollectionColumn {
+  key: string
+  label: string
+  type: VariableType
+  options?: string[]
+}
+
+export interface CollectionRow {
+  id: string
+  sweep?: boolean
+  values: Record<string, string | number>
+}
+
+export interface CollectionData {
+  id: string
+  name: string
+  columns: CollectionColumn[]
+  rows: CollectionRow[]
+  previewRow: number
+}
+
+/** One control binding on a target node: which collection column feeds it. */
+export interface VarBinding {
+  collectionId: string
+  columnKey: string
+  /** Last literal value, used when the binding dangles (deleted column/collection). */
+  lastLiteral?: string | number
+}
+
+/** Keyed by bindable path, e.g. 'props.text_layer_1' or 'brand.primary'. */
+export type VarBindings = Record<string, VarBinding>
+
+export const COLLECTION_PROP = 'comfynext_collection'
+export const BINDINGS_PROP = 'comfynext_varBindings'
+export const VAR_PREVIEW_PROP = 'comfynext_varPreview'
+export const VARS_TYPE = 'VARS'
