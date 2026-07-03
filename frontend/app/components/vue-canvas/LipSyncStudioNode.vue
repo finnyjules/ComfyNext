@@ -14,6 +14,7 @@ const props = defineProps<{
     nodeType: string
     title?: string
     properties?: Record<string, any>
+    lipSyncError?: string | null
   }
 }>()
 
@@ -94,6 +95,11 @@ function generate() {
         <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="statusDotClass" />
         <span class="text-[10px] text-white/40">{{ compiled.issues.length ? `${compiled.issues.length} issue${compiled.issues.length > 1 ? 's' : ''}` : 'Ready' }}</span>
       </div>
+    </div>
+
+    <!-- Generate error (silent failures otherwise: bad voice, missing widget) -->
+    <div v-if="data?.lipSyncError" class="border-t border-white/10 px-2 pt-1.5 text-[10px] leading-tight text-red-400/90">
+      {{ data.lipSyncError }}
     </div>
 
     <!-- Edit + Generate buttons -->

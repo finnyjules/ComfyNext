@@ -37,8 +37,12 @@ const showIntro = computed(() => !sheet.value.face.src && !sheet.value.voice.tex
 
 // ── Generate ─────────────────────────────────────────────────────────────────
 const hasError = computed(() => result.value.issues.some(i => i.level === 'error'))
+// Runtime failures from the Generate handler (voice resolution, missing widget,
+// no audio) land on the node's data — surface them so a click isn't silent.
+const runtimeError = computed(() => node.value?.data?.lipSyncError as string | null | undefined)
 function onGenerate() {
   if (hasError.value) return
+  if (node.value?.data) node.value.data.lipSyncError = null
   window.dispatchEvent(new CustomEvent('comfynext:lipSyncGenerate', { detail: { sourceNodeId: props.nodeId } }))
 }
 
@@ -405,6 +409,9 @@ function humanizeSyncMode(m: string): string {
       </div><!-- /body -->
 
       <!-- Footer -->
+      <div v-if="runtimeError" class="shrink-0 border-t border-red-500/20 bg-red-500/[0.06] px-4 py-2 text-[11px] text-red-300">
+        {{ runtimeError }}
+      </div>
       <div class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-4 py-2.5">
         <span class="mr-auto text-[11px] text-white/30" title="Both engines bill about $1 per 30 seconds of output">~$1 / 30s</span>
         <button
