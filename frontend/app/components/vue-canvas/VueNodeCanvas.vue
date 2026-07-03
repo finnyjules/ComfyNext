@@ -3175,6 +3175,12 @@ function handleOpenCrossfade(e: Event) {
   if (detail?.nodeId) crossfadeOpenForId.value = String(detail.nodeId)
 }
 
+// Collection bottom drawer state — table editor for VARS/Collection nodes.
+const collectionDrawerForId = ref<string | null>(null)
+function handleOpenCollection(e: Event) {
+  collectionDrawerForId.value = String((e as CustomEvent).detail?.nodeId ?? '') || null
+}
+
 // SmartLayout editor modal state — the visual layout editor that mounts over
 // the canvas when the user clicks "Edit layout" on a SmartLayout node.
 const smartLayoutOpenForId = ref<string | null>(null)
@@ -3386,6 +3392,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
+  window.addEventListener('comfynext:openCollection', handleOpenCollection)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
@@ -3433,6 +3440,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openAsciiOptions', handleOpenAscii)
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
+  window.removeEventListener('comfynext:openCollection', handleOpenCollection)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
@@ -6147,6 +6155,17 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="crossfadeOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Collection bottom drawer (table editor) -->
+    <Teleport to="body">
+      <VueCanvasCollectionDrawer
+        v-if="collectionDrawerForId"
+        :node-id="collectionDrawerForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="collectionDrawerForId = null"
       />
     </Teleport>
 
