@@ -243,8 +243,16 @@ value, then flow through the existing paths — for Smart Layout, into `props` /
 - **Normal (non-batch) runs** — the Run button, cascades, agent-triggered renders — resolve
   bindings against the **preview row**. Batch is the only path that iterates rows.
 - **Brand kit precedence:** an explicit binding on a brand key wins over the active kit (it rides
-  the wired-socket slot, which `effectiveBrand` merges last). Conceptually a brand kit is a 1-row
-  collection — a possible future unification, deliberately untouched here.
+  the wired-socket slot, which `effectiveBrand` merges last).
+- **Brand ⇄ collection unification (later, not v1):** a brand kit is data-identical to a 1-row
+  collection; the kit *library* is a collection whose rows are kits and whose preview row is the
+  active kit (named picker = brand switcher = modes). What brand has beyond a plain collection —
+  and what unification needs: (a) **ambient binding** (auto-feeds the reserved `brand.*` namespace
+  with no chips; acceptable name-magic only there), (b) **app scope** (blocked on the Phase-3
+  collection library), (c) **locked schema** (agent prompts, palette shuffles, font upload assume
+  `primary`/`fontDisplay` exist), (d) **per-key cascade merge** (`effectiveBrand` fall-through vs
+  whole-row resolution). Endgame payoff: `link → Brand` columns give per-row full rebrand in one
+  cell. Nothing in v1 blocks this path; nothing in v1 starts it.
 
 ## 8. Error handling
 
