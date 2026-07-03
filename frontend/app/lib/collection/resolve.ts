@@ -37,6 +37,20 @@ export function splitRenderOverrides(
   return { props, brand }
 }
 
+export function splitResolvedValues(
+  values: Record<string, string | number>,
+): { props: Record<string, string>; brand: Record<string, string>; params: Record<string, string | number> } {
+  const props: Record<string, string> = {}
+  const brand: Record<string, string> = {}
+  const params: Record<string, string | number> = {}
+  for (const [path, v] of Object.entries(values)) {
+    if (path.startsWith('props.')) props[path.slice(6)] = String(v)
+    else if (path.startsWith('brand.')) brand[path.slice(6)] = String(v)
+    else if (path.startsWith('params.')) params[path.slice(7)] = v
+  }
+  return { props, brand, params }
+}
+
 export function validateRun(
   c: CollectionData,
   bindings: VarBindings,

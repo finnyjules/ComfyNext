@@ -1,6 +1,6 @@
 import { BINDINGS_PROP, COLLECTION_PROP, VAR_PREVIEW_PROP } from './types'
 import type { CollectionData, VarBindings } from './types'
-import { resolveBindings, splitRenderOverrides } from './resolve'
+import { resolveBindings, splitResolvedValues } from './resolve'
 
 /** Nodes wired from the collection's `output-0` VARS handle. */
 export function wiredTargets(collectionNodeId: string, nodes: any[], edges: any[]): any[] {
@@ -22,8 +22,8 @@ export function pushVarPreview(collectionNode: any, targets: any[]): void {
     const bindings = target?.data?.properties?.[BINDINGS_PROP] as VarBindings | undefined
     if (!bindings || !Object.keys(bindings).length) continue
     const { values } = resolveBindings(c, bindings, c.previewRow)
-    const { props, brand } = splitRenderOverrides(values)
+    const { props, brand, params } = splitResolvedValues(values)
     if (!target.data.properties) target.data.properties = {}
-    target.data.properties[VAR_PREVIEW_PROP] = { props, brand, ts: Date.now() }
+    target.data.properties[VAR_PREVIEW_PROP] = { props, brand, params, ts: Date.now() }
   }
 }
