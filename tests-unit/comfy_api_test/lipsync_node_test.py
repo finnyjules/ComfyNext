@@ -64,11 +64,11 @@ async def test_hosted_video_uploads_view_ref(monkeypatch, tmp_path):
     (tmp_path / "clip.mp4").write_bytes(b"VIDEODATA")
     monkeypatch.setattr(nr.folder_paths, "get_input_directory", lambda: str(tmp_path))
     captured = {}
-    async def fake_upload(data, filename):
+    async def fake_upload(data, filename, content_type="application/octet-stream"):
         captured["data"] = data
         captured["filename"] = filename
         return "https://api.replicate.com/v1/files/abc/content"
-    monkeypatch.setattr(nr, "_upload_replicate_file", fake_upload)
+    monkeypatch.setattr(nr, "_upload_public_file", fake_upload)
     out = await nr._lipsync_hosted_video_url("/view?filename=clip.mp4&type=input")
     assert out == "https://api.replicate.com/v1/files/abc/content"
     assert captured["data"] == b"VIDEODATA"
@@ -79,10 +79,10 @@ async def test_hosted_video_uploads_view_ref(monkeypatch, tmp_path):
 async def test_hosted_video_uploads_data_url(monkeypatch):
     import base64 as _b64
     captured = {}
-    async def fake_upload(data, filename):
+    async def fake_upload(data, filename, content_type="application/octet-stream"):
         captured["data"] = data
         return "https://api.replicate.com/v1/files/xyz/content"
-    monkeypatch.setattr(nr, "_upload_replicate_file", fake_upload)
+    monkeypatch.setattr(nr, "_upload_public_file", fake_upload)
     payload = b"RAWVIDEO"
     data_url = "data:video/mp4;base64," + _b64.b64encode(payload).decode()
     out = await nr._lipsync_hosted_video_url(data_url)

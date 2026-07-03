@@ -1930,32 +1930,37 @@ def _lipsync_build_input(engine, image, video, audio, resolution, sync_mode):
     return "veed/fabric-1.0", {"image": image, "audio": audio, "resolution": resolution}
 
 
-async def _upload_replicate_file(data: bytes, filename: str) -> str:
-    """Upload bytes to the Replicate Files API and return a URL a Replicate model
-    can fetch. Used for the sync engine's source VIDEO — sync/lipsync-2-pro cannot
-    ingest a multi-MB base64 data URL, and a local /view URL isn't reachable from
-    Replicate. (Images stay data URLs — small enough, and Fabric accepts them.)"""
-    token = _get_token()
-    form = aiohttp.FormData()
-    form.add_field("content", data, filename=filename, content_type="application/octet-stream")
+async def _upload_public_file(data: bytes, filename: str, content_type: str = "application/octet-stream") -> str:
+    """Upload bytes to fal storage and return a PUBLIC CDN url (v3.fal.media).
+    Used for the sync engine's source VIDEO: sync/lipsync-2-pro proxies to sync.so,
+    whose servers fetch the video URL directly — so it must be publicly reachable
+    (a Replicate Files url is auth-gated; a /view url is local; a multi-MB base64
+    data url is rejected). fal-cdn urls need no auth. (Fabric/images stay data urls.)"""
+    from comfy_api_nodes import fal_refs
+    token = fal_refs.get_fal_token()
+    hdr = {"Authorization": f"Key {token}", "Content-Type": "application/json"}
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{REPLICATE_API_BASE}/files",
-            headers={"Authorization": f"Token {token}"}, data=form,
+            "https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            headers=hdr, json={"content_type": content_type, "file_name": filename},
         ) as r:
             if r.status not in (200, 201):
-                raise RuntimeError(f"Replicate file upload failed HTTP {r.status}: {await r.text()}")
-            j = await r.json()
-    url = (j.get("urls") or {}).get("get")
-    if not url:
-        raise RuntimeError(f"Replicate file upload returned no url: {j}")
-    return url
+                raise RuntimeError(f"fal storage initiate failed HTTP {r.status}: {await r.text()}")
+            init = await r.json()
+        file_url = init.get("file_url")
+        upload_url = init.get("upload_url")
+        if not (file_url and upload_url):
+            raise RuntimeError(f"fal storage initiate returned no urls: {init}")
+        async with session.put(upload_url, data=data, headers={"Content-Type": content_type}) as r:
+            if r.status not in (200, 201, 204):
+                raise RuntimeError(f"fal storage upload PUT failed HTTP {r.status}: {await r.text()}")
+    return file_url
 
 
 async def _lipsync_hosted_video_url(src: str) -> str:
-    """Resolve a source-video ref to a Replicate-fetchable URL. A public http(s)
-    URL passes through; a /view input ref or a data: URL is uploaded to Replicate
-    Files. Empty/unknown forms pass through unchanged."""
+    """Resolve a source-video ref to a publicly-fetchable URL. A public http(s)
+    URL passes through; a /view input ref or a data: URL is uploaded to fal storage.
+    Empty/unknown forms pass through unchanged."""
     if not src:
         return src
     if src.startswith("http://") or src.startswith("https://"):
@@ -1967,11 +1972,11 @@ async def _lipsync_hosted_video_url(src: str) -> str:
             raise RuntimeError(f"Source video {name!r} is missing from the input folder.")
         with open(path, "rb") as f:
             data = f.read()
-        return await _upload_replicate_file(data, name)
+        return await _upload_public_file(data, name, "video/mp4")
     if src.startswith("data:"):
         b64 = src.split(",", 1)[1] if "," in src else ""
         data = base64.b64decode(b64)
-        return await _upload_replicate_file(data, "lipsync-source.mp4")
+        return await _upload_public_file(data, "lipsync-source.mp4", "video/mp4")
     return src
 
 
