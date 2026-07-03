@@ -53,4 +53,24 @@ describe('compileLipSync', () => {
     const s = { ...base(), face: { kind: 'image', src: 'x' } }
     expect(compileLipSync(s as any).issues.some(i => i.level === 'error')).toBe(true)
   })
+  it('TTS voice with text is a valid voice (audio resolves at Generate time)', () => {
+    const s = {
+      ...base(),
+      face: { kind: 'image', src: '/view?filename=a.png&type=input' },
+      voice: { kind: 'tts', text: 'Hello there.', voiceId: 'Wise_Woman' },
+    }
+    const out = compileLipSync(s as any)
+    // No no-voice error despite voice.src being empty — the text drives TTS.
+    expect(out.issues.filter(i => i.level === 'error')).toHaveLength(0)
+    // Compiled audio stays empty here; the Generate handler injects the /view URL.
+    expect(out.modelOptions.audio).toBe('')
+  })
+  it('TTS voice with only whitespace text → error issue', () => {
+    const s = {
+      ...base(),
+      face: { kind: 'image', src: 'x' },
+      voice: { kind: 'tts', text: '   ', voiceId: 'Wise_Woman' },
+    }
+    expect(compileLipSync(s as any).issues.some(i => i.code === 'no-voice')).toBe(true)
+  })
 })
