@@ -1,4 +1,5 @@
 import type { LiteGraphWorkflow, LiteGraphNode } from '~/composables/useVueNodes'
+import { VARS_TYPE } from '~/lib/collection/types'
 
 /**
  * Whether an INT widget carries a sibling `control_after_generate` slot in
@@ -203,7 +204,7 @@ export function assembleWorkflowLinks(
     // ComfyUI's graphToPrompt can't resolve — "No link found in parent graph"
     // aborts the whole run. Skipping here leaves the input's `link` null (set
     // below), i.e. Smart Layout serializes exactly as if the input were unwired.
-    if (String(edge.data?.dataType) === 'VARS') continue
+    if (String(edge.data?.dataType) === VARS_TYPE) continue
 
     const originSlot = parseInt(edge.sourceHandle?.replace('output-', '') || '0')
     const targetSlot = parseInt(edge.targetHandle?.replace('input-', '') || '0')
@@ -402,7 +403,7 @@ export function stripVarsLinks(workflow: LiteGraphWorkflow): void {
   const varsLinkIds = new Set<number>()
   for (const node of nodes) {
     for (const input of node.inputs || []) {
-      if (String((input as any).type) !== 'VARS') continue
+      if (String((input as any).type) !== VARS_TYPE) continue
       if (input.link != null) varsLinkIds.add(Number(input.link))
       input.link = null
     }

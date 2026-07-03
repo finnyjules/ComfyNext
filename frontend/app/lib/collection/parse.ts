@@ -1,7 +1,6 @@
 import type { CollectionData, VariableType } from './types'
+import { HEX_RE } from './types'
 import { addColumn, addRow, clampPreviewRow, setCell } from './model'
-
-const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
 const IMG_RE = /(\.(png|jpe?g|webp|gif|svg)(\?|#|$))|(^\/view\?)/i
 const NUM_RE = /^-?\d+(\.\d+)?$/
 

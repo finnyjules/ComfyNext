@@ -164,9 +164,20 @@ async function exportZip() {
   exporting.value = true
   try {
     const zip = new JSZip()
+    // Precompute which label+outputId combinations are duplicated across rows
+    // so we can disambiguate with rowIndex only when needed.
+    const keyCounts = new Map<string, number>()
     for (const item of done) {
+      const key = `${sanitize(rowLabel(collection.value!, item.rowIndex))}_${item.outputId}`
+      keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1)
+    }
+    for (const item of done) {
+      const label = sanitize(rowLabel(collection.value!, item.rowIndex))
+      const baseKey = `${label}_${item.outputId}`
+      const isDupe = (keyCounts.get(baseKey) ?? 0) > 1
+      const fname = isDupe ? `${baseKey}_${item.rowIndex + 1}.png` : `${baseKey}.png`
       const blob = await fetch(item.url!).then(r => r.blob())
-      zip.file(`${sanitize(rowLabel(collection.value!, item.rowIndex))}_${item.outputId}.png`, blob)
+      zip.file(fname, blob)
     }
     const out = await zip.generateAsync({ type: 'blob' })
     const url = URL.createObjectURL(out)

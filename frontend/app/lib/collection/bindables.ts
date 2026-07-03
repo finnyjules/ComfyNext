@@ -27,7 +27,7 @@ export function listSmartLayoutBindables(template: unknown): Bindable[] {
   PROP_RE.lastIndex = 0
   while ((m = PROP_RE.exec(json))) {
     const name = m[1]!
-    const type: VariableType = /^image_layer_/.test(name) ? 'image' : 'text'
+    const type: VariableType = /^image_layer_/i.test(name) ? 'image' : 'text'
     const path = `props.${name}`
     if (!found.has(path)) found.set(path, { path, label: name.replace(/_/g, ' '), type })
   }

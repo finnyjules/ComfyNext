@@ -1,3 +1,5 @@
+export const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+
 export type VariableType = 'text' | 'color' | 'number' | 'select' | 'image' | 'font'
 
 export interface CollectionColumn {

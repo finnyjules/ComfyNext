@@ -1,6 +1,5 @@
 import type { CollectionData, VarBindings } from './types'
-
-const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+import { HEX_RE } from './types'
 
 export function resolveBindings(
   c: CollectionData,

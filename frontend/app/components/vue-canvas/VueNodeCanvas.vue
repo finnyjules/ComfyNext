@@ -28,6 +28,7 @@ import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
+import { VARS_TYPE } from '~/lib/collection/types'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -1453,7 +1454,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Collection: frontend-only data-table node, one VARS output for wiring
   // rows/columns of named variables into a Smart Layout (or other consumer).
   if (nodeType === 'Collection' && (!data.data.outputs || data.data.outputs.length === 0)) {
-    data.data.outputs = [{ name: 'vars', type: 'VARS', links: null }]
+    data.data.outputs = [{ name: 'vars', type: VARS_TYPE, links: null }]
   }
   // Smart Layout: optional VARS input so a Collection's output can wire in
   // (applies to every created node — no-op for anything but SmartLayout).
