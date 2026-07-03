@@ -50,6 +50,9 @@ function onBindingChange(bindable: Bindable, e: Event) {
   const bindings = targetBindings()
   if (!columnKey) {
     delete bindings[bindable.path]
+    // Leave the (possibly now-empty) bindings object in place — its mere
+    // presence marks "explicitly cleared" so the auto-align watcher below
+    // does not silently reseed it on next drawer open.
     return
   }
   // Preserve/refresh lastLiteral: the current resolved value for this path
@@ -63,17 +66,23 @@ function onBindingChange(bindable: Bindable, e: Event) {
   bindings[bindable.path] = { collectionId: collection.value.id, columnKey, ...(lastLiteral !== undefined ? { lastLiteral } : {}) }
 }
 
-// Auto-init bindings for a freshly wired target that has none yet.
+// Auto-init bindings for a freshly wired target that has none yet. Seed only
+// when the bindings object is absent (undefined) — never when it already
+// exists, even as `{}`, since an empty object means the user explicitly
+// cleared all bindings and that choice must stick.
 watch([target, bindables, collection], () => {
   if (!target.value || !collection.value || !bindables.value.length) return
   const existing = target.value.data.properties?.[BINDINGS_PROP]
-  if (existing && Object.keys(existing).length) return
+  if (existing !== undefined) return
   if (!target.value.data.properties) target.value.data.properties = {}
   target.value.data.properties[BINDINGS_PROP] = autoAlign(bindables.value, collection.value.columns, collection.value.id)
 }, { immediate: true })
 
 // Live preview: any change to the collection (cells, preview row) or to the
 // bindings themselves re-pushes the resolved preview row onto the target.
+// Must never deep-watch the whole target properties object — VAR_PREVIEW_PROP
+// and BINDINGS_PROP have to stay disjoint watched keys, or writes to
+// comfynext_varPreview below would retrigger this watcher (infinite loop).
 watch(
   [collection, () => target.value?.data?.properties?.[BINDINGS_PROP]],
   () => { if (node.value) pushVarPreview(node.value, targets.value) },

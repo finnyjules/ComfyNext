@@ -49,6 +49,10 @@ const outputCount = computed<number>(() => {
 // uses) so scrubbing rows updates the node face live.
 const previewUrl = ref<string | null>(null)
 let debounceHandle: ReturnType<typeof setTimeout> | null = null
+// Module-instance generation counter: guards against an older in-flight
+// /api/render-template response resolving after a newer one and clobbering
+// the preview with stale (backwards-flickering) content.
+let renderGeneration = 0
 
 const varCount = computed(() => Object.keys(props.data.properties?.[BINDINGS_PROP] ?? {}).length)
 
@@ -56,6 +60,7 @@ async function renderVarPreview() {
   const preview = props.data.properties?.[VAR_PREVIEW_PROP]
   const template = readTemplateFromNode({ data: props.data }) as any
   if (!preview || !template) return
+  const generation = ++renderGeneration
   try {
     const res = await fetch('/api/render-template', {
       method: 'POST',
@@ -64,8 +69,10 @@ async function renderVarPreview() {
     })
     if (!res.ok) return
     const blob = await res.blob()
+    if (generation !== renderGeneration) return // a newer request superseded this one — drop it
+    const nextUrl = URL.createObjectURL(blob)
     if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = URL.createObjectURL(blob)
+    previewUrl.value = nextUrl
   } catch {
     // Best-effort preview — leave the previous thumbnail (or none) on failure.
   }
