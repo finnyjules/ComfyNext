@@ -1,7 +1,7 @@
 # PRD — Variables & Data Merge (Batch Generation)
 
 **Date:** 2026-06-26
-**Status:** Design approved, pending spec review
+**Status:** Superseded by `2026-07-03-variables-collections-design.md` (core variable model retained; canvas representation, editing surfaces, and lifecycle redesigned)
 **Author:** brainstormed with Claude
 
 ---
