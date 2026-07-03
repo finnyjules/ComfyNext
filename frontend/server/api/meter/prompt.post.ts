@@ -24,9 +24,11 @@ export default defineEventHandler(async (event) => {
     register: (promptId: string, charge: { userId: string; credits: number; version: string }) =>
       meterStore.register(promptId, charge),
     forward: async (b: any) => {
-      // §7: forward only a comfy.org credential this caller supplied.
-      const callerKey = (b?.extra_data?.api_key_comfy_org ?? b?.extra_data?.auth_token_comfy_org) ?? null
-      const safeBody = { ...b, extra_data: stripForeignComfyOrgCreds(b?.extra_data, callerKey) }
+      // Spike policy: strip EVERY comfy.org credential — there is no trusted
+      // per-user key store yet, so nothing in the body can be verified as "the
+      // caller's own key". Phase 1 (Clerk) re-enables §7 pass-through by
+      // passing the user's stored key from their session as callerSuppliedKey.
+      const safeBody = { ...b, extra_data: stripForeignComfyOrgCreds(b?.extra_data, null) }
       const res = await fetch(`${COMFY}/prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', origin: COMFY },
