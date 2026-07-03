@@ -40,3 +40,17 @@ describe('meterPrompt', () => {
     await expect(meterPrompt('u1', {}, deps())).rejects.toBeInstanceOf(MeterError)
   })
 })
+
+describe('meterPrompt isolation', () => {
+  it('does not price, forward, register, or settle for an anonymous caller', async () => {
+    const priceGraph = vi.fn(() => ({ credits: 4, version: 'spike-v1', breakdown: [] }))
+    const forward = vi.fn(); const register = vi.fn(); const settle = vi.fn()
+    await expect(meterPrompt(null, body, {
+      priceGraph, getAvailable: () => 100, register, forward: forward as any, settle,
+    })).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(priceGraph).not.toHaveBeenCalled()
+    expect(forward).not.toHaveBeenCalled()
+    expect(register).not.toHaveBeenCalled()
+    expect(settle).not.toHaveBeenCalled()
+  })
+})
