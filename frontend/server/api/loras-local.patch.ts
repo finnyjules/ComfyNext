@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
   // Merge onto the existing sidecar (or start fresh if there isn't one).
   let meta: Record<string, any> = {}
   try {
-    meta = JSON.parse(await fs.readFile(sidecarPath, 'utf8'))
+    meta = parseSidecar(await fs.readFile(sidecarPath, 'utf8'))
   } catch { /* no/invalid sidecar — create one */ }
 
   const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k)

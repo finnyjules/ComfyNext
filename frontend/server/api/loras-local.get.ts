@@ -51,9 +51,9 @@ export default defineEventHandler(async () => {
   for (const base of bases) {
     const f = `${base}.safetensors`
 
-    let meta: any = {}
+    let meta: Record<string, any> = {}
     try {
-      meta = JSON.parse(await fs.readFile(path.join(lorasDir, `${base}.json`), 'utf8'))
+      meta = parseSidecar(await fs.readFile(path.join(lorasDir, `${base}.json`), 'utf8'))
     } catch { /* no sidecar */ }
 
     let trainedOn: string | null = meta.trained_on ?? null

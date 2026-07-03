@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { sidecarAesthetic, buildLoraPrompt } from '~~/server/utils/loraPrompt'
+import { sidecarAesthetic, buildLoraPrompt, parseSidecar } from '~~/server/utils/loraPrompt'
+
+describe('parseSidecar', () => {
+  it('parses a normal object sidecar', () => {
+    expect(parseSidecar('{"name":"x","kind":"style"}')).toEqual({ name: 'x', kind: 'style' })
+  })
+
+  it('returns {} for the JSON literal null (JSON.parse("null") is a valid null, not a throw)', () => {
+    // This is the crash vector: a sidecar file whose entire content is `null`.
+    expect(parseSidecar('null')).toEqual({})
+  })
+
+  it('returns {} for non-object JSON (array, string, number, bool)', () => {
+    expect(parseSidecar('[1,2,3]')).toEqual({})
+    expect(parseSidecar('"hi"')).toEqual({})
+    expect(parseSidecar('42')).toEqual({})
+    expect(parseSidecar('true')).toEqual({})
+  })
+
+  it('returns {} for invalid/empty JSON without throwing', () => {
+    expect(parseSidecar('{ broken')).toEqual({})
+    expect(parseSidecar('')).toEqual({})
+  })
+})
 
 describe('sidecarAesthetic', () => {
   it('reads the older `aesthetic` key', () => {

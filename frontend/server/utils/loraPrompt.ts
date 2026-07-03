@@ -16,6 +16,22 @@ export function sidecarAesthetic(meta: Record<string, unknown> | null | undefine
 }
 
 /**
+ * Parse a LoRA .json sidecar into a plain object, tolerating garbage. Crucially
+ * `JSON.parse('null')` succeeds and returns `null` (and `'[1]'` returns an
+ * array), which would then blow up any `meta.foo` access — a single sidecar file
+ * containing `null` used to 500 the whole /api/loras-local list. Anything that
+ * isn't a JSON object (null, array, string, number, invalid) normalizes to `{}`.
+ */
+export function parseSidecar(raw: string): Record<string, any> {
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, any> : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
  * Compose a trained-LoRA generation prompt from its sidecar style + the user's
  * text, mirroring the style branch of lora-cover.post.ts:
  *   "<aesthetic> <trigger>, <userPrompt>"
