@@ -33,7 +33,7 @@ function go() {
         :disabled="busy || !phrase.trim()" @click="go"
       >↑</button>
     </div>
-    <div class="mt-2.5 flex flex-wrap gap-1.5">
+    <div v-if="QUICK.length" class="mt-2.5 flex flex-wrap gap-1.5">
       <button
         v-for="q in QUICK" :key="q" :disabled="busy"
         class="rounded-full border border-white/[0.12] bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/60 hover:text-white/85 disabled:opacity-40"

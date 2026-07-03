@@ -13,7 +13,7 @@ import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
-import { applyCanvasCommand, describeCanvas, scopeSnapshotToUpstream, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import { applyCanvasCommand, describeCanvas, scopeSnapshotToUpstream, searchImageRequests, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse, RESULT_REVIEW_SYSTEM } from '~/lib/agent/protocol'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
@@ -46,6 +46,9 @@ export function useCanvasAgent(opts: {
   tune?: (cmds: { target: string; request: string }[]) => Promise<{ changes: ProposedChange[]; notice?: string }>
   /** Undo the in-place studio-tune edits. Called on Dismiss. */
   tuneRevert?: () => void
+  /** Open the web-image-search picker for a `searchImages` command's query. The
+   *  picker owns the rest (search → user picks → import as Image nodes). */
+  searchImages?: (query: string) => void
   apiKey: () => string
   tier?: string
 }) {
@@ -119,6 +122,7 @@ export function useCanvasAgent(opts: {
       const tuneInputs: { target: string; request: string }[] = []
       let probe = clone(original)
       commands.forEach((cmd, i) => {
+        if (cmd.op === 'searchImages') return // intercepted below — opens the picker, never a proposal card
         if (cmd.op === 'tuneNode') {
           const req = typeof cmd.args?.request === 'string' ? cmd.args.request : ''
           if (cmd.target && req) tuneInputs.push({ target: cmd.target, request: req })
@@ -148,8 +152,13 @@ export function useCanvasAgent(opts: {
         tuneBuilt = res.changes
         tuneNotice = res.notice ?? ''
       }
+      // Web-image search: hand the query to the picker (one search per ask — the
+      // hint tells the model to emit a single searchImages).
+      const searchQueries = searchImageRequests(commands)
+      if (searchQueries.length && opts.searchImages) opts.searchImages(searchQueries[0]!)
       const built = [...graphBuilt, ...tuneBuilt]
       if (!built.length) {
+        if (searchQueries.length && opts.searchImages) { answer.value = tuneNotice || message; return } // the picker is the response
         answer.value = tuneNotice || message || (commands.length ? 'I couldn’t apply those edits to this graph.' : 'No changes for that — try rephrasing.')
         return
       }
@@ -330,7 +339,7 @@ export function useCanvasAgent(opts: {
     await runReview([nodeId], intent || 'this image', { manual: true })
   }
   /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
-  function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = ''; review.value = null; pendingReview = null }
+  function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = ''; error.value = ''; review.value = null; pendingReview = null }
 
   return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, autoReviewNode, dismiss }
 }

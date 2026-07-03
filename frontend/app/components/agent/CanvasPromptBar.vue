@@ -5,10 +5,11 @@
 // which stays anchored just above the toolbar. Owns useCanvasAgent; the parent
 // supplies the VueNodeCanvas ref (agentSnapshot + applyCanvasOps).
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { Sparkles, ArrowUp } from 'lucide-vue-next'
+import { Sparkles, ArrowUp, X } from 'lucide-vue-next'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
+import ImageSearchPickerModal from '~/components/agent/ImageSearchPickerModal.vue'
 import { useCanvasAgent } from '~/composables/useCanvasAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { paidProducerFor } from '~/lib/artifact/nextSteps'
@@ -38,7 +39,19 @@ const {
   runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
   resolveResultNode: (targetIds: string[]) => props.vueCanvas.agentResolveResultNode?.(targetIds) ?? null,
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  // "find me a picture of X" → the model emits searchImages and the picker
+  // takes over (search → select → import as Image nodes).
+  searchImages: (query: string) => { searchQuery.value = query; searchOpen.value = true },
 })
+
+// Web-image-search picker (opened by the agent's searchImages command).
+const searchOpen = ref(false)
+const searchQuery = ref('')
+function onSearchDone(imported: number, failed: number) {
+  searchOpen.value = false
+  if (imported) answer.value = `Imported ${imported} image${imported === 1 ? '' : 's'} onto the canvas.${failed ? ` ${failed} couldn’t be downloaded.` : ''}`
+  else if (failed) answer.value = 'None of those images could be downloaded — try other picks.'
+}
 
 // Run→look→fix: when a Keep & Run finishes, review its output (reviewLastRun is a
 // no-op unless a review is armed). VueNodeCanvas fires this on execution_complete.
@@ -110,6 +123,7 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
 
 <template>
   <div v-if="ready" class="flex flex-col gap-2">
+    <ImageSearchPickerModal :open="searchOpen" :query="searchQuery" @close="searchOpen = false" @done="onSearchDone" />
     <!-- Results expand upward, above the input -->
     <div v-if="hasResult" class="relative max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
       <!-- Slow glimm sweep over the thinking card while the agent works. Persistently
@@ -118,10 +132,17 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
       <div class="pointer-events-none absolute inset-0 z-10" style="clip-path: inset(0 round 12px)">
         <AgentSweep :active="glimmActive" :period="3" palette="lagoon" />
       </div>
+      <!-- Dismiss the card for the answer / error states (no proposal → no
+           keep/revert controls, so this is the only way to close it). -->
+      <button
+        v-if="!busy && !reviewing && !hasProposal && (answer || error)"
+        class="absolute right-2 top-2 z-20 grid size-6 place-items-center rounded-md text-white/40 transition hover:bg-white/10 hover:text-white/80"
+        title="Dismiss" @click="dismiss"
+      ><X class="size-3.5" /></button>
       <div v-if="busy"><AgentProgress :active="busy" /></div>
       <template v-else>
-        <p v-if="error" class="text-[12px] leading-snug text-red-400/90">{{ error }}</p>
-        <div v-else-if="answer">
+        <p v-if="error" class="pr-6 text-[12px] leading-snug text-red-400/90">{{ error }}</p>
+        <div v-else-if="answer" class="pr-6">
           <p v-if="reasoning" class="mb-1 text-[11px] leading-snug text-white/40">{{ reasoning }}</p>
           <p class="whitespace-pre-line text-[12.5px] leading-relaxed text-white/85">{{ answer }}</p>
         </div>

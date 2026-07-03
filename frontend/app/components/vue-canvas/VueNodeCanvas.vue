@@ -1736,10 +1736,12 @@ async function addAssetNodeData(a: DroppedAsset, position: { x: number, y: numbe
 }
 
 async function handleAddAssetNode(e: Event) {
-  const a = (e as CustomEvent<DroppedAsset>).detail
+  // offsetX/offsetY (optional, canvas px) cascade batched adds — e.g. the web
+  // image-search import — so several nodes don't land exactly on top of each other.
+  const a = (e as CustomEvent<DroppedAsset & { offsetX?: number; offsetY?: number }>).detail
   if (!a?.filename) return
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  nodes.value.push(await addAssetNodeData(a, { x: center.x, y: center.y }))
+  nodes.value.push(await addAssetNodeData(a, { x: center.x + (a.offsetX ?? 0), y: center.y + (a.offsetY ?? 0) }))
 }
 
 async function handleDrop(event: DragEvent) {
@@ -3482,8 +3484,18 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-function getUpstreamImageUrl(srcNode: any): string | null {
-  if (srcNode?.data?.images?.length) return srcNode.data.images[0]
+// Multi-output sources (e.g. Split photo into layers: subject=0, background=1)
+// mirror ui images in output-slot order, so the wire's source handle picks
+// which image the layer shows.
+function srcOutputIndex(edge: any): number {
+  const m = /^output-(\d+)$/.exec(edge?.sourceHandle ?? '')
+  return m ? Number(m[1]) : 0
+}
+function getUpstreamImageUrl(srcNode: any, edge?: any): string | null {
+  if (srcNode?.data?.images?.length) {
+    const i = srcOutputIndex(edge)
+    return srcNode.data.images[i] ?? srcNode.data.images[0]
+  }
   if (srcNode?.data?.nodeType === 'LoadImage' && srcNode?.data?.widgetsValues?.[0]) {
     const filename = srcNode.data.widgetsValues[0]
     return `/view?${new URLSearchParams({ filename, type: 'input' })}`
@@ -3504,7 +3516,7 @@ function collectCompositorLayers(node: any): any[] {
       e.target === node.id && e.targetHandle === `input-${i - 1}`)
     if (!edge) continue
     const src = (nodes.value as any[]).find((n: any) => n.id === edge.source)
-    const url = getUpstreamImageUrl(src)
+    const url = getUpstreamImageUrl(src, edge)
     if (!url) continue
     out.push({
       url,
@@ -3831,7 +3843,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         e.target === liveNode.id && e.targetHandle === `input-${slot1 - 1}`)
       if (!edge) return null
       const src = (nodes.value as any[]).find((n: any) => n.id === edge.source)
-      const url = getUpstreamImageUrl(src)
+      const url = getUpstreamImageUrl(src, edge)
       if (!url) return null
       return {
         url,
