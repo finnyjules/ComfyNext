@@ -86,6 +86,32 @@ function effectivelyOptional(p: PortLite): boolean {
   return !!m && Number(m[2]) > 1 // only <prefix>1 is the required member of the series
 }
 
+/** Narrow a snapshot to one node + its transitive UPSTREAM chain (the subgraph
+ *  that produced it). Used by the auto-review path so the prompt describes only
+ *  the relevant nodes instead of the whole canvas — cheaper and less distracting.
+ *  Keeps catalog/styles untouched (fix proposals may add nodes from the palette).
+ *  Unknown target → snapshot returned unchanged (never describe an empty graph). */
+export function scopeSnapshotToUpstream(s: CanvasSnapshot, targetId: string): CanvasSnapshot {
+  if (!s.nodes.some(n => String(n.id) === String(targetId))) return s
+  const keep = new Set([String(targetId)])
+  const stack = [String(targetId)]
+  while (stack.length) {
+    const id = stack.pop()!
+    for (const e of s.edges) {
+      if (String(e.target) !== id) continue
+      const src = String(e.source)
+      if (keep.has(src)) continue
+      keep.add(src)
+      stack.push(src)
+    }
+  }
+  return {
+    ...s,
+    nodes: s.nodes.filter(n => keep.has(String(n.id))),
+    edges: s.edges.filter(e => keep.has(String(e.source)) && keep.has(String(e.target))),
+  }
+}
+
 /** Read the (selected) graph as an agent snapshot: one object per node, each with
  *  its settable widgets + which inputs are connected, plus a graph summary. */
 export function describeCanvas(s: CanvasSnapshot): SurfaceSnapshot {

@@ -11,6 +11,9 @@ import { modelForTier } from '../lib/aiModels'
 interface ReviewBody {
   apiKey?: string
   tier?: string
+  /** STATIC instruction (byte-identical across calls) — sent as a cached system
+   *  block so repeat reviews within the cache TTL read it at ~0.1× input price. */
+  system?: string
   prompt?: string
   schema?: unknown
   image?: string // data URL (data:image/png;base64,…) or raw base64
@@ -39,6 +42,11 @@ export default defineEventHandler(async (event) => {
       model: modelForTier(body?.tier),
       max_tokens: 2048,
       output_config: { format: { type: 'json_schema', schema } },
+      // Cache the static instruction prefix: reviews cluster (iterate → render →
+      // review, Variations bursts), so the 5-minute ephemeral window hits often.
+      ...(body?.system
+        ? { system: [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }] }
+        : {}),
       messages: [{
         role: 'user',
         content: [

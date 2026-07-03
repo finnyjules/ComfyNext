@@ -13,8 +13,8 @@ import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
-import { applyCanvasCommand, describeCanvas, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
-import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
+import { applyCanvasCommand, describeCanvas, scopeSnapshotToUpstream, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse, RESULT_REVIEW_SYSTEM } from '~/lib/agent/protocol'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import type { LayoutIssue } from '~/lib/agent/verify'
@@ -247,10 +247,17 @@ export function useCanvasAgent(opts: {
       if (freshNode) analyzingNodeIds.value = new Set([freshNode])
       const snap = clone(opts.getSnapshot(intent))
       if (!auto) original = snap
-      const desc = describeCanvas(snap)
+      // Auto mode reviews ONE artifact: describe only it + its upstream chain.
+      // Fewer prompt tokens AND less off-target noise for the model. Fix commands
+      // still probe against the FULL snapshot (they only ever target the scoped
+      // nodes, but the probe must see the whole graph to validate wiring).
+      const descTarget = auto ? String(freshNode ?? resultNode ?? targets[0]) : null
+      const desc = describeCanvas(descTarget ? scopeSnapshotToUpstream(snap, descTarget) : snap)
       const res = await $fetch<{ text: string }>('/api/agent-review', {
         method: 'POST',
-        body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildResultReviewPrompt(desc, intent), schema: buildReviewSchema(desc.commands), image },
+        // system = the static ~3k-token instruction, cached server-side (ephemeral
+        // prefix cache) so clustered reviews pay ~0.1× for it.
+        body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', system: RESULT_REVIEW_SYSTEM, prompt: buildResultReviewPrompt(desc, intent), schema: buildReviewSchema(desc.commands), image },
         timeout: 60_000,
       })
       const { assessment, issues: found, fixes, fixRationales, fixLabels } = parseReviewResponse(res.text)

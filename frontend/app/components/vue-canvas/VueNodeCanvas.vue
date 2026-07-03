@@ -776,6 +776,27 @@ async function agentRunOutputImage(nodeIds: string[]): Promise<string | null> {
     const res = await fetch(bust)
     if (!res.ok) return null
     const blob = await res.blob()
+    // Vision billing is (w × h) / 750 tokens, so a 2K render costs ~5× a 720p one
+    // for no gain — hands/text/artifact defects read fine at ~1280px. Cap the long
+    // edge before encoding; below the cap, return the original bytes untouched.
+    const MAX_REVIEW_EDGE = 1280
+    try {
+      const bmp = await createImageBitmap(blob)
+      const long = Math.max(bmp.width, bmp.height)
+      if (long > MAX_REVIEW_EDGE) {
+        const scale = MAX_REVIEW_EDGE / long
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(bmp.width * scale))
+        canvas.height = Math.max(1, Math.round(bmp.height * scale))
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
+          bmp.close()
+          return canvas.toDataURL('image/webp', 0.9)
+        }
+      }
+      bmp.close()
+    } catch { /* not decodable as an image (or bitmap unsupported) → send as-is */ }
     return await new Promise<string>((resolve, reject) => {
       const r = new FileReader()
       r.onload = () => resolve(String(r.result)); r.onerror = () => reject(new Error('read failed'))

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { TemplateV3 } from '~~/shared/template-grid/types'
 import { applySmartLayoutCommand, describeSmartLayout } from '~/lib/agent/surfaces/smartLayout'
 import { applyPlan } from '~/lib/agent/plan'
-import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
+import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse, RESULT_REVIEW_SYSTEM } from '~/lib/agent/protocol'
 
 function fx(): TemplateV3 {
   return {
@@ -166,11 +166,13 @@ describe('protocol', () => {
 
   it('result-review prompt judges achievement of the request, NOT Swiss design', () => {
     const snap = describeSmartLayout(fx()) // any surface; we only assert the prompt framing
+    // The prompt is split for caching: static instruction (system) + dynamic half.
     const prompt = buildResultReviewPrompt(snap, 'a dog in GTA style')
-    expect(prompt.toLowerCase()).toContain('attached image')
+    expect(RESULT_REVIEW_SYSTEM.toLowerCase()).toContain('attached image')
+    expect(RESULT_REVIEW_SYSTEM).toContain('ACHIEVES THE REQUEST')
+    expect(RESULT_REVIEW_SYSTEM).not.toContain('SWISS') // must not impose a style the user didn't ask for
     expect(prompt).toContain('a dog in GTA style')
-    expect(prompt).toContain('ACHIEVES THE REQUEST')
-    expect(prompt).not.toContain('SWISS') // must not impose a style the user didn't ask for
+    expect(prompt).not.toContain('SWISS')
   })
 
   it('parses a visual-review reply into assessment, issues and fix commands', () => {
