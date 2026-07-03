@@ -15,6 +15,8 @@ import type { Command } from '~/lib/agent/commandSurface'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
 import { applyCanvasCommand, describeCanvas, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse } from '~/lib/agent/protocol'
+import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
+import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import type { LayoutIssue } from '~/lib/agent/verify'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 
@@ -59,6 +61,8 @@ export function useCanvasAgent(opts: {
   /** Run→look→fix: a designer's-eye critique of the RUN's actual output. */
   const review = ref<VisualReview | null>(null)
   const reviewing = ref(false)
+  // Auto-critique publishes its fixes as chips on the artifact's strip.
+  const nextStepsStrip = useNextStepsStrip()
   /** Shared set of node ids under review — drives each node's scanning overlay. */
   const { analyzingNodeIds } = useAgentActivity()
   /** Set by Keep & Run; consumed once when the run completes. */
@@ -216,12 +220,18 @@ export function useCanvasAgent(opts: {
   }
 
   /** Run→look→fix core (suggest-only): look at a run's actual output for `targets`,
-   *  and if it falls short of `intent` propose fixes as Keep/Dismiss cards. The user
-   *  decides — nothing is auto-applied or auto-re-run. Used by the Keep & Run loop
-   *  AND by on-demand "Critique" on any result node. */
-  async function runReview(targets: string[], intent: string, manual = false) {
+   *  and if it falls short of `intent` propose fixes. Manual / Keep & Run mode
+   *  surfaces them as Keep/Dismiss cards; `auto` mode (paid-render auto-critique)
+   *  publishes them as pastel chips on the artifact's next-steps strip instead —
+   *  quiet on success, silent on failure, and never clobbers a pending proposal.
+   *  The user decides — nothing is auto-applied or auto-re-run. */
+  async function runReview(targets: string[], intent: string, mode: { manual?: boolean; auto?: boolean } = {}) {
+    const { manual = false, auto = false } = mode
     if (busy.value || reviewing.value || !opts.runOutputImage) return
-    opts.discard(); opts.tuneRevert?.(); changes.value = []; review.value = null; answer.value = ''; error.value = ''
+    if (auto && changes.value.length) return // a pending proposal owns the UI — skip this pass
+    if (!auto) {
+      opts.discard(); opts.tuneRevert?.(); changes.value = []; review.value = null; answer.value = ''; error.value = ''
+    }
     reviewing.value = true
     // Mark the OUTPUT node under review so the white "scanning" overlay lands on
     // the result (past a generator to its result card), not the generator itself.
@@ -236,29 +246,68 @@ export function useCanvasAgent(opts: {
       const freshNode = opts.resolveResultNode?.(targets)
       if (freshNode) analyzingNodeIds.value = new Set([freshNode])
       const snap = clone(opts.getSnapshot(intent))
-      original = snap
+      if (!auto) original = snap
       const desc = describeCanvas(snap)
       const res = await $fetch<{ text: string }>('/api/agent-review', {
         method: 'POST',
         body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildResultReviewPrompt(desc, intent), schema: buildReviewSchema(desc.commands), image },
         timeout: 60_000,
       })
-      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
-      review.value = { assessment, issues: found }
+      const { assessment, issues: found, fixes, fixRationales, fixLabels } = parseReviewResponse(res.text)
       const built: ProposedChange[] = []
+      const builtLabels: string[] = []
       let probe = clone(snap)
       fixes.forEach((cmd, i) => {
         const ch = buildChange(probe, cmd, fixRationales[i] || 'From the visual review')
         if (!ch) return
         ch.fromReview = true
         built.push(ch)
+        builtLabels.push(fixLabels[i] || (fixRationales[i] || '').slice(0, 30) || 'Fix issues')
         const r = applyCanvasCommand(probe, cmd)
         if (r.ok) probe = r.template
       })
+      if (auto) {
+        // Chips only — no bar cards, no "looks right", no review banner.
+        const chipNode = String(freshNode ?? resultNode ?? targets[0])
+        if (built.length) {
+          const chips: FixChip[] = built.map((ch, i) => ({
+            id: i,
+            label: builtLabels[i]!,
+            // Only the Nano-Banana edit has a fixed price; widget/seed fixes vary.
+            hint: JSON.stringify(ch.command).includes('EditImageNode') ? ACTION_HINTS['nano-banana'] : null,
+            apply: () => applyReviewFix(ch, chipNode),
+          }))
+          nextStepsStrip.announceFixes(chipNode, chips)
+        }
+        return
+      }
+      review.value = { assessment, issues: found }
       if (built.length) { changes.value = built; recompute() }
       else if (!found.length) answer.value = '✓ Looks right — the result matches what you asked.'
-    } catch (e) { if (manual) error.value = e instanceof Error ? e.message : 'Couldn’t review the result.' }
-    finally { reviewing.value = false; analyzingNodeIds.value = new Set() }
+    } catch (e) {
+      if (manual) error.value = e instanceof Error ? e.message : 'Couldn’t review the result.'
+      else if (auto) console.warn('[AutoReview] failed silently:', e)
+    } finally { reviewing.value = false; analyzingNodeIds.value = new Set() }
+  }
+
+  /** Chip click: apply exactly ONE review fix through the normal preview→commit
+   *  seam. The spliced EditImageNode lands configured + selected, UN-RUN — the
+   *  user aims (or just hits its Run) before anything bills. */
+  function applyReviewFix(change: ProposedChange, nodeId: string) {
+    if (busy.value || reviewing.value) return
+    try {
+      opts.preview([change.command], false)
+      opts.commit()
+    } catch (e) {
+      console.warn('[AutoReview] fix apply failed:', e)
+    } finally {
+      nextStepsStrip.clearFixes(nodeId)
+    }
+  }
+
+  /** Auto: paid render finished → quiet chip-producing review (gated upstream). */
+  async function autoReviewNode(nodeId: string, intent: string) {
+    await runReview([nodeId], intent || 'this image', { auto: true })
   }
 
   /** Auto: fires when a Keep & Run finishes (a review is armed). */
@@ -271,10 +320,10 @@ export function useCanvasAgent(opts: {
 
   /** On-demand: critique ANY result node (its output vs the prompt that made it). */
   async function reviewNode(nodeId: string, intent: string) {
-    await runReview([nodeId], intent || 'this image', true)
+    await runReview([nodeId], intent || 'this image', { manual: true })
   }
   /** Dismiss: remove the ghost preview + undo any in-place studio-tune edits. */
   function dismiss() { opts.discard(); opts.tuneRevert?.(); changes.value = []; original = null; issues.value = []; answer.value = ''; review.value = null; pendingReview = null }
 
-  return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, dismiss }
+  return { busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered, lastPhrase, ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, autoReviewNode, dismiss }
 }
