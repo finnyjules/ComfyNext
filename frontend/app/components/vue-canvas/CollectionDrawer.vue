@@ -1,10 +1,13 @@
 <!-- frontend/app/components/vue-canvas/CollectionDrawer.vue -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { X, Plus, Upload, ClipboardPaste, Trash2 } from 'lucide-vue-next'
-import { COLLECTION_PROP, type CollectionData, type VariableType } from '~/lib/collection/types'
+import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type VarBinding, type VariableType } from '~/lib/collection/types'
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
+import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
+import { resolveBindings } from '~/lib/collection/resolve'
+import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -14,6 +17,68 @@ const collection = computed<CollectionData | null>(() =>
   (node.value?.data?.properties?.[COLLECTION_PROP] as CollectionData) ?? null)
 
 const TYPES: VariableType[] = ['text', 'color', 'number', 'image', 'font', 'select']
+
+// --- Bindings strip -------------------------------------------------------
+// Smart Layout targets wired from this collection's output-0. We only bind
+// against the first one — multiple targets on one collection is an edge case
+// the UI doesn't need to solve for yet.
+const targets = computed(() => wiredTargets(props.nodeId, props.nodes, props.edges)
+  .filter(n => n?.data?.nodeType === 'SmartLayout'))
+const target = computed(() => targets.value[0] ?? null)
+
+const bindables = computed<Bindable[]>(() =>
+  target.value ? listSmartLayoutBindables(readTemplateFromNode(target.value)) : [])
+
+function targetBindings(): Record<string, VarBinding> {
+  if (!target.value) return {}
+  if (!target.value.data.properties) target.value.data.properties = {}
+  if (!target.value.data.properties[BINDINGS_PROP]) target.value.data.properties[BINDINGS_PROP] = {}
+  return target.value.data.properties[BINDINGS_PROP]
+}
+
+function compatibleColumns(bindable: Bindable) {
+  return collection.value ? collection.value.columns.filter(c => typeCompatible(bindable.type, c.type)) : []
+}
+
+function bindingFor(path: string): VarBinding | undefined {
+  return targetBindings()[path]
+}
+
+function onBindingChange(bindable: Bindable, e: Event) {
+  if (!collection.value) return
+  const columnKey = (e.target as HTMLSelectElement).value
+  const bindings = targetBindings()
+  if (!columnKey) {
+    delete bindings[bindable.path]
+    return
+  }
+  // Preserve/refresh lastLiteral: the current resolved value for this path
+  // (row cell if present, else whatever literal was previously recorded) —
+  // cheap to read off the existing binding/collection, so we do; we do not
+  // reach into the SmartLayout template's actual widget defaults since that
+  // would require parsing per-path template state, which is out of scope.
+  const prevLiteral = bindings[bindable.path]?.lastLiteral
+  const { values } = resolveBindings(collection.value, { [bindable.path]: { collectionId: collection.value.id, columnKey } }, collection.value.previewRow)
+  const lastLiteral = values[bindable.path] ?? prevLiteral
+  bindings[bindable.path] = { collectionId: collection.value.id, columnKey, ...(lastLiteral !== undefined ? { lastLiteral } : {}) }
+}
+
+// Auto-init bindings for a freshly wired target that has none yet.
+watch([target, bindables, collection], () => {
+  if (!target.value || !collection.value || !bindables.value.length) return
+  const existing = target.value.data.properties?.[BINDINGS_PROP]
+  if (existing && Object.keys(existing).length) return
+  if (!target.value.data.properties) target.value.data.properties = {}
+  target.value.data.properties[BINDINGS_PROP] = autoAlign(bindables.value, collection.value.columns, collection.value.id)
+}, { immediate: true })
+
+// Live preview: any change to the collection (cells, preview row) or to the
+// bindings themselves re-pushes the resolved preview row onto the target.
+watch(
+  [collection, () => target.value?.data?.properties?.[BINDINGS_PROP]],
+  () => { if (node.value) pushVarPreview(node.value, targets.value) },
+  { deep: true, immediate: true },
+)
 
 const pasteOpen = ref(false)
 const pasteText = ref('')
@@ -86,6 +151,24 @@ function isImageUrl(v: unknown): boolean {
           <button class="drawer-btn" @click="pasteOpen = false">Cancel</button>
           <button class="drawer-btn !bg-white/15" @click="applyPaste">Replace table</button>
         </div>
+      </div>
+
+      <div class="flex items-center gap-3 px-4 py-2 border-b border-white/10 shrink-0 overflow-x-auto">
+        <span class="text-[11px] text-white/40 shrink-0">Bindings</span>
+        <template v-if="target">
+          <div v-for="b in bindables" :key="b.path" class="flex items-center gap-1.5 shrink-0">
+            <span class="text-[11px] text-white/60">{{ b.label }}</span>
+            <select
+              class="bg-white/5 border border-white/10 rounded text-[11px] text-white/80 px-1.5 py-1 outline-none focus:border-white/25"
+              :value="bindingFor(b.path)?.columnKey ?? ''"
+              @change="onBindingChange(b, $event)"
+            >
+              <option value="">—</option>
+              <option v-for="col in compatibleColumns(b)" :key="col.key" :value="col.key">{{ col.label }}</option>
+            </select>
+          </div>
+        </template>
+        <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout node to bind columns</span>
       </div>
 
       <div class="flex-1 overflow-auto">

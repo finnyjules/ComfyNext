@@ -27,6 +27,7 @@ import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveCl
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
+import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -3181,6 +3182,17 @@ function handleOpenCollection(e: Event) {
   collectionDrawerForId.value = String((e as CustomEvent).detail?.nodeId ?? '') || null
 }
 
+// Collection row scrub (node scrubber, not the drawer) — push the newly
+// scrubbed preview row onto any wired Smart Layout targets' live preview.
+function handleCollectionScrub(e: Event) {
+  const nodeId = String((e as CustomEvent).detail?.nodeId ?? '')
+  if (!nodeId) return
+  const allNodes = nodes.value as any[]
+  const colNode = allNodes.find(n => String(n.id) === nodeId)
+  if (!colNode) return
+  pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]))
+}
+
 // SmartLayout editor modal state — the visual layout editor that mounts over
 // the canvas when the user clicks "Edit layout" on a SmartLayout node.
 const smartLayoutOpenForId = ref<string | null>(null)
@@ -3393,6 +3405,7 @@ onMounted(() => {
   window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openCollection', handleOpenCollection)
+  window.addEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
@@ -3441,6 +3454,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openCollection', handleOpenCollection)
+  window.removeEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)

@@ -34,6 +34,10 @@ function step(delta: number) {
   if (!c.rows.length) return
   c.previewRow = (c.previewRow + delta + c.rows.length) % c.rows.length
   clampPreviewRow(c)
+  // This component only receives its own `data`, not the full nodes/edges
+  // graph — hand off to VueNodeCanvas (which owns both) to push the scrubbed
+  // row onto any wired Smart Layout targets' live preview.
+  window.dispatchEvent(new CustomEvent('comfynext:collectionScrub', { detail: { nodeId: props.id } }))
 }
 
 function openTable() {
