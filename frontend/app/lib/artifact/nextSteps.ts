@@ -39,6 +39,22 @@ function isFrozenArtifact(n: MinimalNode | undefined): boolean {
     && typeof ref === 'string' && ref.includes('filename=')
 }
 
+/** True when any DIRECT upstream source of this node is a paid generator
+ *  (carries a price_badge from /object_info). Drives the auto-review gate:
+ *  only renders that cost money get a free-of-charge critique pass. */
+export function paidProducerFor(
+  nodeId: string,
+  nodes: { id: string; data?: { priceBadge?: unknown } }[],
+  edges: MinimalEdge[],
+): boolean {
+  const byId = new Map(nodes.map(n => [String(n.id), n]))
+  for (const e of edges) {
+    if (String(e.target) !== String(nodeId)) continue
+    if (byId.get(String(e.source))?.data?.priceBadge) return true
+  }
+  return false
+}
+
 /** Seed scope for a 'variation' re-run: the targets plus every transitive
  *  upstream node, stopping at (and excluding) artifacts that already hold a
  *  result — those get auto-frozen by the run, so rerolling above them would

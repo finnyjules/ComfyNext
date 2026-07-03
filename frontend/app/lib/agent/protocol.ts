@@ -112,6 +112,7 @@ export function buildReviewSchema(specs: CommandSpec[]): Record<string, unknown>
             target: { type: 'string', description: 'Id of the object to act on (omit when not needed).' },
             args: { type: 'string', description: 'JSON-encoded arguments object.' },
             rationale: { type: 'string', description: 'One short reason for this fix.' },
+            label: { type: 'string', description: 'VERY short imperative chip label for this fix, 2–4 words: "Fix hands", "Clean up text", "Re-roll — wrong subject".' },
           },
           required: ['op'],
           additionalProperties: false,
@@ -162,13 +163,19 @@ export function buildResultReviewPrompt(snapshot: SurfaceSnapshot, intent: strin
 }
 
 /** Parse the visual-review reply. */
-export function parseReviewResponse(text: string): { assessment: string; issues: string[]; fixes: Command[]; fixRationales: string[] } {
+export function parseReviewResponse(text: string): { assessment: string; issues: string[]; fixes: Command[]; fixRationales: string[]; fixLabels: string[] } {
   let data: { assessment?: unknown; issues?: unknown; fixes?: unknown }
-  try { data = JSON.parse(extractJsonObject(text)) } catch { return { assessment: '', issues: [], fixes: [], fixRationales: [] } }
+  try { data = JSON.parse(extractJsonObject(text)) } catch { return { assessment: '', issues: [], fixes: [], fixRationales: [], fixLabels: [] } }
   const assessment = typeof data.assessment === 'string' ? data.assessment : ''
   const issues = Array.isArray(data.issues) ? data.issues.filter((s): s is string => typeof s === 'string') : []
-  const { commands: fixes, rationales: fixRationales } = decodeCommandList(Array.isArray(data.fixes) ? data.fixes : [])
-  return { assessment, issues, fixes, fixRationales }
+  const rawFixes = Array.isArray(data.fixes) ? data.fixes : []
+  const { commands: fixes, rationales: fixRationales } = decodeCommandList(rawFixes)
+  // decodeCommandList is 1:1 with its input, so labels stay aligned with fixes.
+  const fixLabels = rawFixes.map((f) => {
+    const l = (f as { label?: unknown } | null)?.label
+    return typeof l === 'string' ? l : ''
+  })
+  return { assessment, issues, fixes, fixRationales, fixLabels }
 }
 
 /** Parse the model's JSON reply into commands, decoding each `args` string back
