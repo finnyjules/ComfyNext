@@ -60,6 +60,7 @@ import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 import { getProfile } from '~/lib/shotdirector/profiles'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl } from '~/lib/shotdirector/refUpload'
+import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -5110,7 +5111,7 @@ function upstreamArtifactsWithResults(targetIds: string[]): Set<number> {
 
 function getFilteredWorkflow(
   targetIds: string[],
-  opts: { rerollScope?: 'self'; direction?: 'downstream' } = {},
+  opts: { rerollScope?: 'self' | 'variation'; direction?: 'downstream' } = {},
 ) {
   // Seed policy:
   //  • 'downstream' (run here → end) = randomize NOTHING. The point is to push
@@ -5118,12 +5119,17 @@ function getFilteredWorkflow(
   //    nor anything else should regenerate.
   //  • 'self' (re-roll this node) = randomize only the target's seed; upstream
   //    stays cached.
+  //  • 'variation' (Variations ×N) = randomize the target AND its upstream
+  //    producers' seeds, stopping at artifacts that hold a result (those get
+  //    auto-frozen below) — the producing generator re-runs with a fresh seed.
   //  • default (rebuild from start → here) = randomize every seed in the graph.
   const seedScope = opts.direction === 'downstream'
     ? new Set<string>()
     : opts.rerollScope === 'self'
       ? new Set(targetIds)
-      : undefined
+      : opts.rerollScope === 'variation'
+        ? upstreamSeedScope(targetIds, nodes.value as any[], edges.value as any[])
+        : undefined
   randomizeSeedsOnLiveState(seedScope)
   captureActiveRunFromTargets(targetIds)
   const wf = getWorkflowWithSubgraphs()
@@ -5137,7 +5143,7 @@ function getFilteredWorkflow(
   // re-execute (and re-bill) the chain that made them. Auto-freeze UPSTREAM
   // artifact nodes that already hold a result so they feed it like a locked node —
   // no manual lock needed. Skipped for a full "rebuild from start" (default scope).
-  const autoFreeze = (targetIds.length && (opts.rerollScope === 'self' || opts.direction === 'downstream'))
+  const autoFreeze = (targetIds.length && (opts.rerollScope === 'self' || opts.rerollScope === 'variation' || opts.direction === 'downstream'))
     ? upstreamArtifactsWithResults(targetIds)
     : undefined
   // Then locks drop upstream links so collectKeepSet walks a graph where

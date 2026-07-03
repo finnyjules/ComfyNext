@@ -430,7 +430,7 @@ function injectLoraStyleIntoPrompt(workflow: any) {
 
 async function runVueWorkflow(
   targetIds?: string[],
-  opts: { rerollScope?: 'self', direction?: 'downstream', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
+  opts: { rerollScope?: 'self' | 'variation', direction?: 'downstream', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
 ): Promise<boolean> {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
@@ -858,11 +858,41 @@ async function handleRunTextIterator(e: Event) {
   }
 }
 
+// Variations ×N: re-run the artifact's producing generator N times with fresh
+// seeds; each result lands as a Take on the artifact. Sequential like the text
+// iterator — runVueWorkflow reads live canvas state (and rolls seeds) per call.
+let variationsRunning = false
+async function handleRunVariations(e: Event) {
+  if (variationsRunning) {
+    console.warn('[Variations] already running, ignoring re-entry')
+    return
+  }
+  const detail = (e as CustomEvent).detail as { nodeId?: string; count?: number } | undefined
+  const nodeId = detail?.nodeId
+  const count = Math.min(Math.max(1, detail?.count ?? 4), 8)
+  if (!nodeId) return
+  variationsRunning = true
+  try {
+    for (let i = 0; i < count; i++) {
+      const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.([nodeId]) ?? [nodeId]
+      const queued = await runVueWorkflow(expanded, i === 0
+        ? { rerollScope: 'variation', costConfirmIterations: count }
+        : { rerollScope: 'variation', skipCostConfirm: true })
+      if (queued === false) break // user declined the cost confirm
+      // Small breather so the bridge / queue settles before the next.
+      await new Promise(r => setTimeout(r, 250))
+    }
+  } finally {
+    variationsRunning = false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('comfynext:runFiltered', handleRunFiltered)
   window.addEventListener('comfynext:runAll', handleRunAll)
   window.addEventListener('comfynext:openInspector', handleOpenInspector)
   window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
+  window.addEventListener('comfynext:runVariations', handleRunVariations)
   window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
@@ -875,6 +905,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runAll', handleRunAll)
   window.removeEventListener('comfynext:openInspector', handleOpenInspector)
   window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
+  window.removeEventListener('comfynext:runVariations', handleRunVariations)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
