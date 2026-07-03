@@ -68,13 +68,25 @@ def first_fal_video_url(result: dict) -> str:
     return url
 
 
+def first_fal_image_url(result: dict) -> str:
+    """First image URL from an fal image result (e.g. flux-pro/kontext), which
+    returns {images: [{url, width, height, ...}, ...]}."""
+    images = (result or {}).get("images") or []
+    url = images[0].get("url") if images and isinstance(images[0], dict) else None
+    if not url:
+        raise RuntimeError(f"fal result had no image url: {result!r}")
+    return url
+
+
 async def run_fal_prediction(
     app: str, fn: str, input_dict: dict, *, poll_deadline_sec: int = 900,
 ) -> dict:
     token = get_fal_token()
     headers = {"Authorization": f"Key {token}", "Content-Type": "application/json"}
-    submit_url = f"{FAL_QUEUE_BASE}/{app}/{fn}"
     app_base = f"{FAL_QUEUE_BASE}/{app}"
+    # Most apps have a trailing function segment (e.g. seedance .../text-to-video);
+    # single-endpoint apps (e.g. fal-ai/wizper) pass fn="" and submit to the app base.
+    submit_url = f"{app_base}/{fn}" if fn else app_base
 
     async with aiohttp.ClientSession() as session:
         # Submit.
@@ -91,8 +103,11 @@ async def run_fal_prediction(
             raise RuntimeError("fal submit rate-limited; gave up")
 
         rid = submit["request_id"]
-        status_url = f"{app_base}/requests/{rid}/status"
-        result_url = f"{app_base}/requests/{rid}"
+        # fal returns authoritative status/response URLs in the submit body; prefer
+        # them — they carry the correct poll base for sub-endpoint apps (e.g.
+        # veo3.1/fast) where a constructed {app}/requests path can be wrong.
+        status_url = submit.get("status_url") or f"{app_base}/requests/{rid}/status"
+        result_url = submit.get("response_url") or f"{app_base}/requests/{rid}"
 
         deadline = time.time() + poll_deadline_sec
         consecutive_errors = 0

@@ -29,7 +29,7 @@ Video
 -  LipsyncRemoteNode        — Sync lips to audio · sync/lipsync-2-pro
 
 Audio
--  WhisperRemoteNode        — Transcribe audio · Whisper
+-  WhisperRemoteNode        — Transcribe audio · Whisper large-v3 (fal wizper)
 -  MusicGenRemoteNode       — Generate music · MusicGen
 -  MiniMaxSpeechRemoteNode  — Generate speech · MiniMax Speech-02 HD
 
@@ -897,12 +897,49 @@ _FLUX_KONTEXT_ASPECT_RATIOS = [
 ]
 
 
+async def _run_fal_kontext(
+    image_data_url: str, prompt: str, *,
+    aspect_ratio: str = "match_input_image",
+    safety_tolerance: int = 2,
+    enhance_prompt: bool = False,
+    output_format: str = "png",
+    seed: int = 0,
+) -> str:
+    """Run fal-ai/flux-pro/kontext (image edit) and return the output image URL.
+
+    fal is ~2× cheaper than Replicate's black-forest-labs/flux-kontext-pro
+    ($0.04 vs $0.08). fal's dialect differs from Replicate's: the source is
+    `image_url` (not `input_image`); there is no `match_input_image` enum — the
+    ratio is matched by OMITTING `aspect_ratio`; `output_format` is `jpeg` not
+    `jpg`; `prompt_upsampling` maps to `enhance_prompt`; the output is
+    `images[0].url`. `safety_tolerance` is sent only when non-default, as the
+    string enum fal expects.
+    """
+    from comfy_api_nodes import fal_refs
+
+    inp: dict = {
+        "prompt": prompt,
+        "image_url": image_data_url,
+        "output_format": "jpeg" if output_format in ("jpg", "jpeg") else "png",
+    }
+    if aspect_ratio and aspect_ratio != "match_input_image":
+        inp["aspect_ratio"] = aspect_ratio
+    if safety_tolerance and safety_tolerance != 2:
+        inp["safety_tolerance"] = str(safety_tolerance)
+    if enhance_prompt:
+        inp["enhance_prompt"] = True
+    if seed and seed > 0:
+        inp["seed"] = seed
+    result = await fal_refs.run_fal_prediction("fal-ai/flux-pro/kontext", "", inp)
+    return fal_refs.first_fal_image_url(result)
+
+
 class FluxKontextRemoteNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
         return IO.Schema(
             node_id="FluxKontextRemoteNode",
-            display_name="Flux Kontext Pro · Edit (Replicate)",
+            display_name="Flux Kontext Pro · Edit (fal)",
             category="api node/image/Replicate",
             description=(
                 "Flux Kontext Pro image editing — give it an image and a "
@@ -934,18 +971,12 @@ class FluxKontextRemoteNode(IO.ComfyNode):
     @classmethod
     async def execute(cls, input_image, prompt, aspect_ratio,
                       safety_tolerance, prompt_upsampling, output_format, seed):
-        input_dict: dict = {
-            "prompt": prompt,
-            "input_image": _image_tensor_to_data_url(input_image),
-            "aspect_ratio": aspect_ratio,
-            "safety_tolerance": safety_tolerance,
-            "prompt_upsampling": prompt_upsampling,
-            "output_format": output_format,
-        }
-        if seed and seed > 0:
-            input_dict["seed"] = seed
-        pred = await _run_prediction("black-forest-labs/flux-kontext-pro", input_dict)
-        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        url = await _run_fal_kontext(
+            _image_tensor_to_data_url(input_image), prompt,
+            aspect_ratio=aspect_ratio, safety_tolerance=safety_tolerance,
+            enhance_prompt=prompt_upsampling, output_format=output_format, seed=seed,
+        )
+        tensor = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "flux_kontext"))
 
 
@@ -1289,12 +1320,14 @@ class WhisperRemoteNode(IO.ComfyNode):
     def define_schema(cls):
         return IO.Schema(
             node_id="WhisperRemoteNode",
-            display_name="Whisper (Replicate)",
+            display_name="Whisper (fal · wizper)",
             category="api node/audio/Replicate",
             description=(
-                "OpenAI Whisper large-v3 — transcribes audio to text with "
-                "language detection. ~$0.005 per minute. Output is a plain "
-                "string; pair with a Text node to feed downstream prompts."
+                "Whisper large-v3 via fal's 'wizper' — transcribes audio to "
+                "text with language detection, ~250× real-time. Near-free "
+                "(fal bills by compute time; a short clip is a fraction of a "
+                "cent). Output is a plain string; pair with a Text node to "
+                "feed downstream prompts."
             ),
             inputs=[
                 IO.Audio.Input("audio", tooltip="Audio clip to transcribe."),
@@ -1308,29 +1341,30 @@ class WhisperRemoteNode(IO.ComfyNode):
                                  tooltip="Translate to English instead of transcribing in original language."),
             ],
             outputs=[IO.String.Output(display_name="transcript")],
-            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.005,"format":{"suffix":"/min","approximate":true}}'),
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"suffix":"/min","approximate":true}}'),
         is_output_node=True,
         )
 
     @classmethod
     async def execute(cls, audio, language, translate):
-        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+        from comfy_api_nodes import fal_refs
+
+        # wizper fetches audio_url server-side; host the clip on fal's CDN rather
+        # than inline it (a 60s wav data URL is multi-MB and unreliable inline).
+        data_url = _audio_dict_to_wav_data_url(audio, max_seconds=60)
+        audio_url = await _lipsync_hosted_media_url(data_url, "audio/wav", "whisper.wav")
         input_dict: dict = {
-            "audio": audio_url,
+            "audio_url": audio_url,
             "task": "translate" if translate else "transcribe",
+            "version": "3",
         }
         if language and language != "auto":
             input_dict["language"] = language
 
-        pred = await _run_prediction("openai/whisper", input_dict)
-        out_payload = pred.get("output")
-        # Whisper variants return either a string or {transcription: str, segments: [...]}
-        if isinstance(out_payload, dict):
-            text = str(out_payload.get("transcription") or out_payload.get("text") or "")
-        elif isinstance(out_payload, str):
-            text = out_payload
-        else:
-            text = ""
+        # fal-ai/wizper is a single-endpoint app (no trailing function segment).
+        result = await fal_refs.run_fal_prediction("fal-ai/wizper", "", input_dict)
+        # wizper returns {text, chunks, languages}; text is the full transcript.
+        text = str((result or {}).get("text") or "")
         return IO.NodeOutput(text)
 
 
@@ -2165,7 +2199,9 @@ class EditImageNode(IO.ComfyNode):
                       safety_tolerance, prompt_upsampling, output_format):
         data_url = _image_tensor_to_data_url(input_image)
 
-        # Each model speaks a different input dialect on Replicate.
+        # Each model speaks a different dialect. Nano Banana stays on Replicate
+        # (Google-rate passthrough, cheaper there); Flux Kontext goes to fal (~2×
+        # cheaper than Replicate's flux-kontext-pro).
         if model == "Nano Banana 2":
             input_dict = {
                 "prompt": prompt,
@@ -2173,22 +2209,18 @@ class EditImageNode(IO.ComfyNode):
                 "resolution": resolution,
                 "output_format": output_format,
             }
-            slug = "google/nano-banana-2"
+            if seed and seed > 0:
+                input_dict["seed"] = seed
+            pred = await _run_prediction("google/nano-banana-2", input_dict)
+            url = _first_output_url(pred)
         else:  # Flux Kontext Pro
-            input_dict = {
-                "prompt": prompt,
-                "input_image": data_url,
-                "aspect_ratio": aspect_ratio,
-                "safety_tolerance": safety_tolerance,
-                "prompt_upsampling": prompt_upsampling,
-                "output_format": output_format,
-            }
-            slug = "black-forest-labs/flux-kontext-pro"
+            url = await _run_fal_kontext(
+                data_url, prompt, aspect_ratio=aspect_ratio,
+                safety_tolerance=safety_tolerance, enhance_prompt=prompt_upsampling,
+                output_format=output_format, seed=seed,
+            )
 
-        if seed and seed > 0:
-            input_dict["seed"] = seed
-        pred = await _run_prediction(slug, input_dict)
-        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        tensor = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "edit_image"))
 
 
@@ -2286,23 +2318,18 @@ class BlendSceneNode(IO.ComfyNode):
             unify_lighting, contact_shadows, match_camera_look, preserve_identity)
         data_url = _image_tensor_to_data_url(image)
 
-        # Each model takes a different input schema.
+        # Each model takes a different schema. Nano Banana stays on Replicate;
+        # Flux Kontext goes to fal (~2× cheaper).
         if model == "Nano Banana":
             input_dict = {"prompt": instruction, "image_input": [data_url]}
-            slug = "google/nano-banana"
+            pred = await _run_prediction("google/nano-banana", input_dict)
+            url = _first_output_url(pred)
         else:  # Flux Kontext Pro
-            input_dict = {
-                "prompt": instruction,
-                "input_image": data_url,
-                "aspect_ratio": "match_input_image",
-                "output_format": output_format,
-            }
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            slug = "black-forest-labs/flux-kontext-pro"
+            url = await _run_fal_kontext(
+                data_url, instruction, output_format=output_format, seed=seed,
+            )
 
-        pred = await _run_prediction(slug, input_dict)
-        edited = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        edited = await download_url_to_image_tensor(url, cls=cls)
 
         # Optional subject-preserve: composite the original masked region back over
         # the harmonized result so e.g. a product label is never reinterpreted.

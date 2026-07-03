@@ -1,9 +1,10 @@
 /**
  * POST /api/inpaint/flux-fill
  *
- * Mask-based inpainting via Black Forest Labs FLUX.1 Fill on Replicate. The
- * client paints a region, describes it, and the model fills only that region
- * while preserving the rest of the image.
+ * Mask-based inpainting via Black Forest Labs FLUX.1 Fill. The client paints a
+ * region, describes it, and the model fills only that region while preserving
+ * the rest of the image. Dev tier runs on Replicate (cheap default); pro tier
+ * runs on fal (~1.6× cheaper than Replicate's flux-fill-pro).
  *
  * Body:
  *   image    string  data URL (or public http URL) of the source image
@@ -22,9 +23,9 @@
  * (runReplicate/firstOutputUrl/requireReplicateToken are auto-imported from
  * server/utils/replicate.ts).
  */
+// Dev tier only; pro tier now dispatches to fal (fal-ai/flux-pro/v1/fill).
 const MODELS = {
   dev: 'black-forest-labs/flux-fill-dev',
-  pro: 'black-forest-labs/flux-fill-pro',
 } as const
 
 interface Body {
@@ -39,46 +40,61 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
-  const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 
   if (!body?.image) throw createError({ statusCode: 400, message: 'image is required' })
   if (!body?.mask) throw createError({ statusCode: 400, message: 'mask is required' })
 
   const tier: 'dev' | 'pro' = body.tier === 'pro' ? 'pro' : 'dev'
-  const model = MODELS[tier]
   const prompt = (body.prompt ?? '').trim() // empty prompt = generative remove
   const count = Math.max(1, Math.min(4, Math.round(body.count ?? 1)))
-  const guidance = body.guidance ?? (tier === 'pro' ? 60 : 30)
-  const steps = Math.round(body.steps ?? (tier === 'pro' ? 50 : 28))
   const baseSeed = Number.isFinite(body.seed) ? Math.round(body.seed as number) : Math.floor(Date.now() % 2_000_000_000)
+  const seeds = Array.from({ length: count }, (_, i) => baseSeed + i)
 
-  // dev exposes `num_inference_steps`; pro exposes `steps`. Keep to documented
-  // fields only — Replicate rejects unknown input keys.
-  const buildInput = (seed: number): Record<string, unknown> => {
-    const common: Record<string, unknown> = {
-      image: body.image,
-      mask: body.mask,
-      prompt,
-      guidance,
-      seed,
-      output_format: 'png',
-    }
-    if (tier === 'pro') common.steps = steps
-    else common.num_inference_steps = steps
-    return common
+  // Pro tier goes to fal (~1.6× cheaper than Replicate's flux-fill-pro: $0.05 vs
+  // $0.08). fal's Fill schema uses image_url/mask_url (mask white = inpaint) and
+  // has no guidance/steps knobs; output is images[].url. Dev tier stays on
+  // Replicate (the cheap default).
+  if (tier === 'pro') {
+    const outputs = await Promise.all(
+      seeds.map(async (seed) => {
+        const result = await runFal('fal-ai/flux-pro/v1/fill', {
+          image_url: body.image,
+          mask_url: body.mask,
+          prompt,
+          seed,
+          output_format: 'png',
+        })
+        const url = firstFalImageUrl(result)
+        if (!url) throw createError({ statusCode: 502, message: 'fal returned no image' })
+        return fetchAsDataUrl(url)
+      }),
+    )
+    return { images: outputs, tier, model: 'fal-ai/flux-pro/v1/fill' }
   }
 
+  const token = requireReplicateToken()
+  const guidance = body.guidance ?? 30
+  const steps = Math.round(body.steps ?? 28)
+  const buildInput = (seed: number): Record<string, unknown> => ({
+    image: body.image,
+    mask: body.mask,
+    prompt,
+    guidance,
+    seed,
+    output_format: 'png',
+    num_inference_steps: steps,
+  })
+
   // Variations run as independent predictions with distinct seeds, in parallel.
-  const seeds = Array.from({ length: count }, (_, i) => baseSeed + i)
   const outputs = await Promise.all(
     seeds.map(async (seed) => {
-      const out = await runReplicate(model, buildInput(seed), token, { timeoutMs: 120_000 })
+      const out = await runReplicate(MODELS.dev, buildInput(seed), token, { timeoutMs: 120_000 })
       const url = firstOutputUrl(out)
       if (!url) throw createError({ statusCode: 502, message: 'Replicate returned no image' })
       return fetchAsDataUrl(url)
     }),
   )
 
-  return { images: outputs, tier, model }
+  return { images: outputs, tier, model: MODELS.dev }
 })

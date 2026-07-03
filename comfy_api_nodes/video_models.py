@@ -148,33 +148,39 @@ _PIXVERSE_AR   = {"16:9", "9:16", "1:1"}
 
 # ===== Google (Veo) =========================================================
 
-def _b_veo_3_1(prompt, ar, dur, seed, image, audio, adv):
+def _veo31_fal_input(prompt, ar, dur, seed, image, adv):
+    """Shape input for fal-ai/veo3.1 (and /fast). Shared by both builders.
+
+    fal specifics: duration is a STRING with an 's' suffix ("4s"/"6s"/"8s");
+    `auto_fix` replaces Replicate's `enhance_prompt`; the first frame arrives as
+    `image_url` (a data URL from a wired IMAGE tensor — fal accepts it directly),
+    and, as with Seedance, `aspect_ratio` is sent only for t2v (i2v follows the
+    image). `generate_audio=false` selects fal's cheaper video-only tier
+    (~$0.20/s vs ~$0.40/s with audio); it defaults ON to preserve behavior.
+    """
     inp: dict[str, Any] = {
         "prompt": prompt,
-        "aspect_ratio": _ar_or(_VEO_AR, ar, "16:9"),
+        "duration": f"{_dur_or([4, 6, 8], dur, 8)}s",
+        "resolution": _opt_str(adv, "resolution", "720p"),
         "generate_audio": _opt_bool(adv, "generate_audio", True),
-        "enhance_prompt": _opt_bool(adv, "enhance_prompt", True),
+        "auto_fix": _opt_bool(adv, "enhance_prompt", True),
     }
     if neg := _opt_str(adv, "negative_prompt", ""):
         inp["negative_prompt"] = neg
     if image:
-        inp["image"] = image
+        inp["image_url"] = image
+    else:
+        inp["aspect_ratio"] = _ar_or(_VEO_AR, ar, "16:9")
     _maybe_set_seed(inp, seed)
     return inp
+
+
+def _b_veo_3_1(prompt, ar, dur, seed, image, audio, adv):
+    return _veo31_fal_input(prompt, ar, dur, seed, image, adv)
 
 
 def _b_veo_3_1_fast(prompt, ar, dur, seed, image, audio, adv):
-    inp: dict[str, Any] = {
-        "prompt": prompt,
-        "aspect_ratio": _ar_or(_VEO_AR, ar, "16:9"),
-        "generate_audio": _opt_bool(adv, "generate_audio", True),
-    }
-    if neg := _opt_str(adv, "negative_prompt", ""):
-        inp["negative_prompt"] = neg
-    if image:
-        inp["image"] = image
-    _maybe_set_seed(inp, seed)
-    return inp
+    return _veo31_fal_input(prompt, ar, dur, seed, image, adv)
 
 
 # ===== OpenAI (Sora) ========================================================
@@ -417,14 +423,18 @@ MODELS: list[VideoModel] = [
     VideoModel(
         id="veo-3.1", label="Veo 3.1", brand="Google",
         replicate_slug="google/veo-3.1",
-        aspect_ratios=["16:9", "9:16"], durations=[8], default_duration=8,
+        aspect_ratios=["16:9", "9:16"], durations=[4, 6, 8], default_duration=8,
         modes=["t2v", "i2v"], build_input=_b_veo_3_1,
+        provider="fal", fal_app="fal-ai/veo3.1",
+        fal_fn_by_mode={"t2v": "", "firstLast": "image-to-video", "reference": "image-to-video"},
     ),
     VideoModel(
         id="veo-3.1-fast", label="Veo 3.1 Fast", brand="Google",
         replicate_slug="google/veo-3.1-fast",
-        aspect_ratios=["16:9", "9:16"], durations=[8], default_duration=8,
+        aspect_ratios=["16:9", "9:16"], durations=[4, 6, 8], default_duration=8,
         modes=["t2v", "i2v"], build_input=_b_veo_3_1_fast,
+        provider="fal", fal_app="fal-ai/veo3.1/fast",
+        fal_fn_by_mode={"t2v": "", "firstLast": "image-to-video", "reference": "image-to-video"},
     ),
     VideoModel(
         id="sora-2", label="Sora 2", brand="OpenAI",
