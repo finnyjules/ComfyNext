@@ -192,6 +192,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // guardrailed sheet UI — no backend class_type, reopen to re-edit. Dispatches
   // to the backend LipSyncNode (class_type) at Generate time (Task 6).
   LipSyncStudio: 'lip-sync',
+  // Collection: frontend-only data-table node (rows/columns of named
+  // variables) — no backend class_type, reopen to re-edit like Space Type.
+  Collection: 'collection',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

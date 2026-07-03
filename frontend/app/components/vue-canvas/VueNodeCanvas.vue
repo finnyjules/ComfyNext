@@ -53,6 +53,7 @@ import LipSyncStudioNode from '~/components/vue-canvas/LipSyncStudioNode.vue'
 import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
+import CollectionNode from './CollectionNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
@@ -187,6 +188,7 @@ const nodeTypes = {
   'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
   'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
+  'collection': markRaw(CollectionNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1445,6 +1447,11 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Shot Director: three optional CHARACTER cast slots (Task 11 syncs them into the shot sheet).
   if (nodeType === 'ShotDirector' && (!data.data.inputs || data.data.inputs.length === 0)) {
     data.data.inputs = [1, 2, 3].map(i => ({ name: `cast_${i}`, type: 'CHARACTER', link: null, optional: true }))
+  }
+  // Collection: frontend-only data-table node, one VARS output for wiring
+  // rows/columns of named variables into a Smart Layout (or other consumer).
+  if (nodeType === 'Collection' && (!data.data.outputs || data.data.outputs.length === 0)) {
+    data.data.outputs = [{ name: 'vars', type: 'VARS', links: null }]
   }
   return data
 }

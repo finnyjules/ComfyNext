@@ -261,6 +261,16 @@ const STUDIOS: AgentCapability[] = [
       'solid background colour', 'solid background color', 'blue background', 'coloured background', 'colored background', 'set the background colour', 'set the background color', 'make the background blue', 'fill the background with a colour', 'put it on a coloured background', 'give it a solid background', 'frame background colour', 'backdrop colour behind the layers'] },
   { nodeType: 'SmartLayout', kind: 'studio', frontendOnly: false, title: 'Smart Layout', summary: 'Format-aware Swiss/International-style auto-layout — design once, reflow to many ad aspect ratios; brand-themed.', inputs: [{ name: 'image_layer_1', type: 'IMAGE' }, { name: 'text_layer_1', type: 'STRING' }], outputs: [{ name: 'images', type: 'IMAGE' }],
     intents: ['make a poster layout', 'design a layout', 'auto-layout', 'arrange into a composition', 'create an ad layout', 'social media post layout', 'lay this out nicely', 'arrange text and images', 'make a flyer', 'design a banner', 'multi-format layout', 'resize this design to other formats', 'adapt to story or square', 'swiss design poster', 'grid layout', 'headline and body layout', 'brand-styled layout'] },
+  {
+    nodeType: 'Collection',
+    kind: 'studio',
+    frontendOnly: true,
+    title: 'Collection',
+    summary: 'A data table of named variables. Wire it to a Smart Layout to drive text, images, and brand colors per row — scrub rows to preview, or generate the whole set as a batch.',
+    inputs: [],
+    outputs: [{ name: 'vars', type: 'VARS' }],
+    intents: ['variables', 'dataset', 'data table', 'batch generate', 'data merge', 'spreadsheet'],
+  },
 ]
 
 export const AGENT_CAPABILITIES: AgentCapability[] = [...STUDIOS, ...GENERATORS]
