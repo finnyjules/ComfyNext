@@ -30,10 +30,12 @@ export async function settleOnCompletion(opts: SettleOpts): Promise<'success' | 
     try {
       entry = await pollHistory(promptId)
     } catch { /* transient poll failure — keep polling; maxPolls timeout is the backstop */ }
-    if (entry?.status?.completed) {
-      if (entry.status.status_str === 'success') { onSuccess(promptId); return 'success' }
-      onError(promptId); return 'error'
-    }
+    // Engine fact (live-verified): success entries are {status_str:'success',
+    // completed:true}, but FAILED runs are {status_str:'error', completed:false}
+    // — completed never turns true on error, so gate on status_str.
+    const st = entry?.status
+    if (st?.status_str === 'success' && st.completed) { onSuccess(promptId); return 'success' }
+    if (st?.status_str === 'error') { onError(promptId); return 'error' }
     await sleep(intervalMs)
   }
   onError(promptId) // never charge a run we could not confirm
