@@ -6176,6 +6176,7 @@ defineExpose({
     <Teleport to="body">
       <VueCanvasCollectionDrawer
         v-if="collectionDrawerForId"
+        :key="collectionDrawerForId"
         :node-id="collectionDrawerForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"

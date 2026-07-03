@@ -134,10 +134,14 @@ const hasFailed = computed(() => items.value.some(i => i.status === 'failed'))
 const view = ref<'table' | 'results'>('table')
 const hasResults = computed(() => items.value.length > 0 && !running.value)
 
-// Auto-switch to Results the moment a run finishes; the user can always
-// click back to Table manually afterwards.
+// Auto-switch to Results the moment a full-batch run finishes; the user can
+// always click back to Table manually afterwards. Only full-batch entry
+// points (confirmGenerate / retryFailed) arm this flag — single-item
+// retryItem runs must not yank the user out of Table mid-workflow.
+const autoShowResults = ref(false)
 watch(running, (isRunning, wasRunning) => {
-  if (wasRunning && !isRunning && items.value.length) view.value = 'results'
+  if (wasRunning && !isRunning && items.value.length && autoShowResults.value) view.value = 'results'
+  if (wasRunning && !isRunning) autoShowResults.value = false
 })
 
 function selectItem(item: BatchItem) {
@@ -205,6 +209,7 @@ async function confirmGenerate() {
   confirmOpen.value = false
   const planned = planBatch(collection.value.rows, outputs.value)
   items.value = planned
+  autoShowResults.value = true
   await runItems(planned)
 }
 
@@ -216,6 +221,7 @@ async function retryFailed() {
   const failed = items.value.filter(i => i.status === 'failed')
   for (const item of failed) { item.status = 'queued'; item.error = undefined }
   items.value = [...items.value]
+  autoShowResults.value = true
   await runItems(failed)
 }
 
