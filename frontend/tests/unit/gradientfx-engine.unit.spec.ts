@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { reactive, ref } from 'vue'
-import { cloneConfig, DEFAULT_FLOW, ensureConfigDefaults, flowConfig, LAYOUTS } from '~/lib/gradientfx/types'
-import { GRADIENT_FS } from '~/lib/gradientfx/shaders'
+import { cloneConfig, DEFAULT_FLOW, DEFAULT_FOCUS, ensureConfigDefaults, flowConfig, LAYOUTS } from '~/lib/gradientfx/types'
+import { BLUR_FS, GRADIENT_FS } from '~/lib/gradientfx/shaders'
+import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { GRADIENT_PRESET_NAMES, buildGradientPreset } from '~/lib/gradientfx/presets'
+import { AUTHORED_PRESETS } from '~/lib/gradientfx/presetConfigs'
+import { buildVibePrompt } from '~/lib/vibePrompt'
+import { describeControls } from '~/lib/spacetype/controlDescriptor'
+import { makeConfigParams } from '~/lib/agent/configParams'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
@@ -193,6 +199,131 @@ describe('gradientfx shader has flow stage', () => {
     for (const u of ['u_flowVeins', 'u_flowVeinScale', 'u_flowRipple', 'u_flowRefract', 'u_flowViscosity', 'u_flowSwirl']) {
       expect(GRADIENT_FS).toContain(u)
     }
+  })
+  it('living drift churns the field (two inner offsets), not the old rigid translate', () => {
+    for (const u of ['u_flowAnim1', 'u_flowAnim2', 'u_flowAnimAmt']) expect(GRADIENT_FS).toContain(u)
+    // the old single-offset rigid translate is gone
+    expect(GRADIENT_FS).not.toContain('u_flowOffset')
+    // fold churn is gated so a static (speed 0) gradient is unchanged
+    expect(GRADIENT_FS).toContain('if (u_flowAnimAmt > 0.0)')
+  })
+  it('Depth emboss is frequency-compensated so it is defined at every fold scale', () => {
+    // slope normalized to the top of the fold-scale range (max u_flowFoldScale = 7)
+    expect(GRADIENT_FS).toContain('7.0 / u_flowFoldScale')
+  })
+  it('Depth also refracts/displaces the gradient through the fold relief', () => {
+    // the ramp coordinate t is bent by the fold slope, scaled by Depth
+    expect(GRADIENT_FS).toContain('dot(g * (7.0 / u_flowFoldScale), dir) * u_flowDepth')
+  })
+  it('fold height uses quintic-smoothed noise so the Depth emboss does not facet', () => {
+    expect(GRADIENT_FS).toContain('vnoise5')
+    // flowHeight (source of the Depth normal + veins) must build on the C2 fbm5
+    expect(GRADIENT_FS).toMatch(/float flowHeight[\s\S]*?fbm5\(sp, u_flowDetail\)/)
+    // the quintic (Perlin) fade polynomial, not the cubic one
+    expect(GRADIENT_FS).toContain('f * (f * 6.0 - 15.0) + 10.0')
+  })
+})
+
+describe('gradientfx focus / soft-focus post stage', () => {
+  it('BLUR_FS declares the focus/blur uniforms + disc-kernel logic', () => {
+    for (const u of ['u_blur', 'u_focusShape', 'u_focusCenter', 'u_focusRadius', 'u_focusSoft', 'u_focusAngle', 'u_src']) {
+      expect(BLUR_FS).toContain(u)
+    }
+    expect(BLUR_FS).toContain('focusMask')
+    expect(BLUR_FS).toContain('GOLDEN')
+  })
+  it('grain is deferred past the blur (grain supersedes blur — stays crisp)', () => {
+    expect(GRADIENT_FS).toContain('u_grainDeferred')       // main pass can skip grain
+    expect(BLUR_FS).toContain('hashGrain')                 // blur pass re-applies it
+    expect(BLUR_FS).toContain('u_grain')
+  })
+  it('DEFAULT_FOCUS is off (blur 0 → byte-identical no-op)', () => {
+    expect(DEFAULT_FOCUS.blur).toBe(0)
+    expect(DEFAULT_FOCUS.shape).toBe('off')
+  })
+  it('ensureConfigDefaults backfills focus, merging a partial (agent-patched) object', () => {
+    const c = defaultConfig('#f1') as any
+    expect(c.focus).toBeUndefined()
+    ensureConfigDefaults(c)
+    expect(c.focus).toEqual(DEFAULT_FOCUS)
+    // partial focus (e.g. tuner set only blur) is completed, not clobbered
+    const c2 = defaultConfig('#f2') as any
+    c2.focus = { blur: 60 }
+    ensureConfigDefaults(c2)
+    expect(c2.focus.blur).toBe(60)
+    expect(c2.focus.shape).toBe('off')
+    expect(c2.focus.radius).toBe(DEFAULT_FOCUS.radius)
+  })
+  it('gradientAgentControls exposes focus controls; band angle only when linear', () => {
+    const base = defaultConfig('#f3')
+    const keys = gradientAgentControls(base).map(c => c.key)
+    expect(keys).toContain('focus.blur')
+    expect(keys).toContain('focus.shape')
+    expect(keys).toContain('focus.x')
+    expect(keys).not.toContain('focus.angle') // off → no band angle
+    const linear = { ...base, focus: { ...DEFAULT_FOCUS, shape: 'linear' as const } }
+    expect(gradientAgentControls(linear).map(c => c.key)).toContain('focus.angle')
+  })
+})
+
+describe('gradient agent tune-up (presets + guidance)', () => {
+  it('every preset builds a valid, defaults-backfilled config; unknown → null', () => {
+    for (const name of GRADIENT_PRESET_NAMES) {
+      const c = buildGradientPreset(name, '#seed')
+      expect(c, name).toBeTruthy()
+      expect(c!.layers.length).toBeGreaterThan(0)
+      expect(c!.focus).toBeDefined()   // ensureConfigDefaults ran
+    }
+    expect(buildGradientPreset('not-a-preset')).toBeNull()
+  })
+  it('liquid-surface presets use the liquid layout (bake in the good depth/veins)', () => {
+    for (const n of ['marble', 'oil', 'ink', 'lava', 'satin']) expect(buildGradientPreset(n)!.canvas.layout).toBe('liquid')
+  })
+  it('a user-authored preset is used verbatim but re-seeded (vary noise, keep vibe)', () => {
+    const authored = AUTHORED_PRESETS.marble!
+    const built = buildGradientPreset('marble', '#fresh')!
+    expect(built.seed).toBe('#fresh')                                  // re-seeded
+    expect(built.canvas.layout).toBe(authored.canvas.layout)           // look-defining params kept
+    expect(built.flow!.intensity).toBe(authored.flow!.intensity)
+    expect(built.layers[0]!.color.stops).toEqual(authored.layers[0]!.color.stops)
+    expect(authored.seed).toBe('#74xvg7mn')                            // source object untouched
+  })
+  it('re-seeded presets vary orientation (angle) per seed but stay deterministic', () => {
+    const a = buildGradientPreset('marble', '#s1')!, b = buildGradientPreset('marble', '#s2')!
+    for (const c of [a, b]) { expect(c.flow!.angle).toBeGreaterThanOrEqual(0); expect(c.flow!.angle).toBeLessThanOrEqual(360) }
+    expect(a.flow!.angle).not.toBe(b.flow!.angle)                      // different seeds → different angles
+    expect(buildGradientPreset('marble', '#s1')!.flow!.angle).toBe(a.flow!.angle) // same seed → same angle
+  })
+  it('gradientAgentControls exposes the preset macro only when includePreset', () => {
+    const cfg = defaultConfig('#c')
+    expect(gradientAgentControls(cfg).map(c => c.key)).not.toContain('preset')
+    const withPreset = gradientAgentControls(cfg, { includePreset: true })
+    const preset = withPreset.find(c => c.key === 'preset')
+    expect(preset?.kind).toBe('select')
+    expect(preset?.options).toEqual([...GRADIENT_PRESET_NAMES])
+  })
+  it('GRADIENT_GUIDANCE teaches recipes + few-shot examples, not typography', () => {
+    expect(GRADIENT_GUIDANCE).toMatch(/marble|liquid/i)
+    expect(GRADIENT_GUIDANCE).toMatch(/focus\.blur/)
+    expect(GRADIENT_GUIDANCE).toMatch(/relief\.grain/)
+    expect(GRADIENT_GUIDANCE.toLowerCase()).not.toContain('typography effect')
+    // few-shot composition examples present, referencing real preset names + stop keys
+    expect(GRADIENT_GUIDANCE).toContain('EXAMPLES')
+    expect(GRADIENT_GUIDANCE).toContain('"preset":"marble"')
+    expect(GRADIENT_GUIDANCE).toContain('layer.color.stops.0.color')
+    // every preset name referenced in an example must be a real, buildable preset
+    for (const m of GRADIENT_GUIDANCE.matchAll(/"preset":"(\w+)"/g)) {
+      expect(buildGradientPreset(m[1]!), m[1]).toBeTruthy()
+    }
+  })
+  it('buildVibePrompt injects guidance and drops the stale text/typography wording', () => {
+    const described = describeControls(gradientAgentControls(defaultConfig('#p'), { includePreset: true }), makeConfigParams(() => defaultConfig('#p'), () => 0))
+    const prompt = buildVibePrompt(described, 'blue marble', 'Gradient studio', GRADIENT_GUIDANCE)
+    expect(prompt).toContain(GRADIENT_GUIDANCE)
+    expect(prompt).not.toContain('typography effect')
+    expect(prompt).not.toContain('do not change the text')
+    // without guidance it still works (other studios)
+    expect(buildVibePrompt(described, 'x', 'Shader studio')).toContain('CONTROLS YOU MAY CHANGE')
   })
 })
 

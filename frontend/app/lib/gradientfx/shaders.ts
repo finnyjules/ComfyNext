@@ -27,6 +27,7 @@ uniform float u_margin;
 uniform float u_innerRadius;
 uniform vec3  u_bg;
 uniform float u_grain;
+uniform float u_grainDeferred; // 1 = skip grain here; the blur post-pass applies it AFTER blur (so blur can't average it away)
 uniform float u_relief;
 uniform vec3  u_light;         // normalized light dir (x,y in screen plane, z toward viewer)
 uniform vec2  u_center;        // radial/orbit origin offset
@@ -63,7 +64,12 @@ uniform float u_flowDepth;       // liquid fold emboss amount 0..1
 uniform float u_flowHighlights;  // liquid bright-side gain 0..1
 uniform float u_flowShadows;     // liquid dark-side gain 0..1
 uniform float u_flowFoldScale;   // liquid fold frequency
-uniform vec2  u_flowOffset;      // animated warp drift (orbits the noise field over the loop)
+// Living-drift animation: two looping circular offsets injected into the INNER fbm
+// layers so the warp field CHURNS/morphs in place (liquify) rather than translating
+// rigidly. Both are (0,0) when Flow speed is 0 → the static field is unchanged.
+uniform vec2  u_flowAnim1;
+uniform vec2  u_flowAnim2;
+uniform float u_flowAnimAmt;     // fold-field churn strength (0 when static)
 uniform float u_flowGloss;       // liquid specular gloss 0..~1 (0 = matte)
 uniform float u_flowVeins;       // liquid marbled veins 0..1 (0 = smooth)
 uniform float u_flowVeinScale;   // vein frequency
@@ -113,10 +119,29 @@ float fbm(vec2 p, float oct) {
   }
   return tot > 0.0 ? sum / tot : 0.0;
 }
+// Quintic-smoothed (Perlin fade) value noise. Unlike the cubic vnoise above it is
+// C2, so its GRADIENT is continuous — the Depth emboss takes a finite-difference
+// normal of this field, and cubic's C0 gradient faceted along the noise lattice
+// (the blocky "low-res" look). Used for the fold HEIGHT only, so the domain-warp
+// composition (applyFlow) of existing gradients is unchanged.
+float vnoise5(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  float a = vhash(i), b = vhash(i + vec2(1.0, 0.0)), c = vhash(i + vec2(0.0, 1.0)), d = vhash(i + vec2(1.0, 1.0));
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm5(vec2 p, float oct) {
+  float sum = 0.0, amp = 0.5, tot = 0.0;
+  for (int k = 0; k < 6; k++) {
+    if (float(k) >= oct) break;
+    sum += amp * vnoise5(p); tot += amp; p *= 2.0; amp *= 0.5;
+  }
+  return tot > 0.0 ? sum / tot : 0.0;
+}
 // Domain-warp the sample coord (Inigo-Quilez fbm-of-fbm). No-op when intensity is 0.
 vec2 applyFlow(vec2 p) {
   if (u_flowIntensity <= 0.0) return p;
-  vec2 sp = p * u_flowScale; sp.x *= u_aspect; sp += u_flowOffset;
+  vec2 sp = p * u_flowScale; sp.x *= u_aspect;
   // Viscosity: compress the noise lattice ALONG the flow direction so features
   // stretch into long laminar streaks (honey/syrup) instead of round turbulent puffs.
   if (u_flowViscosity > 0.0) {
@@ -126,24 +151,35 @@ vec2 applyFlow(vec2 p) {
     vec2 perp = sp - dir * along;
     sp = dir * (along * (1.0 - u_flowViscosity * 0.78)) + perp;
   }
-  vec2 q = vec2(fbm(sp, u_flowDetail), fbm(sp + vec2(5.2, 1.3), u_flowDetail));
-  vec2 r = vec2(fbm(sp + u_flowDistortion * q + vec2(1.7, 9.2), u_flowDetail),
-                fbm(sp + u_flowDistortion * q + vec2(8.3, 2.8), u_flowDetail));
+  // Living drift: the two circular offsets (u_flowAnim1/2, zero when static) push
+  // the INNER fbm layers along their own looping paths — because q feeds r's sample
+  // point, the composed warp evolves/churns in place instead of sliding as one block.
+  vec2 c1 = u_flowAnim1, c2 = u_flowAnim2;
+  vec2 q = vec2(fbm(sp + c1, u_flowDetail), fbm(sp + vec2(5.2, 1.3) - c1, u_flowDetail));
+  vec2 r = vec2(fbm(sp + u_flowDistortion * q + vec2(1.7, 9.2) + c2, u_flowDetail),
+                fbm(sp + u_flowDistortion * q + vec2(8.3, 2.8) - c2, u_flowDetail));
   // Swirl: fold the field into itself with an extra warp pass for gnarlier curls,
   // then boost the displacement — "more warp" without just smearing to mush.
   if (u_flowSwirl > 0.0) {
-    vec2 s = vec2(fbm(sp + u_flowDistortion * r * 2.0 + vec2(2.3, 7.4), u_flowDetail),
-                  fbm(sp + u_flowDistortion * r * 2.0 + vec2(9.1, 3.6), u_flowDetail));
+    vec2 s = vec2(fbm(sp + u_flowDistortion * r * 2.0 + vec2(2.3, 7.4) + c2, u_flowDetail),
+                  fbm(sp + u_flowDistortion * r * 2.0 + vec2(9.1, 3.6) - c2, u_flowDetail));
     r = mix(r, s, clamp(u_flowSwirl, 0.0, 1.0));
   }
   vec2 disp = (r - 0.5) * u_flowIntensity * (1.0 + u_flowSwirl * 1.5);
   disp.x /= u_aspect;
   return p + disp;
 }
-// Scalar fold height for the liquid Depth & Light shading.
+// Scalar fold height for the liquid Depth & Light shading. Uses the quintic fbm so
+// the emboss normal (its finite-difference gradient) is smooth, not lattice-faceted.
+// When Flow speed > 0, an animated domain warp (gated by u_flowAnimAmt, 0 when
+// static) makes the folds CHURN in place rather than translate — matching the warp.
 float flowHeight(vec2 p) {
-  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect; sp += u_flowOffset;
-  return fbm(sp, u_flowDetail);
+  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect;
+  if (u_flowAnimAmt > 0.0) {
+    vec2 w = vec2(fbm5(sp + u_flowAnim1, u_flowDetail), fbm5(sp - u_flowAnim2, u_flowDetail));
+    sp += (w - 0.5) * u_flowAnimAmt;
+  }
+  return fbm5(sp, u_flowDetail);
 }
 
 vec3 rgb2hsl(vec3 c) {
@@ -250,24 +286,37 @@ vec4 computeLayer(int i, vec2 p) {
     float a = u_flowAngle * PI / 180.0;
     vec2 dir = vec2(cos(a), sin(a));
     vec2 pc = p - 0.5; pc.x *= u_aspect;
-    float t = clamp(dot(pc, dir) + 0.5, 0.0, 1.0);
+
+    // Fold field + slope, shared by depth refraction, veins and chromatic refraction
+    // below (computed once, and only when something actually needs it).
+    bool needH = (u_flowVeins > 0.0 || u_flowDepth > 0.001 || u_flowRefract > 0.0);
+    bool needG = (u_flowDepth > 0.001 || u_flowRefract > 0.0);
+    float h0 = needH ? flowHeight(p) : 0.0;
+    vec2 g = vec2(0.0);
+    if (needG) {
+      float e = 1.5 / u_resolution.y;
+      g = vec2(flowHeight(p + vec2(e, 0.0)) - h0, flowHeight(p + vec2(0.0, e)) - h0) / e;
+    }
+
+    float t = dot(pc, dir) + 0.5;
+    // Depth refraction: bend the gradient through the 3D fold relief so the colours
+    // drape/refract over the folds instead of lying flat under the shading. Same
+    // fold-scale compensation as the emboss; scales with Depth, 0 when Depth is 0.
+    if (u_flowDepth > 0.001) t += dot(g * (7.0 / u_flowFoldScale), dir) * u_flowDepth * 0.3;
+    t = clamp(t, 0.0, 1.0);
 
     // Marbled veins: displace the coordinate by turbulence, then fold it through a
     // triangle wave so the ramp repeats into ink/oil tendrils (seamless: ramp 0→1→0).
     if (u_flowVeins > 0.0) {
-      float turb = flowHeight(p);
-      float m = t + (turb - 0.5) * 1.6;
+      float m = t + (h0 - 0.5) * 1.6;
       float tri = abs(fract(m * u_flowVeinScale) * 2.0 - 1.0);
       t = mix(t, tri, u_flowVeins);
     }
     t = quantize(t, u_steps[i]);
 
-    // Refraction: split the ramp coordinate per channel by the local surface slope —
+    // Chromatic refraction: split the ramp coordinate per channel by the local slope —
     // a glassy chromatic edge along the veins, as if seen through thick liquid.
     if (u_flowRefract > 0.0) {
-      float e = 1.5 / u_resolution.y;
-      float h = flowHeight(p);
-      vec2 g = vec2(flowHeight(p + vec2(e, 0.0)) - h, flowHeight(p + vec2(0.0, e)) - h) / e;
       float disp = u_flowRefract * 0.045 * length(g);
       vec3 cr = sampleRamp(i, clamp(t + disp, 0.0, 1.0));
       vec3 cg = sampleRamp(i, t);
@@ -530,7 +579,12 @@ void main() {
     float h  = flowHeight(p);
     float hx = flowHeight(p + vec2(e, 0.0));
     float hy = flowHeight(p + vec2(0.0, e));
-    vec3 n = normalize(vec3(-(hx - h) / e, -(hy - h) / e, 1.0 / max(u_flowDepth, 0.05)));
+    // Frequency-compensate the slope: the fold gradient scales with u_flowFoldScale,
+    // so low fold scales embossed flat/soft ("blurry") while only the top of the
+    // range looked crisp. Normalize to that top (max u_flowFoldScale = 7.0) so Depth
+    // reads equally defined at EVERY fold scale.
+    float fcomp = 7.0 / u_flowFoldScale;
+    vec3 n = normalize(vec3(-(hx - h) / e * fcomp, -(hy - h) / e * fcomp, 1.0 / max(u_flowDepth, 0.05)));
     vec3 L = normalize(vec3(0.4, 0.5, 0.8));
     float d = clamp(dot(n, L), 0.0, 1.0);
     if (u_flowDepth > 0.001) {
@@ -546,7 +600,7 @@ void main() {
   }
 
   // Wet ripples: a thin interference/caustic pattern phase-shifted by the fold field,
-  // reading as light dancing on a liquid surface. Liquid-only; animated via flowOffset.
+  // reading as light dancing on a liquid surface. Liquid-only; animated via the fold churn.
   if (u_layout > 3.5 && u_layout < 4.5 && u_flowRipple > 0.001) {
     vec2 rp = p; rp.x *= u_aspect;
     rp *= (6.0 + u_flowRipple * 14.0);
@@ -560,12 +614,98 @@ void main() {
   // below 1px at preview resolution and beat against the pixel grid into a visible
   // repeating tile. Per-pixel + a patternless hash keeps it clean at every resolution.
   // Gated to shape coverage (clean background) and luminance-shaped (filmic midtone bias).
-  if (u_grain > 0.001 && cover > 0.001) {
+  if (u_grain > 0.001 && cover > 0.001 && u_grainDeferred < 0.5) {
     float g = hashGrain(gl_FragCoord.xy + u_seed) - 0.5;
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
     float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);   // 0.35 floor .. 1 at lum 0.5
     col += g * u_grain * 0.16 * cover * midtone;
   }
 
-  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+  // When grain is deferred to the blur pass, smuggle shape coverage through the
+  // alpha channel so that pass can gate + luminance-shape grain identically.
+  fragColor = vec4(clamp(col, 0.0, 1.0), u_grainDeferred > 0.5 ? cover : 1.0);
+}`
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Soft-focus / depth-of-field POST pass. Runs only when focus.blur > 0: the main
+// shader renders to a texture, then this pass samples it with a golden-angle disc
+// kernel whose radius is scaled per-pixel by a focus mask (0 = sharp, 1 = full
+// blur). Shape 0 = uniform (blur everything), 1 = radial spot, 2 = linear band.
+// Reuses GRADIENT_VS (fullscreen triangle → v_texCoord).
+// ─────────────────────────────────────────────────────────────────────────────
+export const BLUR_FS = `#version 300 es
+precision highp float;
+in vec2 v_texCoord;
+out vec4 fragColor;
+
+uniform sampler2D u_src;
+uniform vec2  u_resolution;
+uniform float u_blur;         // max radius as a fraction of min(res) — 0 = off
+uniform float u_focusShape;   // 0 uniform, 1 radial, 2 linear
+uniform vec2  u_focusCenter;  // −0.5..0.5
+uniform float u_focusRadius;  // in-focus size, 0..1
+uniform float u_focusSoft;    // falloff, 0..1
+uniform float u_focusAngle;   // radians (linear band)
+uniform float u_grain;        // film grain, re-applied AFTER blur so it stays crisp
+uniform float u_seed;
+
+const float GOLDEN = 2.3999632;   // golden angle (rad)
+const int   TAPS   = 28;
+
+// Cheap hash → per-pixel spiral rotation, so the fixed kernel doesn't stamp a
+// visible orientation into the blur.
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Patternless grain hash (matches the main pass so grain looks identical whether
+// or not blur is on).
+float hashGrain(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+
+// 0 = fully sharp (inside focus), 1 = fully blurred. Aspect-corrected so a radial
+// focus reads round on non-square canvases.
+float focusMask(vec2 uv){
+  vec2 p = uv - 0.5 - u_focusCenter;
+  p.x *= u_resolution.x / u_resolution.y;
+  float d;
+  if (u_focusShape < 1.5) {
+    d = length(p);                                   // radial: distance from centre
+  } else {
+    vec2 dir = vec2(cos(u_focusAngle), sin(u_focusAngle));
+    d = abs(dot(p, vec2(-dir.y, dir.x)));            // linear: perpendicular distance
+  }
+  float soft = max(u_focusSoft, 0.001);
+  return smoothstep(u_focusRadius, u_focusRadius + soft, d);
+}
+
+void main(){
+  vec4 src = texture(u_src, v_texCoord);
+  float mask = (u_focusShape < 0.5) ? 1.0 : focusMask(v_texCoord);
+  float radius = u_blur * min(u_resolution.x, u_resolution.y) * mask;   // pixels
+
+  vec3 outc;
+  if (radius < 0.6) {
+    outc = src.rgb;                                   // in-focus / sharp
+  } else {
+    vec2 texel = 1.0 / u_resolution;
+    vec3 sum = src.rgb;
+    float wsum = 1.0;
+    float ang = hash(gl_FragCoord.xy) * 6.2831853;
+    for (int i = 1; i <= TAPS; i++) {
+      float t = float(i) / float(TAPS);
+      float r = sqrt(t) * radius;                     // even coverage over the disc
+      ang += GOLDEN;
+      vec2 off = vec2(cos(ang), sin(ang)) * r * texel;
+      sum += texture(u_src, v_texCoord + off).rgb;
+      wsum += 1.0;
+    }
+    outc = sum / wsum;
+  }
+
+  // Grain LAST — supersedes the blur so it stays crisp everywhere (the main pass
+  // deferred it and stashed shape coverage in src.a). Same formula as the main pass.
+  if (u_grain > 0.001 && src.a > 0.001) {
+    float g = hashGrain(gl_FragCoord.xy + u_seed) - 0.5;
+    float lum = dot(outc, vec3(0.299, 0.587, 0.114));
+    float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);
+    outc += g * u_grain * 0.16 * src.a * midtone;
+  }
+  fragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
 }`

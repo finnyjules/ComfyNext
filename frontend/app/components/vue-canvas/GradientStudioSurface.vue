@@ -11,14 +11,11 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
-import AgentBar from '~/components/agent/AgentBar.vue'
-import AgentProposal from '~/components/agent/AgentProposal.vue'
-import AgentProgress from '~/components/agent/AgentProgress.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import {
-  ASPECTS, BLEND_MODES, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -39,6 +36,10 @@ const isRadial = computed(() => config.value.canvas.layout === 'radial' || confi
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+// Focus (soft-focus/DoF) is an optional, additive config. Guarantee it exists on
+// the current config so the Focus section's v-models are always non-null — presets
+// replace the whole config and defaultConfig() omits it. Runs before render.
+watch(config, (c) => { if (c && !c.focus) c.focus = { ...DEFAULT_FOCUS } }, { immediate: true, flush: 'sync' })
 
 // In-product agent — "tune" the gradient in natural language (Phase 1). The
 // studio's nested `config` is bridged to a flat Params via makeConfigParams; only
@@ -46,12 +47,11 @@ const isMesh = computed(() => config.value.canvas.layout === 'mesh')
 const { getLocalSetting } = useLocalSettings()
 const agentParams = makeConfigParams(() => config.value, () => activeLayer.value)
 const activeAgentControls = computed(() => gradientAgentControls(config.value))
-const {
-  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, review: agReview, reviewing: agReviewing, hasProposal: agHasProposal, hovered: agHovered,
-  ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
-} = useStudioAgent({
+// The shell renders the prompt + results from this object (see StudioModalShell).
+const gradientAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio',
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  guidance: () => GRADIENT_GUIDANCE,
   render: () => renderGradientForReview(),
 })
 
@@ -363,6 +363,17 @@ function saveConfig() {
   if (!n.data.properties) n.data.properties = {}
   n.data.properties.comfynext_gradientStudio = cloneConfig(config.value)
 }
+
+// Copy the current config JSON to the clipboard — for teaching the agent: build
+// the look you want, click Copy, paste it back with the prompt it should satisfy.
+const copied = ref(false)
+async function copyConfig() {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(config.value))
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  } catch (e) { console.error('[gradient] copy config failed', e) }
+}
 // Save must never block closing — swallow any persistence error so the user can
 // always exit the modal.
 function closeEditor() {
@@ -475,7 +486,12 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
 </script>
 
 <template>
-  <StudioModalShell title="Gradient studio" @close="closeEditor">
+  <StudioModalShell
+    title="Gradient studio"
+    :agent="gradientAgent"
+    agent-placeholder="Describe the look — e.g. warmer, more liquid, calmer…"
+    @close="closeEditor"
+  >
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
@@ -526,27 +542,14 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
       </StudioButton>
+      <button class="ml-1 rounded-md px-2 py-1 text-xs text-white/45 hover:text-white/80 hover:bg-white/[0.06] transition"
+              title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
+        {{ copied ? '✓ Copied' : 'Copy config' }}
+      </button>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
     </template>
 
     <template #controls>
-      <!-- In-product agent: tune the gradient in natural language. -->
-      <div class="mb-3">
-        <AgentBar
-          :busy="agBusy" :error="agError" :notice="agNotice"
-          :chips="['Warmer palette', 'More flow', 'Calmer / softer', 'More contrast']"
-          placeholder="Describe the look — e.g. warmer, more liquid, calmer…"
-          @submit="agAsk" @chip="agAsk"
-        />
-        <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
-        <div v-else-if="agHasProposal" class="pt-2.5">
-          <AgentProposal
-            :changes="agChanges" :busy="agBusy" :review="agReview" :reviewing="agReviewing"
-            @accept="agAccept" @reject="agReject" @reroll="agReroll"
-            @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
-          />
-        </div>
-      </div>
       <!-- Canvas -->
       <StudioSection title="Canvas" badge="both layers">
         <label class="mb-1 flex items-center justify-between text-xs text-white/60">
@@ -565,8 +568,11 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ l }}</button>
         </div>
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
-        <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+        <!-- Margin insets the band/ring layouts; the liquid & mesh fields fill the frame, so hide it there. -->
+        <template v-if="!isLiquid && !isMesh">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
+          <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+        </template>
         <template v-if="isRadial">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
           <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
@@ -657,16 +663,46 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <input v-model.number="mesh.drift" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" />
       </StudioSection>
 
-      <!-- Relief & grain -->
-      <StudioSection title="Relief & grain" badge="both layers" :open="false">
+      <!-- Relief & grain. Relief + its light only shade the band/ring HEIGHT field (linear/
+           radial/orbit/stack); liquid uses flow.depth and mesh has no relief — so on those
+           only Grain applies, and the section slims to "Grain". -->
+      <StudioSection :title="(isLiquid || isMesh) ? 'Grain' : 'Relief & grain'" :open="false">
         <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
-        <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
-        <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
-        <input v-model.number="lightAz" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
-        <input v-model.number="lightEl" type="range" min="0" max="90" step="1" v-studio-reset class="studio-range w-full" />
+        <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" :class="(!isLiquid && !isMesh) ? 'mb-2' : ''" />
+        <template v-if="!isLiquid && !isMesh">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
+          <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
+          <input v-model.number="lightAz" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
+          <input v-model.number="lightEl" type="range" min="0" max="90" step="1" v-studio-reset class="studio-range w-full" />
+        </template>
+      </StudioSection>
+
+      <!-- Focus / soft-focus DoF -->
+      <StudioSection v-if="config.focus" title="Focus" badge="both layers" :open="false">
+        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Blur</span><span class="text-white/40">{{ config.focus.blur }}</span></label>
+        <input v-model.number="config.focus.blur" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+        <label class="mb-1 block text-xs text-white/60">Focus region</label>
+        <select v-model="config.focus.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize">
+          <option value="off">Off — blur everything</option>
+          <option value="radial">Radial — sharp spot</option>
+          <option value="linear">Linear — tilt-shift band</option>
+        </select>
+        <template v-if="config.focus.shape !== 'off'">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus size</span><span class="text-white/40">{{ config.focus.radius.toFixed(2) }}</span></label>
+          <input v-model.number="config.focus.radius" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Falloff</span><span class="text-white/40">{{ config.focus.softness }}</span></label>
+          <input v-model.number="config.focus.softness" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus X</span><span class="text-white/40">{{ config.focus.x.toFixed(2) }}</span></label>
+          <input v-model.number="config.focus.x" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus Y</span><span class="text-white/40">{{ config.focus.y.toFixed(2) }}</span></label>
+          <input v-model.number="config.focus.y" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range w-full" :class="config.focus.shape === 'linear' ? 'mb-2' : ''" />
+          <template v-if="config.focus.shape === 'linear'">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Band angle</span><span class="text-white/40">{{ config.focus.angle }}°</span></label>
+            <input v-model.number="config.focus.angle" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range w-full" />
+          </template>
+        </template>
       </StudioSection>
 
       <!-- Layers -->

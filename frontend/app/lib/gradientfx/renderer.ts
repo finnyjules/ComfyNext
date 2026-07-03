@@ -7,10 +7,14 @@ import { MESH_MAX_POINTS, buildMeshPoints, driftedMeshPositions, meshColorRgb } 
 import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
-import { GRADIENT_FS, GRADIENT_VS } from './shaders'
+import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
 import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight,
-  type BlendKind, type Direction, type GradientConfig,
+  type BlendKind, type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
+
+const FOCUS_IDX: Record<FocusConfig['shape'], number> = { off: 0, radial: 1, linear: 2 }
+/** Blur amount 0..1 → max kernel radius as a fraction of the min canvas dimension. */
+const MAX_BLUR_FRAC = 0.12
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const BLEND_IDX: Record<BlendKind, number> = { normal: 0, lighten: 1, screen: 2, add: 3, multiply: 4, darken: 5, overlay: 6 }
@@ -21,15 +25,22 @@ class GradientFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
+  private blurProg: WebGLProgram | null = null
   private fieldTex: (WebGLTexture | null)[] = [null, null]
   private rampTex: (WebGLTexture | null)[] = [null, null]
+  // Offscreen target for the soft-focus post pass (allocated on first blur; resized with the canvas).
+  private fbo: WebGLFramebuffer | null = null
+  private sceneTex: WebGLTexture | null = null
+  private fboW = 0
+  private fboH = 0
 
   private ensure(width: number, height: number): WebGL2RenderingContext {
     if (!this.gl) {
       this.canvas = document.createElement('canvas')
       this.gl = this.canvas.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false })
       if (!this.gl) throw new Error('WebGL2 unavailable')
-      this.prog = this.compile(this.gl)
+      this.prog = this.compile(this.gl, GRADIENT_FS)
+      this.blurProg = this.compile(this.gl, BLUR_FS)
       for (let i = 0; i < 2; i++) { this.fieldTex[i] = this.gl.createTexture(); this.rampTex[i] = this.gl.createTexture() }
     }
     const gl = this.gl
@@ -40,7 +51,7 @@ class GradientFxRenderer {
     return gl
   }
 
-  private compile(gl: WebGL2RenderingContext): WebGLProgram {
+  private compile(gl: WebGL2RenderingContext, fragmentSrc: string): WebGLProgram {
     const sh = (type: number, src: string) => {
       const s = gl.createShader(type)!
       gl.shaderSource(s, src); gl.compileShader(s)
@@ -52,10 +63,55 @@ class GradientFxRenderer {
     }
     const prog = gl.createProgram()!
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, GRADIENT_VS))
-    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, GRADIENT_FS))
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fragmentSrc))
     gl.linkProgram(prog)
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`gradientfx link: ${gl.getProgramInfoLog(prog)}`)
     return prog
+  }
+
+  /** (Re)allocate the offscreen colour target used by the soft-focus post pass.
+   *  Binds on a SCRATCH unit (4) — never 0–3, which the main shader samples for its
+   *  field/ramp textures. If the scene texture were bound to unit 0 (u_field0) it
+   *  would be sampled while ALSO being the FBO's colour attachment during pass 1 —
+   *  a texture feedback loop that drivers render as pure black. */
+  private ensureSceneTarget(gl: WebGL2RenderingContext, width: number, height: number) {
+    if (!this.fbo) { this.fbo = gl.createFramebuffer(); this.sceneTex = gl.createTexture() }
+    if (this.fboW !== width || this.fboH !== height) {
+      gl.activeTexture(gl.TEXTURE4)
+      gl.bindTexture(gl.TEXTURE_2D, this.sceneTex!)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex!, 0)
+      this.fboW = width; this.fboH = height
+    }
+  }
+
+  /** Second pass: sample the rendered scene texture with the focus-masked disc blur,
+   *  then re-apply film grain on top (deferred from the main pass so blur can't
+   *  average it away). */
+  private blurPass(gl: WebGL2RenderingContext, width: number, height: number, foc: FocusConfig, grain: number, seed: number) {
+    const prog = this.blurProg!
+    gl.useProgram(prog)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, width, height)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.sceneTex!)
+    const u = (n: string) => gl.getUniformLocation(prog, n)
+    gl.uniform1i(u('u_src'), 0)
+    gl.uniform2f(u('u_resolution'), width, height)
+    gl.uniform1f(u('u_blur'), Math.min(1, Math.max(0, foc.blur / 100)) * MAX_BLUR_FRAC)
+    gl.uniform1f(u('u_focusShape'), FOCUS_IDX[foc.shape] ?? 0)
+    gl.uniform2f(u('u_focusCenter'), foc.x ?? 0, foc.y ?? 0)
+    gl.uniform1f(u('u_focusRadius'), foc.radius ?? 0.25)
+    gl.uniform1f(u('u_focusSoft'), Math.max(0, (foc.softness ?? 40) / 100))
+    gl.uniform1f(u('u_focusAngle'), (foc.angle ?? 0) * Math.PI / 180)
+    gl.uniform1f(u('u_grain'), grain)
+    gl.uniform1f(u('u_seed'), seed)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
   private uploadField(gl: WebGL2RenderingContext, slot: number, data: Float32Array) {
@@ -140,6 +196,10 @@ class GradientFxRenderer {
     const bg = hexToRgb(c.canvas.background)
     gl.uniform3f(u('u_bg'), bg.r / 255, bg.g / 255, bg.b / 255)
     gl.uniform1f(u('u_grain'), c.relief.grain)
+    // When the soft-focus post pass is active, defer grain to it so blur can't
+    // average the grain away (grain supersedes blur).
+    const blurActive = !!(c.focus && c.focus.blur > 0.001)
+    gl.uniform1f(u('u_grainDeferred'), blurActive ? 1 : 0)
     gl.uniform1f(u('u_relief'), c.relief.relief)
     const light = reliefLight(c.relief)
     const lv = lightVector(light.azimuth, light.elevation)
@@ -166,20 +226,26 @@ class GradientFxRenderer {
     gl.uniform1f(u('u_flowViscosity'), (fl.viscosity ?? 0) / 100)
     gl.uniform1f(u('u_flowSwirl'), ((fl.swirl ?? 0) / 100) * 1.5)
 
-    // Living drift: a normalized 0..1 loop phase from the clip time. The warp field
-    // orbits a circle over the loop (seamless: phase 0 == phase 1); the orbit's
-    // frequency rises with speed so it reads faster without breaking the loop.
+    // Living drift: a normalized 0..1 loop phase from the clip time. Two circular
+    // offsets (120° apart) drive the INNER fbm layers so the warp CHURNS/morphs in
+    // place (liquify) rather than translating rigidly; both loop seamlessly (phase 0
+    // == phase 1) since they're cos/sin of the phase. All zero when speed is 0, so
+    // the static field is unchanged.
     const dur = Math.max(0.1, c.motion?.duration ?? 4)
     const loopPhase = (((time % dur) + dur) % dur) / dur
     const speed = fl.speed ?? 0
-    let offX = 0, offY = 0
+    let a1x = 0, a1y = 0, a2x = 0, a2y = 0, animAmt = 0
     if (speed > 0) {
       const cycles = Math.max(1, Math.round(speed / 20))     // 1..5 loops per clip
       const ang = loopPhase * Math.PI * 2 * cycles
-      const rad = 0.15 + (speed / 100) * 0.5                 // noise-space orbit radius
-      offX = Math.cos(ang) * rad; offY = Math.sin(ang) * rad
+      const rad = 0.3 + (speed / 100) * 0.8                  // churn radius in noise space
+      a1x = Math.cos(ang) * rad; a1y = Math.sin(ang) * rad
+      a2x = Math.cos(ang + 2.0944) * rad; a2y = Math.sin(ang + 2.0944) * rad // +120°
+      animAmt = 0.5 + (speed / 100) * 0.9                    // fold-field churn strength
     }
-    gl.uniform2f(u('u_flowOffset'), offX, offY)
+    gl.uniform2f(u('u_flowAnim1'), a1x, a1y)
+    gl.uniform2f(u('u_flowAnim2'), a2x, a2y)
+    gl.uniform1f(u('u_flowAnimAmt'), animAmt)
 
     // Mesh points (layout 'mesh', layer 0). Fall back to derived points so a mesh
     // config that somehow lacks them still renders. Drift orbits each point per loop.
@@ -232,8 +298,20 @@ class GradientFxRenderer {
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+    // Soft-focus / DoF post stage. blur === 0 → the exact original single-pass path
+    // (draw straight to the canvas). Otherwise render the scene to an offscreen
+    // texture, then blur it into the canvas with a focus-masked disc kernel.
+    const foc = c.focus
+    if (blurActive && foc) {
+      this.ensureSceneTarget(gl, width, height)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      this.blurPass(gl, width, height, foc, c.relief.grain, xmur(c.seed) % 10000)
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+    }
     return this.canvas!
   }
 

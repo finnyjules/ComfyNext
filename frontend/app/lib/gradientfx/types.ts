@@ -205,6 +205,30 @@ export interface MotionConfig {
   size: number
 }
 
+/** Which region stays in focus while the rest blurs. `off` = uniform soft-focus
+ *  (blur everything evenly, no focus point). */
+export type FocusShape = 'off' | 'radial' | 'linear'
+
+/** Optical soft-focus / depth-of-field post stage. A global blur amount plus an
+ *  optional in-focus region whose blur ramps up with distance (radial spot or
+ *  angled tilt-shift band). `blur === 0` is a byte-identical no-op. */
+export interface FocusConfig {
+  /** Blur amount 0..100. 0 = sharp (post stage skipped entirely). */
+  blur: number
+  shape: FocusShape
+  /** Focus centre, normalized −0.5..0.5 (0,0 = middle). */
+  x: number
+  y: number
+  /** In-focus region size, 0..1 (radial: radius; linear: band half-width). */
+  radius: number
+  /** Falloff 0..100 — how gradually blur ramps in past the focus region. */
+  softness: number
+  /** Linear band angle, degrees 0..360 (ignored for radial/off). */
+  angle: number
+}
+
+export const DEFAULT_FOCUS: FocusConfig = { blur: 0, shape: 'off', x: 0, y: 0, radius: 0.25, softness: 40, angle: 0 }
+
 export interface GradientConfig {
   /** Short hash string, e.g. "#b061ca8z". */
   seed: string
@@ -217,6 +241,8 @@ export interface GradientConfig {
   locks: Record<string, boolean>
   /** Domain-warp / liquid flow (optional for back-compat; defaults to DEFAULT_FLOW). */
   flow?: FlowConfig
+  /** Optical soft-focus / DoF (optional for back-compat; defaults to DEFAULT_FOCUS = off). */
+  focus?: FocusConfig
 }
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
@@ -282,6 +308,9 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   if (!cfg.flow) cfg.flow = { ...DEFAULT_FLOW }
   if (cfg.flow.speed == null) cfg.flow.speed = 0
   if (cfg.flow.gloss == null) cfg.flow.gloss = 0
+  // Backfill focus (merge so a partial object — e.g. an agent patch that set only
+  // focus.blur — gets the rest of the defaults, keeping the editor bindings non-null).
+  cfg.focus = { ...DEFAULT_FOCUS, ...(cfg.focus ?? {}) }
   // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back
   // too, but backfilling here keeps the editor's bindings non-null).
   if (cfg.canvas.layout === 'mesh' && cfg.layers[0] && !cfg.layers[0].mesh) {
