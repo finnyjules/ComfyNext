@@ -54,12 +54,12 @@ import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
-import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
+import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
 import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 import { getProfile } from '~/lib/shotdirector/profiles'
 import { materializeCast } from '~/lib/shotdirector/cast'
-import { viewRefUrl } from '~/lib/shotdirector/refUpload'
+import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
@@ -1508,10 +1508,14 @@ async function spliceIntoEdge(edgeId: string, nodeType: string, widgetOverrides?
 /** Apply a transform after a node: feed it from the node and re-point every
  *  existing matching-type output edge through it (used by artifact-card actions
  *  like "Remove background"). If nothing was downstream, it's just appended. */
-async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAGE', widgetOverrides?: Record<string, unknown>) {
+async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAGE', widgetOverrides?: Record<string, unknown>): Promise<string | null> {
   if (!objectInfo.value[nodeType]) await fetchObjectInfo()
+  if (!objectInfo.value[nodeType]) {
+    toast.error(`${nodeType} isn't available`, { description: 'Is the ComfyUI backend running with the latest nodes? Restart it and try again.' })
+    return null
+  }
   const src = (nodes.value as any[]).find(n => n.id === nodeId)
-  if (!src) return
+  if (!src) return null
   const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
   const node = createNodeData(nodeType, pos, widgetOverrides)
   const srcOutHandle = outputHandleFor(src, outType)
@@ -1522,7 +1526,7 @@ async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAG
   await nextTick()
   // No type-compatible feed → just place the node; wiring slot 0 regardless
   // of type would create a link the backend rejects at run time.
-  if (!srcOutHandle || !inHandle) return
+  if (!srcOutHandle || !inHandle) return node.id
   const downstream = (edges.value as any[]).filter(e => e.source === nodeId && e.sourceHandle === srcOutHandle)
   const newEdges: any[] = [
     { source: nodeId, sourceHandle: srcOutHandle, target: node.id, targetHandle: inHandle, type: 'comfy', data: { dataType: outType } },
@@ -1536,6 +1540,7 @@ async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAG
     if (downstream.length) removeEdges(downstream.map((e: any) => e.id))
   }
   addEdges(newEdges)
+  return node.id
 }
 
 /** Can this node be spliced into this edge? (compatible in/out ports, and the
@@ -1622,10 +1627,23 @@ function handleEdgeInsert(e: Event) {
   openNodeSearch()
 }
 
-function handleApplyEffect(e: Event) {
-  const { nodeId, nodeType, output, widgetOverrides } = (e as CustomEvent).detail || {}
+async function handleApplyEffect(e: Event) {
+  const { nodeId, nodeType, output, widgetOverrides, run, focus } = (e as CustomEvent).detail || {}
   if (!nodeId || !nodeType) return
-  spliceAfterNode(String(nodeId), String(nodeType), output || 'IMAGE', widgetOverrides)
+  const newId = await spliceAfterNode(String(nodeId), String(nodeType), output || 'IMAGE', widgetOverrides)
+  if (!newId) return
+  if (focus) {
+    // Bring the freshly spawned node into view so the user can aim it before running.
+    fitView({ nodes: [newId], padding: 0.5, duration: 250 })
+  }
+  if (run) {
+    // One-tap actions (Upscale): run the new node immediately; 'self' scope
+    // freezes the upstream artifact so it feeds its image instead of re-running
+    // (and re-billing) the chain that produced it.
+    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+      detail: { targetIds: [newId], rerollScope: 'self' },
+    }))
+  }
 }
 
 // Handle node drop from sidebar
@@ -2481,6 +2499,33 @@ function handleOpenShotDirector(e: Event) {
   if (detail?.nodeId) shotDirectorOpenForId.value = String(detail.nodeId)
 }
 
+/** "Animate" from an image artifact: upload the image as a Shot Director
+ *  reference (input-dir copy — Replicate can't fetch output-dir views), spawn a
+ *  ShotDirector node beside the artifact with the ref pre-seeded, and open its
+ *  editor so the user aims the shot before any paid run. */
+async function handleAnimateArtifact(e: Event) {
+  const detail = (e as CustomEvent).detail || {}
+  const src = (nodes.value as any[]).find(n => n.id === String(detail.nodeId))
+  const imgUrl = src?.data?.images?.[0]
+  if (!src || typeof imgUrl !== 'string') return
+  try {
+    const blob = await (await fetch(imgUrl)).blob()
+    const refUrl = await uploadRefFile(new File([blob], 'animate.png', { type: blob.type || 'image/png' }))
+    // Reference mode + composition-lock: "this exact picture, brought to life".
+    // (firstFrame mode exists on the sheet but has no compile/dispatch wiring yet.)
+    const sheet = addRef(hydrateShotSheet(undefined), 'image', refUrl, 'composition-lock')
+    const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
+    const node = createNodeData('ShotDirector', pos, undefined, { comfynext_shotDirector: sheet })
+    nodes.value.push(node)
+    await nextTick()
+    fitView({ nodes: [node.id], padding: 0.5, duration: 250 })
+    shotDirectorOpenForId.value = String(node.id)
+  } catch (err) {
+    console.error('[Animate] spawn failed:', err)
+    toast.error('Animate failed', { description: String((err as any)?.message || err).slice(0, 120) })
+  }
+}
+
 // Lip-Sync Studio editor open-state (same pattern as Shot Director).
 const lipSyncOpenForId = ref<string | null>(null)
 function handleOpenLipSync(e: Event) {
@@ -3232,6 +3277,7 @@ onMounted(() => {
   window.addEventListener('comfynext:poseGenerate', handlePoseGenerate)
   window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
+  window.addEventListener('comfynext:animateArtifact', handleAnimateArtifact)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -3277,6 +3323,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:poseGenerate', handlePoseGenerate)
   window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
+  window.removeEventListener('comfynext:animateArtifact', handleAnimateArtifact)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
