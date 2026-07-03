@@ -538,10 +538,18 @@ async function renderCurrentBlob(): Promise<Blob | null> {
 // sees the new values with no `nextTick`/rAF needed.
 async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
   const keys = Object.keys(overrides)
+  // Pin the active layer at entry: `paramsProxy`'s `layer.`-scoped keys resolve
+  // against activeLayer.value LIVE, so if the user switches layers while this
+  // awaits renderCurrentBlob(), the module-level proxy would snapshot/restore
+  // against a DIFFERENT layer than the one the overrides were meant for. Build
+  // a local proxy pinned to the layer active at call time and use it for the
+  // snapshot, the override application, and the restore.
+  const pinned = activeLayer.value
+  const pinnedParams = makeConfigParams(() => config.value, () => pinned)
   const snapshot = new Map<string, string | number | undefined>()
-  for (const key of keys) snapshot.set(key, paramsProxy[key] as string | number | undefined)
+  for (const key of keys) snapshot.set(key, pinnedParams[key] as string | number | undefined)
   try {
-    for (const key of keys) paramsProxy[key] = overrides[key]!
+    for (const key of keys) pinnedParams[key] = overrides[key]!
     return await renderCurrentBlob()
   } catch (e) {
     console.error('[gradient] param-baker render failed', e)
@@ -549,7 +557,7 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   } finally {
     for (const key of keys) {
       const prev = snapshot.get(key)
-      if (prev !== undefined) paramsProxy[key] = prev
+      if (prev !== undefined) pinnedParams[key] = prev
     }
   }
 }

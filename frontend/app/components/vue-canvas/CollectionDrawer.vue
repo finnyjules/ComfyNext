@@ -180,11 +180,11 @@ function selectItem(item: BatchItem) {
 // sweep row (including the kept one — keepRow copies its values in first),
 // then re-pushes the resolved preview so wired targets snap to the kept look.
 function isSweepRow(item: BatchItem): boolean {
-  return !!collection.value?.rows[item.rowIndex]?.sweep
+  return !!collection.value?.rows.find(r => r.id === item.rowId)?.sweep
 }
 function keepItem(item: BatchItem) {
   if (!collection.value || !node.value) return
-  const row = collection.value.rows[item.rowIndex]
+  const row = collection.value.rows.find(r => r.id === item.rowId)
   if (!row) return
   const sweptRowIds = new Set(collection.value.rows.filter(r => r.sweep).map(r => r.id))
   keepRow(collection.value, row.id)
@@ -287,6 +287,17 @@ async function runItems(toRun: BatchItem[]) {
 async function runRows(rows: CollectionRow[], targetNode: any, outputList: { id: string }[]) {
   if (!collection.value || !targetNode || String(targetNode.id) !== String(target.value?.id)) return
   const planned = planBatch(rows, outputList)
+  // `rows` may be a filtered subset (e.g. just the freshly-appended sweep
+  // rows), so planBatch's positional rowIndex (0,1,2…) does NOT match the
+  // row's real position in collection.rows — but every consumer (resolveBindings,
+  // rowLabel, isSweepRow/keepItem by index, preview highlight) resolves
+  // rowIndex against the FULL collection.rows. Remap to the absolute index
+  // here so row identity stays correct regardless of what subset was planned.
+  const fullRows = collection.value.rows
+  for (const item of planned) {
+    const abs = fullRows.findIndex(r => r.id === item.rowId)
+    if (abs !== -1) item.rowIndex = abs
+  }
   items.value = planned
   autoShowResults.value = true
   await runItems(planned)
