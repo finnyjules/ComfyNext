@@ -45,4 +45,11 @@ describe('importTable', () => {
     importTable(c, 'n\n1\n2.5')
     expect(c.rows[1].values.n).toBe(2.5)
   })
+  it('is a no-op on empty or whitespace-only input', () => {
+    const c = createCollection('t')
+    importTable(c, '')
+    importTable(c, '   \n  ')
+    expect(c.columns).toEqual([])
+    expect(c.rows).toEqual([])
+  })
 })
