@@ -1909,6 +1909,27 @@ class LipsyncRemoteNode(IO.ComfyNode):
         return IO.NodeOutput(video)
 
 
+def _lipsync_resolve_engine(engine: str, has_image: bool, has_video: bool) -> str:
+    """Pick the lip-sync engine: explicit choice wins; else a video → sync
+    (relip), an image → fabric (talking head)."""
+    if engine in ("fabric", "sync"):
+        return engine
+    return "sync" if has_video else "fabric"
+
+
+def _lipsync_build_input(engine, image, video, audio, resolution, sync_mode):
+    """Shape the Replicate input per engine. Returns (slug, input_dict)."""
+    if not audio:
+        raise RuntimeError("Lip-sync requires an audio clip.")
+    if engine == "sync":
+        if not video:
+            raise RuntimeError("sync/lipsync-2-pro requires a source video.")
+        return "sync/lipsync-2-pro", {"video": video, "audio": audio, "sync_mode": sync_mode}
+    if not image:
+        raise RuntimeError("Fabric 1.0 requires an input image (face).")
+    return "veed/fabric-1.0", {"image": image, "audio": audio, "resolution": resolution}
+
+
 # =============================================================================
 # USE-CASE NODES
 # =============================================================================
@@ -3803,7 +3824,13 @@ class SplitPhotoLayersNode(IO.ComfyNode):
         if background.dim() == 4 and background.shape[-1] == 4:
             background = background[..., :3].contiguous()
 
-        return IO.NodeOutput(subject, background)
+        # Surface both results as ui images, in OUTPUT-SLOT ORDER (subject=0,
+        # background=1) — the Frame resolves a wire's preview by the source
+        # output index into data.images. Durable outputs so both land in Assets.
+        sub_ui = save_generation_output(subject, "split_subject")
+        bg_ui = save_generation_output(background, "split_background")
+        ui = {"images": [*sub_ui["images"], *bg_ui["images"]], "animated": (False,)}
+        return IO.NodeOutput(subject, background, ui=ui)
 
 
 # =============================================================================
@@ -3968,6 +3995,71 @@ class LipsyncNode(IO.ComfyNode):
             {"video": video_url, "audio": audio_url, "sync_mode": sync_mode},
             poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC,
         )
+        video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(video)
+
+
+class LipSyncNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="LipSyncNode",
+            display_name="Lip-sync a character",
+            category="api node/video/Replicate",
+            description=(
+                "Make a face speak an audio clip. Image face → VEED Fabric 1.0 "
+                "(talking head); video face → sync/lipsync-2-pro (relip). Driven "
+                "by the Lip-Sync Studio; ~$1 per 30s."
+            ),
+            inputs=[
+                IO.Image.Input("image", optional=True,
+                               tooltip="Optional wired face image (else supplied via the studio)."),
+                IO.Audio.Input("audio", optional=True,
+                               tooltip="Optional wired voice clip (else supplied via the studio)."),
+                IO.Combo.Input("engine", options=["auto", "fabric", "sync"], default="auto",
+                               tooltip="auto = image→Fabric, video→sync."),
+                IO.Combo.Input("resolution", options=["480p", "720p", "1080p"], default="720p",
+                               tooltip="Fabric only; sync keeps the source framing."),
+                IO.Combo.Input("sync_mode",
+                               options=["cut_off", "loop", "bounce", "silence", "remap"],
+                               default="cut_off", advanced=True,
+                               tooltip="sync only — how to handle audio/video length mismatch."),
+                IO.String.Input("model_options", multiline=True, default="{}",
+                                tooltip="JSON from the Lip-Sync Studio: face_image / face_video / audio URLs."),
+            ],
+            outputs=[IO.Video.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":1.00,"format":{"approximate":true,"suffix":"/30s"}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image=None, audio=None, engine="auto",
+                      resolution="720p", sync_mode="cut_off", model_options="{}"):
+        try:
+            opts = json.loads(model_options or "{}")
+            if not isinstance(opts, dict):
+                opts = {}
+        except json.JSONDecodeError:
+            opts = {}
+
+        def _resolve(src):
+            if not src:
+                return src
+            name = _parse_view_ref(src)
+            return _local_ref_to_data_url(name) if name else src
+
+        # Wired ports win over studio-supplied URLs.
+        face_image = _image_tensor_to_data_url(image) if image is not None else _resolve(opts.get("face_image"))
+        face_video = _resolve(opts.get("face_video"))
+        audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else _resolve(opts.get("audio"))
+        resolution = opts.get("resolution", resolution)
+        sync_mode = opts.get("sync_mode", sync_mode)
+        engine = opts.get("engine", engine)
+
+        eng = _lipsync_resolve_engine(engine, bool(face_image), bool(face_video))
+        slug, input_dict = _lipsync_build_input(
+            eng, face_image, face_video, audio_url, resolution, sync_mode)
+        print(f"[LipSync] engine={eng!r} slug={slug!r} keys={list(input_dict)}", flush=True)
+        pred = await _run_prediction(slug, input_dict, poll_deadline_sec=_VIDEO_POLL_DEADLINE_SEC)
         video = await download_url_to_video_output(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(video)
 
@@ -5189,6 +5281,7 @@ class ReplicateExtension(ComfyExtension):
             EnhanceVideoNode,           # Enhance a video · Topaz
             DescribeVideoNode,          # Describe a video · Gemini 2.5 Flash
             LipsyncNode,                # Sync lips to audio · sync.so 2-pro
+            LipSyncNode,                # Lip-sync a character · Fabric 1.0 / sync 2-pro
             # Audio
             TranscribeAudioNode,        # Transcribe audio · Whisper
             IdentifySpeakersNode,       # Identify speakers in audio · Whisper Diarization
