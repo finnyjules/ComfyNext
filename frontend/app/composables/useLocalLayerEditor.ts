@@ -14,6 +14,11 @@ import {
   localLayerBox, shapeToPathLayer,
 } from '~/composables/useCompositorLayers'
 import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables/useVectorSvg'
+import {
+  type LayerGroup, topGroupOf, layersInGroup, ancestorsOf, isDescendantOrSelf,
+  createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
+  reparentGroup as reparentGroupOp, pruneEmptyGroups,
+} from '~/lib/compositor/layerGroups'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -49,6 +54,22 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     ;(n.data.properties as any).comfynext_stackOrder = order
   }
 
+  // Nested-group registry: LayerGroup { id, name?, parentId? } describing the
+  // group tree. Layers keep their flat `groupId` (immediate group); this only
+  // adds parent links + names. Absent ⇒ every group is a flat root (old frames).
+  const localGroups = computed<LayerGroup[]>(() =>
+    ((node()?.data?.properties as any)?.comfynext_localGroups as LayerGroup[]) ?? [])
+  function writeGroups(next: LayerGroup[]) {
+    const n = node(); if (!n) return
+    if (!n.data.properties) n.data.properties = {}
+    ;(n.data.properties as any).comfynext_localGroups = next
+  }
+  /** Commit layers + registry together (registry pruned of empty groups). */
+  function commitBoth(nextLayers: LocalLayer[], nextGroups: LayerGroup[]) {
+    commit(nextLayers)
+    writeGroups(pruneEmptyGroups(nextLayers, nextGroups))
+  }
+
   // Doc-level background fill (behind every layer; baked into output).
   const background = computed<Paint | undefined>(() => (node()?.data?.properties as any)?.comfynext_localBg as Paint | undefined)
   function writeBg(p: Paint | undefined) {
@@ -63,12 +84,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   // The editor is the single mutation choke point, so one history stack here
   // covers every vector edit. Discrete ops record before mutating; a drag
   // records once at pointer-down (coalesced) so it's a single undo step.
-  type Snapshot = { layers: LocalLayer[]; order: string[]; bg: Paint | undefined }
+  type Snapshot = { layers: LocalLayer[]; order: string[]; bg: Paint | undefined; groups: LayerGroup[] }
   const HISTORY_CAP = 120
   const _past = ref<Snapshot[]>([])
   const _future = ref<Snapshot[]>([])
-  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()], bg: background.value } }
-  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]); writeBg(s.bg) }
+  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()], bg: background.value, groups: JSON.parse(JSON.stringify(localGroups.value)) } }
+  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]); writeBg(s.bg); writeGroups([...s.groups]) }
   function recordHistory() {
     _past.value.push(snapshot())
     if (_past.value.length > HISTORY_CAP) _past.value.shift()
@@ -96,7 +117,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function addLocal(layer: LocalLayer) { recordHistory(); commit([...localLayers.value, layer]); selectLocal(layer.id) }
   function deleteLocal(id: string) {
     recordHistory()
-    commit(localLayers.value.filter(l => l.id !== id))
+    commitBoth(localLayers.value.filter(l => l.id !== id), localGroups.value)
     if (selectedId.value === id) selectedId.value = null
   }
   /** Delete many layers in one history step (e.g. a whole group). */
@@ -104,7 +125,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!ids.length) return
     recordHistory()
     const set = new Set(ids)
-    commit(localLayers.value.filter(l => !set.has(l.id)))
+    commitBoth(localLayers.value.filter(l => !set.has(l.id)), localGroups.value)
     if (selectedId.value && set.has(selectedId.value)) selectLocal(null)
   }
   function moveLocalZ(id: string, dir: -1 | 1) {
@@ -120,15 +141,28 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   const selected = computed(() => localLayers.value.find(l => l.id === selectedId.value) ?? null)
   // Multi-selection (superset of selectedId) for booleans / group / align.
   const selectedIds = ref<Set<string>>(new Set())
-  /** All layer ids in the same group as `id` (just `id` if ungrouped). */
+  /** Every layer id under the same OUTERMOST group as `id` (just `id` if
+   *  ungrouped). Nesting-aware: clicking a nested layer selects the whole top
+   *  group, matching Figma. For a flat (un-nested) group this is byte-identical
+   *  to the old "same groupId" behavior. */
   function groupSiblings(id: string): string[] {
     const l = localLayers.value.find(x => x.id === id)
     if (!l?.groupId) return [id]
-    return localLayers.value.filter(x => x.groupId === l.groupId).map(x => x.id)
+    const top = topGroupOf(l.groupId, localGroups.value)
+    const ids = layersInGroup(top, localLayers.value, localGroups.value)
+    return ids.length ? ids : [id]
   }
   function selectLocal(id: string | null) {
     selectedId.value = id
     selectedIds.value = id ? new Set(groupSiblings(id)) : new Set() // selecting a grouped layer selects the group
+  }
+  /** Select exactly one group's subtree (a specific level, not expanded to the
+   *  outermost like a canvas click). Used by the layers panel. */
+  function selectGroupById(groupId: string) {
+    const ids = layersInGroup(groupId, localLayers.value, localGroups.value)
+    if (!ids.length) return
+    selectedIds.value = new Set(ids)
+    selectedId.value = ids[ids.length - 1] ?? null
   }
   /** Shift-click: toggle `id` (and its group) in the multi-selection. */
   function toggleSelect(id: string) {
@@ -139,30 +173,50 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedIds.value = s
   }
   let _groupSeq = 0
-  /** Group the current multi-selection (≥2 layers) under one groupId. */
+  /** Group the current multi-selection (≥2 layers). Fully-selected existing
+   *  groups nest under the new group; loose layers become direct members. */
   function groupSelected() {
-    const ids = [...selectedIds.value]
-    if (ids.length < 2) return
+    if (selectedIds.value.size < 2) return
     const gid = `g-${Date.now().toString(36)}-${++_groupSeq}`
     recordHistory()
-    commit(localLayers.value.map(l => (selectedIds.value.has(l.id) ? { ...l, groupId: gid } as LocalLayer : l)))
+    const r = createGroupFromSelection(localLayers.value, localGroups.value, selectedIds.value, gid)
+    commitBoth(r.layers as LocalLayer[], r.groups)
   }
-  /** Rename a group: mirror the name onto every member layer. */
+  /** Rename a group (stored in the registry). */
   function renameGroup(groupId: string, name: string) {
     recordHistory()
-    const nm = name.trim()
-    commit(localLayers.value.map(l => (l.groupId === groupId
-      ? { ...l, groupName: nm || undefined } as LocalLayer : l)))
+    writeGroups(renameGroupOp(localGroups.value, groupId, name))
   }
-  /** Ungroup: clear groupId on the selected layers. */
-  function ungroupSelected() {
-    if (!selectedIds.value.size) return
+  /** Dissolve one specific group level (used by the layers panel). */
+  function ungroupGroup(groupId: string) {
     recordHistory()
-    commit(localLayers.value.map(l => {
-      if (!selectedIds.value.has(l.id) || !l.groupId) return l
-      const { groupId: _drop, ...rest } = l as any
-      return rest as LocalLayer
-    }))
+    const r = dissolveGroupOp(localLayers.value, localGroups.value, groupId)
+    commitBoth(r.layers as LocalLayer[], r.groups)
+  }
+  /** Ungroup the outermost group(s) in the current selection. */
+  function ungroupSelected() {
+    const sel = selectedIds.value
+    if (!sel.size) return
+    const tops = new Set<string>()
+    for (const l of localLayers.value) if (sel.has(l.id) && l.groupId) tops.add(topGroupOf(l.groupId, localGroups.value))
+    if (!tops.size) return
+    recordHistory()
+    let L = localLayers.value as LocalLayer[]
+    let G = localGroups.value
+    for (const t of tops) { const r = dissolveGroupOp(L, G, t); L = r.layers as LocalLayer[]; G = r.groups }
+    commitBoth(L, G)
+    selectedIds.value = new Set([...sel].filter(id => L.some(l => l.id === id)))
+  }
+  /** Move a layer into `groupId` (or out to loose when undefined). Panel drag. */
+  function setLayerGroup(layerId: string, groupId: string | undefined) {
+    recordHistory()
+    commitBoth(localLayers.value.map(l => (l.id === layerId ? { ...l, groupId } as LocalLayer : l)), localGroups.value)
+  }
+  /** Re-parent a group under `parentId` (root when undefined). Panel drag. */
+  function setGroupParent(groupId: string, parentId: string | undefined) {
+    if (parentId && isDescendantOrSelf(parentId, groupId, localGroups.value)) return // no cycles
+    recordHistory()
+    writeGroups(reparentGroupOp(localGroups.value, groupId, parentId))
   }
   const canGroup = computed(() => selectedIds.value.size >= 2)
   const canUngroup = computed(() => selectedLayers.value.some(l => !!l.groupId))
@@ -488,7 +542,8 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     background, setBackground,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
-    groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,
+    groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
+    localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   }
 }

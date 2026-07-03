@@ -187,6 +187,12 @@ export interface TextLayer extends LayerCommon {
   color: Paint           // text fill — solid, gradient, or a patterned Fill
   align: 'left' | 'center' | 'right'
   lineHeight: number     // multiplier
+  letterSpacing?: number // tracking in em (fraction of font size); default 0
+  underline?: boolean    // draw an underline under each line
+  strikethrough?: boolean// draw a line-through each line
+  /** Display-only case transform (the stored `text` is left untouched, so it
+   *  round-trips through inline editing). Absent ⇒ text renders verbatim. */
+  textTransform?: 'uppercase' | 'lowercase' | 'capitalize'
   strokeColor: Paint
   strokeWidth: number    // normalized to canvas width (0 = no outline)
   boxW?: number          // optional text-box width (normalized to canvas width);
@@ -539,9 +545,18 @@ function drawTintedImage(
   ctx.drawImage(off, -w / 2, -h / 2, w, h)
 }
 
-/** Split text into explicit-newline lines. */
+/** Apply a layer's display-only case transform to a string. */
+function transformCase(s: string, t: TextLayer['textTransform']): string {
+  if (t === 'uppercase') return s.toUpperCase()
+  if (t === 'lowercase') return s.toLowerCase()
+  if (t === 'capitalize') return s.replace(/\b\p{L}/gu, c => c.toUpperCase())
+  return s
+}
+
+/** Split text into explicit-newline lines, applying any case transform so that
+ *  measurement (wrap, box) and drawing operate on the same displayed glyphs. */
 function textLines(layer: TextLayer): string[] {
-  return (layer.text ?? '').split('\n')
+  return transformCase(layer.text ?? '', layer.textTransform).split('\n')
 }
 
 /**
@@ -577,6 +592,14 @@ export function applyFont(ctx: CanvasRenderingContext2D, layer: TextLayer, W: nu
   const wght = layer.axes?.wght
   const weight = wght != null && Number.isFinite(wght) ? Math.round(wght) : layer.fontWeight
   ctx.font = `${weight} ${layer.fontSize * W}px ${cssFontStack(layer.fontFamily)}`
+  // Letter spacing (tracking). Canvas exposes `ctx.letterSpacing` as a CSS length
+  // on modern browsers; `font` does NOT reset it, so we set it every time (0 when
+  // unset) to avoid it leaking between layers. measureText honors it too, so wrap
+  // and box math stay correct with no extra work.
+  if ('letterSpacing' in ctx) {
+    const tracking = Math.round((layer.letterSpacing || 0) * layer.fontSize * W * 1000) / 1000
+    ;(ctx as unknown as { letterSpacing: string }).letterSpacing = `${tracking}px`
+  }
   // Progressive enhancement: apply the FULL axis set (slnt/wdth/opsz/custom) via
   // fontVariationSettings, in the correct order (AFTER `font`, which resets it),
   // on browsers that expose the (non-standard) canvas property.
@@ -943,10 +966,21 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
     ctx.strokeStyle = resolvePaint(ctx, layer.strokeColor, textBox)
   }
   ctx.fillStyle = resolvePaint(ctx, layer.color, textBox)
+  const fontPx = layer.fontSize * W
+  const deco = layer.underline || layer.strikethrough
+  const decoThick = Math.max(1, fontPx * 0.06)
   for (let i = 0; i < lines.length; i++) {
     const y = startY + i * lineH
     if (stroke) ctx.strokeText(lines[i], anchorX, y)
     ctx.fillText(lines[i], anchorX, y)
+    // Decoration lines span the drawn line, anchored to match the text alignment.
+    // Drawn in the text's own fill so they inherit gradient/pattern fills.
+    if (deco && lines[i]) {
+      const lw = ctx.measureText(lines[i]).width
+      const left = layer.align === 'left' ? anchorX : layer.align === 'right' ? anchorX - lw : anchorX - lw / 2
+      if (layer.underline) ctx.fillRect(left, y + fontPx * 0.34, lw, decoThick)
+      if (layer.strikethrough) ctx.fillRect(left, y - decoThick / 2, lw, decoThick)
+    }
   }
 }
 

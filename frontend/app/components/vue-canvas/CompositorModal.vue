@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {
   Image as ImageIcon, X, MousePointer2,
-  Type, Square, Circle, Minus, Trash2,
+  Type, Square, Circle, Minus, Plus, Trash2,
   AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
-  Eye, EyeOff,
+  Eye, EyeOff, Underline, Strikethrough, CaseUpper, CaseLower, CaseSensitive,
 } from 'lucide-vue-next'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin,
@@ -11,6 +11,10 @@ import {
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
+import {
+  allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
+  reparentGroup as reparentGroupOp,
+} from '~/lib/compositor/layerGroups'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
@@ -83,8 +87,18 @@ const frameName = computed(() => {
   return (d?.title || d?.subgraphName || 'Frame') as string
 })
 
-function getNodeImageUrl(node: any): string | null {
-  if (node?.data?.images?.length) return node.data.images[0]
+// Multi-output sources (e.g. Split photo into layers: subject=0, background=1)
+// mirror ui images in output-slot order, so the wire's source handle picks
+// which image this layer shows.
+function srcOutputIndex(edge: any): number {
+  const m = /^output-(\d+)$/.exec(edge?.sourceHandle ?? '')
+  return m ? Number(m[1]) : 0
+}
+function getNodeImageUrl(node: any, edge?: any): string | null {
+  if (node?.data?.images?.length) {
+    const i = srcOutputIndex(edge)
+    return node.data.images[i] ?? node.data.images[0]
+  }
   if (node?.data?.nodeType === 'LoadImage' && node?.data?.widgetsValues?.[0]) {
     const filename = node.data.widgetsValues[0]
     return `/view?${new URLSearchParams({ filename, type: 'input' })}`
@@ -116,7 +130,7 @@ const layers = computed<Layer[]>(() => {
     if (!edge) continue
     const source = props.nodes.find((n: any) => n.id === edge.source)
     if (!source) continue
-    const url = getNodeImageUrl(source)
+    const url = getNodeImageUrl(source, edge)
     if (!url) continue
     out.push({
       slot: i,
@@ -211,6 +225,63 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { stageRO?.disconnect(); stageRO = null })
 
+// ── Pan & zoom ──────────────────────────────────────────────────────────────
+// A CSS transform on the stage wrapper. All hit-testing reads
+// getBoundingClientRect(), which already reflects the transform, so layer drag,
+// marquee, and handles stay pixel-accurate at any zoom. transform-origin 0 0
+// keeps the zoom-to-cursor maths simple (screen-space translate).
+const stageWrapRef = ref<HTMLElement | null>(null)
+const view = reactive({ scale: 1, tx: 0, ty: 0 })
+const ZOOM_MIN = 0.2, ZOOM_MAX = 8
+const viewStyle = computed(() => ({
+  width: canvasDisplay.w + 'px',
+  height: canvasDisplay.h + 'px',
+  transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
+  transformOrigin: '0 0',
+}))
+function resetView() { view.scale = 1; view.tx = 0; view.ty = 0 }
+function zoomAround(cx: number, cy: number, factor: number) {
+  const wrap = stageWrapRef.value; if (!wrap) return
+  const rect = wrap.getBoundingClientRect()
+  const s0 = view.scale
+  const s1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s0 * factor))
+  if (s1 === s0) return
+  // Keep the point under (cx,cy) fixed on screen.
+  view.tx += (cx - rect.left) * (1 - s1 / s0)
+  view.ty += (cy - rect.top) * (1 - s1 / s0)
+  view.scale = s1
+}
+function zoomBy(factor: number) {
+  const box = stageBoxRef.value; if (!box) return
+  const r = box.getBoundingClientRect()
+  zoomAround(r.left + r.width / 2, r.top + r.height / 2, factor)
+}
+function onStageWheel(e: WheelEvent) {
+  e.preventDefault()
+  if (e.ctrlKey || e.metaKey) zoomAround(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01))
+  else { view.tx -= e.deltaX; view.ty -= e.deltaY } // two-finger / wheel scroll → pan
+}
+// Space-drag (or middle-mouse) panning — universal, works with any pointer.
+const spaceDown = ref(false)
+const panning = ref(false)
+let panFrom: { x: number, y: number, tx: number, ty: number } | null = null
+let didPan = false
+function onStagePointerDownPan(e: PointerEvent) {
+  if (e.button === 1 || (spaceDown.value && e.button === 0)) {
+    e.preventDefault(); e.stopPropagation()
+    panning.value = true; didPan = false
+    panFrom = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  }
+}
+function onStagePointerMovePan(e: PointerEvent) {
+  if (!panFrom) return
+  didPan = true
+  view.tx = panFrom.tx + (e.clientX - panFrom.x)
+  view.ty = panFrom.ty + (e.clientY - panFrom.y)
+}
+function onStagePointerUpPan() { panFrom = null; panning.value = false }
+
 function fitSize(slot: number) {
   const dims = naturalDims.value[slot]
   if (!dims) return { w: canvasDisplay.w, h: canvasDisplay.h }
@@ -244,7 +315,8 @@ const {
   background, setBackground,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
-  groupSelected, ungroupSelected, renameGroup, canGroup, canUngroup,
+  groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
+  localGroups, selectGroupById, writeGroups,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
 } = editor
 
@@ -262,6 +334,8 @@ const {
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
 })
+// The agent's progress / proposed changes take over the right inspector while active.
+const caPanelActive = computed(() => caBusy.value || caReviewing.value || caHasProposal.value)
 
 const selectedCount = computed(() => selectedLayers.value.length)
 const ALIGN_BTNS = [
@@ -542,6 +616,16 @@ function onKeydown(e: KeyboardEvent) {
       e.preventDefault(); deleteNodeAnchor(); return
     }
   }
+  const tag = (e.target as HTMLElement)?.tagName
+  const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!editingId.value
+  // Space → hold-to-pan. Prevent the default page scroll while held.
+  if (e.code === 'Space' && !inField) { e.preventDefault(); spaceDown.value = true }
+  // Zoom shortcuts: ⌘/Ctrl +, −, and 0 (reset).
+  if ((e.metaKey || e.ctrlKey) && !inField) {
+    if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomBy(1.2); return }
+    if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.2); return }
+    if (e.key === '0') { e.preventDefault(); resetView(); return }
+  }
   // Undo/redo — skip while editing text so the textarea handles it natively.
   const meta = e.metaKey || e.ctrlKey
   if (meta && (e.key === 'z' || e.key === 'Z') && !editingId.value) {
@@ -552,8 +636,25 @@ function onKeydown(e: KeyboardEvent) {
     if (e.shiftKey) ungroupSelected(); else groupSelected()
   }
 }
-onMounted(() => window.addEventListener('keydown', onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
+function onKeyup(e: KeyboardEvent) { if (e.code === 'Space') spaceDown.value = false }
+// If focus leaves the window while Space is held (alt/⌘-tab, clicking into the
+// cross-origin ComfyUI iframe, tab switch), the keyup lands elsewhere and
+// spaceDown would stay stuck true — freezing layer select/move behind pan mode.
+// Reset the whole pan gesture on blur / visibility loss.
+function clearPan() { spaceDown.value = false; panning.value = false; panFrom = null }
+function onVisibility() { if (document.hidden) clearPan() }
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('keyup', onKeyup, true)
+  window.addEventListener('blur', clearPan)
+  document.addEventListener('visibilitychange', onVisibility)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('keyup', onKeyup, true)
+  window.removeEventListener('blur', clearPan)
+  document.removeEventListener('visibilitychange', onVisibility)
+})
 
 // ── Selection: image slot OR local layer, mutually exclusive ────────────────
 const selectedSlot = ref<number | null>(null)
@@ -615,75 +716,107 @@ const resolvedStack = computed(() =>
   }).filter(Boolean) as { key: StackKey; type: 'wired' | 'local'; layer: any }[],
 )
 
-// Sidebar list with grouped local layers collapsed into a single 'group' row
-// (one row per groupId, positioned at its topmost member). Wired + ungrouped
-// locals stay as individual rows.
-type PanelGroup = { type: 'group'; key: string; groupId: string; layers: any[] }
-const panelItems = computed(() => {
-  const out: any[] = []
-  const byGroup = new Map<string, PanelGroup>()
-  for (const item of resolvedStack.value) {
-    const gid = item.type === 'local' ? item.layer.groupId : null
-    if (gid) {
-      let g = byGroup.get(gid)
-      if (!g) { g = { type: 'group', key: 'grp-' + gid, groupId: gid, layers: [] }; byGroup.set(gid, g); out.push(g) }
-      g.layers.push(item)
-    } else {
-      out.push(item)
-    }
-  }
-  return out
+// ── Nested layer tree (panel) ────────────────────────────────────────────────
+// Local layers keep a flat immediate `groupId`; nesting comes from the group
+// registry (parentId). The panel walks the tree recursively; rendering itself is
+// always a flat z-ordered stack, so this is purely an organization view.
+
+// Stack index per key (resolvedStack is top-first) → orders tree siblings so a
+// group sits where its topmost member sits.
+const stackIndexByKey = computed(() => {
+  const m = new Map<string, number>()
+  resolvedStack.value.forEach((it, i) => m.set(it.key, i))
+  return m
 })
+const localItemById = computed(() => {
+  const m = new Map<string, any>()
+  for (const it of resolvedStack.value) if (it.type === 'local') m.set(it.layer.id, it)
+  return m
+})
+function groupCount(gid: string): number { return layersInGroup(gid, localLayers.value, localGroups.value).length }
+function groupSortIndex(gid: string): number {
+  let min = Infinity
+  for (const id of layersInGroup(gid, localLayers.value, localGroups.value)) {
+    const it = localItemById.value.get(id)
+    if (it) min = Math.min(min, stackIndexByKey.value.get(it.key) ?? Infinity)
+  }
+  return min
+}
+
 const expandedGroups = ref<Set<string>>(new Set())
 function toggleGroup(gid: string) {
   const s = new Set(expandedGroups.value)
   s.has(gid) ? s.delete(gid) : s.add(gid)
   expandedGroups.value = s
 }
-function selectGroup(g: PanelGroup) { if (g.layers[0]) selectLocal(g.layers[0].layer.id) }
-function deleteGroup(g: PanelGroup) { deleteLayers(g.layers.map(it => it.layer.id)) }
-function isGroupSelected(g: PanelGroup) { return g.layers.some(it => selectedIds.value.has(it.layer.id)) }
-function groupLabel(g: PanelGroup) { return g.layers[0]?.layer.groupName || 'Group' }
+function selectGroup(gid: string) { selectGroupById(gid) }
+function deleteGroup(gid: string) { deleteLayers(layersInGroup(gid, localLayers.value, localGroups.value)) }
+function isGroupSelected(gid: string) { return layersInGroup(gid, localLayers.value, localGroups.value).some(id => selectedIds.value.has(id)) }
+function groupLabel(gid: string) { return groupDisplayName(gid, localLayers.value, localGroups.value) }
 
 // Group rename (double-click the group label).
 const editingGroupId = ref<string | null>(null)
 const groupNameDraft = ref('')
-function startGroupRename(g: PanelGroup) { editingGroupId.value = g.groupId; groupNameDraft.value = groupLabel(g) === 'Group' ? '' : groupLabel(g) }
+function startGroupRename(gid: string) { editingGroupId.value = gid; const n = groupLabel(gid); groupNameDraft.value = n === 'Group' ? '' : n }
 function commitGroupRename() {
   if (editingGroupId.value) renameGroup(editingGroupId.value, groupNameDraft.value)
   editingGroupId.value = null
 }
 
-// Flat, indented panel rows for rendering + drag-and-drop. A group becomes a
-// header row, and (when expanded) its members become indented child rows.
+// Flat, depth-tagged rows from a recursive walk of the group tree. A group's
+// header is immediately followed by its whole subtree (contiguous block), which
+// the drag code relies on. `depth` drives indentation.
 type FlatRow =
-  | { rk: string; kind: 'group'; groupId: string; item: PanelGroup }
-  | { rk: string; kind: 'child' | 'local'; key: StackKey; layerId: string; groupId?: string; layer: any }
-  | { rk: string; kind: 'wired'; key: StackKey; slot: number; layer: any }
+  | { rk: string; kind: 'group'; groupId: string; depth: number; count: number }
+  | { rk: string; kind: 'child' | 'local'; key: StackKey; layerId: string; groupId?: string; depth: number; layer: any }
+  | { rk: string; kind: 'wired'; key: StackKey; slot: number; depth: number; layer: any }
 const flatRows = computed<FlatRow[]>(() => {
   const rows: FlatRow[] = []
-  for (const item of panelItems.value as any[]) {
-    if (item.type === 'group') {
-      rows.push({ rk: 'gh:' + item.groupId, kind: 'group', groupId: item.groupId, item })
-      if (expandedGroups.value.has(item.groupId)) {
-        for (const c of item.layers) rows.push({ rk: c.key, kind: 'child', key: c.key, layerId: c.layer.id, groupId: item.groupId, layer: c.layer })
-      }
-    } else if (item.type === 'local') {
-      rows.push({ rk: item.key, kind: 'local', key: item.key, layerId: item.layer.id, layer: item.layer })
-    } else {
-      rows.push({ rk: item.key, kind: 'wired', key: item.key, slot: item.layer.slot, layer: item.layer })
+  const groups = localGroups.value
+  const si = stackIndexByKey.value
+  type Sortable = { kind: 'group'; id: string; sort: number } | { kind: 'item'; item: any; sort: number }
+
+  const emitGroup = (gid: string, depth: number) => {
+    rows.push({ rk: 'gh:' + gid, kind: 'group', groupId: gid, depth, count: groupCount(gid) })
+    if (!expandedGroups.value.has(gid)) return
+    const kids: Sortable[] = []
+    for (const cg of childGroupIds(gid, groups)) if (groupCount(cg) > 0) kids.push({ kind: 'group', id: cg, sort: groupSortIndex(cg) })
+    for (const it of resolvedStack.value) {
+      if (it.type === 'local' && it.layer.groupId === gid) kids.push({ kind: 'item', item: it, sort: si.get(it.key) ?? Infinity })
     }
+    kids.sort((a, b) => a.sort - b.sort)
+    for (const k of kids) {
+      if (k.kind === 'group') emitGroup(k.id, depth + 1)
+      else rows.push({ rk: k.item.key, kind: 'child', key: k.item.key, layerId: k.item.layer.id, groupId: gid, depth: depth + 1, layer: k.item.layer })
+    }
+  }
+
+  // Top level: root groups (holding ≥1 layer) + ungrouped locals + wired.
+  const tops: Sortable[] = []
+  for (const gid of allGroupIds(localLayers.value, groups)) {
+    const p = groups.find(g => g.id === gid)?.parentId
+    const isRoot = !p || !groups.some(g => g.id === p)
+    if (isRoot && groupCount(gid) > 0) tops.push({ kind: 'group', id: gid, sort: groupSortIndex(gid) })
+  }
+  for (const it of resolvedStack.value) {
+    if (it.type === 'local' && it.layer.groupId) continue // rendered under its group
+    tops.push({ kind: 'item', item: it, sort: si.get(it.key) ?? Infinity })
+  }
+  tops.sort((a, b) => a.sort - b.sort)
+  for (const t of tops) {
+    if (t.kind === 'group') emitGroup(t.id, 0)
+    else if (t.item.type === 'local') rows.push({ rk: t.item.key, kind: 'local', key: t.item.key, layerId: t.item.layer.id, depth: 0, layer: t.item.layer })
+    else rows.push({ rk: t.item.key, kind: 'wired', key: t.item.key, slot: t.item.layer.slot, depth: 0, layer: t.item.layer })
   }
   return rows
 })
 function rowSelected(row: any) {
-  if (row.kind === 'group') return isGroupSelected(row.item)
+  if (row.kind === 'group') return isGroupSelected(row.groupId)
   if (row.kind === 'wired') return selectedSlot.value === row.slot
-  if (row.kind === 'child') return selectedIds.value.has(row.layerId)
-  return selectedLocalId.value === row.layerId
+  return selectedIds.value.has(row.layerId)
 }
 function onRowClick(row: any) {
-  if (row.kind === 'group') selectGroup(row.item)
+  if (row.kind === 'group') selectGroup(row.groupId)
   else if (row.kind === 'wired') selectImage(row.slot)
   else selectLocal(row.layerId)
 }
@@ -695,13 +828,12 @@ function rowLabel(row: any) {
   return l.kind === 'text' ? (l.text?.split('\n')[0] || 'Text') : l.kind
 }
 
-// ── Drag-and-drop reorder (unified z-order, with group membership) ───────────
+// ── Drag-and-drop reorder (unified z-order + group membership / nesting) ──────
 function setStackOrder(topFirstKeys: StackKey[]) {
   const node = compositor.value; if (!node) return
   if (!node.data.properties) node.data.properties = {}
   ;(node.data.properties as any).comfynext_stackOrder = [...topFirstKeys].reverse() // stored bottom→top
 }
-function rowKeys(it: any): StackKey[] { return it.type === 'group' ? it.layers.map((c: any) => c.key) : [it.key] }
 const dragRk = ref<string | null>(null)
 const dropIndex = ref<number | null>(null)   // flat insertion index 0..flatRows.length
 function onGripDragStart(rk: string, e: DragEvent) {
@@ -719,37 +851,56 @@ function onListDrop() {
   dragRk.value = null; dropIndex.value = null
 }
 function onDragEnd() { dragRk.value = null; dropIndex.value = null }
+
+// The immediate group a drop just below `above` targets, or undefined for loose.
+function dropTargetGroup(above: any): string | undefined {
+  if (!above) return undefined
+  if (above.kind === 'child') return above.groupId
+  if (above.kind === 'group' && expandedGroups.value.has(above.groupId)) return above.groupId
+  return undefined
+}
+
 function applyReorder(rk: string, dropFi: number) {
   const rows = flatRows.value
-  const dragRow = rows.find(r => r.rk === rk) as any
-  if (!dragRow) return
-  recordHistory()
+  const start = rows.findIndex(r => r.rk === rk)
+  if (start < 0) return
+  const dragRow: any = rows[start]
 
-  // Whole-group drag → reorder among TOP-LEVEL positions (groups can't nest).
+  // ── Whole-group drag → move its contiguous subtree block + re-nest it ──────
   if (dragRow.kind === 'group') {
-    const items = [...(panelItems.value as any[])]
-    const from = items.findIndex(it => it.type === 'group' && it.groupId === dragRow.groupId)
-    if (from < 0) return
-    let topInsert = 0
-    for (let i = 0; i < dropFi && i < rows.length; i++) if (rows[i].kind !== 'child') topInsert++
-    const [moved] = items.splice(from, 1)
-    let insert = topInsert > from ? topInsert - 1 : topInsert
-    insert = Math.max(0, Math.min(items.length, insert))
-    items.splice(insert, 0, moved)
-    setStackOrder(items.flatMap(rowKeys))
+    const gid = dragRow.groupId
+    let end = start + 1
+    while (end < rows.length && (rows[end] as any).depth > dragRow.depth) end++
+    const block = rows.slice(start, end)
+    const blockKeys = block.filter((r: any) => r.kind !== 'group').map((r: any) => r.key as string)
+    const blockRks = new Set(block.map(r => r.rk))
+    // Target parent from the first row above the gap that isn't part of the block.
+    let ai = dropFi - 1
+    while (ai >= 0 && blockRks.has(rows[ai]!.rk)) ai--
+    const newParent = dropTargetGroup(rows[ai])
+    if (newParent && isDescendantOrSelf(newParent, gid, localGroups.value)) return // no cycles
+    recordHistory()
+    writeGroups(reparentGroupOp(localGroups.value, gid, newParent))
+    // Reorder z-keys: pull the block out, reinsert at the drop position.
+    const allKeys = rows.filter(r => r.kind !== 'group').map((r: any) => r.key as string)
+    const blockSet = new Set(blockKeys)
+    const remaining = allKeys.filter(k => !blockSet.has(k))
+    let ki = 0
+    for (let i = 0; i < dropFi && i < rows.length; i++) {
+      const r: any = rows[i]
+      if (r.kind !== 'group' && !blockSet.has(r.key)) ki++
+    }
+    ki = Math.max(0, Math.min(remaining.length, ki))
+    remaining.splice(ki, 0, ...blockKeys)
+    setStackOrder(remaining)
     return
   }
 
-  // Single layer/image drag → move one key; (re)assign group membership from the
-  // drop context (the row just above the gap).
+  // ── Single layer / image drag → move one key + (re)assign group membership ──
   const dragKey = dragRow.key as string
   const isWired = dragRow.kind === 'wired'
-  const above: any = rows[dropFi - 1]
-  let targetGroup: string | undefined
-  if (!isWired && above) {
-    if (above.kind === 'child') targetGroup = above.groupId
-    else if (above.kind === 'group' && expandedGroups.value.has(above.groupId)) targetGroup = above.groupId
-  }
+  const targetGroup = isWired ? undefined : dropTargetGroup(rows[dropFi - 1])
+  recordHistory()
   const curKeys = rows.filter(r => r.kind !== 'group').map((r: any) => r.key as string)
   let ki = 0
   for (let i = 0; i < dropFi && i < rows.length; i++) if (rows[i].kind !== 'group') ki++
@@ -758,7 +909,6 @@ function applyReorder(rk: string, dropFi: number) {
   let insertAt = (curPos > -1 && curPos < ki) ? ki - 1 : ki
   insertAt = Math.max(0, Math.min(without.length, insertAt))
   without.splice(insertAt, 0, dragKey)
-
   if (!isWired) {
     commit(localLayers.value.map((l: any) => (l.id === dragRow.layerId ? { ...l, groupId: targetGroup } : l)))
   }
@@ -821,8 +971,13 @@ function onPointerMove(e: PointerEvent) {
   const d = drag.value
   if (!d) return
   if (d.type === 'move') {
-    const dx = (e.clientX - d.startMouseX) / (canvasDisplay.w / 2)
-    const dy = (e.clientY - d.startMouseY) / (canvasDisplay.h / 2)
+    // Divide by the live on-screen rect (canvasRect().width === canvasDisplay.w
+    // * view.scale), not the fixed artboard size, so the layer tracks the cursor
+    // at any zoom — matching the scale/rotate handlers below. At 100% zoom this
+    // is identical to the previous canvasDisplay-based math.
+    const r = canvasRect(); if (!r) return
+    const dx = (e.clientX - d.startMouseX) / (r.width / 2)
+    const dy = (e.clientY - d.startMouseY) / (r.height / 2)
     setLayerProp(d.slot, 'x', clamp(d.startX + dx, -1.5, 1.5))
     setLayerProp(d.slot, 'y', clamp(d.startY + dy, -1.5, 1.5))
   } else if (d.type === 'scale') {
@@ -984,6 +1139,15 @@ function onCanvasClick(e: MouseEvent) {
   if (lastDownHitLayer) { lastDownHitLayer = false; return }
   if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
 }
+// Click in the empty stage gutter (outside the artboard) → deselect. A pan that
+// ends on the gutter also fires a click here, so swallow it.
+function onStageBackgroundClick(e: MouseEvent) {
+  if (genActive.value && genTool.value !== 'shape') return
+  if (didPan) { didPan = false; return }
+  if (e.target === stageBoxRef.value || e.target === stageWrapRef.value) {
+    selectedSlot.value = null; selectLocal(null)
+  }
+}
 
 // ── Text editing: focus the inline textarea when editing starts ─────────────
 const editRef = ref<HTMLTextAreaElement | null>(null)
@@ -999,6 +1163,9 @@ const editingStyle = computed(() => {
     fontFamily: /\s/.test(l.fontFamily) ? `"${l.fontFamily}", sans-serif` : `${l.fontFamily}, sans-serif`,
     fontWeight: String(l.fontWeight), fontSize: l.fontSize * canvasDisplay.w + 'px',
     lineHeight: String(l.lineHeight), color: paintPrimaryColor(l.color, '#ffffff'), textAlign: l.align as any,
+    letterSpacing: `${l.letterSpacing || 0}em`,
+    textTransform: (l.textTransform || 'none') as any,
+    textDecoration: [l.underline && 'underline', l.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none',
     opacity: String(l.opacity), caretColor: paintPrimaryColor(l.color, '#ffffff'),
   }
 })
@@ -1918,21 +2085,6 @@ onUnmounted(() => {
     <!-- Glimm sweep over the frame while the agent works. -->
     <AgentSweep :active="caBusy" />
 
-    <!-- In-product agent: command bar + proposal (top-centre). -->
-    <div class="glass-panel absolute top-4 left-1/2 z-30 w-[440px] max-w-[calc(100%-560px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#0e0e10]/85 backdrop-blur-md shadow-2xl p-3">
-      <AgentBar :busy="caBusy" :error="caError" :notice="caNotice" @submit="caAsk" @chip="caAsk" />
-      <div v-if="caBusy" class="pt-2.5">
-        <AgentProgress :active="caBusy" />
-      </div>
-      <div v-else-if="caHasProposal" class="pt-2.5">
-        <AgentProposal
-          :changes="caChanges" :busy="caBusy" :issues="caIssues" :review="caReview" :reviewing="caReviewing"
-          @accept="caAccept" @reject="caReject" @reroll="caReroll"
-          @keep="caKeep" @revert="caRevert" @hover="(i: number | null) => caHovered = i"
-        />
-      </div>
-    </div>
-
     <!-- Left sidebar: floating glass layer panel -->
     <div class="glass-panel absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
       <div class="px-3 pt-3 pb-3 flex-1 min-h-0 overflow-y-auto">
@@ -1944,9 +2096,10 @@ onUnmounted(() => {
             <div v-if="dropIndex === idx" class="h-0.5 bg-white/70 rounded mx-1.5 my-0.5" />
             <div
               class="group/row flex items-center gap-1.5 pr-2 py-1.5 rounded transition-colors"
+              :style="{ paddingLeft: ((row as any).depth * 14 + 4) + 'px' }"
               :class="[
                 rowSelected(row) ? 'bg-white/10' : 'hover:bg-white/[0.04]',
-                row.kind === 'child' ? 'ml-3.5 border-l border-white/10 pl-1' : 'pl-1',
+                (row as any).depth > 0 ? 'border-l border-white/10' : '',
                 dragRk === row.rk ? 'opacity-40' : '',
                 editingGroupId === (row as any).groupId && row.kind === 'group' ? 'cursor-default' : 'cursor-pointer',
               ]"
@@ -1985,7 +2138,7 @@ onUnmounted(() => {
                 @blur="commitGroupRename"
               />
               <span v-else-if="row.kind === 'group'" class="text-sm truncate flex-1" title="Double-click to rename"
-                @dblclick.stop="startGroupRename(row.item)">{{ groupLabel(row.item) }} <span class="text-white/40">· {{ row.item.layers.length }}</span></span>
+                @dblclick.stop="startGroupRename(row.groupId)">{{ groupLabel(row.groupId) }} <span class="text-white/40">· {{ row.count }}</span></span>
               <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1" :class="rowHidden(row) ? 'text-white/35' : ''">Layer {{ row.slot }}</span>
               <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']">{{ rowLabel(row) }}</span>
               <!-- Lock (locked layers render but ignore canvas clicks/drags) -->
@@ -2004,9 +2157,14 @@ onUnmounted(() => {
                 @click.stop="toggleRowHidden(row)">
                 <component :is="rowHidden(row) ? EyeOff : Eye" class="size-3.5" />
               </button>
+              <!-- Ungroup (dissolve this level) -->
+              <button v-if="row.kind === 'group'" class="opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80 transition cursor-pointer"
+                title="Ungroup" @click.stop="ungroupGroup(row.groupId)">
+                <Ungroup class="size-3.5" />
+              </button>
               <!-- Delete -->
               <button v-if="row.kind === 'group'" class="opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
-                title="Delete group" @click.stop="deleteGroup(row.item)">
+                title="Delete group" @click.stop="deleteGroup(row.groupId)">
                 <Trash2 class="size-3.5" />
               </button>
               <button v-else-if="row.kind !== 'wired'" class="opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-red-400 transition cursor-pointer"
@@ -2027,14 +2185,21 @@ onUnmounted(() => {
     <div
       ref="stageBoxRef"
       class="absolute top-16 bottom-4 left-[272px] right-[320px] flex items-center justify-center overflow-hidden"
+      :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : ''"
       :style="{ paddingBottom: stagePadBottom + 'px' }"
+      @wheel="onStageWheel"
+      @pointerdown.capture="onStagePointerDownPan"
+      @pointermove="onStagePointerMovePan"
+      @pointerup="onStagePointerUpPan"
+      @click="onStageBackgroundClick"
       @dragover="onCanvasDragOver"
       @dragleave="onCanvasDragLeave"
       @drop="onCanvasDrop"
     >
       <!-- Stage wrapper (overflow-visible): the artboard clips rendered layers,
-           but selection controls live here so their handles can spill into the gutter. -->
-      <div class="relative" :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }">
+           but selection controls live here so their handles can spill into the gutter.
+           The pan/zoom view transform is applied here. -->
+      <div ref="stageWrapRef" class="relative" :style="viewStyle">
       <div
         ref="canvasRef"
         class="absolute inset-0 bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5 transition-shadow"
@@ -2390,8 +2555,31 @@ onUnmounted(() => {
       </div>
       </Transition>
 
-      <!-- Bottom toolbar -->
-      <div class="absolute bottom-4 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+      <!-- Zoom control (bottom-left of the stage). Scroll to pan, ⌘/pinch to zoom,
+           space-drag to pan; these buttons + the % (reset) cover mouse users. -->
+      <div class="absolute bottom-4 left-4 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
+        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
+          <Minus class="size-4" />
+        </button>
+        <button class="h-7 min-w-[46px] px-1 rounded-md hover:bg-white/10 text-white/80 cursor-pointer text-[11px] tabular-nums" title="Reset zoom (⌘0)" @click="resetView">
+          {{ Math.round(view.scale * 100) }}%
+        </button>
+        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom in (⌘+)" @click="zoomBy(1.2)">
+          <Plus class="size-4" />
+        </button>
+      </div>
+
+      <!-- Bottom cluster: agent command bar + toolbar. The column is bottom-anchored
+           and shrink-wraps to the toolbar's width (its widest child), so the bare
+           prompt above stretches to exactly match the toolbar. -->
+      <div class="absolute bottom-4 flex flex-col items-stretch gap-2 pointer-events-none">
+      <!-- Agent command bar — bare prompt; its progress + proposal render in the
+           right inspector (see the Assistant takeover branch). -->
+      <div class="pointer-events-auto">
+        <AgentBar :busy="caBusy" :error="caError" :notice="caNotice" :chips="[]" @submit="caAsk" @chip="caAsk" />
+      </div>
+      <!-- Toolbar -->
+      <div class="pointer-events-auto flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
           class="flex items-center justify-center size-8 rounded-md cursor-pointer"
           :class="isSelectTool ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
@@ -2477,6 +2665,7 @@ onUnmounted(() => {
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
         <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />
       </div>
+      </div>
     </div>
 
     <!-- Floating top-right: Render + esc/close (studio chrome) -->
@@ -2499,8 +2688,28 @@ onUnmounted(() => {
 
     <!-- Right sidebar: floating glass properties panel -->
     <div class="glass-panel absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <!-- Assistant: the agent's progress / proposed changes take over the inspector. -->
+      <template v-if="caPanelActive">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Sparkles class="size-3.5 text-white/70" />
+          <span class="text-sm font-medium">Assistant</span>
+        </div>
+        <div class="p-4 flex-1 min-h-0 overflow-y-auto">
+          <AgentProgress v-if="caBusy" :active="caBusy" />
+          <div v-else-if="caReviewing && !caHasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+            <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+          </div>
+          <AgentProposal
+            v-else-if="caHasProposal"
+            :changes="caChanges" :busy="caBusy" :issues="caIssues" :review="caReview" :reviewing="caReviewing"
+            @accept="caAccept" @reject="caReject" @reroll="caReroll"
+            @keep="caKeep" @revert="caRevert" @hover="(i: number | null) => caHovered = i"
+          />
+        </div>
+      </template>
+
       <!-- Brand kits (opening the palette takes over the inspector) -->
-      <template v-if="brandOpen">
+      <template v-else-if="brandOpen">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <Palette class="size-3.5 text-white/70" />
           <span class="text-sm font-medium">Brand kits</span>
@@ -2728,6 +2937,44 @@ onUnmounted(() => {
                   :value="(selectedLocal as any).boxW ? pxW((selectedLocal as any).boxW) : ''"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="panel-label mb-1.5" title="Line height as a multiple of the font size">Line height</div>
+                <input type="number" min="0.5" max="4" step="0.05" :value="(selectedLocal as any).lineHeight ?? 1.2"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setLocal(selectedLocal!.id, { lineHeight: parseFloat(($event.target as HTMLInputElement).value) || 1.2 })" />
+              </div>
+              <div>
+                <div class="panel-label mb-1.5" title="Tracking, in em (fraction of the font size)">Letter spacing</div>
+                <input type="number" step="0.01" :value="(selectedLocal as any).letterSpacing ?? 0"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setLocal(selectedLocal!.id, { letterSpacing: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+              </div>
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Style</div>
+              <div class="flex gap-1">
+                <button title="Underline"
+                  class="flex items-center justify-center bg-white/[0.04] border border-white/[0.06] rounded py-1.5 px-2.5"
+                  :class="(selectedLocal as any).underline ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                  @click="setLocal(selectedLocal!.id, { underline: !(selectedLocal as any).underline })">
+                  <Underline class="size-3.5" />
+                </button>
+                <button title="Strikethrough"
+                  class="flex items-center justify-center bg-white/[0.04] border border-white/[0.06] rounded py-1.5 px-2.5"
+                  :class="(selectedLocal as any).strikethrough ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                  @click="setLocal(selectedLocal!.id, { strikethrough: !(selectedLocal as any).strikethrough })">
+                  <Strikethrough class="size-3.5" />
+                </button>
+                <div class="w-px bg-white/[0.08] mx-0.5"></div>
+                <button v-for="c in (['uppercase','lowercase','capitalize'] as const)" :key="c" :title="c"
+                  class="flex items-center justify-center bg-white/[0.04] border border-white/[0.06] rounded py-1.5 px-2.5"
+                  :class="(selectedLocal as any).textTransform === c ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                  @click="setLocal(selectedLocal!.id, { textTransform: (selectedLocal as any).textTransform === c ? undefined : c })">
+                  <component :is="c === 'uppercase' ? CaseUpper : c === 'lowercase' ? CaseLower : CaseSensitive" class="size-3.5" />
+                </button>
               </div>
             </div>
             <div class="space-y-3">

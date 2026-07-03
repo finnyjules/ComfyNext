@@ -152,10 +152,34 @@ function handleTop(idx: number, count: number): string {
   return `calc(${pad}px + ${(idx / (count - 1)) * 100}% - ${(pad * 2 * idx) / (count - 1)}px)`
 }
 
-function resolveSrcUrl(src: any): string | null {
-  if (src?.data?.images?.length) return src.data.images[0]
+// Read an upstream node's widget value by name (widgetDefs[i] ↔ widgetsValues[i]).
+function srcWidgetVal(src: any, name: string): string | null {
+  const defs = src?.data?.widgetDefs
+  const vals = src?.data?.widgetsValues
+  if (!Array.isArray(defs) || !Array.isArray(vals)) return null
+  const i = defs.findIndex((w: any) => w?.name === name)
+  return i >= 0 ? (vals[i] || null) : null
+}
+// Multi-output sources (e.g. Split photo into layers: subject=0, background=1)
+// mirror ui images in output-slot order, so the wire's source handle picks
+// which image this layer shows.
+function srcOutputIndex(edge: any): number {
+  const m = /^output-(\d+)$/.exec(edge?.sourceHandle ?? '')
+  return m ? Number(m[1]) : 0
+}
+function resolveSrcUrl(src: any, edge?: any): string | null {
+  if (src?.data?.images?.length) {
+    const i = srcOutputIndex(edge)
+    return src.data.images[i] ?? src.data.images[0]
+  }
   if (src?.data?.nodeType === 'LoadImage' && src?.data?.widgetsValues?.[0]) {
     return `/view?${new URLSearchParams({ filename: src.data.widgetsValues[0], type: 'input' })}`
+  }
+  // An `Image` artifact node (pasted/uploaded image) before it has executed: its
+  // filename lives in the `image` widget (by name), with data.images still empty.
+  if (src?.data?.nodeType === 'Image') {
+    const file = srcWidgetVal(src, 'image')
+    if (file) return `/view?${new URLSearchParams({ filename: file, type: 'input' })}`
   }
   return null
 }
@@ -181,7 +205,7 @@ const wiredLayers = computed<WiredLayer[]>(() => {
     const edge = edges.find((e: any) => e.target === props.id && e.targetHandle === `input-${s}`)
     if (!edge) continue
     const src = nodes.find((n: any) => n.id === edge.source)
-    const url = resolveSrcUrl(src)
+    const url = resolveSrcUrl(src, edge)
     if (!url) continue
     out.push({ slot: s, url, x: layerTf(s, 'x'), y: layerTf(s, 'y'), rotation: layerTf(s, 'rotation'), scale: layerTf(s, 'scale'), opacity: wiredOpacity(s), blend: blendOf(s), cloner: wiredCloner(s) })
   }
@@ -341,6 +365,9 @@ const editingStyle = computed(() => {
     fontFamily: /\s/.test(l.fontFamily) ? `"${l.fontFamily}", sans-serif` : `${l.fontFamily}, sans-serif`,
     fontWeight: String(l.fontWeight), fontSize: l.fontSize * W + 'px',
     lineHeight: String(l.lineHeight), color: paintPrimaryColor(l.color, '#ffffff'), textAlign: l.align as any,
+    letterSpacing: `${l.letterSpacing || 0}em`,
+    textTransform: (l.textTransform || 'none') as any,
+    textDecoration: [l.underline && 'underline', l.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none',
     opacity: String(l.opacity), caretColor: paintPrimaryColor(l.color, '#ffffff'),
   }
 })
