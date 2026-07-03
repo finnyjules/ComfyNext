@@ -62,6 +62,10 @@ const {
   sampleBrand: () => sampleBrand.value as BrandKit,
 })
 function onAgentHover(i: number | null) { agentHovered.value = i }
+// The agent's progress / proposal take over the right panel while it's active.
+const agentPanelActive = computed(() => agentBusy.value || agentReviewing.value || agentHasProposal.value)
+// The right panel is shown when the agent is working or an element/stack is selected.
+const rightPanelOpen = computed(() => agentPanelActive.value || !!selectedElement.value || !!selectedStack.value)
 
 // Opening step: a fresh, empty layout shows the format picker first (pick the
 // deliverables, then design on a blank canvas). An existing layout — any
@@ -79,8 +83,8 @@ function onFormatsChosen(keys: string[]) {
 const canvasArea = computed(() => ({
   top: '24px',
   left: '272px',                                     // left-4 + w-60 + gap
-  // Right column (agent on v3, and/or the element inspector) is w-80 = 320px.
-  right: (isV3(template.value) || selectedElement.value) ? '344px' : '32px', // right-4 + w-80 + gap
+  // Right column (agent results and/or the element inspector) is w-80 = 320px.
+  right: rightPanelOpen.value ? '344px' : '32px', // right-4 + w-80 + gap
   bottom: '88px',                                    // bottom toolbar + gap
 }))
 
@@ -339,37 +343,46 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </div>
       </div>
 
-      <!-- Right panel: ONE card — the agent pinned at the top, the proposal and
-           element inspector scrolling beneath it. -->
+      <!-- Right panel: the agent's progress / proposal take it over while active
+           (Assistant), otherwise it hosts the element / stack inspector. The prompt
+           itself lives in the bottom cluster, above the toolbar. -->
       <div
-        v-if="started && (isV3(template) || selectedElement)"
+        v-if="started && rightPanelOpen"
         class="absolute top-4 right-4 bottom-4 z-30 flex w-80 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0e0e10]/80 shadow-2xl backdrop-blur-md"
       >
-        <div v-if="isV3(template)" class="shrink-0 border-b border-white/[0.06] px-4 pt-4 pb-5">
-          <AgentBar :busy="agentBusy" :error="agentError" :notice="agentNotice" @submit="agentAsk" @chip="agentAsk" />
-        </div>
-        <div class="min-h-0 flex-1 overflow-y-auto pt-2">
-          <!-- The progress line fades out and the proposal fades in (out-in). -->
-          <Transition name="agent-fade" mode="out-in">
-            <div v-if="agentBusy" key="progress" class="p-3">
-              <AgentProgress :active="agentBusy" />
+        <template v-if="agentPanelActive">
+          <div class="shrink-0 border-b border-white/[0.06] px-4 py-3 flex items-center gap-2">
+            <span class="text-white/70">✦</span>
+            <span class="text-sm font-medium">Assistant</span>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-3">
+            <AgentProgress v-if="agentBusy" :active="agentBusy" />
+            <div v-else-if="agentReviewing && !agentHasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
+              <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
             </div>
-            <div v-else-if="agentHasProposal" key="proposal" class="p-3 pb-0">
-              <AgentProposal
-                :changes="agentChanges" :busy="agentBusy" :issues="agentIssues"
-                :review="agentReview" :reviewing="agentReviewing"
-                @accept="acceptChange" @reject="rejectChange" @reroll="agentReroll"
-                @keep="agentKeep" @revert="agentRevert" @hover="onAgentHover"
-              />
-            </div>
-          </Transition>
-          <TemplatesGridPropertyPanel v-if="selectedElement && !agentBusy" />
-          <TemplatesStackInspector v-if="selectedStack && !agentBusy" />
+            <AgentProposal
+              v-else-if="agentHasProposal"
+              :changes="agentChanges" :busy="agentBusy" :issues="agentIssues"
+              :review="agentReview" :reviewing="agentReviewing"
+              @accept="acceptChange" @reject="rejectChange" @reroll="agentReroll"
+              @keep="agentKeep" @revert="agentRevert" @hover="onAgentHover"
+            />
+          </div>
+        </template>
+        <div v-else class="min-h-0 flex-1 overflow-y-auto pt-2">
+          <TemplatesGridPropertyPanel v-if="selectedElement" />
+          <TemplatesStackInspector v-if="selectedStack" />
         </div>
       </div>
 
-      <!-- Bottom toolbars: tools + zoom (only once designing) -->
-      <div v-if="started" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+      <!-- Bottom cluster: the agent prompt (v3) sits above the tools + zoom toolbars.
+           The column shrink-wraps to the toolbar row, so the bare prompt matches its
+           width — the same layout the Compositor uses. -->
+      <div v-if="started" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-stretch gap-2">
+        <div v-if="isV3(template)">
+          <AgentBar :busy="agentBusy" :error="agentError" :notice="agentNotice" :chips="[]" @submit="agentAsk" @chip="agentAsk" />
+        </div>
+        <div class="flex items-center gap-2">
         <div class="flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <!-- Grid -->
         <div class="relative">
@@ -609,6 +622,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
             title="Zoom in"
             @click="ctx.zoomBy(1.2)"
           >+</button>
+        </div>
         </div>
       </div>
     </div>

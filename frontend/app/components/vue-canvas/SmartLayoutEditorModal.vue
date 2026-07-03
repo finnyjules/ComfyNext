@@ -322,9 +322,11 @@ function readUpstreamImageUrl(inputName: string): string | null {
   const source = props.nodes.find((n: any) => n.id === edge.source)
   if (!source) return null
 
-  // LoadImage: surface the picked filename via /view so the editor shows a
-  // realistic preview while authoring.
-  if (source.data?.nodeType === 'LoadImage') {
+  // LoadImage or an `Image` artifact node (e.g. a pasted/uploaded image): surface
+  // the picked filename via /view so the editor shows a realistic preview while
+  // authoring. Both store the filename in the `image` widget (resolved by name),
+  // and an Image node has no data.images until it has executed.
+  if (source.data?.nodeType === 'LoadImage' || source.data?.nodeType === 'Image') {
     const defs = source.data.widgetDefs as any[] | undefined
     const wv = source.data.widgetsValues as any[] | undefined
     const wIdx = defs?.findIndex((d: any) => d.name === 'image') ?? -1
