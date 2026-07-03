@@ -22,4 +22,22 @@ describe('resolveWiredInput', () => {
     expect(url).toContain('filename=photo.jpg')
     expect(url).toContain('type=input')
   })
+
+  it('builds a /view URL for an upstream Image artifact node (pasted image) before it runs', () => {
+    // A pasted/uploaded Image node stores its filename in the `image` widget,
+    // resolved by name via widgetDefs, and has no data.images until executed.
+    // The `image` widget is deliberately not at index 0 to prove name lookup.
+    const up = {
+      id: 'a',
+      data: {
+        nodeType: 'Image',
+        widgetDefs: [{ name: 'label' }, { name: 'image' }],
+        widgetsValues: ['ignored', '1719_pasted.png'],
+      },
+    }
+    const edges = [{ source: 'a', target: 's1', targetHandle: 'input-0' }]
+    const url = resolveWiredInput('s1', [studio, up], edges)
+    expect(url).toContain('filename=1719_pasted.png')
+    expect(url).toContain('type=input')
+  })
 })

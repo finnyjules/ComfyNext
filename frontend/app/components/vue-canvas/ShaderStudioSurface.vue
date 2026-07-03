@@ -18,9 +18,6 @@ import { ADJUST_PRESETS, DUOTONE_PRESETS, applyAdjustPreset } from '~/lib/shader
 import { loadImage } from '~/lib/shaderstudio/source'
 import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import AgentBar from '~/components/agent/AgentBar.vue'
-import AgentProposal from '~/components/agent/AgentProposal.vue'
-import AgentProgress from '~/components/agent/AgentProgress.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
@@ -56,10 +53,8 @@ const effectUniforms = computed(() =>
 const { getLocalSetting } = useLocalSettings()
 const agentParams = makeConfigParams(() => config.value)
 const activeAgentControls = computed(() => shaderAgentControls(config.value, effectDef.value))
-const {
-  busy: agBusy, error: agError, notice: agNotice, changes: agChanges, review: agReview, reviewing: agReviewing, hasProposal: agHasProposal, hovered: agHovered,
-  ask: agAsk, acceptChange: agAccept, rejectChange: agReject, reroll: agReroll, keep: agKeep, revert: agRevert,
-} = useStudioAgent({
+// The shell renders the prompt + results from this object (see StudioModalShell).
+const shaderAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio',
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
   // Force a fresh synchronous render of the current config to the preview canvas,
@@ -316,7 +311,12 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
 </script>
 
 <template>
-  <StudioModalShell title="Shader studio" :breadcrumb="effectDef?.name" @close="closeEditor">
+  <StudioModalShell
+    title="Shader studio" :breadcrumb="effectDef?.name"
+    :agent="shaderAgent"
+    agent-placeholder="Describe the look — e.g. punchier, warmer, more glow…"
+    @close="closeEditor"
+  >
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
@@ -336,23 +336,6 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
     </template>
 
     <template #controls>
-      <!-- In-product agent: tune the shader in natural language. -->
-      <div class="mb-3">
-        <AgentBar
-          :busy="agBusy" :error="agError" :notice="agNotice"
-          :chips="['More intense', 'Warmer grade', 'Higher contrast', 'Softer / dreamier']"
-          placeholder="Describe the look — e.g. punchier, warmer, more glow…"
-          @submit="agAsk" @chip="agAsk"
-        />
-        <div v-if="agBusy" class="pt-2.5"><AgentProgress :active="agBusy" /></div>
-        <div v-else-if="agHasProposal" class="pt-2.5">
-          <AgentProposal
-            :changes="agChanges" :busy="agBusy" :review="agReview" :reviewing="agReviewing"
-            @accept="agAccept" @reject="agReject" @reroll="agReroll"
-            @keep="agKeep" @revert="agRevert" @hover="(i: number | null) => agHovered = i"
-          />
-        </div>
-      </div>
       <!-- Source -->
       <StudioSection title="Source">
         <p v-if="wiredUrl" class="mb-2 text-[11px] text-white/50">Using wired input</p>

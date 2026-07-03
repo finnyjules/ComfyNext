@@ -3,10 +3,26 @@
 // resolveSrcUrl logic in app/lib/shaderfx/chain.ts (kept local so the studio engine
 // is self-contained).
 
+// Read a node's widget value by name (widgetDefs[i] ↔ widgetsValues[i]).
+function widgetValue(src: any, name: string): string | null {
+  const defs = src?.data?.widgetDefs
+  const vals = src?.data?.widgetsValues
+  if (!Array.isArray(defs) || !Array.isArray(vals)) return null
+  const i = defs.findIndex((w: any) => w?.name === name)
+  return i >= 0 ? (vals[i] || null) : null
+}
+
 function resolveSrcUrl(src: any): string | null {
   if (src?.data?.images?.length) return src.data.images[0]
   if (src?.data?.nodeType === 'LoadImage' && src?.data?.widgetsValues?.[0]) {
     return `/view?${new URLSearchParams({ filename: src.data.widgetsValues[0], type: 'input' })}`
+  }
+  // An `Image` artifact node (a pasted or uploaded image) before it has executed:
+  // its filename lives in the `image` widget (resolved by name), and data.images
+  // is still empty. Mirror ArtifactImageNode's own /view resolution.
+  if (src?.data?.nodeType === 'Image') {
+    const file = widgetValue(src, 'image')
+    if (file) return `/view?${new URLSearchParams({ filename: file, type: 'input' })}`
   }
   return null
 }

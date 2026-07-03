@@ -42,6 +42,16 @@ describe('walkShaderChain', () => {
     expect(r.baseUrl).toBe('/view?out=b')
   })
 
+  it('resolves an upstream Image artifact node (pasted image) via its image widget', () => {
+    const nodes = [
+      shaderNode('b', 'halftone'),
+      node('a', 'Image', { widgetDefs: [{ name: 'label' }, { name: 'image' }], widgetsValues: ['x', 'pasted.png'] }),
+    ]
+    const r = walkShaderChain('b', nodes, [edge('a', 'b')])
+    expect(r.baseUrl).toContain('filename=pasted.png')
+    expect(r.baseUrl).toContain('type=input')
+  })
+
   it('cycles and missing edges terminate safely', () => {
     const nodes = [shaderNode('a', 'halftone'), shaderNode('b', 'halftone')]
     const r = walkShaderChain('a', nodes, [edge('b', 'a'), edge('a', 'b')])

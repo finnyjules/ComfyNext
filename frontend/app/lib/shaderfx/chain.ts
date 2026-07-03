@@ -34,6 +34,12 @@ function resolveSrcUrl(src: any): string | null {
   if (src?.data?.nodeType === 'LoadImage' && src?.data?.widgetsValues?.[0]) {
     return `/view?${new URLSearchParams({ filename: src.data.widgetsValues[0], type: 'input' })}`
   }
+  // An `Image` artifact node (pasted/uploaded image) before it has executed: its
+  // filename lives in the `image` widget (by name), with data.images still empty.
+  if (src?.data?.nodeType === 'Image') {
+    const file = widgetVal(src, 'image')
+    if (file) return `/view?${new URLSearchParams({ filename: String(file), type: 'input' })}`
+  }
   return null
 }
 
