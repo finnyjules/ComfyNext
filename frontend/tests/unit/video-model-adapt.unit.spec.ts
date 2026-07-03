@@ -4,10 +4,11 @@ import {
   modelSupportsSeed, allowedDurations, allowedAspectRatios, snapWidgetsToModel,
 } from '../../app/lib/videoModelAdapt'
 
-// Audit of comfy_api_nodes/video_models.py (2026-06-10): every builder calls
-// _maybe_set_seed except _b_kling_v2_5_turbo_pro (Replicate 422s on seed) and
-// _b_fabric_1_0 (lip-sync, no seed input).
-const NO_SEED_IDS = ['kling-v2.5-turbo-pro', 'fabric-1.0']
+// Audit of comfy_api_nodes/video_models.py: every builder calls _maybe_set_seed
+// except _b_kling_v2_5_turbo_pro (Replicate 422s on seed), _b_fabric_1_0 (lip-sync,
+// no seed input), and _b_seedance_2_0 (moved to fal 2026-07-02 — fal Seedance has
+// no seed input; seedance-2.0-fast stays on Replicate and keeps its seed).
+const NO_SEED_IDS = ['kling-v2.5-turbo-pro', 'fabric-1.0', 'seedance-2.0']
 
 describe('video-models supportsSeed flag', () => {
   it('every model declares a boolean supportsSeed', () => {
