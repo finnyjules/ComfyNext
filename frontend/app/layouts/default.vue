@@ -5,9 +5,12 @@ import {
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
+  Shapes, Blend, Aperture, Grid3x3, CaseSensitive,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { healDanglingLinks } from '~/composables/useFilteredPrompt'
+import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
+import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
 import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
@@ -86,6 +89,7 @@ const sidebarItems = [
   { label: 'Hand', icon: Hand, tool: 'hand' },
   // Sources
   { label: 'Add', icon: Plus, submenu: 'load', dividerBefore: true },
+  { label: 'Studios', icon: Shapes, submenu: 'studios' },
   { label: 'Assets', icon: LayoutGrid, panel: 'assets' },
   // Make + edit
   { label: 'Actions', icon: WandSparkles, panel: 'generators', dividerBefore: true },
@@ -109,15 +113,7 @@ const loadOptions = [
   // Composition surfaces — spatial (Frame, Smart Layout) + temporal (Timeline) — grouped up top.
   { label: 'Frame',    icon: Frame,          nodeType: 'Compositor' },
   { label: 'Smart Layout', icon: LayoutTemplate, nodeType: 'SmartLayout' },
-  // Kinetic Slates gallery — hidden pending a redesign (see lib/kineticEnabled).
-  ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
-  ...(SPACE_TYPE_ENABLED ? [{ label: 'Type Studio', icon: Clapperboard, special: 'space-type' }] : []),
-  { label: 'Gradient', icon: Sparkles, nodeType: 'GradientStudio' },
-  { label: 'Shader', icon: Sparkles, nodeType: 'ShaderStudio' },
-  { label: 'Pattern', icon: Sparkles, nodeType: 'TextureStudio' },
   { label: 'Collection', icon: Table2, nodeType: 'Collection' },
-  { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector' },
-  { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
@@ -125,24 +121,40 @@ const loadOptions = [
   { label: 'Video', icon: Film,           nodeType: 'Video' },
   { label: '3D',    icon: Box,            nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
 ]
-const loadMenuOpen = ref(false)
+
+// One submenu open at a time. 'load' = Add, plus the Studios / Generate doors
+// and the More overflow. null = all closed.
+type SubmenuName = 'load' | 'studios' | 'generate' | 'more'
+const openSubmenu = ref<SubmenuName | null>(null)
 
 function addLoadNode(nodeType: string) {
   window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType } }))
-  loadMenuOpen.value = false
+  openSubmenu.value = null
 }
 
 // Load submenu click: most items drop their artifact node, but "Slate" is a
 // special entry that opens the slate gallery instead of dispatching addNode.
 const slateGalleryOpen = ref(false)
 function onLoadOption(opt: { nodeType?: string; special?: string }) {
-  loadMenuOpen.value = false
+  openSubmenu.value = null
   if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
   // Space Type is a persistent, re-editable canvas node now — drop the node and
   // let VueNodeCanvas auto-open its editor (config persists in node properties).
   if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: 'SpaceType' } })); return }
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
+
+// Studios — places you open and craft in (spec §1: defined by interaction
+// model, not AI-ness). Pastel dot = the studio bills AI credits when run.
+const studiosOptions = [
+  ...(SPACE_TYPE_ENABLED ? [{ label: 'Type', icon: CaseSensitive, special: 'space-type' }] : []),
+  { label: 'Gradient', icon: Blend, nodeType: 'GradientStudio' },
+  { label: 'Shader', icon: Aperture, nodeType: 'ShaderStudio' },
+  { label: 'Pattern', icon: Grid3x3, nodeType: 'TextureStudio' },
+  ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
+  { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector', pastel: true },
+  { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio', pastel: true },
+]
 
 // Gallery → canvas: a placed slate is a Compositor (Frame) node whose
 // properties carry the instantiated local layers + motion doc. VueNodeCanvas's
@@ -176,7 +188,6 @@ const annotateOptions = [
 // "More" overflow menu — folds the power-user + annotate actions behind one
 // toolbar item. Nodes/Blocks reuse runSidebarItem; annotate options fire
 // addAnnotation. (Annotate is no longer a top-level toolbar item.)
-const moreMenuOpen = ref(false)
 const moreOptions = [
   { label: 'Nodes', icon: GitFork, tabId: 'node-library' },
   { label: 'Blocks', icon: Boxes, panel: 'blocks' },
@@ -184,7 +195,7 @@ const moreOptions = [
 
 function addAnnotation(kind: string) {
   window.dispatchEvent(new CustomEvent('comfynext:addAnnotation', { detail: { kind } }))
-  moreMenuOpen.value = false
+  openSubmenu.value = null
 }
 
 // "Get Started" modal: pops up once per fresh blank project. We track the
@@ -296,8 +307,7 @@ function isSidebarItemActive(item: any): boolean {
   if (item?.panel === 'characters') return charactersPanelOpen.value
   if (item?.panel === 'blocks') return blockLibraryPanelOpen.value
   if (item?.panel === 'assets') return assetsPanelOpen.value
-  if (item?.submenu === 'load') return loadMenuOpen.value
-  if (item?.submenu === 'more') return moreMenuOpen.value || blockLibraryPanelOpen.value || vueNodesSidebarOpen.value
+  if (item?.submenu) return openSubmenu.value === item.submenu || (item.submenu === 'more' && (blockLibraryPanelOpen.value || vueNodesSidebarOpen.value))
   return activeSidebarItem.value === item?.label
 }
 
@@ -307,20 +317,14 @@ function toggleSidebarItem(label: string) {
     openTab({ type: 'assets', label: 'Assets' })
     return
   }
-  if (item?.submenu === 'load') {
-    // Close other open panels so the popup isn't competing with them.
+  if (item?.submenu) {
+    // Close side panels so the popup isn't competing with them.
     toolboxPanelOpen.value = false
     generatorsPanelOpen.value = false
     loraLibraryPanelOpen.value = false
     charactersPanelOpen.value = false
     blockLibraryPanelOpen.value = false
-    moreMenuOpen.value = false
-    loadMenuOpen.value = !loadMenuOpen.value
-    return
-  }
-  if (item?.submenu === 'more') {
-    loadMenuOpen.value = false
-    moreMenuOpen.value = !moreMenuOpen.value
+    openSubmenu.value = openSubmenu.value === item.submenu ? null : (item.submenu as SubmenuName)
     return
   }
   runSidebarItem(item)
@@ -329,8 +333,7 @@ function toggleSidebarItem(label: string) {
 // Perform a leaf sidebar action (tool / panel / tab). Shared by the toolbar and
 // the "More" overflow menu so their behaviour can't drift.
 function runSidebarItem(item: any) {
-  loadMenuOpen.value = false
-  moreMenuOpen.value = false
+  openSubmenu.value = null
   if (item?.tool) {
     // Deactivate explain if switching away
     if (activeTool.value === 'explain' && item.tool !== 'explain') {
@@ -472,7 +475,7 @@ async function runVueWorkflow(
   }
 
   // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
-  const plainWorkflow = JSON.parse(JSON.stringify(workflow))
+  let plainWorkflow = JSON.parse(JSON.stringify(workflow))
 
   // Stamp the tab's stable project UUID so history entries can be grouped
   if (activeTab.value.projectUuid) {
@@ -597,6 +600,19 @@ async function runVueWorkflow(
     toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
     return false
   }
+  // Frontend-only nodes (studios with no /object_info entry — Collection,
+  // SpaceType, GradientStudio, etc.) never execute server-side. Filtered runs
+  // already exclude them (buildFilteredWorkflow only keeps an explicit target
+  // set), but a global Run loads the full graph, and the bridge iframe's own
+  // graphToPrompt aborts the ENTIRE run the instant it hits a class_type-less
+  // node ("Node 'X' has no class_type"). Strip them from this run-only copy —
+  // never from anything a save path might still reference.
+  const { workflow: strippedWorkflow, removedTypes } = stripFrontendOnlyNodes(plainWorkflow, FRONTEND_ONLY_NODE_TYPES)
+  if (removedTypes.length) {
+    plainWorkflow = strippedWorkflow
+    console.log('[Run] excluded frontend-only node(s) from execution:', removedTypes)
+  }
+
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
     targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
@@ -3065,19 +3081,13 @@ function dismissRunResult() {
           </Transition>
         </div>
 
-        <!-- Backdrop closes the Load popup on outside click. Sits below the
-             toolbar (z-40) but above the canvas, so clicks pass through to
+        <!-- Backdrop closes any open submenu popup on outside click. Sits below
+             the toolbar (z-40) but above the canvas, so clicks pass through to
              the close handler instead of the canvas behind. -->
         <div
-          v-if="loadMenuOpen && activeTab.type === 'project'"
+          v-if="openSubmenu && activeTab.type === 'project'"
           class="absolute inset-0 z-30"
-          @click="loadMenuOpen = false"
-        />
-        <!-- Same backdrop pattern for the More popup. -->
-        <div
-          v-if="moreMenuOpen && activeTab.type === 'project'"
-          class="absolute inset-0 z-30"
-          @click="moreMenuOpen = false"
+          @click="openSubmenu = null"
         />
         <!-- Workflow status bar: replaces the start/complete/error toasts
              with one persistent surface for "what's the workflow doing."

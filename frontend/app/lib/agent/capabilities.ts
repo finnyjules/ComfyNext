@@ -274,3 +274,25 @@ const STUDIOS: AgentCapability[] = [
 ]
 
 export const AGENT_CAPABILITIES: AgentCapability[] = [...STUDIOS, ...GENERATORS]
+
+/**
+ * All node types that exist ONLY on the Vue canvas — no ComfyUI /object_info
+ * entry, no backend class_type. The global Run path (runVueWorkflow in
+ * layouts/default.vue) must strip these before handing the workflow to the
+ * bridge iframe: the iframe's own graphToPrompt serializes every node it's
+ * given, and a class_type-less node aborts the ENTIRE run with "Node 'X' has
+ * no class_type" — filtered runs are unaffected because buildFilteredWorkflow
+ * only ever keeps an explicit target set.
+ *
+ * Derived from the `frontendOnly: true` studios above, PLUS `LipSyncStudio` —
+ * a frontend-only studio (see VueNodeCanvas.vue's wildcard-output synthesis
+ * list) that was never added to AGENT_CAPABILITIES, so it doesn't come
+ * through the `.filter(c => c.frontendOnly)` derivation. That's a separate,
+ * pre-existing gap in the agent's capability palette (not this file's
+ * concern to fix); it's added here explicitly so the Run-time strip stays
+ * correct regardless.
+ */
+export const FRONTEND_ONLY_NODE_TYPES: Set<string> = new Set([
+  ...studioNodeTypes().map(n => n.name),
+  'LipSyncStudio',
+])
