@@ -38,7 +38,20 @@ The spike deliberately does NOT re-route the canvas. To ship Surface B, all engi
 3. **Bind `:8188` to a private interface** on the RunPod topology; only Nitro can reach it.
 4. Redirect the bridge's `queuePrompt` through the metered route (or make the proxied `/prompt` itself the meter).
 
-**Estimate:** _[filled by Task 8's live smoke — the point of the spike is to size this. Record: does proxying the ws in Nitro dev work cleanly? does the iframe tolerate a same-origin proxy path? rough day count for Phase 5.]_
+**Estimate:** the HTTP half is small — `comfyui-proxy.ts` already proxies every REST path the canvas needs (`/prompt`, `/view`, `/upload`, `/object_info`, …), so "iframe behind Nitro" is mostly pointing the iframe src at a proxied origin and fixing asset paths (~1–2 days incl. regressions). The ws proxy is the real work: Nitro dev has no first-class ws passthrough, so it needs a crossws/h3 upgrade handler + bidirectional pump + reconnect semantics (~2–3 days to production-shape). Redirecting the bridge's `queuePrompt` through `/api/meter/prompt` is one bridge change (~0.5 day, needs a ComfyUI restart per bridge convention). Call Phase 5 **~1 week** all-in on the RunPod topology, on top of infra provisioning itself.
 
-## Effort estimate for the rest (fill after smoke)
-_[filled by Task 8's live smoke — Phases 1–3 are ~a week each per the spec; confirm nothing here contradicts that. Note any surprises.]_
+## Effort estimate for the rest (live smoke results, 2026-07-03)
+
+All four paths verified end-to-end against the real engine through the real route (`frontend-harness` dev server, ComfyUI at `127.0.0.1:8188`):
+
+| Path | Observed |
+|---|---|
+| Funded success (EmptyImage→SaveImage, 1cr) | priced → forwarded → `prompt_id` returned → **debited 100→99 ~1.1s after submit** (run itself ~0.1s; latency = watcher's 1s poll cadence) |
+| Insufficient (0cr wallet, 1cr graph) | **HTTP 402** `{available:0, required:1}`, engine queue length unchanged (nothing forwarded) |
+| Runtime failure (LipSyncNode w/ no audio → SaveVideo, 31cr priced) | forwarded, engine errored ~1s, **voided fast, balance unchanged** — no charge |
+| Anonymous (no x-spike-user) | **HTTP 401**, no deps invoked |
+| Validation-rejected graph | ComfyUI 400 at forward → route 400, nothing registered, no charge |
+
+**Surprise worth its own line — failed runs never set `completed:true`.** The live smoke caught that ComfyUI history marks failures `{status_str:'error', completed:false}`; the watcher originally gated on `completed` and would have voided failures only via the 2-minute timeout. Fixed (`d4fd6bef1`): success requires `status_str==='success' && completed`; error settles on `status_str==='error'` alone. This is the kind of engine-shape fact to re-verify when upgrading ComfyUI.
+
+Nothing observed contradicts the spec's ~a-week-each sizing for Phases 1–3. The metering mechanism itself is proven and cheap; the schedule risk is concentrated in Phase 5's ws/iframe isolation (above) and the separately-tracked multi-tenant data + hosted-GPU tracks.
