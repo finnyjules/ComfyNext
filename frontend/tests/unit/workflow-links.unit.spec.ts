@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assembleWorkflowLinks, healDanglingLinks, repairInvalidNodeIds, seedHasControlWidget, realignWidgetValues } from '../../app/composables/useFilteredPrompt'
+import { assembleWorkflowLinks, healDanglingLinks, repairInvalidNodeIds, seedHasControlWidget, realignWidgetValues, stripVarsLinks } from '../../app/composables/useFilteredPrompt'
 import type { LiteGraphNode } from '../../app/composables/useVueNodes'
 
 // Minimal node factory with one IMAGE input ("images", slot 0) and one IMAGE
@@ -19,6 +19,17 @@ const edge = (source: number, target: number) => ({
   sourceHandle: 'output-0',
   targetHandle: 'input-0',
   data: { dataType: 'IMAGE' },
+})
+
+// VARS edge (Collection → Smart Layout): Collection is a frontend-only
+// data-table node with no backend class_type, so this edge must never
+// serialize into the prompt (see assembleWorkflowLinks / stripVarsLinks).
+const varsEdge = (source: number, target: number) => ({
+  source: String(source),
+  target: String(target),
+  sourceHandle: 'output-0',
+  targetHandle: 'input-1',
+  data: { dataType: 'VARS' },
 })
 
 describe('assembleWorkflowLinks', () => {
@@ -65,6 +76,101 @@ describe('assembleWorkflowLinks', () => {
       expect(ids.has(Number(l[3]))).toBe(true) // target exists
     }
     expect(links).toHaveLength(1)
+  })
+
+  it('skips a VARS edge interleaved between IMAGE edges, leaving contiguous ids on the rest', () => {
+    // Collection (id 3) → SmartLayout's `vars` input (slot 1), sandwiched
+    // between two ordinary IMAGE edges. The VARS edge must be dropped
+    // entirely — no tuple, no input.link — while the surviving IMAGE links
+    // still get contiguous ids 1, 2 as if the VARS edge were never there.
+    const a = node(1)
+    const b = node(2)
+    const smartLayout = {
+      id: 4,
+      type: 'SmartLayout',
+      inputs: [
+        { name: 'images', type: 'IMAGE', link: null },
+        { name: 'vars', type: 'VARS', link: null },
+      ],
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: null }],
+    } as unknown as LiteGraphNode
+    const collection = {
+      id: 3,
+      type: 'Collection',
+      inputs: [],
+      outputs: [{ name: 'VARS', type: 'VARS', links: null }],
+    } as unknown as LiteGraphNode
+
+    const varsInEdge = { ...varsEdge(3, 4), targetHandle: 'input-1' }
+    const links = assembleWorkflowLinks(
+      [a, b, smartLayout, collection],
+      [edge(1, 2), varsInEdge, edge(2, 4)],
+    )
+
+    expect(links).toHaveLength(2)
+    expect(links.some((l) => l[5] === 'VARS')).toBe(false)
+    expect(links[0]).toEqual([1, 1, 0, 2, 0, 'IMAGE'])
+    expect(links[1]).toEqual([2, 2, 0, 4, 0, 'IMAGE'])
+
+    // VARS target input stays unwired.
+    expect(smartLayout.inputs![1].link).toBeNull()
+    // Collection's VARS output never picked up a link id.
+    expect(collection.outputs![0].links).toEqual([])
+  })
+})
+
+describe('stripVarsLinks', () => {
+  it('nulls a VARS input link, drops its tuple from links[], and prunes it from the source output — leaving an unrelated IMAGE link untouched', () => {
+    // Defense-in-depth pass: a workflow can reach this function with a VARS
+    // link already baked in (e.g. a save made before the assembleWorkflowLinks
+    // guard existed). Collection has no backend class_type, so a surviving
+    // VARS link here would still abort graphToPrompt.
+    const wf = {
+      nodes: [
+        { id: 1, type: 'Gen', inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }] },
+        {
+          id: 2,
+          type: 'SmartLayout',
+          inputs: [
+            { name: 'images', type: 'IMAGE', link: 1 },
+            { name: 'vars', type: 'VARS', link: 2 },
+          ],
+          outputs: [],
+        },
+        { id: 3, type: 'Collection', inputs: [], outputs: [{ name: 'VARS', type: 'VARS', links: [2] }] },
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'IMAGE'],
+        [2, 3, 0, 2, 1, 'VARS'],
+      ],
+    }
+
+    stripVarsLinks(wf as any)
+
+    // VARS input nulled.
+    expect(wf.nodes[1].inputs[1].link).toBeNull()
+    // VARS tuple removed from links[]; the IMAGE tuple survives untouched.
+    expect(wf.links).toEqual([[1, 1, 0, 2, 0, 'IMAGE']])
+    // VARS link id pruned from the Collection source output.
+    expect(wf.nodes[2].outputs[0].links).toEqual([])
+    // Unrelated IMAGE input/output untouched.
+    expect(wf.nodes[1].inputs[0].link).toBe(1)
+    expect(wf.nodes[0].outputs[0].links).toEqual([1])
+  })
+
+  it('is a no-op when no VARS input carries a link', () => {
+    const wf = {
+      nodes: [
+        { id: 1, type: 'Gen', inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [5] }] },
+        { id: 2, type: 'Image', inputs: [{ name: 'images', type: 'IMAGE', link: 5 }], outputs: [] },
+      ],
+      links: [[5, 1, 0, 2, 0, 'IMAGE']],
+    }
+
+    stripVarsLinks(wf as any)
+
+    expect(wf.links).toEqual([[5, 1, 0, 2, 0, 'IMAGE']])
+    expect(wf.nodes[1].inputs[0].link).toBe(5)
   })
 })
 
