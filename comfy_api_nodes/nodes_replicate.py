@@ -1930,6 +1930,51 @@ def _lipsync_build_input(engine, image, video, audio, resolution, sync_mode):
     return "veed/fabric-1.0", {"image": image, "audio": audio, "resolution": resolution}
 
 
+async def _upload_replicate_file(data: bytes, filename: str) -> str:
+    """Upload bytes to the Replicate Files API and return a URL a Replicate model
+    can fetch. Used for the sync engine's source VIDEO — sync/lipsync-2-pro cannot
+    ingest a multi-MB base64 data URL, and a local /view URL isn't reachable from
+    Replicate. (Images stay data URLs — small enough, and Fabric accepts them.)"""
+    token = _get_token()
+    form = aiohttp.FormData()
+    form.add_field("content", data, filename=filename, content_type="application/octet-stream")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{REPLICATE_API_BASE}/files",
+            headers={"Authorization": f"Token {token}"}, data=form,
+        ) as r:
+            if r.status not in (200, 201):
+                raise RuntimeError(f"Replicate file upload failed HTTP {r.status}: {await r.text()}")
+            j = await r.json()
+    url = (j.get("urls") or {}).get("get")
+    if not url:
+        raise RuntimeError(f"Replicate file upload returned no url: {j}")
+    return url
+
+
+async def _lipsync_hosted_video_url(src: str) -> str:
+    """Resolve a source-video ref to a Replicate-fetchable URL. A public http(s)
+    URL passes through; a /view input ref or a data: URL is uploaded to Replicate
+    Files. Empty/unknown forms pass through unchanged."""
+    if not src:
+        return src
+    if src.startswith("http://") or src.startswith("https://"):
+        return src
+    name = _parse_view_ref(src)
+    if name:
+        path = os.path.join(folder_paths.get_input_directory(), name)
+        if not os.path.isfile(path):
+            raise RuntimeError(f"Source video {name!r} is missing from the input folder.")
+        with open(path, "rb") as f:
+            data = f.read()
+        return await _upload_replicate_file(data, name)
+    if src.startswith("data:"):
+        b64 = src.split(",", 1)[1] if "," in src else ""
+        data = base64.b64decode(b64)
+        return await _upload_replicate_file(data, "lipsync-source.mp4")
+    return src
+
+
 # =============================================================================
 # USE-CASE NODES
 # =============================================================================
@@ -2143,13 +2188,32 @@ class EditImageNode(IO.ComfyNode):
 
 _BLEND_SCENE_MODELS = ["Flux Kontext Pro", "Nano Banana"]
 
-_BLEND_SCENE_DEFAULT_PROMPT = (
-    "Blend all elements into a single cohesive, photorealistic image. "
-    "Unify the lighting direction, color temperature and ambient tone across the "
-    "whole scene. Add soft, realistic contact shadows where objects meet surfaces. "
-    "Match film grain and depth of field. Keep each element's shape, proportions "
-    "and identity unchanged."
+# The instruction is assembled from the always-on base sentence plus one clause
+# per enabled toggle. A user-supplied `prompt` (advanced) overrides the whole thing.
+_BLEND_SCENE_BASE = "Blend all elements into a single cohesive, photorealistic image."
+_BLEND_CLAUSE_LIGHTING = (
+    "Unify the lighting direction, color temperature and ambient tone across the whole scene."
 )
+_BLEND_CLAUSE_SHADOWS = "Add soft, realistic contact shadows where objects meet surfaces."
+_BLEND_CLAUSE_CAMERA = "Match film grain and depth of field."
+_BLEND_CLAUSE_IDENTITY = (
+    "Keep each element's shape, position, proportions and identity unchanged. "
+    "Do not move, rotate, rescale or reflow any element."
+)
+
+
+def _build_blend_instruction(unify_lighting, contact_shadows, match_camera_look,
+                             preserve_identity):
+    parts = [_BLEND_SCENE_BASE]
+    if unify_lighting:
+        parts.append(_BLEND_CLAUSE_LIGHTING)
+    if contact_shadows:
+        parts.append(_BLEND_CLAUSE_SHADOWS)
+    if match_camera_look:
+        parts.append(_BLEND_CLAUSE_CAMERA)
+    if preserve_identity:
+        parts.append(_BLEND_CLAUSE_IDENTITY)
+    return " ".join(parts)
 
 
 class BlendSceneNode(IO.ComfyNode):
@@ -2177,13 +2241,21 @@ class BlendSceneNode(IO.ComfyNode):
             inputs=[
                 IO.Combo.Input("model", options=_BLEND_SCENE_MODELS, default="Flux Kontext Pro"),
                 IO.Image.Input("image", tooltip="The flattened composite to blend (e.g. a Frame's output)."),
-                IO.String.Input("prompt", multiline=True, default=_BLEND_SCENE_DEFAULT_PROMPT,
-                                tooltip="How to blend. The default harmonizes lighting, color and shadows."),
+                IO.Boolean.Input("unify_lighting", default=True,
+                                 tooltip="Match lighting direction, color temperature and ambient tone across the whole scene."),
+                IO.Boolean.Input("contact_shadows", default=True,
+                                 tooltip="Add soft, realistic contact shadows where elements meet surfaces."),
+                IO.Boolean.Input("match_camera_look", default=True,
+                                 tooltip="Match film grain and depth of field across the elements."),
+                IO.Boolean.Input("preserve_identity", default=True,
+                                 tooltip="Keep each element's shape, position, proportions and identity unchanged — don't move or resize anything."),
                 IO.Mask.Input("keep_subject", optional=True,
                               tooltip="Optional: a mask of a region to keep pixel-exact (e.g. the product). "
                                       "The harmonized scene fills everywhere else."),
                 IO.Float.Input("keep_feather", default=2.0, min=0.0, max=30.0, step=0.5, advanced=True,
                                tooltip="Soften the edge where the kept region meets the blended scene."),
+                IO.String.Input("prompt", multiline=True, default="", optional=True, advanced=True,
+                                tooltip="Advanced: fully custom blend instruction. Leave empty to use the checkboxes above."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
                 IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
             ],
@@ -2194,11 +2266,14 @@ class BlendSceneNode(IO.ComfyNode):
         )
 
     @classmethod
-    async def execute(cls, model, image, prompt, keep_subject=None, keep_feather=2.0,
-                      seed=0, output_format="png"):
+    async def execute(cls, model, image, unify_lighting=True, contact_shadows=True,
+                      match_camera_look=True, preserve_identity=True, keep_subject=None,
+                      keep_feather=2.0, prompt="", seed=0, output_format="png"):
         import torch.nn.functional as F
 
-        instruction = (prompt or "").strip() or _BLEND_SCENE_DEFAULT_PROMPT
+        # A custom prompt (advanced) wins; otherwise assemble from the toggles.
+        instruction = (prompt or "").strip() or _build_blend_instruction(
+            unify_lighting, contact_shadows, match_camera_look, preserve_identity)
         data_url = _image_tensor_to_data_url(image)
 
         # Each model takes a different input schema.
@@ -4049,13 +4124,17 @@ class LipSyncNode(IO.ComfyNode):
 
         # Wired ports win over studio-supplied URLs.
         face_image = _image_tensor_to_data_url(image) if image is not None else _resolve(opts.get("face_image"))
-        face_video = _resolve(opts.get("face_video"))
+        video_src = opts.get("face_video")
         audio_url = _audio_dict_to_wav_data_url(audio, max_seconds=60) if audio is not None else _resolve(opts.get("audio"))
         resolution = opts.get("resolution", resolution)
         sync_mode = opts.get("sync_mode", sync_mode)
         engine = opts.get("engine", engine)
 
-        eng = _lipsync_resolve_engine(engine, bool(face_image), bool(face_video))
+        eng = _lipsync_resolve_engine(engine, bool(face_image), bool(video_src))
+        # The sync engine's video must be a URL Replicate can fetch — upload it to
+        # Replicate Files rather than inlining megabytes of base64 (which sync
+        # rejects). Fabric/image never needs a video, so it's skipped there.
+        face_video = await _lipsync_hosted_video_url(video_src) if eng == "sync" else _resolve(video_src)
         slug, input_dict = _lipsync_build_input(
             eng, face_image, face_video, audio_url, resolution, sync_mode)
         print(f"[LipSync] engine={eng!r} slug={slug!r} keys={list(input_dict)}", flush=True)

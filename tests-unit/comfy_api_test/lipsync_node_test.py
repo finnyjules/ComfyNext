@@ -7,6 +7,7 @@ import pytest
 # Pre-import the util shim so nodes_replicate imports cleanly (pre-existing
 # utils/comfy.utils sys.path shadow; see fal_dispatch_test.py).
 import utils.install_util  # noqa: F401
+from comfy_api_nodes import nodes_replicate as nr
 from comfy_api_nodes.nodes_replicate import _lipsync_resolve_engine, _lipsync_build_input
 
 DATA = "data:image/png;base64,x"
@@ -46,3 +47,44 @@ def test_build_fabric_requires_image():
 def test_build_requires_audio():
     with pytest.raises(RuntimeError, match="audio"):
         _lipsync_build_input("fabric", DATA, None, "", "720p", "cut_off")
+
+
+# --- sync-engine source-video hosting (Replicate Files upload) --------------
+
+@pytest.mark.asyncio
+async def test_hosted_video_passthrough_public_url():
+    # A public URL is already fetchable by Replicate — no upload.
+    assert await nr._lipsync_hosted_video_url("https://x/v.mp4") == "https://x/v.mp4"
+    assert await nr._lipsync_hosted_video_url("http://x/v.mp4") == "http://x/v.mp4"
+    assert await nr._lipsync_hosted_video_url("") == ""
+
+
+@pytest.mark.asyncio
+async def test_hosted_video_uploads_view_ref(monkeypatch, tmp_path):
+    (tmp_path / "clip.mp4").write_bytes(b"VIDEODATA")
+    monkeypatch.setattr(nr.folder_paths, "get_input_directory", lambda: str(tmp_path))
+    captured = {}
+    async def fake_upload(data, filename):
+        captured["data"] = data
+        captured["filename"] = filename
+        return "https://api.replicate.com/v1/files/abc/content"
+    monkeypatch.setattr(nr, "_upload_replicate_file", fake_upload)
+    out = await nr._lipsync_hosted_video_url("/view?filename=clip.mp4&type=input")
+    assert out == "https://api.replicate.com/v1/files/abc/content"
+    assert captured["data"] == b"VIDEODATA"
+    assert captured["filename"] == "clip.mp4"
+
+
+@pytest.mark.asyncio
+async def test_hosted_video_uploads_data_url(monkeypatch):
+    import base64 as _b64
+    captured = {}
+    async def fake_upload(data, filename):
+        captured["data"] = data
+        return "https://api.replicate.com/v1/files/xyz/content"
+    monkeypatch.setattr(nr, "_upload_replicate_file", fake_upload)
+    payload = b"RAWVIDEO"
+    data_url = "data:video/mp4;base64," + _b64.b64encode(payload).decode()
+    out = await nr._lipsync_hosted_video_url(data_url)
+    assert out == "https://api.replicate.com/v1/files/xyz/content"
+    assert captured["data"] == payload
