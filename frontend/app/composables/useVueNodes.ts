@@ -187,6 +187,11 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // LoRA) into a canonical 4-shot reference sheet, then saves it as a castable
   // Character — no backend class_type, reopen to re-edit.
   CharacterSheet: 'character-sheet',
+  // Lip-Sync Studio: frontend-only config node for driving a face (character/
+  // image/video) with a voice (typed TTS/uploaded audio/clip URL) via a
+  // guardrailed sheet UI — no backend class_type, reopen to re-edit. Dispatches
+  // to the backend LipSyncNode (class_type) at Generate time (Task 6).
+  LipSyncStudio: 'lip-sync',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

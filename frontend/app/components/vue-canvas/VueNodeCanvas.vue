@@ -49,6 +49,8 @@ import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
+import LipSyncStudioNode from '~/components/vue-canvas/LipSyncStudioNode.vue'
+import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
@@ -181,7 +183,7 @@ const nodeTypes = {
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
   'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
-  'character-sheet': markRaw(CharacterSheetNode),
+  'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1395,7 +1397,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
   // empty. Give it ONE wildcard output so the generated Image/Video artifact can
   // be wired from it (visual/provenance link only — SpaceType never executes).
-  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShotDirector') && (!data.data.outputs || data.data.outputs.length === 0)) {
+  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShotDirector' || nodeType === 'LipSyncStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'output', type: '*', links: null }]
   }
   // Shader Studio consumes an image — give it one input handle (input-0).
@@ -2478,6 +2480,13 @@ function handleOpenShotDirector(e: Event) {
   if (detail?.nodeId) shotDirectorOpenForId.value = String(detail.nodeId)
 }
 
+// Lip-Sync Studio editor open-state (same pattern as Shot Director).
+const lipSyncOpenForId = ref<string | null>(null)
+function handleOpenLipSync(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) lipSyncOpenForId.value = String(detail.nodeId)
+}
+
 /** Shot Director "Generate": compile the sheet, patch the (found-or-spawned)
  *  FilmShotNode's widgets, and hand off to the normal filtered run. No studio
  *  edge — ShotDirector bakes nothing, so we remember the target id instead. */
@@ -3199,6 +3208,7 @@ onMounted(() => {
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.addEventListener('comfynext:openLipSync', handleOpenLipSync)
   window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.addEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
@@ -3242,6 +3252,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openShotDirector', handleOpenShotDirector)
   window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
   window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.removeEventListener('comfynext:openLipSync', handleOpenLipSync)
   window.removeEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
   window.removeEventListener('comfynext:uncastCharacter', handleUncastCharacter)
   window.removeEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
@@ -5877,6 +5888,16 @@ defineExpose({
         :node-id="shotDirectorOpenForId"
         :nodes="nodes as any[]"
         @close="shotDirectorOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Lip-Sync Studio editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <LipSyncSurface
+        v-if="lipSyncOpenForId"
+        :node-id="lipSyncOpenForId"
+        :nodes="nodes as any[]"
+        @close="lipSyncOpenForId = null"
       />
     </Teleport>
 

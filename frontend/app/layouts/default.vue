@@ -116,6 +116,7 @@ const loadOptions = [
   { label: 'Shader', icon: Sparkles, nodeType: 'ShaderStudio' },
   { label: 'Pattern', icon: Sparkles, nodeType: 'TextureStudio' },
   { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector' },
+  { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio' },
   { label: 'Timeline', icon: Clapperboard, nodeType: 'Timeline', dividerAfter: true },
   { label: 'Image', icon: Image,          nodeType: 'Image' },
   { label: 'Text',  icon: Type,           nodeType: 'Text' },
