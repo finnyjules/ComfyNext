@@ -197,6 +197,13 @@ export function assembleWorkflowLinks(
     const targetNode = nodeById.get(Number(edge.target))
     // Orphaned edge — would emit a link referencing a node not in the graph.
     if (!sourceNode || !targetNode) continue
+    // VARS edges (Collection → Smart Layout) never serialize into the prompt.
+    // Collection is a frontend-only data-table node with no backend class_type,
+    // so emitting this link would leave the target input pointing at a node
+    // ComfyUI's graphToPrompt can't resolve — "No link found in parent graph"
+    // aborts the whole run. Skipping here leaves the input's `link` null (set
+    // below), i.e. Smart Layout serializes exactly as if the input were unwired.
+    if (String(edge.data?.dataType) === 'VARS') continue
 
     const originSlot = parseInt(edge.sourceHandle?.replace('output-', '') || '0')
     const targetSlot = parseInt(edge.targetHandle?.replace('input-', '') || '0')
@@ -378,7 +385,42 @@ export function buildFilteredWorkflow(
       return keep.has(originId) && keep.has(targetId)
     })
   }
+  stripVarsLinks(cloned)
   return cloned
+}
+
+/**
+ * Belt-and-suspenders companion to the VARS skip in `assembleWorkflowLinks`:
+ * null out any node input still carrying a VARS-typed link and drop matching
+ * link tuples, in case a workflow reaches this function with a VARS link
+ * already baked in (e.g. a save made before this guard existed, or a caller
+ * that builds LiteGraph JSON some other way). Collection has no backend
+ * class_type, so a surviving VARS link here would still abort the run.
+ */
+export function stripVarsLinks(workflow: LiteGraphWorkflow): void {
+  const nodes = (workflow.nodes as LiteGraphNode[]) || []
+  const varsLinkIds = new Set<number>()
+  for (const node of nodes) {
+    for (const input of node.inputs || []) {
+      if (String((input as any).type) !== 'VARS') continue
+      if (input.link != null) varsLinkIds.add(Number(input.link))
+      input.link = null
+    }
+  }
+  if (!varsLinkIds.size) return
+  for (const node of nodes) {
+    for (const output of node.outputs || []) {
+      if (Array.isArray(output.links)) {
+        output.links = output.links.filter((id: any) => !varsLinkIds.has(Number(id)))
+      }
+    }
+  }
+  if (Array.isArray(workflow.links)) {
+    workflow.links = workflow.links.filter((link: any) => {
+      if (!Array.isArray(link)) return true
+      return !varsLinkIds.has(Number(link[0]))
+    })
+  }
 }
 
 /**

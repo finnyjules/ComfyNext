@@ -18,7 +18,7 @@ import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
-import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
+import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget, stripVarsLinks } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
@@ -26,6 +26,7 @@ import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
+import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -1453,6 +1454,9 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   if (nodeType === 'Collection' && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'vars', type: 'VARS', links: null }]
   }
+  // Smart Layout: optional VARS input so a Collection's output can wire in
+  // (applies to every created node — no-op for anything but SmartLayout).
+  ensureVarsInput(data)
   return data
 }
 
@@ -5700,6 +5704,7 @@ defineExpose({
     captureActiveRunFromTargets([])
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf
+    stripVarsLinks(wf as any)
     const aligned = realignWidgetValues(wf, objectInfo.value)
     const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
     const backfilled = backfillStandaloneArtifactImages(unlocked, nodes.value as any[], objectInfo.value)

@@ -1,6 +1,7 @@
 import type { Node, Edge } from '@vue-flow/core'
 import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } from '~/composables/useFilteredPrompt'
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
+import { ensureVarsInput } from '~/lib/collection/varsInput'
 
 // LiteGraph workflow format
 export interface LiteGraphNode {
@@ -468,6 +469,11 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
         },
       }
     }) as VueFlowNode[]
+
+    // Saved workflows predating the Collection→SmartLayout VARS wiring lack
+    // the `vars` input handle on SmartLayout nodes — normalize every loaded
+    // node so old graphs gain it too (idempotent no-op for everything else).
+    for (const n of nodes.value as any[]) ensureVarsInput(n)
 
     edges.value = (workflow.links || [])
       .filter((link) => link != null)
