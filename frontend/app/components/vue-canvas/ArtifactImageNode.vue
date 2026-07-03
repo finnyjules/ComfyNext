@@ -294,16 +294,18 @@ function editWithNanoBanana() {
 // ── Escalator actions (ARPU levers 2+5) ─────────────────────────────────────
 // Enhance/Relight/Lens spawn their generator pre-wired and focused but UN-RUN
 // (the user aims first, then pays). Upscale is a true one-tap: spawn + run,
-// upstream artifact frozen so only the upscaler bills.
-function spliceEffect(nodeType: string, opts: { run?: boolean; focus?: boolean } = {}, widgetOverrides?: Record<string, unknown>) {
+// upstream artifact frozen so only the upscaler bills. All four BRANCH off the
+// image (unlike Retouch's true splices): they produce a new deliverable, so
+// they must never re-point the existing chain through a paid node.
+function spliceEffect(nodeType: string, opts: { run?: boolean; focus?: boolean; branch?: boolean } = {}, widgetOverrides?: Record<string, unknown>) {
   window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
     detail: { nodeId: props.id, nodeType, output: 'IMAGE', widgetOverrides, ...opts },
   }))
 }
-function spawnEnhanceDetail() { spliceEffect('EnhanceDetailNode', { focus: true }) }
-function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true }) }
-function spawnRelight() { spliceEffect('RelightNode', { focus: true }) }
-function spawnLensReframe() { spliceEffect('LensReframe', { focus: true }) }
+function spawnEnhanceDetail() { spliceEffect('EnhanceDetailNode', { focus: true, branch: true }) }
+function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true, branch: true }) }
+function spawnRelight() { spliceEffect('RelightNode', { focus: true, branch: true }) }
+function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch: true }) }
 
 // Variations ×4: sequential re-runs of the producing generator with fresh
 // seeds; results accumulate in the Takes strip. Needs something upstream to

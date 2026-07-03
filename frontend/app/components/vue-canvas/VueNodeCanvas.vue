@@ -58,6 +58,8 @@ import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
 import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 import { getProfile } from '~/lib/shotdirector/profiles'
+import { hydrateLipSyncSheet } from '~/lib/lipsync/hydrate'
+import { compileLipSync } from '~/lib/lipsync/compile'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
@@ -1507,8 +1509,12 @@ async function spliceIntoEdge(edgeId: string, nodeType: string, widgetOverrides?
 
 /** Apply a transform after a node: feed it from the node and re-point every
  *  existing matching-type output edge through it (used by artifact-card actions
- *  like "Remove background"). If nothing was downstream, it's just appended. */
-async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAGE', widgetOverrides?: Record<string, unknown>): Promise<string | null> {
+ *  like "Remove background"). If nothing was downstream, it's just appended.
+ *  opts.branch = tap the output WITHOUT re-pointing downstream (escalator
+ *  actions like Upscale/Relight: they produce a new deliverable — silently
+ *  inserting a paid node into the existing chain would re-bill on every
+ *  later run of that chain). Branches offset down so they don't overlap. */
+async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAGE', widgetOverrides?: Record<string, unknown>, opts: { branch?: boolean } = {}): Promise<string | null> {
   if (!objectInfo.value[nodeType]) await fetchObjectInfo()
   if (!objectInfo.value[nodeType]) {
     toast.error(`${nodeType} isn't available`, { description: 'Is the ComfyUI backend running with the latest nodes? Restart it and try again.' })
@@ -1516,7 +1522,11 @@ async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAG
   }
   const src = (nodes.value as any[]).find(n => n.id === nodeId)
   if (!src) return null
-  const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
+  const hasDownstream = (edges.value as any[]).some(e => e.source === nodeId)
+  const pos = {
+    x: (src.position?.x ?? 0) + 360,
+    y: (src.position?.y ?? 0) + (opts.branch && hasDownstream ? 230 : 0),
+  }
   const node = createNodeData(nodeType, pos, widgetOverrides)
   const srcOutHandle = outputHandleFor(src, outType)
   const inHandle = inputHandleFor(node, outType)
@@ -1533,7 +1543,9 @@ async function spliceAfterNode(nodeId: string, nodeType: string, outType = 'IMAG
   ]
   // Re-point downstream consumers through the new node only when it has a
   // matching output to hand them; otherwise leave them on the source.
-  if (outHandle) {
+  // Branch mode: never re-point — the existing chain must keep running
+  // (and billing) exactly as before.
+  if (outHandle && !opts.branch) {
     for (const e of downstream) {
       newEdges.push({ source: node.id, sourceHandle: outHandle, target: e.target, targetHandle: e.targetHandle, type: 'comfy', data: { dataType: outType } })
     }
@@ -1628,9 +1640,9 @@ function handleEdgeInsert(e: Event) {
 }
 
 async function handleApplyEffect(e: Event) {
-  const { nodeId, nodeType, output, widgetOverrides, run, focus } = (e as CustomEvent).detail || {}
+  const { nodeId, nodeType, output, widgetOverrides, run, focus, branch } = (e as CustomEvent).detail || {}
   if (!nodeId || !nodeType) return
-  const newId = await spliceAfterNode(String(nodeId), String(nodeType), output || 'IMAGE', widgetOverrides)
+  const newId = await spliceAfterNode(String(nodeId), String(nodeType), output || 'IMAGE', widgetOverrides, { branch: !!branch })
   if (!newId) return
   if (focus) {
     // Bring the freshly spawned node into view so the user can aim it before running.
