@@ -8,6 +8,9 @@ import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type VarBinding, t
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
 import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
+import { listStudioBindables } from '~/lib/collection/studioBindables'
+import { controlsForStudio } from '~/lib/collection/studioControls'
+import { VARS_TARGET_NODE_TYPES } from '~/lib/collection/varsInput'
 import { resolveBindings, validateRun } from '~/lib/collection/resolve'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
@@ -23,15 +26,30 @@ const collection = computed<CollectionData | null>(() =>
 const TYPES: VariableType[] = ['text', 'color', 'number', 'image', 'font', 'select']
 
 // --- Bindings strip -------------------------------------------------------
-// Smart Layout targets wired from this collection's output-0. We only bind
-// against the first one — multiple targets on one collection is an edge case
-// the UI doesn't need to solve for yet.
+// Smart Layout / studio targets wired from this collection's output-0. We
+// only bind against the first one — multiple targets on one collection is an
+// edge case the UI doesn't need to solve for yet.
 const targets = computed(() => wiredTargets(props.nodeId, props.nodes, props.edges)
-  .filter(n => n?.data?.nodeType === 'SmartLayout'))
+  .filter(n => VARS_TARGET_NODE_TYPES.has(n?.data?.nodeType)))
 const target = computed(() => targets.value[0] ?? null)
 
-const bindables = computed<Bindable[]>(() =>
-  target.value ? listSmartLayoutBindables(readTemplateFromNode(target.value)) : [])
+// Bindables differ by target kind: Smart Layout's are derived synchronously
+// from its template JSON; studios need `controlsForStudio`, which resolves
+// async (dynamic imports keep WebGL-adjacent studio modules out of anything
+// that doesn't need them — see lib/collection/studioControls.ts). Tracked as
+// a ref rather than a computed since computed can't await.
+const bindables = ref<Bindable[]>([])
+watch(target, async (t) => {
+  if (!t) { bindables.value = []; return }
+  if (t.data?.nodeType === 'SmartLayout') {
+    bindables.value = listSmartLayoutBindables(readTemplateFromNode(t))
+    return
+  }
+  const controls = await controlsForStudio(t)
+  // Guard against the target having changed while the async lookup was in flight.
+  if (target.value !== t) return
+  bindables.value = listStudioBindables(controls)
+}, { immediate: true })
 
 function targetBindings(): Record<string, VarBinding> {
   if (!target.value) return {}
@@ -349,7 +367,7 @@ function isImageUrl(v: unknown): boolean {
             </select>
           </div>
         </template>
-        <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout node to bind columns</span>
+        <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout or studio node to bind columns</span>
       </div>
 
       <div v-if="view === 'results'" class="flex-1 overflow-auto p-3">

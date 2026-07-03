@@ -1,0 +1,98 @@
+// Studio → StudioControlDesc[] adapter for the drawer bindings strip
+// (`comfynext:promoteControl` + CollectionDrawer.vue).
+//
+// Kept OUT of studioBindables.ts on purpose: resolving a studio's live control
+// list touches the same modules the in-studio "vibe" tuner uses (SpaceType's
+// effect registry pulls in `three`; Gradient/Shader/Texture pull in their own
+// config readers). Those are fine in the browser but risk breaking vitest's
+// node environment if imported eagerly from a file a plain unit spec touches.
+// This file confines those imports to function bodies (dynamic import) so
+// `mapControlSpecToDesc` — the pure, testable part — can be imported on its
+// own without dragging in WebGL-adjacent modules.
+import type { ControlSpec } from '~/lib/spacetype/effect'
+import type { StudioControlDesc } from './studioBindables'
+
+/** Pure shape adapter: a Space Type / Gradient / Shader / Texture `ControlSpec`
+ *  (kind/min/max/step/options, possibly a DOTTED `key` for Gradient/Shader) to
+ *  the flatter `StudioControlDesc` the Collection bindings strip understands.
+ *  Only the AI-editable-ish kinds (slider/select/color/font) carry meaning for
+ *  binding — other kinds (text/textList/fillList/path/curve) are passed through
+ *  with their raw kind so callers can filter them out via `controlKindToVariableType`
+ *  returning null. */
+export function mapControlSpecToDesc(spec: ControlSpec): StudioControlDesc {
+  const desc: StudioControlDesc = { key: spec.key, label: spec.label, kind: spec.kind }
+  if (spec.kind === 'slider') {
+    desc.min = spec.min
+    desc.max = spec.max
+    desc.step = spec.step
+  }
+  if (spec.kind === 'select') {
+    desc.options = [...spec.options]
+  }
+  return desc
+}
+
+function mapAll(specs: ControlSpec[]): StudioControlDesc[] {
+  return specs.map(mapControlSpecToDesc)
+}
+
+/** Space Type: the active effect's own ControlSpec list (registry lookup by
+ *  `comfynext_spaceType.effectId`, defaulting like the node/surface do). */
+async function spaceTypeControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ getEffect }, { defaultSpaceTypeState }] = await Promise.all([
+    import('~/lib/spacetype/effects'),
+    import('~/lib/spacetype/state'),
+  ])
+  const saved = node?.data?.properties?.comfynext_spaceType
+  const effectId = saved?.effectId ?? defaultSpaceTypeState().effectId
+  const effect = getEffect(effectId)
+  return mapAll(effect.controls)
+}
+
+/** Gradient Studio: same config the canvas tuner reads (comfynext_gradientStudio,
+ *  falling back to a fresh default config), controls scoped to the current layout. */
+async function gradientControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ cloneConfig }, { defaultConfig }, { gradientAgentControls }] = await Promise.all([
+    import('~/lib/gradientfx/types'),
+    import('~/lib/gradientfx/randomize'),
+    import('~/lib/gradientfx/agentControls'),
+  ])
+  const saved = node?.data?.properties?.comfynext_gradientStudio
+  const config = saved ? cloneConfig(saved) : defaultConfig()
+  return mapAll(gradientAgentControls(config, { includePreset: true }))
+}
+
+/** Shader Studio: same config the canvas tuner reads, plus the active effect's
+ *  float uniforms (resolved async from the shader catalog). */
+async function shaderControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ hydrateConfig, defaultConfig }, { shaderAgentControls }, { getEffect }] = await Promise.all([
+    import('~/lib/shaderstudio/types'),
+    import('~/lib/shaderstudio/agentControls'),
+    import('~/lib/shaderfx/catalog'),
+  ])
+  const saved = node?.data?.properties?.comfynext_shaderStudio
+  const config = saved && typeof saved === 'object' ? hydrateConfig(saved) : defaultConfig()
+  const effectDef = config.effect?.id ? await getEffect(config.effect.id) : null
+  return mapAll(shaderAgentControls(config, effectDef))
+}
+
+/** Texture Studio: flat Params bag under comfynext_textureStudio, static control
+ *  list (no per-layout gating like Gradient/Shader — `when` predicates live in
+ *  the surface, not here, so this offers the full vocabulary). */
+async function textureControls(node: any): Promise<StudioControlDesc[]> {
+  const { TEXTURE_CONTROLS } = await import('~/lib/texturefx/controls')
+  void node
+  return mapAll(TEXTURE_CONTROLS as ControlSpec[])
+}
+
+/** Resolve the bindable control list for a studio node, keyed off
+ *  `node.data.nodeType`. Returns [] for unknown/non-studio types. */
+export async function controlsForStudio(node: any): Promise<StudioControlDesc[]> {
+  switch (node?.data?.nodeType) {
+    case 'SpaceType': return spaceTypeControls(node)
+    case 'GradientStudio': return gradientControls(node)
+    case 'ShaderStudio': return shaderControls(node)
+    case 'TextureStudio': return textureControls(node)
+    default: return []
+  }
+}

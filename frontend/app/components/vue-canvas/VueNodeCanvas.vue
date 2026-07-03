@@ -28,7 +28,10 @@ import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
-import { VARS_TYPE } from '~/lib/collection/types'
+import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
+import { createCollection } from '~/lib/collection/model'
+import { promoteControl } from '~/composables/useStudioVarBindings'
+import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -3194,6 +3197,101 @@ function handleCollectionScrub(e: Event) {
   pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]))
 }
 
+// Promote a studio control to a Collection column. Fired by useStudioVarBindings'
+// `promote()` when the calling surface has no `createCollectionNode` accessor of
+// its own (i.e. every studio surface today — they only know their own nodeId).
+// Mirrors promoteControl's own "reuse the wired collection, else create one"
+// logic, but this is the ONLY place that can create the collection node + VARS
+// edge since only the canvas owns `nodes.value`/`edges.value`.
+function handlePromoteControl(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string; control: StudioControlDesc; currentValue: string | number }>).detail
+  if (!detail?.nodeId || !detail.control) return
+  const studioId = String(detail.nodeId)
+  const studio = (nodes.value as any[]).find(n => String(n.id) === studioId)
+  if (!studio) return
+
+  const result = promoteControl(
+    () => nodes.value as any[],
+    () => edges.value as any[],
+    studioId,
+    detail.control,
+    detail.currentValue,
+    () => {
+      // No wired collection yet — create one beside the studio and wire its
+      // VARS output into the studio's `vars` input (ensureVarsInput first so
+      // that input handle actually exists on legacy/freshly-created nodes).
+      ensureVarsInput(studio)
+      const pos = { x: (studio.position?.x ?? 0) - 260, y: studio.position?.y ?? 0 }
+      const colNode = createNodeData('Collection', pos)
+      if (!colNode.data.properties) colNode.data.properties = {}
+      colNode.data.properties[COLLECTION_PROP] = createCollection('Collection')
+      nodes.value.push(colNode)
+
+      const varsIndex = ((studio.data?.inputs ?? []) as any[]).findIndex(i => i.name === 'vars')
+      if (varsIndex >= 0) {
+        edges.value.push({
+          id: `e-vars-${colNode.id}-${studioId}`,
+          source: colNode.id,
+          sourceHandle: 'output-0',
+          target: studioId,
+          targetHandle: `input-${varsIndex}`,
+          type: 'comfy',
+          data: { dataType: VARS_TYPE },
+        } as any)
+      }
+      return colNode
+    },
+  )
+  if (!result) return
+
+  // The just-promoted control's collection is whichever node the studio's vars
+  // input now traces back to (freshly created above, or the one already wired).
+  const allNodes = nodes.value as any[]
+  const allEdges = edges.value as any[]
+  const collectionId = allEdges.find(ed => String(ed.target) === studioId && ed?.data?.dataType === VARS_TYPE)?.source
+  const collectionNode = collectionId ? allNodes.find(n => String(n.id) === String(collectionId)) : undefined
+  if (collectionNode) {
+    pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges))
+    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(collectionId) } }))
+  }
+}
+
+// Fallback binder for surfaces that only have a control's `path`/`columnKey`
+// and no live accessor into the composable (e.g. cross-component triggers).
+// Surfaces with direct access to useStudioVarBindings should call its own
+// bind/write-through helpers instead — this event exists so nothing is stuck
+// if only the DOM is reachable.
+function handleBindControl(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string; path: string; columnKey: string }>).detail
+  if (!detail?.nodeId || !detail.path || !detail.columnKey) return
+  const node = (nodes.value as any[]).find(n => String(n.id) === String(detail.nodeId))
+  if (!node) return
+  const edge = (edges.value as any[]).find(ed => String(ed.target) === String(detail.nodeId) && ed?.data?.dataType === VARS_TYPE)
+  const colNode = edge ? (nodes.value as any[]).find(n => String(n.id) === String(edge.source)) : undefined
+  const c = colNode?.data?.properties?.[COLLECTION_PROP]
+  if (!c) return
+
+  if (!node.data.properties) node.data.properties = {}
+  const bindings = (node.data.properties[BINDINGS_PROP] ?? {}) as VarBindings
+  const row = c.rows?.[c.previewRow]
+  const lastLiteral = row?.values?.[detail.columnKey]
+  bindings[detail.path] = { collectionId: c.id, columnKey: detail.columnKey, ...(lastLiteral !== undefined ? { lastLiteral } : {}) }
+  node.data.properties[BINDINGS_PROP] = bindings
+}
+
+// Fallback unbinder mirroring handleBindControl — deletes the binding entry
+// only. Surfaces with direct composable access should call unbind() there
+// instead (it also freezes the control's last value); this event is the
+// no-composable fallback and intentionally does not attempt that freeze.
+function handleUnbindControl(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string; path: string }>).detail
+  if (!detail?.nodeId || !detail.path) return
+  const node = (nodes.value as any[]).find(n => String(n.id) === String(detail.nodeId))
+  const bindings = node?.data?.properties?.[BINDINGS_PROP] as VarBindings | undefined
+  if (!bindings) return
+  delete bindings[detail.path]
+}
+
 // SmartLayout editor modal state — the visual layout editor that mounts over
 // the canvas when the user clicks "Edit layout" on a SmartLayout node.
 const smartLayoutOpenForId = ref<string | null>(null)
@@ -3407,6 +3505,9 @@ onMounted(() => {
   window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.addEventListener('comfynext:openCollection', handleOpenCollection)
   window.addEventListener('comfynext:collectionScrub', handleCollectionScrub)
+  window.addEventListener('comfynext:promoteControl', handlePromoteControl)
+  window.addEventListener('comfynext:bindControl', handleBindControl)
+  window.addEventListener('comfynext:unbindControl', handleUnbindControl)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
@@ -3456,6 +3557,9 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
   window.removeEventListener('comfynext:openCollection', handleOpenCollection)
   window.removeEventListener('comfynext:collectionScrub', handleCollectionScrub)
+  window.removeEventListener('comfynext:promoteControl', handlePromoteControl)
+  window.removeEventListener('comfynext:bindControl', handleBindControl)
+  window.removeEventListener('comfynext:unbindControl', handleUnbindControl)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
