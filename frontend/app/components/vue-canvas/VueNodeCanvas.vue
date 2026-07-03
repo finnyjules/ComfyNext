@@ -6190,6 +6190,7 @@ defineExpose({
         v-if="shaderStudioOpenForId"
         :node-id="shaderStudioOpenForId"
         :nodes="nodes as any[]"
+        :edges="edges as any[]"
         :wired-url="shaderStudioWiredUrl"
         @close="shaderStudioOpenForId = null"
       />

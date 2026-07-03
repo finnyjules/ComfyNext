@@ -8,6 +8,8 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
@@ -19,10 +21,16 @@ import { loadImage } from '~/lib/shaderstudio/source'
 import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { useStudioAgent } from '~/composables/useStudioAgent'
+import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
+import { controlsForStudio } from '~/lib/collection/studioControls'
+import type { StudioControlDesc } from '~/lib/collection/studioBindables'
+import { controlKindToVariableType } from '~/lib/collection/studioBindables'
+import { typeCompatible } from '~/lib/collection/bindables'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
 
-const props = defineProps<{ nodeId: string; nodes: any[]; wiredUrl?: string | null }>()
+const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[]; wiredUrl?: string | null }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { recordAsset } = useProjectGenerations()
@@ -61,6 +69,74 @@ const shaderAgent = useStudioAgent({
   // then export it for the agent's visual self-review.
   render: () => { renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
 })
+
+// Collections variable binding (Slice 2a, Task 7a) — same recipe as Gradient Studio
+// (Task 6): `studioControls` mirrors what the agent tuner offers (via
+// `controlsForStudio`, loaded once since the composable wants a synchronous
+// accessor) purely for the bind-menu's control descriptions (label/kind/min/max/
+// step/options), matched by dotted key. The SAME dotted-path proxy the canvas
+// agent tuner reads/writes (`agentParams` above) is reused here so onEdit/promote/
+// unbind's "live value" reads and applyParam's writes address identical keys.
+// Writing through this proxy mutates `config` directly, so the surface's existing
+// `deep` watcher on `config` re-renders the preview — no extra watcher needed, and
+// per the loop-safety note, nothing here calls onEdit from a config watch (only
+// the explicit control handlers below do).
+const studioControls = ref<StudioControlDesc[]>([])
+onMounted(async () => { studioControls.value = await controlsForStudio(currentNode()) })
+
+const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+  props.nodeId,
+  () => studioControls.value,
+  (key, value) => { agentParams[key] = value },
+  { nodes: () => props.nodes, edges: () => props.edges ?? [] },
+)
+
+// Wired collection lookup (studio -> collection) for the "Bind to" submenu.
+const wiredColumns = computed<CollectionColumn[]>(() => {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return []
+  const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
+  const c = colNode?.data?.properties?.[COLLECTION_PROP]
+  return c?.columns ?? []
+})
+
+const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
+function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
+  const type = controlKindToVariableType(control.kind)
+  if (type === null) return
+  const liveValue = agentParams[control.key] as string | number
+  const bound = boundColumnFor(control.key)
+  const items: MenuItem[] = []
+  if (!bound) {
+    items.push({ label: 'Turn into variable', action: () => promote(control, liveValue) })
+    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
+    if (compatCols.length) {
+      items.push({
+        label: 'Bind to',
+        children: compatCols.map(col => ({
+          label: col.label,
+          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+            detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
+          })),
+        })),
+      })
+    }
+  } else {
+    items.push({
+      label: 'Go to collection',
+      action: () => {
+        const edgeList = props.edges ?? []
+        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
+      },
+    })
+    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ divider: true })
+    items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
+  }
+  varMenu.value = { x: e.clientX, y: e.clientY, items }
+}
 
 // ── effect textures (mirror ShaderEffectNode) ───────────────────────────────
 const textureImages = new Map<string, HTMLImageElement>()
@@ -383,8 +459,14 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <StudioSection title="Duotone" :open="false">
         <template #badge><StudioSwitch v-model="config.duotone.enabled" /></template>
         <div class="mb-2 flex items-center gap-2">
-          <label class="text-[11px] text-white/60">Ink</label><StudioColor v-model="config.duotone.ink" />
-          <label class="text-[11px] text-white/60">Paper</label><StudioColor v-model="config.duotone.paper" />
+          <label class="text-[11px] text-white/60">Ink</label>
+          <BindableRow control-key="duotone.ink" label="Ink" kind="color" :bound="boundColumnFor('duotone.ink')" @menu="openVarMenu">
+            <StudioColor v-model="config.duotone.ink" @update:model-value="(v: string) => onEdit('duotone.ink', v)" />
+          </BindableRow>
+          <label class="text-[11px] text-white/60">Paper</label>
+          <BindableRow control-key="duotone.paper" label="Paper" kind="color" :bound="boundColumnFor('duotone.paper')" @menu="openVarMenu">
+            <StudioColor v-model="config.duotone.paper" @update:model-value="(v: string) => onEdit('duotone.paper', v)" />
+          </BindableRow>
         </div>
         <div class="grid grid-cols-4 gap-1">
           <button v-for="p in DUOTONE_PRESETS" :key="p.name" class="h-7 overflow-hidden rounded border border-white/10" :title="p.name" @click="pickDuotone(p)">
@@ -400,8 +482,10 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           <option v-for="p in ADJUST_PRESETS" :key="p.name" :value="p.name">{{ p.name }}</option>
         </select>
         <template v-for="f in ([['exposure','Exposure',-2,2],['brightness','Brightness',-1,1],['contrast','Contrast',-1,1],['saturation','Saturation',-1,1],['hue','Hue',-180,180],['temperature','Temperature',-1,1],['tint','Tint',-1,1]] as const)" :key="f[0]">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
-          <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
+          <BindableRow :control-key="`adjust.${f[0]}`" :label="f[1]" kind="slider" :min="f[2]" :max="f[3]" :step="0.01" :bound="boundColumnFor(`adjust.${f[0]}`)" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
+            <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit(`adjust.${f[0]}`, (config.adjust as any)[f[0]])" />
+          </BindableRow>
         </template>
       </StudioSection>
 
@@ -409,27 +493,41 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <StudioSection title="Post-processing" :open="false">
         <div class="mb-1 flex items-center justify-between"><span class="text-xs text-white/70">Lens Blur</span><StudioSwitch v-model="config.post.blur.enabled" /></div>
         <template v-if="config.post.blur.enabled">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Focus range</span><span class="text-white/40">{{ config.post.blur.range.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Aperture</span><span class="text-white/40">{{ config.post.blur.aperture.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Max blur</span><span class="text-white/40">{{ config.post.blur.maxBlur.toFixed(0) }}</span></label>
-          <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" v-studio-reset class="studio-range mb-2 w-full" />
+          <BindableRow control-key="post.blur.range" label="Focus range" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('post.blur.range')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Focus range</span><span class="text-white/40">{{ config.post.blur.range.toFixed(2) }}</span></label>
+            <input v-model.number="config.post.blur.range" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('post.blur.range', config.post.blur.range)" />
+          </BindableRow>
+          <BindableRow control-key="post.blur.aperture" label="Aperture" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('post.blur.aperture')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Aperture</span><span class="text-white/40">{{ config.post.blur.aperture.toFixed(2) }}</span></label>
+            <input v-model.number="config.post.blur.aperture" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('post.blur.aperture', config.post.blur.aperture)" />
+          </BindableRow>
+          <BindableRow control-key="post.blur.maxBlur" label="Max blur" kind="slider" :min="0" :max="40" :step="1" :bound="boundColumnFor('post.blur.maxBlur')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Max blur</span><span class="text-white/40">{{ config.post.blur.maxBlur.toFixed(0) }}</span></label>
+            <input v-model.number="config.post.blur.maxBlur" type="range" min="0" max="40" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('post.blur.maxBlur', config.post.blur.maxBlur)" />
+          </BindableRow>
         </template>
         <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Chromatic</span><StudioSwitch v-model="config.post.chromatic.enabled" /></div>
         <template v-if="config.post.chromatic.enabled">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Amount</span><span class="text-white/40">{{ config.post.chromatic.amount.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+          <BindableRow control-key="post.chromatic.amount" label="Chromatic amount" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('post.chromatic.amount')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Amount</span><span class="text-white/40">{{ config.post.chromatic.amount.toFixed(2) }}</span></label>
+            <input v-model.number="config.post.chromatic.amount" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" @input="onEdit('post.chromatic.amount', config.post.chromatic.amount)" />
+          </BindableRow>
         </template>
 
         <div class="mb-1 mt-2 flex items-center justify-between"><span class="text-xs text-white/70">Bloom</span><StudioSwitch v-model="config.post.bloom.enabled" /></div>
         <template v-if="config.post.bloom.enabled">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Threshold</span><span class="text-white/40">{{ config.post.bloom.threshold.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.bloom.threshold" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Intensity</span><span class="text-white/40">{{ config.post.bloom.intensity.toFixed(2) }}</span></label>
-          <input v-model.number="config.post.bloom.intensity" type="range" min="0" max="3" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Radius</span><span class="text-white/40">{{ config.post.bloom.radius.toFixed(0) }}</span></label>
-          <input v-model.number="config.post.bloom.radius" type="range" min="4" max="200" step="2" v-studio-reset class="studio-range w-full" />
+          <BindableRow control-key="post.bloom.threshold" label="Bloom threshold" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('post.bloom.threshold')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Threshold</span><span class="text-white/40">{{ config.post.bloom.threshold.toFixed(2) }}</span></label>
+            <input v-model.number="config.post.bloom.threshold" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('post.bloom.threshold', config.post.bloom.threshold)" />
+          </BindableRow>
+          <BindableRow control-key="post.bloom.intensity" label="Bloom intensity" kind="slider" :min="0" :max="3" :step="0.01" :bound="boundColumnFor('post.bloom.intensity')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Intensity</span><span class="text-white/40">{{ config.post.bloom.intensity.toFixed(2) }}</span></label>
+            <input v-model.number="config.post.bloom.intensity" type="range" min="0" max="3" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('post.bloom.intensity', config.post.bloom.intensity)" />
+          </BindableRow>
+          <BindableRow control-key="post.bloom.radius" label="Bloom radius" kind="slider" :min="4" :max="200" :step="2" :bound="boundColumnFor('post.bloom.radius')" @menu="openVarMenu">
+            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>Radius</span><span class="text-white/40">{{ config.post.bloom.radius.toFixed(0) }}</span></label>
+            <input v-model.number="config.post.bloom.radius" type="range" min="4" max="200" step="2" v-studio-reset class="studio-range w-full" @input="onEdit('post.bloom.radius', config.post.bloom.radius)" />
+          </BindableRow>
         </template>
       </StudioSection>
 
@@ -473,4 +571,11 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
       <div class="px-2 py-1.5"><div class="truncate text-[11px] text-white/85">{{ (item as EffectDef).name }}</div><div class="text-[10px] capitalize text-white/35">{{ (item as EffectDef).category }}</div></div>
     </template>
   </CatalogModal>
+  <CanvasContextMenu
+    v-if="varMenu"
+    :x="varMenu.x"
+    :y="varMenu.y"
+    :items="varMenu.items"
+    @close="varMenu = null"
+  />
 </template>
