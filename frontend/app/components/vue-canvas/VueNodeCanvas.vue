@@ -6169,6 +6169,7 @@ defineExpose({
         v-if="gradientStudioOpenForId"
         :node-id="gradientStudioOpenForId"
         :nodes="nodes as any[]"
+        :edges="edges as any[]"
         @close="gradientStudioOpenForId = null"
       />
     </Teleport>
