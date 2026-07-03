@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * Generators panel — surfaces Comfy's official "partner" API nodes
- * (Flux, Kling, Veo, Sora, ElevenLabs, Recraft, Stability, Meshy, …)
- * organized the same way as the native Node Library sidebar.
+ * Actions panel — AI-driven verbs (generate / edit / enhance / analyze),
+ * fetched live from /object_info (`api node/<domain>/<provider>` categories)
+ * so new partner nodes appear automatically.
  *
- * The full catalog is dynamic — we fetch it from /object_info on mount and
- * group nodes by `api node/<domain>/<provider>` categories. This way new
- * partners that ship in future Comfy releases appear automatically.
+ * Organization is intent-first (see ~/data/action-catalog.ts): a pinned hero
+ * tier of the highest-frequency actions, then Create / Edit / Enhance /
+ * Analyze sections. Provider is a detail on the card (brand chip), never the
+ * grouping — users pick by what they want done, not by whose API runs it.
  */
 import {
   X, WandSparkles,
@@ -19,6 +20,10 @@ import {
 } from 'lucide-vue-next'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { getGeneratorIcon, getModelBrand } from '~/data/generator-icons'
+import {
+  ACTION_CATALOG, DEPRECATED_NODES, HERO_BY_DOMAIN, groupByIntent,
+  type ActionDomain, type ActionSection,
+} from '~/data/action-catalog'
 
 // Pick which brand to show on the corner chip. Replicate is just transport;
 // the chip should say BFL for a Flux node, Ideogram for an Ideogram node,
@@ -40,12 +45,13 @@ function isLegacyProvider(provider: string): boolean {
   return !MODERN_PROVIDERS.has(provider)
 }
 
-type Domain = 'image' | 'audio' | 'video' | '3d' | 'text'
+type Domain = ActionDomain
 interface PartnerNode {
   nodeType: string
   label: string
   description: string
   provider: string
+  domain: Domain
   price: string | null         // pretty-formatted, e.g. "$0.06" or "$0.35–$2.80"
   priceSuffix: string | null   // unit hint, e.g. "/1K chars"
   priceApprox: boolean         // show a "~" prefix
@@ -119,12 +125,6 @@ function parsePrice(priceBadge: any): {
     varies: reallyVaries,
   }
 }
-interface ProviderSection {
-  domain: Domain
-  provider: string
-  items: PartnerNode[]
-}
-
 // Domain accent colors match the homepage prompt-chip palette (pages/index.vue)
 // so the same surface = the same hue across the app. `text` reuses the
 // voiceover red since the homepage doesn't have a text chip.
@@ -138,7 +138,7 @@ const DOMAINS: { id: Domain; label: string; icon: any; color: string }[] = [
 
 // -- Fetch partner nodes from object_info ----------------------------------
 
-const sections = ref<ProviderSection[]>([])
+const allItems = ref<PartnerNode[]>([])
 const loading = ref(true)
 const fetchError = ref<string | null>(null)
 
@@ -149,7 +149,7 @@ async function loadPartnerNodes() {
     const res = await fetch('/object_info')
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const info = await res.json() as Record<string, any>
-    const grouped = new Map<string, ProviderSection>()
+    const items: PartnerNode[] = []
     for (const [nodeType, node] of Object.entries(info)) {
       const cat = (node?.category || '') as string
       if (!cat.startsWith('api node/')) continue
@@ -159,33 +159,23 @@ async function loadPartnerNodes() {
       const domain = parts[1] as Domain | undefined
       const provider = parts[2] || 'Other'
       if (!domain || !['image', 'audio', 'video', '3d', 'text'].includes(domain)) continue
-      const key = `${domain}::${provider}`
-      let sect = grouped.get(key)
-      if (!sect) {
-        sect = { domain: domain as Domain, provider, items: [] }
-        grouped.set(key, sect)
-      }
       const p = parsePrice(node?.price_badge)
-      sect.items.push({
+      items.push({
         nodeType,
         label: node?.display_name || nodeType,
         description: (node?.description || '').split('\n')[0]!.slice(0, 200),
         provider,
+        domain,
         price: p.price,
         priceSuffix: p.suffix,
         priceApprox: p.approx,
         priceVaries: p.varies,
       })
     }
-    // Sort items within each provider by label, providers alphabetically.
-    const arr = Array.from(grouped.values())
-    arr.forEach(s => s.items.sort((a, b) => a.label.localeCompare(b.label)))
-    arr.sort((a, b) =>
-      a.domain.localeCompare(b.domain) || a.provider.localeCompare(b.provider))
-    sections.value = arr
+    allItems.value = items
   } catch (e: any) {
-    fetchError.value = e?.message || 'failed to load partner nodes'
-    sections.value = []
+    fetchError.value = e?.message || 'failed to load actions'
+    allItems.value = []
   } finally {
     loading.value = false
   }
@@ -198,9 +188,7 @@ const activeDomain = ref<Domain>('image')
 const searchQuery = ref('')
 
 function domainItemCount(d: Domain): number {
-  return sections.value
-    .filter(s => s.domain === d)
-    .reduce((sum, s) => sum + s.items.length, 0)
+  return allItems.value.filter(it => it.domain === d).length
 }
 
 // Persist the legacy-visibility toggle across sessions. Defaults to hidden —
@@ -217,27 +205,23 @@ onMounted(loadShowLegacy)
 watch(showLegacy, saveShowLegacy)
 
 function legacyCountForDomain(d: Domain): number {
-  return sections.value
-    .filter(s => s.domain === d && isLegacyProvider(s.provider))
-    .reduce((sum, s) => sum + s.items.length, 0)
+  return allItems.value
+    .filter(it => it.domain === d && isLegacyProvider(it.provider))
+    .length
 }
 
-const visibleSections = computed(() => {
+const visibleGroups = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return sections.value
-    .filter(s => s.domain === activeDomain.value)
-    .filter(s => showLegacy.value || !isLegacyProvider(s.provider))
-    .map(s => {
-      if (!q) return s
-      const items = s.items.filter(it =>
-        it.label.toLowerCase().includes(q)
-        || it.description.toLowerCase().includes(q)
-        || it.provider.toLowerCase().includes(q)
-        || it.nodeType.toLowerCase().includes(q),
-      )
-      return { ...s, items }
-    })
-    .filter(s => s.items.length > 0)
+  const items = allItems.value
+    .filter(it => it.domain === activeDomain.value)
+    .filter(it => showLegacy.value || !isLegacyProvider(it.provider))
+    .filter(it => !q
+      || it.label.toLowerCase().includes(q)
+      || it.description.toLowerCase().includes(q)
+      || it.provider.toLowerCase().includes(q)
+      || it.nodeType.toLowerCase().includes(q)
+      || (ACTION_CATALOG[it.nodeType]?.useCase.toLowerCase().includes(q) ?? false))
+  return groupByIntent(items, q ? [] : HERO_BY_DOMAIN[activeDomain.value])
 })
 
 // Collapsed sections, persisted under a key independent from Toolbox.
@@ -254,14 +238,14 @@ function saveCollapsed() {
 }
 onMounted(loadCollapsed)
 
-function sectionKey(s: ProviderSection): string {
-  return `${s.domain}:${s.provider}`
+function sectionKey(s: ActionSection<PartnerNode>): string {
+  return `${activeDomain.value}:${s.intent}`
 }
-function isCollapsed(s: ProviderSection): boolean {
+function isCollapsed(s: ActionSection<PartnerNode>): boolean {
   if (searchQuery.value.trim()) return false
   return collapsedKeys.value.has(sectionKey(s))
 }
-function toggleSection(s: ProviderSection) {
+function toggleSection(s: ActionSection<PartnerNode>) {
   const key = sectionKey(s)
   const next = new Set(collapsedKeys.value)
   if (next.has(key)) next.delete(key)
@@ -427,90 +411,8 @@ function providerIcon(provider: string, domain: Domain): any {
   return PROVIDER_ICONS[provider] ?? DOMAIN_FALLBACK_ICON[domain]
 }
 
-// -- Use-case rendering -----------------------------------------------------
-//
-// Cards default to model-name-first ("Flux 1.1 Pro"), but for any node listed
-// in USE_CASE_BY_NODE we render the *use case* as the primary title with the
-// model as a smaller subheader. Keep this map in sync when new generator
-// nodes ship — entries are keyed by node_id (the Python class's node_id).
-
-const USE_CASE_BY_NODE: Record<string, { useCase: string; model: string }> = {
-  // Replicate (BYOK) — new use-case nodes
-  // Image — generation
-  FluxLoRARemoteNode:      { useCase: 'Generate an image with your LoRA', model: 'Flux Dev + LoRA' },
-  GenerateImageNode:       { useCase: 'Generate an image',         model: 'Many models · pick in gallery' },
-  GenerateAnimeNode:       { useCase: 'Generate an anime image',   model: 'Animagine XL' },
-  GenerateEmojiNode:       { useCase: 'Generate an emoji',         model: 'Flux Kontext + Emoji LoRA' },
-  ConsistentFaceNode:      { useCase: 'Generate a consistent face', model: 'Ideogram Character' },
-  SketchToImageNode:       { useCase: 'Sketch to image',           model: 'Nano Banana' },
-  PersonSwap:              { useCase: 'Swap a person',             model: 'Nano Banana 2' },
-  PoseMannequin:           { useCase: 'Re-pose a character',       model: 'Nano Banana 2' },
-  RelightNode:             { useCase: 'Relight a photo',           model: 'Nano Banana 2' },
-  // Image — manipulation
-  EditImageNode:           { useCase: 'Edit an image',             model: 'Nano Banana 2 / Flux Kontext' },
-  RestyleFromImageNode:    { useCase: 'Restyle from an image',     model: 'Nano Banana / IP-Adapter' },
-  RestyleWithLoRANode:     { useCase: 'Restyle with your style',   model: 'Moondream + Flux LoRA + Nano Banana 2' },
-  ProductShotNode:         { useCase: 'Make a product shot',       model: 'SDXL Ad-Inpaint' },
-  UpscaleImageNode:        { useCase: 'Upscale an image',          model: 'Clarity' },
-  RemoveBackgroundNode:    { useCase: 'Remove background',         model: '851-labs/bg-remover' },
-  RestorePhotoNode:        { useCase: 'Restore an old photo',      model: 'Flux Kontext · Restore' },
-  FixFacesNode:            { useCase: 'Fix faces in a photo',      model: 'CodeFormer' },
-  LayerizeGraphicNode:     { useCase: 'Layerize a graphic',        model: 'Ideogram Layerize' },
-  SplitPhotoLayersNode:    { useCase: 'Split photo into layers',   model: 'BG Remover + LaMa / Bria Eraser' },
-  OutpaintImageNode:       { useCase: 'Expand / outpaint an image', model: 'Flux Fill / Bria Expand' },
-  // Replicate FaceSwap removed — the local FaceSwap node (InsightFace, in
-  // comfy_extras/nodes_face.py) is faster, supports video, and is free.
-  // Image — analysis
-  DescribeImageNode:       { useCase: 'Describe an image',         model: 'Moondream 2' },
-  ExtractTextNode:         { useCase: 'Extract text from image',   model: 'ByteDance Dolphin (OCR)' },
-  FindObjectsNode:         { useCase: 'Find objects in an image',  model: 'YOLO-World' },
-  // Video
-  GenerateVideoNode:       { useCase: 'Generate a video',          model: 'Seedance / Veo 3 / Kling' },
-  EnhanceVideoNode:        { useCase: 'Enhance a video',           model: 'Topaz' },
-  DescribeVideoNode:       { useCase: 'Describe a video',          model: 'Gemini 2.5 Flash' },
-  LipsyncNode:             { useCase: 'Sync lips to audio',        model: 'sync.so 2-pro' },
-  // Audio
-  TranscribeAudioNode:     { useCase: 'Transcribe audio',          model: 'Whisper' },
-  IdentifySpeakersNode:    { useCase: 'Identify speakers in audio', model: 'Whisper Diarization' },
-  GenerateMusicNode:       { useCase: 'Generate music',            model: 'MusicGen' },
-  GenerateSpeechNode:      { useCase: 'Generate speech',           model: 'MiniMax Speech-02 HD' },
-  CloneSingingVoiceNode:   { useCase: 'Clone a singing voice',     model: 'RVC' },
-  // 3D
-  Generate3DNode:          { useCase: 'Generate a 3D model',       model: 'Hunyuan3D 2' },
-  // Text / LLM
-  ChatLLMNode:             { useCase: 'Chat with an LLM',          model: 'GPT-5 / Claude / Gemini' },
-  ImprovePromptNode:       { useCase: 'Improve a prompt',          model: 'GPT-5 nano' },
-  SummarizeTextNode:       { useCase: 'Summarize text',            model: 'Gemini 3 Flash' },
-  TranslateTextNode:       { useCase: 'Translate text',            model: 'Gemini 3 Flash' },
-  RewriteToneNode:         { useCase: 'Rewrite in a tone',         model: 'Claude 4.5 Haiku' },
-  BrainstormIdeasNode:     { useCase: 'Brainstorm ideas',          model: 'GPT-5 mini' },
-  ReasonStepByStepNode:    { useCase: 'Think step by step',        model: 'DeepSeek R1' },
-}
-
-// Per-model classes are still registered server-side for back-compat with
-// any saved workflows that reference them, but they're hidden from the
-// Generators panel — the use-case nodes above are now the front door.
-const DEPRECATED_NODES = new Set<string>([
-  'FluxProRemoteNode',
-  'IdeogramV3TurboRemoteNode',
-  'FluxKontextRemoteNode',
-  'ClarityUpscaleRemoteNode',
-  'RemoveBackgroundRemoteNode',
-  'RestorePhotoRemoteNode',
-  'CodeformerRemoteNode',
-  'DescribeImageRemoteNode',
-  'Seedance2RemoteNode',
-  'Veo3RemoteNode',
-  'KlingVideoRemoteNode',
-  'LipsyncRemoteNode',
-  'WhisperRemoteNode',
-  'MusicGenRemoteNode',
-  'MiniMaxSpeechRemoteNode',
-  'Hunyuan3DRemoteNode',
-])
-
 function useCaseFor(item: PartnerNode): { useCase: string; model: string } | null {
-  return USE_CASE_BY_NODE[item.nodeType] ?? null
+  return ACTION_CATALOG[item.nodeType] ?? null
 }
 </script>
 
@@ -520,7 +422,7 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="flex items-center gap-2">
         <WandSparkles class="size-4 text-white/70" />
-        <span class="text-sm font-semibold text-white/90">Generators</span>
+        <span class="text-sm font-semibold text-white/90">Actions</span>
       </div>
       <button
         class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors cursor-pointer"
@@ -538,7 +440,7 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
           ref="searchInputRef"
           v-model="searchQuery"
           type="text"
-          placeholder="Search partner nodes…"
+          placeholder="Search actions…"
           class="w-full bg-white/[0.04] border border-white/10 rounded pl-7 pr-7 py-1.5 text-xs text-white/85 placeholder-white/30 outline-none focus:bg-white/[0.06] focus:border-white/20 transition-colors"
           @keydown.esc="clearSearch"
         />
@@ -597,33 +499,82 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
     <!-- Content -->
     <div class="flex-1 overflow-y-auto pb-3">
       <div v-if="loading" class="px-4 py-12 text-center text-xs text-white/40">
-        Loading partner nodes…
+        Loading actions…
       </div>
       <div v-else-if="fetchError" class="px-4 py-12 text-center text-xs text-amber-400">
-        Couldn't load partner nodes: {{ fetchError }}
+        Couldn't load actions: {{ fetchError }}
       </div>
       <div
-        v-else-if="visibleSections.length === 0"
+        v-else-if="visibleGroups.hero.length === 0 && visibleGroups.sections.length === 0"
         class="px-4 py-12 text-center text-xs text-white/40"
       >
         <template v-if="searchQuery.trim()">
-          No partner nodes match <span class="text-white/70">"{{ searchQuery }}"</span>.
+          No actions match <span class="text-white/70">"{{ searchQuery }}"</span>.
           <button class="block mx-auto mt-2 text-white/70 hover:text-white underline underline-offset-2 cursor-pointer" @click="clearSearch">
             Clear search
           </button>
         </template>
         <template v-else>
-          No partner nodes in this category.
+          No actions in this category.
         </template>
       </div>
 
-      <div v-for="section in visibleSections" :key="sectionKey(section)" class="px-2 pt-2">
+      <!-- Hero tier — highest-frequency actions, pinned above the intent sections.
+           Hidden while searching (search shows one flat grouping). -->
+      <div v-if="visibleGroups.hero.length" class="px-2 pt-2 grid grid-cols-2 gap-1.5">
+        <button
+          v-for="item in visibleGroups.hero"
+          :key="item.nodeType"
+          draggable="true"
+          class="relative group flex flex-col items-start gap-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.06] hover:border-white/15 transition-colors cursor-grab active:cursor-grabbing px-2.5 py-2.5 text-left"
+          :title="`${item.label} (${item.nodeType}) — click to add, or drag onto canvas`"
+          @click="addNode(item.nodeType)"
+          @dragstart="(e) => onCardDragStart(e, item)"
+          @mouseenter="(e) => onCardEnter(e, item)"
+          @mouseleave="onCardLeave"
+        >
+          <div
+            class="relative size-9 rounded-md flex items-center justify-center shrink-0 ring-1 ring-white/10"
+            :class="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider) ? 'bg-white/[0.04]' : ''"
+            :style="getGeneratorIcon(item.nodeType) || hasComfyBrandIcon(item.provider)
+              ? {}
+              : { backgroundColor: providerColor(item.provider).bg, color: providerColor(item.provider).fg }"
+          >
+            <component
+              v-if="getGeneratorIcon(item.nodeType)"
+              :is="getGeneratorIcon(item.nodeType)"
+              class="size-5 text-white/85"
+              :stroke-width="1.75"
+            />
+            <span
+              v-else-if="hasComfyBrandIcon(item.provider)"
+              :class="[comfyBrandIconClass(item.provider), isComfyMonoIcon(item.provider) ? 'bg-white' : '']"
+              class="size-5"
+            />
+            <component
+              v-else
+              :is="providerIcon(item.provider, item.domain)"
+              class="size-4"
+              :stroke-width="1.75"
+            />
+          </div>
+          <span class="text-[12px] text-white/90 group-hover:text-white leading-tight line-clamp-2 transition-colors">
+            {{ useCaseFor(item)?.useCase ?? item.label }}
+          </span>
+          <span
+            v-if="item.price"
+            class="absolute top-1.5 right-1.5 text-[9px] tabular-nums leading-none px-1 py-0.5 rounded bg-amber-500/15 text-amber-200/90 border border-amber-500/15"
+          >{{ item.priceApprox ? '~' : '' }}{{ item.price }}</span>
+        </button>
+      </div>
+
+      <div v-for="section in visibleGroups.sections" :key="sectionKey(section)" class="px-2 pt-2">
         <button
           class="w-full flex items-center justify-between px-1 pb-1.5 group cursor-pointer"
           @click="toggleSection(section)"
         >
           <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-white/40 group-hover:text-white/65 transition-colors">
-            {{ section.provider }}
+            {{ section.label }}
             <span class="ml-1 text-white/25 normal-case tracking-normal">{{ section.items.length }}</span>
           </span>
           <ChevronDown
@@ -668,7 +619,7 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
               />
               <component
                 v-else
-                :is="providerIcon(item.provider, section.domain)"
+                :is="providerIcon(item.provider, item.domain)"
                 class="size-4"
                 :stroke-width="1.75"
               />
@@ -690,7 +641,7 @@ function useCaseFor(item: PartnerNode): { useCase: string; model: string } | nul
                   />
                   <component
                     v-else
-                    :is="providerIcon(chipProvider(item), section.domain)"
+                    :is="providerIcon(chipProvider(item), item.domain)"
                     class="size-2 shrink-0 text-white/45 group-hover:text-white/60"
                     :stroke-width="2"
                   />
