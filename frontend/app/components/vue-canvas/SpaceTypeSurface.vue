@@ -156,7 +156,9 @@ function pullTextLines() {
 }
 watch(textLines, () => {
   if (syncingText) return
-  ;(params as Record<string, unknown>).text = textLines.join('\n')
+  const joined = textLines.join('\n')
+  ;(params as Record<string, unknown>).text = joined
+  onEdit('text', joined)
 }, { deep: true })
 function addTextRow() { textLines.push('') }
 function removeTextRow(i: number) { textLines.splice(i, 1); if (!textLines.length) textLines.push('') }
