@@ -52,10 +52,10 @@ Reorganization:
 4. Keep the existing domain tabs (Image, Audio, Video, 3D, Text) — genuinely user-meaningful.
 5. The four Generate-door items also appear here; the door duplicates the hero tier, it does not replace it.
 
-### Toolbox (role unchanged, contents cleaned)
-- Identity: **Photoshop-parity supplemental tools** — deterministic, local, free. Kept as its own panel, explicitly *not* merged into Actions.
-- **AI items migrate out:** the current AI sub-sections (Face Swap, Denoise, AI upscale, and any other model-backed entries in `app/data/toolbox-items.ts`) move to the Actions panel. After migration the Toolbox is 100% deterministic and 100% free.
-- Duplicate verbs across the two panels are legitimate and resolved by engine: Toolbox "Upscale 2×" = deterministic resampler; Actions "Upscale an image" = AI. The panel tells you the engine.
+### Toolbox (role unchanged)
+- Identity: **Photoshop-parity supplemental tools** — local and free, deterministic *or* neural. Kept as its own panel, explicitly *not* merged into Actions.
+- **AMENDED 2026-07-03 (user decision, supersedes the original "AI items migrate out"):** the model-backed entries are local free models with a `requiresModels` download flow — modern Photoshop parity includes neural filters, so they STAY. Boundary rule: **Actions = cloud AI (billed, pastel); Toolbox = everything local + free.** Their section header renamed "AI" → "Local AI".
+- Duplicate verbs across the two panels are legitimate and resolved by engine: Toolbox "Upscale 2×" = local model, free; Actions "Upscale an image" = cloud AI, billed. The panel tells you the engine and the cost.
 
 ### Selection chips (contextual sampler for takes-input actions)
 - Selecting a media node surfaces the top 3–4 relevant actions as chips (pattern already shipped for post-render chip strips and critique fix chips — generalize it), plus an "All actions…" chip that opens the Actions panel pre-filtered to the selection's media type.
@@ -75,7 +75,7 @@ Reorganization:
 2. **Toolbar restructure** — Add menu section labels, Collection → sources, Timeline → surfaces, Studios split out as its own menu (with Type Studio added and icon fixes).
 3. **Generate door** — curated four-item menu with pastel treatment.
 4. **Selection chips generalization** — contextual actions on media-node selection.
-5. **Toolbox AI migration** — move model-backed items from toolbox-items.ts into the Actions catalog.
+5. ~~**Toolbox AI migration** — move model-backed items from toolbox-items.ts into the Actions catalog.~~ **AMENDED 2026-07-03 (user decision):** the Toolbox's model-backed items (Face Swap/InsightFace, Vocal Separator/demucs, local Whisper, Face Restore, Remove BG, Subject Mask, Object Removal, Upscale 2×, Slow Motion AI, Lip Sync) are LOCAL and FREE with their own `requiresModels` download flow — they are Photoshop-parity in the modern sense (Photoshop ships neural filters) and STAY in the Toolbox. The boundary rule is refined: **Actions = cloud AI (billed, pastel); Toolbox = everything local and free, deterministic or neural.** Their section header renamed "AI" → "Local AI" so the panel tells the truth. Nothing in the Toolbox is ever pastel (§1 rule unchanged: pastel = bills).
 
 Each phase is independently shippable; 1 and 2 have no ordering dependency between them.
 

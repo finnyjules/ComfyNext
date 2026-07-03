@@ -278,7 +278,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     ],
   },
   {
-    title: 'AI',
+    title: 'Local AI',
     items: [
       { nodeType: 'FaceSwap', label: 'Face Swap', description: 'Replace a face in the target with the face from a reference photo. Downloads ~530 MB on first use.', icon: UserRoundCog, requiresModels: 'faceswap' },
       { nodeType: 'FaceRestore', label: 'Face Restore', description: 'CodeFormer face restoration — sharpens facial detail and fixes muddy AI-generated or low-res faces. Pairs perfectly with Face Swap. Downloads ~360 MB on first use.', icon: Sparkles, requiresModels: 'facerestore' },
@@ -380,7 +380,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
   },
   {
     domain: 'audio',
-    title: 'AI',
+    title: 'Local AI',
     items: [
       { nodeType: 'WhisperTranscribe', label: 'Transcribe',    description: 'Speech-to-text via Whisper. Outputs Caption Track text + SRT. Downloads ~145 MB (base model) on first use.', icon: MessageSquare, requiresModels: 'whisper' },
       { nodeType: 'VocalSeparator',    label: 'Vocal Separator', description: 'Split a song into vocals + instrumental stems (Demucs). Downloads ~80 MB on first use.', icon: Mic, requiresModels: 'demucs' },
@@ -428,7 +428,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
   },
   {
     domain: 'video',
-    title: 'AI',
+    title: 'Local AI',
     items: [
       { nodeType: 'FrameInterpolateAI',   label: 'Slow Motion AI',     description: 'RIFE 4.6 frame interpolation — handles fast action and complex scenes far better than classical optical flow. Downloads ~32 MB on first use.', icon: Hourglass, requiresModels: 'frameinterp' },
       { nodeType: 'LipSync',              label: 'Lip Sync',           description: 'Wav2Lip — re-syncs the mouth region of a talking head to a new audio clip. Downloads ~140 MB on first use.', icon: Mic, requiresModels: 'lipsync' },
