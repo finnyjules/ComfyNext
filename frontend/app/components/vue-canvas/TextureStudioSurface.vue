@@ -19,9 +19,6 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import { useTextureAgent } from '~/composables/useTextureAgent'
-import AgentBar from '~/components/agent/AgentBar.vue'
-import AgentProposal from '~/components/agent/AgentProposal.vue'
-import AgentProgress from '~/components/agent/AgentProgress.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -37,10 +34,8 @@ const params = reactive<Params>(textureDefaults())
 // mutates the reactive params in place (fills replaced wholesale so revert clears
 // a custom fill) then re-renders via onParam().
 const { getLocalSetting } = useLocalSettings()
-const {
-  busy: taBusy, error: taError, notice: taNotice, changes: taChanges, issues: taIssues, review: taReview, reviewing: taReviewing, hasProposal: taHasProposal, hovered: taHovered,
-  ask: taAsk, acceptChange: taAccept, rejectChange: taReject, reroll: taReroll, keep: taKeep, revert: taRevert,
-} = useTextureAgent({
+// The shell renders the prompt + results from this object (see StudioModalShell).
+const textureAgent = useTextureAgent({
   getState: () => ({ params }),
   setState: (s) => { Object.assign(params, s.params); (params as any).fills = (s.params as any).fills; onParam() },
   apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
@@ -448,7 +443,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <StudioModalShell title="Pattern Studio" @close="closeEditor">
+  <StudioModalShell
+    title="Pattern Studio"
+    :agent="textureAgent"
+    agent-placeholder="Describe it — e.g. red and cream, fade the ground, tighter cells…"
+    @close="closeEditor"
+  >
     <template #preview>
       <div class="flex h-full flex-col items-center justify-center gap-3 p-4">
         <canvas ref="canvas" class="max-h-[60vh] max-w-full rounded-lg border border-white/10" />
@@ -506,23 +506,6 @@ onBeforeUnmount(() => {
     </template>
 
     <template #controls>
-      <!-- In-product agent: edit fills + tune the texture in natural language. -->
-      <div class="mb-3">
-        <AgentBar
-          :busy="taBusy" :error="taError" :notice="taNotice"
-          :chips="['Recolour the roles', 'Warmer palette', 'Gradient the ground', 'Tighter cells']"
-          placeholder="Describe it — e.g. red and cream, fade the ground, tighter cells…"
-          @submit="taAsk" @chip="taAsk"
-        />
-        <div v-if="taBusy" class="pt-2.5"><AgentProgress :active="taBusy" /></div>
-        <div v-else-if="taHasProposal" class="pt-2.5">
-          <AgentProposal
-            :changes="taChanges" :busy="taBusy" :issues="taIssues" :review="taReview" :reviewing="taReviewing"
-            @accept="taAccept" @reject="taReject" @reroll="taReroll"
-            @keep="taKeep" @revert="taRevert" @hover="(i: number | null) => taHovered = i"
-          />
-        </div>
-      </div>
       <StudioSection v-for="s in sections" :key="s.title" :title="s.title">
         <div v-for="c in s.controls" :key="c.key">
           <template v-if="c.kind === 'slider'">

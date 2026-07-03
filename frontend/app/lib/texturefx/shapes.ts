@@ -262,6 +262,72 @@ export function shapeRegion(family: string, u: number, v: number, cells: number,
       }
       return { role: bRole, fx: bFx, fy: bFy, shade: bShade }
     }
+    case 'triangles': {
+      // Equilateral triangle tiling: shear a square grid so each unit rhombus splits
+      // into two triangles by its anti-diagonal (role 0 = lower-left up-triangle,
+      // role 1 = upper-right down-triangle). N forced even so the half-cell shear
+      // wraps seamlessly on both axes.
+      const N = 2 * Math.max(1, Math.round(cells / 2))
+      let px = u * N
+      const py = v * N
+      px += py * 0.5
+      const tfx = px - Math.floor(px), tfy = py - Math.floor(py)
+      return { role: tfx + tfy < 1 ? 0 : 1, fx: tfx, fy: tfy }
+    }
+    case 'diamond': {
+      // Argyle: a checkerboard rotated 45° (diamonds). Parity of the two rotated
+      // lattice indices. u→u+1 shifts both indices by +cells (a+b even); v→v+1 shifts
+      // them by +cells/-cells (a+b unchanged) — seamless either way.
+      const a = Math.floor((u + v) * cells)
+      const b = Math.floor((u - v) * cells)
+      return { role: (((a + b) % 2) + 2) % 2 === 0 ? 0 : 1, fx, fy }
+    }
+    case 'shippou': {
+      // Seven-treasures / overlapping circles on the integer lattice. Role by how many
+      // of the 4 surrounding unit-circles (radius R) cover the point: ≥2 = overlap lens
+      // (0), 1 = circle body (1), 0 = field (2). Integer centres → period 1 → seamless.
+      const R = Number.isFinite(Number((_p as any)?.shippouRadius)) ? Number((_p as any).shippouRadius) : 0.62
+      const gx2 = u * cells, gy2 = v * cells
+      const cxi = Math.floor(gx2), cyi = Math.floor(gy2)
+      let count = 0
+      for (let di = 0; di <= 1; di++) for (let dj = 0; dj <= 1; dj++) {
+        if (Math.hypot(gx2 - (cxi + di), gy2 - (cyi + dj)) < R) count++
+      }
+      return { role: count >= 2 ? 0 : count === 1 ? 1 : 2, fx, fy }
+    }
+    case 'seigaiha': {
+      // Japanese wave: overlapping concentric-arc fans in offset rows. Reuses the
+      // fish-scale lowest-row owner search (identical quantization → seamless), then
+      // colours by the radial ring band inside the front-most (owning) circle so each
+      // fan reads as nested arcs. Roles cycle 0/1/2 by band.
+      const dyReq = Number.isFinite(Number((_p as any)?.fsRowSpacing)) ? Number((_p as any).fsRowSpacing) : 0.5
+      const R = Number.isFinite(Number((_p as any)?.fsRadius)) ? Number((_p as any).fsRadius) : 0.78
+      const wReq = Number.isFinite(Number((_p as any)?.fsWidth)) ? Number((_p as any).fsWidth) : 1.0
+      const rings = Math.max(2, Math.round(Number.isFinite(Number((_p as any)?.seigaihaRings)) ? Number((_p as any).seigaihaRings) : 5))
+      const ncols = 2 * Math.max(1, Math.round(cells / wReq / 2))
+      const sw = cells / ncols
+      const npairs = Math.max(1, Math.round(cells / (2 * dyReq)))
+      const sdy = cells / (2 * npairs)
+      const gxx = u * cells, gyy = v * cells
+      const pxn = gxx / sw
+      const jc = Math.round(gyy / sdy)
+      let bj: number | null = null, bi = 0, bd = 1e9
+      for (let dj = -3; dj <= 3; dj++) {
+        const j = jc + dj
+        const off = (((j % 2) + 2) % 2) * 0.5
+        const ic = Math.round(pxn - off)
+        for (let di = -2; di <= 2; di++) {
+          const i = ic + di, cxn = i + off, cyy = j * sdy
+          const d = Math.hypot(pxn - cxn, gyy - cyy)
+          if (d < R && (bj === null || j < bj || (j === bj && d < bd))) { bj = j; bi = i; bd = d }
+        }
+      }
+      if (bj === null) return { role: 0, fx: 0.5, fy: 0.5 }
+      const band = Math.min(rings - 1, Math.floor((bd / R) * rings))
+      const off = (((bj % 2) + 2) % 2) * 0.5
+      const cxn = bi + off, cyy = bj * sdy
+      return { role: (((band % 3) + 3) % 3), fx: (pxn - cxn) / (2 * R) + 0.5, fy: (gyy - cyy) / (2 * R) + 0.5 }
+    }
     default:
       return { role: 0, fx, fy }
   }

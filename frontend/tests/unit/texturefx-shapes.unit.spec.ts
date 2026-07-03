@@ -791,8 +791,153 @@ describe('shapeRegion tripods (interlocking 3D Y-blocks)', () => {
   })
 })
 
+describe('shapeRegion triangles', () => {
+  const cells = 8
+  it('roles are only 0 or 1', () => {
+    for (let i = 0; i <= 24; i++) for (let j = 0; j <= 24; j++) {
+      const r = shapeRegion('triangles', i / 24, j / 24, cells)
+      expect(r.role === 0 || r.role === 1).toBe(true)
+    }
+  })
+  it('both triangle orientations appear', () => {
+    const set = new Set<number>()
+    for (let i = 0; i <= 24; i++) for (let j = 0; j <= 24; j++) set.add(shapeRegion('triangles', i / 24, j / 24, cells).role)
+    expect(set).toEqual(new Set([0, 1]))
+  })
+  it('seamless wrap at cells=8: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('triangles', 0, t, cells).role).toBe(shapeRegion('triangles', 1, t, cells).role)
+      expect(shapeRegion('triangles', t, 0, cells).role).toBe(shapeRegion('triangles', t, 1, cells).role)
+    }
+  })
+  it('rolesFor resolves to [up, down]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'triangles' } as any)).toEqual(['up', 'down'])
+  })
+})
+
+describe('shapeRegion diamond (argyle)', () => {
+  const cells = 8
+  it('both roles appear and are only 0 or 1', () => {
+    const set = new Set<number>()
+    for (let i = 0; i <= 24; i++) for (let j = 0; j <= 24; j++) {
+      const r = shapeRegion('diamond', i / 24, j / 24, cells)
+      expect(r.role === 0 || r.role === 1).toBe(true)
+      set.add(r.role)
+    }
+    expect(set).toEqual(new Set([0, 1]))
+  })
+  it('adjacent diamonds alternate colour', () => {
+    // Centres of two edge-sharing diamonds in the rotated lattice (a=0,b=0) vs (a=1,b=0)
+    // differ in a+b parity, so their roles flip.
+    const a = shapeRegion('diamond', 0.5 / cells, 0, cells)
+    const b = shapeRegion('diamond', 1 / cells, 0.5 / cells, cells)
+    expect(a.role).not.toBe(b.role)
+  })
+  it('seamless wrap at cells=8: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('diamond', 0, t, cells).role).toBe(shapeRegion('diamond', 1, t, cells).role)
+      expect(shapeRegion('diamond', t, 0, cells).role).toBe(shapeRegion('diamond', t, 1, cells).role)
+    }
+  })
+  it('rolesFor resolves to [a, b]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'diamond' } as any)).toEqual(['a', 'b'])
+  })
+})
+
+describe('shapeRegion shippou (overlapping circles)', () => {
+  const cells = 8
+  it('all three roles (overlap/circle/field) appear over a dense grid', () => {
+    const set = new Set<number>()
+    for (let i = 0; i <= 32; i++) for (let j = 0; j <= 32; j++) {
+      const r = shapeRegion('shippou', i / 32, j / 32, cells)
+      expect(r.role >= 0 && r.role <= 2).toBe(true)
+      set.add(r.role)
+    }
+    expect(set).toEqual(new Set([0, 1, 2]))
+  })
+  it('cell centre is field (role 2) at the default radius', () => {
+    // Distance from a cell centre to each of its 4 corner circles is √0.5≈0.707 > 0.62.
+    expect(shapeRegion('shippou', 0.5 / cells, 0.5 / cells, cells).role).toBe(2)
+  })
+  it('a wider radius shrinks the field (fewer role-2 pixels)', () => {
+    const countField = (R: number) => {
+      let n = 0
+      for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) {
+        if (shapeRegion('shippou', (i + 0.5) / 40, (j + 0.5) / 40, cells, { shippouRadius: R } as any).role === 2) n++
+      }
+      return n
+    }
+    expect(countField(0.85)).toBeLessThan(countField(0.55))
+  })
+  it('seamless wrap at cells=8: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('shippou', 0, t, cells).role).toBe(shapeRegion('shippou', 1, t, cells).role)
+      expect(shapeRegion('shippou', t, 0, cells).role).toBe(shapeRegion('shippou', t, 1, cells).role)
+    }
+  })
+  it('rolesFor resolves to [overlap, circle, field]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'shippou' } as any)).toEqual(['overlap', 'circle', 'field'])
+  })
+})
+
+describe('shapeRegion seigaiha (wave fans)', () => {
+  const cells = 8
+  it('roles stay within {0,1,2} and all appear', () => {
+    const set = new Set<number>()
+    for (let i = 0; i <= 32; i++) for (let j = 0; j <= 32; j++) {
+      const r = shapeRegion('seigaiha', i / 32, j / 32, cells)
+      expect(r.role >= 0 && r.role <= 2).toBe(true)
+      set.add(r.role)
+    }
+    expect(set).toEqual(new Set([0, 1, 2]))
+  })
+  it('more rings produces more distinct band transitions', () => {
+    // Count radial-band changes along a horizontal scan; more rings → more flips.
+    const flips = (rings: number) => {
+      let n = 0, prev = -1
+      for (let i = 0; i < 200; i++) {
+        const r = shapeRegion('seigaiha', i / 200, 0.3, cells, { seigaihaRings: rings } as any).role
+        if (r !== prev) n++
+        prev = r
+      }
+      return n
+    }
+    expect(flips(8)).toBeGreaterThan(flips(2))
+  })
+  it('seamless wrap at cells=8: u=0 matches u=1 and v=0 matches v=1', () => {
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16
+      expect(shapeRegion('seigaiha', 0, t, cells).role).toBe(shapeRegion('seigaiha', 1, t, cells).role)
+      expect(shapeRegion('seigaiha', t, 0, cells).role).toBe(shapeRegion('seigaiha', t, 1, cells).role)
+    }
+  })
+  it('seam holds across the shared fishscale sliders (width, spacing, radius)', () => {
+    const configs = [
+      { fsWidth: 1.6, fsRowSpacing: 0.5, fsRadius: 0.78, seigaihaRings: 5 },
+      { fsWidth: 0.5, fsRowSpacing: 0.3, fsRadius: 0.9, seigaihaRings: 6 },
+      { fsWidth: 1.0, fsRowSpacing: 0.7, fsRadius: 0.6, seigaihaRings: 3 },
+    ]
+    for (const cfg of configs) {
+      for (let i = 0; i <= 16; i++) {
+        const t = i / 16
+        expect(shapeRegion('seigaiha', 0, t, cells, cfg as any).role).toBe(shapeRegion('seigaiha', 1, t, cells, cfg as any).role)
+        expect(shapeRegion('seigaiha', t, 0, cells, cfg as any).role).toBe(shapeRegion('seigaiha', t, 1, cells, cfg as any).role)
+      }
+    }
+  })
+  it('rolesFor resolves to [ringA, ringB, ringC]', () => {
+    expect(rolesFor({ mode: 'shapes', shapeFamily: 'seigaiha' } as any)).toEqual(['ringA', 'ringB', 'ringC'])
+  })
+})
+
 describe('isStrokeEdge (shape outline detection)', () => {
-  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods']
+  // seigaiha is intentionally excluded: its dense concentric bands make almost every
+  // pixel a band boundary, so the "some interior" invariant does not hold (stroke on
+  // seigaiha outlines the whole fan — expected, just not meaningful to assert here).
+  const families = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods', 'triangles', 'diamond', 'shippou']
 
   it('flags region boundaries and not deep interiors, for every family', () => {
     // Each family must produce SOME edge pixels and SOME non-edge (interior) pixels

@@ -141,6 +141,30 @@ function truchetColor(
     const side = state === 0 ? fy < fx : fy < 1 - fx
     return out(side ? A : B)
   }
+  if (fam === 'maze') {
+    // 10-PRINT: a straight diagonal per cell. state 0 → main diagonal '\' (corners
+    // (0,0)-(1,1)); state 1 → anti-diagonal '/'. Lines end at cell corners, which
+    // are shared with neighbours, so uniform/mixed states weave into a labyrinth.
+    const d = state === 0 ? Math.abs(fy - fx) : Math.abs(fy - (1 - fx))
+    return d < tw ? out(A) : out(BG)
+  }
+  if (fam === 'arcs2') {
+    // Double Truchet arcs: two concentric quarter-circles (radius 0.5 ± gap) per
+    // corner pair. Same edge-midpoint endpoints as `arcs`, so it stays connected.
+    const c0x = state === 0 ? 0 : 1, c1x = state === 0 ? 1 : 0
+    const gap = 0.16
+    const onArc = (cx0: number, cy0: number) => {
+      const d = Math.hypot(fx - cx0, fy - cy0)
+      return Math.abs(d - (0.5 - gap)) < tw * 0.5 || Math.abs(d - (0.5 + gap)) < tw * 0.5
+    }
+    return (onArc(c0x, 0) || onArc(c1x, 1)) ? out(A) : out(BG)
+  }
+  if (fam === 'arcdot') {
+    // Truchet arcs with a dot at each cell centre — reads as a connected pipe network
+    // studded with rivets. Arc coverage OR a centre disc of radius ~tw.
+    const dot = Math.hypot(fx - 0.5, fy - 0.5) < tw * 1.4
+    return (dot || arcCoverage(fx, fy, state, tw)) ? out(A) : out(BG)
+  }
   if (fam === 'weave') {
     // Warp (vertical, A) and weft (horizontal, B) bands. Band width follows the
     // line-weight control (tw); the over/under at each crossing is the cell
@@ -205,12 +229,60 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
   const lw = Number(p.lineWeight) || 0.12
   const jitter = Number(p.jitter) || 0
   const motif = String(p.motif)
+  // Shared knobs for the appended figure motifs. `bands` = concentric-band /
+  // wave-cycle count; `waveAmp` = wave line amplitude; `majorEvery` = graph-paper
+  // heavy-line interval. Every figure below is a pure function of the cell-local
+  // (fx,fy) plus modded (cx,cy), so it wraps at the tile edge by construction.
+  const bands = Math.max(1, Math.round(Number(p.bands) || 6))
+  const waveAmp = Number.isFinite(Number(p.waveAmp)) ? Number(p.waveAmp) : 0.3
+  const rtri = (x: number) => Math.abs(2 * (x - Math.floor(x)) - 1)
 
   const swap = jitter > 0 && cellHash < jitter
   const ink: [number, number, number] = swap ? B : A
   const ink2: [number, number, number] = swap ? A : B
 
   switch (motif) {
+    case 'rings': {
+      // Concentric circles centred in each cell (Euclidean distance banding).
+      const bi = Math.floor(Math.hypot(fx - 0.5, fy - 0.5) * 2 * bands)
+      return out(posmod(bi, 2) === 0 ? A : BG)
+    }
+    case 'squares': {
+      // Concentric squares (Chebyshev distance banding).
+      const bi = Math.floor(Math.max(Math.abs(fx - 0.5), Math.abs(fy - 0.5)) * 2 * bands)
+      return out(posmod(bi, 2) === 0 ? A : BG)
+    }
+    case 'diamonds': {
+      // Concentric diamonds (Manhattan distance banding).
+      const bi = Math.floor((Math.abs(fx - 0.5) + Math.abs(fy - 0.5)) * 2 * bands)
+      return out(posmod(bi, 2) === 0 ? A : BG)
+    }
+    case 'waves': {
+      // Sine wave line, `bands` humps per cell. Endpoints sit at fy=0.5 (sin=0 at the
+      // integer-frequency cell edges), so lines join left↔right into continuous waves.
+      const curve = 0.5 + waveAmp * Math.sin(fx * 2 * Math.PI * bands)
+      return out(Math.abs(fy - curve) < lw ? A : BG)
+    }
+    case 'zigzag': {
+      // Triangle-wave line (chevron rows). rtri peaks at the integer-frequency cell
+      // edges, so adjacent cells connect at a shared peak.
+      const curve = 0.5 + waveAmp * (2 * rtri(fx * bands) - 1)
+      return out(Math.abs(fy - curve) < lw ? A : BG)
+    }
+    case 'cross': {
+      // A plus sign centred in each cell; arms half-width = line weight.
+      return out((Math.abs(fx - 0.5) < lw || Math.abs(fy - 0.5) < lw) ? A : BG)
+    }
+    case 'graph': {
+      // Graph paper: thin minor rule on every cell's top/left edge (like `grid`),
+      // heavier major rule every `majorEvery` cells. major → A, minor → B, ground → BG.
+      const major = Math.max(2, Math.round(Number(p.majorEvery) || 4))
+      const minorW = Math.min(0.45, lw)
+      const majorW = Math.min(0.49, lw * 1.8)
+      const onMajor = (posmod(cx, major) === 0 && fx < majorW) || (posmod(cy, major) === 0 && fy < majorW)
+      const onMinor = fx < minorW || fy < minorW
+      return out(onMajor ? A : onMinor ? B : BG)
+    }
     case 'stripes':
       // `scale` sets the stripe split point (fraction of each cell that is ink).
       return out(fx < scale ? ink : ink2)

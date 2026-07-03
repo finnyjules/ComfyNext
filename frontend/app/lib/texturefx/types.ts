@@ -1,5 +1,9 @@
 export const LATTICES = ['square', 'brick', 'diagonal'] as const
-export const MOTIFS = ['checker', 'stripes', 'dots', 'grid'] as const
+// Procedural motifs. Appended entries keep the original indices stable (the GLSL
+// mirror in renderer.ts dispatches on u_motif by index, and saved scenes store the
+// string). rings/squares/diamonds are concentric-band figures; waves/zigzag are
+// wavy line rows; cross is a per-cell plus; graph is graph-paper (minor+major grid).
+export const MOTIFS = ['checker', 'stripes', 'dots', 'grid', 'rings', 'squares', 'diamonds', 'waves', 'zigzag', 'cross', 'graph'] as const
 
 export type Lattice = typeof LATTICES[number]
 export type Motif = typeof MOTIFS[number]
@@ -10,9 +14,14 @@ export function cloneParams<T>(value: T): T {
 }
 
 export const MODES = ['procedural', 'truchet', 'raster', 'shapes'] as const
-export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale'] as const
+// Truchet tile families. multiscale MUST stay at index 3 — the GLSL reads it as a
+// bounded band (u_family in [2.5,3.5]) and the render() state-texture path keys on
+// the 'multiscale' string. maze/arcs2/arcdot are appended (indices 4-6): maze =
+// 10-PRINT straight diagonals, arcs2 = double concentric arcs, arcdot = arcs + a
+// centre dot. All three flow through the same placement/coherence state machinery.
+export const TILE_FAMILIES = ['arcs', 'diagonal', 'weave', 'multiscale', 'maze', 'arcs2', 'arcdot'] as const
 export const SEAM_METHODS = ['mirror', 'feather', 'direct'] as const
-export const SHAPE_FAMILIES = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods'] as const
+export const SHAPE_FAMILIES = ['octagon', 'pinwheel', 'chevron', 'basketweave', 'herringbone', 'fishscale', 'pythagorean', 'hex', 'cairo', 'cubes', 'weave3d', 'tripods', 'triangles', 'diamond', 'shippou', 'seigaiha'] as const
 
 export type Mode = typeof MODES[number]
 export type SeamMethod = typeof SEAM_METHODS[number]

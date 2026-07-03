@@ -12,6 +12,12 @@ const isTruchet = (p: Params) => String(p.mode) === 'truchet'
 const isRaster = (p: Params) => String(p.mode) === 'raster'
 const isShapes = (p: Params) => String(p.mode) === 'shapes'
 
+// Which figure motifs read which knob. `bands` = concentric-band / wave-hump count;
+// `waveAmp` = wave amplitude; `lineWeight` = mark thickness (grid + the line figures).
+const FIGURE_BANDS = new Set(['rings', 'squares', 'diamonds', 'waves', 'zigzag'])
+const FIGURE_WAVE = new Set(['waves', 'zigzag'])
+const FIGURE_LINEWEIGHT = new Set(['grid', 'waves', 'zigzag', 'cross', 'graph'])
+
 export const TEXTURE_CONTROLS: TextureControl[] = [
   // Lattice controls — hidden in raster mode (raster is whole-tile, no lattice).
   { key: 'lattice', label: 'Lattice', kind: 'select', options: [...LATTICES], default: 'square', group: 'Lattice', when: (p) => !isRaster(p) },
@@ -21,9 +27,12 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'shapeFamily', label: 'Shape', kind: 'select', options: [...SHAPE_FAMILIES], default: 'octagon', group: 'Cell', when: isShapes },
   { key: 'pinwheel', label: 'Pinwheel', kind: 'select', options: ['off', 'on'], default: 'on', group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'pinwheel' },
   { key: 'hexOrient', label: 'Orientation', kind: 'select', options: ['pointy', 'flat'], default: 'pointy', group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'hex' },
-  { key: 'fsWidth', label: 'Scale width', kind: 'slider', min: 0.4, max: 2.0, step: 0.05, default: 1.0, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
-  { key: 'fsRowSpacing', label: 'Row spacing', kind: 'slider', min: 0.2, max: 0.9, step: 0.02, default: 0.5, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
-  { key: 'fsRadius', label: 'Arc radius', kind: 'slider', min: 0.55, max: 1.0, step: 0.01, default: 0.78, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'fishscale' },
+  // fishscale + seigaiha share the scallop lattice geometry, so they share these knobs.
+  { key: 'fsWidth', label: 'Scale width', kind: 'slider', min: 0.4, max: 2.0, step: 0.05, default: 1.0, group: 'Cell', when: (p) => isShapes(p) && (String(p.shapeFamily) === 'fishscale' || String(p.shapeFamily) === 'seigaiha') },
+  { key: 'fsRowSpacing', label: 'Row spacing', kind: 'slider', min: 0.2, max: 0.9, step: 0.02, default: 0.5, group: 'Cell', when: (p) => isShapes(p) && (String(p.shapeFamily) === 'fishscale' || String(p.shapeFamily) === 'seigaiha') },
+  { key: 'fsRadius', label: 'Arc radius', kind: 'slider', min: 0.55, max: 1.0, step: 0.01, default: 0.78, group: 'Cell', when: (p) => isShapes(p) && (String(p.shapeFamily) === 'fishscale' || String(p.shapeFamily) === 'seigaiha') },
+  { key: 'seigaihaRings', label: 'Rings', kind: 'slider', min: 2, max: 8, step: 1, default: 5, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'seigaiha' },
+  { key: 'shippouRadius', label: 'Circle overlap', kind: 'slider', min: 0.5, max: 0.9, step: 0.01, default: 0.62, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'shippou' },
   { key: 'weaveWidth', label: 'Strand width', kind: 'slider', min: 0.14, max: 0.42, step: 0.01, default: 0.34, group: 'Cell', when: (p) => isShapes(p) && String(p.shapeFamily) === 'weave3d' },
   // Arm reach (radial) sets hole size: ~0.577 = hexagon corner (tiny holes / near-solid
   // cubes); lower = bigger hexagonal recesses. Arm width sets how fat the arms are.
@@ -37,7 +46,13 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   // sized by 'Cells'. 'Line weight' is only used by the grid motif. Reveal each
   // only where it does something, so neither reads as a dead slider.
   { key: 'scale', label: 'Motif size', kind: 'slider', min: 0.1, max: 1, step: 0.01, default: 0.7, group: 'Content', when: (p) => isProcedural(p) && (String(p.motif) === 'dots' || String(p.motif) === 'stripes') },
-  { key: 'lineWeight', label: 'Line weight', kind: 'slider', min: 0.02, max: 0.5, step: 0.01, default: 0.12, group: 'Content', when: (p) => isProcedural(p) && String(p.motif) === 'grid' },
+  { key: 'lineWeight', label: 'Line weight', kind: 'slider', min: 0.02, max: 0.5, step: 0.01, default: 0.12, group: 'Content', when: (p) => isProcedural(p) && FIGURE_LINEWEIGHT.has(String(p.motif)) },
+  // Figure-motif knobs. 'Repeat' drives concentric-band count (rings/squares/diamonds)
+  // and wave-hump count (waves/zigzag); 'Wave depth' is the wave amplitude; 'Major every'
+  // is the graph-paper heavy-rule interval.
+  { key: 'bands', label: 'Repeat', kind: 'slider', min: 2, max: 16, step: 1, default: 6, group: 'Content', when: (p) => isProcedural(p) && FIGURE_BANDS.has(String(p.motif)) },
+  { key: 'waveAmp', label: 'Wave depth', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0.3, group: 'Content', when: (p) => isProcedural(p) && FIGURE_WAVE.has(String(p.motif)) },
+  { key: 'majorEvery', label: 'Major every', kind: 'slider', min: 2, max: 8, step: 1, default: 4, group: 'Content', when: (p) => isProcedural(p) && String(p.motif) === 'graph' },
   { key: 'jitter', label: 'Color jitter', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Content', when: isProcedural },
 
   // Truchet controls — shown only in truchet mode.

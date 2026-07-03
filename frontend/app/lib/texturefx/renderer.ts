@@ -22,6 +22,8 @@ precision highp float;
 in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
 uniform float u_mode, u_family, u_rotBias, u_tw;
+uniform float u_bands, u_waveAmp, u_majorEvery;   // figure motifs: band/hump count, wave amplitude, graph-paper major interval
+uniform float u_shippouRadius, u_seigaihaRings;   // shape families: overlapping-circle radius, seigaiha ring count
 uniform float u_shapeFamily;
 uniform float u_pinwheel;
 uniform float u_hexFlat;
@@ -369,7 +371,7 @@ int shapeRole(vec2 uv, out vec2 cf, out float shade) {
         float along = fract(tt[int(mod(float(vis) + 2.0, 3.0))]);
         cf = vec2(along, vs / bw * 0.5 + 0.5);
       }
-    } else {                              // tripods — interlocking 3D Y-blocks (role 3 = recess/bg)
+    } else if (u_shapeFamily < 11.5) {    // tripods — interlocking 3D Y-blocks (role 3 = recess/bg)
       float uw = fract(v_uv.x); float vw = fract(v_uv.y);
       float K = 1.1547005;
       float nx = max(2.0, floor(u_cells + 0.5));
@@ -393,6 +395,51 @@ int shapeRole(vec2 uv, out vec2 cf, out float shade) {
             if (h > bestH) { bestH = h; role = int(sect); cf = vec2(min(1.0, along / armLen), across / armW * 0.5 + 0.5); shade = (across > 0.0) ? (1.0 - bevel) : 1.0; }
           }
         }
+      }
+    } else if (u_shapeFamily < 12.5) {    // triangles — equilateral (sheared square split by anti-diagonal)
+      float N = 2.0 * max(1.0, floor(u_cells / 2.0 + 0.5));
+      float px = v_uv.x * N;
+      float py = v_uv.y * N;
+      px += py * 0.5;
+      vec2 tf = vec2(fract(px), fract(py));
+      role = (tf.x + tf.y < 1.0) ? 0 : 1;
+      cf = tf;
+    } else if (u_shapeFamily < 13.5) {    // diamond — argyle (45°-rotated checkerboard)
+      float a = floor((v_uv.x + v_uv.y) * u_cells);
+      float b = floor((v_uv.x - v_uv.y) * u_cells);
+      role = (mod(a + b, 2.0) < 0.5) ? 0 : 1;
+      cf = f;
+    } else if (u_shapeFamily < 14.5) {    // shippou — overlapping circles on the integer lattice
+      float R = u_shippouRadius;
+      float gx2 = v_uv.x * u_cells; float gy2 = v_uv.y * u_cells;
+      float cxi = floor(gx2); float cyi = floor(gy2);
+      float cnt = 0.0;
+      for (int di = 0; di <= 1; di++) {
+        for (int dj = 0; dj <= 1; dj++) {
+          if (distance(vec2(gx2, gy2), vec2(cxi + float(di), cyi + float(dj))) < R) cnt += 1.0;
+        }
+      }
+      role = (cnt >= 1.5) ? 0 : ((cnt > 0.5) ? 1 : 2);
+      cf = f;
+    } else {                              // seigaiha — concentric-arc wave fans (fish-scale owner + radial bands)
+      float dyReq = u_fsRowSpacing; float R = u_fsRadius; float wReq = u_fsWidth;
+      float rings = max(2.0, floor(u_seigaihaRings + 0.5));
+      float ncols = 2.0 * max(1.0, floor(u_cells / wReq / 2.0 + 0.5));
+      float sw = u_cells / ncols;
+      float npairs = max(1.0, floor(u_cells / (2.0 * dyReq) + 0.5));
+      float sdy = u_cells / (2.0 * npairs);
+      float gxx = v_uv.x * u_cells; float gyy = v_uv.y * u_cells;
+      float bi, bj;
+      bool found = fsOwner(gxx, gyy, sdy, R, sw, bi, bj);
+      if (!found) { role = 0; cf = vec2(0.5); }
+      else {
+        float off = mod(bj, 2.0) * 0.5;
+        float cxn = bi + off; float cyy = bj * sdy;
+        float pxn = gxx / sw;
+        float d = distance(vec2(pxn, gyy), vec2(cxn, cyy));
+        float band = min(rings - 1.0, floor(d / R * rings));
+        role = int(mod(band, 3.0));
+        cf = vec2((pxn - cxn) / (2.0 * R) + 0.5, (gyy - cyy) / (2.0 * R) + 0.5);
       }
     }
   return role;
@@ -472,7 +519,7 @@ void main(){
   // u_mode: 0 = procedural, 1 = truchet  (MODES order)
   // u_family: 0 = arcs, 1 = diagonal, 2 = weave, 3 = multiscale  (TILE_FAMILIES order)
   if (u_mode > 0.5) {
-    if (u_family > 2.5) { // multiscale: read level from u_stateTex, descend 3× when level=1
+    if (u_family > 2.5 && u_family < 3.5) { // multiscale: read level from u_stateTex, descend 3× when level=1
       float lvl = texelFetch(u_stateTex, ivec2(int(cx), int(cy)), 0).r > 0.5 ? 1.0 : 0.0;
       vec2 lf = vec2(fx, fy); float sub = 0.0;
       if (lvl > 0.5) {
@@ -496,7 +543,7 @@ void main(){
     } else if (u_family < 1.5) {     // diagonal two-tone: sideA=role0, sideB=role1
       bool side = (st < 0.5) ? (fy < fx) : (fy < 1.0 - fx);
       col = side ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
-    } else {                          // weave: warp=role0, weft=role1, gap=role2
+    } else if (u_family < 2.5) {      // weave: warp=role0, weft=role1, gap=role2
       float bw = 0.44 + u_tw;
       bool inV = abs(fx - 0.5) < bw*0.5;
       bool inH = abs(fy - 0.5) < bw*0.5;
@@ -505,6 +552,20 @@ void main(){
       else if (inV) col = evalFill(0, vec2(fx,fy), v_uv);
       else if (inH) col = evalFill(1, vec2(fx,fy), v_uv);
       else col = evalFill(2, vec2(fx,fy), v_uv);
+    } else if (u_family < 4.5) {      // maze (10 PRINT): straight diagonal per cell, stroke=role0
+      float d = (st < 0.5) ? abs(fy - fx) : abs(fy - (1.0 - fx));
+      col = (d < u_tw) ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
+    } else if (u_family < 5.5) {      // arcs2: double concentric quarter-arcs, stroke=role0
+      float c0x = (st < 0.5) ? 0.0 : 1.0;
+      float c1x = (st < 0.5) ? 1.0 : 0.0;
+      float gap = 0.16;
+      float d0 = distance(vec2(fx,fy), vec2(c0x, 0.0));
+      float d1 = distance(vec2(fx,fy), vec2(c1x, 1.0));
+      bool on = abs(d0-(0.5-gap))<u_tw*0.5 || abs(d0-(0.5+gap))<u_tw*0.5 || abs(d1-(0.5-gap))<u_tw*0.5 || abs(d1-(0.5+gap))<u_tw*0.5;
+      col = on ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
+    } else {                          // arcdot: arcs + a centre dot, stroke=role0
+      bool dot = distance(vec2(fx,fy), vec2(0.5)) < u_tw*1.4;
+      col = (dot || arcCov(vec2(fx,fy), st, u_tw)) ? evalFill(0, vec2(fx,fy), v_uv) : evalFill(1, vec2(fx,fy), v_uv);
     }
     frag = vec4(col, 1.0);
     return;
@@ -515,12 +576,15 @@ void main(){
   float swap = (u_jitter > 0.0 && cellHash(cx, cy, hseed + 3.0) < u_jitter) ? 1.0 : 0.0;
   vec3 F0 = evalFill(0, vec2(fx,fy), v_uv);
   vec3 F1 = evalFill(1, vec2(fx,fy), v_uv);
+  vec3 F2 = evalFill(2, vec2(fx,fy), v_uv);   // ground for the 3-role graph motif
   // Jitter-swapped aliases for checker/stripes only
   vec3 ink  = (swap > 0.5) ? F1 : F0;
   vec3 ink2 = (swap > 0.5) ? F0 : F1;
 
   vec3 c;
-  // u_motif: 0 = checker, 1 = stripes, 2 = dots, 3 = grid  (MOTIFS order)
+  // u_motif (MOTIFS order): 0 checker, 1 stripes, 2 dots, 3 grid, then the appended
+  // figure motifs 4 rings, 5 squares, 6 diamonds, 7 waves, 8 zigzag, 9 cross, 10 graph.
+  // The figures use F0 for the mark and F1/F2 for ground — mirrors patternColor().
   if (u_motif < 0.5) {                 // checker: role0/role1 with jitter swap
     c = (posmod(cx+cy,2.0)==0.0) ? ink : ink2;
   } else if (u_motif < 1.5) {          // stripes: role0/role1 with jitter swap
@@ -530,8 +594,32 @@ void main(){
     float aa = max(fwidth(d), 1e-4);
     float cov = 1.0 - smoothstep(u_scale*0.5 - aa, u_scale*0.5 + aa, d);
     c = mix(F1, F0, cov);
-  } else {                             // grid: role0=line, role1=ground, no swap
+  } else if (u_motif < 3.5) {          // grid: role0=line, role1=ground, no swap
     c = (fx < u_lw || fy < u_lw) ? F0 : F1;
+  } else if (u_motif < 4.5) {          // rings: concentric circles (Euclidean bands)
+    float bi = floor(distance(vec2(fx,fy), vec2(0.5)) * 2.0 * u_bands);
+    c = (mod(bi, 2.0) < 0.5) ? F0 : F1;
+  } else if (u_motif < 5.5) {          // squares: concentric squares (Chebyshev bands)
+    float bi = floor(max(abs(fx-0.5), abs(fy-0.5)) * 2.0 * u_bands);
+    c = (mod(bi, 2.0) < 0.5) ? F0 : F1;
+  } else if (u_motif < 6.5) {          // diamonds: concentric diamonds (Manhattan bands)
+    float bi = floor((abs(fx-0.5) + abs(fy-0.5)) * 2.0 * u_bands);
+    c = (mod(bi, 2.0) < 0.5) ? F0 : F1;
+  } else if (u_motif < 7.5) {          // waves: sine line rows (u_bands humps)
+    float curve = 0.5 + u_waveAmp * sin(fx * 6.2831853 * u_bands);
+    c = (abs(fy - curve) < u_lw) ? F0 : F1;
+  } else if (u_motif < 8.5) {          // zigzag: triangle-wave line rows
+    float curve = 0.5 + u_waveAmp * (2.0 * r_tri(fx * u_bands) - 1.0);
+    c = (abs(fy - curve) < u_lw) ? F0 : F1;
+  } else if (u_motif < 9.5) {          // cross: per-cell plus sign
+    c = (abs(fx-0.5) < u_lw || abs(fy-0.5) < u_lw) ? F0 : F1;
+  } else {                             // graph: minor rule (F1) + major rule (F0) over ground (F2)
+    float major = max(2.0, floor(u_majorEvery + 0.5));
+    float minorW = min(0.45, u_lw);
+    float majorW = min(0.49, u_lw * 1.8);
+    bool onMajor = (mod(cx, major) < 0.5 && fx < majorW) || (mod(cy, major) < 0.5 && fy < majorW);
+    bool onMinor = (fx < minorW || fy < minorW);
+    c = onMajor ? F0 : (onMinor ? F1 : F2);
   }
   frag = vec4(c, 1.0);
 }`
@@ -635,6 +723,13 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_mode'), Math.max(0, MODES.indexOf(String(p.mode) as typeof MODES[number])))
     gl.uniform1f(u('u_family'), Math.max(0, TILE_FAMILIES.indexOf(String(p.tileFamily) as typeof TILE_FAMILIES[number])))
     gl.uniform1f(u('u_shapeFamily'), Math.max(0, SHAPE_FAMILIES.indexOf(String(p.shapeFamily) as any)))
+    // Figure-motif knobs (rings/squares/diamonds/waves/zigzag/graph). bands is rounded
+    // to an integer here so the GLSL band/frequency math matches patternColor() exactly.
+    gl.uniform1f(u('u_bands'), Math.max(1, Math.round(Number(p.bands) || 6)))
+    gl.uniform1f(u('u_waveAmp'), Number.isFinite(Number(p.waveAmp)) ? Number(p.waveAmp) : 0.3)
+    gl.uniform1f(u('u_majorEvery'), Number.isFinite(Number(p.majorEvery)) ? Number(p.majorEvery) : 4)
+    gl.uniform1f(u('u_shippouRadius'), Number.isFinite(Number(p.shippouRadius)) ? Number(p.shippouRadius) : 0.62)
+    gl.uniform1f(u('u_seigaihaRings'), Number.isFinite(Number(p.seigaihaRings)) ? Number(p.seigaihaRings) : 5)
     gl.uniform1f(u('u_pinwheel'), String(p.pinwheel) !== 'off' ? 1 : 0)
     gl.uniform1f(u('u_hexFlat'), String(p.hexOrient) === 'flat' ? 1 : 0)
     gl.uniform1f(u('u_fsRadius'),     Number.isFinite(Number(p.fsRadius))     ? Number(p.fsRadius)     : 0.78)
