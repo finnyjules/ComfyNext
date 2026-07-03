@@ -45,6 +45,9 @@ watch(target, async (t) => {
     bindables.value = listSmartLayoutBindables(readTemplateFromNode(t))
     return
   }
+  // Clear before awaiting — a stale list would let the auto-align watcher seed
+  // the new target with the previous target's bindables.
+  bindables.value = []
   const controls = await controlsForStudio(t)
   // Guard against the target having changed while the async lookup was in flight.
   if (target.value !== t) return
