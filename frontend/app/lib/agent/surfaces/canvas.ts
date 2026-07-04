@@ -206,6 +206,13 @@ function resolvePorts(from: NodeLite, to: NodeLite, fromPort?: string, toPort?: 
   return null
 }
 
+/** Numbers past float-precision territory (or non-finite) can only be model
+ *  mistakes — no sampler/seed/size widget wants them, and they corrupt runs. */
+const MAX_WIDGET_NUMBER = 1e15
+function isInsaneNumber(v: unknown): boolean {
+  return typeof v === 'number' && (!Number.isFinite(v) || Math.abs(v) > MAX_WIDGET_NUMBER)
+}
+
 /** Apply one command to the snapshot (a dry-run for the proposal preview +
  *  validation). Pure — the input is never mutated. The composable replays
  *  accepted commands here to preview, then materialises them on the live graph. */
@@ -219,6 +226,7 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       const name = cmd.args?.name
       if (typeof name !== 'string' || !(name in node.widgets)) return { ok: false, reason: 'invalid', detail: `'${String(name)}' is not a widget on ${nodeName(node)} (has: ${Object.keys(node.widgets).join(', ') || 'none'})` }
       if (!('value' in (cmd.args ?? {}))) return { ok: false, reason: 'invalid', detail: 'missing args.value' }
+      if (isInsaneNumber(cmd.args!.value)) return { ok: false, reason: 'invalid', detail: `'${String(cmd.args!.value)}' is out of range for ${name}` }
       // Choice widgets: reject a value that isn't an allowed option (would break the run).
       const opts = node.widgetOptions?.[name]
       if (Array.isArray(opts) && opts.length && !opts.includes(cmd.args!.value as string)) {
@@ -245,7 +253,7 @@ export function applyCanvasCommand(input: CanvasSnapshot, cmd: Command): Command
       const widgets: Record<string, unknown> = {}
       for (const w of entry.widgets) widgets[w.name] = w.default
       const overrides = cmd.args?.widgetOverrides as Record<string, unknown> | undefined
-      if (overrides) for (const [k, v] of Object.entries(overrides)) if (k in widgets) widgets[k] = v
+      if (overrides) for (const [k, v] of Object.entries(overrides)) if (k in widgets && !isInsaneNumber(v)) widgets[k] = v
       const node: NodeLite = {
         id, nodeType, title: entry.name, widgets,
         // Preserve `optional` so verify doesn't flag a generator's optional image

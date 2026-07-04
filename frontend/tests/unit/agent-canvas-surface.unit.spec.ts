@@ -204,6 +204,25 @@ describe('verifyCanvas', () => {
   })
 })
 
+describe('numeric sanity on widget writes', () => {
+  it('rejects absurd numeric magnitudes on setWidget', () => {
+    const r = applyCanvasCommand(graph(), { op: 'setWidget', target: '2', args: { name: 'steps', value: 1e16 } })
+    expect(r.ok).toBe(false)
+  })
+  it('rejects non-finite numbers on setWidget', () => {
+    const r = applyCanvasCommand(graph(), { op: 'setWidget', target: '2', args: { name: 'steps', value: Number.POSITIVE_INFINITY } })
+    expect(r.ok).toBe(false)
+  })
+  it('drops absurd numeric overrides on addNode instead of writing them', () => {
+    const r = applyCanvasCommand(graph(), { op: 'addNode', args: { nodeType: 'UpscaleImage', widgetOverrides: { scale: 1e16 } } })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      const added = r.template.nodes[r.template.nodes.length - 1]!
+      expect(added.widgets.scale).not.toBe(1e16) // kept the catalog default
+    }
+  })
+})
+
 describe('setWidget choice validation', () => {
   const g = (): CanvasSnapshot => ({ nodes: [
     { id: 'k', nodeType: 'KSampler', title: 'KSampler', widgets: { sampler_name: 'euler', steps: 20 },
