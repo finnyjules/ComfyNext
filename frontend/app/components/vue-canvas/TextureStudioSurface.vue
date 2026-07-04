@@ -20,7 +20,7 @@ import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import { useTextureAgent } from '~/composables/useTextureAgent'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
-import BindableControlChip from '~/components/vue-canvas/studio/BindableControlChip.vue'
+import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
@@ -667,9 +667,14 @@ onBeforeUnmount(() => {
             />
           </template>
           <template v-else-if="c.kind === 'select'">
-            <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55">
+            <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55 group">
               <span>{{ c.label }}</span>
-              <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+              <VariableGlyph
+                v-if="controlKindToVariableType(c.kind) !== null"
+                :bound="boundColumnFor(c.key)"
+                @promote="promote(c, String(params[c.key]))"
+                @menu="(e: MouseEvent) => openVarMenu(e, c)"
+              />
             </label>
             <!-- StudioSelect uses defineModel<string> — bind with v-model -->
             <StudioSelect
@@ -680,9 +685,14 @@ onBeforeUnmount(() => {
           </template>
           <template v-else-if="c.kind === 'color'">
             <div class="flex items-center gap-2">
-              <label class="flex items-center gap-1.5 text-[11px] text-white/55">
+              <label class="flex items-center gap-1.5 text-[11px] text-white/55 group">
                 <span>{{ c.label }}</span>
-                <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
+                <VariableGlyph
+                  v-if="controlKindToVariableType(c.kind) !== null"
+                  :bound="boundColumnFor(c.key)"
+                  @promote="promote(c, String(params[c.key]))"
+                  @menu="(e: MouseEvent) => openVarMenu(e, c)"
+                />
               </label>
               <!-- StudioColor uses defineModel<string> — bind with v-model -->
               <StudioColor
