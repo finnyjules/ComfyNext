@@ -26,6 +26,10 @@ input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border: 0; bo
 input[type="range"]:focus-visible { outline: none; }
 input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
 input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16); }
+/* Variable-bound rail tint — a bound .studio-range gets a pink-tinted track
+   instead of the neutral white/12% track, so a bound slider reads pink at a glance. */
+.studio-range[data-bound]::-webkit-slider-runnable-track { background: rgba(244, 114, 182, 0.18); }
+.studio-range[data-bound]::-moz-range-track { background: rgba(244, 114, 182, 0.18); }
 
 /* Full-width labeled variant for the media studios (StudioSlider + auto-built
    controls): width + a grouping margin so each label+slider reads as one block. */
@@ -191,6 +195,12 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Variable-bound affordance — pink is the dedicated convention for
+     variable-bound inputs (distinct from emerald=run, pastel-gradient=AI,
+     and purple which is never used). */
+  --var-accent: #f472b6;
+  --var-accent-text: #f9a8d4;
 }
 
 .dark {

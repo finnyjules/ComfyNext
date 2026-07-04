@@ -7,6 +7,7 @@
 import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2 } from 'lucide-vue-next'
 
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useCopyAssist } from '~/composables/useCopyAssist'
 import type { CopyAssistMode } from '~/composables/useCopyAssist'
@@ -492,12 +493,17 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
     </StudioSection>
 
-    <!-- Variable binding — text/image elements bound to a Collection column. -->
-    <StudioSection v-if="boundSocket" title="Variable" badge="Bound">
+    <!-- Variable binding — image elements bound to a Collection column. (Text
+         elements fold this into the pink row in the Text section below, so the
+         binding actions aren't duplicated.) -->
+    <StudioSection v-if="boundSocket && el?.type !== 'text'" title="Variable" badge="Bound">
       <div class="flex items-center justify-between gap-2">
-        <div class="min-w-0">
-          <p class="text-[12px] text-[#c9d6ff] truncate">{{ boundColumnKey }}</p>
-          <p class="text-[10px] text-white/35">Editing writes to this column's row.</p>
+        <div class="min-w-0 flex items-center gap-1.5">
+          <VariableGlyph :bound="boundColumnKey" />
+          <div class="min-w-0">
+            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnKey }}</p>
+            <p class="text-[10px] text-white/35">Editing writes to this column's row.</p>
+          </div>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <button
@@ -620,13 +626,36 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
 
     <!-- Text -->
     <template v-if="textEl">
-      <StudioSection :title="boundSocket ? `Text (from ${boundColumnKey})` : 'Content'" badge="Text">
+      <StudioSection :title="boundSocket ? 'Text' : 'Content'" :badge="boundSocket ? 'Bound' : 'Text'">
+        <!-- Bound: pink read-only row — the variable name, never the resolved
+             literal text. Editing happens in the collection table, not here. -->
+        <div v-if="boundSocket" class="flex items-center justify-between gap-2">
+          <div class="min-w-0 flex items-center gap-1.5">
+            <VariableGlyph :bound="boundColumnKey" />
+            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnKey }}</p>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button
+              class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-white/[0.12] text-white/75 hover:text-white transition-colors cursor-pointer"
+              @click="goToCollection"
+            >
+              Edit in table
+            </button>
+            <button
+              class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-red-500/15 text-white/60 hover:text-red-300 transition-colors cursor-pointer"
+              @click="unbindVariable"
+            >
+              Unbind
+            </button>
+          </div>
+        </div>
         <textarea
-          :value="boundSocket ? resolvedBoundValue : textEl.content"
+          v-else
+          :value="textEl.content"
           rows="3"
           :class="inputCls"
           class="h-auto py-1.5 resize-y"
-          @change="(e: any) => { boundSocket ? writeThroughBoundText(e.target.value) : patchElement(el!.id, { content: e.target.value }) }"
+          @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
         />
       </StudioSection>
       <StudioSection title="Typography">

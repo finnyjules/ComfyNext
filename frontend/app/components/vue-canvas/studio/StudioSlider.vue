@@ -49,7 +49,8 @@ function onScrubDown(e: PointerEvent) {
       <div class="flex items-center gap-1.5">
         <span
           v-if="bound"
-          class="max-w-[90px] truncate font-mono text-[11px] text-white/70"
+          class="max-w-[90px] truncate font-mono text-[11px]"
+          style="color: var(--var-accent-text)"
           :title="bound"
         >{{ bound }}</span>
         <span
@@ -69,6 +70,7 @@ function onScrubDown(e: PointerEvent) {
     <input
       v-studio-reset :data-default="default" type="range"
       v-model.number="model" :min="min" :max="max" :step="step ?? 1"
+      :data-bound="bound ? '' : null"
       class="studio-range w-full"
     />
   </div>
