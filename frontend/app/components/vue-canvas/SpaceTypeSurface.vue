@@ -1030,15 +1030,16 @@ async function generateVideo() {
                 <span>{{ c.label }}</span>
                 <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
               </label>
-              <div v-else class="mb-1.5 flex items-center gap-1.5">
-                <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
-              </div>
               <span v-if="vibeMoved.has(c.key) && vibeSnapshot && c.kind !== 'slider'" class="ml-1 text-[10px] text-amber-400/80">was {{ fmt(vibeSnapshot[c.key]) }}</span>
               <StudioSlider v-if="c.kind === 'slider'" :label="c.label"
                             :min="Number(c.min ?? 0)" :max="Number(c.max ?? 1)" :step="Number(c.step ?? 1)"
                             :default="Number(c.default ?? 0)"
                             :model-value="Number(params[c.key])"
-                            @update:model-value="(v: number) => { params[c.key] = v; onEdit(c.key, v) }" />
+                            :bindable="controlKindToVariableType(c.kind) !== null"
+                            :bound="boundColumnFor(c.key)"
+                            @update:model-value="(v: number) => { params[c.key] = v; onEdit(c.key, v) }"
+                            @promote="promote(controlDesc(c), Number(params[c.key]))"
+                            @menu="(e: MouseEvent) => openVarMenu(e, c)" />
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
                      class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" @change="onEdit(c.key, String(params[c.key]))" />
               <template v-else-if="c.kind === 'textList'">

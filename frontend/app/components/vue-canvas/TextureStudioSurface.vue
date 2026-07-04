@@ -651,9 +651,6 @@ onBeforeUnmount(() => {
       <StudioSection v-for="s in sections" :key="s.title" :title="s.title">
         <div v-for="c in s.controls" :key="c.key" @contextmenu.prevent="openVarMenu($event, c)">
           <template v-if="c.kind === 'slider'">
-            <div v-if="boundColumnFor(c.key)" class="mb-1 flex justify-end">
-              <BindableControlChip :column-key="boundColumnFor(c.key)" @menu="openVarMenu($event, c)" />
-            </div>
             <!-- StudioSlider uses defineModel<number> — bind with v-model -->
             <StudioSlider
               :label="c.label"
@@ -662,7 +659,11 @@ onBeforeUnmount(() => {
               :step="Number(c.step)"
               :default="Number(c.default)"
               :model-value="Number(params[c.key])"
+              :bindable="controlKindToVariableType(c.kind) !== null"
+              :bound="boundColumnFor(c.key)"
               @update:model-value="(v: number) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
+              @promote="promote(c, Number(params[c.key]))"
+              @menu="(e: MouseEvent) => openVarMenu(e, c)"
             />
           </template>
           <template v-else-if="c.kind === 'select'">
