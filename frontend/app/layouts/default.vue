@@ -9,7 +9,7 @@ import {
   Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import { healDanglingLinks } from '~/composables/useFilteredPrompt'
+import { healDanglingLinks, stripVarsLinks } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
 import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
 import { brandKitToKv } from '~~/shared/brand/resolve'
@@ -649,6 +649,12 @@ async function runVueWorkflow(
     plainWorkflow = strippedWorkflow
     console.log('[Run] excluded frontend-only node(s) from execution:', removedTypes)
   }
+  // Execution-boundary guard: VARS links (Collection → Smart Layout) are kept
+  // all the way through getWorkflow/getFilteredWorkflow so saves/reloads keep
+  // the wire — this run-only copy is the one place they get stripped, since
+  // Collection has no backend class_type and a surviving VARS link would abort
+  // graphToPrompt with "No link found in parent graph".
+  stripVarsLinks(plainWorkflow as any)
 
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,

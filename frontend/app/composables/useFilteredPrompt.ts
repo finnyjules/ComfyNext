@@ -178,6 +178,16 @@ export function healDanglingLinks(workflow: any): DanglingLinkReport[] {
  * the surviving node input keeps the dangling `link` id — so `graphToPrompt`
  * aborts the whole run with "No link found in parent graph for id [N] slot [S]".
  * Skipping the orphan leaves the node serializing cleanly as a leaf instead.
+ *
+ * VARS edges (Collection → Smart Layout) ARE emitted here like any other edge.
+ * This is the sole link-builder feeding BOTH execution (runVueWorkflow) AND
+ * persistence (getWorkflow → snapshotActiveCanvasIntoDoc's autosave/durable-doc
+ * path), so skipping VARS here would silently drop the Collection→target wire
+ * on every save/reload cycle even though nodes and bindings survive. Collection
+ * still has no backend class_type, so VARS links must never reach ComfyUI's
+ * `graphToPrompt` — that guard lives at the execution boundary instead
+ * (`stripVarsLinks`, called from `runVueWorkflow` right before the workflow is
+ * sent to the bridge iframe).
  */
 export function assembleWorkflowLinks(
   lgNodes: LiteGraphNode[],
@@ -198,13 +208,6 @@ export function assembleWorkflowLinks(
     const targetNode = nodeById.get(Number(edge.target))
     // Orphaned edge — would emit a link referencing a node not in the graph.
     if (!sourceNode || !targetNode) continue
-    // VARS edges (Collection → Smart Layout) never serialize into the prompt.
-    // Collection is a frontend-only data-table node with no backend class_type,
-    // so emitting this link would leave the target input pointing at a node
-    // ComfyUI's graphToPrompt can't resolve — "No link found in parent graph"
-    // aborts the whole run. Skipping here leaves the input's `link` null (set
-    // below), i.e. Smart Layout serializes exactly as if the input were unwired.
-    if (String(edge.data?.dataType) === VARS_TYPE) continue
 
     const originSlot = parseInt(edge.sourceHandle?.replace('output-', '') || '0')
     const targetSlot = parseInt(edge.targetHandle?.replace('input-', '') || '0')
@@ -391,12 +394,16 @@ export function buildFilteredWorkflow(
 }
 
 /**
- * Belt-and-suspenders companion to the VARS skip in `assembleWorkflowLinks`:
- * null out any node input still carrying a VARS-typed link and drop matching
- * link tuples, in case a workflow reaches this function with a VARS link
- * already baked in (e.g. a save made before this guard existed, or a caller
- * that builds LiteGraph JSON some other way). Collection has no backend
- * class_type, so a surviving VARS link here would still abort the run.
+ * Execution-boundary guard: null out any node input still carrying a
+ * VARS-typed link and drop matching link tuples. VARS links (Collection →
+ * Smart Layout) are intentionally persisted everywhere else — `assembleWorkflowLinks`
+ * emits them like any other edge so saves/reloads keep the Collection→target
+ * wire intact — but Collection is a frontend-only data-table node with no
+ * backend class_type, so a VARS link reaching ComfyUI's `graphToPrompt` would
+ * abort the whole run ("No link found in parent graph"). This function is the
+ * one place that strips them, called from `runVueWorkflow` right before the
+ * workflow is sent to the bridge iframe (and from `buildFilteredWorkflow`,
+ * which shares that same execution path for per-node/filtered runs).
  */
 export function stripVarsLinks(workflow: LiteGraphWorkflow): void {
   const nodes = (workflow.nodes as LiteGraphNode[]) || []

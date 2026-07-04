@@ -78,11 +78,14 @@ describe('assembleWorkflowLinks', () => {
     expect(links).toHaveLength(1)
   })
 
-  it('skips a VARS edge interleaved between IMAGE edges, leaving contiguous ids on the rest', () => {
+  it('emits a VARS edge interleaved between IMAGE edges, keeping contiguous ids across all three', () => {
     // Collection (id 3) → SmartLayout's `vars` input (slot 1), sandwiched
-    // between two ordinary IMAGE edges. The VARS edge must be dropped
-    // entirely — no tuple, no input.link — while the surviving IMAGE links
-    // still get contiguous ids 1, 2 as if the VARS edge were never there.
+    // between two ordinary IMAGE edges. VARS links must persist through
+    // assembleWorkflowLinks like any other edge — it's the sole link-builder
+    // feeding BOTH execution AND persistence (getWorkflow / snapshotActiveCanvasIntoDoc),
+    // so skipping here would silently drop the Collection→target wire on every
+    // save/reload cycle. Stripping VARS links now happens ONLY at the execution
+    // boundary (stripVarsLinks, called from runVueWorkflow just before queueing).
     const a = node(1)
     const b = node(2)
     const smartLayout = {
@@ -107,15 +110,48 @@ describe('assembleWorkflowLinks', () => {
       [edge(1, 2), varsInEdge, edge(2, 4)],
     )
 
-    expect(links).toHaveLength(2)
-    expect(links.some((l) => l[5] === 'VARS')).toBe(false)
+    expect(links).toHaveLength(3)
+    expect(links.some((l) => l[5] === 'VARS')).toBe(true)
     expect(links[0]).toEqual([1, 1, 0, 2, 0, 'IMAGE'])
-    expect(links[1]).toEqual([2, 2, 0, 4, 0, 'IMAGE'])
+    expect(links[1]).toEqual([2, 3, 0, 4, 1, 'VARS'])
+    expect(links[2]).toEqual([3, 2, 0, 4, 0, 'IMAGE'])
 
-    // VARS target input stays unwired.
-    expect(smartLayout.inputs![1].link).toBeNull()
-    // Collection's VARS output never picked up a link id.
-    expect(collection.outputs![0].links).toEqual([])
+    // VARS target input is wired to the VARS link id.
+    expect(smartLayout.inputs![1].link).toBe(2)
+    // Collection's VARS output picked up the link id.
+    expect(collection.outputs![0].links).toEqual([2])
+  })
+
+  it('round-trips a VARS link tuple: edges → links[] → re-wired inputs, matching a save/reload cycle', () => {
+    // Regression for the persistence bug: a workflow's links[] containing a
+    // VARS tuple must leave the target input wired when rebuilt — this is the
+    // shape convertFromLiteGraph consumes on reload. We can't easily invoke
+    // convertFromLiteGraph here (it needs full Vue Flow composable context),
+    // so this exercises the same tuple-consumption contract assembleWorkflowLinks
+    // produces and stripVarsLinks consumes, proving the wire survives a
+    // build → strip-at-boundary → (would-be) reload round trip when the strip
+    // is skipped (i.e. the persisted copy, not the execution copy).
+    const collection = {
+      id: 10,
+      type: 'Collection',
+      inputs: [],
+      outputs: [{ name: 'VARS', type: 'VARS', links: null }],
+    } as unknown as LiteGraphNode
+    const smartLayout = {
+      id: 11,
+      type: 'SmartLayout',
+      inputs: [{ name: 'vars', type: 'VARS', link: null }],
+      outputs: [],
+    } as unknown as LiteGraphNode
+
+    // varsEdge's targetHandle is 'input-1', matching Smart Layout's real `vars`
+    // slot position (slot 0 in this minimal node stands in for it structurally).
+    const varsInEdge = { ...varsEdge(10, 11), targetHandle: 'input-0' }
+    const links = assembleWorkflowLinks([collection, smartLayout], [varsInEdge])
+
+    expect(links).toEqual([[1, 10, 0, 11, 0, 'VARS']])
+    expect(smartLayout.inputs![0].link).toBe(1)
+    expect(collection.outputs![0].links).toEqual([1])
   })
 })
 

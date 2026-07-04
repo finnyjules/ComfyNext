@@ -18,7 +18,7 @@ import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
-import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget, stripVarsLinks } from '~/composables/useFilteredPrompt'
+import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
@@ -5851,7 +5851,10 @@ defineExpose({
     captureActiveRunFromTargets([])
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf
-    stripVarsLinks(wf as any)
+    // VARS links (Collection → Smart Layout) are intentionally kept here —
+    // getWorkflow output must be persistence-safe (snapshotActiveCanvasIntoDoc
+    // saves it verbatim for autosave/durable docs). Stripping happens ONLY at
+    // the execution boundary, in runVueWorkflow, right before queuing.
     const aligned = realignWidgetValues(wf, objectInfo.value)
     const unlocked = applyArtifactLocks(aligned, nodes.value as any[])
     const backfilled = backfillStandaloneArtifactImages(unlocked, nodes.value as any[], objectInfo.value)
