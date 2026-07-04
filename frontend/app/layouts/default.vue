@@ -264,8 +264,14 @@ function onStartModalPick(payload: { nodeType: string; source?: ActionSource }) 
   startModalTabId.value = null
   // Defer one tick so the modal unmounts before we touch the canvas — keeps
   // any focus/scroll state clean and ensures the canvas is fully mounted.
-  nextTick(() => {
-    vueCanvasRef.value?.materializeStartGraph?.({
+  // Then ensure the schema is loaded before seeding: materializeStartGraph
+  // silently no-ops when object_info hasn't arrived yet, and the modal shows
+  // (and gets clicked) faster than the fetch on fresh projects — mirrors
+  // seedStarterGraph's refreshSchema safety.
+  nextTick(async () => {
+    const canvas = vueCanvasRef.value
+    await canvas?.refreshSchema?.()
+    canvas?.materializeStartGraph?.({
       sourceNodeType,
       generatorNodeType: payload.nodeType,
     })
