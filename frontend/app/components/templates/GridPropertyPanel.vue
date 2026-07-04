@@ -439,19 +439,31 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <p :class="labelCls" class="mb-1.5">Grid region</p>
         <div v-if="region" class="grid grid-cols-2 gap-2">
           <label class="flex items-center gap-1.5">
-            <span class="text-[11px] text-white/40 w-8">Col</span>
+            <span
+              class="text-[11px] text-white/40 w-8"
+              v-scrub="{ get: () => region!.col, set: (v: number) => setRegionField('col', String(v)), min: 1, max: metrics.cols, step: 1 }"
+            >Col</span>
             <input type="number" min="1" :max="metrics.cols" :value="region.col" :class="inputCls" @change="(e: any) => setRegionField('col', e.target.value)">
           </label>
           <label class="flex items-center gap-1.5">
-            <span class="text-[11px] text-white/40 w-8">Span</span>
+            <span
+              class="text-[11px] text-white/40 w-8"
+              v-scrub="{ get: () => region!.colSpan, set: (v: number) => setRegionField('colSpan', String(v)), min: 1, max: metrics.cols, step: 1 }"
+            >Span</span>
             <input type="number" min="1" :max="metrics.cols" :value="region.colSpan" :class="inputCls" @change="(e: any) => setRegionField('colSpan', e.target.value)">
           </label>
           <label class="flex items-center gap-1.5">
-            <span class="text-[11px] text-white/40 w-8">Row</span>
+            <span
+              class="text-[11px] text-white/40 w-8"
+              v-scrub="{ get: () => region!.row, set: (v: number) => setRegionField('row', String(v)), min: 1, max: metrics.rows, step: 1 }"
+            >Row</span>
             <input type="number" min="1" :max="metrics.rows" :value="region.row" :class="inputCls" @change="(e: any) => setRegionField('row', e.target.value)">
           </label>
           <label class="flex items-center gap-1.5">
-            <span class="text-[11px] text-white/40 w-8">Span</span>
+            <span
+              class="text-[11px] text-white/40 w-8"
+              v-scrub="{ get: () => region!.rowSpan, set: (v: number) => setRegionField('rowSpan', String(v)), min: 1, max: metrics.rows, step: 1 }"
+            >Span</span>
             <input type="number" min="1" :max="metrics.rows" :value="region.rowSpan" :class="inputCls" @change="(e: any) => setRegionField('rowSpan', e.target.value)">
           </label>
         </div>
