@@ -204,6 +204,13 @@ Rules and touchpoints:
   image-search path) and auto-picks; thumbnails land in the cells; user scans the column and
   clicks any wrong cell to swap via the existing picker. One review pass, not 32 pick steps.
 - Manual CSV/paste/typing always available; AI-fill is additive.
+- **Manual media upload (built 2026-07-03, image-only v1):** image cells are upload targets —
+  click or drag-drop a file → ComfyUI `/upload/image` (input dir) → the cell holds the
+  same-origin `/view?filename=…&type=input` URL. Image column headers offer bulk
+  "Upload images": N files → N new rows (preview-row values copied, image cell per file) —
+  the batch-native gesture. The accept list is a single seam (`IMAGE_ACCEPT`) so audio/video
+  column types can be added the moment a binding target consumes them (e.g. a future lip-sync
+  batch: clip column × character).
 - New `/api/*` routes must be allow-listed in `comfyui-proxy.ts` `NITRO_API_PATHS`.
 
 ## 7. Architecture
