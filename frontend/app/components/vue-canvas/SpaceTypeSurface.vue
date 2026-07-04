@@ -518,7 +518,14 @@ function rebuild() {
 // drag paused, so the preview stopped tracking a slider mid-drag (stutter); rAF coalescing
 // rebuilds once per frame while dragging, so the preview follows the slider continuously.
 let rebuildRaf = 0
+// The sweep baker (renderBlobWithOverrides) owns rebuilds while baking — see
+// renderBlobWithOverrides. It writes overrides straight onto `params`, which
+// would otherwise also trip the structuralSignature watch below and queue an
+// uncoordinated second rebuild via rAF that could land mid-bake or clobber the
+// baker's own capture/restore sequence.
+let bakingOverrides = false
 function scheduleRebuild() {
+  if (bakingOverrides) return // the sweep baker owns rebuilds while baking — see renderBlobWithOverrides
   if (rebuildRaf) return
   rebuildRaf = requestAnimationFrame(async () => {
     rebuildRaf = 0
@@ -810,6 +817,16 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   const keys = Object.keys(overrides)
   const snapshot = new Map<string, unknown>()
   for (const key of keys) snapshot.set(key, (params as Record<string, unknown>)[key])
+  // Claim ownership of rebuilds for the duration of the bake: writing overrides onto
+  // `params` below also trips the structuralSignature watch, which would otherwise
+  // queue its own uncoordinated rebuild via rAF that could land mid-bake (reading a
+  // half-restored `params`) or race the restore in the `finally` below. Cancel any
+  // rebuild already in flight from a pre-bake edit — the explicit rebuild() calls in
+  // this function supersede it.
+  bakingOverrides = true
+  if (rebuildRaf) { cancelAnimationFrame(rebuildRaf); rebuildRaf = 0 }
+  let userEditedDuringBake = false
+  const unwatchGuard = watch(structuralSignature, () => { userEditedDuringBake = true })
   try {
     for (const key of keys) (params as Record<string, unknown>)[key] = overrides[key]!
     await ensureEffectFonts()
@@ -823,11 +840,18 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
     console.error('[space-type] param-baker render failed', e)
     return null
   } finally {
+    unwatchGuard()
     for (const key of keys) {
       if (snapshot.has(key)) (params as Record<string, unknown>)[key] = snapshot.get(key)
     }
     await ensureEffectFonts()
     rebuild()
+    bakingOverrides = false
+    // If a user edit landed mid-bake (its own scheduleRebuild() was suppressed above),
+    // the rebuild() just above only reflects the restored pre-bake params, not that
+    // edit — schedule one trailing rebuild now that the flag is clear so the edit
+    // isn't silently dropped.
+    if (userEditedDuringBake) scheduleRebuild()
   }
 }
 
