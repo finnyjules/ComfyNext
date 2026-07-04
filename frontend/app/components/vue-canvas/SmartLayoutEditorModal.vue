@@ -15,6 +15,10 @@ import type { BrandKit } from '~~/shared/brand/types'
 import { allElements } from '~~/shared/template-grid/sections'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
+import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE } from '~/lib/collection/types'
+import type { CollectionData, VarBindings } from '~/lib/collection/types'
+import { resolveBindings, splitResolvedValues } from '~/lib/collection/resolve'
+import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 
 const props = defineProps<{
   nodeId: string
@@ -279,7 +283,7 @@ const activeVariantByLayer = ref<Record<string, number>>({})
 // Consumed by the variant cycler in both property panels (v1 + grid).
 provide('smartLayoutVariants', { variantsByLayer, activeVariantByLayer })
 
-const initialProps = computed<Record<string, string>>(() => {
+const baseInitialProps = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {}
   for (let i = 1; i <= _MAX_TEXT_LAYERS; i++) {
     const key = `text_layer_${i}`
@@ -300,6 +304,58 @@ const initialProps = computed<Record<string, string>>(() => {
   }
   return out
 })
+
+// -- Turn-into-variable: bound elements render live Collection values --------
+// The wired collection is whatever Collection node's VARS output feeds this
+// SmartLayout node (same edge shape `promoteLayoutElement`/`findWiredCollectionNode`
+// use). `node` above already tracks `props.nodes` reactively, so this recomputes
+// whenever the node's `data.properties[BINDINGS_PROP]` mutates OR the collection
+// node's own `data.properties[COLLECTION_PROP]` mutates (both are read here,
+// so Vue's dependency tracking picks up scrubbing the preview row / editing
+// cells directly) — verified: `resolveBindings` reads `c.rows[rowIndex]` and
+// `c` is read off the reactive `nodes` array via `.find()`, so any deep mutation
+// on the node objects (row edits, previewRow changes) re-triggers this computed.
+const wiredCollectionNode = computed<any | undefined>(() => {
+  const edge = props.edges.find((e: any) =>
+    String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return undefined
+  return props.nodes.find((n: any) => String(n.id) === String(edge.source))
+})
+
+const liveBindings = computed<VarBindings>(() =>
+  (node.value?.data?.properties?.[BINDINGS_PROP] as VarBindings | undefined) ?? {})
+
+const resolvedBindingProps = computed<Record<string, string>>(() => {
+  const colNode = wiredCollectionNode.value
+  const c = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  if (!c) return {}
+  const { values } = resolveBindings(c, liveBindings.value, c.previewRow)
+  return splitResolvedValues(values).props
+})
+
+// Resolved collection values win over the upstream-socket props: once an
+// element is bound, its live cell value is what the editor should show.
+const initialProps = computed<Record<string, string>>(() => ({
+  ...baseInitialProps.value,
+  ...resolvedBindingProps.value,
+}))
+
+// Threaded to GridEditorCanvas.vue / GridPropertyPanel.vue (inject, bypassing
+// GridEditorShell's props — provide/inject pierces the shell without adding
+// SmartLayout-specific plumbing to the generic grid-editor composable). Gives
+// the editor everything Task 3's context menu / inspector Variable row need:
+// the layout node id (to dispatch comfynext:promoteLayoutElement), raw
+// nodes/edges accessors (for Go to collection / direct collection writes),
+// and the already-computed bindings + wired collection so canvas badges and
+// the inspector don't each re-derive the VARS-edge lookup.
+const smartLayoutBinding: SmartLayoutBindingContext = {
+  nodeId: props.nodeId,
+  nodesAccessor: () => props.nodes,
+  edgesAccessor: () => props.edges,
+  bindings: liveBindings,
+  collectionNode: wiredCollectionNode,
+}
+provide('smartLayoutBinding', smartLayoutBinding)
 
 /**
  * Best-effort URL extraction for an upstream IMAGE source. Today we only

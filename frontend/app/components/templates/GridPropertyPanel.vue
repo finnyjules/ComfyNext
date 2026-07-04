@@ -10,8 +10,16 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
+import { isBoundToken } from '~/lib/collection/layoutPromote'
+import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
+import { COLLECTION_PROP } from '~/lib/collection/types'
+import type { CollectionData } from '~/lib/collection/types'
+import { resolveBindings } from '~/lib/collection/resolve'
+import { setCell } from '~/lib/collection/model'
+import { pushVarPreview, wiredTargets } from '~/lib/collection/preview'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
+const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
 const {
   metrics, formatClass, isMaster, currentFormat, currentOutput, outputs, regionScope,
   selectedElement, selectedResolved, sampleProps, effectiveBrand,
@@ -21,6 +29,64 @@ const {
 } = ctx
 
 const el = selectedElement
+
+// -- Variable binding (Turn into variable write-through) ---------------------
+// Same "live binding" contract the canvas badges use: a bound socket is a
+// whole-match `{{ props.x }}` token AND an actual comfynext_varBindings entry
+// on the node (a hand-typed token with no binding is just literal content).
+const boundSocket = computed<string | null>(() => {
+  if (!el.value || !binding) return null
+  if (el.value.type !== 'text' && el.value.type !== 'image') return null
+  const socket = isBoundToken((el.value as any).content)
+  if (!socket) return null
+  return binding.bindings.value[`props.${socket}`] ? socket : null
+})
+const boundColumnKey = computed<string | null>(() =>
+  (boundSocket.value && binding) ? (binding.bindings.value[`props.${boundSocket.value}`]?.columnKey ?? null) : null)
+
+const wiredCollection = computed<CollectionData | undefined>(() =>
+  binding?.collectionNode.value?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined)
+
+/** Resolved cell value for the bound socket — what the write-through text
+ *  field should display instead of the raw `{{ props.x }}` token. */
+const resolvedBoundValue = computed<string>(() => {
+  const socket = boundSocket.value
+  const c = wiredCollection.value
+  if (!socket || !c || !binding) return ''
+  const { values } = resolveBindings(c, binding.bindings.value, c.previewRow)
+  const v = values[`props.${socket}`]
+  return v !== undefined ? String(v) : ''
+})
+
+function goToCollection() {
+  const colNode = binding?.collectionNode.value
+  if (colNode) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+}
+
+function unbindVariable() {
+  if (!el.value || !binding || !boundSocket.value) return
+  const resolved = resolvedBoundValue.value
+  patchElement(el.value.id, { content: resolved || (el.value as any).content } as any)
+  window.dispatchEvent(new CustomEvent('comfynext:unbindControl', {
+    detail: { nodeId: binding.nodeId, path: `props.${boundSocket.value}` },
+  }))
+}
+
+/** Write-through: editing a bound text field updates the collection cell
+ *  (+ pushes a fresh preview to every wired target), never the template's
+ *  token content — the element stays `{{ props.<socket> }}` forever. */
+function writeThroughBoundText(value: string) {
+  const c = wiredCollection.value
+  const columnKey = boundColumnKey.value
+  if (!c || !columnKey) return
+  const row = c.rows[c.previewRow]
+  if (!row) return
+  setCell(c, row.id, columnKey, value)
+  const colNode = binding?.collectionNode.value
+  if (colNode) {
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()))
+  }
+}
 
 /** Display name for the current output (variation-aware). */
 const outputLabel = computed(() =>
@@ -307,15 +373,39 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
     </StudioSection>
 
+    <!-- Variable binding — text/image elements bound to a Collection column. -->
+    <StudioSection v-if="boundSocket" title="Variable" badge="Bound">
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <p class="text-[12px] text-[#c9d6ff] truncate">{{ boundColumnKey }}</p>
+          <p class="text-[10px] text-white/35">Editing writes to this column's row.</p>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <button
+            class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-white/[0.12] text-white/75 hover:text-white transition-colors cursor-pointer"
+            @click="goToCollection"
+          >
+            Go to collection
+          </button>
+          <button
+            class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-red-500/15 text-white/60 hover:text-red-300 transition-colors cursor-pointer"
+            @click="unbindVariable"
+          >
+            Unbind
+          </button>
+        </div>
+      </div>
+    </StudioSection>
+
     <!-- Text -->
     <template v-if="textEl">
-      <StudioSection title="Content" badge="Text">
+      <StudioSection :title="boundSocket ? `Text (from ${boundColumnKey})` : 'Content'" badge="Text">
         <textarea
-          :value="textEl.content"
+          :value="boundSocket ? resolvedBoundValue : textEl.content"
           rows="3"
           :class="inputCls"
           class="h-auto py-1.5 resize-y"
-          @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
+          @change="(e: any) => { boundSocket ? writeThroughBoundText(e.target.value) : patchElement(el!.id, { content: e.target.value }) }"
         />
       </StudioSection>
       <StudioSection title="Typography">

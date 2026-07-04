@@ -11,8 +11,12 @@ import { dragRegion, resizeRegion } from '~~/shared/template-grid/editor'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
 import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
+import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
+const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion, patchElement,
@@ -217,6 +221,96 @@ function imageStyle(r: ResolvedElement): Record<string, string> {
 
 function imageSrc(r: ResolvedElement): string {
   return r.el.type === 'image' ? resolve(r.el.content) : ''
+}
+
+// -- Turn into variable: badges + context menu -------------------------------
+// "Mega unintuitive and hidden" is the problem this fixes — right-click a
+// text/image element to bind it to a Collection column, see it live-badged
+// once bound. Shapes get no menu (nothing to bind them to yet).
+
+/** Socket name (e.g. `text_layer_1`) when the element's content is a bound
+ *  `{{ props.x }}` token AND that binding actually exists on the node — a
+ *  token with no live binding (e.g. hand-typed) shows no chip/menu items. */
+function boundSocket(el: ResolvedElement['el']): string | null {
+  if (el.type !== 'text' && el.type !== 'image') return null
+  const socket = isBoundToken((el as any).content)
+  if (!socket || !binding) return null
+  return binding.bindings.value[`props.${socket}`] ? socket : null
+}
+
+/** Column key shown on the badge — falls back to the socket name if the
+ *  wired collection is momentarily unreachable (still indicates "bound"). */
+function boundColumnLabel(el: ResolvedElement['el']): string {
+  const socket = boundSocket(el)
+  if (!socket || !binding) return ''
+  return binding.bindings.value[`props.${socket}`]?.columnKey ?? socket
+}
+
+const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
+
+function goToCollection() {
+  if (!binding) return
+  const colNode = binding.collectionNode.value
+  if (colNode) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+}
+
+/** Unbind: freeze the element's content back to the resolved live value (so
+ *  it doesn't silently revert to some stale literal), then delete the
+ *  binding. The canvas has no direct node-mutation access (only `ctx`'s
+ *  template-scoped ops), so the binding delete goes through the same
+ *  `comfynext:unbindControl` fallback event VueNodeCanvas already handles
+ *  for surfaces without composable access (Slice 2a). */
+function unbindElement(r: ResolvedElement) {
+  const socket = boundSocket(r.el)
+  if (!socket || !binding) return
+  // Resolve straight from the token via `resolve()` (reads sampleProps, which
+  // already carries the live collection value per the modal's initialProps
+  // merge) rather than `r.text?.content` — that's the FIT result and may be
+  // truncated/ellipsized for the current region, which would freeze a
+  // clipped string as the literal instead of the true value.
+  const resolvedValue = resolve((r.el as any).content)
+  patchElement(r.el.id, { content: resolvedValue } as any)
+  window.dispatchEvent(new CustomEvent('comfynext:unbindControl', {
+    detail: { nodeId: binding.nodeId, path: `props.${socket}` },
+  }))
+}
+
+function turnIntoVariable(r: ResolvedElement) {
+  if (!binding) return
+  const el = r.el
+  if (el.type !== 'text' && el.type !== 'image') return
+  const kind = el.type
+  const socketName = nextFreeSocket(template.value, kind)
+  const { priorContent } = tokenizeElementContent(el as any, socketName)
+  const label = columnLabelForElement(el as any, priorContent, socketName)
+  patchElement(el.id, { content: `{{ props.${socketName} }}` } as any)
+  window.dispatchEvent(new CustomEvent('comfynext:promoteLayoutElement', {
+    detail: {
+      nodeId: binding.nodeId,
+      socketName,
+      columnLabel: label,
+      currentValue: priorContent,
+      kind,
+    },
+  }))
+}
+
+function onElementContextMenu(e: MouseEvent, r: ResolvedElement) {
+  if (previewMode.value || r.el.locked) return
+  if (r.el.type !== 'text' && r.el.type !== 'image') return   // shapes: no variable menu
+  if (!binding) return
+  selectedId.value = r.el.id
+  const socket = boundSocket(r.el)
+  const items: MenuItem[] = socket
+    ? [
+        { label: 'Go to collection', action: goToCollection },
+        { divider: true },
+        { label: 'Unbind', action: () => unbindElement(r) },
+      ]
+    : [
+        { label: 'Turn into variable', action: () => turnIntoVariable(r) },
+      ]
+  varMenu.value = { x: e.clientX, y: e.clientY, items }
 }
 
 // -- Drag to move (snaps to cells) -------------------------------------------
@@ -565,6 +659,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
             : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
         @dblclick="(e) => { if (r.el.type === 'image') { e.stopPropagation(); enterReposition(r) } }"
+        @contextmenu.prevent.stop="(e) => onElementContextMenu(e, r)"
       >
         <template v-if="r.el.type === 'text'">
           <div :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
@@ -580,6 +675,13 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <template v-else-if="r.el.type === 'shape'">
           <div :style="shapeStyle(r)" />
         </template>
+
+        <!-- Variable-bound badge — bound text/image elements only. -->
+        <div
+          v-if="boundSocket(r.el)"
+          class="absolute top-1 right-1 bg-white/15 rounded-full text-[9px] px-1 text-white/80 pointer-events-none truncate max-w-[80%]"
+          :title="`Bound to column · ${boundColumnLabel(r.el)}`"
+        >{{ boundColumnLabel(r.el) }}</div>
 
         <!-- Resize handles — hidden while repositioning so they don't fight the pan drag. -->
         <template v-if="selectedId === r.el.id && !r.el.locked && repositionId !== r.el.id">
@@ -670,6 +772,14 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         {{ r.el.id }} · culled ({{ r.cullReason === 'no-slot' ? 'no slot' : 'too small' }})
       </button>
     </div>
+
+    <CanvasContextMenu
+      v-if="varMenu"
+      :x="varMenu.x"
+      :y="varMenu.y"
+      :items="varMenu.items"
+      @close="varMenu = null"
+    />
 
   </div>
 </template>
