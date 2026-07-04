@@ -26,7 +26,12 @@ describe('scrubValue', () => {
     expect(scrubValue({ min: -100, max: 100, step: 1, startValue: 0, deltaPx: -130 })).toBe(-130 / 260 * 200)
   })
   it('never emits float dust', () => {
-    const v = scrubValue({ min: 0, max: 1, step: 0.01, startValue: 0.1, deltaPx: 5, scrubPx: 260 })
+    // Use inputs that trigger IEEE 754 accumulation error: 0.1 * 3 = 0.30000000000000004
+    // min:0 max:1 step:0.1, deltaPx:65 → raw:0.25 → Math.round(0.25/0.1)*0.1 → 0.30000000000000004
+    const v = scrubValue({ min: 0, max: 1, step: 0.1, startValue: 0, deltaPx: 65, scrubPx: 260 })
+    // Must return clean 0.3, not the dusty 0.30000000000000004
+    expect(v).toBe(0.3)
+    // Verify it's strictly equal to the toFixed clean round (test fails if strip is removed)
     expect(v).toBe(Number(v.toFixed(6)))
   })
 })
