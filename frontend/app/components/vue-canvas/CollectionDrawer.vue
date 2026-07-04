@@ -2,11 +2,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import JSZip from 'jszip'
-import { X, Plus, Upload, ClipboardPaste, Trash2, Play, Check } from 'lucide-vue-next'
+import { X, Plus, Upload, ClipboardPaste, Trash2, Play, Check, ImagePlus, Loader2 } from 'lucide-vue-next'
 import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type CollectionRow, type VarBinding, type VariableType } from '~/lib/collection/types'
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel, keepRow } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
+import { IMAGE_ACCEPT, uploadMediaFile, addMediaRows } from '~/lib/collection/upload'
 import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
 import { listStudioBindables } from '~/lib/collection/studioBindables'
 import { controlsForStudio } from '~/lib/collection/studioControls'
@@ -401,6 +402,102 @@ function isImageUrl(v: unknown): boolean {
   const s = String(v ?? '')
   return /(\.(png|jpe?g|webp|gif|svg)(\?|#|$))|(^\/view\?)/i.test(s) || /^https?:\/\//i.test(s)
 }
+
+// --- Image cell upload -----------------------------------------------------
+// Click-to-upload / drag-drop on an image cell. `cellUploading`/`cellError`
+// are keyed by `${rowId}:${colKey}` so multiple cells can be mid-upload (or
+// showing a stale error) independently. Errors self-clear after 3s — no toast
+// machinery exists in this drawer, so a transient red ring + title is the
+// established inline-error convention here.
+const cellFileInputs = ref<Record<string, HTMLInputElement | null>>({})
+const cellUploading = ref<Set<string>>(new Set())
+const cellError = ref<Record<string, string>>({})
+
+function cellKey(rowId: string, colKey: string): string {
+  return `${rowId}:${colKey}`
+}
+function setCellFileInput(key: string, el: any) {
+  cellFileInputs.value[key] = (el as HTMLInputElement) ?? null
+}
+function openCellUpload(rowId: string, colKey: string) {
+  if (running.value) return
+  cellFileInputs.value[cellKey(rowId, colKey)]?.click()
+}
+async function uploadToCell(rowId: string, colKey: string, file: File | undefined) {
+  if (!file || !collection.value || running.value) return
+  const key = cellKey(rowId, colKey)
+  delete cellError.value[key]
+  cellUploading.value.add(key)
+  cellUploading.value = new Set(cellUploading.value)
+  try {
+    const url = await uploadMediaFile(file)
+    setCell(collection.value, rowId, colKey, url)
+  } catch {
+    cellError.value = { ...cellError.value, [key]: 'Upload failed' }
+    setTimeout(() => {
+      const next = { ...cellError.value }
+      delete next[key]
+      cellError.value = next
+    }, 3000)
+  } finally {
+    cellUploading.value.delete(key)
+    cellUploading.value = new Set(cellUploading.value)
+  }
+}
+function onCellFileChange(rowId: string, colKey: string, e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  uploadToCell(rowId, colKey, file)
+  input.value = ''
+}
+function onCellDrop(rowId: string, colKey: string, e: DragEvent) {
+  if (running.value) return
+  const file = e.dataTransfer?.files?.[0]
+  uploadToCell(rowId, colKey, file)
+}
+
+// --- Column header bulk upload ---------------------------------------------
+// Multi-select file input beside an image column's type dropdown: uploads
+// each file sequentially, then appends ONE row per successful upload via
+// `addMediaRows` (mirrors the sweep-row append pattern, but not sweep-marked
+// since these are real user rows). Partial failures are counted and surfaced
+// via the same inline `sweepWarning`-style message strip.
+const headerFileInputs = ref<Record<string, HTMLInputElement | null>>({})
+const columnUploading = ref<Set<string>>(new Set())
+function setHeaderFileInput(key: string, el: any) {
+  headerFileInputs.value[key] = (el as HTMLInputElement) ?? null
+}
+function openHeaderUpload(colKey: string) {
+  if (running.value) return
+  headerFileInputs.value[colKey]?.click()
+}
+async function onHeaderFilesChange(colKey: string, e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length || !collection.value || running.value) return
+
+  columnUploading.value.add(colKey)
+  columnUploading.value = new Set(columnUploading.value)
+  const urls: string[] = []
+  let failed = 0
+  try {
+    for (const file of files) {
+      try {
+        urls.push(await uploadMediaFile(file))
+      } catch {
+        failed++
+      }
+    }
+    if (urls.length) addMediaRows(collection.value, colKey, urls)
+    sweepWarning.value = failed
+      ? `${failed} of ${files.length} uploads failed`
+      : ''
+  } finally {
+    columnUploading.value.delete(colKey)
+    columnUploading.value = new Set(columnUploading.value)
+  }
+}
 </script>
 
 <template>
@@ -542,6 +639,25 @@ function isImageUrl(v: unknown): boolean {
                   <select v-model="col.type" class="bg-[#141414] text-white/40 text-[11px] outline-none">
                     <option v-for="t in TYPES" :key="t" :value="t">{{ t }}</option>
                   </select>
+                  <button
+                    v-if="col.type === 'image'"
+                    class="opacity-40 hover:opacity-100 disabled:opacity-20 disabled:cursor-not-allowed"
+                    :disabled="running"
+                    title="Upload images"
+                    @click="openHeaderUpload(col.key)"
+                  >
+                    <Loader2 v-if="columnUploading.has(col.key)" class="size-3 animate-spin" />
+                    <ImagePlus v-else class="size-3" />
+                  </button>
+                  <input
+                    v-if="col.type === 'image'"
+                    :ref="(el) => setHeaderFileInput(col.key, el)"
+                    type="file"
+                    :accept="IMAGE_ACCEPT"
+                    multiple
+                    class="hidden"
+                    @change="onHeaderFilesChange(col.key, $event)"
+                  />
                   <button class="opacity-40 hover:opacity-100" @click="onRemoveColumn(col.key)">
                     <Trash2 class="size-3" />
                   </button>
@@ -582,11 +698,38 @@ function isImageUrl(v: unknown): boolean {
                       @click.stop
                     />
                   </template>
-                  <img
-                    v-else-if="col.type === 'image' && isImageUrl(row.values[col.key])"
-                    :src="String(row.values[col.key])"
-                    class="size-5 rounded object-cover border border-white/10"
-                  />
+                  <template v-else-if="col.type === 'image'">
+                    <div
+                      class="relative size-5 rounded border flex items-center justify-center shrink-0 cursor-pointer transition"
+                      :class="cellError[cellKey(row.id, col.key)]
+                        ? 'border-red-400/60 ring-1 ring-red-400/60'
+                        : 'border-white/10 border-dashed hover:border-white/30'"
+                      :title="cellError[cellKey(row.id, col.key)] || 'Upload image'"
+                      @click.stop="openCellUpload(row.id, col.key)"
+                      @dragover.prevent
+                      @drop.stop.prevent="onCellDrop(row.id, col.key, $event)"
+                    >
+                      <img
+                        v-if="isImageUrl(row.values[col.key])"
+                        :src="String(row.values[col.key])"
+                        class="size-5 rounded object-cover"
+                        :class="{ 'opacity-40': cellUploading.has(cellKey(row.id, col.key)) }"
+                      />
+                      <ImagePlus v-else class="size-3 text-white/30" />
+                      <Loader2
+                        v-if="cellUploading.has(cellKey(row.id, col.key))"
+                        class="size-3 animate-spin text-white/80 absolute inset-0 m-auto"
+                      />
+                      <input
+                        :ref="(el) => setCellFileInput(cellKey(row.id, col.key), el)"
+                        type="file"
+                        :accept="IMAGE_ACCEPT"
+                        class="hidden"
+                        @click.stop
+                        @change="onCellFileChange(row.id, col.key, $event)"
+                      />
+                    </div>
+                  </template>
                   <input
                     :value="row.values[col.key] ?? ''"
                     class="bg-transparent outline-none flex-1 min-w-[60px] focus:bg-white/5 rounded px-1"
