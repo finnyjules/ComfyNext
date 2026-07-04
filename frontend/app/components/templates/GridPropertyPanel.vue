@@ -4,19 +4,22 @@
  * setRegion so master vs format-class semantics live in one place; everything
  * else patches the element directly (v2 has no per-aspect style overrides).
  */
-import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2 } from 'lucide-vue-next'
 
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
+import { useCopyAssist } from '~/composables/useCopyAssist'
+import type { CopyAssistMode } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
-import { isBoundToken } from '~/lib/collection/layoutPromote'
+import { isBoundToken, nextFreeSocket, tokenizeElementContent, columnLabelForElement } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import { COLLECTION_PROP } from '~/lib/collection/types'
 import type { CollectionData } from '~/lib/collection/types'
 import { resolveBindings } from '~/lib/collection/resolve'
 import { setCell } from '~/lib/collection/model'
 import { pushVarPreview, wiredTargets } from '~/lib/collection/preview'
+import { addMediaRows } from '~/lib/collection/upload'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
@@ -87,6 +90,110 @@ function writeThroughBoundText(value: string) {
     pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()))
   }
 }
+
+// -- Copy assistant (AI affordance — gen-pastel treatment) -------------------
+// Variations / write-from-brief / translate, applying to the selected text
+// element (bound → cell write-through; unbound → literal content) or landing
+// as new collection rows. Endpoint contract: Task 4's /api/copy-assist
+// (frontend/server/lib/copyAssist.ts) — { options: { text, language? }[] }.
+
+const copyAssist = useCopyAssist()
+const copyMode = ref<CopyAssistMode>('variations')
+const copyBrief = ref('')
+const COPY_LANGUAGES = ['EN', 'FR', 'DE', 'ES', 'IT', 'PT', 'NL', 'JA'] as const
+const copyLanguages = ref<string[]>([])
+const copyLanguageCustom = ref('')
+
+function toggleCopyLanguage(lang: string) {
+  const i = copyLanguages.value.indexOf(lang)
+  if (i >= 0) copyLanguages.value = copyLanguages.value.filter(l => l !== lang)
+  else copyLanguages.value = [...copyLanguages.value, lang]
+}
+function addCustomCopyLanguage() {
+  const v = copyLanguageCustom.value.trim()
+  if (v && !copyLanguages.value.includes(v)) copyLanguages.value = [...copyLanguages.value, v]
+  copyLanguageCustom.value = ''
+}
+
+/** The text the assistant works from: bound → resolved cell value (never the
+ *  raw `{{ props.x }}` token), unbound → the element's literal content. */
+const copySourceText = computed(() => {
+  if (!textEl.value) return ''
+  return boundSocket.value ? resolvedBoundValue.value : textEl.value.content
+})
+
+async function runCopyAssist() {
+  if (!textEl.value) return
+  const payload: Parameters<typeof copyAssist.run>[0] =
+    copyMode.value === 'translate'
+      ? { mode: 'translate', text: copySourceText.value, languages: copyLanguages.value, count: 5 }
+      : copyMode.value === 'brief'
+        ? { mode: 'brief', text: copySourceText.value, brief: copyBrief.value, count: 5 }
+        : { mode: 'variations', text: copySourceText.value, count: 5 }
+  // context.brandTone would add campaign coherence, but no brand-tone field
+  // exists on the brand kit today (shared/brand/types.ts has colors/fonts/logo
+  // only) — skipped per the plan's "skip if not cheaply available" clause.
+  await copyAssist.run(payload)
+}
+
+/** Click an option: apply to the element (bound → cell write-through,
+ *  unbound → literal content patch). */
+function applyCopyOption(text: string) {
+  if (!el.value) return
+  if (boundSocket.value) writeThroughBoundText(text)
+  else patchElement(el.value.id, { content: text } as any)
+}
+
+/** Bound footer action: append one new row per option, override the bound
+ *  column, and push a fresh preview to every wired target. */
+function addCopyOptionsAsRows() {
+  const c = wiredCollection.value
+  const columnKey = boundColumnKey.value
+  if (!c || !columnKey || !copyAssist.options.value.length) return
+  addMediaRows(c, columnKey, copyAssist.options.value.map(o => o.text))
+  const colNode = binding?.collectionNode.value
+  if (colNode) {
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()))
+    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  }
+}
+
+/** Unbound footer action: run the same promote flow as the context menu's
+ *  "Turn into variable" (Task 3), then add rows. The VueNodeCanvas handler is
+ *  synchronous, so the binding exists immediately after the dispatch. */
+function promoteThenAddCopyOptionsAsRows() {
+  if (!el.value || !binding || el.value.type !== 'text') return
+  const texts = copyAssist.options.value.map(o => o.text)
+  if (!texts.length) return
+
+  const socketName = nextFreeSocket(ctx.template.value, 'text')
+  const { priorContent } = tokenizeElementContent(el.value as any, socketName)
+  const label = columnLabelForElement(el.value as any, priorContent, socketName)
+  patchElement(el.value.id, { content: `{{ props.${socketName} }}` } as any)
+  window.dispatchEvent(new CustomEvent('comfynext:promoteLayoutElement', {
+    detail: { nodeId: binding.nodeId, socketName, columnLabel: label, currentValue: priorContent, kind: 'text' },
+  }))
+
+  const c = wiredCollection.value
+  const columnKey = boundColumnKey.value
+  if (!c || !columnKey) return
+  addMediaRows(c, columnKey, texts)
+  const colNode = binding.collectionNode.value
+  if (colNode) {
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding.nodesAccessor(), binding.edgesAccessor()))
+    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  }
+}
+
+// Clear assistant results/mode state on element switch — stale options from a
+// different element must never linger into the newly-selected one.
+watch(() => el.value?.id, () => {
+  copyAssist.clear()
+  copyBrief.value = ''
+  copyLanguages.value = []
+  copyLanguageCustom.value = ''
+  copyMode.value = 'variations'
+})
 
 /** Display name for the current output (variation-aware). */
 const outputLabel = computed(() =>
@@ -396,6 +503,108 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         </div>
       </div>
     </StudioSection>
+
+    <!-- Copy assistant — AI affordance, gen-pastel treatment. Text elements only. -->
+    <div v-if="textEl" class="rounded-lg gen-pastel p-[1px]">
+      <div class="rounded-[7px] bg-[#15151a] p-2.5 flex flex-col gap-2">
+        <div class="flex items-center gap-1.5">
+          <Sparkles class="size-3.5 text-white/70" />
+          <p class="text-[11px] font-medium text-white/85">Copy assistant</p>
+        </div>
+
+        <!-- Mode chips -->
+        <div class="flex gap-1">
+          <button
+            v-for="m in (['variations', 'brief', 'translate'] as const)" :key="m"
+            class="flex-1 h-6 rounded text-[10.5px] transition-colors cursor-pointer"
+            :class="copyMode === m ? 'bg-white/15 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/[0.08]'"
+            @click="copyMode = m"
+          >{{ m === 'variations' ? 'Variations' : m === 'brief' ? 'Write from brief…' : 'Translate…' }}</button>
+        </div>
+
+        <!-- Brief textarea -->
+        <textarea
+          v-if="copyMode === 'brief'"
+          v-model="copyBrief"
+          rows="2"
+          placeholder="What should this say? Audience, tone, offer…"
+          :class="inputCls"
+          class="h-auto py-1.5 resize-y"
+        />
+
+        <!-- Translate languages -->
+        <div v-if="copyMode === 'translate'" class="flex flex-col gap-1.5">
+          <div class="flex flex-wrap gap-1">
+            <button
+              v-for="lang in COPY_LANGUAGES" :key="lang"
+              class="h-6 px-1.5 rounded text-[10.5px] transition-colors cursor-pointer"
+              :class="copyLanguages.includes(lang) ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+              @click="toggleCopyLanguage(lang)"
+            >{{ lang }}</button>
+          </div>
+          <div class="flex gap-1">
+            <input
+              v-model="copyLanguageCustom"
+              placeholder="Add a language…"
+              :class="inputCls"
+              @keydown.enter.prevent="addCustomCopyLanguage"
+            >
+            <button
+              class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white transition-colors cursor-pointer shrink-0"
+              @click="addCustomCopyLanguage"
+            >Add</button>
+          </div>
+          <div v-if="copyLanguages.length" class="flex flex-wrap gap-1">
+            <span
+              v-for="lang in copyLanguages" :key="lang"
+              class="h-5 px-1.5 rounded-full bg-white/10 text-[9.5px] text-white/70 flex items-center gap-1"
+            >
+              {{ lang }}
+              <button class="text-white/40 hover:text-white/80 cursor-pointer" @click="toggleCopyLanguage(lang)">×</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- Generate -->
+        <button
+          class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
+          :disabled="copyAssist.loading.value || (copyMode === 'brief' && !copyBrief.trim()) || (copyMode === 'translate' && !copyLanguages.length)"
+          @click="runCopyAssist"
+        >
+          <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
+          <span>Generate</span>
+        </button>
+
+        <p v-if="copyAssist.error.value" class="text-[10.5px] text-red-300/90">{{ copyAssist.error.value }}</p>
+
+        <!-- Results -->
+        <div v-if="copyAssist.options.value.length" class="flex flex-col gap-1 mt-0.5">
+          <button
+            v-for="(opt, i) in copyAssist.options.value" :key="i"
+            class="w-full text-left px-2 py-1.5 rounded bg-white/[0.04] hover:bg-white/[0.09] transition-colors cursor-pointer flex items-start gap-1.5"
+            @click="applyCopyOption(opt.text)"
+          >
+            <span v-if="opt.language" class="shrink-0 mt-0.5 h-4 px-1 rounded-full bg-white/10 text-[9px] text-white/60 uppercase tracking-wide">{{ opt.language }}</span>
+            <span class="text-[11.5px] text-white/80 leading-snug">{{ opt.text }}</span>
+          </button>
+
+          <button
+            v-if="boundSocket"
+            class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
+            @click="addCopyOptionsAsRows"
+          >
+            Add all as rows
+          </button>
+          <button
+            v-else-if="binding"
+            class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
+            @click="promoteThenAddCopyOptionsAsRows"
+          >
+            Make variable + add as rows
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Text -->
     <template v-if="textEl">
