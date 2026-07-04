@@ -10,11 +10,16 @@
 
 export type ActionDomain = 'image' | 'audio' | 'video' | '3d' | 'text'
 export type ActionIntent = 'create' | 'edit' | 'enhance' | 'analyze'
+export type ActionSource = 'image' | 'video' | 'audio' | 'text'
 
 export interface ActionEntry {
   useCase: string
   model: string
   intent: ActionIntent
+  /** Upstream artifact this action consumes (absent = prompt-only). Drives
+   *  the start-modal's pre-wired source artifact. Additive metadata — set
+   *  where known; only surfaces that render an entry require it. */
+  source?: ActionSource
 }
 
 export const ACTION_CATALOG: Record<string, ActionEntry> = {
@@ -28,7 +33,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   FluxMultiLoRARemoteNode: { useCase: 'Generate with two LoRAs',      model: 'Flux Dev + 2 LoRAs',                       intent: 'create' },
   TextEffectNode:        { useCase: 'Render a text effect',           model: 'Typographic art gallery',                  intent: 'create' },
   // -- Image · edit -----------------------------------------------------------
-  EditImageNode:         { useCase: 'Edit an image',                  model: 'Nano Banana 2 / Flux Kontext',             intent: 'edit' },
+  EditImageNode:         { useCase: 'Edit an image',                  model: 'Nano Banana 2 / Flux Kontext',             intent: 'edit', source: 'image' },
   RestyleFromImageNode:  { useCase: 'Restyle from an image',          model: 'Nano Banana / IP-Adapter',                 intent: 'edit' },
   RestyleWithLoRANode:   { useCase: 'Restyle with your style',        model: 'Moondream + Flux LoRA + Nano Banana 2',    intent: 'edit' },
   PersonSwap:            { useCase: 'Swap a person',                  model: 'Nano Banana 2',                            intent: 'edit' },
@@ -53,7 +58,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   // -- Video -------------------------------------------------------------------
   GenerateVideoNode:     { useCase: 'Generate a video',               model: 'Seedance / Veo 3 / Kling',                 intent: 'create' },
   FilmShotNode:          { useCase: 'Film a shot',                    model: 'Kling v2.5 Turbo Pro + shot presets',      intent: 'create' },
-  LipsyncNode:           { useCase: 'Sync lips to audio',             model: 'sync.so 2-pro',                            intent: 'edit' },
+  LipsyncNode:           { useCase: 'Sync lips to audio',             model: 'sync.so 2-pro',                            intent: 'edit', source: 'video' },
   LipSyncNode:           { useCase: 'Lip-sync a character',           model: 'VEED Fabric 1.0 / sync.so 2-pro',          intent: 'edit' },
   EnhanceVideoNode:      { useCase: 'Enhance a video',                model: 'Topaz',                                    intent: 'enhance' },
   DescribeVideoNode:     { useCase: 'Describe a video',               model: 'Gemini 2.5 Flash',                         intent: 'analyze' },
@@ -136,6 +141,28 @@ export const INTENT_ORDER: { id: ActionIntent | 'other'; label: string }[] = [
   { id: 'analyze', label: 'Analyze' },
   { id: 'other',   label: 'More models' },
 ]
+
+// Source-type → artifact node that supplies it (used to pre-wire a runnable
+// graph when a start-modal pick consumes an upstream asset).
+export const ARTIFACT_NODE_FOR_SOURCE: Record<ActionSource, string> = {
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
+  text: 'Text',
+}
+
+// Start-modal hero tier: flatten HERO_BY_DOMAIN with per-domain caps so the
+// modal shows 8 cards (2 rows) spanning all media types. Order = domain order.
+const MODAL_HERO_CAPS: [ActionDomain, number][] = [
+  ['image', 3], ['video', 2], ['audio', 2], ['3d', 1],
+]
+export function modalHero(): { nodeType: string; entry: ActionEntry }[] {
+  return MODAL_HERO_CAPS.flatMap(([domain, cap]) =>
+    HERO_BY_DOMAIN[domain].slice(0, cap)
+      .filter(nt => ACTION_CATALOG[nt] != null)
+      .map(nt => ({ nodeType: nt, entry: ACTION_CATALOG[nt]! })),
+  )
+}
 
 export interface ActionSection<T> {
   intent: ActionIntent | 'other'
