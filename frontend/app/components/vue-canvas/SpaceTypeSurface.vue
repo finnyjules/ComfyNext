@@ -826,9 +826,13 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   bakingOverrides = true
   if (rebuildRaf) { cancelAnimationFrame(rebuildRaf); rebuildRaf = 0 }
   let userEditedDuringBake = false
-  const unwatchGuard = watch(structuralSignature, () => { userEditedDuringBake = true })
+  let unwatchGuard: () => void = () => {}
   try {
     for (const key of keys) (params as Record<string, unknown>)[key] = overrides[key]!
+    const baselineSig = structuralSignature()
+    unwatchGuard = watch(structuralSignature, (newSig) => {
+      if (newSig !== baselineSig) userEditedDuringBake = true
+    }) as unknown as () => void
     await ensureEffectFonts()
     engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
     rebuild()
