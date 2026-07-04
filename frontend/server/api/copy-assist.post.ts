@@ -1,8 +1,8 @@
 // Copy assistant — variations / brief / translate ad-copy for Smart Layout
 // text elements. Sibling of vibe.post.ts: raw fetch, user-supplied Anthropic
 // key, no SDK, haiku + structured outputs.
-import { buildCopyAssistPrompt, copyAssistSchema, clampCount } from '../lib/copyAssist'
-import { MAX_PHRASE_CHARS, optionalString, requireApiKey, requireString } from '../lib/agentRequest'
+import { buildCopyAssistPrompt, copyAssistSchema } from '../lib/copyAssist'
+import { MAX_PHRASE_CHARS, requireApiKey, requireString } from '../lib/agentRequest'
 import type { CopyAssistMode, CopyAssistRequest } from '../lib/copyAssist'
 
 const MODES: CopyAssistMode[] = ['variations', 'brief', 'translate']
@@ -48,7 +48,6 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildCopyAssistPrompt(req)
   const schema = copyAssistSchema(mode)
-  clampCount(req) // validated for consistency; the prompt already embeds the count
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {

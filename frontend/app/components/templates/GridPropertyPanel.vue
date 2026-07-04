@@ -568,7 +568,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <!-- Generate -->
         <button
           class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
-          :disabled="copyAssist.loading.value || !copySourceText.trim() || (copyMode === 'brief' && !copyBrief.trim()) || (copyMode === 'translate' && !copyLanguages.length)"
+          :disabled="copyAssist.loading.value || (copyMode === 'brief' ? !copyBrief.trim() : !copySourceText.trim()) || (copyMode === 'translate' && !copyLanguages.length)"
           @click="runCopyAssist"
         >
           <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
