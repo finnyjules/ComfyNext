@@ -29,6 +29,7 @@ export function requireString(v: unknown, name: string, max: number): string {
 
 export function optionalString(v: unknown, name: string, max: number): string | undefined {
   if (v === undefined || v === null) return undefined
+  if (typeof v === 'string' && !v.trim()) return undefined
   return requireString(v, name, max)
 }
 

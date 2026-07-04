@@ -270,7 +270,9 @@ export function useCanvasAgent(opts: {
         body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', system: RESULT_REVIEW_SYSTEM, prompt: buildResultReviewPrompt(desc, intent), schema: buildReviewSchema(desc.commands), image },
         timeout: 60_000,
       })
-      const { assessment, issues: found, fixes, fixRationales, fixLabels } = parseReviewResponse(res.text)
+      const parsed = parseReviewResponse(res.text)
+      if (parsed.parseFailed) throw new Error('The model reply could not be read — please try again.')
+      const { assessment, issues: found, fixes, fixRationales, fixLabels } = parsed
       const built: ProposedChange[] = []
       const builtLabels: string[] = []
       let probe = clone(snap)

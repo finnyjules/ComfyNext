@@ -232,7 +232,9 @@ export function useLayoutAgent(opts: {
         body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildReviewPrompt(snapshot, intent), schema, image },
         timeout: 60_000,
       })
-      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
+      const parsed = parseReviewResponse(res.text)
+      if (parsed.parseFailed) throw new Error('The model reply could not be read — please try again.')
+      const { assessment, issues: found, fixes, fixRationales } = parsed
       review.value = { assessment, issues: found }
       if (fixes.length && original) {
         let probe = clone(opts.template.value) // current preview (original + accepted changes)

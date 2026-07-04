@@ -78,7 +78,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         body: { apiKey: opts.apiKey(), tier: opts.tier ?? 'plan', prompt: buildReviewPrompt(snapshot, intent), schema: buildReviewSchema(snapshot.commands), image },
         timeout: 60_000,
       })
-      const { assessment, issues: found, fixes, fixRationales } = parseReviewResponse(res.text)
+      const parsed = parseReviewResponse(res.text)
+      if (parsed.parseFailed) throw new Error('The model reply could not be read — please try again.')
+      const { assessment, issues: found, fixes, fixRationales } = parsed
       review.value = { assessment, issues: found }
       fixes.forEach((cmd, i) => {
         if (cmd.op !== 'setParam' || typeof cmd.target !== 'string') return

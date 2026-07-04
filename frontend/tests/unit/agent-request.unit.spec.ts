@@ -31,6 +31,10 @@ describe('optionalString', () => {
     expect(optionalString(undefined, 'guidance', 100)).toBeUndefined()
     expect(optionalString(null, 'guidance', 100)).toBeUndefined()
   })
+  it('treats empty and whitespace-only strings as absent', () => {
+    expect(optionalString('', 'guidance', 100)).toBeUndefined()
+    expect(optionalString('   ', 'guidance', 100)).toBeUndefined()
+  })
   it('rejects non-strings and over-cap strings', () => {
     expect(() => optionalString(42, 'guidance', 100)).toThrow()
     expect(() => optionalString('x'.repeat(101), 'guidance', 100)).toThrow()

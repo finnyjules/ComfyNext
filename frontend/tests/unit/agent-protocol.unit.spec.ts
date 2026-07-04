@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildAgentPrompt, parseAgentResponse } from '../../app/lib/agent/protocol'
+import { buildAgentPrompt, buildResultReviewPrompt, buildReviewPrompt, parseAgentResponse, parseReviewResponse } from '../../app/lib/agent/protocol'
 import type { SurfaceSnapshot } from '../../app/lib/agent/commandSurface'
 
 const SNAPSHOT: SurfaceSnapshot = {
@@ -49,5 +49,33 @@ describe('buildAgentPrompt injection delimiting', () => {
     // the injected closing sentinel must not survive verbatim inside the block
     const inner = p.split('<<<REQUEST\n')[1]!.split('\nREQUEST>>>')[0]!
     expect(inner).not.toContain('REQUEST>>>')
+  })
+})
+
+describe('parseReviewResponse', () => {
+  it('parses a valid review reply', () => {
+    const r = parseReviewResponse('{"assessment":"Looks solid","issues":["a bit crowded"],"fixes":[{"op":"setText","target":"n1","args":"{\\"text\\":\\"Hi\\"}","rationale":"tighten","label":"Tighten copy"}]}')
+    expect(r.parseFailed).toBe(false)
+    expect(r.assessment).toBe('Looks solid')
+    expect(r.issues).toEqual(['a bit crowded'])
+    expect(r.fixes).toHaveLength(1)
+    expect(r.fixes[0]).toMatchObject({ op: 'setText', target: 'n1', args: { text: 'Hi' } })
+    expect(r.fixLabels[0]).toBe('Tighten copy')
+  })
+  it('flags unparseable replies instead of silently returning empty fields', () => {
+    const r = parseReviewResponse('I cannot review that.')
+    expect(r.parseFailed).toBe(true)
+    expect(r).toMatchObject({ assessment: '', issues: [], fixes: [], fixRationales: [], fixLabels: [] })
+  })
+})
+
+describe('buildReviewPrompt / buildResultReviewPrompt injection delimiting', () => {
+  it('buildReviewPrompt wraps the intent in sentinels', () => {
+    const p = buildReviewPrompt(SNAPSHOT, 'make it pop')
+    expect(p).toContain('<<<REQUEST\nmake it pop\nREQUEST>>>')
+  })
+  it('buildResultReviewPrompt wraps the intent in sentinels', () => {
+    const p = buildResultReviewPrompt(SNAPSHOT, 'a red car')
+    expect(p).toContain('<<<REQUEST\na red car\nREQUEST>>>')
   })
 })
