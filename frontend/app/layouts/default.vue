@@ -25,7 +25,7 @@ import AllProjectsView from '~/components/AllProjectsView.vue'
 import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
-import { ARTIFACT_NODE_FOR_INPUT, type Capability } from '~/data/node-capabilities'
+import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
@@ -259,20 +259,23 @@ async function seedStarterGraph(nodeType: string, tries = 0) {
   }
 }
 
-function onStartModalPick(payload: { capability: Capability }) {
-  const cap = payload.capability
-  const sourceNodeType = cap.from === 'prompt'
-    ? undefined
-    : ARTIFACT_NODE_FOR_INPUT[cap.from]
+function onStartModalPick(payload: { nodeType: string; source?: ActionSource }) {
+  const sourceNodeType = payload.source ? ARTIFACT_NODE_FOR_SOURCE[payload.source] : undefined
   startModalTabId.value = null
   // Defer one tick so the modal unmounts before we touch the canvas — keeps
   // any focus/scroll state clean and ensures the canvas is fully mounted.
   nextTick(() => {
     vueCanvasRef.value?.materializeStartGraph?.({
       sourceNodeType,
-      generatorNodeType: cap.nodeType,
+      generatorNodeType: payload.nodeType,
     })
   })
+}
+
+// Studio tile in the start modal → same routing as the toolbar Studios door.
+function onStartModalStudio(opt: { label: string; nodeType?: string; special?: string }) {
+  startModalTabId.value = null
+  nextTick(() => onLoadOption(opt))
 }
 function onStartModalSkip() {
   startModalTabId.value = null
@@ -3524,6 +3527,7 @@ function dismissRunResult() {
     <StartProjectModal
       v-if="startModalTabId && activeTabId === startModalTabId"
       @start="onStartModalPick"
+      @studio="onStartModalStudio"
       @skip="onStartModalSkip"
     />
   </div>
