@@ -321,6 +321,18 @@ function applySweep(values: (string | number)[]) {
   }))
 }
 
+// Wired collection node id feeding this studio's `vars` input — shared by the
+// "Go to collection" var-menu item and the bound-row "Edit in table" button.
+function wiredCollectionNodeId(): string | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+  return edge ? String(edge.source) : null
+}
+function goToCollection() {
+  const nodeId = wiredCollectionNodeId()
+  if (nodeId) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId } }))
+}
+
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, c: ControlSpec) {
   const type = controlKindToVariableType(c.kind)
@@ -345,17 +357,16 @@ function openVarMenu(e: MouseEvent, c: ControlSpec) {
     }
   }
   else {
-    items.push({
-      label: 'Go to collection',
-      action: () => {
-        const edgeList = props.edges ?? []
-        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
-      },
-    })
+    items.push({ label: 'Go to collection', action: goToCollection })
     items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control: desc, anchor: { x: e.clientX, y: e.clientY } } } })
     items.push({ divider: true })
-    items.push({ label: 'Unbind', action: () => unbind(c.key, liveValue) })
+    items.push({
+      label: 'Unbind',
+      action: () => {
+        unbind(c.key, liveValue)
+        if (c.kind === 'text' || c.kind === 'textList') pullTextLines()
+      },
+    })
   }
   varMenu.value = { x: e.clientX, y: e.clientY, items }
 }
@@ -1045,8 +1056,18 @@ async function generateVideo() {
                             @update:model-value="(v: number) => { params[c.key] = v; onEdit(c.key, v) }"
                             @promote="promote(controlDesc(c), Number(params[c.key]))"
                             @menu="(e: MouseEvent) => openVarMenu(e, c)" />
+              <div v-else-if="c.kind === 'text' && boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
+                <button type="button" @click="goToCollection"
+                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+              </div>
               <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
                      class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" @change="onEdit(c.key, String(params[c.key]))" />
+              <div v-else-if="c.kind === 'textList' && boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
+                <button type="button" @click="goToCollection"
+                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+              </div>
               <template v-else-if="c.kind === 'textList'">
                 <div v-for="(_, i) in textLines" :key="i" data-row
                      class="mb-1 flex items-center gap-1 rounded transition-shadow"
@@ -1118,6 +1139,12 @@ async function generateVideo() {
               </p>
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
+              <div v-else-if="(c.kind === 'color' || c.kind === 'select' || c.kind === 'font') && boundColumnFor(c.key)"
+                   class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
+                <button type="button" @click="goToCollection"
+                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+              </div>
               <StudioColor v-else-if="c.kind === 'color'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val; rebuild(); onEdit(c.key, val) }" />
               <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"

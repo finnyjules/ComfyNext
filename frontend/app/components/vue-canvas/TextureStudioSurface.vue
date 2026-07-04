@@ -233,6 +233,18 @@ function applySweep(values: (string | number)[]) {
   }))
 }
 
+// Wired collection node id feeding this studio's `vars` input — shared by the
+// "Go to collection" var-menu item and the bound-row "Edit in table" button.
+function wiredCollectionNodeId(): string | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+  return edge ? String(edge.source) : null
+}
+function goToCollection() {
+  const nodeId = wiredCollectionNodeId()
+  if (nodeId) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId } }))
+}
+
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
   const type = controlKindToVariableType(control.kind)
@@ -255,14 +267,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
       })
     }
   } else {
-    items.push({
-      label: 'Go to collection',
-      action: () => {
-        const edgeList = props.edges ?? []
-        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
-      },
-    })
+    items.push({ label: 'Go to collection', action: goToCollection })
     items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
     items.push({ divider: true })
     items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
@@ -676,8 +681,16 @@ onBeforeUnmount(() => {
                 @menu="(e: MouseEvent) => openVarMenu(e, c)"
               />
             </label>
+            <!-- Bound: pink read-only row — the variable name, never the resolved
+                 literal value. Editing happens in the collection table. -->
+            <div v-if="boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+              <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
+              <button type="button" @click="goToCollection"
+                      class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+            </div>
             <!-- StudioSelect uses defineModel<string> — bind with v-model -->
             <StudioSelect
+              v-else
               :options="c.options as string[]"
               :model-value="String(params[c.key])"
               @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
@@ -694,8 +707,15 @@ onBeforeUnmount(() => {
                   @menu="(e: MouseEvent) => openVarMenu(e, c)"
                 />
               </label>
+              <!-- Bound: pink read-only row instead of the swatch/picker. -->
+              <div v-if="boundColumnFor(c.key)" class="flex flex-1 items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
+                <button type="button" @click="goToCollection"
+                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+              </div>
               <!-- StudioColor uses defineModel<string> — bind with v-model -->
               <StudioColor
+                v-else
                 :model-value="String(params[c.key])"
                 @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
               />
