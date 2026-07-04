@@ -27,8 +27,29 @@ export function hasStudioBaker(id: string): boolean { return _bakers.has(id) }
 export type StudioParamBaker = (overrides: Record<string, string | number>) => Promise<Blob | null>
 
 const _paramBakers = new Map<string, StudioParamBaker>()
-export function registerStudioParamBaker(id: string, fn: StudioParamBaker): void { _paramBakers.set(id, fn) }
-export function unregisterStudioParamBaker(id: string): void { _paramBakers.delete(id) }
+/** Per-id promise chain used to serialize concurrent calls to the same node's baker
+ *  (see invariant note below). Not exported — an implementation detail of the wrapper. */
+const _paramBakerQueues = new Map<string, Promise<unknown>>()
+
+/** INVARIANT: param bakers snapshot→apply-overrides→render→restore the studio's SHARED
+ *  reactive config. Two concurrent calls on the same node (e.g. a collection sweep's
+ *  batch runner firing several rows in parallel) would interleave those snapshots and
+ *  restores, corrupting the live config and producing wrong thumbnails. So every baker
+ *  registered here is wrapped in a per-id mutex: each call awaits the previous call on
+ *  the SAME id before starting (a rejection is swallowed so one failure can't wedge the
+ *  queue forever); calls on different ids remain fully independent/concurrent. */
+export function registerStudioParamBaker(id: string, fn: StudioParamBaker): void {
+  const wrapped: StudioParamBaker = (overrides) => {
+    const prev = _paramBakerQueues.get(id) ?? Promise.resolve()
+    const run = prev.catch(() => {}).then(() => fn(overrides))
+    // Store a settled-either-way tail so the next call waits on this one, not on `run`
+    // itself (which callers also await and may reject).
+    _paramBakerQueues.set(id, run.catch(() => {}))
+    return run
+  }
+  _paramBakers.set(id, wrapped)
+}
+export function unregisterStudioParamBaker(id: string): void { _paramBakers.delete(id); _paramBakerQueues.delete(id) }
 export function getStudioParamBaker(id: string): StudioParamBaker | undefined { return _paramBakers.get(id) }
 
 export interface WalkNode { id: string; type?: string; data?: { nodeType?: string } | null }
