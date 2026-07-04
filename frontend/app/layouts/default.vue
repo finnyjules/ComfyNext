@@ -5,7 +5,7 @@ import {
   ZoomIn, ZoomOut, Maximize2, Map, Globe, Square, PanelRight, Wand, Library,
   AudioWaveform, Film, Box, Type, Frame, Clapperboard,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
-  Shapes, Blend, Aperture, Grid3x3, CaseSensitive, ListVideo,
+  Shapes, ListVideo,
   Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -16,6 +16,7 @@ import { brandKitToKv } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 import type { ActionDomain } from '~/data/action-catalog'
+import { STUDIO_OPTIONS } from '~/data/studio-options'
 import { Sonner } from '~/components/ui/sonner'
 import AssetsHistory from '~/components/AssetsHistory.vue'
 import CommunityHome from '~/components/community/CommunityHome.vue'
@@ -150,17 +151,8 @@ function onLoadOption(opt: { nodeType?: string; special?: string }) {
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
 
-// Studios — places you open and craft in (spec §1: defined by interaction
-// model, not AI-ness). Pastel dot = the studio bills AI credits when run.
-const studiosOptions = [
-  ...(SPACE_TYPE_ENABLED ? [{ label: 'Type', icon: CaseSensitive, special: 'space-type' }] : []),
-  { label: 'Gradient', icon: Blend, nodeType: 'GradientStudio' },
-  { label: 'Shader', icon: Aperture, nodeType: 'ShaderStudio' },
-  { label: 'Pattern', icon: Grid3x3, nodeType: 'TextureStudio' },
-  ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
-  { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector', pastel: true },
-  { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio', pastel: true },
-]
+// Studios door options — shared with the start modal (app/data/studio-options.ts).
+const studiosOptions = STUDIO_OPTIONS
 
 // Generate door — the curated zero-input AI verbs (spec §2). The fast lane,
 // not the store: the full catalog lives in the Actions panel. Audio expands
