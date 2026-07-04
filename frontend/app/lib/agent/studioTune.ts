@@ -96,7 +96,8 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
   } catch (e) {
     return { ok: false, rows: [], restore, error: e instanceof Error ? e.message : String(e) }
   }
-  const { commands, changeRationales, message } = parseAgentResponse(res.text)
+  const { commands, changeRationales, message, parseFailed } = parseAgentResponse(res.text)
+  if (parseFailed) return { ok: false, rows: [], restore, error: 'The model reply could not be read — please try again.' }
   const rows: TuneRow[] = []
   const backIds: string[] = []
   const frontIds: string[] = []
@@ -170,7 +171,8 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
   } catch (e) {
     return { ok: false, rows: [], restore, error: e instanceof Error ? e.message : String(e) }
   }
-  const { commands, changeRationales, message } = parseAgentResponse(res.text)
+  const { commands, changeRationales, message, parseFailed } = parseAgentResponse(res.text)
+  if (parseFailed) return { ok: false, rows: [], restore, error: 'The model reply could not be read — please try again.' }
   const rows: TuneRow[] = []
   let droppedMedia = false
   commands.forEach((cmd, i) => {

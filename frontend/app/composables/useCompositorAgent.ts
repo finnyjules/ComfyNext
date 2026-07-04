@@ -70,6 +70,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
       timeout: 60_000,
     })
     const parsed = parseAgentResponse(res.text)
+    if (parsed.parseFailed) throw new Error('The model reply could not be read — please try again.')
     reasoning.value = parsed.reasoning
     return parsed
   }
