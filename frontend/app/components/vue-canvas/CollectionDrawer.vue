@@ -481,13 +481,24 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
   columnUploading.value = new Set(columnUploading.value)
   const urls: string[] = []
   let failed = 0
+  let skipped = 0
   try {
     for (const file of files) {
+      // Guard against batch run starting mid-upload; break early and count remaining as skipped
+      if (running.value) {
+        skipped = files.length - urls.length - failed
+        break
+      }
       try {
         urls.push(await uploadMediaFile(file))
       } catch {
         failed++
       }
+    }
+    // Prevent adding rows if a batch started running during the upload loop
+    if (running.value) {
+      sweepWarning.value = 'Batch running — uploaded images were not added as rows.'
+      return
     }
     if (urls.length) addMediaRows(collection.value, colKey, urls)
     sweepWarning.value = failed
