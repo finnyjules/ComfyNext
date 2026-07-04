@@ -10,6 +10,7 @@
  * is reliable, and the model's `reasoning` field carries its thinking for display.
  */
 import { createError, defineEventHandler, readBody } from 'h3'
+import { assertRateLimit } from '../lib/rateLimit'
 import { modelForTier } from '../lib/aiModels'
 import { MAX_PROMPT_CHARS, optionalTier, requireApiKey, requireString } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
@@ -22,6 +23,7 @@ interface AgentPlanBody {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'agent-plan')
   const body = await readBody<AgentPlanBody>(event)
   const apiKey = requireApiKey(body?.apiKey)
   const prompt = requireString(body?.prompt, 'prompt', MAX_PROMPT_CHARS)

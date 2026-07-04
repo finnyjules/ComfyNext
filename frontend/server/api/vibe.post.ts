@@ -1,10 +1,13 @@
 // Natural-language → parameter patch for the Type Studio "vibe control".
 // Sibling of pipeline-suggest.post.ts: raw fetch, user-supplied Anthropic key,
 // no SDK. Haiku + structured outputs keep it fast and ~half a cent per ask.
+import { createError, defineEventHandler, readBody } from 'h3'
+import { assertRateLimit } from '../lib/rateLimit'
 import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
 import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalString, requireApiKey, requireString } from '../lib/agentRequest'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'vibe', 60)
   const body = await readBody(event)
   const apiKey = requireApiKey(body?.apiKey)
   const phrase = requireString(body?.phrase, 'phrase', MAX_PHRASE_CHARS)
