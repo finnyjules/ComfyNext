@@ -34,7 +34,10 @@ import BindableControlChip from '~/components/vue-canvas/studio/BindableControlC
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { controlKindToVariableType, type StudioControlDesc } from '~/lib/collection/studioBindables'
 import { typeCompatible } from '~/lib/collection/bindables'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
+import { addSweepRows } from '~/lib/collection/model'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
+import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -287,6 +290,37 @@ const wiredColumns = computed<CollectionColumn[]>(() => {
   return c?.columns ?? []
 })
 
+// Wired collection NODE (not just its columns) — the sweep flow needs to
+// mutate the actual CollectionData object once the popover's Apply fires.
+function findWiredCollectionNode(): any | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return null
+  return props.nodes.find((n: any) => String(n.id) === String(edge.source)) ?? null
+}
+
+// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
+// control; on Apply, turns the entered values into sweep rows on the wired
+// collection and hands off to the drawer + a follow-up run event (mirrors
+// Gradient Studio's applySweep, Slice 2a Task 8c).
+const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
+function applySweep(values: (string | number)[]) {
+  const control = sweepPopover.value?.control
+  sweepPopover.value = null
+  if (!control) return
+  const colNode = findWiredCollectionNode()
+  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  if (!colNode || !collection) return
+  const columnKey = boundColumnFor(control.key)
+  if (!columnKey) return
+
+  const added = addSweepRows(collection, columnKey, values)
+  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
+  }))
+}
+
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, c: ControlSpec) {
   const type = controlKindToVariableType(c.kind)
@@ -319,7 +353,7 @@ function openVarMenu(e: MouseEvent, c: ControlSpec) {
         if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
       },
     })
-    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control: desc, anchor: { x: e.clientX, y: e.clientY } } } })
     items.push({ divider: true })
     items.push({ label: 'Unbind', action: () => unbind(c.key, liveValue) })
   }
@@ -605,9 +639,13 @@ onMounted(async () => {
   await ensureEffectFonts()
   rebuild()
   startPreview()
+  registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
 })
 
-onBeforeUnmount(() => { saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null })
+onBeforeUnmount(() => {
+  saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
+  unregisterStudioParamBaker(props.nodeId)
+})
 
 // Global view keys are live for every effect (camera/scene transform read per frame).
 const GLOBAL_LIVE_KEYS = ['speed', 'scale', 'rotateX', 'rotateY', 'rotateZ']
@@ -751,6 +789,47 @@ const cfg = computed(() => ({
 // Supersample factor for bakes/exports: render at N× the output size then downscale, so
 // texture/text edges come out clean (MSAA only smooths polygon silhouettes). Offline only.
 const BAKE_SS = 2
+
+// Studio param-baker (Slice 2a Task 8c) — bakes ONE frame with a set of
+// `params.*` overrides applied (a collection sweep/generate row), without
+// disturbing the studio's live on-screen scene. Type Studio's controls are
+// flat `params[key]` writes (like Texture Studio — no dotted-path proxy, no
+// layer scoping), so overrides are snapshotted/written directly on `params`.
+// UNLIKE Gradient/Shader/Texture's bake paths, Type Studio's renderer is
+// STRUCTURAL: `engine.build(params, texOpts())` (via `rebuild()`) must run
+// after writing the overrides — `engine.renderFrame`/`renderFrameAt` alone
+// only re-poses the already-built scene graph, so a param that changes
+// geometry/text/material (most of them) would be invisible without a
+// rebuild first. `ensureEffectFonts()` is awaited first too, mirroring
+// `generateImage`'s own sequence, in case an override touches `font`.
+// Everything here (`build`/`renderFrame`) is still synchronous — only
+// `frameToBlob`'s `canvas.toBlob` wrapper is awaited — so no extra
+// `nextTick`/rAF wait is needed beyond the existing async font load.
+async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+  if (!engine) return null
+  const keys = Object.keys(overrides)
+  const snapshot = new Map<string, unknown>()
+  for (const key of keys) snapshot.set(key, (params as Record<string, unknown>)[key])
+  try {
+    for (const key of keys) (params as Record<string, unknown>)[key] = overrides[key]!
+    await ensureEffectFonts()
+    engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
+    rebuild()
+    engine.renderFrame(0, params)
+    const blob = await engine.frameToBlob(W.value, H.value)
+    engine.setSize(W.value, H.value)
+    return blob
+  } catch (e) {
+    console.error('[space-type] param-baker render failed', e)
+    return null
+  } finally {
+    for (const key of keys) {
+      if (snapshot.has(key)) (params as Record<string, unknown>)[key] = snapshot.get(key)
+    }
+    await ensureEffectFonts()
+    rebuild()
+  }
+}
 
 async function generateImage() {
   if (!engine) return
@@ -1170,5 +1249,12 @@ async function generateVideo() {
     :y="varMenu.y"
     :items="varMenu.items"
     @close="varMenu = null"
+  />
+  <SweepPopover
+    v-if="sweepPopover"
+    :control="sweepPopover.control"
+    :anchor="sweepPopover.anchor"
+    @apply="applySweep"
+    @close="sweepPopover = null"
   />
 </template>

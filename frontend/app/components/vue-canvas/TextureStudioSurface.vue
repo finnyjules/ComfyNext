@@ -26,7 +26,10 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { typeCompatible } from '~/lib/collection/bindables'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn } from '~/lib/collection/types'
+import { addSweepRows } from '~/lib/collection/model'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
+import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -199,6 +202,37 @@ const wiredColumns = computed<CollectionColumn[]>(() => {
   return c?.columns ?? []
 })
 
+// Wired collection NODE (not just its columns) — the sweep flow needs to
+// mutate the actual CollectionData object once the popover's Apply fires.
+function findWiredCollectionNode(): any | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return null
+  return props.nodes.find((n: any) => String(n.id) === String(edge.source)) ?? null
+}
+
+// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
+// control; on Apply, turns the entered values into sweep rows on the wired
+// collection and hands off to the drawer + a follow-up run event (mirrors
+// Gradient Studio's applySweep, Slice 2a Task 8c).
+const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
+function applySweep(values: (string | number)[]) {
+  const control = sweepPopover.value?.control
+  sweepPopover.value = null
+  if (!control) return
+  const colNode = findWiredCollectionNode()
+  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  if (!colNode || !collection) return
+  const columnKey = boundColumnFor(control.key)
+  if (!columnKey) return
+
+  const added = addSweepRows(collection, columnKey, values)
+  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
+  }))
+}
+
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
   const type = controlKindToVariableType(control.kind)
@@ -229,7 +263,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
         if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
       },
     })
-    items.push({ label: 'Sweep…', disabled: true })
+    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
     items.push({ divider: true })
     items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
   }
@@ -470,6 +504,36 @@ async function exportBlob(): Promise<Blob> {
     styled.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
 }
 
+// Studio param-baker (Slice 2a Task 8c) — bakes ONE frame with a set of
+// `params.*` overrides applied (a collection sweep/generate row), without
+// disturbing the studio's live on-screen tile: snapshot the current value of
+// every overridden key directly off the flat reactive `params` object (no
+// dotted-path proxy needed here — Texture Studio's controls are flat
+// `params[key]` writes, unlike Gradient's nested/layer-scoped config), write
+// the overrides the same way `onEdit`'s setter does (`params[key] = value`,
+// no separate rebuild step needed — `exportBlob` reads `params` fresh each
+// call), render one full-res frame via the shared `exportBlob` capture path,
+// then restore the snapshots in `finally` regardless of success/failure.
+// `exportBlob` calls `textureFx.render(params, ...)` directly with `params`
+// as an argument and only awaits the `toBlob` callback, so no `nextTick`/rAF
+// wait is needed between the override-write and the capture call.
+async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+  const keys = Object.keys(overrides)
+  const snapshot = new Map<string, unknown>()
+  for (const key of keys) snapshot.set(key, (params as Record<string, unknown>)[key])
+  try {
+    for (const key of keys) (params as Record<string, unknown>)[key] = overrides[key]!
+    return await exportBlob()
+  } catch (e) {
+    console.error('[texture] param-baker render failed', e)
+    return null
+  } finally {
+    for (const key of keys) {
+      if (snapshot.has(key)) (params as Record<string, unknown>)[key] = snapshot.get(key)
+    }
+  }
+}
+
 async function sendToCanvas() {
   baking.value = true; bakeMsg.value = 'Rendering…'
   try {
@@ -511,10 +575,12 @@ onMounted(() => {
   // Stylize effects load async; re-render once ready so the preview reflects them.
   preloadStylize().then(renderPreview).catch(() => {})
   window.addEventListener('keydown', onKey)
+  registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
 })
 onBeforeUnmount(() => {
   try { saveParams() } catch { /* swallow */ }
   window.removeEventListener('keydown', onKey)
+  unregisterStudioParamBaker(props.nodeId)
 })
 </script>
 
@@ -914,5 +980,12 @@ onBeforeUnmount(() => {
     :y="varMenu.y"
     :items="varMenu.items"
     @close="varMenu = null"
+  />
+  <SweepPopover
+    v-if="sweepPopover"
+    :control="sweepPopover.control"
+    :anchor="sweepPopover.anchor"
+    @apply="applySweep"
+    @close="sweepPopover = null"
   />
 </template>
