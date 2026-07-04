@@ -19,6 +19,8 @@ import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import type { LayoutIssue } from '~/lib/agent/verify'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { isFastLanePlacement } from '~/lib/agent/fastlane'
+import { capabilityByType } from '~/lib/agent/capabilities'
 
 const REROLLABLE = new Set(['setWidget', 'setMode', 'addNode'])
 const clone = (s: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(s)) as CanvasSnapshot
@@ -135,6 +137,25 @@ export function useCanvasAgent(opts: {
         const r = applyCanvasCommand(probe, cmd)
         if (r.ok) probe = r.template
       })
+      // FAST LANE: a single generator/studio placement the user already fully
+      // described (e.g. "a red fox in snow") needs no proposal ceremony. Commit
+      // it through the SAME path as the Keep button (undo/glimm/id-map identical),
+      // focus it, confirm in one line — and DO NOT run it (spending stays the
+      // user's explicit act on the node). Anything else falls through to the
+      // normal ghost → Keep/Reject flow below.
+      if (isFastLanePlacement(commands) && graphBuilt.length === 1) {
+        // Blueprint the ghost, then promote it exactly like keep() does.
+        opts.preview(graphBuilt.map(c => c.command), true)
+        const committed = opts.commit() || []
+        changes.value = []; original = null; issues.value = []; review.value = null
+        const nodeType = commands[0]!.args?.nodeType as string
+        const title = capabilityByType(nodeType)?.title ?? 'the node'
+        answer.value = message?.trim()
+          ? message.trim()
+          : `Added ${title} — press Run when you're ready.`
+        // (intentionally no opts.run call here — never auto-run a billable node)
+        return
+      }
       // Graph-health readout is about graph structure — only when graph changed.
       issues.value = graphBuilt.length ? verifyCanvas(probe) : []
       // Blueprint first (for ADDED graph nodes) — this materialises the ghost nodes
