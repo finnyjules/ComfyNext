@@ -8,6 +8,7 @@
 import { createError, defineEventHandler, readBody } from 'h3'
 import { modelForTier } from '../lib/aiModels'
 import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalString, optionalTier, requireApiKey, requireString } from '../lib/agentRequest'
+import { extractModelText } from '../lib/modelText'
 
 interface ReviewBody {
   apiKey?: string
@@ -68,7 +69,6 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: res.status, statusMessage: `model error: ${detail.slice(0, 200)}` })
   }
 
-  const json = (await res.json()) as { content?: Array<{ text?: string }> }
-  const text = json.content?.find(b => typeof b.text === 'string')?.text ?? ''
-  return { text }
+  const json = await res.json()
+  return { text: extractModelText(json) }
 })

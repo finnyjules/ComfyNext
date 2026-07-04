@@ -4,6 +4,7 @@
 // Google catalog (server/utils/fontMatch) so hallucinated families never ship.
 import { getGoogleCatalog } from '../utils/googleCatalog'
 import { groundSuggestions } from '../utils/fontMatch'
+import { extractModelText } from '../lib/modelText'
 
 const SUGGEST_SCHEMA = {
   type: 'object',
@@ -86,9 +87,12 @@ Rules:
     }
 
     const data: any = await res.json()
-    const text = data?.content?.find((b: any) => b.type === 'text')?.text
-    if (!text) throw createError({ statusCode: 502, message: 'Empty response from Claude' })
-    suggestions = JSON.parse(text).suggestions
+    const text = extractModelText(data)
+    const parsed = JSON.parse(text) as { suggestions?: unknown }
+    suggestions = Array.isArray(parsed.suggestions)
+      ? parsed.suggestions.filter((s: any) => typeof s?.family === 'string')
+      : []
+    if (!suggestions.length) throw createError({ statusCode: 502, message: 'Claude returned no usable suggestions' })
   }
   catch (err: any) {
     if (err.statusCode) throw err
