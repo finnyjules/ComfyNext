@@ -30,6 +30,7 @@ import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
 import { createCollection } from '~/lib/collection/model'
+import { promoteLayoutElement } from '~/lib/collection/layoutBinding'
 import { promoteControl } from '~/composables/useStudioVarBindings'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
@@ -3215,6 +3216,55 @@ function handleCollectionScrub(e: Event) {
   pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]))
 }
 
+// Shared "reuse the wired collection, else create one" logic used by BOTH the
+// studio-control promote handler and the Smart Layout element promote handler
+// below. This is the ONLY place that can create the collection node + VARS
+// edge since only the canvas owns `nodes.value`/`edges.value`. Callers pass
+// their own `createCollectionNode` callback into `promoteControl`/
+// `promoteLayoutElement` — this helper just builds that callback once.
+function findOrCreateWiredCollection(targetNode: any): () => any {
+  return () => {
+    // No wired collection yet — create one beside the target node and wire its
+    // VARS output into the node's `vars` input (ensureVarsInput first so that
+    // input handle actually exists on legacy/freshly-created nodes).
+    ensureVarsInput(targetNode)
+    const targetId = String(targetNode.id)
+    const pos = { x: (targetNode.position?.x ?? 0) - 260, y: targetNode.position?.y ?? 0 }
+    const colNode = createNodeData('Collection', pos)
+    if (!colNode.data.properties) colNode.data.properties = {}
+    colNode.data.properties[COLLECTION_PROP] = createCollection('Collection')
+    nodes.value.push(colNode)
+
+    const varsIndex = ((targetNode.data?.inputs ?? []) as any[]).findIndex(i => i.name === 'vars')
+    if (varsIndex >= 0) {
+      edges.value.push({
+        id: `e-vars-${colNode.id}-${targetId}`,
+        source: colNode.id,
+        sourceHandle: 'output-0',
+        target: targetId,
+        targetHandle: `input-${varsIndex}`,
+        type: 'comfy',
+        data: { dataType: VARS_TYPE },
+      } as any)
+    }
+    return colNode
+  }
+}
+
+// After a promote call creates/reuses a wired collection, push the fresh
+// preview onto every wired target and open the collection drawer. Shared by
+// both promote handlers below.
+function pushPreviewAndOpenCollection(targetId: string) {
+  const allNodes = nodes.value as any[]
+  const allEdges = edges.value as any[]
+  const collectionId = allEdges.find(ed => String(ed.target) === targetId && ed?.data?.dataType === VARS_TYPE)?.source
+  const collectionNode = collectionId ? allNodes.find(n => String(n.id) === String(collectionId)) : undefined
+  if (collectionNode) {
+    pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges))
+    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(collectionId) } }))
+  }
+}
+
 // Promote a studio control to a Collection column. Fired by useStudioVarBindings'
 // `promote()` when the calling surface has no `createCollectionNode` accessor of
 // its own (i.e. every studio surface today — they only know their own nodeId).
@@ -3234,44 +3284,46 @@ function handlePromoteControl(e: Event) {
     studioId,
     detail.control,
     detail.currentValue,
-    () => {
-      // No wired collection yet — create one beside the studio and wire its
-      // VARS output into the studio's `vars` input (ensureVarsInput first so
-      // that input handle actually exists on legacy/freshly-created nodes).
-      ensureVarsInput(studio)
-      const pos = { x: (studio.position?.x ?? 0) - 260, y: studio.position?.y ?? 0 }
-      const colNode = createNodeData('Collection', pos)
-      if (!colNode.data.properties) colNode.data.properties = {}
-      colNode.data.properties[COLLECTION_PROP] = createCollection('Collection')
-      nodes.value.push(colNode)
-
-      const varsIndex = ((studio.data?.inputs ?? []) as any[]).findIndex(i => i.name === 'vars')
-      if (varsIndex >= 0) {
-        edges.value.push({
-          id: `e-vars-${colNode.id}-${studioId}`,
-          source: colNode.id,
-          sourceHandle: 'output-0',
-          target: studioId,
-          targetHandle: `input-${varsIndex}`,
-          type: 'comfy',
-          data: { dataType: VARS_TYPE },
-        } as any)
-      }
-      return colNode
-    },
+    findOrCreateWiredCollection(studio),
   )
   if (!result) return
 
   // The just-promoted control's collection is whichever node the studio's vars
   // input now traces back to (freshly created above, or the one already wired).
-  const allNodes = nodes.value as any[]
-  const allEdges = edges.value as any[]
-  const collectionId = allEdges.find(ed => String(ed.target) === studioId && ed?.data?.dataType === VARS_TYPE)?.source
-  const collectionNode = collectionId ? allNodes.find(n => String(n.id) === String(collectionId)) : undefined
-  if (collectionNode) {
-    pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges))
-    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(collectionId) } }))
-  }
+  pushPreviewAndOpenCollection(studioId)
+}
+
+// Promote a Smart Layout text/image element to a Collection column. Fired by
+// the editor's context-menu "Turn into variable" action (Task 3) once the
+// element's content has been tokenized to `{{ props.<socketName> }}`. Mirrors
+// handlePromoteControl above, sharing the same find-or-create-collection logic,
+// but binds `props.<socketName>` instead of `params.<control.key>`.
+function handlePromoteLayoutElement(e: Event) {
+  const detail = (e as CustomEvent<{
+    nodeId: string
+    socketName: string
+    columnLabel: string
+    currentValue: string | number
+    kind: 'text' | 'image'
+  }>).detail
+  if (!detail?.nodeId || !detail.socketName) return
+  const layoutId = String(detail.nodeId)
+  const layoutNode = (nodes.value as any[]).find(n => String(n.id) === layoutId)
+  if (!layoutNode) return
+
+  const result = promoteLayoutElement(
+    () => nodes.value as any[],
+    () => edges.value as any[],
+    layoutId,
+    detail.socketName,
+    detail.columnLabel,
+    detail.currentValue,
+    detail.kind,
+    findOrCreateWiredCollection(layoutNode),
+  )
+  if (!result) return
+
+  pushPreviewAndOpenCollection(layoutId)
 }
 
 // Fallback binder for surfaces that only have a control's `path`/`columnKey`
@@ -3525,6 +3577,7 @@ onMounted(() => {
   window.addEventListener('comfynext:runSweepRows', handleRunSweepRows)
   window.addEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.addEventListener('comfynext:promoteControl', handlePromoteControl)
+  window.addEventListener('comfynext:promoteLayoutElement', handlePromoteLayoutElement)
   window.addEventListener('comfynext:bindControl', handleBindControl)
   window.addEventListener('comfynext:unbindControl', handleUnbindControl)
   window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
@@ -3578,6 +3631,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:runSweepRows', handleRunSweepRows)
   window.removeEventListener('comfynext:collectionScrub', handleCollectionScrub)
   window.removeEventListener('comfynext:promoteControl', handlePromoteControl)
+  window.removeEventListener('comfynext:promoteLayoutElement', handlePromoteLayoutElement)
   window.removeEventListener('comfynext:bindControl', handleBindControl)
   window.removeEventListener('comfynext:unbindControl', handleUnbindControl)
   window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)

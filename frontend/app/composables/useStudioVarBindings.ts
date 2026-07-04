@@ -55,8 +55,10 @@ function findNode(nodes: any[], id: string): any | undefined {
 }
 
 /** Find the collection node wired into `studioNodeId` via a VARS edge, verifying
- *  the edge's source node actually owns the collection referenced by `collectionId`. */
-function findWiredCollectionNode(nodes: any[], edges: any[], studioNodeId: string, collectionId?: string): any | undefined {
+ *  the edge's source node actually owns the collection referenced by `collectionId`.
+ *  Exported so other binding modules (e.g. layoutBinding.ts) reuse this exact
+ *  lookup instead of re-implementing it. */
+export function findWiredCollectionNode(nodes: any[], edges: any[], studioNodeId: string, collectionId?: string): any | undefined {
   const wiredSourceIds = new Set(
     edges
       .filter(e => String(e.target) === String(studioNodeId) && e?.data?.dataType === 'VARS')
