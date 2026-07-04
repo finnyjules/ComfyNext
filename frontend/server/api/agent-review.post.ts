@@ -7,6 +7,7 @@
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { modelForTier } from '../lib/aiModels'
+import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalString, optionalTier, requireApiKey, requireString } from '../lib/agentRequest'
 
 interface ReviewBody {
   apiKey?: string
@@ -21,9 +22,14 @@ interface ReviewBody {
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<ReviewBody>(event)
-  const { apiKey, prompt, schema, image } = body ?? {}
-  if (!apiKey || !prompt || !schema || !image) {
-    throw createError({ statusCode: 400, statusMessage: 'apiKey, prompt, schema and image are required' })
+  const apiKey = requireApiKey(body?.apiKey)
+  const prompt = requireString(body?.prompt, 'prompt', MAX_PROMPT_CHARS)
+  const image = requireString(body?.image, 'image', MAX_IMAGE_CHARS)
+  const system = optionalString(body?.system, 'system', MAX_PROMPT_CHARS)
+  const tier = optionalTier(body?.tier)
+  const schema = body?.schema
+  if (!schema || typeof schema !== 'object') {
+    throw createError({ statusCode: 400, statusMessage: 'schema (object) is required' })
   }
 
   // Split a data URL into media type + base64 payload.
@@ -39,13 +45,13 @@ export default defineEventHandler(async (event) => {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: modelForTier(body?.tier),
+      model: modelForTier(tier),
       max_tokens: 2048,
       output_config: { format: { type: 'json_schema', schema } },
       // Cache the static instruction prefix: reviews cluster (iterate → render →
       // review, Variations bursts), so the 5-minute ephemeral window hits often.
-      ...(body?.system
-        ? { system: [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }] }
+      ...(system
+        ? { system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] }
         : {}),
       messages: [{
         role: 'user',

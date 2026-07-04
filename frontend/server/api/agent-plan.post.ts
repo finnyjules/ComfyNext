@@ -11,6 +11,7 @@
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { modelForTier } from '../lib/aiModels'
+import { MAX_PROMPT_CHARS, optionalTier, requireApiKey, requireString } from '../lib/agentRequest'
 
 interface AgentPlanBody {
   apiKey?: string
@@ -21,11 +22,12 @@ interface AgentPlanBody {
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<AgentPlanBody>(event)
-  const apiKey = body?.apiKey
-  const prompt = body?.prompt
+  const apiKey = requireApiKey(body?.apiKey)
+  const prompt = requireString(body?.prompt, 'prompt', MAX_PROMPT_CHARS)
+  const tier = optionalTier(body?.tier)
   const schema = body?.schema
-  if (!apiKey || !prompt || !schema) {
-    throw createError({ statusCode: 400, statusMessage: 'apiKey, prompt and schema are required' })
+  if (!schema || typeof schema !== 'object') {
+    throw createError({ statusCode: 400, statusMessage: 'schema (object) is required' })
   }
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -36,7 +38,7 @@ export default defineEventHandler(async (event) => {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: modelForTier(body?.tier),
+      model: modelForTier(tier),
       max_tokens: 2048,
       output_config: { format: { type: 'json_schema', schema } },
       messages: [{ role: 'user', content: prompt }],

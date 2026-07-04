@@ -2,19 +2,20 @@
 // Sibling of pipeline-suggest.post.ts: raw fetch, user-supplied Anthropic key,
 // no SDK. Haiku + structured outputs keep it fast and ~half a cent per ask.
 import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
+import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalString, requireApiKey, requireString } from '../lib/agentRequest'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { apiKey, controls, phrase, effectLabel, guidance } = body || {}
-
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
+  const apiKey = requireApiKey(body?.apiKey)
+  const phrase = requireString(body?.phrase, 'phrase', MAX_PHRASE_CHARS)
+  const guidance = optionalString(body?.guidance, 'guidance', MAX_PROMPT_CHARS)
+  const effectLabel = optionalString(body?.effectLabel, 'effectLabel', 200) ?? 'effect'
+  const controls = body?.controls
+  if (!Array.isArray(controls) || controls.length > 500) {
+    throw createError({ statusCode: 400, message: 'controls (array, ≤500) is required' })
   }
-  if (!Array.isArray(controls) || !phrase || typeof phrase !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing controls or phrase' })
-  }
 
-  const prompt = buildVibePrompt(controls, phrase, typeof effectLabel === 'string' ? effectLabel : 'effect', typeof guidance === 'string' ? guidance : undefined)
+  const prompt = buildVibePrompt(controls, phrase, effectLabel, guidance)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
