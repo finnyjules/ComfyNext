@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Download, Grid3x3, ImagePlus, Layers2, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, CaseSensitive, Columns3, Download, Grid2x2, Grid3x3, ImagePlus, Layers2, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -50,7 +50,7 @@ const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sa
 
 // In-product agent (last-mile of F1): drives the template through the command
 // surface. Gated to v3 templates in the UI below.
-const { getLocalSetting } = useLocalSettings()
+const { getLocalSetting, setLocalSetting } = useLocalSettings()
 const {
   busy: agentBusy, error: agentError, notice: agentNotice, issues: agentIssues, review: agentReview, reviewing: agentReviewing, changes: agentChanges, hasProposal: agentHasProposal, hovered: agentHovered,
   ask: agentAsk, acceptChange, rejectChange, reroll: agentReroll,
@@ -194,6 +194,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 const gridPanelOpen = ref(false)
 const { currentFormat, format, formatClass, metrics } = ctx
+
+// Fine grid / column guide overlay toggles — persisted so the placement aid
+// stays how the designer left it across sessions. Default: fine grid ON
+// (the always-visible placement lattice the creator-flow ask calls for),
+// column guides ON (unchanged from today's always-on coarse guides).
+const FINE_GRID_KEY = 'ComfyNext.SmartLayout.FineGrid'
+const COLUMN_GUIDES_KEY = 'ComfyNext.SmartLayout.ColumnGuides'
+const fineGridOn = ref(getLocalSetting(FINE_GRID_KEY) !== 'false')
+const columnGuidesOn = ref(getLocalSetting(COLUMN_GUIDES_KEY) !== 'false')
+function toggleFineGrid() {
+  fineGridOn.value = !fineGridOn.value
+  setLocalSetting(FINE_GRID_KEY, String(fineGridOn.value))
+}
+function toggleColumnGuides() {
+  columnGuidesOn.value = !columnGuidesOn.value
+  setLocalSetting(COLUMN_GUIDES_KEY, String(columnGuidesOn.value))
+}
 
 /** Class default dims, shown as placeholders so "unset" reads as automatic. */
 const classDefaultDims = computed(() => {
@@ -384,7 +401,28 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </div>
         <div class="flex items-center gap-2">
         <div class="flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
-        <!-- Grid -->
+        <!-- Fine placement grid toggle -->
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="fineGridOn ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+          title="Toggle the fine placement grid"
+          @click="toggleFineGrid"
+        >
+          <Grid2x2 class="size-4" /> Grid
+        </button>
+        <!-- Column guides toggle -->
+        <button
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="columnGuidesOn ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+          title="Toggle column/section guides"
+          @click="toggleColumnGuides"
+        >
+          <Columns3 class="size-4" /> Columns
+        </button>
+
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+
+        <!-- Grid settings -->
         <div class="relative">
           <button
             class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
@@ -392,7 +430,7 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
             title="Grid settings — columns, rows, gutter, margin"
             @click="gridPanelOpen = !gridPanelOpen"
           >
-            <Grid3x3 class="size-4" /> Grid
+            <Grid3x3 class="size-4" /> Settings
           </button>
           <div
             v-if="gridPanelOpen"

@@ -14,6 +14,7 @@ import type { Region } from '~~/shared/template-grid/types'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
+import { useLocalSettings } from '~/composables/useLocalSettings'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
@@ -119,6 +120,51 @@ const backgroundStyle = computed(() => {
 })
 
 // -- Grid overlay geometry ---------------------------------------------------
+
+// Persisted overlay toggles. Fine grid defaults ON (always-visible placement
+// aid per the creator-flow ask); column guides keep today's default (also
+// on) — both write-through to localStorage via the shared settings helper so
+// the shell's toolbar buttons and this canvas agree on state without prop
+// plumbing.
+const { getLocalSetting, setLocalSetting } = useLocalSettings()
+const FINE_GRID_KEY = 'ComfyNext.SmartLayout.FineGrid'
+const COLUMN_GUIDES_KEY = 'ComfyNext.SmartLayout.ColumnGuides'
+const fineGridOn = ref(getLocalSetting(FINE_GRID_KEY) !== 'false')
+const columnGuidesOn = ref(getLocalSetting(COLUMN_GUIDES_KEY) !== 'false')
+
+function onSettingChanged(e: Event) {
+  const { key, value } = (e as CustomEvent<{ key: string; value: string }>).detail ?? {}
+  if (key === `comfynext:${FINE_GRID_KEY}`) fineGridOn.value = value !== 'false'
+  else if (key === `comfynext:${COLUMN_GUIDES_KEY}`) columnGuidesOn.value = value !== 'false'
+}
+onMounted(() => window.addEventListener('comfynext:setting-changed', onSettingChanged))
+onUnmounted(() => window.removeEventListener('comfynext:setting-changed', onSettingChanged))
+
+// Fine placement lattice — two repeating-linear-gradient backgrounds (not an
+// SVG line-per-cell, which would mean hundreds of DOM nodes on a dense v3
+// baseline grid) sized to the metrics' cell dimensions, offset by the grid
+// origin so lines land exactly on cell boundaries. A second, larger-period
+// pair draws an emphasis line every 4th cell for rhythm.
+const fineGridStyle = computed(() => {
+  const m = metrics.value
+  const cw = Math.max(1, m.cellW + m.gutter)
+  const ch = Math.max(1, m.cellH + m.gutter)
+  const hair = 'rgba(255,255,255,0.06)'
+  const emph = 'rgba(255,255,255,0.12)'
+  return {
+    position: 'absolute' as const,
+    inset: '0',
+    pointerEvents: 'none' as const,
+    backgroundImage: [
+      `repeating-linear-gradient(to right, ${emph} 0, ${emph} 1px, transparent 1px, transparent ${cw * 4}px)`,
+      `repeating-linear-gradient(to bottom, ${emph} 0, ${emph} 1px, transparent 1px, transparent ${ch * 4}px)`,
+      `repeating-linear-gradient(to right, ${hair} 0, ${hair} 1px, transparent 1px, transparent ${cw}px)`,
+      `repeating-linear-gradient(to bottom, ${hair} 0, ${hair} 1px, transparent 1px, transparent ${ch}px)`,
+    ].join(', '),
+    backgroundPosition: `${m.originX}px ${m.originY}px`,
+    backgroundRepeat: 'repeat',
+  }
+})
 
 const gridCells = computed(() => {
   const m = metrics.value
@@ -608,30 +654,36 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       }"
       @click="onCanvasClick"
     >
+      <!-- Fine placement lattice (always-on by default) — single element, two
+           repeating-gradient backgrounds; cheap even at hundreds of cells. -->
+      <div v-if="fineGridOn" :style="fineGridStyle" />
+
       <!-- Grid overlay (under elements, non-interactive) -->
       <div class="absolute inset-0 pointer-events-none">
-        <div
-          v-for="(c, i) in gridCells.cols"
-          :key="`c${i}`"
-          class="absolute"
-          :style="{
-            left: c.left + 'px', top: c.top + 'px',
-            width: c.width + 'px', height: c.height + 'px',
-            background: 'rgba(150,180,255,0.05)',
-            borderLeft: '1px solid rgba(150,180,255,0.16)',
-            borderRight: '1px solid rgba(150,180,255,0.16)',
-          }"
-        />
-        <div
-          v-for="(l, i) in gridCells.rowLines"
-          :key="`r${i}`"
-          class="absolute"
-          :style="{
-            left: l.left + 'px', top: l.top + 'px',
-            width: l.width + 'px', height: '1px',
-            background: 'rgba(150,180,255,0.14)',
-          }"
-        />
+        <template v-if="columnGuidesOn">
+          <div
+            v-for="(c, i) in gridCells.cols"
+            :key="`c${i}`"
+            class="absolute"
+            :style="{
+              left: c.left + 'px', top: c.top + 'px',
+              width: c.width + 'px', height: c.height + 'px',
+              background: 'rgba(150,180,255,0.05)',
+              borderLeft: '1px solid rgba(150,180,255,0.16)',
+              borderRight: '1px solid rgba(150,180,255,0.16)',
+            }"
+          />
+          <div
+            v-for="(l, i) in gridCells.rowLines"
+            :key="`r${i}`"
+            class="absolute"
+            :style="{
+              left: l.left + 'px', top: l.top + 'px',
+              width: l.width + 'px', height: '1px',
+              background: 'rgba(150,180,255,0.14)',
+            }"
+          />
+        </template>
         <!-- Safe-area hatching (platform UI zones) -->
         <div
           v-for="(s, i) in safeStrips"
