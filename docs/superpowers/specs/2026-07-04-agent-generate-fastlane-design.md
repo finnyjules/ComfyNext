@@ -1,62 +1,53 @@
-# Generate mode in the prompt bar — deterministic fast path
+# Agent fast-lane for single-node generations
 
 **Date:** 2026-07-04
-**Status:** Approved direction, pending spec review
-**Scope:** Frontend only. The canvas prompt bar (`app/components/agent/CanvasPromptBar.vue`) gains a deterministic "generate mode". The Generate toolbar door's BEHAVIOR is unchanged (click still drops a bare node); its options list is refactored onto the shared module in §2.
+**Status:** Approved direction, pending spec review. SUPERSEDES the earlier "generate-mode chip" draft (previous content of this file, see git history) — the user rejected adding a mode/chip to the prompt bar; the bar stays single-purpose (always the agent). This design keeps one brain and zero new UI, and instead removes the proposal ceremony when there is nothing to review.
+**Scope:** Frontend only. `useCanvasAgent.ts` + a small pure predicate. No changes to the prompt bar UI, the Generate toolbar door, the planner prompt, or `/api/agent-plan`.
 
-## 1. Purpose & decided constraints
+## 1. Behavior
 
-Typing "a cat wearing a hat" today goes through the full agent planner (sonnet round-trip, ~2k-token prompt, ghost proposal, Keep & Run) even though the planner's own rules resolve it to `addNode GenerateImageNode {prompt}`. This adds a deterministic gear **in front of** the agent for declared generation intent — no model call, no ghost, no ambiguity — without touching the agent path at all.
+Today, typing a plain description ("a red fox in deep snow") flows: planner → ghost proposal on canvas → user clicks **Keep & Run** (or Keep). Three beats for the product's most common ask, where the "proposal" is a single node the user already fully described.
 
-Decided in design discussion:
-- **The Generate toolbar door keeps dropping bare nodes** (click = node on canvas, consistent with the Add/Studios doors' grammar). The mode selector lives in the bar itself — the door and the bar are parallel paths (click vs type), not redundant ones.
-- **Never auto-run.** Enter places a configured node; running (spending) is always the user's explicit act on the node.
-- **Freeform bar behavior is byte-identical to today** — no chip means the agent planner, ghost proposals, review loop, all unchanged. No changes to `useCanvasAgent.ask()`, the planner prompt, or `/api/agent-plan`.
+New behavior: when the planner's response is a **trivially-safe single placement** (definition in §2), skip the ghost/proposal ceremony and place the node directly — configured, selected, brought into view, and **never auto-run** (running = spending is always the user's explicit act on the node; same rule as the start modal). The bar shows a one-line confirmation instead of the proposal card. Anything non-trivial (multi-command plans, wiring, edits to existing nodes, deletions, tunes) keeps today's full ghost → review → Keep/Reject flow, byte-identical.
 
-## 2. Shared data — `GENERATE_OPTIONS`
+Accepted tradeoff (explicitly chosen over the chip design): the planner round-trip's latency (~2–5s) and cost (~1¢) remain — we are buying "fewer beats, no new concepts", not "instant and free".
 
-New module `app/data/generate-options.ts` (same never-drift pattern as `studio-options.ts`):
+## 2. The eligibility predicate
+
+New pure function in `app/lib/agent/fastlane.ts`:
 
 ```ts
-export interface GenerateOption {
-  label: string            // 'Image' | 'Styled image' | 'Video' | 'Music' | 'Speech'
-  icon: Component
-  nodeType: string         // GenerateImageNode | FluxLoRARemoteNode | GenerateVideoNode | GenerateMusicNode | GenerateSpeechNode
-  promptWidget: string     // the node's primary prompt/text widget name (verified against the Python schemas at plan time; 'prompt' expected for image/video/music, TBD-verify for speech which may be 'text')
-  placeholder: string      // bar placeholder while chip active, e.g. 'Describe the image…'
-}
-export const GENERATE_OPTIONS: GenerateOption[]
+export function isFastLanePlacement(commands: AgentCommand[]): boolean
 ```
 
-The toolbar door (`generateOptions` + `generateAudioOptions` in `default.vue`) is refactored to render from this module (labels/icons/nodeTypes identical to today, including the Audio→Music/Speech inline expand). Door behavior unchanged: click still calls `addLoadNode(nodeType)`.
+True iff ALL hold:
+- exactly one command, `op === 'addNode'`;
+- no `target` (it creates; it doesn't modify anything existing);
+- the nodeType is a **creation** capability: present in `AGENT_CAPABILITIES` with `kind === 'generator'`, OR a frontend-only studio (`kind === 'studio'`) — the planner's gradient/texture exceptions ("soft blue gradient" → GradientStudio) deserve the same fast lane; both are free to place and the studio is free to run;
+- effects (`kind === 'effect'`) are NOT eligible — a lone `addNode EditImageNode` floating unwired is a half-plan; let the ghost flow show what the agent intends to feed it.
 
-## 3. Mode state — `useGenerateMode()`
+The predicate sees only the parsed commands — no LLM involvement, trivially unit-testable.
 
-New composable `app/composables/useGenerateMode.ts`: a module-level singleton `ref<GenerateOption | null>`, with `set(opt)`, `clear()`. Written by the bar's own selector; read by the bar. (Toolbar door does NOT write it — decided. Homepage cards deferred.)
+## 3. Implementation shape (`useCanvasAgent.ask()`)
 
-## 4. Bar UI & behavior (`CanvasPromptBar.vue`)
+After parse + the existing dry-run/verify step, if `isFastLanePlacement(commands)`:
+1. Commit through the SAME code path as the user clicking Keep (reuse the existing preview→commit internals with animation off; no new canvas API) — preserving undo/`restore` behavior exactly.
+2. `fitView` the placed node (existing focus pattern).
+3. Set `answer` to a short confirmation derived from the plan (e.g. "Added **Generate an image** — press Run when ready.", using the capability title; append the model's `message` if present). No proposal card, no Keep/Reject buttons.
+4. Do NOT arm the run→look→fix review (nothing ran).
 
-- **Selector:** a small button at the bar's left edge carrying the pastel treatment (gen-pastel dot, matching the Generate toolbar icon — this stages a billed action). Click opens a compact popup listing `GENERATE_OPTIONS` (five rows, flat — no Audio submenu needed here). Picking one sets the mode.
-- **Chip:** while mode is active, the button is replaced by a chip showing the option label + ✕. Placeholder switches to the option's `placeholder`. The agent's glimm/proposal UI is untouched (it simply won't trigger in chip mode).
-- **Enter with chip active:** deterministic placement —
-  1. dispatch the existing `comfynext:addNode` event extended with `widgetOverrides: { [promptWidget]: typedText }` (the canvas's `handleAddNode` must honor `widgetOverrides`; if it doesn't today, extend it — `spliceAfterNode`/`applyEffect` already flow overrides through the same node-creation internals, so the seam exists),
-  2. `fitView` to the new node (reuse the focus pattern from `handleApplyEffect`),
-  3. clear the chip and the input (one-shot; the bar returns to freeform/agent mode),
-  4. **do not run anything.**
-- **Empty Enter with chip active:** no-op (don't place a node with an empty prompt).
-- **Escape** (input focused) or chip ✕: clear the mode, keep the bar. Escape without a chip behaves as today.
-- **No chip:** submit goes to `ask(phrase)` exactly as today.
+Else: existing flow, unchanged.
 
-## 5. Out of scope / deferred
+## 4. Out of scope / rejected / deferred
 
-- Toolbar Generate door changes — none (explicitly decided against making it a mode-setter).
-- Homepage "Create an image" cards seeding the mode on project open (slice 2 — mount-timing fiddliness).
-- Freeform-prompt heuristic (approach B) — revisit only with evidence that users type descriptions without picking the mode; the agent handles those correctly today, just slower.
-- `/image`-style slash shortcuts in the bar.
-- Auto-run in any form.
-- Styled-image LoRA picking: the fast path prefills the prompt only; LoRA selection stays whatever the node's defaults/widgets provide (the agent path remains the smart route for "in my watercolor style").
+- **Rejected:** mode chip / selector in the prompt bar (this spec's predecessor). The Generate toolbar door keeps dropping bare nodes; no `GENERATE_OPTIONS` module is needed.
+- **Deferred:** non-LLM instant path (client heuristic) — revisit only with evidence; latency is accepted for now.
+- **Deferred:** homepage-card → prompt seeding; slash commands.
+- **Never:** auto-run of billable nodes from any prompt path.
 
-## 6. Testing
+## 5. Testing
 
-- Unit (vitest): `GENERATE_OPTIONS` — 5 entries, nodeTypes exist in `ACTION_CATALOG`, non-empty `promptWidget`/`placeholder` per entry.
-- e2e (Playwright, `PW_BASE_URL` pattern): chip flow — open selector, pick Image, type "a red fox", Enter → exactly one new node on canvas whose prompt widget shows "a red fox", chip cleared, nothing running (run-queue count unchanged); Escape clears chip; freeform submit with no chip still reaches the agent UI (thinking state appears).
+- Unit (vitest, `tests/unit/agent-fastlane.unit.spec.ts`): predicate truth table — single generator addNode ✓; single studio addNode ✓; single effect addNode ✗; addNode+connect pair ✗; single setWidget ✗; addNode with target ✗; empty ✗.
+- e2e (Playwright): intercept `POST /api/agent-plan` with `page.route()` returning canned JSON — deterministic and free, no real model call:
+  - canned single-addNode response → type in bar, submit → node appears with prompt widget filled, NO proposal card, nothing running;
+  - canned two-command response (addNode + connect) → ghost proposal card appears as today (regression guard).
