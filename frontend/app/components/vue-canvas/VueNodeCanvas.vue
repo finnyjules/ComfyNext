@@ -718,6 +718,7 @@ async function agentTune(tuneCmds: { target: string; request: string }[], apiKey
       const res = await tuner(node, tc.request, apiKey)
       if (res.restore) tuneRestores.push(res.restore)
       if (res.notice) notices.push(res.notice)
+      if (res.error) notices.push(res.error)
       if (res.ok) {
         tunedIds.push(String(node.id))
         for (const row of res.rows) {
