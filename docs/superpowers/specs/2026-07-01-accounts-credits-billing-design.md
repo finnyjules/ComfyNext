@@ -91,6 +91,23 @@ Today the canvas iframe loads from and submits prompts directly to `:8188`, bypa
 2. All iframe/ws/HTTP ComfyUI traffic forced through the Nitro proxy.
 3. The proxy enforces the Clerk session (via §5.1 middleware) on every forwarded request.
 
+## 6.5 Engine multi-tenancy: worker pool + per-user ownership (added 2026-07-03)
+
+ComfyUI is single-user by construction and **must never be shared raw between tenants** — this is a privacy problem before it is a throughput problem:
+
+- `/history` is global (every user's prompts/outputs visible to any caller)
+- `/view` serves the whole output directory to anyone
+- `/interrupt` is global (any user can kill any job)
+- one shared `input/` directory (upload collisions), global model/RAM state
+
+The industry-standard remedy (RunPod `worker-comfyui`, ComfyDeploy, Replicate, comfy.icu all converge on it): demote ComfyUI from "the server" to **a job runtime** — our layer owns users, queueing, and storage; ComfyUI processes are interchangeable workers. ComfyNext is already most of the way there (frontend owns UX; the Phase-0 meter route owns submission/pricing/outcome keyed by `prompt_id`; the training queue is ours and durable). Design:
+
+1. **Worker pool.** N ComfyUI processes on the host (`:8189`, `:8190`, …, all private per §6). The meter route (`/api/meter/prompt`) routes each priced job to an idle worker and records `prompt_id → {userId, worker}`. Workers are cheap on the CPU topology (mostly awaiting provider APIs; no local model weights), so N=4–8 fits one mid-size box; N and box size are the two scaling dials, in that order. ComfyUI's serial per-process queue is respected — concurrency comes from the pool, never from sharing a process.
+2. **Ownership filtering at the proxy.** The submission registry (Phase-0 `meterStore`, Postgres-backed from Phase 2/5) is the ownership map. The authed proxy answers `/history/{id}` and `/view` only for the requesting user's own `prompt_id`s/outputs, and scopes `/interrupt` the same way. Unowned id → 404, indistinguishable from nonexistent.
+3. **Per-user storage prefixes.** Uploads land under a per-user prefix in each worker's `input/`; outputs are keyed per user (and pushed to R2, which also survives worker recycling).
+
+This section IS the "multi-tenant Comfy deployment" work formerly parked as a separate unscoped track. It ships as **Phase 5.5** (below), sized ~1–2 weeks alongside Phase 5, and is a launch blocker for any second user.
+
 ## 7. Relationship to ComfyUI's native credit system
 
 The two systems are independent **by construction**: comfy.org credentials travel only as `auth_token_comfy_org` / `api_key_comfy_org` inside prompt `extra_data` (`execution.py:151`) and are read only by `comfy_api_nodes/*`. Our system lives entirely in the Nuxt/Postgres/Stripe layer. No shared identifiers, processes, or stores.
@@ -153,23 +170,25 @@ Admin build phasing: user lookup + manual grant land **in Phase 2** (they're how
 
 | Phase | Scope | Rationale |
 |---|---|---|
-| **−1 Compute topology** | Decide: shared Comfy instance vs per-user pods vs serverless GPU. | Isolation model and who-can-run-what derive from it. Fixed per-action pricing removed the GPU-time-measurement dependency, but isolation still blocks the spike |
-| **0 Spike** | Surface-B end-to-end on the chosen topology: authenticated proxy → price one prompt → forward → correlate ws success → mock debit. Includes §6 isolation | The only unknown-effort piece; estimate the rest after it lands |
-| **1 Foundations** | Neon + schema, Clerk auth + session guard + user sync, app gated behind login. No money | Everything hangs off identity + DB |
+| **−1 Compute topology** | ✅ **DECIDED (revised 2026-07-03): CPU box + operator API keys, no GPU hosting for v1.** All heavy generation is already provider-API-billed (Replicate/fal/MiniMax); studios render browser-side; local models (Depth Anything, LaMa) are CPU-able or API-swappable. Self-hosted GPU returns as a scale-stage COGS lever (trigger: ~25%+ utilization of one L40S ≈ ~1,500 flux-class images/day) | Kills serverless cold starts and most of the hosted-GPU infra track; per-image COGS +$0.005 (inside noise) |
+| **0 Spike** | ✅ **DONE 2026-07-03** — `/api/meter/prompt` live-verified end-to-end (funded/insufficient/failure/anon). See `docs/superpowers/spikes/2026-07-03-surface-b-findings.md`; settlement = `/history` polling (`execution_success` is client-targeted, not broadcast; failed runs keep `completed:false`) | Mechanism proven; ws/iframe isolation sized ~1 wk; Phases 1–3 sizing confirmed |
+| **1 Foundations** | Neon + schema, Clerk auth + session guard + user sync, app gated behind login. No money. **Must include the deployment switch: no Clerk keys in env ⇒ local mode (no login, meter off, today's behavior)** | Everything hangs off identity + DB; the switch keeps local dev/personal use friction-free |
 | **2 Ledger + wallet** | `ledger.ts`, wallet UI, signup bonus. Debits against manually granted balances | Money core in isolation, testable before Stripe |
 | **3 Stripe** | Checkout, webhook granting, refunds/disputes | Users can buy credits |
 | **4 Metering A** | Provider proxies + training queue on hold/settle | The easy meter surface |
-| **5 Metering B** | Graph runs metered via the Phase-0 mechanism; legacy-node pass-through policy enforced | De-risked by the spike |
-| **6 Guardrails** | Moderation (both sides), velocity limits, reconciliation, spend alerts | Harden before public launch |
+| **5 Metering B** | Graph runs metered via the Phase-0 mechanism; legacy-node pass-through policy enforced (re-enable §7 pass-through from the Clerk-keyed store — the spike strips ALL comfy.org creds); ws/iframe behind the authed proxy, `:8188` private | De-risked by the spike |
+| **5.5 Engine multi-tenancy** | §6.5: worker pool (N ComfyUI processes, meter-routed), ownership-filtered `/history`/`/view`/`/interrupt`, per-user storage prefixes + R2 outputs | Launch blocker for any second user; ~1–2 wks alongside Phase 5 |
+| **6 Guardrails** | Moderation (both sides), velocity limits, reconciliation, spend alerts. **Weight raised by the topology decision: one operator Replicate/fal account fronts all users — provider spend ceilings + prompt moderation protect the whole product, not just cost** | Harden before public launch |
 
-Effort: Phases 1–3 are well-trodden (~a week-ish each solo); Phase 5 is sized by the Phase-0 spike; Phase 6 is ongoing. No total estimate until the spike lands.
+Effort: Phases 1–3 are well-trodden (~a week-ish each solo, confirmed by the spike); Phase 5 ≈ 1 wk (ws proxy is the concentrated risk); Phase 5.5 ≈ 1–2 wks; Phase 6 is ongoing.
 
 ## 11. Out of scope (launch)
 
-Subscriptions/auto-top-up, teams/orgs/seats, multi-currency, referral credits, polished admin dashboard beyond the minimal internal routes in §9.2. The hosted-GPU infrastructure build itself (provisioning, scaling, multi-tenant Comfy deployment) is a separate track — Phase −1 only *decides* its shape as far as metering needs it.
+Subscriptions/auto-top-up, teams/orgs/seats, multi-currency, referral credits, polished admin dashboard beyond the minimal internal routes in §9.2. ~~The hosted-GPU infrastructure build~~ *(resolved 2026-07-03: no GPU hosting for v1 per Phase −1; multi-tenant Comfy deployment is now in-scope as Phase 5.5/§6.5; remaining infra = one CPU VPS — Hetzner + Coolify recommended, ~€10–15/mo)*. Self-hosted GPU is a deferred scale-stage COGS lever.
 
 ## 12. Open questions
 
-1. **Compute topology (Phase −1)** — shared instance / per-user pods / serverless GPU.
+1. ~~**Compute topology (Phase −1)**~~ ✅ Decided 2026-07-03: CPU box + operator API keys (see §10).
 2. **Output-side moderation mechanism** — which classifier, where in the pipeline, what happens on a flag.
 3. **Credit-pack sizes and the credit↔dollar exchange rate** — product/pricing call, needed by Phase 3.
+4. **Multi-worker job routing details (Phase 5.5)** — idle-worker selection, worker health/restart supervision, whether the pool lives in the Nitro process or a tiny supervisor.
