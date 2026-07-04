@@ -2,38 +2,48 @@
 // text elements. Sibling of vibe.post.ts: raw fetch, user-supplied Anthropic
 // key, no SDK, haiku + structured outputs.
 import { buildCopyAssistPrompt, copyAssistSchema, clampCount } from '../lib/copyAssist'
+import { MAX_PHRASE_CHARS, optionalString, requireApiKey, requireString } from '../lib/agentRequest'
 import type { CopyAssistMode, CopyAssistRequest } from '../lib/copyAssist'
 
 const MODES: CopyAssistMode[] = ['variations', 'brief', 'translate']
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { apiKey, mode, text, brief, languages, count, context } = body || {}
-
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
-  }
+  const apiKey = requireApiKey(body?.apiKey)
+  const mode = body?.mode
   if (!mode || !MODES.includes(mode)) {
     throw createError({ statusCode: 400, message: `Invalid mode — expected one of ${MODES.join(', ')}` })
   }
-  if ((mode === 'variations' || mode === 'translate') && (typeof text !== 'string' || !text.trim())) {
-    throw createError({ statusCode: 400, message: 'Missing text' })
+
+  let text: string | undefined
+  let brief: string | undefined
+  let languages: string[] | undefined
+
+  if (mode === 'variations' || mode === 'translate') {
+    text = requireString(body?.text, 'text', MAX_PHRASE_CHARS)
   }
-  if (mode === 'brief' && (typeof brief !== 'string' || !brief.trim())) {
-    throw createError({ statusCode: 400, message: 'Missing brief' })
+  if (mode === 'brief') {
+    brief = requireString(body?.brief, 'brief', MAX_PHRASE_CHARS)
   }
-  if (mode === 'translate' && (!Array.isArray(languages) || languages.length === 0)) {
-    throw createError({ statusCode: 400, message: 'Missing languages' })
+  if (mode === 'translate') {
+    languages = body?.languages
+    if (!Array.isArray(languages) || languages.length === 0) {
+      throw createError({ statusCode: 400, message: 'languages (non-empty array) is required' })
+    }
+    if (languages.length > 50) {
+      throw createError({ statusCode: 400, message: 'languages too long (max 50 entries)' })
+    }
+    languages = languages.map((lang: unknown) => requireString(lang, 'language', 100))
   }
 
   const req: CopyAssistRequest = {
     apiKey,
     mode,
-    text: typeof text === 'string' ? text : '',
-    brief: typeof brief === 'string' ? brief : undefined,
-    languages: Array.isArray(languages) ? languages : undefined,
-    count: typeof count === 'number' ? count : undefined,
-    context: context && typeof context === 'object' ? context : undefined,
+    text: text || '',
+    brief,
+    languages,
+    count: typeof body?.count === 'number' ? body.count : undefined,
+    context: body?.context && typeof body.context === 'object' ? body.context : undefined,
   }
 
   const prompt = buildCopyAssistPrompt(req)
