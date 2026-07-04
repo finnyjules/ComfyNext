@@ -41,6 +41,9 @@ export function useCanvasAgent(opts: {
   /** Resolve review targets → the OUTPUT/result node id (past a generator to its
    *  result card), so the "scanning" overlay lands on the output, not the generator. */
   resolveResultNode?: (targetIds: string[]) => string | null
+  /** Bring the given nodes into view — used by the fast lane, which places a
+   *  node at a fixed graph position without the blueprint animation. */
+  frameNodes?: (ids: string[]) => void
   /** Remove the ghosts. Called on Dismiss. */
   discard: () => void
   /** Delegate tuneNode commands to each target node's OWN studio surface (applied
@@ -148,6 +151,9 @@ export function useCanvasAgent(opts: {
         opts.preview(graphBuilt.map(c => c.command), true)
         const committed = opts.commit() || []
         changes.value = []; original = null; issues.value = []; review.value = null
+        // Bring the placed node into view — it lands at a fixed graph position
+        // without the blueprint animation, so it could otherwise be off-screen.
+        if (committed.length) opts.frameNodes?.(committed)
         const nodeType = commands[0]!.args?.nodeType as string
         const title = capabilityByType(nodeType)?.title ?? 'the node'
         answer.value = message?.trim()

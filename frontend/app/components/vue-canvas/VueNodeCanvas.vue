@@ -685,6 +685,13 @@ function agentCommit() {
   return ghostNodeIds // the just-committed node ids (so the caller can run them)
 }
 
+/** Bring the given node(s) into view — used by the agent fast lane, which
+ *  places a node at a fixed graph position (not viewport-relative) and skips
+ *  the blueprint animation, so the node could otherwise land off-screen. */
+function agentFrameNodes(ids: string[]) {
+  if (ids.length) fitView({ nodes: ids, padding: 0.4, duration: 250 })
+}
+
 /** Glimm "citrus" sweep over the just-committed node(s) — their exact on-screen
  *  box + rounded corners. Brief celebratory finish. */
 function glimmBurstOver(nodeIds: string[]) {
@@ -5938,6 +5945,7 @@ defineExpose({
   agentSnapshot,
   agentPreview,
   agentCommit,
+  agentFrameNodes,
   agentDiscard,
   agentHighlight,
   agentTune,

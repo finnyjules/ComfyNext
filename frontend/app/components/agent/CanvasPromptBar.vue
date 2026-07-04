@@ -26,6 +26,7 @@ const {
   getSnapshot: (phrase?: string) => props.vueCanvas.agentSnapshot(phrase),
   preview: (cmds, animate) => props.vueCanvas.agentPreview(cmds, animate),
   commit: () => props.vueCanvas.agentCommit(),
+  frameNodes: (ids: string[]) => props.vueCanvas.agentFrameNodes(ids),
   discard: () => props.vueCanvas.agentDiscard(),
   tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
   tuneRevert: () => props.vueCanvas.agentTuneRevert(),
