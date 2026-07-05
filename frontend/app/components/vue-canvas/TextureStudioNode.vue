@@ -22,6 +22,7 @@ const props = defineProps<{
     mode?: number
     properties?: Record<string, any>
     studioBusy?: boolean
+    inputs?: { name?: string }[]
   }
 }>()
 
@@ -98,6 +99,11 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); unregisterStudioBaker(pr
 function openEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openTextureStudio', { detail: { nodeId: props.id } }))
 }
+
+// Index of the optional `vars` input a Collection's VARS output wires into.
+// Rendering its Handle (below) is what lets that edge anchor and survive reload.
+const varsInputIndex = computed(() =>
+  ((props.data?.inputs as { name?: string }[] | undefined) ?? []).findIndex(i => i?.name === 'vars'))
 </script>
 
 <template>
@@ -105,6 +111,15 @@ function openEditor() {
     class="relative w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
     @dblclick.stop="openEditor"
   >
+    <!-- Variables input: a Collection's VARS output wires here. Rendering this Handle
+         lets the VARS edge anchor so it survives reload (fixes edge-lost-on-restart). -->
+    <Handle
+      v-if="varsInputIndex >= 0"
+      :id="`input-${varsInputIndex}`" type="target" :position="Position.Left"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-[#f472b6]/60 !bg-[#1a1a1a]"
+      :style="{ top: '50%' }"
+    />
+
     <!-- Output handle: anchors the provenance edge to a generated Image node. -->
     <Handle
       id="output-0" type="source" :position="Position.Right"

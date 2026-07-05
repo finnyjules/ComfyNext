@@ -15,7 +15,7 @@ import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 const props = defineProps<{
   id: string
-  data: { nodeType: string; title?: string; mode?: number; properties?: Record<string, any>; studioBusy?: boolean }
+  data: { nodeType: string; title?: string; mode?: number; properties?: Record<string, any>; studioBusy?: boolean; inputs?: { name?: string }[] }
 }>()
 
 const PREVIEW_W = 220
@@ -111,6 +111,11 @@ watch(animated, startLoop)
 function openEditor() {
   window.dispatchEvent(new CustomEvent('comfynext:openShaderStudio', { detail: { nodeId: props.id } }))
 }
+
+// Index of the optional `vars` input a Collection's VARS output wires into.
+// Rendering its Handle (below) is what lets that edge anchor and survive reload.
+const varsInputIndex = computed(() =>
+  ((props.data?.inputs as { name?: string }[] | undefined) ?? []).findIndex(i => i?.name === 'vars'))
 </script>
 
 <template>
@@ -121,6 +126,14 @@ function openEditor() {
     <!-- Input handle (image in) -->
     <Handle id="input-0" type="target" :position="Position.Left"
       class="!h-3 !w-3 !rounded-full !border-2 !border-white/40 !bg-[#1a1a1a]" :style="{ top: '50%' }" />
+    <!-- Variables input: a Collection's VARS output wires here. Rendering this Handle
+         lets the VARS edge anchor so it survives reload (fixes edge-lost-on-restart). -->
+    <Handle
+      v-if="varsInputIndex >= 0"
+      :id="`input-${varsInputIndex}`" type="target" :position="Position.Left"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-[#f472b6]/60 !bg-[#1a1a1a]"
+      :style="{ top: '50%' }"
+    />
     <!-- Output handle (provenance to generated Image/Video) -->
     <Handle id="output-0" type="source" :position="Position.Right"
       class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]" :style="{ top: '50%' }" />
