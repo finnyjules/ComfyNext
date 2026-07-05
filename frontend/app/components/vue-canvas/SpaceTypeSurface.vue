@@ -39,6 +39,7 @@ import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
 import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
@@ -318,7 +319,8 @@ const wiredColumns = computed<CollectionColumn[]>(() => {
   if (!edge) return []
   const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
   const c = colNode?.data?.properties?.[COLLECTION_PROP]
-  return c?.columns ?? []
+  if (!c) return []
+  return effectiveColumns(c, makeLookupResolver(props.nodes))
 })
 
 // Wired collection NODE (not just its columns) — the sweep flow needs to
