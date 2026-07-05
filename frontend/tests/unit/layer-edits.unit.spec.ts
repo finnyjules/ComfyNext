@@ -21,3 +21,39 @@ describe('nudgeLayers', () => {
     expect(nudgeLayers(arr, new Set(['a']), 0, 0)).toBe(arr)
   })
 })
+
+import { duplicateLayers } from '../../app/lib/compositor/layerEdits'
+
+const G = (id: string, x: number, y: number, groupId?: string): any => ({ id, kind: 'rect', x, y, rotation: 0, opacity: 1, w: 0.1, h: 0.1, ...(groupId ? { groupId } : {}) })
+
+describe('duplicateLayers', () => {
+  const ids = () => { let n = 0; return () => `id${++n}` }
+  const gids = () => { let n = 0; return () => `g${++n}` }
+
+  it('clones a loose layer with a fresh id and offset, selection = the copy', () => {
+    const r = duplicateLayers([G('a', 0.2, 0.2)], [], new Set(['a']), 0.02, ids(), gids())
+    expect(r.layers).toHaveLength(2)
+    expect(r.newIds).toEqual(['id1'])
+    expect(r.layers[1]).toMatchObject({ id: 'id1', x: 0.22, y: 0.22 })
+    expect(r.groups).toEqual([])
+  })
+  it('maps two layers sharing a group to ONE fresh group id', () => {
+    const r = duplicateLayers([G('a', 0.2, 0.2, 'gsrc'), G('b', 0.3, 0.3, 'gsrc')], [{ id: 'gsrc' }], new Set(['a', 'b']), 0.02, ids(), gids())
+    expect(r.layers).toHaveLength(4)
+    const copies = r.layers.slice(2)
+    expect(copies[0].groupId).toBe('g1')
+    expect(copies[1].groupId).toBe('g1')
+    expect(r.groups).toContainEqual({ id: 'g1' })
+  })
+  it('is a no-op for an empty selection', () => {
+    const arr = [G('a', 0.2, 0.2)]
+    const r = duplicateLayers(arr, [], new Set(), 0.02, ids(), gids())
+    expect(r.layers).toBe(arr); expect(r.newIds).toEqual([])
+  })
+  it('deep-clones nested data (effects) so copies are independent', () => {
+    const src: any = { ...G('a', 0.2, 0.2), effects: [{ type: 'drop_shadow', blur: 4 }] }
+    const r = duplicateLayers([src], [], new Set(['a']), 0.02, ids(), gids())
+    ;(r.layers[1] as any).effects[0].blur = 99
+    expect((src as any).effects[0].blur).toBe(4)
+  })
+})

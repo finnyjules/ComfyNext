@@ -19,7 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
-import { nudgeLayers } from '~/lib/compositor/layerEdits'
+import { nudgeLayers, duplicateLayers } from '~/lib/compositor/layerEdits'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -174,6 +174,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedIds.value = s
   }
   let _groupSeq = 0
+  let _dupSeq = 0
   /** Group the current multi-selection (≥2 layers). Fully-selected existing
    *  groups nest under the new group; loose layers become direct members. */
   function groupSelected() {
@@ -284,6 +285,20 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!selectedIds.value.size || (dx === 0 && dy === 0)) return
     recordHistory()
     commit(nudgeLayers(localLayers.value, selectedIds.value, dx, dy))
+  }
+
+  /** Duplicate the current multi-selection; the copies become the selection. */
+  function duplicateSelection() {
+    if (!selectedIds.value.size) return
+    recordHistory()
+    const r = duplicateLayers(
+      localLayers.value, localGroups.value, selectedIds.value, 0.02,
+      () => `ll-${Date.now().toString(36)}-${++_dupSeq}`,
+      () => `g-${Date.now().toString(36)}-${++_groupSeq}`,
+    )
+    commitBoth(r.layers as LocalLayer[], r.groups)
+    selectedIds.value = new Set(r.newIds)
+    selectedId.value = r.newIds[r.newIds.length - 1] ?? null
   }
 
   // ── Pointer interaction (zoom-agnostic via screen rect) ─────────────────────
@@ -549,7 +564,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
     undo, redo, canUndo, canRedo,
-    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection,
+    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
