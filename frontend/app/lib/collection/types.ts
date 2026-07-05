@@ -21,6 +21,15 @@ export interface CollectionData {
   columns: CollectionColumn[]
   rows: CollectionRow[]
   previewRow: number
+  links?: CollectionLink[]
+}
+
+/** One lookup link on a driver collection: match this collection's `matchLocal`
+ *  column against the foreign collection's `matchForeign` key column. */
+export interface CollectionLink {
+  collectionId: string
+  matchLocal: string
+  matchForeign: string
 }
 
 /** One control binding on a target node: which collection column feeds it. */
@@ -38,3 +47,4 @@ export const COLLECTION_PROP = 'comfynext_collection'
 export const BINDINGS_PROP = 'comfynext_varBindings'
 export const VAR_PREVIEW_PROP = 'comfynext_varPreview'
 export const VARS_TYPE = 'VARS'
+export const LOOKUP_TYPE = 'LOOKUP'
