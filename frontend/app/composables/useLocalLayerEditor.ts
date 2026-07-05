@@ -19,7 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
-import { nudgeLayers, duplicateLayers } from '~/lib/compositor/layerEdits'
+import { nudgeLayers, duplicateLayers, snapAngle } from '~/lib/compositor/layerEdits'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -422,7 +422,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       let rot = d.startRot + ((Math.atan2(e.clientY - d.cy, e.clientX - d.cx) - d.startAngle) * 180) / Math.PI
       while (rot > 180) rot -= 360
       while (rot < -180) rot += 360
-      setLocal(d.id, { rotation: Math.round(rot) })
+      setLocal(d.id, { rotation: Math.round(snapAngle(rot, e.shiftKey ? 15 : null)) })
     }
   }
   function onUp() { drag.value = null; snapGuides.value = { vx: null, hy: null }; window.removeEventListener('pointermove', onMove) }

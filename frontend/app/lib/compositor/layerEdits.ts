@@ -50,3 +50,9 @@ export function duplicateLayers(
   const newGroups: LayerGroup[] = [...groups, ...[...groupMap.values()].map(id => ({ id }))]
   return { layers: [...layers, ...clones], groups: newGroups, newIds }
 }
+
+/** Round an angle (degrees) to the nearest `step`; pass through when step falsy. */
+export function snapAngle(deg: number, step: number | null): number {
+  if (!step) return deg
+  return Math.round(deg / step) * step
+}

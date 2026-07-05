@@ -57,3 +57,18 @@ describe('duplicateLayers', () => {
     expect((src as any).effects[0].blur).toBe(4)
   })
 })
+
+import { snapAngle } from '../../app/lib/compositor/layerEdits'
+
+describe('snapAngle', () => {
+  it('snaps to the nearest step', () => {
+    expect(snapAngle(7, 15)).toBe(0)
+    expect(snapAngle(8, 15)).toBe(15)
+    expect(snapAngle(52, 15)).toBe(45)
+    expect(snapAngle(-8, 15)).toBe(-15)
+  })
+  it('passes through when step is null or 0', () => {
+    expect(snapAngle(37, null)).toBe(37)
+    expect(snapAngle(37, 0)).toBe(37)
+  })
+})
