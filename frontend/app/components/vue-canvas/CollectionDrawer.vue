@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import JSZip from 'jszip'
-import { X, Plus, Upload, ClipboardPaste, Trash2, Play, Check, ImagePlus, Loader2 } from 'lucide-vue-next'
+import { X, Plus, Upload, ClipboardPaste, Trash2, Play, Check, ImagePlus, Loader2, Link2 } from 'lucide-vue-next'
 import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type CollectionRow, type VarBinding, type VariableType } from '~/lib/collection/types'
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel, keepRow } from '~/lib/collection/model'
@@ -15,6 +15,7 @@ import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
 import { buildRenderItem, buildStudioRenderItem, estimateBatch, sanitize } from '~/lib/collection/generate'
 import { getStudioParamBaker } from '~/lib/studio/cascade'
+import { linkedColumns, resolveLinkedCell, makeLookupResolver } from '~/lib/collection/lookup'
 
 const props = defineProps<{
   nodeId: string
@@ -29,6 +30,22 @@ const collection = computed<CollectionData | null>(() =>
   (node.value?.data?.properties?.[COLLECTION_PROP] as CollectionData) ?? null)
 
 const TYPES: VariableType[] = ['text', 'color', 'number', 'image', 'font', 'select']
+
+// --- Lookup (linked) columns — read-only, contributed by this collection's
+// links into foreign collections. Rendered after the real columns, never
+// editable here (edit at the source via `openForeign`).
+const lookupResolve = computed(() => makeLookupResolver(props.nodes))
+const linkedCols = computed(() => (collection.value ? linkedColumns(collection.value, lookupResolve.value) : []))
+function linkedCellText(rowIndex: number, colIndex: number): string {
+  const c = collection.value; const col = linkedCols.value[colIndex]
+  if (!c || !col) return ''
+  const v = resolveLinkedCell(c, rowIndex, col, lookupResolve.value)
+  return v === undefined ? '—' : String(v)
+}
+function openForeign(sourceCollectionId: string) {
+  const n = props.nodes.find((x: any) => x?.data?.properties?.[COLLECTION_PROP]?.id === sourceCollectionId)
+  if (n) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(n.id) } }))
+}
 
 // --- Wired targets --------------------------------------------------------
 // Smart Layout / studio targets wired from this collection's output-0, used to
@@ -595,6 +612,21 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
                   </button>
                 </div>
               </th>
+              <th
+                v-for="col in linkedCols"
+                :key="col.key"
+                class="text-left font-normal px-2 py-1.5 border-b border-white/10 min-w-[140px]"
+                style="background: rgba(244,114,182,0.06)"
+                title="Linked from another collection — read-only"
+              >
+                <div class="flex items-center gap-1.5 text-pink-300/80">
+                  <Link2 class="size-3 shrink-0" />
+                  <span class="truncate">{{ col.label }}</span>
+                  <button class="opacity-40 hover:opacity-100 ml-auto" title="Edit in table" @click="openForeign(col.sourceCollectionId)">
+                    <Link2 class="size-3" />
+                  </button>
+                </div>
+              </th>
               <th class="border-b border-white/10 w-full" />
             </tr>
           </thead>
@@ -669,6 +701,14 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
                     @click.stop
                   />
                 </div>
+              </td>
+              <td
+                v-for="(col, ci) in linkedCols"
+                :key="col.key"
+                class="px-2 py-1 border-b border-white/5 text-white/40"
+                style="background: rgba(244,114,182,0.06)"
+              >
+                {{ linkedCellText(i, ci) }}
               </td>
               <td class="border-b border-white/5 pr-2 text-right">
                 <button class="opacity-0 group-hover:opacity-40 hover:!opacity-100" :class="{ 'opacity-0 cursor-not-allowed': running }" :disabled="running" @click.stop="onRemoveRow(row.id)">
