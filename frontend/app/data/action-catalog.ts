@@ -45,6 +45,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   SplitPhotoLayersNode:  { useCase: 'Split photo into layers',        model: 'BG Remover + LaMa / Bria Eraser',          intent: 'edit' },
   OutpaintImageNode:     { useCase: 'Expand / outpaint an image',     model: 'Flux Fill / Bria Expand',                  intent: 'edit' },
   BlendSceneNode:        { useCase: 'Blend a composite into a scene', model: 'Flux Kontext Pro / Nano Banana',           intent: 'edit' },
+  SwapProductNode:       { useCase: 'Swap a product into a scene', model: 'Nano Banana 2',                            intent: 'edit' },
   RotateCameraNode:      { useCase: 'Rotate the camera',              model: 'Qwen-Image-Edit-Plus',                     intent: 'edit' },
   // -- Image · enhance --------------------------------------------------------
   UpscaleImageNode:      { useCase: 'Upscale an image',               model: 'Clarity',                                  intent: 'enhance' },
