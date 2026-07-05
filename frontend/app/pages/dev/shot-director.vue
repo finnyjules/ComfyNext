@@ -14,6 +14,18 @@ const portraitSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='320' height=
 </svg>`
 const portrait = 'data:image/svg+xml,' + encodeURIComponent(portraitSvg)
 
+const plateSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'>
+  <rect width='480' height='270' fill='rgb(18,20,34)'/>
+  <rect y='180' width='480' height='90' fill='rgb(30,26,40)'/>
+  <rect x='40' y='60' width='30' height='140' fill='rgb(40,44,70)'/>
+  <rect x='120' y='40' width='24' height='160' fill='rgb(46,40,64)'/>
+  <rect x='330' y='70' width='34' height='130' fill='rgb(38,42,66)'/>
+  <rect x='210' y='90' width='60' height='16' fill='rgb(255,80,140)' opacity='0.8'/>
+  <rect x='90' y='120' width='40' height='12' fill='rgb(80,200,255)' opacity='0.8'/>
+  <rect x='360' y='110' width='46' height='14' fill='rgb(120,255,180)' opacity='0.7'/>
+</svg>`
+const plate = 'data:image/svg+xml,' + encodeURIComponent(plateSvg)
+
 const seededSheet = {
   intent: '',
   mode: 'reference',
@@ -25,7 +37,10 @@ const seededSheet = {
   camera: { shotType: 'medium', move: 'push-in', pacing: 'smooth' },
   constraints: ['no camera shake'],
   cast: [],
-  references: [{ kind: 'image', slot: 1, src: portrait, role: 'identity-lock' }],
+  references: [
+    { kind: 'image', slot: 1, src: portrait, role: 'identity-lock' },
+    { kind: 'image', slot: 2, src: plate, role: 'location' },
+  ],
   beats: [],
   audio: { generate: true },
   format: { aspectRatio: '16:9', durationS: 5, resolution: '1080p' },

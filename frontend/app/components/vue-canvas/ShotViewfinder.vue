@@ -15,6 +15,7 @@ const props = defineProps<{
   mode: ShotMode
   subjectImage: string | null
   subjectLabel: string
+  environmentImage?: string | null
   firstFrame?: string
   lastFrame?: string
 }>()
@@ -104,6 +105,12 @@ const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
 
       <!-- REFERENCE: composed subject in-frame -->
       <template v-else>
+        <!-- environment plate — the location backdrop, darkened so the subject reads -->
+        <template v-if="environmentImage">
+          <img :src="environmentImage" class="absolute inset-0 h-full w-full object-cover" alt="" />
+          <div class="absolute inset-0 bg-black/30" />
+        </template>
+
         <!-- rule-of-thirds guides -->
         <svg class="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
           <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
@@ -116,7 +123,7 @@ const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
         <div v-if="subjectImage" class="absolute bottom-0 left-[63%] -translate-x-1/2 overflow-hidden rounded-t-sm">
           <img :src="subjectImage" :style="subjectStyle" class="object-cover" alt="" />
         </div>
-        <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
+        <div v-else-if="!environmentImage" class="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
           <span class="text-[11px] text-white/40">Your shot appears here</span>
           <span class="text-[10px] leading-relaxed text-white/25">Cast a character or add a reference photo — framing and camera move preview live.</span>
         </div>

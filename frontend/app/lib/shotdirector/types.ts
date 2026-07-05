@@ -21,6 +21,10 @@ export type RefKind = 'image' | 'video' | 'audio'
 export type RefRole =
   // image roles
   | 'identity-lock' | 'lighting-copy' | 'composition-lock' | 'style-transfer'
+  // scene-context image role — the environment plate (attach/generate). Not a
+  // manual dropdown option (absent from ROLES_BY_KIND); the surface sets it
+  // directly. Deliberately not composition-lock: use the place, not its framing.
+  | 'location'
   // video roles
   | 'camera-copy' | 'motion-transfer' | 'sequence-extend'
   // audio roles
@@ -122,6 +126,7 @@ export const CAMERA_MOVE_PHRASE: Record<CameraMove, string> = {
 
 export const ROLE_PURPOSE: Record<RefRole, string> = {
   'identity-lock': "the character's identity and wardrobe",
+  'location': 'the location and setting',
   'lighting-copy': 'the lighting style',
   'composition-lock': 'the scene composition',
   'style-transfer': 'the visual style',

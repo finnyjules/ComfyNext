@@ -41,6 +41,13 @@ describe('buildPrompt — reference mode, no beats', () => {
     )
   })
 
+  it('phrases a location-role image as the environment plate', () => {
+    const s = baseSheet()
+    const loc: Ref = { kind: 'image', slot: 1, src: 'plate', role: 'location' }
+    s.references = [loc]
+    expect(buildPrompt(s, SEEDANCE_PROFILE)).toContain('Use @Image1 for the location and setting.')
+  })
+
   it('omits reference tags in first/last-frame mode', () => {
     const s = baseSheet()
     s.mode = 'firstLastFrame'

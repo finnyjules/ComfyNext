@@ -3,7 +3,7 @@
 // LEFT = references-first editing controls; RIGHT = always-visible compiled preview.
 // All mutations go through update/addReference/removeReference from useShotDirector.
 import { computed, ref } from 'vue'
-import { X, Plus, Copy, Check } from 'lucide-vue-next'
+import { X, Plus, Copy, Check, Sparkles } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
 import { useCharacters, missingVariantIssues } from '~/composables/useCharacters'
 import {
@@ -137,15 +137,64 @@ const subjectImage = computed<string | null>(() => {
     const cover = castCover(lead)
     if (cover) return cover
   }
-  const imgs = sheet.value.references.filter(r => r.kind === 'image' && r.src)
+  // Exclude the location plate — it is the backdrop, never the subject.
+  const imgs = sheet.value.references.filter(r => r.kind === 'image' && r.src && r.role !== 'location')
   const locked = imgs.find(r => r.role === 'identity-lock' || r.role === 'composition-lock')
   return (locked ?? imgs[0])?.src ?? null
 })
 const subjectLabel = computed(() => sheet.value.cast[0]?.name ?? 'Reference')
 
+// ── Environment plate ────────────────────────────────────────────────────────
+// A single 'location'-role image ref: the backdrop the viewfinder composes over
+// and a real reference sent to the model. Surfaced only on the Environment field
+// (filtered out of the Images rail), one at a time.
+const environmentRef = computed(() => sheet.value.references.find(r => r.role === 'location') ?? null)
+const environmentImage = computed(() => environmentRef.value?.src ?? null)
+const envGenerating = ref(false)
+const envError = ref<string | null>(null)
+const fileInputEnv = ref<HTMLInputElement | null>(null)
+
+function setLocationRef(src: string) {
+  const existing = environmentRef.value
+  if (existing) removeReference('image', existing.slot)
+  addReference('image', src, 'location')
+}
+
+async function onEnvironmentFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  envError.value = null
+  const src = await uploadRefFile(file).catch(() => fileToDataUrl(file))
+  setLocationRef(src)
+  input.value = ''
+}
+
+async function generateEnvironment() {
+  const parts = [sheet.value.environment, sheet.value.lighting, sheet.value.style]
+    .map(s => s.trim()).filter(Boolean)
+  if (!parts.length) return
+  envGenerating.value = true
+  envError.value = null
+  try {
+    const prompt = `${parts.join(', ')}, empty establishing location, no people, cinematic`
+    const res = await $fetch<{ images?: string[] }>('/api/inpaint/text2img', {
+      method: 'POST',
+      body: { prompt, aspect_ratio: sheet.value.format.aspectRatio, count: 1 },
+    })
+    const src = res.images?.[0]
+    if (!src) throw new Error('No image returned')
+    setLocationRef(src)
+  } catch (err) {
+    envError.value = err instanceof Error ? err.message : 'Generation failed'
+  } finally {
+    envGenerating.value = false
+  }
+}
+
 // ── Reference helpers ─────────────────────────────────────────────────────────
 const imageRefs = computed(() =>
-  sheet.value.references.filter(r => r.kind === 'image').sort((a, b) => a.slot - b.slot))
+  sheet.value.references.filter(r => r.kind === 'image' && r.role !== 'location').sort((a, b) => a.slot - b.slot))
 const videoRefs = computed(() =>
   sheet.value.references.filter(r => r.kind === 'video').sort((a, b) => a.slot - b.slot))
 const audioRefs = computed(() =>
@@ -606,6 +655,35 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                 class="w-full rounded border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/25 outline-none focus:border-white/25"
                 @input="update(s => ({ ...s, environment: ($event.target as HTMLInputElement).value }))"
               />
+              <!-- Location plate: reference mode only; steers the setting + backs the frame -->
+              <div v-if="sheet.mode === 'reference'" class="mt-1.5">
+                <input ref="fileInputEnv" type="file" accept="image/*" class="hidden" @change="onEnvironmentFile" />
+                <div v-if="environmentImage" class="flex items-center gap-2 rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-1.5">
+                  <img :src="environmentImage" class="h-9 w-14 shrink-0 rounded border border-white/10 object-cover" alt="" />
+                  <span class="flex-1 text-[10px] leading-relaxed text-white/40">Location plate — steers the setting, and backs the frame.</span>
+                  <button type="button" class="rounded px-1.5 py-0.5 text-[10px] text-white/45 transition hover:bg-white/10 hover:text-white/80" @click="fileInputEnv?.click()">Replace</button>
+                  <button type="button" class="rounded p-0.5 text-white/30 transition hover:bg-white/10 hover:text-white/70" @click="removeReference('image', environmentRef!.slot)">
+                    <X class="h-3 w-3" />
+                  </button>
+                </div>
+                <div v-else class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 rounded border border-white/10 px-2 py-1 text-[10px] text-white/50 transition hover:bg-white/10 hover:text-white/80"
+                    @click="fileInputEnv?.click()"
+                  ><Plus class="h-3 w-3" /> Attach location</button>
+                  <button
+                    type="button"
+                    class="gen-pastel flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-neutral-900 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    :class="{ 'animate-pulse': envGenerating }"
+                    :disabled="!sheet.environment.trim() || envGenerating"
+                    :title="sheet.environment.trim() ? 'Generate a location plate from the environment text' : 'Describe the environment first'"
+                    @click="generateEnvironment"
+                  ><Sparkles class="h-3 w-3" /> {{ envGenerating ? 'Generating…' : 'Generate ~$0.01' }}</button>
+                  <span class="text-[10px] text-white/30">an image steers the setting far more than words</span>
+                </div>
+                <p v-if="envError" class="mt-1 text-[10px] text-red-400/80">{{ envError }}</p>
+              </div>
             </div>
             <!-- Lighting (prominent + presets) -->
             <div>
@@ -869,6 +947,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             :mode="sheet.mode"
             :subject-image="subjectImage"
             :subject-label="subjectLabel"
+            :environment-image="environmentImage"
             :first-frame="sheet.firstFrame"
             :last-frame="sheet.lastFrame"
           />
