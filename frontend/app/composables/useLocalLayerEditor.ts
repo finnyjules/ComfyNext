@@ -19,6 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
+import { nudgeLayers } from '~/lib/compositor/layerEdits'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -276,6 +277,13 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       const lo = s[0].l.y, hi = s[s.length - 1].l.y, step = (hi - lo) / (s.length - 1)
       s.forEach((e, i) => patch(e.l.id, { y: lo + step * i }))
     }
+  }
+
+  /** Move the whole multi-selection by a normalized delta (keyboard nudge). */
+  function nudgeSelection(dx: number, dy: number) {
+    if (!selectedIds.value.size || (dx === 0 && dy === 0)) return
+    recordHistory()
+    commit(nudgeLayers(localLayers.value, selectedIds.value, dx, dy))
   }
 
   // ── Pointer interaction (zoom-agnostic via screen rect) ─────────────────────
@@ -541,7 +549,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
     undo, redo, canUndo, canRedo,
-    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected,
+    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
