@@ -3,17 +3,19 @@
 // LEFT = references-first editing controls; RIGHT = always-visible compiled preview.
 // All mutations go through update/addReference/removeReference from useShotDirector.
 import { computed, ref } from 'vue'
-import { X, Plus, Copy, Check, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { X, Plus, Copy, Check } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
 import { useCharacters, missingVariantIssues } from '~/composables/useCharacters'
 import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
-  type RefKind, type ShotType, type CameraMove, type Pacing, type RefRole, type CastMember,
+  type RefKind, type RefRole, type CastMember,
 } from '~/lib/shotdirector/types'
 import { formatShotUSD } from '~/lib/shotdirector/price'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
+import ShotViewfinder from '~/components/vue-canvas/ShotViewfinder.vue'
+import ShotCameraPicker from '~/components/vue-canvas/ShotCameraPicker.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -124,16 +126,22 @@ const wordCountClass = computed(() => {
   if (result.value.wordCount > 100) return 'text-amber-400'
   return 'text-emerald-400'
 })
-const wordBarClass = computed(() => {
-  if (result.value.issues.some(i => i.code === 'word-budget-exceeded')) return 'bg-red-400'
-  if (result.value.wordCount > 100) return 'bg-amber-400'
-  return 'bg-emerald-400'
+
+// ── Viewfinder subject ──────────────────────────────────────────────────────────
+// The single representative photo the frame composes: the lead cast member's
+// cover, else the strongest image reference (identity/composition lock reads as
+// "the subject"), else the first image. First/last-frame mode draws its own pair.
+const subjectImage = computed<string | null>(() => {
+  const lead = sheet.value.cast[0]
+  if (lead) {
+    const cover = castCover(lead)
+    if (cover) return cover
+  }
+  const imgs = sheet.value.references.filter(r => r.kind === 'image' && r.src)
+  const locked = imgs.find(r => r.role === 'identity-lock' || r.role === 'composition-lock')
+  return (locked ?? imgs[0])?.src ?? null
 })
-// Word bar width: 0-100 words maps to 0-100%; 100-600 maps to 100-100% (already capped red)
-const wordBarWidth = computed(() => {
-  const w = result.value.wordCount
-  return Math.min(100, Math.round((w / 100) * 100)) + '%'
-})
+const subjectLabel = computed(() => sheet.value.cast[0]?.name ?? 'Reference')
 
 // ── Reference helpers ─────────────────────────────────────────────────────────
 const imageRefs = computed(() =>
@@ -226,7 +234,7 @@ function removeConstraint(i: number) {
 }
 
 // ── Beats ──────────────────────────────────────────────────────────────────────
-const beatsOpen = ref(true)
+const beatsOpen = ref(false)
 
 function addBeat() {
   if (sheet.value.format.durationS === -1 || sheet.value.beats.length >= 3) return
@@ -432,7 +440,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                     <img
                       v-if="ref.src"
                       :src="ref.src"
-                      class="h-8 w-8 shrink-0 rounded object-cover border border-white/10"
+                      class="h-10 w-10 shrink-0 rounded object-cover border border-white/10"
                       alt=""
                     />
                     <!-- Role dropdown -->
@@ -634,45 +642,17 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             </div>
           </StudioSection>
 
-          <!-- ═══ CAMERA ═════════════════════════════════════════════════════ -->
+          <!-- ═══ CAMERA (visual pickers) ════════════════════════════════════ -->
           <StudioSection title="Camera">
             <p class="text-[11px] leading-relaxed text-white/35">One move per shot — real cinematography doesn't combine a dolly with a pan, and neither does the model.</p>
-            <!-- Shot type -->
-            <div>
-              <label class="mb-1 block text-[11px] text-white/45">Shot type</label>
-              <select
-                :value="sheet.camera.shotType"
-                class="w-full rounded border border-white/10 bg-[#0e0e10] px-2.5 py-1.5 text-[12px] text-white/80 outline-none focus:border-white/25"
-                @change="update(s => ({ ...s, camera: { ...s.camera, shotType: ($event.target as HTMLSelectElement).value as ShotType } }))"
-              >
-                <option v-for="(label, key) in SHOT_TYPE_PHRASE" :key="key" :value="key" class="bg-neutral-900">{{ label }}</option>
-              </select>
-            </div>
-            <!-- Camera move (single select) -->
-            <div>
-              <label class="mb-1 block text-[11px] text-white/45">Camera move</label>
-              <select
-                :value="sheet.camera.move"
-                class="w-full rounded border border-white/10 bg-[#0e0e10] px-2.5 py-1.5 text-[12px] text-white/80 outline-none focus:border-white/25"
-                @change="update(s => ({ ...s, camera: { ...s.camera, move: ($event.target as HTMLSelectElement).value as CameraMove } }))"
-              >
-                <option v-for="(label, key) in CAMERA_MOVE_PHRASE" :key="key" :value="key" class="bg-neutral-900">{{ label }}</option>
-              </select>
-            </div>
-            <!-- Pacing -->
-            <div>
-              <label class="mb-1 block text-[11px] text-white/45">Pacing</label>
-              <select
-                :value="sheet.camera.pacing"
-                class="w-full rounded border border-white/10 bg-[#0e0e10] px-2.5 py-1.5 text-[12px] text-white/80 outline-none focus:border-white/25"
-                @change="update(s => ({ ...s, camera: { ...s.camera, pacing: ($event.target as HTMLSelectElement).value as Pacing } }))"
-              >
-                <option value="slow" class="bg-neutral-900">Slow</option>
-                <option value="smooth" class="bg-neutral-900">Smooth</option>
-                <option value="gradual" class="bg-neutral-900">Gradual</option>
-                <option value="gentle" class="bg-neutral-900">Gentle</option>
-              </select>
-            </div>
+            <ShotCameraPicker
+              :shot-type="sheet.camera.shotType"
+              :move="sheet.camera.move"
+              :pacing="sheet.camera.pacing"
+              @update:shot-type="v => update(s => ({ ...s, camera: { ...s.camera, shotType: v } }))"
+              @update:move="v => update(s => ({ ...s, camera: { ...s.camera, move: v } }))"
+              @update:pacing="v => update(s => ({ ...s, camera: { ...s.camera, pacing: v } }))"
+            />
           </StudioSection>
 
           <!-- ═══ CONSTRAINTS ════════════════════════════════════════════════ -->
@@ -877,26 +857,23 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
         </div><!-- /left column -->
 
-        <!-- RIGHT: compiled preview (sticky, never scrolls) -->
-        <div class="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto p-4">
+        <!-- RIGHT: viewfinder-first preview -->
+        <div class="flex w-[380px] shrink-0 flex-col gap-3 overflow-y-auto p-4">
 
-          <!-- Word budget meter -->
-          <div class="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3">
-            <div class="mb-2 flex items-center justify-between">
-              <span class="text-[11px] text-white/45">Word budget</span>
-              <span class="text-[13px] font-semibold tabular-nums" :class="wordCountClass">{{ result.wordCount }}</span>
-            </div>
-            <div class="h-1 overflow-hidden rounded-full bg-white/10">
-              <div
-                class="h-full rounded-full transition-all duration-200"
-                :class="wordBarClass"
-                :style="{ width: wordBarWidth }"
-              />
-            </div>
-            <p class="mt-1 text-[10px] text-white/25">≤100 words recommended</p>
-          </div>
+          <!-- Viewfinder — the frame is the loudest thing on screen -->
+          <ShotViewfinder
+            :aspect-ratio="sheet.format.aspectRatio"
+            :duration-label="durationLabel"
+            :shot-type="sheet.camera.shotType"
+            :move="sheet.camera.move"
+            :mode="sheet.mode"
+            :subject-image="subjectImage"
+            :subject-label="subjectLabel"
+            :first-frame="sheet.firstFrame"
+            :last-frame="sheet.lastFrame"
+          />
 
-          <!-- Issues -->
+          <!-- Issues (errors block generate) -->
           <div v-if="result.issues.length > 0" class="space-y-1">
             <div
               v-for="(issue, i) in result.issues" :key="i"
@@ -910,40 +887,43 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             </div>
           </div>
 
-          <!-- Compiled prompt -->
+          <!-- Compiled prompt — kept visible, demoted below the frame. The word
+               count rides here as a quiet hint rather than a full meter. -->
           <div class="flex min-h-0 flex-1 flex-col gap-1.5">
-            <span class="text-[11px] text-white/40">Compiled prompt <span class="text-white/25">— what gets sent; edit the fields on the left to change it</span></span>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/40">Compiled prompt <span class="text-white/25">— what gets sent</span></span>
+              <span class="text-[10px] tabular-nums" :class="wordCountClass" title="≤100 words reads best">{{ result.wordCount }} words</span>
+            </div>
             <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-white/[0.08] bg-black/30 p-3">
               <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-white/75">{{ result.prompt || '(empty — fill in Subject and Action on the left and the prompt builds itself)' }}</pre>
             </div>
-          </div>
-
-          <!-- Copy actions -->
-          <div class="flex flex-col gap-2">
-            <button
-              type="button"
-              class="flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[12px] font-medium transition-colors"
-              :class="copiedPrompt
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                : 'border-white/10 text-white/60 hover:border-white/20 hover:text-white/90'"
-              @click="copyPrompt"
-            >
-              <Check v-if="copiedPrompt" class="h-3.5 w-3.5" />
-              <Copy v-else class="h-3.5 w-3.5" />
-              {{ copiedPrompt ? 'Copied!' : 'Copy prompt' }}
-            </button>
-            <button
-              type="button"
-              class="flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[12px] font-medium transition-colors"
-              :class="copiedJson
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                : 'border-white/10 text-white/60 hover:border-white/20 hover:text-white/90'"
-              @click="copyJson"
-            >
-              <Check v-if="copiedJson" class="h-3.5 w-3.5" />
-              <Copy v-else class="h-3.5 w-3.5" />
-              {{ copiedJson ? 'Copied!' : 'Copy input JSON' }}
-            </button>
+            <!-- Copy actions: secondary, ghost, side-by-side -->
+            <div class="flex gap-1.5">
+              <button
+                type="button"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
+                :class="copiedPrompt
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                  : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"
+                @click="copyPrompt"
+              >
+                <Check v-if="copiedPrompt" class="h-3 w-3" />
+                <Copy v-else class="h-3 w-3" />
+                {{ copiedPrompt ? 'Copied' : 'Prompt' }}
+              </button>
+              <button
+                type="button"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
+                :class="copiedJson
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                  : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"
+                @click="copyJson"
+              >
+                <Check v-if="copiedJson" class="h-3 w-3" />
+                <Copy v-else class="h-3 w-3" />
+                {{ copiedJson ? 'Copied' : 'JSON' }}
+              </button>
+            </div>
           </div>
 
         </div><!-- /right column -->
@@ -951,10 +931,9 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
       </div><!-- /two-column body -->
 
       <!-- Footer -->
-      <div class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-4 py-2.5">
-        <span class="text-[11px] tabular-nums text-white/40" :title="'Estimated provider cost for this shot'">
-          {{ formatShotUSD(sheet) }}
-        </span>
+      <div class="flex shrink-0 items-center gap-2 border-t border-white/[0.06] px-4 py-2.5">
+        <span class="text-[10px] text-white/25">Failed runs aren't charged.</span>
+        <span class="flex-1" />
         <button
           type="button"
           class="rounded bg-white/[0.06] px-2.5 py-1.5 text-[12px] text-white/70 transition hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -966,11 +945,12 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
         </button>
         <button
           type="button"
-          class="rounded bg-emerald-500/15 px-3 py-1.5 text-[12px] font-medium text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="rounded bg-emerald-500/15 px-3.5 py-1.5 text-[12px] font-medium text-emerald-300 tabular-nums transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="hasErrors"
+          :title="'Estimated provider cost for this shot'"
           @click="onGenerate"
         >
-          Generate
+          Generate · {{ formatShotUSD(sheet) }}
         </button>
       </div>
     </div>
