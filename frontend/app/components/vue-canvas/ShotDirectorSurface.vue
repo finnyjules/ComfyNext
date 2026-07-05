@@ -644,7 +644,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
 
           <!-- ═══ CAMERA (visual pickers) ════════════════════════════════════ -->
           <StudioSection title="Camera">
-            <p class="text-[11px] leading-relaxed text-white/35">One move per shot — real cinematography doesn't combine a dolly with a pan, and neither does the model.</p>
+            <p class="text-[11px] leading-relaxed text-white/35">One move per shot — the model follows a single camera instruction far better than a compound one.</p>
             <ShotCameraPicker
               :shot-type="sheet.camera.shotType"
               :move="sheet.camera.move"
