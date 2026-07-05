@@ -28,8 +28,9 @@ import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
-import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
+import { BINDINGS_PROP, COLLECTION_PROP, LOOKUP_TYPE, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
 import { createCollection } from '~/lib/collection/model'
+import { autoMatchColumns, reconcileLinks } from '~/lib/collection/lookup'
 import { promoteLayoutElement } from '~/lib/collection/layoutBinding'
 import { promoteControl } from '~/composables/useStudioVarBindings'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
@@ -75,6 +76,7 @@ import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
+import LookupMatchPicker from '~/components/vue-canvas/LookupMatchPicker.vue'
 import type { PortAnchor } from '~/lib/portIntent'
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { bestPortPair, findCompatiblePortIndex, typesCompatible } from '~/utils/portTypes'
@@ -1468,6 +1470,11 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   if (nodeType === 'Collection' && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'vars', type: VARS_TYPE, links: null }]
   }
+  // Collection: optional lookup-in target so another Collection's VARS output
+  // can wire in and become a lookup table (LOOKUP edge, detected in onConnect).
+  if (nodeType === 'Collection' && (!data.data.inputs || data.data.inputs.length === 0)) {
+    data.data.inputs = [{ name: 'lookup', type: VARS_TYPE, link: null, optional: true }]
+  }
   // Smart Layout: optional VARS input so a Collection's output can wire in
   // (applies to every created node — no-op for anything but SmartLayout).
   ensureVarsInput(data)
@@ -1930,8 +1937,18 @@ onConnect((params) => {
     }
   }
   const outputIndex = parseInt(sourceHandle?.replace('output-', '') || '0')
-  const dataType = sourceNode?.data?.outputs?.[outputIndex]?.type || '*'
+  let dataType = sourceNode?.data?.outputs?.[outputIndex]?.type || '*'
+  // Collection → Collection lookup-in ⇒ a LOOKUP edge (not a VARS binding wire).
+  const isLookup = sourceNode?.data?.nodeType === 'Collection'
+    && targetNode?.data?.nodeType === 'Collection'
+    && String(sourceNode.id) !== String(targetNode.id)
+  if (isLookup) dataType = LOOKUP_TYPE
+  if (sourceNode?.data?.nodeType === 'Collection' && targetNode?.data?.nodeType === 'Collection'
+    && String(sourceNode.id) === String(targetNode.id)) {
+    return // guard: a collection cannot look up itself
+  }
   addEdges([{ ...params, sourceHandle, targetHandle, type: 'comfy', data: { dataType } }])
+  if (isLookup) registerLookupLink(String(sourceNode.id), String(targetNode.id), { x: connectStartInfo?.x ?? 0, y: connectStartInfo?.y ?? 0 })
 })
 
 // ── Port intent popover ──────────────────────────────────────────────────────
@@ -3223,6 +3240,61 @@ function handleCollectionScrub(e: Event) {
   if (!colNode) return
   pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]))
 }
+
+// ── Lookup collections (LOOKUP edges) ───────────────────────────────────────
+// Collection ids of the collections a driver has LOOKUP edges from.
+function lookupSourceIds(driverId: string): string[] {
+  return (edges.value as any[])
+    .filter(e => String(e.target) === String(driverId) && e?.data?.dataType === LOOKUP_TYPE)
+    .map(e => String(e.source))
+}
+function collectionDataOf(nodeId: string): any | undefined {
+  const n = (nodes.value as any[]).find(x => String(x.id) === String(nodeId))
+  return n?.data?.properties?.[COLLECTION_PROP]
+}
+// After a LOOKUP edge is drawn: auto-match on a shared key, else open the picker.
+const lookupPicker = ref<{ sourceId: string; driverId: string; foreign: any[]; local: any[]; anchor: { x: number; y: number } } | null>(null)
+function registerLookupLink(sourceId: string, driverId: string, anchor: { x: number; y: number }) {
+  const driver = collectionDataOf(driverId); const foreign = collectionDataOf(sourceId)
+  if (!driver || !foreign) return
+  if (!Array.isArray(driver.links)) driver.links = []
+  const match = autoMatchColumns(driver.columns, foreign.columns)
+  if (match) {
+    driver.links = reconcileLinks(driver.links, lookupSourceIds(driverId), sid =>
+      sid === sourceId ? match : (driver.links.find((l: any) => l.collectionId === sid) ?? null))
+  } else {
+    lookupPicker.value = { sourceId, driverId, foreign: foreign.columns, local: driver.columns, anchor }
+  }
+}
+function applyLookupMatch(v: { matchLocal: string; matchForeign: string }) {
+  const p = lookupPicker.value; lookupPicker.value = null
+  if (!p) return
+  const driver = collectionDataOf(p.driverId); if (!driver) return
+  if (!Array.isArray(driver.links)) driver.links = []
+  driver.links = reconcileLinks(
+    driver.links.filter((l: any) => l.collectionId !== p.sourceId).concat([{ collectionId: p.sourceId, ...v }]),
+    lookupSourceIds(p.driverId),
+    () => null,
+  )
+}
+function cancelLookupMatch() {
+  const p = lookupPicker.value; lookupPicker.value = null
+  if (!p) return
+  // Remove the just-drawn edge — the user backed out of matching.
+  const drop = (edges.value as any[]).filter(e => String(e.source) === p.sourceId && String(e.target) === p.driverId && e?.data?.dataType === LOOKUP_TYPE)
+  if (drop.length) removeEdges(drop.map(e => e.id))
+}
+// Prune links whose LOOKUP edge no longer exists (covers disconnect + delete).
+watch(edges, () => {
+  for (const n of nodes.value as any[]) {
+    if (n?.data?.nodeType !== 'Collection') continue
+    const c = n.data.properties?.[COLLECTION_PROP]
+    if (!c || !Array.isArray(c.links) || !c.links.length) continue
+    const ids = lookupSourceIds(String(n.id))
+    const next = reconcileLinks(c.links, ids, () => null) // prune-only; never auto-add here
+    if (next.length !== c.links.length) c.links = next
+  }
+}, { deep: true })
 
 // Shared "reuse the wired collection, else create one" logic used by BOTH the
 // studio-control promote handler and the Smart Layout element promote handler
@@ -6456,6 +6528,11 @@ defineExpose({
       @ask-ai="handlePortIntentAi"
       @close="portIntent = null"
     />
+
+    <!-- Lookup match-column picker — opened when a LOOKUP edge lands between
+         two collections that don't share a same-named key. -->
+    <LookupMatchPicker v-if="lookupPicker" :foreign="lookupPicker.foreign" :local="lookupPicker.local"
+      :anchor="lookupPicker.anchor" @apply="applyLookupMatch" @close="cancelLookupMatch" />
   </div>
 </template>
 

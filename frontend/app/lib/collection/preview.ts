@@ -6,7 +6,7 @@ import { resolveBindings, splitResolvedValues } from './resolve'
 export function wiredTargets(collectionNodeId: string, nodes: any[], edges: any[]): any[] {
   const ids = new Set(
     edges
-      .filter(e => String(e.source) === String(collectionNodeId) && e.sourceHandle === 'output-0')
+      .filter(e => String(e.source) === String(collectionNodeId) && e.sourceHandle === 'output-0' && e?.data?.dataType === 'VARS')
       .map(e => String(e.target)),
   )
   return nodes.filter(n => ids.has(String(n.id)))

@@ -72,6 +72,9 @@ function openTable() {
         @click.stop="openTable"
       >Open table</button>
     </div>
+    <!-- Lookup input: another Collection's VARS output wires here to become a lookup table. Pink = variables. -->
+    <Handle id="input-0" type="target" :position="Position.Left"
+      class="!h-3 !w-3 !rounded-full !border-2 !border-[#f472b6]/60 !bg-[#1a1a1a]" />
     <Handle id="output-0" type="source" :position="Position.Right" />
   </div>
 </template>
