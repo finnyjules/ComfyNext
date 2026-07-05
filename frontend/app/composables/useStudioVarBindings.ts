@@ -72,6 +72,28 @@ export function findWiredCollectionNode(nodes: any[], edges: any[], studioNodeId
   })
 }
 
+/** Resolve a bound control's DISPLAY name: the wired column's current
+ *  user-editable `label`, NOT its stable `columnKey`. A column's key is frozen
+ *  at creation time (derived from the label then via `keyFromLabel`), so once
+ *  the user renames the column header the key no longer matches — surfacing the
+ *  key in the studio would show the stale original name. Falls back to the
+ *  `columnKey` when the column or collection can't be resolved (dangling
+ *  binding). Returns null when the control isn't bound. */
+export function boundColumnLabel(
+  nodes: any[],
+  edges: any[],
+  studioNodeId: string,
+  bindings: VarBindings,
+  controlKey: string,
+): string | null {
+  const binding = bindings[`params.${controlKey}`]
+  if (!binding) return null
+  const colNode = findWiredCollectionNode(nodes, edges, studioNodeId, binding.collectionId)
+  const c = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  const label = c?.columns.find(col => col.key === binding.columnKey)?.label
+  return label ?? binding.columnKey
+}
+
 /** Write-through: editing a bound control updates the underlying collection's
  *  preview-row cell (and the binding's frozen fallback). Returns true if written. */
 export function writeThroughEdit(
@@ -196,8 +218,10 @@ export function useStudioVarBindings(
   })
 
   function boundColumnFor(controlKey: string): string | null {
-    const path = `params.${controlKey}`
-    return bindings.value[path]?.columnKey ?? null
+    // Delegate to the pure resolver so the studio shows the column's current
+    // display label (not its frozen key). Reads `bindings.value` (computed) and
+    // `nodes()`/`edges()` reactively, so a column rename re-renders the control.
+    return boundColumnLabel(nodes(), edges(), nodeId, bindings.value, controlKey)
   }
 
   function onEdit(controlKey: string, value: string | number): boolean {

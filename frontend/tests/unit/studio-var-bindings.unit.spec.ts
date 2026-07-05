@@ -1,6 +1,6 @@
 // frontend/tests/unit/studio-var-bindings.unit.spec.ts
 import { describe, it, expect } from 'vitest'
-import { applyParamsPreview, writeThroughEdit, promoteControl } from '~/composables/useStudioVarBindings'
+import { applyParamsPreview, writeThroughEdit, promoteControl, boundColumnLabel } from '~/composables/useStudioVarBindings'
 import { COLLECTION_PROP, BINDINGS_PROP } from '~/lib/collection/types'
 import { createCollection, addColumn, addRow, setCell } from '~/lib/collection/model'
 
@@ -82,5 +82,29 @@ describe('promoteControl', () => {
     expect(c.rows.length).toBe(1)
     expect(c.previewRow).toBe(0)
     expect(c.rows[0]!.values.background).toBe('#112233')
+  })
+})
+
+describe('boundColumnLabel', () => {
+  it('returns the column current label, not the frozen key, when the column was renamed', () => {
+    const { c, nodes, edges, studio } = scene()
+    // The binding stores columnKey 'intensity' (frozen at creation). Rename the
+    // column header — the key stays, the label changes. The studio must show the
+    // new label, mirroring the user renaming a column to "Name of person".
+    c.columns.find(col => col.key === 'intensity')!.label = 'Name of person'
+    ;(studio.data.properties as any)[BINDINGS_PROP] = { 'params.flow.intensity': { collectionId: c.id, columnKey: 'intensity' } }
+    const label = boundColumnLabel(nodes, edges, '2', (studio.data.properties as any)[BINDINGS_PROP], 'flow.intensity')
+    expect(label).toBe('Name of person')
+  })
+
+  it('returns null for an unbound control', () => {
+    const { nodes, edges, studio } = scene()
+    expect(boundColumnLabel(nodes, edges, '2', (studio.data.properties as any)[BINDINGS_PROP], 'flow.notbound')).toBe(null)
+  })
+
+  it('falls back to the columnKey when the wired collection cannot be resolved (dangling binding)', () => {
+    const { nodes, edges, studio } = scene()
+    const bindings = { 'params.flow.intensity': { collectionId: 'gone', columnKey: 'intensity' } }
+    expect(boundColumnLabel(nodes, edges, '2', bindings, 'flow.intensity')).toBe('intensity')
   })
 })

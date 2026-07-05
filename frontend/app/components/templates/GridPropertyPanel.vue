@@ -51,6 +51,16 @@ const boundColumnKey = computed<string | null>(() =>
 const wiredCollection = computed<CollectionData | undefined>(() =>
   binding?.collectionNode.value?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined)
 
+// Display name for the bound column: its current user-editable `label`, not the
+// frozen `columnKey`. The key is derived from the label at column-creation and
+// never changes, so a renamed column header would otherwise show its old name.
+// `boundColumnKey` stays the key for write-through/row logic; this is display-only.
+const boundColumnLabel = computed<string | null>(() => {
+  const key = boundColumnKey.value
+  if (!key) return null
+  return wiredCollection.value?.columns.find(col => col.key === key)?.label ?? key
+})
+
 /** Resolved cell value for the bound socket — what the write-through text
  *  field should display instead of the raw `{{ props.x }}` token. */
 const resolvedBoundValue = computed<string>(() => {
@@ -501,7 +511,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <div class="min-w-0 flex items-center gap-1.5">
           <VariableGlyph :bound="boundColumnKey" />
           <div class="min-w-0">
-            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnKey }}</p>
+            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnLabel }}</p>
             <p class="text-[10px] text-white/35">Editing writes to this column's row.</p>
           </div>
         </div>
@@ -632,7 +642,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <div v-if="boundSocket" class="flex items-center justify-between gap-2">
           <div class="min-w-0 flex items-center gap-1.5">
             <VariableGlyph :bound="boundColumnKey" />
-            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnKey }}</p>
+            <p class="text-[12px] truncate" style="color: var(--var-accent-text)">{{ boundColumnLabel }}</p>
           </div>
           <div class="flex items-center gap-1 shrink-0">
             <button
