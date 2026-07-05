@@ -9,6 +9,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
+import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { resolveUniforms } from '~/lib/shaderfx/params'
@@ -16,7 +17,7 @@ import { shaderFx } from '~/lib/shaderfx/renderer'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/passes'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
-import { ADJUST_PRESETS, DUOTONE_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
+import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
@@ -322,7 +323,10 @@ function pickEffect(id: string) { config.value.effect = { id, params: {}, enable
 const currentThumb = computed(() => (effectDef.value ? thumbs.value[effectDef.value.id] ?? '' : ''))
 
 // ── duotone / adjust presets ────────────────────────────────────────────────
-function pickDuotone(p: { ink: string; paper: string }) { config.value.duotone.ink = p.ink; config.value.duotone.paper = p.paper; config.value.duotone.enabled = true }
+function applyDuotonePalette({ shadow, highlight }: { shadow: string; highlight: string }) {
+  config.value.duotone.ink = shadow; config.value.duotone.paper = highlight; config.value.duotone.enabled = true
+  onEdit('duotone.ink', shadow); onEdit('duotone.paper', highlight)
+}
 function pickAdjustPreset(name: string) { const p = ADJUST_PRESETS.find(x => x.name === name); if (p) { applyAdjustPreset(config.value.adjust, p); config.value.adjust.enabled = true } }
 
 // ── focus-point drag pad ────────────────────────────────────────────────────
@@ -538,11 +542,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
             <StudioColor v-model="config.duotone.paper" @update:model-value="(v: string) => onEdit('duotone.paper', v)" />
           </BindableRow>
         </div>
-        <div class="grid grid-cols-4 gap-1">
-          <button v-for="p in DUOTONE_PRESETS" :key="p.name" class="h-7 overflow-hidden rounded border border-white/10" :title="p.name" @click="pickDuotone(p)">
-            <span class="flex h-full w-full"><span class="h-full w-1/2" :style="{ background: p.ink }" /><span class="h-full w-1/2" :style="{ background: p.paper }" /></span>
-          </button>
-        </div>
+        <PalettePicker mode="duotone" :seed="config.duotone.paper" @apply-duotone="applyDuotonePalette" />
       </StudioSection>
 
       <!-- Adjustments -->
