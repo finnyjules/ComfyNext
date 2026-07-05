@@ -1,10 +1,12 @@
 import type { CollectionData, VarBindings } from './types'
 import { HEX_RE } from './types'
+import { findLinkedColumn, resolveLinkedCell, type LookupResolver } from './lookup'
 
 export function resolveBindings(
   c: CollectionData,
   bindings: VarBindings,
   rowIndex: number,
+  resolve?: LookupResolver,
 ): { values: Record<string, string | number>; missing: string[] } {
   const values: Record<string, string | number> = {}
   const missing: string[] = []
@@ -12,7 +14,12 @@ export function resolveBindings(
   for (const [path, b] of Object.entries(bindings || {})) {
     if (!b || b.collectionId !== c.id) continue
     const col = c.columns.find(x => x.key === b.columnKey)
-    const cell = col && row ? row.values[col.key] : undefined
+    let cell = col && row ? row.values[col.key] : undefined
+    // Linked (lookup) column: resolve through the join when a resolver is supplied.
+    if ((cell === undefined || String(cell).trim() === '') && resolve) {
+      const linked = findLinkedColumn(c, resolve, b.columnKey)
+      if (linked) cell = resolveLinkedCell(c, rowIndex, linked, resolve)
+    }
     if (cell !== undefined && String(cell).trim() !== '') {
       values[path] = cell
     } else if (b.lastLiteral !== undefined) {
