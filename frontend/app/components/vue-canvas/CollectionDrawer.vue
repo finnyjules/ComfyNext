@@ -8,11 +8,9 @@ import { BINDINGS_PROP, COLLECTION_PROP, type CollectionData, type CollectionRow
 import { addColumn, addRow, removeColumn, removeRow, setCell, clampPreviewRow, rowLabel, keepRow } from '~/lib/collection/model'
 import { importTable } from '~/lib/collection/parse'
 import { IMAGE_ACCEPT, uploadMediaFile, addMediaRows } from '~/lib/collection/upload'
-import { autoAlign, listSmartLayoutBindables, readTemplateFromNode, typeCompatible, type Bindable } from '~/lib/collection/bindables'
-import { listStudioBindables } from '~/lib/collection/studioBindables'
-import { controlsForStudio } from '~/lib/collection/studioControls'
+import { readTemplateFromNode } from '~/lib/collection/bindables'
 import { VARS_TARGET_NODE_TYPES } from '~/lib/collection/varsInput'
-import { resolveBindings, validateRun } from '~/lib/collection/resolve'
+import { validateRun } from '~/lib/collection/resolve'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { planBatch, runBatch, type BatchItem, type BatchStatus } from '~/lib/collection/batch'
 import { buildRenderItem, buildStudioRenderItem, estimateBatch, sanitize } from '~/lib/collection/generate'
@@ -32,34 +30,17 @@ const collection = computed<CollectionData | null>(() =>
 
 const TYPES: VariableType[] = ['text', 'color', 'number', 'image', 'font', 'select']
 
-// --- Bindings strip -------------------------------------------------------
-// Smart Layout / studio targets wired from this collection's output-0. We
-// only bind against the first one — multiple targets on one collection is an
-// edge case the UI doesn't need to solve for yet.
+// --- Wired targets --------------------------------------------------------
+// Smart Layout / studio targets wired from this collection's output-0, used to
+// push the live preview row and to drive the batch run. Binding itself is
+// created in the target's own UI (the pink variable hexagon on each control),
+// never here: a single column can drive multiple controls, so bindings live on
+// the controls, not in a per-column matrix in this drawer. We only act on the
+// first wired target; multiple targets on one collection is an edge case the
+// UI doesn't solve for yet.
 const targets = computed(() => wiredTargets(props.nodeId, props.nodes, props.edges)
   .filter(n => VARS_TARGET_NODE_TYPES.has(n?.data?.nodeType)))
 const target = computed(() => targets.value[0] ?? null)
-
-// Bindables differ by target kind: Smart Layout's are derived synchronously
-// from its template JSON; studios need `controlsForStudio`, which resolves
-// async (dynamic imports keep WebGL-adjacent studio modules out of anything
-// that doesn't need them — see lib/collection/studioControls.ts). Tracked as
-// a ref rather than a computed since computed can't await.
-const bindables = ref<Bindable[]>([])
-watch(target, async (t) => {
-  if (!t) { bindables.value = []; return }
-  if (t.data?.nodeType === 'SmartLayout') {
-    bindables.value = listSmartLayoutBindables(readTemplateFromNode(t))
-    return
-  }
-  // Clear before awaiting — a stale list would let the auto-align watcher seed
-  // the new target with the previous target's bindables.
-  bindables.value = []
-  const controls = await controlsForStudio(t)
-  // Guard against the target having changed while the async lookup was in flight.
-  if (target.value !== t) return
-  bindables.value = listStudioBindables(controls)
-}, { immediate: true })
 
 function targetBindings(): Record<string, VarBinding> {
   if (!target.value) return {}
@@ -67,48 +48,6 @@ function targetBindings(): Record<string, VarBinding> {
   if (!target.value.data.properties[BINDINGS_PROP]) target.value.data.properties[BINDINGS_PROP] = {}
   return target.value.data.properties[BINDINGS_PROP]
 }
-
-function compatibleColumns(bindable: Bindable) {
-  return collection.value ? collection.value.columns.filter(c => typeCompatible(bindable.type, c.type)) : []
-}
-
-function bindingFor(path: string): VarBinding | undefined {
-  return targetBindings()[path]
-}
-
-function onBindingChange(bindable: Bindable, e: Event) {
-  if (!collection.value) return
-  const columnKey = (e.target as HTMLSelectElement).value
-  const bindings = targetBindings()
-  if (!columnKey) {
-    delete bindings[bindable.path]
-    // Leave the (possibly now-empty) bindings object in place — its mere
-    // presence marks "explicitly cleared" so the auto-align watcher below
-    // does not silently reseed it on next drawer open.
-    return
-  }
-  // Preserve/refresh lastLiteral: the current resolved value for this path
-  // (row cell if present, else whatever literal was previously recorded) —
-  // cheap to read off the existing binding/collection, so we do; we do not
-  // reach into the SmartLayout template's actual widget defaults since that
-  // would require parsing per-path template state, which is out of scope.
-  const prevLiteral = bindings[bindable.path]?.lastLiteral
-  const { values } = resolveBindings(collection.value, { [bindable.path]: { collectionId: collection.value.id, columnKey } }, collection.value.previewRow)
-  const lastLiteral = values[bindable.path] ?? prevLiteral
-  bindings[bindable.path] = { collectionId: collection.value.id, columnKey, ...(lastLiteral !== undefined ? { lastLiteral } : {}) }
-}
-
-// Auto-init bindings for a freshly wired target that has none yet. Seed only
-// when the bindings object is absent (undefined) — never when it already
-// exists, even as `{}`, since an empty object means the user explicitly
-// cleared all bindings and that choice must stick.
-watch([target, bindables, collection], () => {
-  if (!target.value || !collection.value || !bindables.value.length) return
-  const existing = target.value.data.properties?.[BINDINGS_PROP]
-  if (existing !== undefined) return
-  if (!target.value.data.properties) target.value.data.properties = {}
-  target.value.data.properties[BINDINGS_PROP] = autoAlign(bindables.value, collection.value.columns, collection.value.id)
-}, { immediate: true })
 
 // Live preview: any change to the collection (cells, preview row) or to the
 // bindings themselves re-pushes the resolved preview row onto the target.
@@ -256,8 +195,8 @@ function renderItemFor(targetNode: any, runStamp: string) {
 
 // `runItems` always renders against the currently wired `target.value` — true
 // for every entry point today (confirmGenerate/retryFailed/retryItem/the sweep
-// auto-run all act on rows of THIS collection, and a collection only has the
-// one wired target the bindings strip shows). `runRows` takes an explicit
+// auto-run all act on rows of THIS collection, and a collection only acts on
+// its one wired target). `runRows` takes an explicit
 // `targetNode` anyway (rather than silently trusting `target.value`) so a
 // future multi-target collection can't quietly render against the wrong node.
 async function runItems(toRun: BatchItem[]) {
@@ -571,24 +510,6 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
           <button class="drawer-btn" @click="pasteOpen = false">Cancel</button>
           <button class="drawer-btn !bg-white/15" @click="applyPaste">Replace table</button>
         </div>
-      </div>
-
-      <div v-if="view === 'table'" class="flex items-center gap-3 px-4 py-2 border-b border-white/10 shrink-0 overflow-x-auto">
-        <span class="text-[11px] text-white/40 shrink-0">Bindings</span>
-        <template v-if="target">
-          <div v-for="b in bindables" :key="b.path" class="flex items-center gap-1.5 shrink-0">
-            <span class="text-[11px] text-white/60">{{ b.label }}</span>
-            <select
-              class="bg-white/5 border border-white/10 rounded text-[11px] text-white/80 px-1.5 py-1 outline-none focus:border-white/25"
-              :value="bindingFor(b.path)?.columnKey ?? ''"
-              @change="onBindingChange(b, $event)"
-            >
-              <option value="">—</option>
-              <option v-for="col in compatibleColumns(b)" :key="col.key" :value="col.key">{{ col.label }}</option>
-            </select>
-          </div>
-        </template>
-        <span v-else class="text-[11px] text-white/30">Wire this collection to a Smart Layout or studio node to bind columns</span>
       </div>
 
       <div v-if="sweepWarning" class="px-4 py-1.5 border-b border-amber-400/20 bg-amber-500/10 text-[11px] text-amber-300/90 shrink-0">
