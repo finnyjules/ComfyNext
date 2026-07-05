@@ -31,6 +31,8 @@ import { saveEffectThumbnail } from '~/composables/useEffectThumbnails'
 import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
+import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
+import { fillSwatchKey, parseFillSwatchKey, writeFillSwatch, type FillSwatchField } from '~/lib/spacetype/fillSwatchPath'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { controlKindToVariableType, type StudioControlDesc } from '~/lib/collection/studioBindables'
 import { typeCompatible } from '~/lib/collection/bindables'
@@ -269,13 +271,42 @@ function controlDesc(c: ControlSpec): StudioControlDesc {
   const any = c as any
   return { key: c.key, label: c.label, kind: c.kind, min: any.min, max: any.max, step: any.step, options: any.options }
 }
+function swatchKey(i: number, field: FillSwatchField): string {
+  const k = fillKey(); return k ? fillSwatchKey(k, i, field) : `fills.${i}.${field}`
+}
+function swatchDesc(i: number, field: FillSwatchField, label: string): StudioControlDesc {
+  return { key: swatchKey(i, field), label: `Fill ${i + 1} · ${label}`, kind: 'color' }
+}
+// Each fill's colour swatch(es) become synthetic `color` controls so the binding
+// machinery (promote / applyParamsPreview / run baker) can address one swatch inside
+// the packed fills value. Regenerated from the live `fills` array each call.
+function fillSwatchControls(): StudioControlDesc[] {
+  const out: StudioControlDesc[] = []
+  fills.forEach((f, i) => {
+    out.push(swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'))
+    if (fillNeedsB(f)) out.push(swatchDesc(i, 'b', 'Color 2'))
+    out.push(swatchDesc(i, 'textColor', 'Text'))
+  })
+  return out
+}
 function activeControls(): StudioControlDesc[] {
-  return effect.value.controls.map(controlDesc)
+  return [...effect.value.controls.map(controlDesc), ...fillSwatchControls()]
 }
 const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
   props.nodeId,
   activeControls,
-  (key, value) => { (params as Record<string, unknown>)[key] = value; rebuild() },
+  (key, value) => {
+    const k = fillKey()
+    const swatch = k ? parseFillSwatchKey(k, key) : null
+    if (swatch && fills[swatch.index]) {
+      // Writing the reactive `fills` array trips watch(fills) -> serializeFills ->
+      // params.fills -> structuralSignature -> scheduleRebuild, so no explicit rebuild.
+      ;(fills[swatch.index] as Record<string, unknown>)[swatch.field] = value
+    } else {
+      ;(params as Record<string, unknown>)[key] = value
+      rebuild()
+    }
+  },
   { nodes: () => props.nodes, edges: () => props.edges ?? [] },
 )
 
@@ -335,11 +366,12 @@ function goToCollection() {
 
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function openVarMenu(e: MouseEvent, c: ControlSpec) {
-  const type = controlKindToVariableType(c.kind)
+  openVarMenuDesc(e, controlDesc(c), params[c.key] as string | number)
+}
+function openVarMenuDesc(e: MouseEvent, desc: StudioControlDesc, liveValue: string | number) {
+  const type = controlKindToVariableType(desc.kind)
   if (type === null) return
-  const desc = controlDesc(c)
-  const liveValue = params[c.key] as string | number
-  const bound = boundColumnFor(c.key)
+  const bound = boundColumnFor(desc.key)
   const items: MenuItem[] = []
   if (!bound) {
     items.push({ label: 'Turn into variable', action: () => promote(desc, liveValue) })
@@ -350,7 +382,7 @@ function openVarMenu(e: MouseEvent, c: ControlSpec) {
         children: compatCols.map(col => ({
           label: col.label,
           action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
-            detail: { nodeId: props.nodeId, path: `params.${c.key}`, columnKey: col.key },
+            detail: { nodeId: props.nodeId, path: `params.${desc.key}`, columnKey: col.key },
           })),
         })),
       })
@@ -363,8 +395,8 @@ function openVarMenu(e: MouseEvent, c: ControlSpec) {
     items.push({
       label: 'Unbind',
       action: () => {
-        unbind(c.key, liveValue)
-        if (c.kind === 'text' || c.kind === 'textList') pullTextLines()
+        unbind(desc.key, liveValue)
+        if (desc.kind === 'text' || desc.kind === 'textList') pullTextLines()
       },
     })
   }
@@ -823,8 +855,28 @@ const BAKE_SS = 2
 // Everything here (`build`/`renderFrame`) is still synchronous — only
 // `frameToBlob`'s `canvas.toBlob` wrapper is awaited — so no extra
 // `nextTick`/rAF wait is needed beyond the existing async font load.
-async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+// Fold any `fills.<i>.<field>` overrides into one packed `fills` value (starting from
+// the current live `params.fills`); pass non-fill keys through untouched.
+function collapseFillOverrides(raw: Record<string, string | number>): Record<string, string | number> {
+  const k = fillKey()
+  if (!k) return raw
+  const out: Record<string, string | number> = {}
+  let fillsSer: unknown = (params as Record<string, unknown>)[k]
+  let touched = false
+  for (const [key, val] of Object.entries(raw)) {
+    const s = parseFillSwatchKey(k, key)
+    if (s) { fillsSer = writeFillSwatch(fillsSer, s.index, s.field, String(val)); touched = true }
+    else out[key] = val
+  }
+  if (touched) out[k] = fillsSer as string
+  return out
+}
+async function renderBlobWithOverrides(rawOverrides: Record<string, string | number>): Promise<Blob | null> {
   if (!engine) return null
+  // Collapse fill-swatch overrides (`fills.0.a` …) into a single packed `fills`
+  // override so the existing flat snapshot/apply/restore below round-trips one real
+  // param instead of writing garbage top-level keys.
+  const overrides = collapseFillOverrides(rawOverrides)
   const keys = Object.keys(overrides)
   const snapshot = new Map<string, unknown>()
   for (const key of keys) snapshot.set(key, (params as Record<string, unknown>)[key])
@@ -1107,19 +1159,35 @@ async function generateVideo() {
                     </div>
                     <!-- colours: fill pair grouped left, text colour pushed right -->
                     <div class="mt-2.5 flex items-end gap-2.5 pl-6">
-                      <div class="flex flex-col items-center gap-1">
-                        <span class="text-[9px] uppercase tracking-wide text-white/35">{{ fillNeedsB(f) ? 'Color 1' : 'Fill' }}</span>
-                        <StudioColor v-model="f.a" />
-                      </div>
-                      <div v-if="fillNeedsB(f)" class="flex flex-col items-center gap-1">
-                        <span class="text-[9px] uppercase tracking-wide text-white/35">Color 2</span>
-                        <StudioColor v-model="f.b" />
-                      </div>
+                      <FillSwatch
+                        :label="fillNeedsB(f) ? 'Color 1' : 'Fill'"
+                        :color="f.a"
+                        :bound="boundColumnFor(swatchKey(i, 'a'))"
+                        @update:color="(v: string) => { f.a = v }"
+                        @promote="promote(swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'), f.a)"
+                        @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'), f.a)"
+                        @edit="goToCollection"
+                      />
+                      <FillSwatch
+                        v-if="fillNeedsB(f)"
+                        label="Color 2"
+                        :color="f.b"
+                        :bound="boundColumnFor(swatchKey(i, 'b'))"
+                        @update:color="(v: string) => { f.b = v }"
+                        @promote="promote(swatchDesc(i, 'b', 'Color 2'), f.b)"
+                        @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'b', 'Color 2'), f.b)"
+                        @edit="goToCollection"
+                      />
                       <div class="flex-1"></div>
-                      <div class="flex flex-col items-center gap-1">
-                        <span class="text-[9px] uppercase tracking-wide text-white/35">Text</span>
-                        <StudioColor v-model="f.textColor" />
-                      </div>
+                      <FillSwatch
+                        label="Text"
+                        :color="f.textColor"
+                        :bound="boundColumnFor(swatchKey(i, 'textColor'))"
+                        @update:color="(v: string) => { f.textColor = v }"
+                        @promote="promote(swatchDesc(i, 'textColor', 'Text'), f.textColor)"
+                        @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'textColor', 'Text'), f.textColor)"
+                        @edit="goToCollection"
+                      />
                     </div>
                     <!-- pattern controls (only the ones this type uses) -->
                     <div v-if="fillHasAngle(f) || fillHasDensity(f)" class="mt-2.5 space-y-1.5 pl-6">
