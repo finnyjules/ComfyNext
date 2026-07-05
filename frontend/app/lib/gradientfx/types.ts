@@ -303,7 +303,11 @@ export function canvasCenter(canvas: CanvasConfig): CenterOffset {
  * blobs keep working. Mutates `cfg` in place and returns it.
  */
 export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
+  // Defensive: a malformed/partial blob (e.g. a corrupt node or an empty {}) must
+  // not throw — backfill the top-level containers before reading into them.
+  cfg.canvas = cfg.canvas ?? ({} as GradientConfig['canvas'])
   if (!cfg.canvas.center) cfg.canvas.center = { ...DEFAULT_CENTER }
+  cfg.relief = cfg.relief ?? ({} as GradientConfig['relief'])
   if (!cfg.relief.light) cfg.relief.light = { ...DEFAULT_LIGHT }
   if (!cfg.flow) cfg.flow = { ...DEFAULT_FLOW }
   if (cfg.flow.speed == null) cfg.flow.speed = 0
@@ -311,9 +315,10 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   // Backfill focus (merge so a partial object — e.g. an agent patch that set only
   // focus.blur — gets the rest of the defaults, keeping the editor bindings non-null).
   cfg.focus = { ...DEFAULT_FOCUS, ...(cfg.focus ?? {}) }
+  cfg.layers = cfg.layers ?? []
   // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back
   // too, but backfilling here keeps the editor's bindings non-null).
-  if (cfg.canvas.layout === 'mesh' && cfg.layers[0] && !cfg.layers[0].mesh) {
+  if (cfg.canvas.layout === 'mesh' && cfg.layers[0]?.color?.stops && !cfg.layers[0].mesh) {
     cfg.layers[0].mesh = defaultMesh(cfg.layers[0].color.stops, cfg.seed)
   }
   return cfg
