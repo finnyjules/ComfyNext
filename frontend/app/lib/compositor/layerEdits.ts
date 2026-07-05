@@ -76,11 +76,11 @@ export function computeSnapAdjust(
     yt.push(o.cy - o.hy, o.cy, o.cy + o.hy)
   }
   let bestX = { d: thresholdX, adj: 0, guide: null as number | null }
-  for (const edge of [prim.cx, prim.cx - prim.hx, prim.cx + prim.hx]) for (const t of xt) {
+  for (const edge of [prim.cx - prim.hx, prim.cx, prim.cx + prim.hx]) for (const t of xt) {
     const dd = Math.abs(edge - t); if (dd < bestX.d) bestX = { d: dd, adj: t - edge, guide: t }
   }
   let bestY = { d: thresholdY, adj: 0, guide: null as number | null }
-  for (const edge of [prim.cy, prim.cy - prim.hy, prim.cy + prim.hy]) for (const t of yt) {
+  for (const edge of [prim.cy - prim.hy, prim.cy, prim.cy + prim.hy]) for (const t of yt) {
     const dd = Math.abs(edge - t); if (dd < bestY.d) bestY = { d: dd, adj: t - edge, guide: t }
   }
   return { dx: bestX.adj, dy: bestY.adj, guideX: bestX.guide, guideY: bestY.guide }

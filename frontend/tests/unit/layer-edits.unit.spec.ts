@@ -87,10 +87,17 @@ describe('computeSnapAdjust', () => {
   })
   it("snaps to another layer's center", () => {
     const r = computeSnapAdjust({ cx: 0.31, cy: 0.5, hx: 0.05, hy: 0.05 }, [{ cx: 0.3, cy: 0.5, hx: 0.05, hy: 0.05 }], T, T)
-    expect(r.dx).toBeCloseTo(-0.01); expect(r.guideX).toBe(0.3)
+    expect(r.dx).toBeCloseTo(-0.01); expect(r.guideX).toBe(0.25)
   })
   it('does nothing outside the threshold', () => {
     const r = computeSnapAdjust({ cx: 0.6, cy: 0.6, hx: 0.05, hy: 0.05 }, [], T, T)
     expect(r.dx).toBe(0); expect(r.dy).toBe(0); expect(r.guideX).toBeNull(); expect(r.guideY).toBeNull()
+  })
+  it('breaks ties in left/center/right edge order (matches original)', () => {
+    // left edge (0.39) is 0.01 from other-layer edge 0.4; center (0.49) is 0.01 from canvas-center 0.5.
+    // Left edge is processed first, so it wins the tie → guide 0.4.
+    const r = computeSnapAdjust({ cx: 0.49, cy: 0.5, hx: 0.1, hy: 0.1 }, [{ cx: 0.4, cy: 0.5, hx: 0, hy: 0 }], T, T)
+    expect(r.guideX).toBe(0.4)
+    expect(r.dx).toBeCloseTo(0.01)
   })
 })
