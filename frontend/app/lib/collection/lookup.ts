@@ -58,3 +58,22 @@ export function effectiveColumns(local: CollectionData, resolve: LookupResolver)
 export function findLinkedColumn(local: CollectionData, resolve: LookupResolver, key: string): LinkedColumn | null {
   return linkedColumns(local, resolve).find(c => c.key === key) ?? null
 }
+
+/** Resolve one linked cell for a driver row: match the row's `matchLocal` value
+ *  against the foreign `matchForeign` column (first match), return the foreign
+ *  `sourceColumnKey` cell. undefined on any miss (blank key, missing foreign
+ *  collection, no match, blank foreign cell). One level only — never recurses. */
+export function resolveLinkedCell(
+  local: CollectionData, rowIndex: number, col: LinkedColumn, resolve: LookupResolver,
+): string | number | undefined {
+  const row = local.rows[rowIndex]
+  if (!row) return undefined
+  const keyVal = row.values[col.matchLocal]
+  if (keyVal === undefined || String(keyVal).trim() === '') return undefined
+  const foreign = resolve(col.sourceCollectionId)
+  if (!foreign) return undefined
+  const fRow = foreign.rows.find(r => String(r.values[col.matchForeign]) === String(keyVal))
+  if (!fRow) return undefined
+  const val = fRow.values[col.sourceColumnKey]
+  return (val === undefined || String(val).trim() === '') ? undefined : val
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createCollection, addColumn, addRow, setCell } from '~/lib/collection/model'
-import { linkedColumns, effectiveColumns, findLinkedColumn } from '~/lib/collection/lookup'
+import { linkedColumns, effectiveColumns, findLinkedColumn, resolveLinkedCell } from '~/lib/collection/lookup'
 import type { LookupResolver } from '~/lib/collection/lookup'
 
 function players() {
@@ -57,5 +57,26 @@ describe('effectiveColumns / findLinkedColumn', () => {
     const { local, foreign, resolve } = scene()
     expect(findLinkedColumn(local, resolve, `${foreign.id}::fill1`)?.sourceColumnKey).toBe('fill1')
     expect(findLinkedColumn(local, resolve, 'country')).toBe(null)
+  })
+})
+
+describe('resolveLinkedCell', () => {
+  it('resolves a driver row through the join', () => {
+    const { local, resolve } = scene()
+    const fill1 = linkedColumns(local, resolve).find(c => c.sourceColumnKey === 'fill1')!
+    expect(resolveLinkedCell(local, 0, fill1, resolve)).toBe('#0000ff') // Mbappe -> France -> blue
+  })
+  it('returns undefined when no foreign row matches the key', () => {
+    const { local, resolve } = scene()
+    const r = addRow(local); setCell(local, r.id, 'country', 'Brazil') // no Brazil in Themes
+    const fill1 = linkedColumns(local, resolve).find(c => c.sourceColumnKey === 'fill1')!
+    expect(resolveLinkedCell(local, 1, fill1, resolve)).toBe(undefined)
+  })
+  it('returns undefined for a blank key or missing foreign collection', () => {
+    const { local, resolve } = scene()
+    const fill1 = linkedColumns(local, resolve).find(c => c.sourceColumnKey === 'fill1')!
+    addRow(local) // new row, no country set -> blank key
+    expect(resolveLinkedCell(local, local.rows.length - 1, fill1, resolve)).toBe(undefined)
+    expect(resolveLinkedCell(local, 0, fill1, () => undefined)).toBe(undefined) // missing foreign
   })
 })
