@@ -7,7 +7,8 @@
 // Foreign collections arrive via a `LookupResolver` callback so this module
 // stays pure — no canvas/store access.
 
-import type { CollectionColumn, CollectionData, VariableType } from './types'
+import type { CollectionColumn, CollectionData, CollectionLink, VariableType } from './types'
+import { COLLECTION_PROP } from './types'
 
 export type LookupResolver = (collectionId: string) => CollectionData | undefined
 
@@ -76,4 +77,46 @@ export function resolveLinkedCell(
   if (!fRow) return undefined
   const val = fRow.values[col.sourceColumnKey]
   return (val === undefined || String(val).trim() === '') ? undefined : val
+}
+
+/** Auto-match two column sets by shared key. Exactly one shared key → use it for
+ *  both sides; 0 or >1 → null (ambiguous, defer to the match picker). */
+export function autoMatchColumns(
+  local: CollectionColumn[], foreign: CollectionColumn[],
+): { matchLocal: string; matchForeign: string } | null {
+  const foreignKeys = new Set(foreign.map(c => c.key))
+  const shared = local.map(c => c.key).filter(k => foreignKeys.has(k))
+  return shared.length === 1 ? { matchLocal: shared[0]!, matchForeign: shared[0]! } : null
+}
+
+/** Reconcile a driver's links against the set of source collection ids that
+ *  currently have a LOOKUP edge into it. Keeps existing links (preserving their
+ *  match columns) whose source still has an edge; adds a link for any new source
+ *  when autoMatch yields one; drops links whose edge is gone. */
+export function reconcileLinks(
+  existing: CollectionLink[],
+  sourceIds: string[],
+  autoMatch: (sourceId: string) => { matchLocal: string; matchForeign: string } | null,
+): CollectionLink[] {
+  const wanted = new Set(sourceIds)
+  const kept = existing.filter(l => wanted.has(l.collectionId))
+  const have = new Set(kept.map(l => l.collectionId))
+  const added: CollectionLink[] = []
+  for (const id of sourceIds) {
+    if (have.has(id)) continue
+    const m = autoMatch(id)
+    if (m) { added.push({ collectionId: id, ...m }); have.add(id) }
+  }
+  return [...kept, ...added]
+}
+
+/** Build a LookupResolver over a set of canvas nodes, keyed by each collection's data id. */
+export function makeLookupResolver(collectionNodes: any[]): LookupResolver {
+  return (id: string) => {
+    for (const n of collectionNodes) {
+      const c = n?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+      if (c && c.id === id) return c
+    }
+    return undefined
+  }
 }
