@@ -56,3 +56,32 @@ export function snapAngle(deg: number, step: number | null): number {
   if (!step) return deg
   return Math.round(deg / step) * step
 }
+
+export interface SnapBox { cx: number; cy: number; hx: number; hy: number }
+
+/** Snap a moving box's edges/center to target lines (other boxes' edges/centers
+ *  plus canvas targets, default the two edges + center). Returns the adjustment
+ *  and the guide line to draw per axis (null = no snap on that axis). */
+export function computeSnapAdjust(
+  prim: SnapBox,
+  others: SnapBox[],
+  thresholdX: number,
+  thresholdY: number,
+  canvasTargets: number[] = [0, 0.5, 1],
+): { dx: number; dy: number; guideX: number | null; guideY: number | null } {
+  const xt = [...canvasTargets]
+  const yt = [...canvasTargets]
+  for (const o of others) {
+    xt.push(o.cx - o.hx, o.cx, o.cx + o.hx)
+    yt.push(o.cy - o.hy, o.cy, o.cy + o.hy)
+  }
+  let bestX = { d: thresholdX, adj: 0, guide: null as number | null }
+  for (const edge of [prim.cx, prim.cx - prim.hx, prim.cx + prim.hx]) for (const t of xt) {
+    const dd = Math.abs(edge - t); if (dd < bestX.d) bestX = { d: dd, adj: t - edge, guide: t }
+  }
+  let bestY = { d: thresholdY, adj: 0, guide: null as number | null }
+  for (const edge of [prim.cy, prim.cy - prim.hy, prim.cy + prim.hy]) for (const t of yt) {
+    const dd = Math.abs(edge - t); if (dd < bestY.d) bestY = { d: dd, adj: t - edge, guide: t }
+  }
+  return { dx: bestX.adj, dy: bestY.adj, guideX: bestX.guide, guideY: bestY.guide }
+}

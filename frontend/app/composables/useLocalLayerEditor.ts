@@ -19,7 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
-import { nudgeLayers, duplicateLayers, snapAngle } from '~/lib/compositor/layerEdits'
+import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust } from '~/lib/compositor/layerEdits'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -360,24 +360,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const b = boxPx(prim); const hx = b.w / 2 / W, hy = b.h / 2 / H
     const cx = ox + dx, cy = oy + dy
     const movingIds = new Set((drag.value as any)?.origins?.map((o: any) => o.id) ?? [primaryId])
-    // Target lines from non-moving layers (left/center/right, top/middle/bottom) + canvas center.
-    const xt: number[] = [0.5], yt: number[] = [0.5]
+    const others = [] as { cx: number; cy: number; hx: number; hy: number }[]
     for (const l of localLayers.value) {
       if (movingIds.has(l.id)) continue
-      const lb = boxPx(l); const lhx = lb.w / 2 / W, lhy = lb.h / 2 / H
-      xt.push(l.x - lhx, l.x, l.x + lhx); yt.push(l.y - lhy, l.y, l.y + lhy)
+      const lb = boxPx(l)
+      others.push({ cx: l.x, cy: l.y, hx: lb.w / 2 / W, hy: lb.h / 2 / H })
     }
-    const tx = SNAP_PX / W, ty = SNAP_PX / H
-    let bestX = { d: tx, adj: 0, guide: null as number | null }
-    for (const edge of [cx - hx, cx, cx + hx]) for (const t of xt) {
-      const dd = Math.abs(edge - t); if (dd < bestX.d) bestX = { d: dd, adj: t - edge, guide: t }
-    }
-    let bestY = { d: ty, adj: 0, guide: null as number | null }
-    for (const edge of [cy - hy, cy, cy + hy]) for (const t of yt) {
-      const dd = Math.abs(edge - t); if (dd < bestY.d) bestY = { d: dd, adj: t - edge, guide: t }
-    }
-    snapGuides.value = { vx: bestX.guide, hy: bestY.guide }
-    return { dx: dx + bestX.adj, dy: dy + bestY.adj }
+    const res = computeSnapAdjust({ cx, cy, hx, hy }, others, SNAP_PX / W, SNAP_PX / H)
+    snapGuides.value = { vx: res.guideX, hy: res.guideY }
+    return { dx: dx + res.dx, dy: dy + res.dy }
   }
   function startScale(e: PointerEvent) {
     e.preventDefault(); e.stopPropagation()

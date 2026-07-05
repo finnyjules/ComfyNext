@@ -72,3 +72,25 @@ describe('snapAngle', () => {
     expect(snapAngle(37, 0)).toBe(37)
   })
 })
+
+import { computeSnapAdjust } from '../../app/lib/compositor/layerEdits'
+
+describe('computeSnapAdjust', () => {
+  const T = 0.02
+  it('snaps the left edge to the canvas edge (0)', () => {
+    const r = computeSnapAdjust({ cx: 0.105, cy: 0.5, hx: 0.1, hy: 0.1 }, [], T, T)
+    expect(r.dx).toBeCloseTo(-0.005); expect(r.guideX).toBe(0)
+  })
+  it('snaps center to canvas center (0.5)', () => {
+    const r = computeSnapAdjust({ cx: 0.49, cy: 0.5, hx: 0.1, hy: 0.1 }, [], T, T)
+    expect(r.dx).toBeCloseTo(0.01); expect(r.guideX).toBe(0.5)
+  })
+  it("snaps to another layer's center", () => {
+    const r = computeSnapAdjust({ cx: 0.31, cy: 0.5, hx: 0.05, hy: 0.05 }, [{ cx: 0.3, cy: 0.5, hx: 0.05, hy: 0.05 }], T, T)
+    expect(r.dx).toBeCloseTo(-0.01); expect(r.guideX).toBe(0.3)
+  })
+  it('does nothing outside the threshold', () => {
+    const r = computeSnapAdjust({ cx: 0.6, cy: 0.6, hx: 0.05, hy: 0.05 }, [], T, T)
+    expect(r.dx).toBe(0); expect(r.dy).toBe(0); expect(r.guideX).toBeNull(); expect(r.guideY).toBeNull()
+  })
+})
