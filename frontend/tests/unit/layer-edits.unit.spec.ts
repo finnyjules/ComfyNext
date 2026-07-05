@@ -101,3 +101,23 @@ describe('computeSnapAdjust', () => {
     expect(r.dx).toBeCloseTo(0.01)
   })
 })
+
+import { mapKeyToEdit } from '../../app/lib/compositor/layerEdits'
+
+describe('mapKeyToEdit', () => {
+  it('maps arrows to nudge (small step)', () => {
+    expect(mapKeyToEdit({ key: 'ArrowLeft' }, 1, 10)).toEqual({ type: 'nudge', dxPx: -1, dyPx: 0 })
+    expect(mapKeyToEdit({ key: 'ArrowDown' }, 1, 10)).toEqual({ type: 'nudge', dxPx: 0, dyPx: 1 })
+  })
+  it('uses the large step with shift', () => {
+    expect(mapKeyToEdit({ key: 'ArrowRight', shiftKey: true }, 1, 10)).toEqual({ type: 'nudge', dxPx: 10, dyPx: 0 })
+  })
+  it('maps cmd/ctrl+D to duplicate', () => {
+    expect(mapKeyToEdit({ key: 'd', metaKey: true }, 1, 10)).toEqual({ type: 'duplicate' })
+    expect(mapKeyToEdit({ key: 'D', ctrlKey: true }, 1, 10)).toEqual({ type: 'duplicate' })
+  })
+  it('returns null for unrelated keys and plain d', () => {
+    expect(mapKeyToEdit({ key: 'd' }, 1, 10)).toBeNull()
+    expect(mapKeyToEdit({ key: 'a', metaKey: true }, 1, 10)).toBeNull()
+  })
+})

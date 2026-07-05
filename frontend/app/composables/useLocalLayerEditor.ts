@@ -19,7 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
-import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust } from '~/lib/compositor/layerEdits'
+import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit } from '~/lib/compositor/layerEdits'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -301,6 +301,18 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedId.value = r.newIds[r.newIds.length - 1] ?? null
   }
 
+  /** Keyboard: arrow-nudge (1px / shift 10px) + cmd/ctrl-D duplicate.
+   *  Returns true if consumed. No-op (false) when nothing is selected. */
+  function handleEditorKey(e: KeyboardEvent): boolean {
+    if (!selectedIds.value.size) return false
+    const a = mapKeyToEdit(e, 1, 10)
+    if (!a) return false
+    e.preventDefault()
+    if (a.type === 'nudge') nudgeSelection(a.dxPx / dims().w, a.dyPx / dims().h)
+    else duplicateSelection()
+    return true
+  }
+
   // ── Pointer interaction (zoom-agnostic via screen rect) ─────────────────────
   type Drag =
     | { type: 'move'; id: string; sx: number; sy: number; origins: { id: string; ox: number; oy: number }[] }
@@ -555,7 +567,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
     undo, redo, canUndo, canRedo,
-    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection,
+    selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection, handleEditorKey,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,

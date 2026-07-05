@@ -314,7 +314,7 @@ const {
   addPathLayers, addPathFromSvg, deleteLayers,
   background, setBackground,
   undo, redo, canUndo, canRedo,
-  selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit,
+  selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey,
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
@@ -602,6 +602,11 @@ async function runVectorize(backend: 'local' | 'recraft') {
 
 // Esc cancels an in-progress pen draft (before it bubbles to modal-close).
 function onKeydown(e: KeyboardEvent) {
+  // Keyboard nudge/duplicate on the current selection — deferred first so it
+  // doesn't fire while typing in a field or text-editing a layer.
+  const t = e.target as HTMLElement | null
+  const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  if (!typing && !editingId.value && handleEditorKey(e)) return
   if (e.key === 'Escape' && pen.active.value) { e.stopPropagation(); pen.setActive(false); return }
   if (e.key === 'Enter' && pen.active.value && pen.anchors.value.length >= 2) { e.preventDefault(); finishPen(); return }
   // V → Select tool (when not typing in a field).
