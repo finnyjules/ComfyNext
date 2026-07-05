@@ -12,6 +12,7 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
+import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
@@ -440,6 +441,11 @@ function addStop() {
 function removeStop(i: number) {
   const stops = layer.value.color.stops
   if (stops.length > 2) stops.splice(i, 1)
+}
+/** Replace the active layer's stops from a colour-theory harmony. */
+function applyPaletteStops(stops: { pos: number; color: string }[]) {
+  layer.value.color.stops = stops.map(s => ({ color: s.color, pos: s.pos }))
+  stops.forEach((s, i) => onEdit(`layer.color.stops.${i}.color`, s.color))
 }
 
 // ── motion tracks ─────────────────────────────────────────────────────────────
@@ -1055,6 +1061,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
             <button v-if="layer.color.stops.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeStop(i)"><Trash2 class="h-3 w-3" /></button>
           </div>
           <button class="mt-1 flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addStop"><Plus class="h-3 w-3" /> Add stop</button>
+        </div>
+        <div class="mb-3 border-t border-white/[0.06] pt-2">
+          <PalettePicker mode="stops" :stop-count="layer.color.stops.length" :seed="layer.color.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyPaletteStops" />
         </div>
         <template v-if="!isMesh">
           <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
