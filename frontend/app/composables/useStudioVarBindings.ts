@@ -19,6 +19,7 @@ import { BINDINGS_PROP, COLLECTION_PROP, VAR_PREVIEW_PROP } from '~/lib/collecti
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
 import { addColumn, addRow, clampPreviewRow, setCell } from '~/lib/collection/model'
 import { resolveBindings } from '~/lib/collection/resolve'
+import { makeLookupResolver } from '~/lib/collection/lookup'
 
 export interface VarPreviewPayload {
   params?: Record<string, string | number>
@@ -264,7 +265,7 @@ export function useStudioVarBindings(
     const colNode = findWiredCollectionNode(nodes(), edges(), nodeId, binding.collectionId)
     const c = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
     if (c) {
-      const { values } = resolveBindings(c, { [path]: binding }, c.previewRow)
+      const { values } = resolveBindings(c, { [path]: binding }, c.previewRow, makeLookupResolver(nodes()))
       if (values[path] !== undefined) binding.lastLiteral = values[path]
       else if (currentValue !== undefined) binding.lastLiteral = currentValue
     } else if (currentValue !== undefined) {

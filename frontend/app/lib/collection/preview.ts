@@ -1,6 +1,7 @@
 import { BINDINGS_PROP, COLLECTION_PROP, VAR_PREVIEW_PROP } from './types'
 import type { CollectionData, VarBindings } from './types'
 import { resolveBindings, splitResolvedValues } from './resolve'
+import { makeLookupResolver } from './lookup'
 
 /** Nodes wired from the collection's `output-0` VARS handle. */
 export function wiredTargets(collectionNodeId: string, nodes: any[], edges: any[]): any[] {
@@ -15,13 +16,14 @@ export function wiredTargets(collectionNodeId: string, nodes: any[], edges: any[
 /** Resolve the collection's current preview row for each bound target and
  *  stamp the result onto `target.data.properties[VAR_PREVIEW_PROP]` so the
  *  node body can render a live thumbnail without re-deriving bindings. */
-export function pushVarPreview(collectionNode: any, targets: any[]): void {
+export function pushVarPreview(collectionNode: any, targets: any[], allNodes?: any[]): void {
   const c = collectionNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
   if (!c) return
+  const resolve = allNodes ? makeLookupResolver(allNodes) : undefined
   for (const target of targets) {
     const bindings = target?.data?.properties?.[BINDINGS_PROP] as VarBindings | undefined
     if (!bindings || !Object.keys(bindings).length) continue
-    const { values } = resolveBindings(c, bindings, c.previewRow)
+    const { values } = resolveBindings(c, bindings, c.previewRow, resolve)
     const { props, brand, params } = splitResolvedValues(values)
     if (!target.data.properties) target.data.properties = {}
     target.data.properties[VAR_PREVIEW_PROP] = { props, brand, params, ts: Date.now() }

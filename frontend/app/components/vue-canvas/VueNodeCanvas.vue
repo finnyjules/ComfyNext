@@ -3238,7 +3238,7 @@ function handleCollectionScrub(e: Event) {
   const allNodes = nodes.value as any[]
   const colNode = allNodes.find(n => String(n.id) === nodeId)
   if (!colNode) return
-  pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]))
+  pushVarPreview(colNode, wiredTargets(nodeId, allNodes, edges.value as any[]), allNodes)
 }
 
 // ── Lookup collections (LOOKUP edges) ───────────────────────────────────────
@@ -3340,7 +3340,7 @@ function pushPreviewAndOpenCollection(targetId: string) {
   const collectionId = allEdges.find(ed => String(ed.target) === targetId && ed?.data?.dataType === VARS_TYPE)?.source
   const collectionNode = collectionId ? allNodes.find(n => String(n.id) === String(collectionId)) : undefined
   if (collectionNode) {
-    pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges))
+    pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges), allNodes)
     window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(collectionId) } }))
   }
 }

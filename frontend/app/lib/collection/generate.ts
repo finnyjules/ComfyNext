@@ -5,6 +5,7 @@ import { resolveBindings, splitRenderOverrides, splitResolvedValues } from './re
 import { rowLabel } from './model'
 import { readTemplateFromNode } from './bindables'
 import { getStudioParamBaker } from '~/lib/studio/cascade'
+import { makeLookupResolver } from './lookup'
 
 export function sanitize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
@@ -89,9 +90,11 @@ export function buildStudioRenderItem(
   collection: CollectionData,
   bindings: VarBindings,
   runStamp: string,
+  allNodes?: any[],
 ): (item: BatchItem) => Promise<void> {
   return async (item: BatchItem) => {
-    const { values } = resolveBindings(collection, bindings, item.rowIndex)
+    const resolve = allNodes ? makeLookupResolver(allNodes) : undefined
+    const { values } = resolveBindings(collection, bindings, item.rowIndex, resolve)
     const { params } = splitResolvedValues(values)
 
     const baker = getStudioParamBaker(targetNodeId)

@@ -98,7 +98,7 @@ function writeThroughBoundText(value: string) {
   setCell(c, row.id, columnKey, value)
   const colNode = binding?.collectionNode.value
   if (colNode) {
-    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()))
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()), binding!.nodesAccessor())
   }
 }
 
@@ -164,7 +164,7 @@ function addCopyOptionsAsRows() {
   addMediaRows(c, columnKey, copyAssist.options.value.map(o => o.text))
   const colNode = binding?.collectionNode.value
   if (colNode) {
-    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()))
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()), binding!.nodesAccessor())
     window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
   }
 }
@@ -191,7 +191,7 @@ function promoteThenAddCopyOptionsAsRows() {
   addMediaRows(c, columnKey, texts)
   const colNode = binding.collectionNode.value
   if (colNode) {
-    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding.nodesAccessor(), binding.edgesAccessor()))
+    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding.nodesAccessor(), binding.edgesAccessor()), binding.nodesAccessor())
     window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
   }
 }

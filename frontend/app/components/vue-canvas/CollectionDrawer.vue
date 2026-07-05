@@ -56,7 +56,7 @@ function targetBindings(): Record<string, VarBinding> {
 // comfynext_varPreview below would retrigger this watcher (infinite loop).
 watch(
   [collection, () => target.value?.data?.properties?.[BINDINGS_PROP]],
-  () => { if (node.value) pushVarPreview(node.value, targets.value) },
+  () => { if (node.value) pushVarPreview(node.value, targets.value, props.nodes) },
   { deep: true, immediate: true },
 )
 
@@ -131,7 +131,7 @@ function keepItem(item: BatchItem) {
   // keepRow removed every `sweep: true` row (row 0 survives even if it was
   // the kept row) — drop any now-stale result items that pointed at them.
   items.value = items.value.filter(i => !sweptRowIds.has(i.rowId))
-  pushVarPreview(node.value, targets.value)
+  pushVarPreview(node.value, targets.value, props.nodes)
 }
 
 async function retryItem(item: BatchItem) {
@@ -190,7 +190,7 @@ function renderItemFor(targetNode: any, runStamp: string) {
   if (!collection.value) throw new Error('no collection')
   return targetNode.data?.nodeType === 'SmartLayout'
     ? buildRenderItem(targetNode, collection.value, targetBindings(), runStamp)
-    : buildStudioRenderItem(String(targetNode.id), collection.value, targetBindings(), runStamp)
+    : buildStudioRenderItem(String(targetNode.id), collection.value, targetBindings(), runStamp, props.nodes)
 }
 
 // `runItems` always renders against the currently wired `target.value` — true
