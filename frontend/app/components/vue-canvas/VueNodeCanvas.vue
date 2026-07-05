@@ -38,6 +38,7 @@ import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
 import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
+import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -156,7 +157,10 @@ function applyPendingTakesForDisplayedCanvas() {
   delete pendingTakesByCanvas[canvasId]
   for (const { nodeId, take } of pending) {
     const target = (nodes.value as any[]).find((n: any) => n.id === nodeId)
-    if (target) target.data = appendTake({ ...target.data }, take)
+    if (target) {
+      take.params = { ...(take.params ?? {}), ...nodeGenParams(target) } // provenance for breeding
+      target.data = appendTake({ ...target.data }, take)
+    }
   }
 }
 
@@ -2458,7 +2462,12 @@ function handleBridgeMessage(event: MessageEvent) {
         // animated, so a single run stays behavior-identical while prior results
         // are preserved for compare/switch.
         const take = takeFromExecutedEvent(event)
-        if (take) target.data = appendTake({ ...target.data }, take)
+        if (take) {
+          // Provenance: remember HOW this result was made (prompt/seed/model/…) so
+          // a later "breed from this take" can perturb around it. (Direction Loop.)
+          take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
+          target.data = appendTake({ ...target.data }, take)
+        }
       }
     }
   }
