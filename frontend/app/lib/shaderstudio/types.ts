@@ -29,6 +29,16 @@ export interface StudioDuotone {
   paper: string // light color (hex)
 }
 
+/** One color stop on the gradient-map ramp (pos 0..1 = luminance). */
+export interface StudioGradientStop { pos: number; color: string }
+
+export interface StudioGradientMap {
+  enabled: boolean
+  /** Ramp stops (sorted by pos at compose time); max 8 used. */
+  stops: StudioGradientStop[]
+  mix: number // [0,1] blend of the mapped result over the source
+}
+
 export interface StudioAdjust {
   enabled: boolean
   exposure: number     // [-2,2] stops
@@ -92,6 +102,7 @@ export interface ShaderStudioConfig {
   resolution: number
   effect: StudioEffect
   duotone: StudioDuotone
+  gradientMap: StudioGradientMap
   adjust: StudioAdjust
   post: StudioPost
   motion: StudioMotion
@@ -104,6 +115,14 @@ export function defaultConfig(): ShaderStudioConfig {
     resolution: 1536,
     effect: { id: '', params: {}, enabled: true, customChars: '' },
     duotone: { enabled: false, ink: '#1a1a2e', paper: '#f5f5f5' },
+    gradientMap: {
+      enabled: false, mix: 1,
+      stops: [
+        { pos: 0, color: '#06283d' },
+        { pos: 0.5, color: '#256d85' },
+        { pos: 1, color: '#47b5ff' },
+      ],
+    },
     adjust: {
       enabled: false, exposure: 0, brightness: 0, contrast: 0,
       saturation: 0, hue: 0, temperature: 0, tint: 0,

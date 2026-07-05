@@ -1,8 +1,8 @@
 // frontend/tests/unit/shaderstudio-glsl.unit.spec.ts
 import { describe, expect, it } from 'vitest'
-import { ADJUST_FS, CHROMATIC_FS, DUOTONE_FS, LENS_BLUR_FS } from '~/lib/shaderstudio/glsl'
+import { ADJUST_FS, CHROMATIC_FS, DUOTONE_FS, GRADIENT_MAP_FS, LENS_BLUR_FS } from '~/lib/shaderstudio/glsl'
 
-const ALL = { DUOTONE_FS, ADJUST_FS, LENS_BLUR_FS, CHROMATIC_FS }
+const ALL = { DUOTONE_FS, ADJUST_FS, LENS_BLUR_FS, CHROMATIC_FS, GRADIENT_MAP_FS }
 
 describe('shaderstudio glsl', () => {
   for (const [name, src] of Object.entries(ALL)) {

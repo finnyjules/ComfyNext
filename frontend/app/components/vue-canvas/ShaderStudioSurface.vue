@@ -327,6 +327,16 @@ function applyDuotonePalette({ shadow, highlight }: { shadow: string; highlight:
   config.value.duotone.ink = shadow; config.value.duotone.paper = highlight; config.value.duotone.enabled = true
   onEdit('duotone.ink', shadow); onEdit('duotone.paper', highlight)
 }
+
+function applyGradientStops(stops: { pos: number; color: string }[]) {
+  config.value.gradientMap.stops = stops.map(s => ({ pos: s.pos, color: s.color }))
+  config.value.gradientMap.enabled = true
+}
+const gradientMapRampCss = computed(() => {
+  const s = [...config.value.gradientMap.stops].sort((a, b) => a.pos - b.pos)
+  if (!s.length) return 'transparent'
+  return `linear-gradient(to right, ${s.map(x => `${x.color} ${Math.round(x.pos * 100)}%`).join(', ')})`
+})
 function pickAdjustPreset(name: string) { const p = ADJUST_PRESETS.find(x => x.name === name); if (p) { applyAdjustPreset(config.value.adjust, p); config.value.adjust.enabled = true } }
 
 // ── focus-point drag pad ────────────────────────────────────────────────────
@@ -543,6 +553,20 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           </BindableRow>
         </div>
         <PalettePicker mode="duotone" :seed="config.duotone.paper" @apply-duotone="applyDuotonePalette" />
+      </StudioSection>
+
+      <!-- Gradient Map -->
+      <StudioSection title="Gradient Map" :open="false">
+        <template #badge><StudioSwitch v-model="config.gradientMap.enabled" /></template>
+        <div class="mb-2 h-6 overflow-hidden rounded border border-white/10" :style="{ background: gradientMapRampCss }" />
+        <PalettePicker mode="stops" :stop-count="config.gradientMap.stops.length" :seed="config.gradientMap.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyGradientStops" />
+        <div class="mt-3">
+          <label class="mb-1 block text-[11px] text-white/60">Mix</label>
+          <input
+            v-model.number="config.gradientMap.mix" type="range" min="0" max="1" step="0.01"
+            v-studio-reset class="studio-range w-full" @input="onEdit('gradientMap.mix', config.gradientMap.mix)"
+          />
+        </div>
       </StudioSection>
 
       <!-- Adjustments -->

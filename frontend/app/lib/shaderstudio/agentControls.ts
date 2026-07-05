@@ -32,6 +32,11 @@ export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDe
     out.push({ key: 'duotone.paper', label: 'Paper', kind: 'color', default: '#f5f5f5', group: 'Duotone' })
   }
 
+  // Gradient map (the ramp colours are set via the palette picker, not tuned)
+  if (cfg.gradientMap?.enabled) {
+    out.push(slider('gradientMap.mix', 'Gradient map mix', 0, 1, 0.01, 'Gradient map'))
+  }
+
   // Adjustments
   if (cfg.adjust.enabled) {
     out.push(slider('adjust.exposure', 'Exposure', -2, 2, 0.01, 'Adjust'))

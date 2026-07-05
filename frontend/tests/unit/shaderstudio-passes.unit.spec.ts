@@ -53,6 +53,35 @@ describe('composePasses', () => {
     expect(bloom.uniforms.u_radius).toBe(80)
   })
 
+  it('appends a gradient-map pass with pos-sorted stop uniforms when enabled', () => {
+    const c = defaultConfig()
+    ;(c as any).gradientMap = { enabled: true, mix: 0.8, stops: [
+      { pos: 1, color: '#ffffff' },
+      { pos: 0, color: '#000000' },
+      { pos: 0.5, color: '#ff0000' },
+    ] }
+    const passes = composePasses(c, null, 0)
+    expect(passes.map(p => p.id)).toEqual(['studio:gradientMap'])
+    const u = passes[0]!.uniforms
+    expect(u.u_gm_n).toBe(3)
+    expect(u.u_gm_mix).toBe(0.8)
+    expect(u['u_gm_pos[0]']).toBe(0)
+    expect(u['u_gm_pos[1]']).toBe(0.5)
+    expect(u['u_gm_pos[2]']).toBe(1)
+    expect(u['u_gm_r[0]']).toBe(0)   // black
+    expect(u['u_gm_r[1]']).toBe(1)   // red
+    expect(u['u_gm_g[1]']).toBe(0)
+    expect(u['u_gm_r[2]']).toBe(1)   // white
+  })
+
+  it('caps the gradient map at 8 stops', () => {
+    const c = defaultConfig()
+    ;(c as any).gradientMap = { enabled: true, mix: 1, stops: Array.from({ length: 12 }, (_, i) => ({ pos: i / 11, color: '#808080' })) }
+    const passes = composePasses(c, null, 0)
+    expect(passes[0]!.uniforms.u_gm_n).toBe(8)
+    expect(passes[0]!.uniforms['u_gm_pos[8]']).toBeUndefined()
+  })
+
   it('expands a multi-pass effect into N passes', () => {
     const c = defaultConfig()
     c.effect = { id: 'bloom', params: {}, enabled: true }

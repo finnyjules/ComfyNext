@@ -6,7 +6,7 @@
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/renderer'
 import type { EffectDef } from '~/lib/shaderfx/types'
-import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, LENS_BLUR_FS } from './glsl'
+import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, GRADIENT_MAP_FS, LENS_BLUR_FS } from './glsl'
 import type { ShaderStudioConfig } from './types'
 
 /** Hex (#rrggbb) → {r,g,b} in 0..1. */
@@ -51,6 +51,18 @@ export function composePasses(
       u_ink_r: ink.r, u_ink_g: ink.g, u_ink_b: ink.b,
       u_paper_r: paper.r, u_paper_g: paper.g, u_paper_b: paper.b,
     } })
+  }
+
+  // 2b. Gradient map (multi-stop luminance remap)
+  if (cfg.gradientMap?.enabled && cfg.gradientMap.stops?.length) {
+    const stops = [...cfg.gradientMap.stops].sort((a, b) => a.pos - b.pos).slice(0, 8)
+    const u: Record<string, number> = { u_gm_n: stops.length, u_gm_mix: cfg.gradientMap.mix ?? 1 }
+    stops.forEach((s, i) => {
+      const c = hexRgb(s.color)
+      u[`u_gm_pos[${i}]`] = Math.min(1, Math.max(0, s.pos))
+      u[`u_gm_r[${i}]`] = c.r; u[`u_gm_g[${i}]`] = c.g; u[`u_gm_b[${i}]`] = c.b
+    })
+    out.push({ id: 'studio:gradientMap', source: GRADIENT_MAP_FS, uniforms: u })
   }
 
   // 3. Adjustments

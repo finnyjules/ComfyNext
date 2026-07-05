@@ -18,6 +18,44 @@ void main() {
 }
 `
 
+// Multi-stop gradient map: remap luminance through up to 8 color stops.
+// Stops arrive pos-sorted; positions/colours passed as array uniforms so the
+// whole ramp is one pass with no LUT texture.
+export const GRADIENT_MAP_FS = HEAD + `
+#define MAXS 8
+uniform float u_gm_n;
+uniform float u_gm_pos[MAXS];
+uniform float u_gm_r[MAXS];
+uniform float u_gm_g[MAXS];
+uniform float u_gm_b[MAXS];
+uniform float u_gm_mix;
+vec3 stopColor(int i) { return vec3(u_gm_r[i], u_gm_g[i], u_gm_b[i]); }
+void main() {
+  vec4 src = texture(u_image0, v_texCoord);
+  float lum = dot(src.rgb, vec3(0.299, 0.587, 0.114));
+  int n = int(u_gm_n + 0.5);
+  vec3 mapped = stopColor(0);
+  if (n >= 2) {
+    if (lum <= u_gm_pos[0]) {
+      mapped = stopColor(0);
+    } else if (lum >= u_gm_pos[n - 1]) {
+      mapped = stopColor(n - 1);
+    } else {
+      for (int i = 0; i < MAXS - 1; i++) {
+        if (i + 1 >= n) break;
+        float p0 = u_gm_pos[i], p1 = u_gm_pos[i + 1];
+        if (lum >= p0 && lum <= p1) {
+          float f = (p1 - p0) > 1e-5 ? (lum - p0) / (p1 - p0) : 0.0;
+          mapped = mix(stopColor(i), stopColor(i + 1), f);
+          break;
+        }
+      }
+    }
+  }
+  fragColor0 = vec4(mix(src.rgb, mapped, u_gm_mix), src.a);
+}
+`
+
 export const ADJUST_FS = HEAD + `
 uniform float u_exposure, u_brightness, u_contrast, u_saturation, u_hue, u_temperature, u_tint;
 vec3 hueRotate(vec3 c, float deg) {
