@@ -5,6 +5,7 @@ from typing_extensions import override
 from torchvision.transforms.functional import adjust_saturation
 
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._gradient_map import apply_gradient_map
 from comfy_extras._live_preview import save_live_preview
 
 
@@ -194,16 +195,17 @@ class GradientMapNode(IO.ComfyNode):
         return IO.Schema(
             node_id="AdjustGradientMap",
             display_name="Gradient Map",
-            description="Remap luminance through a 2-stop color gradient.",
+            description="Remap luminance through a multi-stop colour gradient — "
+                        "pick stops directly or from a colour-theory palette.",
             category="image/color",
             inputs=[
                 IO.Image.Input("image"),
-                IO.Float.Input("shadow_r", default=0.05, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("shadow_g", default=0.05, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("shadow_b", default=0.20, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_r", default=1.00, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_g", default=0.90, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_b", default=0.50, min=0.0, max=1.0, step=0.01),
+                IO.String.Input(
+                    "stops",
+                    default='[{"pos":0,"color":"#06283d"},{"pos":0.5,"color":"#256d85"},{"pos":1,"color":"#47b5ff"}]',
+                    extra_dict={"comfynext_widget": "gradient_editor", "gradient_mode": "stops"},
+                    tooltip="Gradient-map colour stops (managed by the palette widget).",
+                ),
                 IO.Float.Input("mix", default=1.0, min=0.0, max=1.0, step=0.01),
             ],
             outputs=[IO.Image.Output(display_name="image")],
@@ -212,13 +214,8 @@ class GradientMapNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, shadow_r, shadow_g, shadow_b,
-                highlight_r, highlight_g, highlight_b, mix) -> IO.NodeOutput:
-        luma = _luma(image).clamp(0.0, 1.0)  # [B, H, W, 1]
-        shadow = torch.tensor([shadow_r, shadow_g, shadow_b], device=image.device, dtype=image.dtype).view(1, 1, 1, 3)
-        high = torch.tensor([highlight_r, highlight_g, highlight_b], device=image.device, dtype=image.dtype).view(1, 1, 1, 3)
-        mapped = shadow * (1.0 - luma) + high * luma
-        x = (image * (1.0 - mix) + mapped * mix).clamp(0.0, 1.0)
+    def execute(cls, image, stops, mix) -> IO.NodeOutput:
+        x = apply_gradient_map(image, stops, mix)
         return IO.NodeOutput(x, ui=save_live_preview(x, str(cls.hidden.unique_id)))
 
 

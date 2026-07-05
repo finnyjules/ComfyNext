@@ -4,6 +4,7 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, IO
+from comfy_extras._gradient_map import apply_duotone
 from comfy_extras._live_preview import save_live_preview
 
 
@@ -17,16 +18,17 @@ class DuotoneNode(IO.ComfyNode):
         return IO.Schema(
             node_id="Duotone",
             display_name="Duotone",
-            description="Map luminance to two colors — classic newsprint look.",
+            description="Map luminance to two colours — classic newsprint look. "
+                        "Pick a shadow + highlight, or a colour-theory palette.",
             category="image/grading",
             inputs=[
                 IO.Image.Input("image"),
-                IO.Float.Input("shadow_r",    default=0.10, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("shadow_g",    default=0.10, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("shadow_b",    default=0.30, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_r", default=1.00, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_g", default=0.80, min=0.0, max=1.0, step=0.01),
-                IO.Float.Input("highlight_b", default=0.40, min=0.0, max=1.0, step=0.01),
+                IO.String.Input(
+                    "duotone",
+                    default='{"shadow":"#1a1a2e","highlight":"#f5f5f5"}',
+                    extra_dict={"comfynext_widget": "gradient_editor", "gradient_mode": "duotone"},
+                    tooltip="Shadow + highlight colours (managed by the palette widget).",
+                ),
             ],
             outputs=[IO.Image.Output(display_name="image")],
             hidden=[IO.Hidden.unique_id],
@@ -34,12 +36,8 @@ class DuotoneNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, shadow_r, shadow_g, shadow_b,
-                highlight_r, highlight_g, highlight_b) -> IO.NodeOutput:
-        l = _luma(image).clamp(0, 1)
-        c0 = torch.tensor([shadow_r, shadow_g, shadow_b], device=image.device, dtype=image.dtype).view(1, 1, 1, 3)
-        c1 = torch.tensor([highlight_r, highlight_g, highlight_b], device=image.device, dtype=image.dtype).view(1, 1, 1, 3)
-        x = (c0 * (1.0 - l) + c1 * l).clamp(0, 1)
+    def execute(cls, image, duotone) -> IO.NodeOutput:
+        x = apply_duotone(image, duotone)
         return IO.NodeOutput(x, ui=save_live_preview(x, str(cls.hidden.unique_id)))
 
 
