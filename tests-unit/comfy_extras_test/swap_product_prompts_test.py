@@ -29,3 +29,12 @@ def test_base_prompt_keeps_scene_fixed():
     # The reference scene's background and camera must be preserved.
     low = sp.SWAP_PRODUCT_PROMPT.lower()
     assert "background" in low and "camera" in low
+
+
+def test_base_prompt_relights_product_to_scene():
+    # Regression guard: the product must be re-lit to the scene, and its own
+    # original studio lighting explicitly discarded — otherwise it reads as a
+    # flat pasted-in cutout (the failure we saw on the first live render).
+    low = sp.SWAP_PRODUCT_PROMPT.lower()
+    assert "re-light" in low or "relight" in low
+    assert "discard" in low and "lighting" in low
