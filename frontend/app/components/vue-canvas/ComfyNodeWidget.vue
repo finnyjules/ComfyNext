@@ -14,6 +14,8 @@ const props = defineProps<{
     // gallery modal instead of showing a plain combo dropdown. Backend ships
     // this via IO.Combo.Input(..., extra_dict={"comfynext_widget": "model_picker"}).
     comfynext_widget?: string
+    // For comfynext_widget === 'gradient_editor': 'duotone' | 'stops'.
+    gradient_mode?: string
   }
   modelValue: any
   nodeType?: string
@@ -125,12 +127,7 @@ const GRADIENT_WIDGETS: Record<string, Record<string, string>> = {
     density: 'linear-gradient(to right, #555555, #888888 50%, #ffcc66)',
   },
   AdjustGradientMap: {
-    shadow_r:    'linear-gradient(to right, #000000, #ff3030)',
-    shadow_g:    'linear-gradient(to right, #000000, #30ff30)',
-    shadow_b:    'linear-gradient(to right, #000000, #3030ff)',
-    highlight_r: 'linear-gradient(to right, #555555, #ff6060)',
-    highlight_g: 'linear-gradient(to right, #555555, #60ff60)',
-    highlight_b: 'linear-gradient(to right, #555555, #6060ff)',
+    // colours now live in the gradient_editor widget; only `mix` is a slider
     mix:         'linear-gradient(to right, #2a2a2a, #6b6b6b 50%, #cccccc)',
   },
   AdjustChannelMixer: {
@@ -276,14 +273,6 @@ const GRADIENT_WIDGETS: Record<string, Record<string, string>> = {
   },
 
   // Grading
-  Duotone: {
-    shadow_r:    'linear-gradient(to right, #000000, #ff3030)',
-    shadow_g:    'linear-gradient(to right, #000000, #30ff30)',
-    shadow_b:    'linear-gradient(to right, #000000, #3030ff)',
-    highlight_r: 'linear-gradient(to right, #555555, #ff6060)',
-    highlight_g: 'linear-gradient(to right, #555555, #60ff60)',
-    highlight_b: 'linear-gradient(to right, #555555, #6060ff)',
-  },
   SplitToning: {
     shadow_r:    'linear-gradient(to right, #000000, #ff3030)',
     shadow_g:    'linear-gradient(to right, #000000, #30ff30)',
@@ -522,6 +511,16 @@ function formatLabel(name: string): string {
       <VueCanvasWidgetsWidgetTextOnPath
         :model-value="modelValue"
         :label="formatLabel(widgetDef.name)"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </template>
+    <!-- Duotone / Gradient Map colour editor: stop strip + colour-theory palette
+         picker. Owns a JSON blob ({shadow,highlight} or [{pos,color}]). -->
+    <template v-else-if="widgetDef.comfynext_widget === 'gradient_editor'">
+      <VueCanvasWidgetsWidgetGradientEditor
+        :model-value="modelValue"
+        :label="formatLabel(widgetDef.name)"
+        :mode="widgetDef.gradient_mode"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
