@@ -318,6 +318,7 @@ const {
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
+  hud,
 } = editor
 
 // In-product agent (Phase 2, 2nd home) — drives the frame through the Compositor
@@ -2316,6 +2317,10 @@ onUnmounted(() => {
           :style="{ left: snapGuides.vx * canvasDisplay.w + 'px' }" />
         <div v-if="snapGuides.hy != null" class="absolute left-0 right-0 h-px bg-white/80 pointer-events-none"
           :style="{ top: snapGuides.hy * canvasDisplay.h + 'px' }" />
+
+        <!-- Dimension HUD (while dragging) -->
+        <div v-if="hud" class="absolute px-1.5 py-0.5 rounded bg-black/80 text-white text-[11px] font-medium tabular-nums pointer-events-none whitespace-nowrap"
+          :style="{ left: hud.left + 'px', top: hud.top + 'px', transform: 'translate(-50%, -100%)' }">{{ hud.text }}</div>
 
         <!-- Marquee (rubber-band) selection rect -->
         <div v-if="marquee" class="absolute border border-white/80 bg-white/10 pointer-events-none"
