@@ -4,6 +4,7 @@
 // be inspected without wiring up a full canvas + ComfyUI backend. Not shipped UI.
 import { reactive, ref } from 'vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
+import ShotViewfinder from '~/components/vue-canvas/ShotViewfinder.vue'
 
 const portraitSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='520'>
   <rect width='320' height='520' fill='rgb(46,42,48)'/>
@@ -53,8 +54,19 @@ const open = ref(true)
 </script>
 
 <template>
-  <div class="min-h-screen bg-neutral-950">
+  <div class="min-h-screen bg-neutral-950 p-6">
     <ShotDirectorSurface v-if="open" :node-id="'harness-1'" :nodes="nodes" @close="open = false" />
-    <button v-else class="m-6 rounded bg-white/10 px-3 py-2 text-white" @click="open = true">Reopen</button>
+    <template v-else>
+      <button class="mb-6 rounded bg-white/10 px-3 py-2 text-white" @click="open = true">Reopen</button>
+      <!-- Standalone viewfinder to inspect keyframe rendering + stale chip -->
+      <div class="text-white">
+        <p class="mb-2 text-xs text-white/50">Viewfinder with a generated keyframe (stale):</p>
+        <ShotViewfinder
+          aspect-ratio="16:9" duration-label="5s" shot-type="medium" move="push-in" mode="reference"
+          :subject-image="portrait" subject-label="Vera" :environment-image="plate"
+          :keyframe="plate" :keyframe-stale="true"
+        />
+      </div>
+    </template>
   </div>
 </template>

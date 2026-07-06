@@ -16,7 +16,7 @@
  */
 const MODEL = 'google/nano-banana-pro'
 
-interface Body { prompt?: string; image?: string; images?: string[] }
+interface Body { prompt?: string; image?: string; images?: string[]; aspect_ratio?: string }
 
 export default defineEventHandler(async (event) => {
   const token = requireReplicateToken()
@@ -30,6 +30,8 @@ export default defineEventHandler(async (event) => {
 
   const input: Record<string, unknown> = { prompt, resolution: '1K', output_format: 'png' }
   if (imageList.length) input.image_input = imageList
+  // Optional aspect ratio (e.g. a keyframe preview matching the shot's ratio).
+  if (typeof body?.aspect_ratio === 'string' && body.aspect_ratio) input.aspect_ratio = body.aspect_ratio
 
   const out = await runReplicate(MODEL, input, token, { timeoutMs: 120_000 })
   const url = firstOutputUrl(out)

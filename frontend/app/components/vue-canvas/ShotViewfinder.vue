@@ -16,6 +16,10 @@ const props = defineProps<{
   subjectImage: string | null
   subjectLabel: string
   environmentImage?: string | null
+  /** a generated photoreal keyframe — when set, it becomes the frame image. */
+  keyframe?: string | null
+  /** the keyframe no longer reflects the current inputs. */
+  keyframeStale?: boolean
   firstFrame?: string
   lastFrame?: string
 }>()
@@ -105,31 +109,42 @@ const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
 
       <!-- REFERENCE: composed subject in-frame -->
       <template v-else>
-        <!-- environment plate — the location backdrop, darkened so the subject reads -->
-        <template v-if="environmentImage">
-          <img :src="environmentImage" class="absolute inset-0 h-full w-full object-cover" alt="" />
-          <div class="absolute inset-0 bg-black/30" />
+        <!-- Generated keyframe: the photoreal preview becomes the frame image -->
+        <template v-if="keyframe">
+          <img :src="keyframe" class="absolute inset-0 h-full w-full object-cover" alt="" />
+          <span
+            v-if="keyframeStale"
+            class="pointer-events-none absolute right-2 top-8 rounded bg-amber-500/85 px-1.5 py-0.5 text-[9px] font-medium text-amber-950"
+          >Preview out of date</span>
+        </template>
+        <!-- Schematic composition (no keyframe yet) -->
+        <template v-else>
+          <!-- environment plate — the location backdrop, darkened so the subject reads -->
+          <template v-if="environmentImage">
+            <img :src="environmentImage" class="absolute inset-0 h-full w-full object-cover" alt="" />
+            <div class="absolute inset-0 bg-black/30" />
+          </template>
+
+          <!-- rule-of-thirds guides -->
+          <svg class="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+            <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
+            <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
+            <line x1="0" y1="33.3" x2="100" y2="33.3" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
+            <line x1="0" y1="66.6" x2="100" y2="66.6" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
+          </svg>
+
+          <!-- subject, framed on the right third, scaled by shot type -->
+          <div v-if="subjectImage" class="absolute bottom-0 left-[63%] -translate-x-1/2 overflow-hidden rounded-t-sm">
+            <img :src="subjectImage" :style="subjectStyle" class="object-cover" alt="" />
+          </div>
+          <div v-else-if="!environmentImage" class="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
+            <span class="text-[11px] text-white/40">Your shot appears here</span>
+            <span class="text-[10px] leading-relaxed text-white/25">Cast a character or add a reference photo — framing and camera move preview live.</span>
+          </div>
         </template>
 
-        <!-- rule-of-thirds guides -->
-        <svg class="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
-          <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
-          <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
-          <line x1="0" y1="33.3" x2="100" y2="33.3" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
-          <line x1="0" y1="66.6" x2="100" y2="66.6" stroke="rgba(255,255,255,0.07)" stroke-width="0.4" />
-        </svg>
-
-        <!-- subject, framed on the right third, scaled by shot type -->
-        <div v-if="subjectImage" class="absolute bottom-0 left-[63%] -translate-x-1/2 overflow-hidden rounded-t-sm">
-          <img :src="subjectImage" :style="subjectStyle" class="object-cover" alt="" />
-        </div>
-        <div v-else-if="!environmentImage" class="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
-          <span class="text-[11px] text-white/40">Your shot appears here</span>
-          <span class="text-[10px] leading-relaxed text-white/25">Cast a character or add a reference photo — framing and camera move preview live.</span>
-        </div>
-
-        <!-- camera-move motif overlay -->
-        <svg v-if="subjectImage" class="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet">
+        <!-- camera-move motif overlay (over schematic OR keyframe — a still can't show motion) -->
+        <svg v-if="keyframe || subjectImage" class="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet">
           <g stroke="rgba(255,255,255,0.6)" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round">
             <template v-if="moveKind === 'in'">
               <path d="M34 20 h6 M34 20 v6 M66 20 h-6 M66 20 v6 M34 40 h6 M34 40 v-6 M66 40 h-6 M66 40 v-6" />

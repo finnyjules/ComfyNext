@@ -11,6 +11,7 @@ import {
   type RefKind, type RefRole, type CastMember,
 } from '~/lib/shotdirector/types'
 import { formatShotUSD } from '~/lib/shotdirector/price'
+import { buildKeyframePrompt, KEYFRAME_COST_USD } from '~/lib/shotdirector/keyframe'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
@@ -197,6 +198,58 @@ async function generateEnvironment() {
     envError.value = err instanceof Error ? err.message : 'Generation failed'
   } finally {
     envGenerating.value = false
+  }
+}
+
+// ── Keyframe preview ─────────────────────────────────────────────────────────
+// A photoreal still generated from the SAME references + intent Seedance will use
+// — a ~$0.05 proxy for the slow, ~$2.25 run. On-demand (explicit button); editing
+// never spends, it just marks the shown keyframe stale.
+const previewCost = `~$${KEYFRAME_COST_USD.toFixed(2)}`
+const previewFrame = ref<string | null>(null)
+const previewBusy = ref(false)
+const previewError = ref<string | null>(null)
+const previewKey = ref<string | null>(null)
+
+// What the keyframe depends on — when this drifts from previewKey, it's stale.
+const previewSignature = computed(() =>
+  JSON.stringify([result.value.prompt, subjectImage.value, environmentImage.value, sheet.value.format.aspectRatio]))
+const keyframeStale = computed(() => !!previewFrame.value && previewKey.value !== previewSignature.value)
+const canPreview = computed(() => !!(subjectImage.value || environmentImage.value || sheet.value.subject.trim()))
+
+function fetchImageAsDataUrl(url: string): Promise<string> {
+  return fetch(url).then(r => r.blob()).then(blob => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  }))
+}
+
+async function generatePreview() {
+  if (previewBusy.value) return
+  previewBusy.value = true
+  previewError.value = null
+  const sig = previewSignature.value
+  try {
+    const person = subjectImage.value
+    const location = environmentImage.value
+    const images: string[] = []
+    if (person) images.push(await fetchImageAsDataUrl(person))
+    if (location) images.push(await fetchImageAsDataUrl(location))
+    const prompt = buildKeyframePrompt(sheet.value, { hasPerson: !!person, hasLocation: !!location })
+    const res = await $fetch<{ images?: string[] }>('/api/inpaint/nano-gen', {
+      method: 'POST',
+      body: { prompt, images, aspect_ratio: sheet.value.format.aspectRatio },
+    })
+    const out = res.images?.[0]
+    if (!out) throw new Error('No image returned')
+    previewFrame.value = out
+    previewKey.value = sig
+  } catch (err) {
+    previewError.value = err instanceof Error ? err.message : 'Preview failed'
+  } finally {
+    previewBusy.value = false
   }
 }
 
@@ -956,9 +1009,32 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             :subject-image="subjectImage"
             :subject-label="subjectLabel"
             :environment-image="environmentImage"
+            :keyframe="previewFrame"
+            :keyframe-stale="keyframeStale"
             :first-frame="sheet.firstFrame"
             :last-frame="sheet.lastFrame"
           />
+
+          <!-- Keyframe preview: a photoreal still from the same refs Seedance uses -->
+          <div v-if="sheet.mode === 'reference'" class="flex flex-col gap-1">
+            <button
+              type="button"
+              class="gen-pastel flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium text-neutral-900 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              :class="{ 'animate-pulse': previewBusy }"
+              :disabled="previewBusy || !canPreview"
+              title="Generate a photoreal preview frame from the same references Seedance uses"
+              @click="generatePreview"
+            >
+              <Sparkles class="h-3 w-3" />
+              {{ previewBusy
+                ? 'Rendering preview…'
+                : previewFrame
+                  ? (keyframeStale ? `Update preview · ${previewCost}` : `Refresh preview · ${previewCost}`)
+                  : `Preview frame · ${previewCost}` }}
+            </button>
+            <p v-if="previewError" class="text-[10px] text-red-400/80">{{ previewError }}</p>
+            <p v-else class="text-[10px] leading-relaxed text-white/30">A quick photoreal still from your references — a real look before the slow full run.</p>
+          </div>
 
           <!-- Issues (errors block generate) -->
           <div v-if="result.issues.length > 0" class="space-y-1">
