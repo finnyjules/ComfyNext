@@ -2592,6 +2592,7 @@ async def init_builtin_extra_nodes():
         "nodes_relight.py",
         "nodes_swap_product.py",
         "nodes_swap_background.py",
+        "nodes_turntable.py",
         "nodes_model3d.py",
         "nodes_comfynext_projects.py",
         "nodes_timeline.py",
