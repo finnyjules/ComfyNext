@@ -18,6 +18,8 @@ def stitch_clips(sources: list) -> io.BytesIO:
     out_buf = io.BytesIO()
     out_container = None
     out_stream = None
+    out_fps = None
+    out_frame_idx = 0
     W = H = None
     for idx, src in enumerate(sources):
         if hasattr(src, "seek"):
@@ -29,8 +31,9 @@ def stitch_clips(sources: list) -> io.BytesIO:
             for frame in cin.decode(vin):
                 if out_container is None:
                     W, H = frame.width, frame.height
+                    out_fps = fps
                     out_container = av.open(out_buf, mode="w", format="mp4")
-                    out_stream = out_container.add_stream("h264", rate=fps)
+                    out_stream = out_container.add_stream("h264", rate=out_fps)
                     out_stream.width, out_stream.height = W, H
                     out_stream.pix_fmt = "yuv420p"
                     out_stream.options = {"preset": "veryfast", "crf": "20"}
@@ -40,11 +43,15 @@ def stitch_clips(sources: list) -> io.BytesIO:
                     continue
                 frame_no += 1
                 rf = frame.reformat(width=W, height=H, format="yuv420p")
-                # Decoded frames carry the *input* stream's pts/time_base; clearing
-                # it lets the output encoder assign fresh, monotonic timestamps in
-                # its own time_base instead of feeding it a mismatched raw pts
-                # (which errors out or crashes the encoder on the 2nd+ frame).
-                rf.pts = None
+                # Decoded frames carry the *input* stream's pts/time_base, which is
+                # meaningless in the output stream's time_base. Rather than clearing
+                # pts (which stamps every frame at t=0 and collapses the container's
+                # duration), assign an explicit monotonic output-frame index in the
+                # output stream's own 1/fps time_base so timestamps stay correct and
+                # strictly increasing across all joined clips.
+                rf.pts = out_frame_idx
+                rf.time_base = Fraction(1, 1) / out_fps
+                out_frame_idx += 1
                 for pkt in out_stream.encode(rf):
                     out_container.mux(pkt)
     for pkt in out_stream.encode():
