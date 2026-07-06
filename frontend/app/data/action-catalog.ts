@@ -59,6 +59,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   FindObjectsNode:       { useCase: 'Find objects in an image',       model: 'YOLO-World',                               intent: 'analyze' },
   // -- Video -------------------------------------------------------------------
   GenerateVideoNode:     { useCase: 'Generate a video',               model: 'Seedance / Veo 3 / Kling',                 intent: 'create' },
+  TurntableNode:         { useCase: 'Spin a product 360°',            model: 'Luma Ray 2 / Seedance 2.0',                intent: 'create' },
   FilmShotNode:          { useCase: 'Film a shot',                    model: 'Kling v2.5 Turbo Pro + shot presets',      intent: 'create' },
   LipsyncNode:           { useCase: 'Sync lips to audio',             model: 'sync.so 2-pro',                            intent: 'edit', source: 'video' },
   LipSyncNode:           { useCase: 'Lip-sync a character',           model: 'VEED Fabric 1.0 / sync.so 2-pro',          intent: 'edit' },

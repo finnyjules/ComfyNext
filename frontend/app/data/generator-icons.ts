@@ -47,6 +47,7 @@ import {
   AudioLines,
   Replace,
   ImagePlus,
+  Rotate3d,
 } from 'lucide-vue-next'
 
 export const GENERATOR_NODE_ICONS: Record<string, Component> = {
@@ -85,6 +86,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
 
   // ----- Video -----
   GenerateVideoNode:    Film,
+  TurntableNode:        Rotate3d,
   FilmShotNode:         Clapperboard,
   EnhanceVideoNode:     Wand2,
   DescribeVideoNode:    MessageSquareText,
@@ -153,6 +155,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
 
   // ----- Video -----
   GenerateVideoNode:    null,                 // Multi: Seedance / Veo / Kling
+  TurntableNode:        'Luma',               // Luma Ray 2 (front-only default path)
   FilmShotNode:         null,                 // Multi: full video gallery
   EnhanceVideoNode:     'Topaz',
   DescribeVideoNode:    'Gemini',
