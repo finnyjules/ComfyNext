@@ -136,3 +136,13 @@ describe('mapKeyToEdit copy/paste', () => {
     expect(mapKeyToEdit({ key: 'v' }, 1, 10)).toBeNull()
   })
 })
+
+import { dragHud } from '../../app/lib/compositor/layerEdits'
+
+describe('dragHud', () => {
+  const info = { wPx: 120.4, hPx: 60.6, xPx: 340.5, yPx: 200.2, rotation: 12.7 }
+  it('scale → rounded W × H', () => { expect(dragHud('scale', info)).toEqual({ text: '120 × 61' }) })
+  it('rotate → rounded degrees', () => { expect(dragHud('rotate', info)).toEqual({ text: '13°' }) })
+  it('move → rounded X, Y', () => { expect(dragHud('move', info)).toEqual({ text: '341, 200' }) })
+  it('null kind → null', () => { expect(dragHud(null, info)).toBeNull() })
+})

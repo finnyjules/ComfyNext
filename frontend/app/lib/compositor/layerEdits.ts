@@ -113,3 +113,14 @@ export function mapKeyToEdit(
   if (meta && (e.key === 'd' || e.key === 'D')) return { type: 'duplicate' }
   return null
 }
+
+/** HUD text for the active drag: scale → "W × H", rotate → "N°", move → "X, Y". */
+export function dragHud(
+  kind: 'move' | 'scale' | 'rotate' | null,
+  info: { wPx: number; hPx: number; xPx: number; yPx: number; rotation: number },
+): { text: string } | null {
+  if (kind === 'scale') return { text: `${Math.round(info.wPx)} × ${Math.round(info.hPx)}` }
+  if (kind === 'rotate') return { text: `${Math.round(info.rotation)}°` }
+  if (kind === 'move') return { text: `${Math.round(info.xPx)}, ${Math.round(info.yPx)}` }
+  return null
+}

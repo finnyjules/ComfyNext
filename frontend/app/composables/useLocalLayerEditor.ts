@@ -19,7 +19,7 @@ import {
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
-import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit } from '~/lib/compositor/layerEdits'
+import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit, dragHud } from '~/lib/compositor/layerEdits'
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
 
 interface EditorOpts {
@@ -248,6 +248,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!l) return null
     const b = boxPx(l)
     return boxHandles(l.x * dims().w, l.y * dims().h, b.w / 2, b.h / 2, l.rotation)
+  })
+
+  const hud = computed(() => {
+    const d = drag.value; const l = selected.value
+    if (!d || !l) return null
+    const b = boxPx(l); const W = dims().w, H = dims().h
+    const h = dragHud(d.type, { wPx: b.w, hPx: b.h, xPx: l.x * W, yPx: l.y * H, rotation: l.rotation })
+    if (!h) return null
+    return { text: h.text, left: l.x * W, top: l.y * H - b.h / 2 - 12 }
   })
 
   // ── Align / distribute (operates on the multi-selection) ────────────────────
@@ -588,7 +597,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     localLayers, selectedId, selected, selectLocal,
     setLocal, addLocal, deleteLocal, moveLocalZ,
     editingId, editingLayer, beginEdit, endEdit,
-    boxPx, handlePositions,
+    boxPx, handlePositions, hud,
     hitTest, startScale, startRotate,
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
