@@ -2,7 +2,10 @@
 // Defensive hydration of a persisted ShotSheet (node.data.properties.comfynext_shotDirector)
 // and pure reference-list helpers. Mirrors the shaderstudio hydrateConfig pattern.
 
-import { createDefaultShotSheet, type CastMember, type Ref, type RefKind, type ShotSheet } from './types'
+import {
+  createDefaultShotSheet, CAMERA_MOVE_PHRASE, MOVE_DIRECTIONS,
+  type CameraDirection, type CameraMove, type CastMember, type Ref, type RefKind, type ShotSheet,
+} from './types'
 
 function obj(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
@@ -12,6 +15,22 @@ function arr<T>(v: unknown): T[] {
 }
 function str(v: unknown, d: string): string {
   return typeof v === 'string' ? v : d
+}
+
+/** Validate the camera block: unknown move → default; direction kept only if the
+ *  move allows it (so a stale direction from a move change is dropped). */
+function hydrateCamera(cam: Record<string, unknown>, d: ShotSheet): ShotSheet['camera'] {
+  const move: CameraMove = (typeof cam.move === 'string' && cam.move in CAMERA_MOVE_PHRASE)
+    ? cam.move as CameraMove : d.camera.move
+  const allowed = MOVE_DIRECTIONS[move] as string[]
+  const direction = (typeof cam.direction === 'string' && allowed.includes(cam.direction))
+    ? cam.direction as CameraDirection : undefined
+  return {
+    shotType: str(cam.shotType, d.camera.shotType) as ShotSheet['camera']['shotType'],
+    move,
+    pacing: str(cam.pacing, d.camera.pacing) as ShotSheet['camera']['pacing'],
+    ...(direction ? { direction } : {}),
+  }
 }
 
 export function hydrateShotSheet(raw: unknown): ShotSheet {
@@ -26,11 +45,7 @@ export function hydrateShotSheet(raw: unknown): ShotSheet {
     environment: str(r.environment, d.environment),
     lighting: str(r.lighting, d.lighting),
     style: str(r.style, d.style),
-    camera: {
-      shotType: str(cam.shotType, d.camera.shotType) as ShotSheet['camera']['shotType'],
-      move: str(cam.move, d.camera.move) as ShotSheet['camera']['move'],
-      pacing: str(cam.pacing, d.camera.pacing) as ShotSheet['camera']['pacing'],
-    },
+    camera: hydrateCamera(cam, d),
     constraints: arr<string>(r.constraints),
     cast: arr<CastMember>(r.cast)
       .filter(c =>

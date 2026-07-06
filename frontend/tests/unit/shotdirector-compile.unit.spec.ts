@@ -33,7 +33,7 @@ describe('buildPrompt — reference mode, no beats', () => {
     expect(buildPrompt(s, SEEDANCE_PROFILE)).toBe(
       'A jazz singer in a red dress steps up to the microphone and begins to sing, '
       + 'in a dim, smoky 1950s jazz club. '
-      + 'Medium shot, slow push-in. '
+      + 'Medium shot, slow dolly in, the camera moving physically forward. '
       + 'Warm rim light from a single spotlight; grainy 16mm film. '
       + "Use @Image1 for the character's identity and wardrobe; @Video1 for the camera movement. "
       + '"Good evening, everyone." '
@@ -54,7 +54,7 @@ describe('buildPrompt — reference mode, no beats', () => {
     s.firstFrame = 'FIRST'
     const prompt = buildPrompt(s, SEEDANCE_PROFILE)
     expect(prompt).not.toContain('@Image')
-    expect(prompt).toContain('Medium shot, slow push-in.')
+    expect(prompt).toContain('Medium shot, slow dolly in, the camera moving physically forward.')
   })
 })
 
@@ -67,10 +67,10 @@ describe('buildPrompt — beats', () => {
       { id: 'b1', startS: 4, endS: 8, action: 'she picks up a glass', shotType: 'close-up', move: 'push-in', pacing: 'slow' },
     ]
     const prompt = buildPrompt(s, SEEDANCE_PROFILE)
-    expect(prompt).toContain('[0s] Wide shot, smooth locked-off, static camera. She walks to the bar.')
-    expect(prompt).toContain('[4s] Close-up, slow push-in. She picks up a glass.')
+    expect(prompt).toContain('[0s] Wide shot, smooth locked-off, a static camera. She walks to the bar.')
+    expect(prompt).toContain('[4s] Close-up, slow dolly in, the camera moving physically forward. She picks up a glass.')
     // The single non-beat camera line must NOT also appear.
-    expect(prompt).not.toContain('Medium shot, slow push-in.')
+    expect(prompt).not.toContain('Medium shot, slow dolly in')
   })
 })
 

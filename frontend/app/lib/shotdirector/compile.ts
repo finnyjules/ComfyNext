@@ -5,7 +5,7 @@
 // Deterministic and pure — pinned by golden tests.
 
 import {
-  CAMERA_MOVE_PHRASE, ROLE_PURPOSE, SHOT_TYPE_PHRASE,
+  cameraMoveClause, ROLE_PURPOSE, SHOT_TYPE_PHRASE,
   type Beat, type ShotSheet,
 } from './types'
 import { validateShotSheet, type RefCaps, type ValidationIssue } from './rules'
@@ -27,17 +27,20 @@ function capitalize(s: string): string {
   return s.length ? s[0]!.toUpperCase() + s.slice(1) : s
 }
 
-/** "Medium shot, slow push-in." for the shot's single camera line. */
-function cameraLine(shotType: ShotSheet['camera']['shotType'], move: ShotSheet['camera']['move'], pacing: string): string {
-  return `${SHOT_TYPE_PHRASE[shotType]}, ${pacing} ${CAMERA_MOVE_PHRASE[move]}.`
+/** "Medium shot, slow dolly in, the camera moving physically forward." */
+function cameraLine(shotType: ShotSheet['camera']['shotType'], move: ShotSheet['camera']['move'], pacing: string, direction?: ShotSheet['camera']['direction']): string {
+  return `${SHOT_TYPE_PHRASE[shotType]}, ${pacing} ${cameraMoveClause(move, direction)}.`
 }
 
-/** "[0s] Wide shot, smooth locked-off, static camera. She walks to the bar." */
+/** "[0s] Wide shot, smooth locked-off, a static camera. She walks to the bar." */
 function beatLine(sheet: ShotSheet, b: Beat): string {
   const shotType = b.shotType ?? sheet.camera.shotType
   const move = b.move ?? sheet.camera.move
   const pacing = b.pacing ?? sheet.camera.pacing
-  const cam = `${SHOT_TYPE_PHRASE[shotType]}, ${pacing} ${CAMERA_MOVE_PHRASE[move]}.`
+  // A beat inherits the shot's direction only when it inherits the shot's move;
+  // a beat that overrides the move falls back to that move's default direction.
+  const direction = b.move ? undefined : sheet.camera.direction
+  const cam = `${SHOT_TYPE_PHRASE[shotType]}, ${pacing} ${cameraMoveClause(move, direction)}.`
   const action = b.action.trim().replace(/\.$/, '')
   return `[${b.startS}s] ${cam} ${capitalize(action)}.`
 }
@@ -87,7 +90,7 @@ export function buildPrompt(sheet: ShotSheet, profile: ModelProfile): string {
   if (sheet.beats.length > 0) {
     for (const b of sheet.beats) segments.push(beatLine(sheet, b))
   } else {
-    segments.push(cameraLine(sheet.camera.shotType, sheet.camera.move, sheet.camera.pacing))
+    segments.push(cameraLine(sheet.camera.shotType, sheet.camera.move, sheet.camera.pacing, sheet.camera.direction))
   }
 
   // Lighting + Style.
