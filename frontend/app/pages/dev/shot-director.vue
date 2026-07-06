@@ -35,7 +35,7 @@ const seededSheet = {
   environment: 'rainy street, neon signs',
   lighting: 'neon',
   style: 'cinematic, 35mm film grain',
-  camera: { shotType: 'medium', move: 'push-in', pacing: 'smooth' },
+  camera: { shotType: 'medium', move: 'orbit', pacing: 'smooth', direction: 'ccw' },
   constraints: ['no camera shake'],
   cast: [{ slug: 'vera', name: 'Vera', via: 'picker' }],
   references: [

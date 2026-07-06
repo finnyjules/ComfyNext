@@ -788,8 +788,10 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
               :shot-type="sheet.camera.shotType"
               :move="sheet.camera.move"
               :pacing="sheet.camera.pacing"
+              :direction="sheet.camera.direction"
               @update:shot-type="v => update(s => ({ ...s, camera: { ...s.camera, shotType: v } }))"
               @update:move="v => update(s => ({ ...s, camera: { ...s.camera, move: v } }))"
+              @update:direction="v => update(s => ({ ...s, camera: { ...s.camera, direction: v } }))"
               @update:pacing="v => update(s => ({ ...s, camera: { ...s.camera, pacing: v } }))"
             />
           </StudioSection>
@@ -1005,6 +1007,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             :duration-label="durationLabel"
             :shot-type="sheet.camera.shotType"
             :move="sheet.camera.move"
+            :direction="sheet.camera.direction"
             :mode="sheet.mode"
             :subject-image="subjectImage"
             :subject-label="subjectLabel"

@@ -5,13 +5,14 @@
 // reflects the shot type, and a camera-move motif. Purely presentational — it
 // reads the sheet, it never mutates it.
 import { computed } from 'vue'
-import { SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, type ShotType, type CameraMove, type ShotMode } from '~/lib/shotdirector/types'
+import { SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, MOVE_DEFAULT_DIR, type ShotType, type CameraMove, type CameraDirection, type ShotMode } from '~/lib/shotdirector/types'
 
 const props = defineProps<{
   aspectRatio: string
   durationLabel: string
   shotType: ShotType
   move: CameraMove
+  direction?: CameraDirection
   mode: ShotMode
   subjectImage: string | null
   subjectLabel: string
@@ -62,21 +63,38 @@ const subjectStyle = computed(() => {
 })
 
 // Camera-move motif — a small vocabulary of directional glyphs drawn over the frame.
-type MoveKind = 'in' | 'out' | 'horizontal' | 'track' | 'orbit' | 'down' | 'wave' | 'static'
+type MoveKind = 'in' | 'out' | 'horizontal' | 'vertical' | 'track' | 'orbit' | 'arc' | 'down' | 'wave' | 'static'
 const MOVE_KIND: Record<CameraMove, MoveKind> = {
-  'push-in': 'in',
-  'pull-out': 'out',
-  'pan': 'horizontal',
+  'locked-off': 'static',
+  'push-in': 'in', 'zoom-in': 'in',
+  'pull-out': 'out', 'zoom-out': 'out',
+  'pan': 'horizontal', 'whip-pan': 'horizontal', 'truck': 'horizontal',
+  'tilt': 'vertical', 'pedestal': 'vertical', 'crane': 'vertical',
   'track': 'track',
+  'arc': 'arc',
   'orbit': 'orbit',
   'aerial': 'down',
   'handheld': 'wave',
-  'locked-off': 'static',
 }
 const moveKind = computed(() => MOVE_KIND[props.move] ?? 'static')
+// Effective direction (chosen, else the move's default).
+const dir = computed<CameraDirection | undefined>(() => props.direction ?? MOVE_DEFAULT_DIR[props.move])
+// Horizontal arrows / curves mirror for left + counter-clockwise; vertical flips for down.
+const mirrorX = computed(() => dir.value === 'left' || dir.value === 'ccw')
+const pointDown = computed(() => dir.value === 'down')
+// SVG viewBox is 0..100 wide; mirror about the centre.
+const motifTransform = computed(() => {
+  if ((moveKind.value === 'horizontal' || moveKind.value === 'orbit' || moveKind.value === 'arc') && mirrorX.value) return 'matrix(-1,0,0,1,100,0)'
+  if (moveKind.value === 'vertical' && pointDown.value) return 'matrix(1,0,0,-1,0,60)'
+  return undefined
+})
 
+const DIR_SHORT: Record<CameraDirection, string> = { left: 'left', right: 'right', up: 'up', down: 'down', cw: 'CW', ccw: 'CCW' }
 const shotLabel = computed(() => SHOT_TYPE_PHRASE[props.shotType] ?? props.shotType)
-const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
+const moveLabel = computed(() => {
+  const base = CAMERA_MOVE_PHRASE[props.move] ?? props.move
+  return dir.value ? `${base} ${DIR_SHORT[dir.value]}` : base
+})
 </script>
 
 <template>
@@ -145,7 +163,7 @@ const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
 
         <!-- camera-move motif overlay (over schematic OR keyframe — a still can't show motion) -->
         <svg v-if="keyframe || subjectImage" class="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet">
-          <g stroke="rgba(255,255,255,0.6)" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <g stroke="rgba(255,255,255,0.6)" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" :transform="motifTransform">
             <template v-if="moveKind === 'in'">
               <path d="M34 20 h6 M34 20 v6 M66 20 h-6 M66 20 v6 M34 40 h6 M34 40 v-6 M66 40 h-6 M66 40 v-6" />
               <path d="M45 30 h4 M47 28 l3 2 l-3 2" opacity="0.9" />
@@ -155,6 +173,13 @@ const moveLabel = computed(() => CAMERA_MOVE_PHRASE[props.move] ?? props.move)
             </template>
             <template v-else-if="moveKind === 'horizontal'">
               <path d="M30 30 H70 M64 26 l5 4 l-5 4" />
+            </template>
+            <template v-else-if="moveKind === 'vertical'">
+              <path d="M50 42 V20 M46 25 l4 -5 l4 5" />
+            </template>
+            <template v-else-if="moveKind === 'arc'">
+              <path d="M30 40 q20 -24 40 0" />
+              <path d="M64 34 l6 6 l-7 1" />
             </template>
             <template v-else-if="moveKind === 'track'">
               <path d="M28 26 H68 M63 22 l5 4 l-5 4" />
