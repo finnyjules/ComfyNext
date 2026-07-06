@@ -46,6 +46,7 @@ import {
   Boxes,
   AudioLines,
   Replace,
+  ImagePlus,
 } from 'lucide-vue-next'
 
 export const GENERATOR_NODE_ICONS: Record<string, Component> = {
@@ -66,6 +67,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   EditImageNode:        Pencil,
   BlendSceneNode:       Blend,
   SwapProductNode:      Replace,
+  SwapBackgroundNode:   ImagePlus,
   UpscaleImageNode:     Maximize2,
   RemoveBackgroundNode: Scissors,
   RestorePhotoNode:     Wand2,
@@ -131,6 +133,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
   SketchToImageNode:    'Gemini',             // Nano Banana = Google's lightweight model
   RelightNode:          'Gemini',             // Nano Banana 2
   SwapProductNode:      'Gemini',             // Nano Banana 2
+  SwapBackgroundNode:   'Gemini',             // Nano Banana 2
 
   // ----- Image · manipulation -----
   EditImageNode:        'BFL',                // Flux Kontext Pro
