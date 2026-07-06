@@ -22,8 +22,9 @@ describe('useCharacters', () => {
     const { characters, refresh, resolveRefs, coverUrl } = useCharacters()
     await refresh()
     expect(characters.value).toHaveLength(1)
+    // Cover-first: coverIndex 1 (r2) leads the resolved list.
     expect(resolveRefs(['reva', 'ghost'])).toEqual({
-      reva: ['/view?filename=r1.png&type=input', '/view?filename=r2.png&type=input'],
+      reva: ['/view?filename=r2.png&type=input', '/view?filename=r1.png&type=input'],
       ghost: [],
     })
     expect(coverUrl(characters.value[0]!)).toBe('/view?filename=r2.png&type=input')
@@ -47,16 +48,26 @@ describe('useCharacters', () => {
     expect(resolveVariantRefs([{ slug: 'reva', variantId: 'punk' }])).toEqual({
       reva: ['/view?filename=p1.png&type=input'],
     })
-    // Unknown variant id falls back to the default variant.
+    // Unknown variant id falls back to the default variant (cover-first: r2 leads).
     expect(resolveVariantRefs([{ slug: 'reva', variantId: 'nonexistent' }])).toEqual({
-      reva: ['/view?filename=r1.png&type=input', '/view?filename=r2.png&type=input'],
+      reva: ['/view?filename=r2.png&type=input', '/view?filename=r1.png&type=input'],
     })
-    // No variantId → default variant.
+    // No variantId → default variant (cover-first).
     expect(resolveVariantRefs([{ slug: 'reva' }])).toEqual({
-      reva: ['/view?filename=r1.png&type=input', '/view?filename=r2.png&type=input'],
+      reva: ['/view?filename=r2.png&type=input', '/view?filename=r1.png&type=input'],
     })
     // Unknown slug → empty array.
     expect(resolveVariantRefs([{ slug: 'ghost' }])).toEqual({ ghost: [] })
+  })
+
+  it('coverFirstRefs orders the cover first and tolerates edge coverIndexes', async () => {
+    const { coverFirstRefs } = await import('~/composables/useCharacters')
+    expect(coverFirstRefs({ refImages: ['a', 'b', 'c'], coverIndex: 2 })).toEqual(['c', 'a', 'b'])
+    expect(coverFirstRefs({ refImages: ['a', 'b'], coverIndex: 0 })).toEqual(['a', 'b'])
+    expect(coverFirstRefs({ refImages: ['solo'], coverIndex: 5 })).toEqual(['solo']) // clamped, single
+    expect(coverFirstRefs({ refImages: [], coverIndex: 0 })).toEqual([])
+    expect(coverFirstRefs(undefined)).toEqual([])
+    expect(coverFirstRefs({ refImages: ['a', 'b', 'c'], coverIndex: 9 })).toEqual(['c', 'a', 'b']) // clamped high
   })
 
   it('coverUrl(c, variantId) returns the named variant cover, falling back to default', async () => {

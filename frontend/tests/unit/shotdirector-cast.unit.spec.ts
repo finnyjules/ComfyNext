@@ -17,22 +17,25 @@ function sheetWithCast() {
 }
 
 describe('materializeCast', () => {
-  it('injects identity-lock refs cast-first and renumbers manual refs after', () => {
+  it('injects one cover ref per member (cast-first) and renumbers manual refs after', () => {
     const s = sheetWithCast()
     s.references = [{ kind: 'image', slot: 1, src: U('manual.png'), role: 'style-transfer' }]
+    // resolved is cover-first; only the first (cover) per member is sent.
     const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
     const imgs = sheet.references.filter(r => r.kind === 'image')
     expect(imgs.map(r => [r.slot, r.src, r.castSlug ?? null])).toEqual([
-      [1, U('r1'), 'reva'], [2, U('r2'), 'reva'], [3, U('m1'), 'marcus'], [4, U('manual.png'), null],
+      [1, U('r1'), 'reva'], [2, U('m1'), 'marcus'], [3, U('manual.png'), null],
     ])
     expect(imgs[0]!.role).toBe('identity-lock')
   })
 
-  it('caps refs per member at 3', () => {
+  it('sends only the cover (one ref) per member, however many photos resolve', () => {
     const s = sheetWithCast()
     s.cast = [s.cast[0]!]
     const { sheet } = materializeCast(s, { reva: [U('1'), U('2'), U('3'), U('4')] }, SEEDANCE_PROFILE)
-    expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(3)
+    const revaRefs = sheet.references.filter(r => r.castSlug === 'reva')
+    expect(revaRefs).toHaveLength(1)
+    expect(revaRefs[0]!.src).toBe(U('1')) // the cover leads the cover-first list
   })
 
   it('is idempotent — re-materializing replaces cast refs, never duplicates', () => {
@@ -42,17 +45,16 @@ describe('materializeCast', () => {
     expect(twice.references).toHaveLength(2)
   })
 
-  it('squeezes per-member caps when manual refs crowd the budget, min 1, with a warning', () => {
+  it('still gives each member exactly one cover when manual refs are present (no squeeze)', () => {
     const s = sheetWithCast()
     s.references = Array.from({ length: 5 }, (_, i) => ({
       kind: 'image' as const, slot: i + 1, src: U(`man${i}`), role: 'style-transfer' as const,
     }))
-    // budget 9 − 5 manual = 4; 2 members → floor(4/2)=2 each
+    // 5 manual + 2 covers = 7 ≤ 9 → fits, so no warning and one cover each.
     const { sheet, issues } = materializeCast(s, { reva: [U('1'), U('2'), U('3')], marcus: [U('4'), U('5'), U('6')] }, SEEDANCE_PROFILE)
-    expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(2)
-    const warning = issues.find(i => i.level === 'warning' && i.code === 'cast-refs-squeezed')
-    expect(warning).toBeDefined()
-    expect(warning!.message).toContain('crowd the')
+    expect(sheet.references.filter(r => r.castSlug === 'reva')).toHaveLength(1)
+    expect(sheet.references.filter(r => r.castSlug === 'marcus')).toHaveLength(1)
+    expect(issues.find(i => i.code === 'cast-refs-squeezed')).toBeUndefined()
   })
 
   it('warns with "remove manual references" when budget < members (overcap)', () => {
@@ -110,10 +112,10 @@ describe('materializeCast', () => {
 })
 
 describe('castClause', () => {
-  it('names each member with their bracket tags in slot order', () => {
+  it('names each member with their cover tag', () => {
     const s = sheetWithCast()
     const { sheet } = materializeCast(s, { reva: [U('r1'), U('r2')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
-    expect(castClause(sheet, SEEDANCE_PROFILE)).toBe('Characters: Reva @Image1 @Image2; Marcus @Image3.')
+    expect(castClause(sheet, SEEDANCE_PROFILE)).toBe('Characters: Reva @Image1; Marcus @Image2.')
   })
   it('is empty with no cast refs', () => {
     expect(castClause(createDefaultShotSheet(), SEEDANCE_PROFILE)).toBe('')

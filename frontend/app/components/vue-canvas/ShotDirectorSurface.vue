@@ -72,7 +72,9 @@ const castRefRows = computed(() => {
   let tag = 1
   const resolved = resolveVariantRefs(sheet.value.cast.map(m => ({ slug: m.slug, variantId: m.variantId })))
   return sheet.value.cast.map((m) => {
-    const urls = resolved[m.slug]?.slice(0, 3) ?? []
+    // One cover per member is what actually gets sent (CAST_REF_CAP) — showing
+    // the cover here keeps the preview honest and matches the video output.
+    const urls = resolved[m.slug]?.slice(0, 1) ?? []
     const start = tag
     tag += urls.length
     return { slug: m.slug, name: m.name, variantLabel: variantLabel(m), urls, start, end: tag - 1 }

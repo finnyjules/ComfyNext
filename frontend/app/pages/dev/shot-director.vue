@@ -36,7 +36,7 @@ const seededSheet = {
   style: 'cinematic, 35mm film grain',
   camera: { shotType: 'medium', move: 'push-in', pacing: 'smooth' },
   constraints: ['no camera shake'],
-  cast: [],
+  cast: [{ slug: 'vera', name: 'Vera', via: 'picker' }],
   references: [
     { kind: 'image', slot: 1, src: portrait, role: 'identity-lock' },
     { kind: 'image', slot: 2, src: plate, role: 'location' },

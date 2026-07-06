@@ -47,6 +47,18 @@ function pickVariant(c: CharacterClient, variantId?: string): CharacterVariantCl
 }
 
 /**
+ * A variant's ref filenames ordered cover-first (coverIndex leads), so any caller
+ * that takes just the first N gets the cover the user picked. Pure; shared shape
+ * so the generate-time resolver in the canvas can mirror it.
+ */
+export function coverFirstRefs(variant?: { refImages: string[]; coverIndex?: number }): string[] {
+  const refs = variant?.refImages ?? []
+  if (refs.length <= 1) return [...refs]
+  const ci = Math.min(Math.max(variant?.coverIndex ?? 0, 0), refs.length - 1)
+  return [refs[ci]!, ...refs.slice(0, ci), ...refs.slice(ci + 1)]
+}
+
+/**
  * Warning issues for cast picks whose variant no longer exists (deleted from
  * the character) — resolution silently falls back to the Default look, so the
  * shot renders differently than the sheet says; surface that. Unknown SLUGS
@@ -91,7 +103,9 @@ export function useCharacters() {
     for (const { slug, variantId } of picks) {
       const c = bySlug.get(slug)
       const variant = c ? pickVariant(c, variantId) : undefined
-      out[slug] = (variant?.refImages ?? []).map(viewRefUrl)
+      // Cover-first: the video path takes just the first ref per member (its
+      // cover), so the cover the user chose in the panel must lead the list.
+      out[slug] = coverFirstRefs(variant).map(viewRefUrl)
     }
     return out
   }

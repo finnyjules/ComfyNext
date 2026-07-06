@@ -72,6 +72,7 @@ import { hydrateLipSyncSheet } from '~/lib/lipsync/hydrate'
 import { compileLipSync } from '~/lib/lipsync/compile'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { coverFirstRefs } from '~/composables/useCharacters'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
@@ -2722,14 +2723,15 @@ async function handleShotDirectorGenerate(e: Event) {
     let resolved: Record<string, string[]> = {}
     try {
       const res = await fetch('/api/characters-local')
-      type VariantLite = { id: string, refImages: string[] }
+      type VariantLite = { id: string, refImages: string[], coverIndex?: number }
       const data = res.ok ? await res.json() as { characters?: { slug: string, variants?: VariantLite[] }[] } : {}
       const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
       resolved = Object.fromEntries(sheet.cast.map((m) => {
         const variants = bySlug.get(m.slug)?.variants ?? []
         const variant = (m.variantId ? variants.find(v => v.id === m.variantId) : undefined)
           ?? variants.find(v => v.id === 'default') ?? variants[0]
-        return [m.slug, (variant?.refImages ?? []).map(f => viewRefUrl(f))]
+        // Cover-first so materializeCast's single cover ref is the chosen cover.
+        return [m.slug, coverFirstRefs(variant).map(f => viewRefUrl(f))]
       }))
     } catch { /* resolved stays empty → zero-ref errors below */ }
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
