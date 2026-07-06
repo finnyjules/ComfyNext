@@ -20,6 +20,7 @@ import {
   reparentGroup as reparentGroupOp, pruneEmptyGroups,
 } from '~/lib/compositor/layerGroups'
 import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit } from '~/lib/compositor/layerEdits'
+import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -301,15 +302,42 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedId.value = r.newIds[r.newIds.length - 1] ?? null
   }
 
-  /** Keyboard: arrow-nudge (1px / shift 10px) + cmd/ctrl-D duplicate.
-   *  Returns true if consumed. No-op (false) when nothing is selected. */
+  /** Copy the current multi-selection to the shared in-app clipboard. */
+  function copySelection() {
+    const p = extractForCopy(localLayers.value, localGroups.value, selectedIds.value)
+    if (p) setClipboard(p)
+  }
+  /** Paste the clipboard into THIS frame; offset unless inPlace. Copies become the selection. */
+  function pasteClipboard(inPlace: boolean) {
+    const p = getClipboard()
+    if (!p) return
+    recordHistory()
+    const r = materializePaste(
+      p, localLayers.value, localGroups.value, inPlace ? 0 : 0.02,
+      () => `ll-${Date.now().toString(36)}-${++_dupSeq}`,
+      () => `g-${Date.now().toString(36)}-${++_groupSeq}`,
+    )
+    commitBoth(r.layers as LocalLayer[], r.groups)
+    selectedIds.value = new Set(r.newIds)
+    selectedId.value = r.newIds[r.newIds.length - 1] ?? null
+  }
+
+  /** Keyboard: arrow-nudge (1px / shift 10px), cmd/ctrl-D duplicate,
+   *  cmd/ctrl-C copy, cmd/ctrl-V paste (offset) / +Shift paste in-place.
+   *  Paste only needs a clipboard; nudge/duplicate/copy need a selection.
+   *  Returns true if consumed. */
   function handleEditorKey(e: KeyboardEvent): boolean {
-    if (!selectedIds.value.size) return false
     const a = mapKeyToEdit(e, 1, 10)
     if (!a) return false
+    if (a.type === 'paste') {
+      if (!hasClipboard()) return false
+      e.preventDefault(); pasteClipboard(a.inPlace); return true
+    }
+    if (!selectedIds.value.size) return false
     e.preventDefault()
     if (a.type === 'nudge') nudgeSelection(a.dxPx / dims().w, a.dyPx / dims().h)
-    else duplicateSelection()
+    else if (a.type === 'duplicate') duplicateSelection()
+    else if (a.type === 'copy') copySelection()
     return true
   }
 
@@ -568,6 +596,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     background, setBackground,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection, handleEditorKey,
+    copySelection, pasteClipboard,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,

@@ -121,3 +121,18 @@ describe('mapKeyToEdit', () => {
     expect(mapKeyToEdit({ key: 'a', metaKey: true }, 1, 10)).toBeNull()
   })
 })
+
+describe('mapKeyToEdit copy/paste', () => {
+  it('maps cmd/ctrl+C to copy', () => {
+    expect(mapKeyToEdit({ key: 'c', metaKey: true }, 1, 10)).toEqual({ type: 'copy' })
+    expect(mapKeyToEdit({ key: 'C', ctrlKey: true }, 1, 10)).toEqual({ type: 'copy' })
+  })
+  it('maps cmd/ctrl+V to offset paste, +Shift to in-place', () => {
+    expect(mapKeyToEdit({ key: 'v', metaKey: true }, 1, 10)).toEqual({ type: 'paste', inPlace: false })
+    expect(mapKeyToEdit({ key: 'v', metaKey: true, shiftKey: true }, 1, 10)).toEqual({ type: 'paste', inPlace: true })
+  })
+  it('plain c/v (no meta) is null', () => {
+    expect(mapKeyToEdit({ key: 'c' }, 1, 10)).toBeNull()
+    expect(mapKeyToEdit({ key: 'v' }, 1, 10)).toBeNull()
+  })
+})

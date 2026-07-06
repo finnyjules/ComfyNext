@@ -86,10 +86,15 @@ export function computeSnapAdjust(
   return { dx: bestX.adj, dy: bestY.adj, guideX: bestX.guide, guideY: bestY.guide }
 }
 
-export type EditAction = { type: 'nudge'; dxPx: number; dyPx: number } | { type: 'duplicate' }
+export type EditAction =
+  | { type: 'nudge'; dxPx: number; dyPx: number }
+  | { type: 'duplicate' }
+  | { type: 'copy' }
+  | { type: 'paste'; inPlace: boolean }
 
 /** Map a keyboard event to an edit action (arrows → nudge in logical px,
- *  cmd/ctrl+D → duplicate). Pure; the editor converts px → normalized. */
+ *  cmd/ctrl+D → duplicate, cmd/ctrl+C → copy, cmd/ctrl+V (+Shift) → paste).
+ *  Pure; the editor converts px → normalized. */
 export function mapKeyToEdit(
   e: { key: string; shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean },
   pxSmall: number,
@@ -102,6 +107,9 @@ export function mapKeyToEdit(
     case 'ArrowUp': return { type: 'nudge', dxPx: 0, dyPx: -px }
     case 'ArrowDown': return { type: 'nudge', dxPx: 0, dyPx: px }
   }
-  if ((e.metaKey || e.ctrlKey) && (e.key === 'd' || e.key === 'D')) return { type: 'duplicate' }
+  const meta = e.metaKey || e.ctrlKey
+  if (meta && (e.key === 'c' || e.key === 'C')) return { type: 'copy' }
+  if (meta && (e.key === 'v' || e.key === 'V')) return { type: 'paste', inPlace: !!e.shiftKey }
+  if (meta && (e.key === 'd' || e.key === 'D')) return { type: 'duplicate' }
   return null
 }
