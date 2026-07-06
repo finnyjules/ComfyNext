@@ -95,7 +95,13 @@ function onRemoveCast(m: CastMember) {
 const hasErrors = computed(() => result.value.issues.some(i => i.level === 'error'))
 
 function onGenerate() {
+  // The sheet is already persisted on the node (update/rerollSeed persist
+  // synchronously), so the canvas handler reads the fresh sheet regardless.
+  // Close the modal so the user returns to the canvas and can actually SEE the
+  // spawned FilmShotNode run — otherwise the full-screen modal hides it and the
+  // launch looks like it did nothing. Handler errors surface on the node card.
   window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
+  emit('close')
 }
 
 function onNewTake() {
