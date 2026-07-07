@@ -15,6 +15,7 @@ import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/Canvas
 import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import { useLocalSettings } from '~/composables/useLocalSettings'
+import { useLayoutTextEdit } from '~/composables/useLayoutTextEdit'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
@@ -25,6 +26,33 @@ const {
   moveChildIntoStack, moveChildOutOfStack,
   scale, zoomBy, setContainerSize,
 } = ctx
+
+// -- Inline (double-click) text editing --------------------------------------
+// Shared with the property panel's write-through text field so bound vs
+// unbound commits behave identically (see useLayoutTextEdit).
+const layoutText = useLayoutTextEdit(ctx, binding)
+const editingId = ref<string | null>(null)
+const editDraft = ref('')
+
+function startTextEdit(r: ResolvedElement) {
+  if (r.el.type !== 'text' || r.el.locked) return
+  editingId.value = r.el.id
+  // Show the resolved value while editing a bound element, the literal otherwise.
+  const socket = layoutText.boundSocket(r.el)
+  editDraft.value = socket ? (r.text?.content ?? '') : ((r.el as any).content ?? '')
+  nextTick(() => {
+    const node = document.querySelector<HTMLTextAreaElement>('[data-inline-text-edit]')
+    node?.focus(); node?.select()
+  })
+}
+
+function commitTextEdit() {
+  if (!editingId.value) return
+  const r = resolved.value.elements.find((x: any) => x.el.id === editingId.value)
+  if (r) layoutText.commitText(r.el, editDraft.value)
+  editingId.value = null
+}
+function cancelTextEdit() { editingId.value = null }
 
 // -- Render-true preview ------------------------------------------------------
 // Overlays the actual server render of the current format so designers confirm
@@ -393,6 +421,7 @@ onUnmounted(() => window.removeEventListener('keydown', onRepositionKey, true))
 
 function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   e.stopPropagation()
+  if (editingId.value === r.el.id) return   // let the textarea handle its own clicks
   if (previewMode.value) return        // read-only while previewing the render
   selectedId.value = r.el.id
   // In reposition mode, body-drag pans the image instead of moving the element.
@@ -710,11 +739,23 @@ function onSectionHandlePointerUp(e: PointerEvent) {
             ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
             : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
-        @dblclick="(e) => { if (r.el.type === 'image') { e.stopPropagation(); enterReposition(r) } }"
+        @dblclick="(e) => { if (r.el.type === 'image') { e.stopPropagation(); enterReposition(r) } else if (r.el.type === 'text') { e.stopPropagation(); startTextEdit(r) } }"
         @contextmenu.prevent.stop="(e) => onElementContextMenu(e, r)"
       >
         <template v-if="r.el.type === 'text'">
-          <div :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
+          <div v-if="editingId !== r.el.id" :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
+          <textarea
+            v-else
+            data-inline-text-edit
+            v-model="editDraft"
+            class="absolute inset-0 w-full h-full resize-none bg-transparent outline outline-1 outline-[var(--var-accent)] p-0 m-0"
+            :style="{ font: 'inherit', color: 'inherit', textAlign: (r.el.style?.align || 'left') }"
+            @pointerdown.stop
+            @dblclick.stop
+            @keydown.enter.prevent="commitTextEdit"
+            @keydown.escape.prevent="cancelTextEdit"
+            @blur="commitTextEdit"
+          />
         </template>
         <template v-else-if="r.el.type === 'image'">
           <div class="size-full overflow-hidden">
