@@ -2060,7 +2060,8 @@ function setDimPx(l: any, key: 'w' | 'h', px: number) {
 }
 function kindIcon(kind: string) {
   return kind === 'text' ? Type : kind === 'rect' ? Square
-    : kind === 'ellipse' ? Circle : kind === 'image' ? ImageIcon : Minus
+    : kind === 'ellipse' ? Circle : kind === 'image' ? ImageIcon
+    : kind === 'polygon' ? Hexagon : kind === 'star' ? Star : Minus
 }
 
 // ── Add an image layer from the toolbar ─────────────────────────────────────
