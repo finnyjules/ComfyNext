@@ -34,11 +34,11 @@ export function anchorOf(box: Box, handle: Handle, fromCenter: boolean): { x: nu
 }
 
 /** Uniform scale factor = distance(pointer,anchor) / distance(cornerStart,anchor). */
-export function groupScaleFactor(anchor: { x: number; y: number }, cornerStart: { x: number; y: number }, pointerNow: { x: number; y: number }, minF = 0.05): number {
+export function groupScaleFactor(anchor: { x: number; y: number }, cornerStart: { x: number; y: number }, pointerNow: { x: number; y: number }, minF = 0.05, maxF = 20): number {
   const d0 = Math.hypot(cornerStart.x - anchor.x, cornerStart.y - anchor.y)
   const d1 = Math.hypot(pointerNow.x - anchor.x, pointerNow.y - anchor.y)
   if (d0 < 1e-6) return 1
-  return Math.max(minF, d1 / d0)
+  return Math.min(maxF, Math.max(minF, d1 / d0))
 }
 
 /** Scale one layer about `anchor` (px) by `f`: center repositions in px, size fields

@@ -24,6 +24,11 @@ describe('groupScaleFactor', () => {
   it('clamps to minF', () => {
     expect(groupScaleFactor({ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 1, y: 1 }, 0.05)).toBeCloseTo(0.05)
   })
+  it('clamps to the upper bound', () => {
+    // pointer very far from anchor vs a tiny cornerStart distance → huge raw ratio, clamped to 20
+    const f = groupScaleFactor({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1000, y: 0 })
+    expect(f).toBe(20)
+  })
 })
 
 describe('scaleLayerAbout', () => {
