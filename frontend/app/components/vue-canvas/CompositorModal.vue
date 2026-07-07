@@ -379,9 +379,9 @@ function multiOutlineStyle(l: any) {
   }
 }
 
-// Boolean ops work on any closed-outline shapes (paths + rect/ellipse/line,
-// which get converted to paths). Available when ≥2 are selected.
-const BOOLEANABLE = new Set(['path', 'rect', 'ellipse', 'line'])
+// Boolean ops work on any closed-outline shapes (paths + rect/ellipse/line/
+// polygon/star, which get converted to paths). Available when ≥2 are selected.
+const BOOLEANABLE = new Set(['path', 'rect', 'ellipse', 'line', 'polygon', 'star'])
 const selectedPathCount = computed(() => selectedLayers.value.filter((l: any) => BOOLEANABLE.has(l.kind)).length)
 const BOOL_OPS = [
   { op: 'unite', label: 'Unite' }, { op: 'subtract', label: 'Subtract' },

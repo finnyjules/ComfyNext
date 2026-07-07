@@ -689,10 +689,11 @@ export function useLocalLayerEditor(opts: EditorOpts) {
    * with a single result layer at the topmost operand's z-position.
    */
   async function applyBoolean(op: BooleanOp): Promise<boolean> {
-    // Operate on any closed-outline shapes; convert rect/ellipse/line → path so
-    // they can boolean with real paths. Keep the originals (with their ids) for
-    // removal, and z-order is preserved (selectedLayers is z-ordered).
-    const originals = selectedLayers.value.filter(l => l.kind === 'path' || l.kind === 'rect' || l.kind === 'ellipse' || l.kind === 'line')
+    // Operate on any closed-outline shapes; convert rect/ellipse/line/polygon/star
+    // → path so they can boolean with real paths. Keep the originals (with their
+    // ids) for removal, and z-order is preserved (selectedLayers is z-ordered).
+    const originals = selectedLayers.value.filter(l => l.kind === 'path' || l.kind === 'rect' || l.kind === 'ellipse' || l.kind === 'line'
+      || l.kind === 'polygon' || l.kind === 'star')
     if (originals.length < 2) return false
     const operands = originals.map(l => shapeToPathLayer(l)).filter(Boolean) as PathLayer[]
     if (operands.length < 2) return false
