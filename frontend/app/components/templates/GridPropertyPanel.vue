@@ -18,12 +18,13 @@ import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import { COLLECTION_PROP } from '~/lib/collection/types'
 import type { CollectionData } from '~/lib/collection/types'
 import { resolveBindings } from '~/lib/collection/resolve'
-import { setCell } from '~/lib/collection/model'
 import { pushVarPreview, wiredTargets } from '~/lib/collection/preview'
 import { addMediaRows } from '~/lib/collection/upload'
+import { useLayoutTextEdit } from '~/composables/useLayoutTextEdit'
 
 const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
+const layoutText = useLayoutTextEdit(ctx, binding)
 const {
   metrics, formatClass, isMaster, currentFormat, currentOutput, outputs, regionScope,
   selectedElement, selectedResolved, sampleProps, effectiveBrand,
@@ -88,18 +89,12 @@ function unbindVariable() {
 
 /** Write-through: editing a bound text field updates the collection cell
  *  (+ pushes a fresh preview to every wired target), never the template's
- *  token content — the element stays `{{ props.<socket> }}` forever. */
+ *  token content — the element stays `{{ props.<socket> }}` forever.
+ *  Delegates the setCell+preview core to useLayoutTextEdit so the inline
+ *  canvas text editor writes through identically. */
 function writeThroughBoundText(value: string) {
-  const c = wiredCollection.value
-  const columnKey = boundColumnKey.value
-  if (!c || !columnKey) return
-  const row = c.rows[c.previewRow]
-  if (!row) return
-  setCell(c, row.id, columnKey, value)
-  const colNode = binding?.collectionNode.value
-  if (colNode) {
-    pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()), binding!.nodesAccessor())
-  }
+  if (!el.value) return
+  layoutText.commitText(el.value as any, value)
 }
 
 // -- Copy assistant (AI affordance — gen-pastel treatment) -------------------
