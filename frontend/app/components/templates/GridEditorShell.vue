@@ -181,9 +181,11 @@ function onKeydown(e: KeyboardEvent) {
   const nudges: Record<string, [number, number]> = {
     ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
   }
-  if (id && nudges[e.key] && !ctx.isLocked(id)) {
+  const nudge = nudges[e.key]
+  if (id && nudge && !ctx.isLocked(id)) {
     e.preventDefault()
-    ctx.nudgeSelected(...nudges[e.key])
+    const step = e.shiftKey ? 4 : 1
+    ctx.nudgeSelected(nudge[0] * step, nudge[1] * step)
   }
 }
 
