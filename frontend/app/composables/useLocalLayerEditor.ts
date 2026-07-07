@@ -21,6 +21,7 @@ import {
 } from '~/lib/compositor/layerGroups'
 import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit, dragHud } from '~/lib/compositor/layerEdits'
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
+import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -263,9 +264,10 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const d = drag.value; const l = selected.value
     if (!d || !l) return null
     const b = boxPx(l); const W = dims().w, H = dims().h
-    const h = dragHud(d.type, { wPx: b.w, hPx: b.h, xPx: l.x * W, yPx: l.y * H, rotation: l.rotation })
-    if (!h) return null
-    return { text: h.text, left: l.x * W, top: l.y * H - b.h / 2 - 12 }
+    const kind = d.type === 'resize' ? 'scale' : d.type
+    const hh = dragHud(kind, { wPx: b.w, hPx: b.h, xPx: l.x * W, yPx: l.y * H, rotation: l.rotation })
+    if (!hh) return null
+    return { text: hh.text, left: l.x * W, top: l.y * H - b.h / 2 - 12 }
   })
 
   // ── Align / distribute (operates on the multi-selection) ────────────────────
@@ -364,6 +366,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     | { type: 'move'; id: string; sx: number; sy: number; origins: { id: string; ox: number; oy: number }[] }
     | { type: 'scale'; id: string; cx: number; cy: number; startDist: number; start: Record<string, number> }
     | { type: 'rotate'; id: string; cx: number; cy: number; startAngle: number; startRot: number }
+    | { type: 'resize'; id: string; handle: Handle; rot: number; start: Box; p0: { x: number; y: number } }
     | null
   const drag = ref<Drag>(null)
   // Active snap guide lines (normalized positions) shown while moving.
@@ -449,6 +452,20 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     drag.value = { type: 'rotate', id: l.id, cx, cy, startAngle: Math.atan2(e.clientY - cy, e.clientX - cx), startRot: l.rotation }
     attach()
   }
+  function startResize(handle: Handle, e: PointerEvent) {
+    e.preventDefault(); e.stopPropagation()
+    const l = selected.value; const r = getRect(); if (!l || !r) return
+    const W = dims().w, H = dims().h
+    const b = boxPx(l)
+    const { nx, ny } = toNorm(e.clientX, e.clientY, r)
+    recordHistory()
+    drag.value = {
+      type: 'resize', id: l.id, handle, rot: l.rotation,
+      start: { cx: l.x * W, cy: l.y * H, w: b.w, h: b.h },
+      p0: { x: nx * W, y: ny * H },
+    }
+    attach()
+  }
   function onMove(e: PointerEvent) {
     const d = drag.value; if (!d) return
     const r = getRect(); if (!r) return
@@ -472,6 +489,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       while (rot > 180) rot -= 360
       while (rot < -180) rot += 360
       setLocal(d.id, { rotation: Math.round(snapAngle(rot, e.shiftKey ? 15 : null)) })
+    } else if (d.type === 'resize') {
+      const W = dims().w, H = dims().h
+      const { nx, ny } = toNorm(e.clientX, e.clientY, r)
+      const box = resizeBox(d.start, d.rot, d.handle, d.p0, { x: nx * W, y: ny * H }, { aspect: e.shiftKey, fromCenter: e.altKey })
+      // px → normalized (w,h fractions of WIDTH; x of width, y of height)
+      setLocal(d.id, { x: box.cx / W, y: box.cy / H, w: box.w / W, h: box.h / W })
     }
   }
   function onUp() { drag.value = null; snapGuides.value = { vx: null, hy: null }; window.removeEventListener('pointermove', onMove) }
@@ -607,7 +630,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     setLocal, addLocal, deleteLocal, moveLocalZ,
     editingId, editingLayer, beginEdit, endEdit,
     boxPx, handlePositions, hud,
-    hitTest, startScale, startRotate,
+    hitTest, startScale, startRotate, startResize,
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
