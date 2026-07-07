@@ -12,14 +12,12 @@ import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import { setCell } from '~/lib/collection/model'
 import { pushVarPreview, wiredTargets } from '~/lib/collection/preview'
-
-const TOKEN_RE = /^\s*\{\{\s*props\.([a-zA-Z0-9_]+)\s*\}\}\s*$/
+import { isBoundToken } from '~/lib/collection/layoutPromote'
 
 export function useLayoutTextEdit(ctx: GridEditorContext, binding: SmartLayoutBindingContext | null) {
   function boundSocket(el: { content?: string }): string | null {
-    const m = TOKEN_RE.exec(el?.content ?? '')
-    if (!m) return null
-    const socket = m[1]
+    // Single source of truth for whole-token detection (layoutPromote.ts).
+    const socket = isBoundToken(el?.content)
     if (!socket) return null
     return binding?.bindings.value[`props.${socket}`] ? socket : null
   }
