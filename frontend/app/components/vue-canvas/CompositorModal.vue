@@ -317,6 +317,7 @@ const {
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey,
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
+  setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   hud,
 } = editor
@@ -1226,6 +1227,17 @@ function toggleRowHidden(row: any) {
 function toggleRowLocked(row: any) {
   if (row.kind === 'wired') toggleWiredFlag('comfynext_lockedWired', row.slot)
   else if (row.layer) setLocal(row.layer.id, { locked: !row.layer.locked } as any)
+}
+// ── Group-row hide/lock/opacity (Task 4: mirrors the layer-row toggles above,
+// but reads/writes the group's own record via the Task 2 setters) ───────────
+function groupRowHidden(gid: string): boolean {
+  return !!localGroups.value.find(g => g.id === gid)?.hidden
+}
+function groupRowLocked(gid: string): boolean {
+  return !!localGroups.value.find(g => g.id === gid)?.locked
+}
+function groupRowOpacity(gid: string): number {
+  return localGroups.value.find(g => g.id === gid)?.opacity ?? 1
 }
 
 // ── Motion preview (kinetic slates) ──────────────────────────────────────────
@@ -2165,6 +2177,31 @@ onUnmounted(() => {
                 :title="rowHidden(row) ? 'Show' : 'Hide'"
                 @click.stop="toggleRowHidden(row)">
                 <component :is="rowHidden(row) ? EyeOff : Eye" class="size-3.5" />
+              </button>
+              <!-- Group opacity (compact hover-reveal slider; cascades to descendants) -->
+              <input v-if="row.kind === 'group'"
+                type="range" min="0" max="1" step="0.05"
+                class="w-10 h-3 accent-white/70 opacity-0 group-hover/row:opacity-100 transition shrink-0 cursor-pointer"
+                title="Group opacity"
+                :value="groupRowOpacity(row.groupId)"
+                @click.stop @mousedown.stop @pointerdown.stop
+                @input="setGroupOpacity(row.groupId, +($event.target as HTMLInputElement).value)"
+              />
+              <!-- Lock (group-locked ⇒ all descendants not selectable on canvas) -->
+              <button v-if="row.kind === 'group'"
+                class="transition cursor-pointer"
+                :class="groupRowLocked(row.groupId) ? 'text-amber-300/90' : 'opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80'"
+                :title="groupRowLocked(row.groupId) ? 'Unlock group' : 'Lock group (not selectable on canvas)'"
+                @click.stop="setGroupLocked(row.groupId, !groupRowLocked(row.groupId))">
+                <component :is="groupRowLocked(row.groupId) ? Lock : LockOpen" class="size-3.5" />
+              </button>
+              <!-- Visibility (group-hidden ⇒ all descendants hidden) -->
+              <button v-if="row.kind === 'group'"
+                class="transition cursor-pointer"
+                :class="groupRowHidden(row.groupId) ? 'text-white/70' : 'opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80'"
+                :title="groupRowHidden(row.groupId) ? 'Show group' : 'Hide group'"
+                @click.stop="setGroupHidden(row.groupId, !groupRowHidden(row.groupId))">
+                <component :is="groupRowHidden(row.groupId) ? EyeOff : Eye" class="size-3.5" />
               </button>
               <!-- Ungroup (dissolve this level) -->
               <button v-if="row.kind === 'group'" class="opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80 transition cursor-pointer"
