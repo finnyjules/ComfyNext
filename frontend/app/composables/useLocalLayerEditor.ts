@@ -22,6 +22,7 @@ import {
 import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit, dragHud } from '~/lib/compositor/layerEdits'
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
+import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -285,9 +286,29 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     return boxHandles(l.x * dims().w, l.y * dims().h, b.w / 2, b.h / 2, l.rotation)
   })
 
+  /** Union box (px) of the current multi-selection (≥2), else null. */
+  const selectionBox = computed<GBox | null>(() => {
+    if (selectedIds.value.size < 2) return null
+    const W = dims().w, H = dims().h
+    const boxes = selectedLayers.value.map((l) => { const b = boxPx(l); return { cx: l.x * W, cy: l.y * H, w: b.w, h: b.h } })
+    return boxes.length ? unionBox(boxes) : null
+  })
+  const selectionHandles = computed(() => {
+    const b = selectionBox.value; if (!b) return null
+    return { tl: cornerOf(b, 'tl'), tr: cornerOf(b, 'tr'), br: cornerOf(b, 'br'), bl: cornerOf(b, 'bl') }
+  })
+
   const hud = computed(() => {
-    const d = drag.value; const l = selected.value
-    if (!d || !l) return null
+    const d = drag.value
+    if (!d) return null
+    if (d.type === 'groupResize') {
+      const b = selectionBox.value; if (!b) return null
+      const hh = dragHud('scale', { wPx: b.w, hPx: b.h, xPx: b.cx, yPx: b.cy, rotation: 0 })
+      if (!hh) return null
+      return { text: hh.text, left: b.cx, top: b.cy - b.h / 2 - 12 }
+    }
+    const l = selected.value
+    if (!l) return null
     const b = boxPx(l); const W = dims().w, H = dims().h
     const kind = d.type === 'resize' ? 'scale' : d.type
     const hh = dragHud(kind, { wPx: b.w, hPx: b.h, xPx: l.x * W, yPx: l.y * H, rotation: l.rotation })
@@ -392,6 +413,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     | { type: 'scale'; id: string; cx: number; cy: number; startDist: number; start: Record<string, number> }
     | { type: 'rotate'; id: string; cx: number; cy: number; startAngle: number; startRot: number }
     | { type: 'resize'; id: string; handle: Handle; rot: number; start: Box; p0: { x: number; y: number } }
+    | { type: 'groupResize'; handle: GHandle; anchor: { x: number; y: number }; cornerStart: { x: number; y: number }; ids: string[]; start: Record<string, { x: number; y: number; size: Record<string, number> }> }
     | null
   const drag = ref<Drag>(null)
   // Active snap guide lines (normalized positions) shown while moving.
@@ -493,6 +515,29 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     }
     attach()
   }
+  /** Begin a proportional resize of the whole multi-selection from a corner
+   *  handle of the union box. Each layer's start x/y/size is snapshotted so
+   *  onMove always scales from the ORIGINAL (never compounds across moves). */
+  function startGroupResize(handle: GHandle, e: PointerEvent) {
+    e.preventDefault(); e.stopPropagation()
+    const box = selectionBox.value; const r = getRect(); if (!box || !r) return
+    const anchor = anchorOf(box, handle, e.altKey)
+    const cornerStart = cornerOf(box, handle)
+    // Snapshot each selected layer's start center (px) + size fields so f re-derives from the ORIGINAL each move.
+    const start: Record<string, { x: number; y: number; size: Record<string, number> }> = {}
+    for (const l of selectedLayers.value) {
+      const s: Record<string, number> = {}
+      const ll = l as any
+      if (ll.kind === 'text') s.fontSize = ll.fontSize
+      else if (ll.kind === 'line') s.w = ll.w
+      else if (ll.kind === 'path') s.scale = ll.scale
+      else { s.w = ll.w; s.h = ll.h }
+      start[l.id] = { x: l.x, y: l.y, size: s }
+    }
+    recordHistory()
+    drag.value = { type: 'groupResize', handle, anchor, cornerStart, ids: selectedLayers.value.map(l => l.id), start }
+    attach()
+  }
   function onMove(e: PointerEvent) {
     const d = drag.value; if (!d) return
     const r = getRect(); if (!r) return
@@ -522,6 +567,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       const box = resizeBox(d.start, d.rot, d.handle, d.p0, { x: nx * W, y: ny * H }, { aspect: e.shiftKey, fromCenter: e.altKey })
       // px → normalized (w,h fractions of WIDTH; x of width, y of height)
       setLocal(d.id, { x: box.cx / W, y: box.cy / H, w: box.w / W, h: box.h / W })
+    } else if (d.type === 'groupResize') {
+      const W = dims().w, H = dims().h
+      const { nx, ny } = toNorm(e.clientX, e.clientY, r)
+      const f = groupScaleFactor(d.anchor, d.cornerStart, { x: nx * W, y: ny * H })
+      commit(localLayers.value.map((l) => {
+        const s = d.start[l.id]; if (!s) return l
+        const startLayer = { ...l, x: s.x, y: s.y, ...s.size } as LocalLayer
+        return { ...l, ...scaleLayerAbout(startLayer, d.anchor, f, W, H) } as LocalLayer
+      }))
     }
   }
   function onUp() { drag.value = null; snapGuides.value = { vx: null, hy: null }; window.removeEventListener('pointermove', onMove) }
@@ -657,6 +711,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     setLocal, addLocal, deleteLocal, moveLocalZ,
     editingId, editingLayer, beginEdit, endEdit,
     boxPx, handlePositions, hud,
+    selectionBox, selectionHandles, startGroupResize,
     hitTest, startScale, startRotate, startResize,
     onCanvasPointerDown, onCanvasDblClick,
     addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
