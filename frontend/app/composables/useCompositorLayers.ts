@@ -28,6 +28,7 @@ import { axesToVariationSettings } from '~/lib/motion/axes'
 import { expandClones, type Cloner } from '~/composables/useCloner'
 import { type Fill, fillTileBox } from '~/lib/spacetype/fillTile'
 import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
+import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -671,6 +672,7 @@ export function drawLocalLayer(
   W: number,
   H: number,
   maskLayer?: LocalLayer | null,
+  opacityMul = 1,
 ) {
   // Layer mask: clip this layer to another layer's alpha silhouette (Figma
   // "use as mask"). Render the content, then keep only where the mask layer's
@@ -691,7 +693,7 @@ export function drawLocalLayer(
     const octx = off.getContext('2d')
     if (octx) {
       octx.setTransform(t)
-      drawLocalLayerSelf(octx, layer, W, H)
+      drawLocalLayerSelf(octx, layer, W, H, opacityMul)
       // The mask must be rendered on its OWN offscreen and composited with
       // drawImage: paintLayer (inside drawLocalLayerSelf) sets
       // globalCompositeOperation itself, which would silently overwrite a
@@ -716,7 +718,7 @@ export function drawLocalLayer(
       return
     }
   }
-  drawLocalLayerSelf(ctx, layer, W, H)
+  drawLocalLayerSelf(ctx, layer, W, H, opacityMul)
 }
 
 /**
@@ -740,14 +742,14 @@ export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackIt
 
 // A layer's own paint, including its crop (rect/ellipse) region — but NOT any
 // layer-mask, which drawLocalLayer applies around this.
-function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
+function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number, opacityMul = 1) {
   if (layer.mask) {
     ctx.save()
     applyMaskClip(ctx, layer.mask, W, H)
-    paintLayer(ctx, layer, W, H)
+    paintLayer(ctx, layer, W, H, opacityMul)
     ctx.restore()
   } else {
-    paintLayer(ctx, layer, W, H)
+    paintLayer(ctx, layer, W, H, opacityMul)
   }
 }
 
@@ -799,8 +801,9 @@ function paintLayer(
   layer: LocalLayer,
   W: number,
   H: number,
+  opacityMul = 1,
 ) {
-  const baseOpacity = Math.max(0, Math.min(1, layer.opacity))
+  const baseOpacity = Math.max(0, Math.min(1, layer.opacity * opacityMul))
   const blendOp = localBlendOp(layer)
   const fx = (layer.effects ?? []).filter(e => e.visible)
   const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
@@ -1093,6 +1096,8 @@ export function paintLayerStack(
   wiredTreatments?: Record<string, { maskedByKey?: string; showSource?: boolean }>,
   /** Doc-level background fill, painted first (behind every layer). */
   background?: Paint,
+  /** Nested-group registry (Task 1). Absent ⇒ no cascade, byte-identical to before. */
+  groups?: LayerGroup[],
 ) {
   // Background fill — the bottom-most thing in the frame, baked into output.
   if (hasPaint(background)) {
@@ -1134,8 +1139,12 @@ export function paintLayerStack(
     }
 
     const layer = item.layer
-    if (layerHidden(layer)) continue
+    // Nested-group cascade (Task 1): absent `groups` ⇒ gc stays null ⇒ opacityMul
+    // defaults to 1 everywhere below, byte-identical to pre-cascade behavior.
+    const gc = groups ? resolveGroupCascade(layer.groupId, groups) : null
+    if (layerHidden(layer) || gc?.hidden) continue
     if (skip?.(layer)) continue
+    const opacityMul = gc ? gc.opacity : 1
 
     const ref = layerMaskRef(layer)
     const maskItem = ref ? byKey.get(ref) ?? null : null
@@ -1156,6 +1165,11 @@ export function paintLayerStack(
           (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
         )
         if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
+        // Group-cascade limitation (Task 3, mirrors the mask limitation above): the
+        // motion path composes its own effective layer in lib/motion/paint.ts and
+        // doesn't thread an opacityMul through, so an animated layer's group cascade
+        // opacity isn't applied for that frame. Visibility (gc.hidden) IS honored via
+        // the `continue` above. Static (non-animated) layers are unaffected.
         drawLayerWithMotion(ctx, layer, W, H, maskLocal, st, maskState)
         continue
       }
@@ -1167,10 +1181,10 @@ export function paintLayerStack(
 
     if (maskItem && maskItem.type !== 'local') {
       // Wired silhouette masking a local layer → generic cross-source path.
-      drawItemMasked(ctx, item, maskItem, W, H, localBlendOp(layer))
+      drawItemMasked(ctx, item, maskItem, W, H, localBlendOp(layer), opacityMul)
     } else {
       // Local content + local mask (or no mask) → unchanged fast path.
-      drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null)
+      drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null, opacityMul)
     }
   }
 }
@@ -1181,9 +1195,9 @@ export function paintLayerStack(
  * which includes the layer's crop). NOT a silhouette — full pixels/opacity/effects
  * preserved. Wired closures are wrapped in save/restore (no state-hygiene contract).
  */
-function drawItemContent(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number) {
+function drawItemContent(ctx: CanvasRenderingContext2D, item: StackItem, W: number, H: number, opacityMul = 1) {
   if (item.type === 'wired') { ctx.save(); item.draw(ctx, W, H); ctx.restore(); return }
-  drawLocalLayerSelf(ctx, item.layer, W, H)
+  drawLocalLayerSelf(ctx, item.layer, W, H, opacityMul)
 }
 
 /**
@@ -1202,6 +1216,7 @@ function drawItemMasked(
   W: number,
   H: number,
   blendOp: string,
+  opacityMul = 1,
 ) {
   // Device-resolution offscreens rendered through the current transform, so a
   // masked layer stays sharp under any ctx scale (dpr preview / high-res export).
@@ -1216,7 +1231,7 @@ function drawItemMasked(
   const off = mk()
   const octx = off.getContext('2d'); if (!octx) return
   octx.setTransform(t)
-  drawItemContent(octx, content, W, H)
+  drawItemContent(octx, content, W, H, opacityMul)
   const maskOff = mk()
   const mctx = maskOff.getContext('2d'); if (!mctx) return
   mctx.setTransform(t)

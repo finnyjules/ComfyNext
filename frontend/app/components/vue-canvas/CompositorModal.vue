@@ -1412,7 +1412,7 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   await ensureLayerImages(localLayers.value as LocalLayer[])
   await ensureLayerFonts(localLayers.value as LocalLayer[], W)
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value)
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
@@ -1473,7 +1473,7 @@ function renderStack() {
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
-    wiredTreatments.value, background.value)
+    wiredTreatments.value, background.value, localGroups.value)
 }
 watch(
   () => [
