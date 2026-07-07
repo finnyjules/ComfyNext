@@ -36,6 +36,25 @@ function scratchCtx(): CanvasRenderingContext2D | null {
   return _scratch
 }
 
+/** Box layers (independent width+height) get full Figma resize; text/line/path
+ *  keep uniform corner scaling (no 2D box to resize). */
+export function resizableKind(kind: string): boolean {
+  return kind === 'rect' || kind === 'ellipse' || kind === 'image'
+}
+
+/** Compute handle positions (corners, edges, rotation, center) from box geometry
+ *  and rotation. All positions are rotated and translated to world space. */
+export function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number) {
+  const rad = (rotationDeg * Math.PI) / 180
+  const cosA = Math.cos(rad), sinA = Math.sin(rad)
+  const t = (dx: number, dy: number) => ({ x: cx + dx * cosA - dy * sinA, y: cy + dx * sinA + dy * cosA })
+  return {
+    tl: t(-hw, -hh), tr: t(hw, -hh), br: t(hw, hh), bl: t(-hw, hh),
+    t: t(0, -hh), r: t(hw, 0), b: t(0, hh), l: t(-hw, 0),
+    rot: t(0, -hh - 26), topCenter: t(0, -hh), center: { x: cx, y: cy },
+  }
+}
+
 export function useLocalLayerEditor(opts: EditorOpts) {
   const { node, dims, getRect } = opts
 
@@ -233,16 +252,6 @@ export function useLocalLayerEditor(opts: EditorOpts) {
 
   // ── Geometry ────────────────────────────────────────────────────────────────
   function boxPx(layer: LocalLayer) { return localLayerBox(scratchCtx(), layer, dims().w, dims().h) }
-
-  function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number) {
-    const rad = (rotationDeg * Math.PI) / 180
-    const cosA = Math.cos(rad), sinA = Math.sin(rad)
-    const t = (dx: number, dy: number) => ({ x: cx + dx * cosA - dy * sinA, y: cy + dx * sinA + dy * cosA })
-    return {
-      tl: t(-hw, -hh), tr: t(hw, -hh), br: t(hw, hh), bl: t(-hw, hh),
-      rot: t(0, -hh - 26), topCenter: t(0, -hh), center: { x: cx, y: cy },
-    }
-  }
   const handlePositions = computed(() => {
     const l = selected.value
     if (!l) return null
