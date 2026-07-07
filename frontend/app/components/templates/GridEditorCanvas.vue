@@ -600,6 +600,38 @@ function onCanvasClick(e: MouseEvent) {
   if (e.target === e.currentTarget) { selectedId.value = null; selectedSectionId.value = null }
 }
 
+// -- Contextual toolbar (Task 4) ---------------------------------------------
+// Floats above the selected element, in the same template-coordinate space as
+// `rectStyle` — it lives inside the scaled wrapper so the parent's
+// `transform: scale(...)` sizes it visually along with everything else (same
+// trick the resize handles use), no manual scale multiplication needed.
+const { selectedResolved } = ctx
+const showToolbar = computed(() => !!selectedResolved.value && !editingId.value)
+const toolbarStyle = computed(() => {
+  const rect = selectedResolved.value?.rect
+  if (!rect) return { display: 'none' }
+  return {
+    position: 'absolute',
+    left: `${rect.x + rect.w / 2}px`,
+    top: `${rect.y - 8}px`,
+    transform: 'translate(-50%, -100%)',
+    zIndex: '40',
+  } as Record<string, string>
+})
+
+const selectedBound = computed(() => {
+  const el = selectedResolved.value?.el
+  const socket = el ? boundSocket(el) : null
+  return socket ? (binding?.bindings.value[`props.${socket}`]?.columnKey ?? socket) : null
+})
+
+/** Reuses the exact context-menu "Turn into variable" derivation/dispatch
+ *  (see `turnIntoVariable` above) for whatever element is currently selected. */
+function promoteSelected() {
+  if (!selectedResolved.value) return
+  turnIntoVariable(selectedResolved.value)
+}
+
 // -- v3 section boxes (move/resize the section; children ride it) ------------
 type ResolvedSection = (typeof resolvedSections.value)[number]
 
@@ -797,6 +829,20 @@ function onSectionHandlePointerUp(e: PointerEvent) {
           class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white/80 text-[10px] pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
         >Double-click to reposition</div>
       </div>
+
+      <!-- Contextual toolbar — floats above the selection; `.group` so the
+           VariableGlyph's hover-reveal (opacity-0 group-hover:opacity-60) has
+           an ancestor to key off, same as the per-element wrappers above. -->
+      <TemplatesGridInlineToolbar
+        v-if="showToolbar && selectedResolved"
+        class="group"
+        :style="toolbarStyle"
+        :element="selectedResolved.el"
+        :bound="selectedBound"
+        @style="(patch) => ctx.patchStyle(selectedResolved!.el.id, patch)"
+        @promote="promoteSelected"
+        @remove="() => ctx.removeElement(selectedResolved!.el.id)"
+      />
 
       <!-- v3 section frames (drag/resize the box; children ride it) -->
       <template v-if="isV3Mode && !previewMode">
