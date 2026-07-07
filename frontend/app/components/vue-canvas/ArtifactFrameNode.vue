@@ -483,6 +483,7 @@ watch(
     JSON.stringify([...hiddenWiredSet.value]),
     JSON.stringify(wiredTreatments.value),
     JSON.stringify(editor.background.value ?? null),
+    JSON.stringify(editor.localGroups.value),
   ] as const,
   async () => {
     for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
