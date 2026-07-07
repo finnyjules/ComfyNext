@@ -424,6 +424,11 @@ function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   if (editingId.value === r.el.id) return   // let the textarea handle its own clicks
   if (previewMode.value) return        // read-only while previewing the render
   selectedId.value = r.el.id
+  // Selecting via pointerdown on a non-focusable element doesn't reliably move
+  // focus — pull it onto the canvas root so the keydown handler (nudge/dup/
+  // delete) is live immediately after a click, without stealing it while
+  // typing elsewhere (this only runs on an actual element pointerdown).
+  containerRef.value?.focus()
   // In reposition mode, body-drag pans the image instead of moving the element.
   if (repositionId.value === r.el.id && r.el.type === 'image') {
     const focal = (r.el as any).focal ?? { x: 0.5, y: 0.5 }
@@ -693,15 +698,45 @@ function onSectionHandlePointerUp(e: PointerEvent) {
   ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
   sectionResize = null
 }
+
+// -- Keyboard layer (nudge / duplicate / delete) -----------------------------
+// Scoped to the canvas root (tabindex + @keydown) rather than `window`, so it
+// never fights the node-graph's own keyboard handlers outside this modal —
+// this only fires while the canvas itself has focus.
+function onCanvasKeydown(e: KeyboardEvent) {
+  if (editingId.value) return   // inline text editor owns the keyboard
+  const ae = document.activeElement
+  if (ae instanceof Element && ae.matches('input, textarea, [contenteditable], [contenteditable="true"]')) return
+  const id = selectedId.value
+  if (!id) return
+  const meta = e.metaKey || e.ctrlKey
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault()
+    ctx.removeElement(id)
+  } else if (meta && (e.key === 'd' || e.key === 'D')) {
+    e.preventDefault()
+    ctx.duplicateElement(id)
+  } else if (e.key.startsWith('Arrow')) {
+    e.preventDefault()
+    const step = e.shiftKey ? 4 : 1
+    const d: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step],
+    }
+    const delta = d[e.key]
+    if (delta) ctx.nudgeSelected(delta[0], delta[1])
+  }
+}
 </script>
 
 <template>
   <div
     ref="containerRef"
-    class="absolute inset-0 flex items-center justify-center select-none"
+    class="absolute inset-0 flex items-center justify-center select-none outline-none"
+    tabindex="0"
     @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e); onSectionPointerMove(e); onSectionHandlePointerMove(e) }"
     @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e); onSectionPointerUp(e); onSectionHandlePointerUp(e) }"
     @wheel="onWheel"
+    @keydown="onCanvasKeydown"
   >
     <!-- Scaled wrapper; inner div is template coordinate space. -->
     <div
