@@ -11,6 +11,7 @@
 import {
   type LocalLayer, type TextLayer, type RectLayer, type LineLayer, type PathLayer, type Paint,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
+  createPolygonLayer, createStarLayer,
   localLayerBox, shapeToPathLayer,
 } from '~/composables/useCompositorLayers'
 import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables/useVectorSvg'
@@ -41,7 +42,7 @@ function scratchCtx(): CanvasRenderingContext2D | null {
 /** Box layers (independent width+height) get full Figma resize; text/line/path
  *  keep uniform corner scaling (no 2D box to resize). */
 export function resizableKind(kind: string): boolean {
-  return kind === 'rect' || kind === 'ellipse' || kind === 'image'
+  return kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'polygon' || kind === 'star'
 }
 
 /** Compute handle positions (corners, edges, rotation, center) from box geometry
@@ -635,6 +636,8 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function addRect() { addLocal(createRectLayer()) }
   function addEllipse() { addLocal(createEllipseLayer()) }
   function addLine() { addLocal(createLineLayer()) }
+  function addPolygon() { addLocal(createPolygonLayer()) }
+  function addStar() { addLocal(createStarLayer()) }
   async function addImageFromFile(file: File) {
     if (!file.type.startsWith('image/')) return
     const ts = Date.now()
@@ -714,7 +717,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectionBox, selectionHandles, startGroupResize,
     hitTest, startScale, startRotate, startResize,
     onCanvasPointerDown, onCanvasDblClick,
-    addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
+    addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
     undo, redo, canUndo, canRedo,

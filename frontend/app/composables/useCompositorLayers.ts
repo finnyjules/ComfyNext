@@ -264,7 +264,7 @@ export interface PolygonLayer extends LayerCommon {
   w: number; h: number
   sides: number          // integer >= 3
   cornerRadius: number   // 0..1 ratio (scale-invariant)
-  fill: string; stroke: string; strokeWidth: number
+  fill: Paint; stroke: Paint; strokeWidth: number
 }
 export interface StarLayer extends LayerCommon {
   kind: 'star'
@@ -272,7 +272,7 @@ export interface StarLayer extends LayerCommon {
   points: number         // integer >= 3
   innerRatio: number     // 0.01..0.99 (inner radius / outer radius)
   cornerRadius: number   // 0..1 ratio
-  fill: string; stroke: string; strokeWidth: number
+  fill: Paint; stroke: Paint; strokeWidth: number
 }
 
 export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer
@@ -976,6 +976,16 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     }
   } else if (layer.kind === 'path') {
     drawPath(ctx, layer, W)
+  } else if (layer.kind === 'polygon' || layer.kind === 'star') {
+    const d = layer.kind === 'polygon'
+      ? polygonPathData(layer.sides, layer.w, layer.h, layer.cornerRadius)
+      : starPathData(layer.points, layer.innerRatio, layer.w, layer.h, layer.cornerRadius)
+    if (d) {
+      drawPath(ctx, {
+        ...layer, kind: 'path', d, bbox: { w: layer.w, h: layer.h }, scale: 1, fillRule: 'nonzero',
+        fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      } as any, W)
+    }
   } else if (layer.kind === 'line') {
     const w = layer.w * W
     ctx.beginPath()

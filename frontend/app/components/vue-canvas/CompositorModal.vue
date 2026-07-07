@@ -4,6 +4,7 @@ import {
   Type, Square, Circle, Minus, Plus, Trash2,
   AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
   Eye, EyeOff, Underline, Strikethrough, CaseUpper, CaseLower, CaseSensitive,
+  Hexagon, Star,
 } from 'lucide-vue-next'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin,
@@ -310,7 +311,7 @@ const {
   boxPx, handlePositions: localHandlePositions,
   startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown, startResize: onLocalResizePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
-  addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
+  addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
   addPathLayers, addPathFromSvg, deleteLayers,
   background, setBackground,
   undo, redo, canUndo, canRedo,
@@ -2706,6 +2707,12 @@ onUnmounted(() => {
         </button>
         <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
           <Minus class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add polygon" @click="addPolygon">
+          <Hexagon class="size-4" />
+        </button>
+        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add star" @click="addStar">
+          <Star class="size-4" />
         </button>
         <button
           class="flex items-center justify-center size-8 rounded-md cursor-pointer"
