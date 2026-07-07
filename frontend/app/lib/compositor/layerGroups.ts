@@ -24,6 +24,9 @@ export interface LayerGroup {
   id: string
   name?: string
   parentId?: string
+  opacity?: number   // 0..1 group multiplier (cascades to descendants)
+  hidden?: boolean   // group hidden ⇒ all descendants hidden
+  locked?: boolean   // group locked ⇒ all descendants not selectable on canvas
 }
 
 /** The minimal layer shape these helpers need (a LocalLayer satisfies it). */
@@ -64,6 +67,32 @@ export function ancestorsOf(id: string, groups: LayerGroup[]): string[] {
     seen.add(p)
     p = map.get(p)?.parentId
   }
+  return out
+}
+
+export interface GroupCascade { opacity: number; hidden: boolean; locked: boolean }
+
+/** Resolve the effective group contribution for a layer's immediate group:
+ *  opacity multiplied, hidden/locked OR-ed, across the group + all ancestors. */
+export function resolveGroupCascade(groupId: string | undefined, groups: LayerGroup[]): GroupCascade {
+  const out: GroupCascade = { opacity: 1, hidden: false, locked: false }
+  if (!groupId) return out
+  const map = byId(groups)
+  for (const id of [groupId, ...ancestorsOf(groupId, groups)]) {
+    const g = map.get(id)
+    if (!g) continue
+    if (typeof g.opacity === 'number') out.opacity *= g.opacity
+    if (g.hidden) out.hidden = true
+    if (g.locked) out.locked = true
+  }
+  return out
+}
+
+/** Update a group's registry entry (or append one), preserving other fields. Pure. */
+export function upsertGroup(groups: LayerGroup[], groupId: string, patch: Partial<LayerGroup>): LayerGroup[] {
+  let found = false
+  const out = groups.map(g => (g.id === groupId ? (found = true, { ...g, ...patch }) : g))
+  if (!found) out.push({ id: groupId, ...patch })
   return out
 }
 
