@@ -315,6 +315,7 @@ const {
   background, setBackground,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey,
+  selectionBox, selectionHandles, startGroupResize,
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
   setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade,
@@ -2472,9 +2473,9 @@ onUnmounted(() => {
           />
         </template>
 
-        <!-- Local-layer selection / handles -->
+        <!-- Local-layer selection / handles (single selection only — multi-select uses the group box below) -->
         <svg
-          v-if="localHandlePositions && !editingId && !genActive"
+          v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive"
           class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
@@ -2488,7 +2489,7 @@ onUnmounted(() => {
             stroke="#ffffff" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
-        <template v-if="localHandlePositions && !editingId && !genActive">
+        <template v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive">
           <div
             v-for="corner in (['tl', 'tr', 'br', 'bl'] as const)"
             :key="'l-' + corner"
@@ -2512,6 +2513,29 @@ onUnmounted(() => {
             class="absolute z-20 size-3 rounded-full bg-white cursor-grab border-2 border-[#1a1a1a]"
             :style="{ left: localHandlePositions.rot.x + 'px', top: localHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="onLocalRotatePointerDown($event)"
+          />
+        </template>
+
+        <!-- Group selection box + resize handles (≥2 selected) -->
+        <svg
+          v-if="selectionBox && !editingId && !genActive"
+          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+          :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
+        >
+          <rect
+            :x="selectionBox.cx - selectionBox.w / 2" :y="selectionBox.cy - selectionBox.h / 2"
+            :width="selectionBox.w" :height="selectionBox.h"
+            fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"
+          />
+        </svg>
+        <template v-if="selectionBox && !editingId && !genActive">
+          <div
+            v-for="corner in (['tl', 'tr', 'br', 'bl'] as const)"
+            :key="'g-' + corner"
+            data-handle
+            class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
+            :style="{ left: selectionHandles![corner].x + 'px', top: selectionHandles![corner].y + 'px', transform: 'translate(-50%, -50%)' }"
+            @pointerdown="startGroupResize(corner, $event)"
           />
         </template>
 
