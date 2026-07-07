@@ -34,12 +34,13 @@ export function resizeBox(
   let w = start.w, h = start.h, shiftLX = 0, shiftLY = 0
 
   if (opts.fromCenter) {
-    if (sx !== 0) w = clamp(start.w + 2 * sx * d.x)
-    if (sy !== 0) h = clamp(start.h + 2 * sy * d.y)
+    let rw = sx !== 0 ? start.w + 2 * sx * d.x : start.w
+    let rh = sy !== 0 ? start.h + 2 * sy * d.y : start.h
     if (opts.aspect && corner) {
-      const scale = Math.max(w / start.w, h / start.h)
-      w = start.w * scale; h = start.h * scale
+      const scale = Math.max(rw / start.w, rh / start.h)
+      rw = start.w * scale; rh = start.h * scale
     }
+    w = clamp(rw); h = clamp(rh)
     // center fixed → no shift
   } else if (opts.aspect && corner) {
     const scale = Math.max(Math.abs(sx * start.w + d.x) / start.w, Math.abs(sy * start.h + d.y) / start.h)

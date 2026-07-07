@@ -29,6 +29,16 @@ describe('resizeBox — unrotated', () => {
     const r = resizeBox(START, 0, 'r', { x: 120, y: 100 }, { x: 20, y: 100 }, {}, 2)
     expect(r.w).toBe(2)
   })
+  it('alt + shift corner (from center, aspect): scale from unclamped dims, center fixed', () => {
+    // rw=40+2*10=60, rh=20+2*2=24, scale=max(60/40,24/20)=1.5 → w=60,h=30
+    const r = resizeBox(START, 0, 'br', { x: 120, y: 110 }, { x: 130, y: 112 }, { aspect: true, fromCenter: true })
+    expect(r).toMatchObject({ cx: 100, cy: 100, w: 60, h: 30 })
+  })
+  it('edge + shift is a no-op vs edge alone (aspect only affects corners)', () => {
+    const plain = resizeBox(START, 0, 'r', { x: 120, y: 100 }, { x: 130, y: 100 })
+    const shifted = resizeBox(START, 0, 'r', { x: 120, y: 100 }, { x: 130, y: 100 }, { aspect: true })
+    expect(shifted).toMatchObject(plain)
+  })
 })
 
 describe('resizeBox — rotated 90°', () => {
