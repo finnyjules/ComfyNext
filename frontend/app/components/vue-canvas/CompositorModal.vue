@@ -10,7 +10,7 @@ import {
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
-import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
+import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
   reparentGroup as reparentGroupOp,
@@ -308,7 +308,7 @@ const {
   selectedId: selectedLocalId, selected: selectedLocal,
   editingId, editingLayer, beginEdit, endEdit,
   boxPx, handlePositions: localHandlePositions,
-  startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown,
+  startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown, startResize: onLocalResizePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
   addText, addRect, addEllipse, addLine, addImageFromFile, addImageFromName,
   addPathLayers, addPathFromSvg, deleteLayers,
@@ -339,6 +339,9 @@ const {
 const caPanelActive = computed(() => caBusy.value || caReviewing.value || caHasProposal.value)
 
 const selectedCount = computed(() => selectedLayers.value.length)
+// Box layers (rect/ellipse/image) get full Figma-style resize (corners + edges,
+// anchored opposite side); text/line/path keep uniform corner scale (no 2D box).
+const selectedResizable = computed(() => !!selectedLocal.value && resizableKind(selectedLocal.value.kind))
 const ALIGN_BTNS = [
   { mode: 'left', icon: AlignStartVertical, title: 'Align left' },
   { mode: 'hcenter', icon: AlignCenterVertical, title: 'Align horizontal centers' },
@@ -2435,13 +2438,23 @@ onUnmounted(() => {
         </svg>
         <template v-if="localHandlePositions && !editingId && !genActive">
           <div
-            v-for="corner in ['tl', 'tr', 'br', 'bl']"
+            v-for="corner in (['tl', 'tr', 'br', 'bl'] as const)"
             :key="'l-' + corner"
             data-handle
             class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
             :style="{ left: localHandlePositions[corner].x + 'px', top: localHandlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="onLocalScalePointerDown($event)"
+            @pointerdown="selectedResizable ? onLocalResizePointerDown(corner, $event) : onLocalScalePointerDown($event)"
           />
+          <template v-if="selectedResizable">
+            <div
+              v-for="edge in (['t', 'r', 'b', 'l'] as const)"
+              :key="'l-e-' + edge"
+              data-handle
+              class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
+              :style="{ left: localHandlePositions[edge].x + 'px', top: localHandlePositions[edge].y + 'px', transform: 'translate(-50%, -50%)' }"
+              @pointerdown="onLocalResizePointerDown(edge, $event)"
+            />
+          </template>
           <div
             data-handle
             class="absolute z-20 size-3 rounded-full bg-white cursor-grab border-2 border-[#1a1a1a]"
