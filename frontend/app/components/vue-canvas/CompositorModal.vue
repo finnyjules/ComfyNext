@@ -3123,6 +3123,70 @@ onUnmounted(() => {
             </div>
           </template>
 
+          <!-- Polygon controls -->
+          <template v-if="selectedLocal.kind === 'polygon'">
+            <div>
+              <div class="panel-label mb-1.5">Fill</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Stroke</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).stroke"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+                class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Sides</div>
+              <input type="number" min="3" step="1" :value="(selectedLocal as any).sides"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setLocal(selectedLocal!.id, { sides: Math.max(3, Math.round(parseFloat(($event.target as HTMLInputElement).value) || 3)) })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Corner radius</div>
+              <input type="range" min="0" max="1" step="0.01" :value="(selectedLocal as any).cornerRadius"
+                class="w-full accent-white cursor-pointer"
+                @input="setLocal(selectedLocal!.id, { cornerRadius: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+            </div>
+          </template>
+
+          <!-- Star controls -->
+          <template v-if="selectedLocal.kind === 'star'">
+            <div>
+              <div class="panel-label mb-1.5">Fill</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Stroke</div>
+              <FillControl allow-none :model-value="(selectedLocal as any).stroke"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+                class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Points</div>
+              <input type="number" min="3" step="1" :value="(selectedLocal as any).points"
+                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                @input="setLocal(selectedLocal!.id, { points: Math.max(3, Math.round(parseFloat(($event.target as HTMLInputElement).value) || 3)) })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Inner radius</div>
+              <input type="range" min="0.01" max="0.99" step="0.01" :value="(selectedLocal as any).innerRatio"
+                class="w-full accent-white cursor-pointer"
+                @input="setLocal(selectedLocal!.id, { innerRatio: parseFloat(($event.target as HTMLInputElement).value) || 0.5 })" />
+            </div>
+            <div>
+              <div class="panel-label mb-1.5">Corner radius</div>
+              <input type="range" min="0" max="1" step="0.01" :value="(selectedLocal as any).cornerRadius"
+                class="w-full accent-white cursor-pointer"
+                @input="setLocal(selectedLocal!.id, { cornerRadius: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
+            </div>
+          </template>
+
           <!-- Line controls -->
           <template v-if="selectedLocal.kind === 'line'">
             <div>
