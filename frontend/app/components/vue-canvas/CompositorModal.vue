@@ -3238,7 +3238,7 @@ onUnmounted(() => {
           </template>
 
           <!-- Size: W / H with aspect-ratio lock (shapes & images) -->
-          <div v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse' || selectedLocal.kind === 'image'">
+          <div v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse' || selectedLocal.kind === 'image' || selectedLocal.kind === 'polygon' || selectedLocal.kind === 'star'">
             <div class="panel-label mb-1.5">Size</div>
             <div class="flex items-center gap-2">
               <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
