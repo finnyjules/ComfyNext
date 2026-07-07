@@ -1499,6 +1499,7 @@ watch(
     JSON.stringify(readSlotArr('comfynext_hiddenWired')),
     JSON.stringify(wiredTreatments.value),
     JSON.stringify(background.value),
+    JSON.stringify(localGroups.value),
   ] as const,
   async () => {
     for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
