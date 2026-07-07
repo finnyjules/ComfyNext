@@ -2450,7 +2450,7 @@ onUnmounted(() => {
               v-for="edge in (['t', 'r', 'b', 'l'] as const)"
               :key="'l-e-' + edge"
               data-handle
-              class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
+              :class="['absolute z-20 size-2.5 bg-white border border-white/60', edge === 't' || edge === 'b' ? 'cursor-ns-resize' : 'cursor-ew-resize']"
               :style="{ left: localHandlePositions[edge].x + 'px', top: localHandlePositions[edge].y + 'px', transform: 'translate(-50%, -50%)' }"
               @pointerdown="onLocalResizePointerDown(edge, $event)"
             />
