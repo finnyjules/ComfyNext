@@ -17,7 +17,7 @@ import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables
 import {
   type LayerGroup, topGroupOf, layersInGroup, ancestorsOf, isDescendantOrSelf,
   createGroupFromSelection, dissolveGroup as dissolveGroupOp, renameGroup as renameGroupOp,
-  reparentGroup as reparentGroupOp, pruneEmptyGroups,
+  reparentGroup as reparentGroupOp, pruneEmptyGroups, resolveGroupCascade, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit, dragHud } from '~/lib/compositor/layerEdits'
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
@@ -210,6 +210,14 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     recordHistory()
     writeGroups(renameGroupOp(localGroups.value, groupId, name))
   }
+  /** Set a group's own hidden flag (cascades to descendants via resolveGroupCascade). */
+  function setGroupHidden(groupId: string, hidden: boolean) { recordHistory(); writeGroups(upsertGroup(localGroups.value, groupId, { hidden })) }
+  /** Set a group's own locked flag (cascades to descendants via resolveGroupCascade). */
+  function setGroupLocked(groupId: string, locked: boolean) { recordHistory(); writeGroups(upsertGroup(localGroups.value, groupId, { locked })) }
+  /** Set a group's own opacity (multiplies with ancestors via resolveGroupCascade). */
+  function setGroupOpacity(groupId: string, opacity: number) { recordHistory(); writeGroups(upsertGroup(localGroups.value, groupId, { opacity: Math.max(0, Math.min(1, opacity)) })) }
+  /** Effective (cascaded) hidden/locked/opacity for a group, for the layers panel. */
+  function groupCascade(groupId: string) { return resolveGroupCascade(groupId, localGroups.value) }
   /** Dissolve one specific group level (used by the layers panel). */
   function ungroupGroup(groupId: string) {
     recordHistory()
@@ -388,6 +396,8 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       // Hidden/locked layers are transparent to canvas hits (the layers panel
       // can still select a locked layer; the canvas can't).
       if (l.visible === false || l.locked) continue
+      const gc = resolveGroupCascade(l.groupId, localGroups.value)
+      if (gc.hidden || gc.locked) continue
       const b = boxPx(l)
       const cx = l.x * W, cy = l.y * H
       const rad = (-l.rotation * Math.PI) / 180
@@ -639,6 +649,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection, handleEditorKey,
     copySelection, pasteClipboard,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
+    setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   }
