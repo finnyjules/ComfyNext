@@ -13,7 +13,7 @@
  * One renderer (`drawLocalLayer`) draws to any 2D context at any resolution.
  */
 
-export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image'
+export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image' | 'polygon' | 'star'
 
 // ── Motion painter indirection ───────────────────────────────────────────────
 // paintLayerStack(t) needs the motion module, but motion/paint.ts imports
@@ -28,6 +28,7 @@ import { axesToVariationSettings } from '~/lib/motion/axes'
 import { expandClones, type Cloner } from '~/composables/useCloner'
 import { type Fill, fillTileBox } from '~/lib/spacetype/fillTile'
 import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
+import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
@@ -258,7 +259,23 @@ export interface ImageLayer extends LayerCommon {
   tintOpacity?: number    // 0..1 tint strength; default 1
 }
 
-export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer
+export interface PolygonLayer extends LayerCommon {
+  kind: 'polygon'
+  w: number; h: number
+  sides: number          // integer >= 3
+  cornerRadius: number   // 0..1 ratio (scale-invariant)
+  fill: string; stroke: string; strokeWidth: number
+}
+export interface StarLayer extends LayerCommon {
+  kind: 'star'
+  w: number; h: number
+  points: number         // integer >= 3
+  innerRatio: number     // 0.01..0.99 (inner radius / outer radius)
+  cornerRadius: number   // 0..1 ratio
+  fill: string; stroke: string; strokeWidth: number
+}
+
+export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer
 
 let _idSeq = 0
 function newId(): string {
@@ -343,6 +360,25 @@ export function createEllipseLayer(partial: Partial<EllipseLayer> = {}): Ellipse
   }
 }
 
+export function createPolygonLayer(partial: Partial<PolygonLayer> = {}): PolygonLayer {
+  return {
+    id: newId(), kind: 'polygon',
+    x: 0.5, y: 0.5, rotation: 0, opacity: 1,
+    w: 0.24, h: 0.24, sides: 6, cornerRadius: 0,
+    fill: '#3b82f6', stroke: '', strokeWidth: 0,
+    ...partial,
+  }
+}
+export function createStarLayer(partial: Partial<StarLayer> = {}): StarLayer {
+  return {
+    id: newId(), kind: 'star',
+    x: 0.5, y: 0.5, rotation: 0, opacity: 1,
+    w: 0.24, h: 0.24, points: 5, innerRatio: 0.5, cornerRadius: 0,
+    fill: '#f59e0b', stroke: '', strokeWidth: 0,
+    ...partial,
+  }
+}
+
 export function createLineLayer(partial: Partial<LineLayer> = {}): LineLayer {
   return {
     id: newId(), kind: 'line',
@@ -405,6 +441,24 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
       d: `M ${f(-w / 2)} 0 L ${f(w / 2)} 0`, bbox: { w, h: Math.max(layer.strokeWidth, 0.001) },
       scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
       fill: 'none', stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+    })
+  }
+  if (layer.kind === 'polygon') {
+    const d = polygonPathData(layer.sides, layer.w, layer.h, layer.cornerRadius)
+    if (!d) return null
+    return createPathLayer({
+      d, bbox: { w: layer.w, h: layer.h }, scale: 1,
+      x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
+      fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+    })
+  }
+  if (layer.kind === 'star') {
+    const d = starPathData(layer.points, layer.innerRatio, layer.w, layer.h, layer.cornerRadius)
+    if (!d) return null
+    return createPathLayer({
+      d, bbox: { w: layer.w, h: layer.h }, scale: 1,
+      x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
+      fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
     })
   }
   return null
