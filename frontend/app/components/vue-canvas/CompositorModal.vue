@@ -318,6 +318,7 @@ const {
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
   setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade,
+  editingLayerNameId, layerNameDraft, startLayerRename, commitLayerRename,
   snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   hud,
 } = editor
@@ -835,6 +836,7 @@ function onRowDblClick(row: any) {
 }
 function rowLabel(row: any) {
   const l = row.layer
+  if (l.name) return l.name
   return l.kind === 'text' ? (l.text?.split('\n')[0] || 'Text') : l.kind
 }
 
@@ -2158,10 +2160,22 @@ onUnmounted(() => {
                 @keydown.esc.prevent="editingGroupId = null"
                 @blur="commitGroupRename"
               />
+              <input
+                v-else-if="(row.kind === 'local' || row.kind === 'child') && editingLayerNameId === row.layer.id"
+                v-model="layerNameDraft"
+                :ref="(el: any) => el?.focus?.()"
+                class="flex-1 min-w-0 bg-white/[0.06] rounded px-1 text-sm outline-none"
+                @click.stop @mousedown.stop
+                @keydown.enter.prevent="commitLayerRename"
+                @keydown.esc.prevent="editingLayerNameId = null"
+                @blur="commitLayerRename"
+              />
               <span v-else-if="row.kind === 'group'" class="text-sm truncate flex-1" title="Double-click to rename"
                 @dblclick.stop="startGroupRename(row.groupId)">{{ groupLabel(row.groupId) }} <span class="text-white/40">· {{ row.count }}</span></span>
               <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1" :class="rowHidden(row) ? 'text-white/35' : ''">Layer {{ row.slot }}</span>
-              <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']">{{ rowLabel(row) }}</span>
+              <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']"
+                title="Double-click to rename"
+                @dblclick.stop="startLayerRename(row.layer.id)">{{ rowLabel(row) }}</span>
               <!-- Lock (locked layers render but ignore canvas clicks/drags) -->
               <button v-if="row.kind !== 'group'"
                 class="transition cursor-pointer"

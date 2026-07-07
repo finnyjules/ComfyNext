@@ -148,6 +148,7 @@ interface LayerCommon {
   blend?: string     // blend mode vs layers below ('normal' default; same names as wired)
   groupId?: string   // layers sharing a groupId select/move/transform together
   groupName?: string // display name for the group (mirrored on every member)
+  name?: string      // user-set display name (overrides the derived label)
   effects?: LayerEffect[] // drop shadow etc. — applied at render time
   mask?: LayerMask        // crop to a rect/ellipse region — applied at render time
   maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()

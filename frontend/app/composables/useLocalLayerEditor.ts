@@ -210,6 +210,23 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     recordHistory()
     writeGroups(renameGroupOp(localGroups.value, groupId, name))
   }
+  /** Per-layer display name (overrides the derived label in the panel). */
+  const editingLayerNameId = ref<string | null>(null)
+  const layerNameDraft = ref('')
+  function setLayerName(id: string, name: string) {
+    const nm = name.trim()
+    recordHistory()
+    commit(localLayers.value.map(l => (l.id === id ? ({ ...l, name: nm || undefined } as LocalLayer) : l)))
+  }
+  function startLayerRename(id: string) {
+    editingLayerNameId.value = id
+    const l = localLayers.value.find(x => x.id === id)
+    layerNameDraft.value = (l as any)?.name ?? ''
+  }
+  function commitLayerRename() {
+    if (editingLayerNameId.value) setLayerName(editingLayerNameId.value, layerNameDraft.value)
+    editingLayerNameId.value = null
+  }
   /** Set a group's own hidden flag (cascades to descendants via resolveGroupCascade). */
   function setGroupHidden(groupId: string, hidden: boolean) { recordHistory(); writeGroups(upsertGroup(localGroups.value, groupId, { hidden })) }
   /** Set a group's own locked flag (cascades to descendants via resolveGroupCascade). */
@@ -650,6 +667,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     copySelection, pasteClipboard,
     groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
     setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade,
+    editingLayerNameId, layerNameDraft, startLayerRename, commitLayerRename, setLayerName,
     localGroups, commitBoth, writeGroups, setLayerGroup, setGroupParent, selectGroupById,
     snapGuides, marquee, startMarquee, moveMarquee, endMarquee,
   }
