@@ -34,6 +34,10 @@ export interface Take {
   sig?: string
   /** Provenance — what produced it (seed/prompt/model). Filled in over time. */
   params?: Record<string, any>
+  /** True when this result was rendered by draft mode's cheap tier. */
+  draft?: boolean
+  /** Id of the draft take this final result was promoted from. */
+  promotedFrom?: string
 }
 
 /** Node-data fields the takes system reads/writes. Mixed into the node's data. */
@@ -163,4 +167,34 @@ export function resolveActiveTake(data: TakeBearingData | undefined | null): Tak
   if (!data?.takes?.length) return null
   const id = data.activeTakeId
   return data.takes.find((t) => t.id === id) ?? data.takes[data.takes.length - 1] ?? null
+}
+
+/**
+ * Tag a freshly-built take from the per-node run-meta registries: draft marks
+ * (standing) and pending promote (one-shot). Deps injected for testability —
+ * the canvas passes lib/draft/runMeta's real functions.
+ */
+export function tagTakeFromRunMeta(
+  take: Take,
+  nodeId: string,
+  deps: {
+    draftMetaFor: (id: string) => { restore: Record<string, any> } | null
+    consumePendingPromote: (id: string) => { fromTakeId: string; overrides: Record<string, any> } | null
+  },
+): Take {
+  const promote = deps.consumePendingPromote(nodeId)
+  if (promote) {
+    // Promoted run: provenance must record what actually ran (the take-snapshot
+    // overrides), not the live widgets — 'self' reroll randomized the live seed.
+    return {
+      ...take,
+      promotedFrom: promote.fromTakeId,
+      params: { ...(take.params ?? {}), ...promote.overrides },
+    }
+  }
+  const draft = deps.draftMetaFor(nodeId)
+  if (draft) {
+    return { ...take, draft: true, params: { ...(take.params ?? {}), draftRestore: draft.restore } }
+  }
+  return take
 }

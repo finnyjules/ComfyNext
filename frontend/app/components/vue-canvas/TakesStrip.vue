@@ -4,7 +4,7 @@
  * Presentational: parent owns the data and applies the change on `select`.
  * See docs/plans/2026-06-02-creative-studio-project-takes-design.md.
  */
-import { Star, X } from 'lucide-vue-next'
+import { Star, X, PencilLine } from 'lucide-vue-next'
 import type { Take } from '~/composables/useTakes'
 
 defineProps<{
@@ -65,6 +65,15 @@ function thumb(t: Take): string | null {
           v-if="t.pinned"
           class="absolute top-0.5 left-0.5 size-3 text-amber-300 fill-amber-300 drop-shadow"
         />
+
+        <!-- draft marker: dashed sketch chip (NOT pastel — pastel means AI) -->
+        <span
+          v-if="t.draft"
+          class="absolute top-0.5 right-0.5 flex items-center justify-center size-3.5 rounded-[3px] border border-dashed border-white/60 bg-black/50"
+          title="Draft render — promote for full quality"
+        >
+          <PencilLine class="size-2 text-white/80" />
+        </span>
 
         <!-- hover actions -->
         <div

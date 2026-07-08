@@ -40,7 +40,8 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
-import { buildTake, appendTake, takeHasContent } from '~/composables/useTakes'
+import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
+import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -164,7 +165,8 @@ function applyPendingTakesForDisplayedCanvas() {
     const target = (nodes.value as any[]).find((n: any) => n.id === nodeId)
     if (target) {
       take.params = { ...(take.params ?? {}), ...nodeGenParams(target) } // provenance for breeding
-      target.data = appendTake({ ...target.data }, take)
+      const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
+      target.data = appendTake({ ...target.data }, tagged)
     }
   }
 }
@@ -2477,7 +2479,8 @@ function handleBridgeMessage(event: MessageEvent) {
           // Provenance: remember HOW this result was made (prompt/seed/model/…) so
           // a later "breed from this take" can perturb around it. (Direction Loop.)
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
-          target.data = appendTake({ ...target.data }, take)
+          const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
+          target.data = appendTake({ ...target.data }, tagged)
         }
       }
     }
