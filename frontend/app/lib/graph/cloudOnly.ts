@@ -17,6 +17,7 @@ import type { ApiPrompt } from '~/lib/graph/graphToPrompt'
  *  as CPU-trivial plumbing — no GPU tensor work performed. */
 const UTILITY_SAFE = new Set([
   'EmptyImage',
+  'Image', // artifact sink node (comfy_extras/nodes_image.py), auto-materialized on every run
   'LoadImage',
   'SaveImage',
   'PreviewImage',

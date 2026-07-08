@@ -78,4 +78,15 @@ describe('isPoolEligible', () => {
   it('rejects the golden txt2img-seed-control fixture (local KSampler pipeline)', () => {
     expect(isPoolEligible(goldenTxt2Img, objectInfo)).toBe(false)
   })
+
+  it('is eligible when real artifact sink Image node is the final output', () => {
+    const prompt: ApiPrompt = {
+      1: { class_type: 'EmptyImage', inputs: {} },
+      2: { class_type: 'Image', inputs: { image: ['1', 0] } },
+    }
+    expect(isPoolEligible(prompt, {
+      ...objectInfo,
+      Image: { category: 'image' },
+    })).toBe(true)
+  })
 })
