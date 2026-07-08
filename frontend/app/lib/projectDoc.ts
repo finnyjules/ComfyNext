@@ -19,6 +19,8 @@ export interface ProjectDoc {
   /** Active brand-library kit for this project (id into /api/brand-kits).
    *  Unset/null ⇒ no brand theming; all consumers behave as before. */
   brandKitId?: string | null
+  /** Project-scoped named image references (`@refs`): handle → { filename, text? }. */
+  assetRegistry?: import('./refs/registry').RefRegistry
 }
 
 export const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
@@ -42,7 +44,7 @@ export function toProjectDoc(x: any): ProjectDoc {
   if (isProjectDoc(x)) return x
   const id = makeCanvasId()
   const workflow = (x && typeof x === 'object') ? x : makeBlankWorkflow()
-  return { canvases: [{ id, name: 'Canvas 1', workflow }], activeCanvasId: id }
+  return { canvases: [{ id, name: 'Canvas 1', workflow }], activeCanvasId: id, assetRegistry: {} }
 }
 
 export function activeCanvasOf(doc: ProjectDoc): ProjectCanvas {
