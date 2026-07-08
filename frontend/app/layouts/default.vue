@@ -1564,31 +1564,53 @@ function clearQueueWatchdog() {
   if (queueWatchdogTimer) { clearTimeout(queueWatchdogTimer); queueWatchdogTimer = null }
 }
 
-// Per-run watchdogs for DIRECT-mode runs, keyed by prompt_id. Direct mode has
-// no `queued` bridge event to clear the global watchdog, and N runs can be in
-// flight at once (across tabs/workers), so a single global timer can't serve
-// them. Each direct run arms its own timer right after registerRun; it's
-// cleared the moment handleBridgeEvent sees ANY event carrying that prompt_id.
-// On fire → same "Run didn't start" toast, finishRun(error), and idle the tab
-// only if it has no other in-flight runs. (Bridge mode keeps armQueueWatchdog.)
+// Per-run STALL watchdogs for DIRECT-mode runs, keyed by prompt_id. In direct
+// mode the resolved /prompt POST IS the server's acknowledgment (queue()
+// awaits it), so there is no separate handshake to time out — a slow model is
+// NOT a failure. What we guard against instead is a live run that goes SILENT:
+// the server stops emitting any WS event for it (worker died mid-render, socket
+// wedged) and the run would otherwise hang 'running' forever.
+//
+// So this is a generous NO-EVENT stall timer, not an 8s handshake timer: armed
+// at registerRun and RE-ARMED every time handleBridgeEvent sees ANY event
+// carrying that prompt_id (via rearmDirectRunWatchdog). It only fires if
+// DIRECT_RUN_STALL_MS elapse with total silence for a still-live run; cleared on
+// terminal completion events as before. (This fixes the false "didn't start"
+// fires when Re-roll ×N queues prompts serially behind each other on a worker —
+// the 2nd prompt's first event legitimately arrives only after the 1st, which a
+// short per-run timer misread as a stall.) The bridge path keeps armQueueWatchdog.
 // NB: `Map` here would resolve to the lucide-vue-next icon imported above,
 // not the global constructor — use globalThis.Map explicitly.
+const DIRECT_RUN_STALL_MS = 120_000
 const directRunWatchdogs = new globalThis.Map<string, ReturnType<typeof setTimeout>>()
+// prompt_id → its originating tab, so a re-arm (which only carries the id) can
+// still idle the right tab if the run ultimately stalls.
+const directRunWatchdogTabs = new globalThis.Map<string, string>()
 function clearDirectRunWatchdog(promptId: string) {
   const t = directRunWatchdogs.get(promptId)
   if (t) { clearTimeout(t); directRunWatchdogs.delete(promptId) }
+  directRunWatchdogTabs.delete(promptId)
 }
 function armDirectRunWatchdog(promptId: string, tabId: string) {
-  clearDirectRunWatchdog(promptId)
+  directRunWatchdogTabs.set(promptId, tabId)
+  const existing = directRunWatchdogs.get(promptId)
+  if (existing) clearTimeout(existing)
   directRunWatchdogs.set(promptId, setTimeout(() => {
     directRunWatchdogs.delete(promptId)
-    console.error('[Run] no execution event for direct prompt — server never acknowledged it')
-    toast.error('Run didn’t start', {
-      description: 'The ComfyUI canvas didn’t respond — it can go stale after a restart. Reload the page and try again.',
-    })
+    directRunWatchdogTabs.delete(promptId)
+    console.error('[Run] no WS event for direct prompt in %dms — run stalled', DIRECT_RUN_STALL_MS)
+    toast.error('Run stalled — no response from the server')
     finishRun(promptId, 'error')
     if (tabId && inFlight({ tabId }).length === 0) updateTabStatus(tabId, 'idle')
-  }, QUEUE_WATCHDOG_MS))
+  }, DIRECT_RUN_STALL_MS))
+}
+// Re-arm the stall timer on any event carrying this prompt_id, IF a watchdog is
+// still live for it (i.e. it hasn't been cleared by a completion event). Reuses
+// the originating tab captured at arm time. No-op for bridge-path prompt_ids.
+function rearmDirectRunWatchdog(promptId: string) {
+  if (!directRunWatchdogs.has(promptId)) return
+  const tabId = directRunWatchdogTabs.get(promptId) ?? ''
+  armDirectRunWatchdog(promptId, tabId)
 }
 function armQueueWatchdog(tabId: string) {
   clearQueueWatchdog()
@@ -2695,10 +2717,14 @@ function handleBridgeEvent(data: any, source?: Window | null) {
   // run registry knows, that run's originating tab wins over the active-tab
   // fallback above — so a background/other-worker canvas keeps updating. Events
   // with no prompt_id, or a prompt_id not in the registry (bridge-path runs),
-  // keep the tab resolved above unchanged. Any registry hit also clears that
-  // run's per-run watchdog: an event arriving means the server acknowledged it.
+  // keep the tab resolved above unchanged.
+  //
+  // Direct-run STALL watchdog: any event for a live run RE-ARMS its no-event
+  // stall timer (the run is demonstrably alive). Terminal events additionally
+  // CLEAR it in their own branches below (execution_complete/execution_error),
+  // so a completed run stops re-arming. rearm is a no-op once cleared.
   if (prompt_id) {
-    clearDirectRunWatchdog(prompt_id)
+    rearmDirectRunWatchdog(prompt_id)
     tabId = resolveEventTab(prompt_id, tabId)
   }
 
@@ -2774,6 +2800,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
       if (prompt_id) promptProgress.value[prompt_id] = coarsePct
     }
   } else if (evt === 'execution_complete') {
+    if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is done — stop the stall timer
     const durationMs = executionStartTime.value
       ? (Date.now() - executionStartTime.value)
       : 0
@@ -2868,6 +2895,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Refresh history if queue panel is open
     if (queueOpen.value) fetchQueueAndHistory()
   } else if (evt === 'execution_error') {
+    if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is terminal — stop the stall timer
     // Remove this run first, then idle the tab only if it has no other run in
     // flight — a second concurrent direct run must keep the spinner up. Bridge
     // runs aren't registered, so inFlight is empty and this idles as before.
