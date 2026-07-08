@@ -2,14 +2,14 @@
 // text elements. Sibling of vibe.post.ts: raw fetch, user-supplied Anthropic
 // key, no SDK, haiku + structured outputs.
 import { buildCopyAssistPrompt, copyAssistSchema } from '../lib/copyAssist'
-import { MAX_PHRASE_CHARS, requireApiKey, requireString } from '../lib/agentRequest'
+import { MAX_PHRASE_CHARS, optionalApiKey, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import type { CopyAssistMode, CopyAssistRequest } from '../lib/copyAssist'
 
 const MODES: CopyAssistMode[] = ['variations', 'brief', 'translate']
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const apiKey = requireApiKey(body?.apiKey)
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(body?.apiKey))
   const mode = body?.mode
   if (!mode || !MODES.includes(mode)) {
     throw createError({ statusCode: 400, message: `Invalid mode — expected one of ${MODES.join(', ')}` })

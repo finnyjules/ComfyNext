@@ -12,6 +12,10 @@ export default defineNuxtConfig({
     // Max trainings the queue runner keeps in flight on Replicate at once.
     // Override via NUXT_TRAINING_MAX_CONCURRENCY. Default 2.
     trainingMaxConcurrency: '2',
+    // Server-only shared Anthropic key powering all AI-assist routes.
+    // Set via NUXT_ANTHROPIC_API_KEY. Users may still paste their own key in
+    // Settings → AI as a per-browser override; that one is sent per-request.
+    anthropicApiKey: '',
     public: {
       // Public origin the ComfyUI canvas iframe loads from. Empty in dev →
       // falls back to http://127.0.0.1:8188. In production set via

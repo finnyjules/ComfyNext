@@ -4,7 +4,6 @@ import {
   optionalApiKey,
   optionalString,
   optionalTier,
-  requireApiKey,
   requireString,
   resolveAnthropicKey,
 } from '../../server/lib/agentRequest'
@@ -40,17 +39,6 @@ describe('optionalString', () => {
   it('rejects non-strings and over-cap strings', () => {
     expect(() => optionalString(42, 'guidance', 100)).toThrow()
     expect(() => optionalString('x'.repeat(101), 'guidance', 100)).toThrow()
-  })
-})
-
-describe('requireApiKey', () => {
-  it('accepts a plausible Anthropic key', () => {
-    expect(requireApiKey('sk-ant-api03-abc123')).toBe('sk-ant-api03-abc123')
-  })
-  it('rejects missing, non-string, and absurdly long keys', () => {
-    expect(() => requireApiKey(undefined)).toThrow()
-    expect(() => requireApiKey(42)).toThrow()
-    expect(() => requireApiKey('k'.repeat(501))).toThrow()
   })
 })
 

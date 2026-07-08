@@ -1,6 +1,7 @@
 // Resolve a natural-language intent at a node port into 1..N nodes + wiring.
 // Sibling of explain.post.ts: raw fetch, user-supplied Anthropic key, no SDK.
 // Haiku + structured outputs keep this fast and a fraction of a cent per ask.
+import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 const SUGGESTION_SCHEMA = {
   type: 'object',
@@ -50,11 +51,9 @@ const SUGGESTION_SCHEMA = {
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { apiKey, intent, anchor, catalog, graphContext, validationErrors, previousAttempt } = body || {}
+  const { apiKey: clientKey, intent, anchor, catalog, graphContext, validationErrors, previousAttempt } = body || {}
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))
 
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
-  }
   if (!intent || typeof intent !== 'string' || !anchor || !Array.isArray(catalog)) {
     throw createError({ statusCode: 400, message: 'Missing intent, anchor, or catalog' })
   }

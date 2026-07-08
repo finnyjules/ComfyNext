@@ -4,12 +4,12 @@
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
 import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
-import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalString, requireApiKey, requireString } from '../lib/agentRequest'
+import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'vibe', 60)
   const body = await readBody(event)
-  const apiKey = requireApiKey(body?.apiKey)
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(body?.apiKey))
   const phrase = requireString(body?.phrase, 'phrase', MAX_PHRASE_CHARS)
   const guidance = optionalString(body?.guidance, 'guidance', MAX_PROMPT_CHARS)
   const effectLabel = optionalString(body?.effectLabel, 'effectLabel', 200) ?? 'effect'

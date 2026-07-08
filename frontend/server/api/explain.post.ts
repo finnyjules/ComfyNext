@@ -1,12 +1,10 @@
 import { modelForTier } from '../lib/aiModels'
+import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { graphData, apiKey } = body || {}
-
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
-  }
+  const { graphData, apiKey: clientKey } = body || {}
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))
 
   if (!graphData || typeof graphData !== 'string') {
     throw createError({ statusCode: 400, message: 'Missing graph data' })

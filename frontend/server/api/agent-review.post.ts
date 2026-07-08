@@ -8,7 +8,7 @@
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
 import { modelForTier } from '../lib/aiModels'
-import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalString, optionalTier, requireApiKey, requireString } from '../lib/agentRequest'
+import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalTier, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
 
 interface ReviewBody {
@@ -25,7 +25,7 @@ interface ReviewBody {
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'agent-review')
   const body = await readBody<ReviewBody>(event)
-  const apiKey = requireApiKey(body?.apiKey)
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(body?.apiKey))
   const prompt = requireString(body?.prompt, 'prompt', MAX_PROMPT_CHARS)
   const image = requireString(body?.image, 'image', MAX_IMAGE_CHARS)
   const system = optionalString(body?.system, 'system', MAX_PROMPT_CHARS)

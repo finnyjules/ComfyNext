@@ -5,6 +5,7 @@
 import { getGoogleCatalog } from '../utils/googleCatalog'
 import { groundSuggestions } from '../utils/fontMatch'
 import { extractModelText } from '../lib/modelText'
+import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 const SUGGEST_SCHEMA = {
   type: 'object',
@@ -35,11 +36,9 @@ const SUGGEST_SCHEMA = {
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const { apiKey, query } = body || {}
+  const { apiKey: clientKey, query } = body || {}
+  const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))
 
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw createError({ statusCode: 400, message: 'Missing Anthropic API key' })
-  }
   if (!query || typeof query !== 'string' || !query.trim()) {
     throw createError({ statusCode: 400, message: 'Missing description' })
   }

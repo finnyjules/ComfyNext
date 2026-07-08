@@ -33,10 +33,6 @@ export function optionalString(v: unknown, name: string, max: number): string | 
   return requireString(v, name, max)
 }
 
-export function requireApiKey(v: unknown): string {
-  return requireString(v, 'apiKey', MAX_KEY_CHARS)
-}
-
 export function optionalApiKey(v: unknown): string | undefined {
   return optionalString(v, 'apiKey', MAX_KEY_CHARS)
 }
