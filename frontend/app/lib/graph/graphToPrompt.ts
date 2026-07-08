@@ -4,13 +4,16 @@
 // `{ [nodeIdString]: { class_type, inputs } }`.
 //
 // Handles linear graphs plus mode 2 (mute) / mode 4 (bypass) — see
-// `resolveSource` below. There are no subgraphs to flatten (a later task).
+// `resolveSource` below. Subgraph-instance nodes (`workflow.definitions.
+// subgraphs`) are inlined by `flattenSubgraphs` as a pure pre-pass before
+// any of the rest of this file runs — see `~/lib/graph/flattenSubgraphs`.
 // Link resolution lives in one seam (`buildLinkIndex` + `resolveLink` +
-// `resolveSource`) so later tasks that add subgraph flattening can build on
-// top without touching the widget-zip or connection-override logic here.
+// `resolveSource`) so that pre-pass (and any future one) can build on top
+// without touching the widget-zip or connection-override logic here.
 
 import type { LiteGraphNode, LiteGraphWorkflow } from '~/composables/useVueNodes'
 import { widgetSlots, UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
+import { flattenSubgraphs, LITERAL_HOLDER_TYPE } from '~/lib/graph/flattenSubgraphs'
 
 export type { LiteGraphWorkflow }
 
@@ -48,6 +51,11 @@ function nodeHasOutputsUsed(node: LiteGraphNode): boolean {
   return (node.outputs || []).some((o) => Array.isArray(o.links) && o.links.length > 0)
 }
 
+/** A resolved connection either points at a real upstream node/slot, or —
+ * for a flattened subgraph's widget-backed boundary input — is a literal
+ * value with no node reference at all. */
+type ResolvedSource = { ref: [string, number] } | { literal: any } | null
+
 /**
  * Resolves the true source of a link's origin `(nodeId, slot)`, walking
  * through any chain of muted/bypassed nodes (mirrors ComfyUI frontend
@@ -61,6 +69,10 @@ function nodeHasOutputsUsed(node: LiteGraphNode): boolean {
  *    link (if any) is then resolved recursively (transitively walking
  *    chains of bypassed/muted nodes). No matching input, or no link on
  *    the matching input, is treated as mute for this consumer.
+ *  - `LITERAL_HOLDER_TYPE` (synthetic, from `flattenSubgraphs`): resolves to
+ *    the holder's own literal value instead of a node reference, and the
+ *    holder itself never gets a `prompt[id]` entry (see the main loop's
+ *    `UI_ONLY_TYPES`-style skip).
  *
  * `visited` guards against cycles: each (nodeId, slot) pair is recorded
  * before recursing, and revisiting one short-circuits to null rather than
@@ -72,7 +84,7 @@ function resolveSource(
   nodeId: number,
   slot: number,
   visited: Set<string> = new Set(),
-): [string, number] | null {
+): ResolvedSource {
   const key = `${nodeId}:${slot}`
   if (visited.has(key)) return null
   visited.add(key)
@@ -82,6 +94,10 @@ function resolveSource(
 
   const mode = node.mode ?? 0
   if (mode === MODE_MUTE) return null
+
+  if (node.type === LITERAL_HOLDER_TYPE) {
+    return { literal: (node.widgets_values || [])[0] }
+  }
 
   if (mode === MODE_BYPASS) {
     const output = (node.outputs || [])[slot]
@@ -94,26 +110,32 @@ function resolveSource(
     return resolveSource(nodesById, linkIndex, originId, originSlot, visited)
   }
 
-  return [String(nodeId), slot]
+  return { ref: [String(nodeId), slot] }
 }
 
 /**
  * Builds ComfyUI's API prompt from a serialized LiteGraph workflow. Mute
  * (mode 2) and bypass (mode 4) nodes are excluded; bypassed nodes' consumed
- * outputs are re-routed to their matching input via `resolveSource`
- * (subgraph flattening is a later task).
+ * outputs are re-routed to their matching input via `resolveSource`.
+ * Subgraph-instance nodes are inlined first via `flattenSubgraphs` whenever
+ * the workflow carries `definitions.subgraphs` — everything below this
+ * point never has to know a subgraph existed.
  */
 export function graphToPrompt(workflow: LiteGraphWorkflow, objectInfo: Record<string, any>): ApiPrompt {
-  const linkIndex = buildLinkIndex(workflow.links)
+  const flatWorkflow = (workflow as any).definitions?.subgraphs?.length
+    ? flattenSubgraphs(workflow)
+    : workflow
+
+  const linkIndex = buildLinkIndex(flatWorkflow.links)
   const nodesById = new Map<number, LiteGraphNode>()
-  for (const node of workflow.nodes || []) {
+  for (const node of flatWorkflow.nodes || []) {
     nodesById.set(node.id, node)
   }
   const prompt: ApiPrompt = {}
 
-  for (const node of workflow.nodes || []) {
+  for (const node of flatWorkflow.nodes || []) {
     const classType = node.type
-    if (UI_ONLY_TYPES.has(classType)) continue
+    if (UI_ONLY_TYPES.has(classType) || classType === LITERAL_HOLDER_TYPE) continue
 
     const mode = node.mode ?? 0
     if (mode === MODE_MUTE || mode === MODE_BYPASS) continue
@@ -152,7 +174,7 @@ export function graphToPrompt(workflow: LiteGraphWorkflow, objectInfo: Record<st
         delete inputs[input.name]
         continue
       }
-      inputs[input.name] = source
+      inputs[input.name] = 'literal' in source ? source.literal : source.ref
     }
 
     prompt[String(node.id)] = { class_type: classType, inputs }
