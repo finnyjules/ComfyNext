@@ -35,6 +35,7 @@ import {
   makeBlankWorkflow, makeCanvasId, nextCanvasName, toProjectDoc,
   type ProjectCanvas, type ProjectDoc,
 } from '~/lib/projectDoc'
+import { setRef, type RefRegistry } from '~/lib/refs/registry'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
@@ -969,6 +970,17 @@ async function handleRunVariations(e: Event) {
   }
 }
 
+// `@` promote button (ArtifactImageNode) → name the currently-displayed image
+// and write it into the project's @refs registry. Writes go straight onto
+// activeProjectDoc.value.assetRegistry so they ride the existing autosave.
+function onCreateRef(e: Event) {
+  const { name, entry } = (e as CustomEvent).detail || {}
+  if (!name || !entry?.filename || !activeProjectDoc.value) return
+  activeProjectDoc.value.assetRegistry = setRef(activeProjectDoc.value.assetRegistry ?? {}, name, entry)
+  persistWorkflows()
+  toast.success(`Reference @${name} created`)
+}
+
 onMounted(() => {
   window.addEventListener('comfynext:runFiltered', handleRunFiltered)
   window.addEventListener('comfynext:runAll', handleRunAll)
@@ -977,6 +989,7 @@ onMounted(() => {
   window.addEventListener('comfynext:runVariations', handleRunVariations)
   window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   window.addEventListener('comfynext:openActions', handleOpenActions)
+  window.addEventListener('comfynext:createRef', onCreateRef)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
@@ -991,6 +1004,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('comfynext:runVariations', handleRunVariations)
   window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
   window.removeEventListener('comfynext:openActions', handleOpenActions)
+  window.removeEventListener('comfynext:createRef', onCreateRef)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
 })
@@ -1117,6 +1131,9 @@ const activeProjectDoc = computed<ProjectDoc | null>(() => {
   const doc = savedWorkflows[activeTab.value.id]
   return isProjectDoc(doc) ? doc : null
 })
+
+// Read-only registry for descendant node components (Tasks 8 & 9 inject this).
+provide('assetRegistry', computed<RefRegistry>(() => activeProjectDoc.value?.assetRegistry ?? {}))
 
 // Re-entrancy guard: a switch serializes the outgoing canvas, swaps the doc's
 // active id, and (in LiteGraph mode) pushes the target into the iframe. Block
