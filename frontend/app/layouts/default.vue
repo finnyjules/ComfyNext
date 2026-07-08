@@ -248,14 +248,20 @@ watch(() => activeTabId.value, (id) => {
 // Drop a starter generator onto a freshly-opened project. The canvas mounts a
 // tick or two after the tab activates, so retry until materializeStartGraph is
 // available, then ensure the schema is loaded (it reads object_info) before
-// seeding — mirrors the Run path's refreshSchema safety.
+// seeding — mirrors the Run path's refreshSchema safety. Both failure paths
+// (canvas never mounts, generator type missing from object_info) surface a
+// toast instead of leaving the user staring at a blank canvas.
 async function seedStarterGraph(nodeType: string, tries = 0) {
   const canvas = vueCanvasRef.value
   if (canvas?.materializeStartGraph) {
     await canvas.refreshSchema?.()
-    canvas.materializeStartGraph({ generatorNodeType: nodeType })
+    if (canvas.materializeStartGraph({ generatorNodeType: nodeType }) === false) {
+      toast.error('Couldn’t add the starter', { description: `The backend doesn’t provide “${nodeType}”. Check that ComfyUI is running and up to date, then try again from the + menu.` })
+    }
   } else if (tries < 40) {
     setTimeout(() => seedStarterGraph(nodeType, tries + 1), 50)
+  } else {
+    toast.error('Couldn’t set up the project', { description: 'The canvas didn’t finish loading. Refresh the page and try again.' })
   }
 }
 
@@ -265,16 +271,20 @@ function onStartModalPick(payload: { nodeType: string; source?: ActionSource }) 
   // Defer one tick so the modal unmounts before we touch the canvas — keeps
   // any focus/scroll state clean and ensures the canvas is fully mounted.
   // Then ensure the schema is loaded before seeding: materializeStartGraph
-  // silently no-ops when object_info hasn't arrived yet, and the modal shows
-  // (and gets clicked) faster than the fetch on fresh projects — mirrors
-  // seedStarterGraph's refreshSchema safety.
+  // returns false when object_info hasn't arrived yet or lacks the picked
+  // generator — mirrors seedStarterGraph's refreshSchema safety, and both
+  // failure paths surface a toast rather than staying silent.
   nextTick(async () => {
     const canvas = vueCanvasRef.value
-    await canvas?.refreshSchema?.()
-    canvas?.materializeStartGraph?.({
-      sourceNodeType,
-      generatorNodeType: payload.nodeType,
-    })
+    if (!canvas?.materializeStartGraph) {
+      toast.error('Couldn’t set up the project', { description: 'The canvas didn’t finish loading. Refresh the page and try again.' })
+      return
+    }
+    await canvas.refreshSchema?.()
+    const ok = canvas.materializeStartGraph({ sourceNodeType, generatorNodeType: payload.nodeType })
+    if (ok === false) {
+      toast.error('Couldn’t add the starter', { description: `The backend doesn’t provide “${payload.nodeType}”. Check that ComfyUI is running and up to date, then try again from the + menu.` })
+    }
   })
 }
 

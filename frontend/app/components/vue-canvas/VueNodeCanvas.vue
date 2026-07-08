@@ -5865,7 +5865,7 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
  */
 function materializeStartGraph(opts: { sourceNodeType?: string; generatorNodeType: string }) {
   const genInfo = objectInfo.value[opts.generatorNodeType]
-  if (!genInfo) return
+  if (!genInfo) return false
 
   const buildNodeData = (nodeType: string) => {
     const info = objectInfo.value[nodeType]
@@ -5905,7 +5905,7 @@ function materializeStartGraph(opts: { sourceNodeType?: string; generatorNodeTyp
 
   const sourceData = opts.sourceNodeType ? buildNodeData(opts.sourceNodeType) : null
   const generatorData = buildNodeData(opts.generatorNodeType)
-  if (!generatorData) return
+  if (!generatorData) return false
 
   // Pick canvas-coord positions. Left source, right generator. If no source,
   // generator sits roughly centered.
@@ -5980,6 +5980,8 @@ function materializeStartGraph(opts: { sourceNodeType?: string; generatorNodeTyp
 
   // Frame what we just dropped.
   nextTick(() => fitView({ padding: 0.3 }))
+
+  return true
 }
 
 // Expose methods and state for parent layout
