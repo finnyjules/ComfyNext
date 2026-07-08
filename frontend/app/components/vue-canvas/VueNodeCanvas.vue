@@ -113,6 +113,11 @@ const props = defineProps<{
 // background tab's run events don't touch the active canvas, and the right
 // running node is re-lit when you switch to a still-running tab.
 const runningNodeByWorker: Record<number, string | null> = {}
+// prompt_id → the node that run is currently executing. Concurrent runs
+// (spill-to-pool singles, parallel takes) each animate independently; an
+// executing/complete event only touches its own run's glow. Uses globalThis.Map
+// (lucide's Map icon shadows the global in this file's import scope).
+const runningNodeByPrompt = new globalThis.Map<string, string>()
 function eventWorker(src: Window | null): number {
   if (!src) return 0
   for (const f of document.querySelectorAll('iframe[data-worker]')) {
@@ -2426,15 +2431,33 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   if (evt === 'executing') {
-    // Clear all running states on nodes and edges
-    for (const n of nodes.value) {
-      if (n.data?.running) {
-        n.data = { ...n.data, running: false }
+    // Concurrent runs (spill-to-pool, parallel takes): each run only clears
+    // ITS OWN previous node's glow, keyed by prompt_id — run 2 starting must
+    // not extinguish run 1's animation. Events without a prompt_id (legacy
+    // paths) keep the old clear-everything behavior.
+    const promptId = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
+    const clearNodeGlow = (id: string) => {
+      const prev = (nodes.value as any[]).find((n: any) => n.id === id)
+      if (prev?.data?.running) prev.data = { ...prev.data, running: false }
+      for (const e of edges.value) {
+        if (e.source === id && e.data?.running) e.data = { ...e.data, running: false }
       }
     }
-    for (const e of edges.value) {
-      if (e.data?.running) {
-        e.data = { ...e.data, running: false }
+    if (promptId) {
+      const prev = runningNodeByPrompt.get(promptId)
+      if (prev && prev !== String(nodeId)) clearNodeGlow(prev)
+      if (nodeId) runningNodeByPrompt.set(promptId, String(nodeId))
+      else { if (prev) clearNodeGlow(prev); runningNodeByPrompt.delete(promptId) }
+    } else {
+      for (const n of nodes.value) {
+        if (n.data?.running) {
+          n.data = { ...n.data, running: false }
+        }
+      }
+      for (const e of edges.value) {
+        if (e.data?.running) {
+          e.data = { ...e.data, running: false }
+        }
       }
     }
     if (nodeId) {
@@ -2459,8 +2482,13 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   if (evt === 'progress') {
-    // Update progress on the currently running node
-    const running = (nodes.value as any[]).find((n: any) => n.data?.running)
+    // Route progress to ITS run's node (concurrent runs each carry their own
+    // prompt_id); fall back to "the" running node for legacy events without one.
+    const promptId = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
+    const targetId = promptId ? runningNodeByPrompt.get(promptId) : undefined
+    const running = targetId
+      ? (nodes.value as any[]).find((n: any) => n.id === targetId)
+      : (nodes.value as any[]).find((n: any) => n.data?.running)
     if (running) {
       // Bridge sends percent directly, or prog.value/prog.max
       const pct = percent ?? (prog ? Math.round((prog.value / prog.max) * 100) : undefined)
@@ -2504,6 +2532,20 @@ function handleBridgeMessage(event: MessageEvent) {
         }
       }
     }
+    // Release this run's glow bookkeeping (mirrors execution_complete) so a
+    // failed run can't strand a runningNodeByPrompt entry — sibling runs keep
+    // animating, and the edge-filter set resets once nothing is in flight.
+    {
+      const promptId = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
+      if (promptId && runningNodeByPrompt.has(promptId)) {
+        const nid = runningNodeByPrompt.get(promptId)!
+        runningNodeByPrompt.delete(promptId)
+        for (const e of edges.value) {
+          if (e.source === nid && e.data?.running) e.data = { ...e.data, running: false }
+        }
+      }
+      if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
+    }
   }
 
   // On any successful executing event, clear stale error state for the node
@@ -2516,19 +2558,36 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   if (evt === 'execution_complete') {
-    // Clear all running/progress states on nodes and edges
-    for (const n of nodes.value) {
-      if (n.data?.running || n.data?.progress) {
-        n.data = { ...n.data, running: false, progress: undefined }
+    const promptId = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
+    if (promptId && runningNodeByPrompt.has(promptId)) {
+      // Only extinguish THIS run's glow — a sibling concurrent run keeps its
+      // animation until its own completion event arrives.
+      const nid = runningNodeByPrompt.get(promptId)!
+      runningNodeByPrompt.delete(promptId)
+      const target = (nodes.value as any[]).find((n: any) => n.id === nid)
+      if (target?.data && (target.data.running || target.data.progress)) {
+        target.data = { ...target.data, running: false, progress: undefined }
       }
-    }
-    for (const e of edges.value) {
-      if (e.data?.running) {
-        e.data = { ...e.data, running: false }
+      for (const e of edges.value) {
+        if (e.source === nid && e.data?.running) e.data = { ...e.data, running: false }
       }
+    } else {
+      // No prompt_id (legacy) or unknown run: original clear-everything sweep.
+      for (const n of nodes.value) {
+        if (n.data?.running || n.data?.progress) {
+          n.data = { ...n.data, running: false, progress: undefined }
+        }
+      }
+      for (const e of edges.value) {
+        if (e.data?.running) {
+          e.data = { ...e.data, running: false }
+        }
+      }
+      runningNodeByPrompt.clear()
     }
-    // Drop the captured run set — next Run captures fresh.
-    activeRunNodeIds.value = new Set()
+    // Drop the captured run set once NO runs remain — while a sibling run is
+    // still in flight its edge-filtering set stays useful.
+    if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
     // Let the agent close its run→look→fix loop (the prompt bar gates on whether a
     // Keep & Run is awaiting review).
     if (import.meta.client) window.dispatchEvent(new CustomEvent('comfynext:agentRunComplete'))
