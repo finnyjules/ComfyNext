@@ -80,6 +80,19 @@ export function reconnectDelayMs(attempt: number): number {
   return Math.min(base, 5000)
 }
 
+/** After this many CONSECUTIVE failed reconnect attempts, a POOL worker's socket
+ *  is declared lost (main/worker 0 is never given up — see shouldGiveUpWorker). */
+export const WORKER_LOST_MAX_FAILURES = 4
+
+/** Pure decision: should we STOP reconnecting a socket and declare its worker
+ *  lost? Main (worker 0) must retry forever, so always false for it; a pool
+ *  worker (>= 1) is given up once it reaches WORKER_LOST_MAX_FAILURES consecutive
+ *  failed reconnects. Exported for unit testing. */
+export function shouldGiveUpWorker(worker: number, consecutiveFailures: number): boolean {
+  if (worker < 1) return false
+  return consecutiveFailures >= WORKER_LOST_MAX_FAILURES
+}
+
 function getClientId(): string {
   if (!import.meta.client) return ''
   let id = sessionStorage.getItem('comfynext:clientId')
@@ -96,6 +109,9 @@ interface SocketState {
   wantConnected: boolean
   reconnectAttempt: number
   reconnectTimer: ReturnType<typeof setTimeout> | null
+  /** Consecutive failed reconnect attempts (reset to 0 on a successful open).
+   *  Drives worker-lost detection for pool sockets — see shouldGiveUpWorker. */
+  consecutiveFailures: number
 }
 
 const sockets = new Map<number, SocketState>()
@@ -150,7 +166,7 @@ export function shouldCloseWorkerSocket(
 function socketFor(worker: number): SocketState {
   let s = sockets.get(worker)
   if (!s) {
-    s = { ws: null, wantConnected: false, reconnectAttempt: 0, reconnectTimer: null }
+    s = { ws: null, wantConnected: false, reconnectAttempt: 0, reconnectTimer: null, consecutiveFailures: 0 }
     sockets.set(worker, s)
   }
   return s
@@ -199,6 +215,43 @@ function maybeCloseDrainedPoolSocket(worker: number): void {
   }
 }
 
+/** A POOL worker's socket has failed to reconnect too many times in a row — its
+ *  ComfyUI process is gone (killed, crashed). Reconnecting forever would leave
+ *  every prompt mapped to it stuck 'running' with a spinning tab. Instead:
+ *  (a) synthesize an execution_error through the normal listener fan-out for EVERY
+ *  prompt currently mapped to this worker (downstream toast/finishRun/drain/idle
+ *  already handle execution_error), (b) drop those promptWorker + pendingPosts
+ *  entries, (c) stop reconnecting this socket. Main (worker 0) is never given up. */
+function giveUpWorker(worker: number, clientId: string): void {
+  const s = socketFor(worker)
+  s.wantConnected = false
+  if (s.reconnectTimer) { clearTimeout(s.reconnectTimer); s.reconnectTimer = null }
+
+  const lostPrompts: string[] = []
+  for (const [pid, w] of promptWorker) {
+    if (w === worker) lostPrompts.push(pid)
+  }
+  for (const pid of lostPrompts) {
+    // Shape matches wsEventMap's execution_error variant verbatim so the same
+    // downstream handler consumes it. (The brief's `traceback: null` becomes
+    // `undefined` here to fit that type; node_type is included for the same
+    // reason — both are informational only.)
+    const err: BridgeShapedEvent = {
+      event: 'execution_error',
+      prompt_id: pid,
+      node_id: null,
+      node_type: null,
+      exception_message: 'Worker connection lost',
+      exception_type: 'WorkerLost',
+      traceback: undefined,
+    }
+    for (const cb of listeners) cb(err)
+    promptWorker.delete(pid)
+  }
+  pendingPosts.delete(worker)
+  void clientId // reconnect intentionally NOT scheduled — worker is declared lost.
+}
+
 function openSocket(worker: number, clientId: string): void {
   if (!import.meta.client) return
   const s = socketFor(worker)
@@ -209,6 +262,7 @@ function openSocket(worker: number, clientId: string): void {
 
   socket.addEventListener('open', () => {
     s.reconnectAttempt = 0
+    s.consecutiveFailures = 0
   })
 
   socket.addEventListener('message', (evt) => {
@@ -237,6 +291,17 @@ function openSocket(worker: number, clientId: string): void {
 
   socket.addEventListener('close', () => {
     if (s.ws === socket) s.ws = null
+    // A close while we still want the socket up is a failed connection. Count it;
+    // once a POOL worker crosses the threshold, declare it lost instead of
+    // retrying forever (which would strand its prompts as 'running'). Main
+    // (worker 0) never gives up — shouldGiveUpWorker returns false for it.
+    if (s.wantConnected) {
+      s.consecutiveFailures++
+      if (shouldGiveUpWorker(worker, s.consecutiveFailures)) {
+        giveUpWorker(worker, clientId)
+        return
+      }
+    }
     scheduleReconnect(worker, clientId)
   })
 
