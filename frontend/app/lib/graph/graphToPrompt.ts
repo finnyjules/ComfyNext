@@ -123,7 +123,7 @@ function resolveSource(
  */
 export function graphToPrompt(workflow: LiteGraphWorkflow, objectInfo: Record<string, any>): ApiPrompt {
   const flatWorkflow = (workflow as any).definitions?.subgraphs?.length
-    ? flattenSubgraphs(workflow)
+    ? flattenSubgraphs(workflow, objectInfo)
     : workflow
 
   const linkIndex = buildLinkIndex(flatWorkflow.links)

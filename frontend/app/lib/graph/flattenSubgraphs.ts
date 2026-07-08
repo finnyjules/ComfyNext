@@ -57,13 +57,31 @@
 //   - target is a real interior node id (e.g. "3"): the widget is proxied
 //     straight onto that interior node's own widget, bypassing the
 //     boundary-input mechanism entirely (e.g. exposing a KSampler's `seed`
-//     on the instance without it ever being a subgraph input/output). This
-//     file does NOT implement this second form — replaying it would mean
-//     rewriting an interior node's positional `widgets_values` in place,
-//     which risks desyncing `widgetSlots()`'s schema-driven zip if the
-//     interior node's own widgets were reordered by a partial connection.
-//     Left as a documented limitation (see report) rather than guessed at;
-//     only the '-1' (boundary-input) form is handled.
+//     on the instance without it ever being a subgraph input/output).
+//     Verified from every sampled production blueprint with a KSampler
+//     (blueprints/Text to Image (Z-Image-Turbo).json: `["3","seed"]`;
+//     blueprints/Video Inpaint(Wan2.1 VACE).json: `["3","seed"]`; etc — NOT
+//     blueprints/Sharpen.json's `[["24","value"]]`, which despite citing a
+//     real interior node id ("24") is *also* this interior-id form, not a
+//     '-1' example; corrected here after a doc-nit review). This file
+//     resolves it by calling `widgetSlots(classType, objectInfo)` (from
+//     `~/lib/graph/widgetOrder`) on the interior node's own class_type to
+//     find `widgetName`'s positional index (schema-driven, so it can't
+//     desync even if the interior node's widgets were reordered by a
+//     partial connection), then overwrites the REMAPPED interior node's
+//     `widgets_values[index]` with the instance's own positionally-zipped
+//     value (instance `widgets_values[i]` <-> `proxyWidgets[i]`, same zip
+//     convention as the '-1' form). A proxyWidgets entry literally named
+//     `control_after_generate` (e.g. `["3","control_after_generate"]`,
+//     always immediately following that node's `["3","seed"]` entry in every
+//     sampled blueprint) targets the preceding widget's synthetic
+//     `<name>__control` slot per `widgetSlots()`, not a widget named
+//     "control_after_generate" itself — resolved by matching `${prevName}
+//     __control` when a direct name match fails. Requires `objectInfo` to
+//     resolve; when it's absent (or the interior node/class/widget can't be
+//     resolved), the entry is skipped with a one-time `console.warn` —
+//     current default-widgets_values behavior is preserved rather than
+//     guessing or throwing.
 //
 // Depth/cycle guard: subgraph definitions can nest (a definition's interior
 // nodes can themselves be subgraph instances — verified in
@@ -74,6 +92,7 @@
 
 import type { LiteGraphNode, LiteGraphWorkflow } from '~/composables/useVueNodes'
 import { isSubgraphType } from '~/composables/useVueNodes'
+import { widgetSlots, UnknownNodeTypeError, type WidgetSlot } from '~/lib/graph/widgetOrder'
 
 export class SubgraphDepthError extends Error {
   constructor(public subgraphId: string) {
@@ -111,6 +130,8 @@ function remapId(instanceId: number, innerId: number): number {
 interface FlattenContext {
   defsById: Map<string, any>
   nextLinkId: { current: number }
+  objectInfo?: Record<string, any>
+  warnedOnce: Set<string>
 }
 
 /** A resolved connection target used while stitching boundary links: either a
@@ -123,7 +144,7 @@ type ResolvedEndpoint = { nodeId: number; slot: number } | null
  * returns a new workflow, never mutates the input. No-ops (returns the same
  * workflow reference) when there are no subgraph definitions to expand.
  */
-export function flattenSubgraphs(workflow: LiteGraphWorkflow): LiteGraphWorkflow {
+export function flattenSubgraphs(workflow: LiteGraphWorkflow, objectInfo?: Record<string, any>): LiteGraphWorkflow {
   const definitions = (workflow as any).definitions?.subgraphs as any[] | undefined
   if (!definitions?.length) return workflow
 
@@ -135,6 +156,8 @@ export function flattenSubgraphs(workflow: LiteGraphWorkflow): LiteGraphWorkflow
   const ctx: FlattenContext = {
     defsById,
     nextLinkId: { current: nextLinkIdSeed(workflow) },
+    objectInfo,
+    warnedOnce: new Set(),
   }
 
   const outNodes: LiteGraphNode[] = []
@@ -300,10 +323,17 @@ function inlineInstance(
   const remappedInnerNodes: LiteGraphNode[] = innerNodes.map((innerNode) => ({
     ...innerNode,
     id: idMap.get(innerNode.id)!,
+    // Widgets_values is deliberately its own new array (not shared with the
+    // definition's original innerNode) — applyInteriorProxyWidgets below
+    // mutates it in place per-instance, and two sibling instances of the
+    // same definition must not clobber each other's overridden values.
+    widgets_values: innerNode.widgets_values ? [...innerNode.widgets_values] : innerNode.widgets_values,
     // Interior nodes are pushed with fresh, non-overlapping positions isn't
     // required for prompt correctness — position is cosmetic-only in the
     // API prompt path, so we pass it through unchanged.
   }))
+
+  applyInteriorProxyWidgets(instance, idMap, remappedInnerNodes, ctx)
 
   // 3) Rewrite interior links, translating boundary references:
   //    - origin_id === inputBoundaryId  -> resolved outer source for that
@@ -422,6 +452,101 @@ function inlineInstance(
       outNodes.push(remappedNode)
     }
   }
+}
+
+/**
+ * Applies the interior-id form of `properties.proxyWidgets` (`[interiorNodeId,
+ * widgetName]`, e.g. `['73','noise_seed']` / `['3','seed']` — as opposed to
+ * the '-1' boundary-input form handled inline in `inlineInstance` above): for
+ * each such entry, overwrites the REMAPPED interior node's
+ * `widgets_values[index]` with the instance's own positionally-zipped value
+ * (`instance.widgets_values[i]` <-> `instance.properties.proxyWidgets[i]`,
+ * same zip convention as the '-1' form). The positional index comes from
+ * `widgetSlots(classType, objectInfo)` — schema-driven, so it can't desync
+ * even if the interior node's own widgets were reordered.
+ *
+ * A proxyWidgets entry literally named `control_after_generate` targets the
+ * PRECEDING widget's synthetic `<name>__control` slot (every sampled
+ * blueprint pairs `[id,'seed']` immediately followed by
+ * `[id,'control_after_generate']` for the same interior id) — matched by
+ * checking the previous proxyWidgets entry's name rather than guessing which
+ * widget it "belongs" to.
+ *
+ * Never throws: missing `objectInfo`, an unknown class_type, or a widget name
+ * that can't be resolved against the schema all fall back to leaving the
+ * interior node's cloned `widgets_values` untouched, with a one-time
+ * `console.warn` per distinct unresolvable entry (keyed so re-flattening the
+ * same workflow doesn't spam the console).
+ */
+function applyInteriorProxyWidgets(
+  instance: LiteGraphNode,
+  idMap: Map<number, number>,
+  remappedInnerNodes: LiteGraphNode[],
+  ctx: FlattenContext,
+): void {
+  const proxyWidgets: [string, string][] = (instance.properties as any)?.proxyWidgets || []
+  if (!proxyWidgets.length) return
+
+  const instanceWidgetsValues = instance.widgets_values || []
+  const remappedById = new Map<number, LiteGraphNode>()
+  for (const n of remappedInnerNodes) remappedById.set(n.id, n)
+
+  const warnOnce = (key: string, message: string) => {
+    if (ctx.warnedOnce.has(key)) return
+    ctx.warnedOnce.add(key)
+    console.warn(message)
+  }
+
+  proxyWidgets.forEach((entry, i) => {
+    const [target, widgetName] = entry
+    if (target === '-1') return // handled by the boundary-input path above
+    if (i >= instanceWidgetsValues.length) return
+
+    const warnKey = `${instance.type}:${target}:${widgetName}`
+
+    if (!ctx.objectInfo) {
+      warnOnce(warnKey, `flattenSubgraphs: skipping interior proxyWidgets entry ["${target}","${widgetName}"] on instance ${instance.id} (type "${instance.type}") — no objectInfo provided, can't resolve widget position.`)
+      return
+    }
+
+    const interiorId = Number(target)
+    const remappedId = idMap.get(interiorId)
+    const interiorNode = remappedId != null ? remappedById.get(remappedId) : undefined
+    if (!interiorNode) {
+      warnOnce(warnKey, `flattenSubgraphs: skipping interior proxyWidgets entry ["${target}","${widgetName}"] on instance ${instance.id} (type "${instance.type}") — interior node "${target}" not found in this subgraph definition.`)
+      return
+    }
+
+    let slots: WidgetSlot[]
+    try {
+      slots = widgetSlots(interiorNode.type, ctx.objectInfo)
+    } catch (err) {
+      if (err instanceof UnknownNodeTypeError) {
+        warnOnce(warnKey, `flattenSubgraphs: skipping interior proxyWidgets entry ["${target}","${widgetName}"] on instance ${instance.id} — unknown class_type "${interiorNode.type}" in objectInfo.`)
+        return
+      }
+      throw err
+    }
+
+    // A '<name>' match wins if the schema literally has a widget by that
+    // name; otherwise (this is the `control_after_generate` case) look for
+    // the preceding proxyWidgets entry's widget + '__control'.
+    let slotIndex = slots.findIndex((s) => s.name === widgetName)
+    if (slotIndex === -1 && widgetName === 'control_after_generate' && i > 0) {
+      const [prevTarget, prevName] = proxyWidgets[i - 1]!
+      if (prevTarget === target) {
+        slotIndex = slots.findIndex((s) => s.name === `${prevName}__control`)
+      }
+    }
+
+    if (slotIndex === -1) {
+      warnOnce(warnKey, `flattenSubgraphs: skipping interior proxyWidgets entry ["${target}","${widgetName}"] on instance ${instance.id} — no matching widget slot on "${interiorNode.type}".`)
+      return
+    }
+
+    if (!interiorNode.widgets_values) interiorNode.widgets_values = []
+    ;(interiorNode.widgets_values as any[])[slotIndex] = instanceWidgetsValues[i]
+  })
 }
 
 // Deterministic id for the tiny synthetic node that holds a proxied literal

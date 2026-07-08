@@ -30,6 +30,20 @@ const OBJECT_INFO = {
   DoubleNode: {
     input: { required: { image: ['IMAGE', {}] } },
   },
+  // Used for the interior-id proxyWidgets fixtures below. Mirrors a real
+  // KSampler-shaped schema: `seed` carries `control_after_generate`, so
+  // `widgetSlots()` inserts a synthetic `seed__control` slot immediately
+  // after it (see widgetOrder.ts) — positions: 0=seed, 1=seed__control,
+  // 2=steps, matching the real blueprints (e.g. Sharpen/Text to Image
+  // Z-Image-Turbo's `['3','seed']` + `['3','control_after_generate']` pair).
+  KSamplerIsh: {
+    input: {
+      required: {
+        seed: ['INT', { control_after_generate: true }],
+        steps: ['INT', {}],
+      },
+    },
+  },
 }
 
 function baseWorkflow(overrides: Partial<LiteGraphWorkflow> = {}): LiteGraphWorkflow {
@@ -254,6 +268,128 @@ describe('flattenSubgraphs', () => {
     // directly (no node reference at all — there's no real upstream node).
     expect(prompt[String(glslId)].inputs['images.image0']).toBe('literal-image-value')
     expect(prompt['3'].inputs.images).toEqual([String(glslId), 0])
+  })
+
+  // Interior-id proxyWidgets: `[targetInteriorNodeId, widgetName]` (e.g.
+  // `['73','noise_seed']`, `['3','seed']`) — as opposed to the '-1'
+  // boundary-input form above. Verified from every sampled production
+  // blueprint with a KSampler (blueprints/Text to Image
+  // (Z-Image-Turbo).json, blueprints/Video Inpaint(Wan2.1 VACE).json,
+  // etc.): the instance exposes an INTERIOR node's own widget directly,
+  // bypassing the boundary-input mechanism, and the instance's
+  // widgets_values entry for that proxyWidgets slot must overwrite the
+  // remapped interior node's positional widgets_values at the right index.
+  function samplerDefinition() {
+    return {
+      id: SAMPLER_SUBGRAPH_ID,
+      version: 1,
+      state: { lastNodeId: 3, lastLinkId: 1 },
+      name: 'SamplerWrap',
+      inputNode: { id: -10, bounding: [0, 0, 10, 10] },
+      outputNode: { id: -20, bounding: [0, 0, 10, 10] },
+      inputs: [],
+      outputs: [{ id: 'o1', name: 'INT', type: 'INT', linkIds: [] }],
+      nodes: [
+        {
+          id: 3,
+          type: 'KSamplerIsh',
+          pos: [0, 0],
+          size: [0, 0],
+          mode: 0,
+          inputs: [],
+          outputs: [{ name: 'INT', type: 'INT', links: [] }],
+          // [seed, seed__control, steps] — defaults before any instance
+          // override is applied.
+          widgets_values: [111, 'fixed', 20],
+        },
+      ],
+      groups: [],
+      links: [
+        { id: 1, origin_id: 3, origin_slot: 0, target_id: -20, target_slot: 0, type: 'INT' },
+      ],
+      extra: {},
+    }
+  }
+  const SAMPLER_SUBGRAPH_ID = 'cccccccc-0000-4000-8000-000000000003'
+
+  function samplerInstanceNode(id: number, proxyWidgets: [string, string][], widgetsValues: any[]) {
+    return {
+      id,
+      type: SAMPLER_SUBGRAPH_ID,
+      pos: [0, 0],
+      size: [200, 60],
+      mode: 0,
+      inputs: [],
+      outputs: [{ name: 'INT', type: 'INT', links: [] }],
+      title: 'SamplerWrap',
+      properties: { proxyWidgets },
+      widgets_values: widgetsValues,
+    }
+  }
+
+  it('overwrites the remapped interior node\'s seed value at the right positional index via interior-id proxyWidgets', () => {
+    const instance = samplerInstanceNode(
+      2,
+      [['3', 'seed'], ['3', 'control_after_generate']],
+      [999888, 'randomize'],
+    )
+    const workflow = baseWorkflow({
+      nodes: [instance],
+      links: [],
+      ...( { definitions: { subgraphs: [samplerDefinition()] } } as any ),
+    })
+
+    const flattened = flattenSubgraphs(workflow, OBJECT_INFO)
+    const samplerId = Number(`2${String(3).padStart(4, '0')}`)
+    const interior = flattened.nodes.find((n) => n.id === samplerId)!
+    // seed (index 0) overwritten from the instance's proxied value; steps
+    // (index 2) untouched since nothing proxies it.
+    expect(interior.widgets_values![0]).toBe(999888)
+    expect(interior.widgets_values![2]).toBe(20)
+
+    const prompt = graphToPrompt(flattened, OBJECT_INFO)
+    expect(prompt[String(samplerId)].inputs.seed).toBe(999888)
+  })
+
+  it('routes a proxyWidgets entry naming control_after_generate to the preceding widget\'s __control slot', () => {
+    const instance = samplerInstanceNode(
+      2,
+      [['3', 'seed'], ['3', 'control_after_generate']],
+      [42, 'increment'],
+    )
+    const workflow = baseWorkflow({
+      nodes: [instance],
+      links: [],
+      ...( { definitions: { subgraphs: [samplerDefinition()] } } as any ),
+    })
+
+    const flattened = flattenSubgraphs(workflow, OBJECT_INFO)
+    const samplerId = Number(`2${String(3).padStart(4, '0')}`)
+    const interior = flattened.nodes.find((n) => n.id === samplerId)!
+    // index 0 = seed, index 1 = seed__control (the synthetic control slot
+    // immediately after 'seed' per widgetSlots()).
+    expect(interior.widgets_values![0]).toBe(42)
+    expect(interior.widgets_values![1]).toBe('increment')
+  })
+
+  it('leaves interior widgets_values untouched (no throw) when objectInfo is not supplied', () => {
+    const instance = samplerInstanceNode(
+      2,
+      [['3', 'seed'], ['3', 'control_after_generate']],
+      [999888, 'randomize'],
+    )
+    const workflow = baseWorkflow({
+      nodes: [instance],
+      links: [],
+      ...( { definitions: { subgraphs: [samplerDefinition()] } } as any ),
+    })
+
+    expect(() => flattenSubgraphs(workflow)).not.toThrow()
+    const flattened = flattenSubgraphs(workflow)
+    const samplerId = Number(`2${String(3).padStart(4, '0')}`)
+    const interior = flattened.nodes.find((n) => n.id === samplerId)!
+    // Untouched — still the definition's own defaults.
+    expect(interior.widgets_values).toEqual([111, 'fixed', 20])
   })
 
   it('recursively flattens a nested subgraph (subgraph containing a subgraph instance)', () => {
