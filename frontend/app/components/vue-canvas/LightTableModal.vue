@@ -17,7 +17,15 @@ const props = defineProps<{
   title?: string
   /** e.g. "~$0.03" — shown on Promote buttons; null hides the price. */
   promoteUsdLabel?: string | null
+  /** Hosted on a Sketch node — every take is promotable even though it carries
+   *  no `draft` flag (sketch bakes the fast model into widgets, not the mode). */
+  sketch?: boolean
 }>()
+
+/** A take shows Promote when it's a mode-draft OR it lives on a sketch card. */
+function canPromote(t: Take): boolean {
+  return !!t.draft || !!props.sketch
+}
 
 const emit = defineEmits<{
   (e: 'select' | 'pin' | 'discard' | 'promote' | 'branch', id: string): void
@@ -84,7 +92,7 @@ function onKeydown(e: KeyboardEvent) {
     case 'discard': if (id) emit('discard', id); break
     case 'promote': {
       const take = props.takes.find(x => x.id === id)
-      if (take?.draft) emit('promote', take.id)
+      if (take && canPromote(take)) emit('promote', take.id)
       break
     }
     case 'lightbox': lightboxId.value = lightboxId.value ? null : focusedId.value; break
@@ -160,7 +168,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 
           <!-- hover actions -->
           <div class="absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-1.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-            <button v-if="t.draft" class="flex items-center gap-1 rounded bg-white/10 hover:bg-white/20 px-1.5 py-0.5 text-[10px] text-white cursor-pointer" :title="'Re-render at full quality' + (promoteUsdLabel ? ` · ${promoteUsdLabel}` : '')" @click.stop="emit('promote', t.id)">
+            <button v-if="canPromote(t)" class="flex items-center gap-1 rounded bg-white/10 hover:bg-white/20 px-1.5 py-0.5 text-[10px] text-white cursor-pointer" :title="sketch ? 'Promote — spawn the full generator beside this sketch' : 'Re-render at full quality' + (promoteUsdLabel ? ` · ${promoteUsdLabel}` : '')" @click.stop="emit('promote', t.id)">
               <ArrowUpToLine class="size-3" /> Promote<span v-if="promoteUsdLabel" class="text-white/50">{{ promoteUsdLabel }}</span>
             </button>
             <button class="rounded bg-white/10 hover:bg-white/20 p-1 text-white/80 cursor-pointer" title="Continue from this take on a new Image node" @click.stop="emit('branch', t.id)"><GitBranch class="size-3" /></button>
