@@ -39,6 +39,7 @@ import { setRef, type RefRegistry } from '~/lib/refs/registry'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
+const route = useRoute()
 
 // Inline tab rename
 const editingTabId = ref<string | null>(null)
@@ -244,6 +245,12 @@ watch(() => activeTabId.value, (id) => {
     // Tab switch → hide the modal (without re-triggering on switch-back).
     startModalTabId.value = null
   }
+})
+
+// Real page navigations (e.g. /help) render in the Home tab's page slot —
+// switch there so the page is actually visible when a project tab is active.
+watch(() => route.path, (p) => {
+  if (p !== '/' && activeTab.value?.type !== 'home') setActiveTab('home')
 })
 
 // Drop a starter generator onto a freshly-opened project. The canvas mounts a
