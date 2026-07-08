@@ -171,7 +171,7 @@ watch(settingsOpen, (open) => {
     // Load local settings into cache
     const localDefs = Object.values(settingsByCategory).flat().filter((s) => s.local)
     for (const def of localDefs) {
-      localSettingsCache.value[def.id] = getLocalSetting(def.id) ?? ''
+      localSettingsCache.value[def.id] = getLocalSetting(def.id) ?? (def.id === 'Comfy.VueNodes.Enabled' ? 'true' : '')
     }
   }
 })

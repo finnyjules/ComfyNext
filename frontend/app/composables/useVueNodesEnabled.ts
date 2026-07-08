@@ -1,10 +1,15 @@
-const vueNodesEnabled = ref(false)
+const vueNodesEnabled = ref(true)
 let listenerRegistered = false
+
+/** Default-ON: only an explicit 'false' (Settings toggle) disables the Vue canvas. */
+export function vueNodesDefault(stored: string | null): boolean {
+  return stored !== 'false'
+}
 
 export function useVueNodesEnabled() {
   function load() {
     if (import.meta.server) return
-    vueNodesEnabled.value = localStorage.getItem('comfynext:Comfy.VueNodes.Enabled') === 'true'
+    vueNodesEnabled.value = vueNodesDefault(localStorage.getItem('comfynext:Comfy.VueNodes.Enabled'))
   }
 
   // Listen for setting changes (cross-tab via storage event, same-tab via custom event)
