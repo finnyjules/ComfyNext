@@ -26,7 +26,7 @@ import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
-import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import { estimateUsdForNodes, vueNodesToEstimateInput, isReplicateBilled, type CostEstimate } from '~/lib/costEstimate'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
@@ -1941,10 +1941,13 @@ function flushPendingGen(creditsDelta?: number | null) {
 // The badge parsing/summing lives in lib/costEstimate.ts (shared with the
 // pre-run estimate). Returns null when no priced Replicate node ran (so the
 // credit-delta path can win for Comfy-native workflows).
+// Filtered to Replicate-billed nodes only (unlike the pre-run estimate, which
+// also counts credit-billed API nodes) so credit-delta accounting still wins
+// for those.
 function estimateReplicateUsd(): { usd: number; approximate: boolean } | null {
   const nodes = vueCanvasRef.value?.getNodes?.() || []
   const ran = nodes.filter((n: any) => executedNodeIds.has(String(n.id)))
-  const est = estimateUsdForNodes(vueNodesToEstimateInput(ran))
+  const est = estimateUsdForNodes(vueNodesToEstimateInput(ran).filter(isReplicateBilled))
   return est ? { usd: est.usd, approximate: est.approximate } : null
 }
 
