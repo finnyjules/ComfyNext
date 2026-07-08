@@ -383,9 +383,15 @@ async function acceptInpaint(dataUrl: string) {
 }
 
 // ── SAM click-to-select (beta; falls back to brushing on any error) ──────────
+const samBusy = ref(false)
 async function doSamSelect(nx: number, ny: number) {
+  // Busy guards: segment() doesn't set inpaint.busy, so we use a local samBusy
+  // to prevent stacking SAM requests; we also check inpaint.busy for the paid
+  // phase (fluxFill inside runInpaint when intent === 'remove').
+  if (samBusy.value || inpaint.busy.value) return
   if (!sourceImg.value) { inpaintError.value = 'Load an image first.'; return }
   inpaintError.value = ''
+  samBusy.value = true
   try {
     const source = imageToDataUrl(sourceImg.value, out.value.w, out.value.h)
     const point = { x: Math.round(nx * out.value.w), y: Math.round(ny * out.value.h) }
@@ -398,6 +404,8 @@ async function doSamSelect(nx: number, ny: number) {
   } catch {
     inpaintError.value = 'Click-select unavailable (check SAM model); paint the area instead.'
     tool.value = 'paint'
+  } finally {
+    samBusy.value = false
   }
 }
 
