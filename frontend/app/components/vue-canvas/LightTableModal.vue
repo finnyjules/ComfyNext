@@ -5,7 +5,7 @@
  * TakesStrip: the parent owns the takes array and applies every change.
  * Keyboard-first: arrows / Enter / Cmd+Enter / P / X / Space / Esc.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Star, X, ArrowUpToLine, GitBranch, PencilLine, Trash2 } from 'lucide-vue-next'
 import type { Take } from '~/composables/useTakes'
 import { diffTakeParams } from '~/lib/artifact/takeDiff'
@@ -28,6 +28,13 @@ const emit = defineEmits<{
 const focusedId = ref<string | null>(props.takes.at(-1)?.id ?? null)
 const compareId = ref<string | null>(null)   // shift-click second selection
 const lightboxId = ref<string | null>(null)
+
+// Seed/repair focus as takes stream in or get discarded: focus the newest
+// take when nothing valid is focused.
+watch(() => props.takes, (takes) => {
+  if (!takes.length) { focusedId.value = null; return }
+  if (!takes.some(t => t.id === focusedId.value)) focusedId.value = takes.at(-1)!.id
+}, { deep: false })
 
 const focusedIdx = computed(() => props.takes.findIndex(t => t.id === focusedId.value))
 const focused = computed(() => props.takes[focusedIdx.value] ?? null)
