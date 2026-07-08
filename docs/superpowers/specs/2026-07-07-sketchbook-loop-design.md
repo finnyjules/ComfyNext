@@ -41,9 +41,10 @@ This is a frontend-only change; the backend sees an ordinary prompt. No ComfyUI/
 
 **Toggle.** A Draft/Final segmented control in `CanvasStatusBar.vue`. State is per-canvas, persisted in the ProjectDoc canvas (`workflow.extra.draftMode`), default **Final** (drafting is opt-in; we may revisit the default after usage data). Tooltip enumerates coverage honestly: "Draft affects image generators (~10× faster/cheaper). Edit and video nodes run at full quality."
 
-**Mapping.** `frontend/app/lib/draft/overrides.ts` — a table from node type → draft overrides. V1 has one entry:
+**Mapping.** `frontend/app/lib/draft/overrides.ts` — a table from node type → draft overrides. V1 has two families:
 
 - `GenerateImageNode`: `model → flux-schnell`, `model_options.megapixels → "0.5"` (Schnell's builder already defaults `num_inference_steps: 4`, `go_fast: true` — see `comfy_api_nodes/image_models.py:179`). Seed, prompt, aspect ratio untouched.
+- **LoRA-bearing generators** (Restyle-with-LoRA / Flux-LoRA paths, `nodes_replicate.py:532–578`): do **NOT** swap the model — a model swap would silently drop the trained LoRA. Instead reduce on the node's own model via existing widgets: `num_inference_steps → 8`, `megapixels → "0.5"`. Works identically for path A (private trained-model forks) and path B (`flux-dev-lora` + `lora_weights`), since both share the same input dict. ~3–4× faster/cheaper with the LoRA fully applied. V2 knobs, deliberately deferred: the ostris forks' `model: "dev"|"schnell"` input (needs one verification run against a real trained model, and isn't a widget today) and the `flux-schnell-lora` slug swap for path B (Python change).
 
 Nodes not in the table are unaffected. The table is the extension point for D3 (video: min resolution, shortest duration, audio off).
 
@@ -94,6 +95,7 @@ On any draft take: **Promote** re-dispatches the take's `params` snapshot — no
 ## Edge cases
 
 - **Draft mode + node whose model has no Schnell-equivalent semantics** (e.g. user picked a stylized model for its look): the draft still runs Schnell, which changes the look. Mitigation is the honesty tooltip + the badge; the promoted result is always the user's chosen model. We accept this v1; per-node opt-out is a follow-up if it bites.
+- **Character likeness in drafts**: fewer steps softens likeness first — LoRA drafts answer composition/pose/scene, not identity fidelity. The badge tooltip must say this explicitly (characters are the product's core use case); Promote is the likeness check.
 - **Params drift**: user edits the prompt after generating draft takes → Promote uses the take snapshot (correct by construction). The diff row makes this visible.
 - **MAX_TAKES eviction** (30/node): promoting near the cap may evict the oldest unpinned take — acceptable; pinned takes are never evicted (existing behavior).
 - **Variations ×4 in draft mode**: works with zero extra code (each variation dispatch passes through the standing override) — this is the payoff interaction and must be in the verification script.
