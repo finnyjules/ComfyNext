@@ -31,6 +31,37 @@ function classifySource(pythonModule: string): NodeSource {
 
 const SOURCE_FILTERS = ['essentials', 'partner', 'core', 'extensions']
 
+export interface SyntheticNodeEntry {
+  name: string
+  displayName: string
+  description: string
+  keywords: string[]
+  addAs: { nodeType: string, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>, dataOverrides?: Record<string, unknown> }
+}
+
+/** Frontend-only presets surfaced in node search alongside real node types. */
+export const SYNTHETIC_NODE_ENTRIES: SyntheticNodeEntry[] = [
+  {
+    name: 'Sketch',
+    displayName: 'Sketch',
+    description: 'Fast, cheap draft images (~10× faster) — iterate here, promote the winner to full quality.',
+    keywords: ['draft', 'fast', 'cheap', 'sketch', 'idea', 'schnell'],
+    addAs: {
+      nodeType: 'GenerateImageNode',
+      widgetOverrides: { model: 'flux-schnell', model_options: '{"megapixels":"0.5"}' },
+      propertyOverrides: { sketch: true },
+      dataOverrides: { title: 'Sketch' },
+    },
+  },
+]
+
+// Ranking keyword map = real-node keywords + synthetic preset keywords, so
+// `Sketch` etc. surface in `searchNodes` alongside object_info-backed nodes.
+const mergedNodeKeywords: Record<string, string[]> = {
+  ...NODE_KEYWORDS,
+  ...Object.fromEntries(SYNTHETIC_NODE_ENTRIES.map(e => [e.name, e.keywords])),
+}
+
 export function useNodeSearch() {
   // Top-level node categories (sampling, loaders, etc.)
   const categories = computed(() => {
@@ -62,7 +93,7 @@ export function useNodeSearch() {
 
     // Text search — tokenized, ranked, keyword-aware (see lib/nodeMatch).
     // Empty query returns the list unchanged (capped), preserving prior behavior.
-    return searchNodes(nodes, searchQuery.value, { keywords: NODE_KEYWORDS, boosts: NODE_BOOST, limit: 100 })
+    return searchNodes(nodes, searchQuery.value, { keywords: mergedNodeKeywords, boosts: NODE_BOOST, limit: 100 })
   })
 
   async function fetchNodeTypes() {
@@ -98,7 +129,22 @@ export function useNodeSearch() {
         })
       }
       types.sort((a, b) => a.displayName.localeCompare(b.displayName))
-      nodeTypes.value = types
+
+      // Prepend synthetic presets (idempotent: skip any already present by name,
+      // in case fetchNodeTypes is ever invoked more than once).
+      const existingNames = new Set(types.map(t => t.name))
+      const syntheticTypes: NodeType[] = SYNTHETIC_NODE_ENTRIES
+        .filter(e => !existingNames.has(e.name))
+        .map(e => ({
+          name: e.name,
+          displayName: e.displayName,
+          description: e.description,
+          category: 'presets',
+          source: 'essentials',
+          inputs: [],
+          outputs: [],
+        }))
+      nodeTypes.value = [...syntheticTypes, ...types]
       fetchedOnce = true
     }
     catch (err) {
@@ -120,14 +166,27 @@ export function useNodeSearch() {
 
   function addNode(
     nodeType: string,
-    opts: { widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown> } = {},
+    opts: { widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>, dataOverrides?: Record<string, unknown> } = {},
   ) {
+    const synthetic = SYNTHETIC_NODE_ENTRIES.find(e => e.name === nodeType)
+
     // Check if Vue nodes mode is active
     const { vueNodesEnabled } = useVueNodesEnabled()
     if (vueNodesEnabled.value) {
-      // Dispatch custom event for Vue canvas to handle
+      // Dispatch custom event for Vue canvas to handle. Synthetic presets resolve
+      // to their real nodeType + addAs overrides; caller-supplied opts win over
+      // the preset's defaults.
+      const resolvedType = synthetic ? synthetic.addAs.nodeType : nodeType
+      const widgetOverrides = { ...(synthetic?.addAs.widgetOverrides ?? {}), ...(opts.widgetOverrides ?? {}) }
+      const propertyOverrides = { ...(synthetic?.addAs.propertyOverrides ?? {}), ...(opts.propertyOverrides ?? {}) }
+      const dataOverrides = { ...(synthetic?.addAs.dataOverrides ?? {}), ...(opts.dataOverrides ?? {}) }
       window.dispatchEvent(new CustomEvent('comfynext:addNode', {
-        detail: { nodeType, widgetOverrides: opts.widgetOverrides, propertyOverrides: opts.propertyOverrides },
+        detail: {
+          nodeType: resolvedType,
+          widgetOverrides: Object.keys(widgetOverrides).length ? widgetOverrides : undefined,
+          propertyOverrides: Object.keys(propertyOverrides).length ? propertyOverrides : undefined,
+          dataOverrides: Object.keys(dataOverrides).length ? dataOverrides : undefined,
+        },
       }))
       closeNodeSearch()
       return
@@ -135,11 +194,17 @@ export function useNodeSearch() {
 
     // LiteGraph mode — existing iframe postMessage. Widget overrides aren't
     // wired through the bridge yet; LiteGraph mode falls back to a plain add.
+    // Synthetic entries are Vue-canvas-only: in LiteGraph mode, resolve to the
+    // raw nodeType + widgetOverrides only (no property/data overrides support).
+    const resolvedType = synthetic ? synthetic.addAs.nodeType : nodeType
+    const widgetOverrides = synthetic
+      ? { ...synthetic.addAs.widgetOverrides, ...(opts.widgetOverrides ?? {}) }
+      : opts.widgetOverrides
     const container = document.querySelector('[data-tab-id]')
     const iframe = container?.querySelector('iframe') as HTMLIFrameElement | null
     if (iframe?.contentWindow) {
       iframe.contentWindow.postMessage(
-        { type: 'comfynext', action: 'addNodeAtCenter', nodeType, widgetOverrides: opts.widgetOverrides },
+        { type: 'comfynext', action: 'addNodeAtCenter', nodeType: resolvedType, widgetOverrides },
         '*',
       )
     }
