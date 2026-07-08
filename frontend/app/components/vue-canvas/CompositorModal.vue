@@ -1359,6 +1359,21 @@ function bakeSize(): { W: number; H: number } {
   return { W: canvasDisplay.w, H: canvasDisplay.h }
 }
 
+// Full composite (wired + local) at bake resolution, for Harmonize context.
+// Mirrors renderStack()'s paint call (background + wiredTreatments + groups)
+// so the scene crop matches exactly what the editor shows — unlike bakeMotion,
+// which only needs layer pixels frame-by-frame and skips those extras.
+function renderSceneForHarmonize(): { canvas: HTMLCanvasElement; W: number; H: number } {
+  const { W, H } = bakeSize()
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value)
+  return { canvas, W, H }
+}
+
 const storedMotionParams = computed<MotionParams | null>(() => {
   const p = compositor.value?.data?.properties as Record<string, any> | undefined
   return (p?.comfynext_motionParams as MotionParams | undefined) ?? null
@@ -3508,6 +3523,12 @@ onUnmounted(() => {
               title="Cloud background removal — replaces the image with a transparent cutout, in place"
               @click="removeImageBg(selectedLocal)"
             ><PhCheckerboard class="size-3" /> {{ layerEdit.busy.value ? 'Working…' : 'Cut out subject' }}</button>
+            <button
+              class="w-full py-1.5 rounded text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer bg-white/[0.06] hover:bg-white/12 text-white/85 disabled:opacity-40 disabled:cursor-default"
+              :disabled="layerEdit.busy.value"
+              title="Relight + color-match this layer to the scene around it, in place"
+              @click="layerEdit.harmonizeLayer(selectedLocal as any, setLocal, renderSceneForHarmonize)"
+            ><Wand2 class="size-3" /> {{ layerEdit.busy.value ? 'Working…' : 'Harmonize into scene' }}</button>
             <div v-if="layerEdit.error.value" class="text-[10px] text-rose-400">{{ layerEdit.error.value }}</div>
           </div>
         </div>
