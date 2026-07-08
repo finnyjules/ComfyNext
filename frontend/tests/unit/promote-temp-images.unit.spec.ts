@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { planTempImagePromotion, promoteTempImageInputs } from '~/lib/promoteTempImages'
+import { planTempImagePromotion, promoteTempImageInputs, annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 
 // A standalone `Image` artifact wired downstream gets its `image` widget
 // backfilled with the shown result's annotated path. For a `temp` preview that
@@ -98,5 +98,35 @@ describe('promoteTempImageInputs', () => {
     expect(uploadFn).not.toHaveBeenCalled()
     // widget left untouched (so nothing half-promoted is submitted)
     expect(wf.nodes[0]!.widgets_values[0]).toBe('gone_00001_.png [temp]')
+  })
+})
+
+describe('annotatedImageValueFromViewUrl', () => {
+  it('rebuilds an annotated output-dir reference from a take /view URL', () => {
+    const url = '/view?filename=Image_00007_.png&type=output&subfolder=&t=1720000000000'
+    expect(annotatedImageValueFromViewUrl(url)).toBe('Image_00007_.png [output]')
+  })
+
+  it('includes the subfolder when present', () => {
+    const url = '/view?filename=x.png&type=output&subfolder=clipspace&t=1'
+    expect(annotatedImageValueFromViewUrl(url)).toBe('clipspace/x.png [output]')
+  })
+
+  it('works for a temp-type take (live-preview result branched before it clears)', () => {
+    const url = '/view?filename=preview.png&type=temp'
+    expect(annotatedImageValueFromViewUrl(url)).toBe('preview.png [temp]')
+  })
+
+  it('resolves a worker-absolute URL (parallel-pool takes) the same way', () => {
+    const url = 'http://127.0.0.1:8189/view?filename=y.png&type=output'
+    expect(annotatedImageValueFromViewUrl(url)).toBe('y.png [output]')
+  })
+
+  it('returns null for a data: URL or anything without filename+type', () => {
+    expect(annotatedImageValueFromViewUrl('data:image/png;base64,AAA')).toBeNull()
+    expect(annotatedImageValueFromViewUrl('/view?filename=x.png')).toBeNull()
+    expect(annotatedImageValueFromViewUrl(undefined)).toBeNull()
+    expect(annotatedImageValueFromViewUrl(null)).toBeNull()
+    expect(annotatedImageValueFromViewUrl('')).toBeNull()
   })
 })

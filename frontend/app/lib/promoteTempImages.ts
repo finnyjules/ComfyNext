@@ -36,6 +36,31 @@ interface PromoteWorkflow { nodes?: any[] }
 const TEMP_SUFFIX = ' [temp]'
 
 /**
+ * Inverse of `planTempImagePromotion`'s parsing: given a take/result's `/view`
+ * URL (built by `toUrl` in VueNodeCanvas.vue's executed-output handler — bare
+ * `filename`/`type`/optional `subfolder` query params), reconstruct the
+ * annotated `image` widget value ComfyUI's `LoadImage`/`Image` node expects
+ * (`folder_paths.annotated_filepath`: `"<subfolder/>name [type]"`). Returns
+ * null for anything that isn't a same-shape `/view?filename=…` URL (e.g. a
+ * data: URL) — callers must not fake a widget value in that case.
+ */
+export function annotatedImageValueFromViewUrl(url: string | undefined | null): string | null {
+  if (!url) return null
+  let parsed: URL
+  try {
+    parsed = new URL(url, 'http://placeholder.local')
+  } catch {
+    return null
+  }
+  const filename = parsed.searchParams.get('filename')
+  const type = parsed.searchParams.get('type')
+  if (!filename || !type) return null
+  const subfolder = parsed.searchParams.get('subfolder') || ''
+  const inner = subfolder ? `${subfolder}/${filename}` : filename
+  return `${inner} [${type}]`
+}
+
+/**
  * Pure scan: find every `Image` node widget value annotated `… [temp]` and
  * reconstruct the same-origin `/view` URL to fetch it. No I/O, no DOM.
  */

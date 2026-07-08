@@ -569,14 +569,6 @@ async function runVueWorkflow(
     clearDraftRun((plainWorkflow.nodes as any[]).map((n: any) => String(n.id)))
   }
 
-  // One-shot promotes: substitute the take snapshot for any node with a pending
-  // promote. Registered by ArtifactImageNode.promoteTake just before it fires
-  // runFiltered. NOTE: consumption here is peek-free — a promote submitted in
-  // draft mode still renders final for that node. The actual consume (clearing
-  // the registry) happens at result time when the take is tagged (Task 4).
-  const vnodesForPromote = vueCanvasRef.value.getNodes?.() || []
-  applyPendingPromotes(plainWorkflow, vnodesForPromote, (nodeId) => peekPendingPromote(nodeId))
-
   // Cost guard: estimate the exact set of nodes about to run and confirm
   // expensive runs before any side-effecting prep (compositor uploads) or
   // queueing. Live-preview runs never prompt.
@@ -726,6 +718,18 @@ async function runVueWorkflow(
   // Collection has no backend class_type and a surviving VARS link would abort
   // graphToPrompt with "No link found in parent graph".
   stripVarsLinks(plainWorkflow as any)
+
+  // One-shot promotes: substitute the take snapshot for any node with a pending
+  // promote. Registered by ArtifactImageNode.promoteTake just before it fires
+  // runFiltered. NOTE: consumption here is peek-free — a promote submitted in
+  // draft mode still renders final for that node. The actual consume (clearing
+  // the registry) happens at result time when the take is tagged (Task 4).
+  // Placement: this must run AFTER every early-return gate above (cost-confirm
+  // cancel, temp-image-promotion failure, iframe-not-ready) so an aborted run
+  // never leaves the entry in promoteByNode to be wrongly consumed by the
+  // node's next ordinary re-roll — and immediately before the actual submit.
+  const vnodesForPromote = vueCanvasRef.value.getNodes?.() || []
+  applyPendingPromotes(plainWorkflow, vnodesForPromote, (nodeId) => peekPendingPromote(nodeId))
 
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,

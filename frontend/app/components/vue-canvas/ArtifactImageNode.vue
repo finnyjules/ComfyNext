@@ -12,6 +12,7 @@ import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import { setPendingPromote } from '~/lib/draft/runMeta'
 import { promoteOverridesFor } from '~/lib/draft/promote'
+import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import { parseBadgeUsd } from '~/lib/costEstimate'
 import { toast } from 'vue-sonner'
 
@@ -538,10 +539,18 @@ function branchFromTake(takeId: string) {
   const take = (props.data.takes ?? []).find((t) => t.id === takeId)
   const url = take?.images?.[0]
   if (!take || !url) return
+  // Display fields alone leave the new node's `image` widget empty — runnable
+  // only by luck. Recover the annotated filename from the take's /view URL
+  // (same shape the executed-output handler builds it in) so the branched
+  // node is wired the same as a normal LoadImage reference. A take whose
+  // image isn't a /view URL (e.g. a data: URL) has no recoverable filename —
+  // in that case we leave it display-only rather than fake a widget value.
+  const imageWidgetValue = annotatedImageValueFromViewUrl(url)
   window.dispatchEvent(new CustomEvent('comfynext:addNode', {
     detail: {
       nodeType: 'Image',
       dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },
+      ...(imageWidgetValue ? { widgetOverrides: { image: imageWidgetValue } } : {}),
     },
   }))
   lightTableOpen.value = false
