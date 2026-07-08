@@ -110,6 +110,7 @@ export function resolveRepoRoot(): string {
 interface PoolGlobal {
   __cnComfyPool?: Map<number, WorkerState>
   __cnComfyPoolProcs?: Map<number, ChildProcess>
+  __cnComfyPoolEnsuring?: Map<number, Promise<WorkerState>>
 }
 const g = globalThis as unknown as PoolGlobal
 
@@ -155,6 +156,35 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Concurrent-spawn guard: memoizes the in-flight ensure promise per index on
+ * globalThis. Two overlapping calls for the same index during the boot window
+ * would otherwise both spawn a process on the same port (orphaned child, pid-less
+ * survivor never reaped). The first caller creates and stores the promise;
+ * concurrent callers await the same one; the entry is deleted in a finally so a
+ * later call can re-run (e.g. after a worker died). The actual work lives in
+ * `ensureWorkerInner`; `memoizeEnsure` is the pure, injectable wrapper (unit-
+ * tested without spawning).
+ */
+export function memoizeEnsure(
+  index: number,
+  ensuring: Map<number, Promise<WorkerState>>,
+  inner: (index: number) => Promise<WorkerState>,
+): Promise<WorkerState> {
+  const existing = ensuring.get(index)
+  if (existing) return existing
+  const p = inner(index).finally(() => {
+    ensuring.delete(index)
+  })
+  ensuring.set(index, p)
+  return p
+}
+
+export function ensureWorker(index: number): Promise<WorkerState> {
+  if (!g.__cnComfyPoolEnsuring) g.__cnComfyPoolEnsuring = new Map()
+  return memoizeEnsure(index, g.__cnComfyPoolEnsuring, ensureWorkerInner)
+}
+
+/**
  * Ensures worker `index` is running and ready, spawning it if necessary.
  * - If a live ComfyUI already answers on the target port, it's ADOPTED
  *   (status 'ready', no pid — the reaper must never kill it).
@@ -162,7 +192,7 @@ function sleep(ms: number): Promise<void> {
  *   polls /system_stats every second up to 30s. On timeout the spawned
  *   process is killed and the worker is marked 'stopped'.
  */
-export async function ensureWorker(index: number): Promise<WorkerState> {
+async function ensureWorkerInner(index: number): Promise<WorkerState> {
   const pool = poolMap()
   const port = workerPort(index)
   const existing = pool.get(index)
