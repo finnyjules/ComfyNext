@@ -26,6 +26,7 @@ import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
 import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from '~/composables/useInpaint'
+import { useLayerImageEdit } from '~/composables/useLayerImageEdit'
 import { useRegionFx } from '~/composables/useRegionFx'
 import type { Cloner } from '~/composables/useCloner'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
@@ -304,6 +305,7 @@ const editor = useLocalLayerEditor({
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
   getRect: () => canvasRect(),
 })
+const layerEdit = useLayerImageEdit()
 const {
   localLayers, setLocal, addLocal, deleteLocal, selectLocal,
   selectedId: selectedLocalId, selected: selectedLocal,
@@ -2029,18 +2031,11 @@ async function runRegionFill() {
 }
 
 // Cloud background removal — replace an image layer with its transparent cutout.
+// Delegates to useLayerImageEdit (shared with Task 9's Harmonize) so the
+// swap always happens through one setLocal call (one undo step).
 async function removeImageBg(layer: any) {
-  if (!layer || layer.kind !== 'image' || inpaint.busy.value) return
-  try {
-    const img = await loadImage(imageLayerUrl(layer.filename))
-    const { w, h } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
-    const dataUrl = imageToDataUrl(img, w, h)
-    const cutout = await inpaint.removeBackground(dataUrl)
-    const name = await inpaint.uploadDataUrl(cutout, 'compnobg')
-    setLocal(layer.id, { filename: name })
-  } catch (err) {
-    console.error('[compositor remove-bg]', err)
-  }
+  if (!layer || layer.kind !== 'image' || layerEdit.busy.value) return
+  await layerEdit.cutOutLayer(layer, setLocal)
 }
 
 // W/H editing for shapes, with an optional aspect-ratio lock. Both w and h are
@@ -3509,11 +3504,11 @@ onUnmounted(() => {
             ><Wand2 class="size-3" /> Generate in region…</button>
             <button
               class="w-full py-1.5 rounded text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer bg-white/[0.06] hover:bg-white/12 text-white/85 disabled:opacity-40 disabled:cursor-default"
-              :disabled="inpaint.busy.value"
-              title="Cloud background removal — replaces the image with a transparent cutout"
+              :disabled="layerEdit.busy.value"
+              title="Cloud background removal — replaces the image with a transparent cutout, in place"
               @click="removeImageBg(selectedLocal)"
-            ><PhCheckerboard class="size-3" /> {{ inpaint.busy.value ? 'Removing…' : 'Remove background' }}</button>
-            <div v-if="inpaint.error.value" class="text-[10px] text-rose-400">{{ inpaint.error.value }}</div>
+            ><PhCheckerboard class="size-3" /> {{ layerEdit.busy.value ? 'Working…' : 'Cut out subject' }}</button>
+            <div v-if="layerEdit.error.value" class="text-[10px] text-rose-400">{{ layerEdit.error.value }}</div>
           </div>
         </div>
       </template>
