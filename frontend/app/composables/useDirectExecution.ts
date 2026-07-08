@@ -15,11 +15,30 @@
 // HTTP trick), so the origin check passes. In production the same-origin /ws is
 // proxied by the hosting layer to the ComfyUI backend.
 //
-// Module-singleton: one WS connection per app, regardless of how many
+// PARALLEL DISPATCH (Task 6) — per-worker sockets:
+//   Socket state is a Map<worker, SocketState> keyed by APP-SIDE worker number
+//   (0 = main on :8188, N>=1 = pool worker N routed to :8188+(N-1) via the
+//   `comfyWorker=<N-1>` query param the Nuxt proxy understands). Worker 0 is
+//   opened by connect()/disconnect() exactly as before; pool sockets are opened
+//   lazily by queue() the first time an item routes to them, and closed again
+//   the moment that worker's last in-flight prompt completes (tracked in the
+//   internal promptWorker map, no registry import in the socket layer).
+//   Reconnect backoff is per-socket. All sockets share ONE clientId.
+//
+//   queueParallel derives the usable pool size by probing pool indices 0 and 1
+//   through /api/pool/ensure (a warm-up wave); the client hardcodes probing 2
+//   because that matches the default pool size (server/utils/comfyWorkerPool).
+//   A mismatch is harmless — extra probes that resolve non-ready are dropped,
+//   fewer real workers just means some probes fail and shrink the usable set.
+//
+// Module-singleton: one set of sockets per app, regardless of how many
 // components call useDirectExecution().
 
 import type { ApiPrompt, LiteGraphWorkflow } from '~/lib/graph/graphToPrompt'
 import { mapWsEvent, type BridgeShapedEvent } from '~/lib/graph/wsEventMap'
+import { inFlight } from '~/lib/graph/runRegistry'
+import { isPoolEligible } from '~/lib/graph/cloudOnly'
+import { pickWorker } from '~/lib/graph/pickWorker'
 
 export interface QueueResult {
   prompt_id?: string
@@ -29,10 +48,23 @@ export interface QueueResult {
   error?: string
 }
 
+/** worker: 0/absent = main (:8188, no query param); N>=1 = pool worker N,
+ *  routed to :8188+(N-1) via `?comfyWorker=${worker-1}`. */
+export interface QueueOpts {
+  worker?: number
+}
+
+export interface QueueParallelItem {
+  prompt: ApiPrompt
+  workflow: LiteGraphWorkflow
+  label?: string
+}
+
 export interface DirectExecution {
   connect: () => void
   disconnect: () => void
-  queue: (prompt: ApiPrompt, workflow: LiteGraphWorkflow) => Promise<QueueResult>
+  queue: (prompt: ApiPrompt, workflow: LiteGraphWorkflow, opts?: QueueOpts) => Promise<QueueResult>
+  queueParallel: (items: QueueParallelItem[], ctx: { objectInfo: Record<string, any> }) => Promise<QueueResult[]>
   onEvent: (cb: (e: BridgeShapedEvent) => void) => void
   clientId: string
 }
@@ -53,46 +85,89 @@ function getClientId(): string {
   return id
 }
 
-// Module-level singleton state — shared across every useDirectExecution() call.
-let ws: WebSocket | null = null
-let wantConnected = false
-let reconnectAttempt = 0
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+// Per-worker socket state — keyed by app-side worker number (0 = main).
+interface SocketState {
+  ws: WebSocket | null
+  wantConnected: boolean
+  reconnectAttempt: number
+  reconnectTimer: ReturnType<typeof setTimeout> | null
+}
+
+const sockets = new Map<number, SocketState>()
 let cachedClientId: string | null = null
 const listeners = new Set<(e: BridgeShapedEvent) => void>()
 
-/** Pure URL builder — ws(s):// + origin's host/port + /ws?clientId=. Exported for unit testing. */
-export function buildWsUrl(httpOrigin: string, clientId: string): string {
-  return `${httpOrigin.replace(/^http/, 'ws')}/ws?clientId=${clientId}`
+// prompt_id → app-side worker, for pool sockets only (worker >= 1). Maintained
+// by queue() at dispatch time and pruned on completion, so the socket layer can
+// close a pool worker's socket once its last prompt drains — without importing
+// the run registry into the hot message handler.
+const promptWorker = new Map<string, number>()
+
+function socketFor(worker: number): SocketState {
+  let s = sockets.get(worker)
+  if (!s) {
+    s = { ws: null, wantConnected: false, reconnectAttempt: 0, reconnectTimer: null }
+    sockets.set(worker, s)
+  }
+  return s
 }
 
-function wsUrl(clientId: string): string {
+/** Pure URL builder — ws(s):// + origin's host/port + /ws?clientId=, plus
+ *  `&comfyWorker=<0-based pool index>` for app-side workers >= 1 (worker 0 /
+ *  absent = main, no param). Exported for unit testing. */
+export function buildWsUrl(httpOrigin: string, clientId: string, worker = 0): string {
+  const base = `${httpOrigin.replace(/^http/, 'ws')}/ws?clientId=${clientId}`
+  return worker >= 1 ? `${base}&comfyWorker=${worker - 1}` : base
+}
+
+function wsUrl(clientId: string, worker: number): string {
   // Same-origin /ws — routed to ComfyUI by the nuxt.config.ts upgrade proxy
   // (which strips/rewrites the browser Origin so ComfyUI's origin check passes).
   // See the header comment above for why we never connect to :8188 directly.
-  return buildWsUrl(window.location.origin, clientId)
+  return buildWsUrl(window.location.origin, clientId, worker)
 }
 
-function scheduleReconnect(clientId: string): void {
-  if (!wantConnected) return
-  if (reconnectTimer) return
-  const delay = reconnectDelayMs(reconnectAttempt)
-  reconnectAttempt++
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    if (wantConnected) openSocket(clientId)
+function scheduleReconnect(worker: number, clientId: string): void {
+  const s = socketFor(worker)
+  if (!s.wantConnected) return
+  if (s.reconnectTimer) return
+  const delay = reconnectDelayMs(s.reconnectAttempt)
+  s.reconnectAttempt++
+  s.reconnectTimer = setTimeout(() => {
+    s.reconnectTimer = null
+    if (s.wantConnected) openSocket(worker, clientId)
   }, delay)
 }
 
-function openSocket(clientId: string): void {
-  if (!import.meta.client) return
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+/** Close a pool worker's (worker >= 1) socket once its last in-flight prompt has
+ *  drained. Main (worker 0) is never auto-closed — its lifecycle is the flag
+ *  watcher's (connect/disconnect). */
+function maybeCloseDrainedPoolSocket(worker: number): void {
+  if (worker < 1) return
+  for (const w of promptWorker.values()) {
+    if (w === worker) return // still has prompts in flight
+  }
+  const s = sockets.get(worker)
+  if (!s) return
+  s.wantConnected = false
+  if (s.reconnectTimer) { clearTimeout(s.reconnectTimer); s.reconnectTimer = null }
+  if (s.ws) {
+    const socket = s.ws
+    s.ws = null
+    socket.close()
+  }
+}
 
-  const socket = new WebSocket(wsUrl(clientId))
-  ws = socket
+function openSocket(worker: number, clientId: string): void {
+  if (!import.meta.client) return
+  const s = socketFor(worker)
+  if (s.ws && (s.ws.readyState === WebSocket.OPEN || s.ws.readyState === WebSocket.CONNECTING)) return
+
+  const socket = new WebSocket(wsUrl(clientId, worker))
+  s.ws = socket
 
   socket.addEventListener('open', () => {
-    reconnectAttempt = 0
+    s.reconnectAttempt = 0
   })
 
   socket.addEventListener('message', (evt) => {
@@ -105,14 +180,23 @@ function openSocket(clientId: string): void {
       return
     }
     const mapped = mapWsEvent(parsed, clientId)
-    if (mapped) {
-      for (const cb of listeners) cb(mapped)
+    if (!mapped) return
+    for (const cb of listeners) cb(mapped)
+    // After fan-out: if this was a terminal event for a pool prompt, forget the
+    // prompt→worker mapping and close the worker's socket if it just drained.
+    if (mapped.event === 'execution_complete' || mapped.event === 'execution_error') {
+      const pid = mapped.prompt_id
+      if (pid && promptWorker.has(pid)) {
+        const w = promptWorker.get(pid)!
+        promptWorker.delete(pid)
+        maybeCloseDrainedPoolSocket(w)
+      }
     }
   })
 
   socket.addEventListener('close', () => {
-    if (ws === socket) ws = null
-    scheduleReconnect(clientId)
+    if (s.ws === socket) s.ws = null
+    scheduleReconnect(worker, clientId)
   })
 
   socket.addEventListener('error', () => {
@@ -121,31 +205,59 @@ function openSocket(clientId: string): void {
   })
 }
 
+/** Open a pool worker's socket lazily and mark it as wanted (so reconnect works
+ *  while it has prompts in flight). No-op for main / worker 0 here — main is
+ *  owned by connect(). */
+function ensurePoolSocket(worker: number, clientId: string): void {
+  if (worker < 1 || !import.meta.client) return
+  const s = socketFor(worker)
+  s.wantConnected = true
+  openSocket(worker, clientId)
+}
+
 export function useDirectExecution(): DirectExecution {
   if (cachedClientId === null) cachedClientId = getClientId()
   const clientId = cachedClientId
 
   function connect(): void {
     if (!import.meta.client) return
-    wantConnected = true
-    reconnectAttempt = 0
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-    openSocket(clientId)
+    const s = socketFor(0)
+    s.wantConnected = true
+    s.reconnectAttempt = 0
+    if (s.reconnectTimer) { clearTimeout(s.reconnectTimer); s.reconnectTimer = null }
+    openSocket(0, clientId)
   }
 
   function disconnect(): void {
-    wantConnected = false
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-    if (ws) {
-      const socket = ws
-      ws = null
+    const s = socketFor(0)
+    s.wantConnected = false
+    if (s.reconnectTimer) { clearTimeout(s.reconnectTimer); s.reconnectTimer = null }
+    if (s.ws) {
+      const socket = s.ws
+      s.ws = null
       socket.close()
     }
   }
 
-  async function queue(prompt: ApiPrompt, workflow: LiteGraphWorkflow): Promise<QueueResult> {
+  async function queue(
+    prompt: ApiPrompt,
+    workflow: LiteGraphWorkflow,
+    opts?: QueueOpts,
+  ): Promise<QueueResult> {
+    // 1-based/0-based convention (contained ENTIRELY inside this block):
+    //   opts.worker is APP-SIDE: 0/absent = main, N>=1 = pool worker N.
+    //   The wire (query param + pool socket) is 0-based: pool index = worker-1.
+    // Everything above/below queue() speaks app-side numbers; the only place a
+    // worker number becomes 0-based is the `comfyWorker=${worker - 1}` here.
+    const worker = opts?.worker ?? 0
+    const path = worker >= 1 ? `/prompt?comfyWorker=${worker - 1}` : '/prompt'
+
+    // Before POSTing to a pool worker, ensure its WS is open so we receive its
+    // execution events. Main's socket is owned by connect() and left alone.
+    if (worker >= 1) ensurePoolSocket(worker, clientId)
+
     try {
-      const res = await $fetch<{ prompt_id?: string }>('/prompt', {
+      const res = await $fetch<{ prompt_id?: string }>(path, {
         method: 'POST',
         body: {
           prompt,
@@ -153,6 +265,9 @@ export function useDirectExecution(): DirectExecution {
           extra_data: { extra_pnginfo: { workflow } },
         },
       })
+      // Record the prompt→worker mapping for pool workers so the socket layer can
+      // close the socket once this worker's prompts drain.
+      if (worker >= 1 && res?.prompt_id) promptWorker.set(res.prompt_id, worker)
       return { prompt_id: res?.prompt_id }
     } catch (err: any) {
       // ofetch's FetchError parses the JSON body onto `.data` on non-2xx
@@ -164,13 +279,105 @@ export function useDirectExecution(): DirectExecution {
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
       const error = err?.data?.error?.message ?? err?.message ?? String(err)
+      // On a pool worker, a failed POST may leave a socket with nothing left to
+      // do — drain-check it (no prompt_id was recorded, so this only closes if
+      // the worker has no OTHER in-flight prompts).
+      if (worker >= 1) maybeCloseDrainedPoolSocket(worker)
       return { node_errors, error }
     }
+  }
+
+  /**
+   * Parallel dispatch across cloud-only pool workers.
+   *
+   * Sequential-on-main (preserves order, today's exact behavior) when:
+   *   - there is 0 or 1 item, OR
+   *   - any item is not `isPoolEligible` (mixed GPU work stays serialized), OR
+   *   - no pool worker warms up ready (all-fail fallback, warned once).
+   *
+   * Otherwise it warms a wave of pool workers (probing pool indices 0..1 via
+   * /api/pool/ensure with allSettled), keeps the ones reporting status 'ready',
+   * assigns each item to the least-loaded usable worker via `pickWorker` — fed
+   * from the run registry's per-worker in-flight counts PLUS this batch's own
+   * pending assignments (the registry only learns about a run once queue()
+   * POSTs it, so without counting our own assignments every item would pick the
+   * same idle worker) — then queues them all with Promise.all. Item order is
+   * preserved in the result; an individual failure returns its QueueResult
+   * (error field) rather than rejecting the whole batch.
+   */
+  async function queueParallel(
+    items: QueueParallelItem[],
+    ctx: { objectInfo: Record<string, any> },
+  ): Promise<QueueResult[]> {
+    const runSequential = () => sequentialOnMain(items, queue)
+
+    if (items.length <= 1) return runSequential()
+    if (!items.every((it) => isPoolEligible(it.prompt, ctx.objectInfo))) return runSequential()
+
+    // Warm-up wave: probe pool indices 0 and 1 (hardcoded 2 = default pool
+    // size). Usable = those that resolve status 'ready'. App-side worker number
+    // = pool index + 1.
+    const PROBE_POOL_INDICES = [0, 1]
+    const ensured = await Promise.allSettled(
+      PROBE_POOL_INDICES.map((idx) =>
+        $fetch<{ port: number; status: string }>('/api/pool/ensure', {
+          method: 'POST',
+          body: { worker: idx },
+        }).then((r) => ({ idx, status: r?.status })),
+      ),
+    )
+
+    const usableWorkers = ensured
+      .filter((r): r is PromiseFulfilledResult<{ idx: number; status: string }> =>
+        r.status === 'fulfilled' && r.value?.status === 'ready',
+      )
+      .map((r) => r.value.idx + 1) // → app-side worker number
+      .sort((a, b) => a - b)
+
+    if (usableWorkers.length === 0) {
+      console.warn('[queueParallel] no pool worker ready — falling back to sequential dispatch on main')
+      return runSequential()
+    }
+
+    // Cap workers to items.length (no point warming more sockets than items).
+    const workerCount = Math.min(usableWorkers.length, items.length)
+    const workers = usableWorkers.slice(0, workerCount)
+
+    // pickWorker consumes a DENSE 1..poolSize load array; our usable workers may
+    // be a sparse subset (e.g. only worker 2 ready). Compact them: position i in
+    // the dense array (1-based) maps to workers[i-1]. Seed each with its current
+    // registry in-flight count, then increment as we assign within this batch.
+    const load: number[] = [0] // index 0 = main placeholder, never picked
+    for (const w of workers) load.push(inFlight({ worker: w }).length)
+
+    const assignedWorker: number[] = items.map(() => {
+      const denseIdx = pickWorker(load, workers.length) // 1..workers.length
+      load[denseIdx] = (load[denseIdx] ?? 0) + 1 // count our own batch assignment
+      return workers[denseIdx - 1]! // dense → real app-side worker
+    })
+
+    return Promise.all(
+      items.map((it, i) => queue(it.prompt, it.workflow, { worker: assignedWorker[i] })),
+    )
   }
 
   function onEvent(cb: (e: BridgeShapedEvent) => void): void {
     listeners.add(cb)
   }
 
-  return { connect, disconnect, queue, onEvent, clientId }
+  return { connect, disconnect, queue, queueParallel, onEvent, clientId }
+}
+
+/** Sequential fallback: queue every item on main, in order, collecting each
+ *  QueueResult (failures included). Shared by the several queueParallel
+ *  early-outs. */
+async function sequentialOnMain(
+  items: QueueParallelItem[],
+  queue: (p: ApiPrompt, w: LiteGraphWorkflow, opts?: QueueOpts) => Promise<QueueResult>,
+): Promise<QueueResult[]> {
+  const results: QueueResult[] = []
+  for (const it of items) {
+    results.push(await queue(it.prompt, it.workflow))
+  }
+  return results
 }
