@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { buildSuggestRequest, STANDARD_KEY_ERROR } from '~/lib/fontSuggest'
+import { buildSuggestRequest } from '~/lib/fontSuggest'
 
 describe('buildSuggestRequest', () => {
-  it('returns an error when the API key is missing', () => {
+  it('sends no apiKey field when no local key is set (server key applies)', () => {
     const r = buildSuggestRequest(null, 'elegant serif')
-    expect(r).toEqual({ ok: false, error: STANDARD_KEY_ERROR })
+    expect(r).toEqual({ ok: true, body: { query: 'elegant serif' } })
   })
 
-  it('returns an error when the API key is blank', () => {
-    expect(buildSuggestRequest('   ', 'elegant serif')).toEqual({ ok: false, error: STANDARD_KEY_ERROR })
+  it('sends no apiKey field when the local key is blank', () => {
+    expect(buildSuggestRequest('   ', 'elegant serif')).toEqual({ ok: true, body: { query: 'elegant serif' } })
   })
 
   it('returns ok:false with no error for a blank query (nothing to do)', () => {
@@ -20,5 +20,9 @@ describe('buildSuggestRequest', () => {
   it('builds a trimmed request body when key and query are present', () => {
     const r = buildSuggestRequest('sk-key', '  knicks logo  ')
     expect(r).toEqual({ ok: true, body: { apiKey: 'sk-key', query: 'knicks logo' } })
+  })
+
+  it('rides a local key along as a BYOK override', () => {
+    expect(buildSuggestRequest('sk-key', 'q')).toEqual({ ok: true, body: { apiKey: 'sk-key', query: 'q' } })
   })
 })

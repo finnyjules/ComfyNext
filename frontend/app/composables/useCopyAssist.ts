@@ -41,17 +41,13 @@ export function useCopyAssist() {
     if (loading.value) return // guard against double-fire
 
     const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
-    if (!apiKey) {
-      error.value = 'Add your Anthropic key in settings'
-      return
-    }
 
     loading.value = true
     error.value = null
     try {
       const res = await $fetch<{ options: CopyAssistOption[] }>('/api/copy-assist', {
         method: 'POST',
-        body: { apiKey, ...payload },
+        body: { apiKey: apiKey || undefined, ...payload },
       })
       options.value = res.options ?? []
     } catch (e: any) {

@@ -103,18 +103,13 @@ export function useExplain() {
     explanation.value = null
 
     const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
-    if (!apiKey) {
-      loading.value = false
-      error.value = 'No Anthropic API key set. Add your key in Settings → AI.'
-      return
-    }
 
     const graphDescription = formatGraphForClaude(data)
 
     try {
       const res = await $fetch<{ explanation: string }>('/api/explain', {
         method: 'POST',
-        body: { graphData: graphDescription, apiKey },
+        body: { graphData: graphDescription, apiKey: apiKey || undefined },
       })
       explanation.value = res.explanation
     }

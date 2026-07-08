@@ -76,12 +76,11 @@ export function usePortIntent() {
     if (direct) return direct
 
     const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
-    if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
 
     const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST })
     if (!catalog.length) throw new Error('No installed nodes are compatible with this port.')
     const graphContext = buildGraphContext(anchor, ctx.nodes, ctx.edges)
-    const base = { apiKey, intent, anchor, catalog, graphContext }
+    const base = { apiKey: apiKey || undefined, intent, anchor, catalog, graphContext }
 
     let res = await callEndpoint(base)
     let validated = validateSuggestion(res.suggestion, ctx.objectInfo, anchor)

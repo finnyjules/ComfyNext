@@ -12,10 +12,12 @@ import AgentSweep from '~/components/agent/AgentSweep.vue'
 import ImageSearchPickerModal from '~/components/agent/ImageSearchPickerModal.vue'
 import { useCanvasAgent } from '~/composables/useCanvasAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { useAiStatus } from '~/composables/useAiStatus'
 import { paidProducerFor } from '~/lib/artifact/nextSteps'
 
 const props = defineProps<{ vueCanvas?: any }>()
 const { getLocalSetting } = useLocalSettings()
+const { aiAvailable } = useAiStatus()
 
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
@@ -159,6 +161,10 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
         />
       </template>
     </div>
+
+    <p v-if="!aiAvailable" class="px-1 text-[11px] leading-snug text-white/40">
+      AI assist isn’t set up — start the app with NUXT_ANTHROPIC_API_KEY, or paste your own key in Settings → AI.
+    </p>
 
     <!-- Input bar — dark box with a pastel ring that fades in when active -->
     <div class="prompt-field flex items-center gap-2.5 rounded-[12px] px-3.5 py-3.5 shadow-lg">

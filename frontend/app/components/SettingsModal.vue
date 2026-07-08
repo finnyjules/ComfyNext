@@ -129,7 +129,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.PromptFilename', label: 'Prompt for filename when saving', type: 'toggle' },
   ],
   ai: [
-    { id: 'ComfyNext.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Powers Explain and AI node suggestions. Stored in this browser and sent directly to Anthropic — never kept on a server.' },
+    { id: 'ComfyNext.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Optional — AI assist uses the app’s built-in key. Paste your own to override; it stays in this browser and is sent only with your requests.' },
     { id: 'ComfyNext.AI.BraveApiKey', label: 'Brave Search API key', type: 'text', local: true, description: 'Powers the agent’s web image search (“find me a picture of…”). Free tier at brave.com/search/api. Stored in this browser and sent directly to Brave — never kept on a server.' },
     { id: 'replicateToken', label: 'Replicate API token', type: 'secret', description: 'Powers cloud LoRA training, vectorize, background removal and other Replicate features. Stored on this machine (frontend/.data); paste a new value to replace, clear the field to remove.' },
   ],
