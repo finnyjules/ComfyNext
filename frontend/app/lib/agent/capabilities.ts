@@ -295,4 +295,5 @@ export const AGENT_CAPABILITIES: AgentCapability[] = [...STUDIOS, ...GENERATORS]
 export const FRONTEND_ONLY_NODE_TYPES: Set<string> = new Set([
   ...studioNodeTypes().map(n => n.name),
   'LipSyncStudio',
+  'Reference',
 ])

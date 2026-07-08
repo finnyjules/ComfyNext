@@ -29,7 +29,7 @@ import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { BINDINGS_PROP, COLLECTION_PROP, LOOKUP_TYPE, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
-import { applyRefPromptTokens } from '~/lib/refs/injectWorkflow'
+import { applyRefPromptTokens, materializeReferenceNodes } from '~/lib/refs/injectWorkflow'
 import { resolveRefFilename, type RefRegistry } from '~/lib/refs/registry'
 import { isRefBinding } from '~/lib/refs/binding'
 import { createCollection } from '~/lib/collection/model'
@@ -4470,6 +4470,10 @@ async function injectSmartLayoutBrand(workflow: any, kitKv: string): Promise<voi
  */
 async function injectAssetRegistry(workflow: any, reg: RefRegistry): Promise<void> {
   if (!reg || !Object.keys(reg).length || !workflow?.nodes?.length) return
+
+  // (a0) materialize Reference nodes into real Image loaders so their
+  // resolved filename actually reaches ComfyUI
+  materializeReferenceNodes(workflow, reg)
 
   // (a) prompt tokens
   applyRefPromptTokens(workflow, reg)
