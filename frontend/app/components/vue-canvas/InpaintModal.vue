@@ -16,6 +16,10 @@ import { useBrushMask, type MaskTarget } from '~/composables/useBrushMask'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
 import { useStageView } from '~/composables/useStageView'
 import { useRegionFx } from '~/composables/useRegionFx'
+import { useBrandLibrary } from '~/composables/useBrandLibrary'
+import { recolorPrompt } from '~/lib/editActions/prompts'
+import { BRAND_COLOR_KEYS } from '~~/shared/brand/types'
+import type { ComputedRef } from 'vue'
 
 const props = defineProps<{
   nodeId: string
@@ -409,6 +413,48 @@ async function doSamSelect(nx: number, ny: number) {
   }
 }
 
+// ── Recolor intent: brand-kit swatches + free picker ─────────────────────────
+const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandKit: (id: string | null) => void } | null>('comfynext:brand', null)
+const brandLib = useBrandLibrary(projectBrand?.activeKitId)
+/** Active-kit colors first (deduped), else a small neutral default set. */
+const recolorSwatches = computed<{ label: string; hex: string }[]>(() => {
+  const kit = brandLib.activeKit.value as Record<string, string | undefined> | undefined
+  const out: { label: string; hex: string }[] = []
+  if (kit) {
+    for (const key of BRAND_COLOR_KEYS) {
+      const hex = kit[key]
+      if (hex && !out.some(s => s.hex.toLowerCase() === hex.toLowerCase())) out.push({ label: key, hex })
+    }
+  }
+  if (!out.length) {
+    out.push(
+      { label: 'red', hex: '#e5484d' }, { label: 'blue', hex: '#3e63dd' },
+      { label: 'green', hex: '#30a46c' }, { label: 'yellow', hex: '#f5d90a' },
+      { label: 'black', hex: '#1c1c1c' }, { label: 'white', hex: '#f2f2f2' },
+    )
+  }
+  return out
+})
+const customColor = ref('#3e63dd')
+
+async function runRecolor(label: string, hex: string) {
+  if (inpaint.busy.value) return
+  if (!sourceImg.value || !samMask.value) { inpaintError.value = 'Click the object to recolor first.'; return }
+  inpaintError.value = ''
+  try {
+    const source = imageToDataUrl(sourceImg.value, out.value.w, out.value.h)
+    const p = recolorPrompt(`${label} (${hex})`)
+    const images = await inpaint.fluxFill(source, samMask.value, p, { tier: tier.value, count: count.value })
+    const stamp = Date.now()
+    const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: 'mask' }))
+    history.value = [...items, ...history.value]
+    lastResult.value = items[0]?.url ?? null
+    previewResult.value = lastResult.value
+  } catch (err: any) {
+    inpaintError.value = err?.data?.message || err?.message || 'Recolor failed'
+  }
+}
+
 // ── Load an image inside the modal (empty state) ─────────────────────────────
 const fileInputRef = ref<HTMLInputElement | null>(null)
 function triggerLoad() { fileInputRef.value?.click() }
@@ -628,6 +674,19 @@ onBeforeUnmount(() => {
 
           <!-- Actions -->
           <div>
+            <div v-if="intent === 'recolor' && samMask" class="flex items-center gap-1.5 flex-wrap mb-2.5">
+              <span class="text-[10px] text-white/40 select-none">Recolor to</span>
+              <button v-for="s in recolorSwatches" :key="s.hex"
+                      class="size-6 rounded-md border border-white/15 cursor-pointer hover:scale-110 transition-transform"
+                      :style="{ background: s.hex }" :title="`${s.label} ${s.hex}`"
+                      :disabled="inpaint.busy.value"
+                      @click="runRecolor(s.label, s.hex)" />
+              <label class="relative size-6 rounded-md border border-dashed border-white/25 cursor-pointer overflow-hidden" title="Custom color">
+                <input v-model="customColor" type="color" class="absolute inset-0 opacity-0 cursor-pointer"
+                       @change="runRecolor('custom', customColor)" />
+                <span class="absolute inset-0 grid place-items-center text-[10px] text-white/50">+</span>
+              </label>
+            </div>
             <div class="flex items-center gap-1.5">
               <button v-if="mode === 'mask'" class="h-8 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || !hasRegion" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
               <button class="gen-pastel flex-1 h-8 rounded-md text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || (mode === 'mask' && !hasRegion)" @click="runInpaint(false)">

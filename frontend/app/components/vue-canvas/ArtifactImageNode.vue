@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors, Palette } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -255,6 +255,12 @@ function openInpaint() {
 // auto-runs a removal as soon as an object is picked.
 function openRemoveObject() {
   window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
+}
+
+// One-click recolor: open the inpaint editor pre-set to click-select; picking
+// an object reveals a swatch strip (brand colors first) that runs the recolor.
+function openRecolor() {
+  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'recolor' } }))
 }
 
 // Knock out the background: splice a local BackgroundRemove node after this image
@@ -723,6 +729,10 @@ const promoteUsdLabel = computed(() => {
               <button class="edit-menu-item" @click.stop="runAction(openRemoveObject)">
                 <Scissors class="size-3 shrink-0" /> Remove object
                 <span class="edit-menu-hint">click it</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(openRecolor)">
+                <Palette class="size-3 shrink-0" /> Recolor…
+                <span class="edit-menu-hint">click + pick</span>
               </button>
               <button class="edit-menu-item" @click.stop="runAction(editWithNanoBanana)">
                 <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
