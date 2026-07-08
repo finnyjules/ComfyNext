@@ -356,9 +356,32 @@ async function runInpaint(removeMode = false) {
     // lastResult) until the user Applies or generates again.
     lastResult.value = items[0]?.url ?? null
     previewResult.value = lastResult.value
+    // Remove intent: each click is a fresh paid removal that should build on the
+    // last one, not the original photo — otherwise "remove lamppost" then "remove
+    // trash can" would erase the trash can from an image that still has the
+    // lamppost. Promote this result to be the working source for the next click,
+    // and drop the stale SAM mask so the next click segments against it.
+    if (removeMode && lastResult.value) {
+      await applySourceFromResult(lastResult.value)
+    }
   } catch (err: any) {
     inpaintError.value = err?.data?.message || err?.message || 'Inpaint failed'
   }
+}
+
+// Promote a generated result to be the modal's working source image, without
+// resetting the history/results state that applySource() normally clears (this
+// is used mid-flow, right after a successful remove-intent generation).
+async function applySourceFromResult(url: string) {
+  try {
+    const img = await loadImage(url)
+    sourceImg.value = img
+    const nw = img.naturalWidth || MAX, nh = img.naturalHeight || MAX
+    out.value = capDims(nw, nh)
+  } catch {
+    // Keep the previous sourceImg on failure — the result is still applyable.
+  }
+  clearSamMask()
 }
 
 // Commit whatever result is currently on the canvas (a hovered preview, else the
@@ -439,12 +462,14 @@ const customColor = ref('#3e63dd')
 
 async function runRecolor(label: string, hex: string) {
   if (inpaint.busy.value) return
-  if (!sourceImg.value || !samMask.value) { inpaintError.value = 'Click the object to recolor first.'; return }
+  if (!sourceImg.value) { inpaintError.value = 'Click or paint the object to recolor first.'; return }
+  const maskUrl = samMask.value ?? bakeRegionMask()
+  if (!maskUrl) { inpaintError.value = 'Click or paint the object to recolor first.'; return }
   inpaintError.value = ''
   try {
     const source = imageToDataUrl(sourceImg.value, out.value.w, out.value.h)
     const p = recolorPrompt(`${label} (${hex})`)
-    const images = await inpaint.fluxFill(source, samMask.value, p, { tier: tier.value, count: count.value })
+    const images = await inpaint.fluxFill(source, maskUrl, p, { tier: tier.value, count: count.value })
     const stamp = Date.now()
     const items: HistoryItem[] = images.map((url, i) => ({ id: `${stamp}_${i}`, url, prompt: p, mode: 'mask' }))
     history.value = [...items, ...history.value]
@@ -674,7 +699,7 @@ onBeforeUnmount(() => {
 
           <!-- Actions -->
           <div>
-            <div v-if="intent === 'recolor' && samMask" class="flex items-center gap-1.5 flex-wrap mb-2.5">
+            <div v-if="intent === 'recolor' && hasRegion" class="flex items-center gap-1.5 flex-wrap mb-2.5">
               <span class="text-[10px] text-white/40 select-none">Recolor to</span>
               <button v-for="s in recolorSwatches" :key="s.hex"
                       class="size-6 rounded-md border border-white/15 cursor-pointer hover:scale-110 transition-transform"

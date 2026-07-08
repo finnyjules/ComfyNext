@@ -31,6 +31,12 @@ kontext, nano-gen, remove-bg — so **no new server routes** are needed.
   cloud RemoveBackgroundNode remains reachable from the Actions panel. The
   Compositor's existing local-layer "Remove background" button was consolidated
   into the new in-place pipeline and renamed "Cut out subject".
+- Remove-object results follow the InpaintModal's universal Apply semantics
+  (in-place onto the source node, locked) rather than §1's "branched
+  artifact" — branching only the intent flow would diverge from every other
+  inpaint path in the modal. Sequential removes chain on the latest result.
+  The prompt field also remains visible in remove mode (spec sketched it
+  hidden). PENDING USER SIGN-OFF.
 
 ## 1. Remove Object
 
