@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors, Palette } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors, Palette, Type } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -407,6 +407,27 @@ const nextMenuStyle = ref<Record<string, string>>({})
 onClickOutside(editMenuRef, () => { editMenuOpen.value = false }, { ignore: [editMenuPanelRef] })
 onClickOutside(nextMenuRef, () => { nextMenuOpen.value = false }, { ignore: [nextMenuPanelRef] })
 
+// ── Edit text popover — find/replace fields, spawns a TextEditNode ───────────
+const textEditOpen = ref(false)
+const textEditPanelRef = ref<HTMLElement | null>(null)
+const textEditStyle = ref<Record<string, string>>({})
+const textFind = ref('')
+const textReplace = ref('')
+onClickOutside(textEditPanelRef, () => { textEditOpen.value = false })
+
+function openTextEdit() {
+  textEditStyle.value = menuStyleFor(editMenuRef.value)
+  textFind.value = ''
+  textReplace.value = ''
+  textEditOpen.value = true
+}
+
+function runTextEdit() {
+  if (!textFind.value.trim() || !textReplace.value.trim()) return
+  spliceEffect('TextEditNode', { run: true, branch: true }, { find: textFind.value.trim(), replace: textReplace.value.trim() })
+  textEditOpen.value = false
+}
+
 // Beside the node's right edge, top-aligned with the button; flips to the
 // node's left when the viewport runs out. Vertical position clamps so the panel
 // always fits, scrolling internally as a last resort on short viewports.
@@ -734,6 +755,10 @@ const promoteUsdLabel = computed(() => {
                 <Palette class="size-3 shrink-0" /> Recolor…
                 <span class="edit-menu-hint">click + pick</span>
               </button>
+              <button class="edit-menu-item" @click.stop="runAction(openTextEdit)">
+                <Type class="size-3 shrink-0" /> Edit text…
+                <span class="edit-menu-hint">find / replace</span>
+              </button>
               <button class="edit-menu-item" @click.stop="runAction(editWithNanoBanana)">
                 <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
                 <span class="edit-menu-hint">{{ ACTION_HINTS['nano-banana'] }}</span>
@@ -758,6 +783,24 @@ const promoteUsdLabel = computed(() => {
             </div>
             </Teleport>
           </div>
+
+          <Teleport to="body">
+            <div v-if="textEditOpen" ref="textEditPanelRef"
+                 class="nopan nodrag fixed z-[9999] w-[230px] rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg p-2.5 flex flex-col gap-2"
+                 :style="textEditStyle">
+              <div class="text-[9px] uppercase tracking-wider text-white/30 select-none">Edit text in image</div>
+              <input v-model="textFind" placeholder="Text currently in the image" spellcheck="false"
+                     class="h-7 px-2 rounded bg-white/[0.06] border border-white/10 text-[11px] text-white/85 outline-none focus:border-white/25"
+                     @keydown.enter.prevent="runTextEdit" />
+              <input v-model="textReplace" placeholder="Replace with…" spellcheck="false"
+                     class="h-7 px-2 rounded bg-white/[0.06] border border-white/10 text-[11px] text-white/85 outline-none focus:border-white/25"
+                     @keydown.enter.prevent="runTextEdit" />
+              <button class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40"
+                      :disabled="!textFind.trim() || !textReplace.trim()" @click="runTextEdit">
+                Replace text · ~$0.05
+              </button>
+            </div>
+          </Teleport>
 
           <!-- NEXT — transform into something new -->
           <div ref="nextMenuRef" class="relative">
