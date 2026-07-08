@@ -190,9 +190,23 @@ export async function ensureWorker(index: number): Promise<WorkerState> {
   procMap().set(index, child)
   starting.pid = child.pid
 
+  // Handle spawn errors (e.g., bad python path, missing .venv) so the Nitro server
+  // doesn't crash on an unhandled 'error' event. Marks the worker stopped immediately
+  // so the poll loop exits cleanly.
+  child.on('error', (err) => {
+    console.warn('[comfy-pool] spawn failed for worker %d: %s', index, err.message)
+    procMap().delete(index)
+    const stopped: WorkerState = { index, port, status: 'stopped', lastUsedAt: Date.now() }
+    pool.set(index, stopped)
+  })
+
   const deadline = Date.now() + POLL_TIMEOUT_MS
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS)
+    // If spawn errored, the worker state is 'stopped' and procMap is empty — exit loop.
+    if (!procMap().has(index)) {
+      return pool.get(index) || { index, port, status: 'stopped', lastUsedAt: Date.now() }
+    }
     if (await checkHealth(port, HEALTH_TIMEOUT_MS)) {
       const ready: WorkerState = { index, port, status: 'ready', pid: child.pid, lastUsedAt: Date.now() }
       pool.set(index, ready)
