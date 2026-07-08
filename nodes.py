@@ -2591,6 +2591,7 @@ async def init_builtin_extra_nodes():
         "nodes_person_swap.py",
         "nodes_relight.py",
         "nodes_swap_product.py",
+        "nodes_edit_actions.py",
         "nodes_swap_background.py",
         "nodes_turntable.py",
         "nodes_model3d.py",
