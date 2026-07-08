@@ -1079,6 +1079,19 @@ function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
   return doc
 }
 
+// Closing a tab must never destroy work: flush the live canvas into the doc
+// (only the ACTIVE tab has unsaved on-screen state), mirror it to the durable
+// server-side project version, and only then drop the session copy. The
+// project stays restorable from All Projects / Recent — closing ≠ deleting.
+function closeProjectTab(tab: any) {
+  if (tab.id === activeTab.value?.id) snapshotActiveCanvasIntoDoc(tab.id)
+  const doc = savedWorkflows[tab.id]
+  if (doc && docHasContent(doc)) saveDurableVersion(tab, doc)
+  delete savedWorkflows[tab.id]
+  persistWorkflows()
+  closeTab(tab.id)
+}
+
 // Restore a saved version (from the project menu) onto the canvas. The body
 // may be a whole ProjectDoc (new versions) or a bare workflow (old ones) —
 // either way it replaces the tab's entire doc. Assigning a fresh object into
@@ -2793,7 +2806,7 @@ function dismissRunResult() {
             <X
               v-if="tab.closable"
               class="size-3.5 text-white/40 hover:text-white transition-opacity shrink-0"
-              @click.stop="() => { delete savedWorkflows[tab.id]; persistWorkflows(); closeTab(tab.id) }"
+              @click.stop="closeProjectTab(tab)"
             />
           </button>
           </template>
