@@ -4,16 +4,16 @@
 // `mapWsEvent` (wsEventMap.ts) produces those exact shapes so that handler
 // doesn't need to change.
 //
-// WHY DIRECT-TO-COMFYUI (not same-origin /ws): in dev, Nuxt's "comfy-ws-proxy"
-// hook in nuxt.config.ts is supposed to pipe same-origin /ws upgrades to
-// ComfyUI on 127.0.0.1:8188, but it does NOT reliably intercept the upgrade —
-// the request falls through to SSR/Vue Router ("No match found for location
-// with path /ws?clientId=...") followed by an unhandled `write ECONNRESET`
-// that CRASHES the Nuxt dev server. So this composable connects straight to
-// the ComfyUI origin instead, the same thing the bridge iframe already does
-// (see `comfyOrigin` in layouts/default.vue — the "iframe bypasses proxy"
-// pattern). If/when the comfy-ws-proxy hook is made reliable for hosted
-// deployments, this can revisit routing through same-origin /ws again.
+// WS TRANSPORT — same-origin /ws through the Nuxt proxy: the browser cannot
+// connect straight to ComfyUI's own origin (ws://127.0.0.1:8188/ws) because
+// ComfyUI's origin-check middleware (server.py, active without
+// --enable-cors-header) rejects any WS handshake whose (unforgeable) Origin
+// header names the Nuxt dev port instead of the loopback host → 403 → infinite
+// reconnect. Instead we connect to same-origin `/ws`; the "comfy-ws-proxy"
+// upgrade hook in nuxt.config.ts pipes it to 127.0.0.1:8188 while rewriting the
+// Origin to the ComfyUI origin (mirroring server/middleware/comfyui-proxy.ts's
+// HTTP trick), so the origin check passes. In production the same-origin /ws is
+// proxied by the hosting layer to the ComfyUI backend.
 //
 // Module-singleton: one WS connection per app, regardless of how many
 // components call useDirectExecution().
@@ -24,6 +24,9 @@ import { mapWsEvent, type BridgeShapedEvent } from '~/lib/graph/wsEventMap'
 export interface QueueResult {
   prompt_id?: string
   node_errors?: any
+  /** Non-node error message (400 `{ error: { message } }`, network, 5xx). Set
+   *  on any failure so callers can surface it instead of a silent success. */
+  error?: string
 }
 
 export interface DirectExecution {
@@ -64,11 +67,10 @@ export function buildWsUrl(httpOrigin: string, clientId: string): string {
 }
 
 function wsUrl(clientId: string): string {
-  // Same accessor the bridge iframe uses in layouts/default.vue — connect
-  // straight to ComfyUI's own origin rather than same-origin /ws (see the
-  // header comment above for why).
-  const comfyOrigin = useRuntimeConfig().public.comfyOrigin || 'http://127.0.0.1:8188'
-  return buildWsUrl(comfyOrigin, clientId)
+  // Same-origin /ws — routed to ComfyUI by the nuxt.config.ts upgrade proxy
+  // (which strips/rewrites the browser Origin so ComfyUI's origin check passes).
+  // See the header comment above for why we never connect to :8188 directly.
+  return buildWsUrl(window.location.origin, clientId)
 }
 
 function scheduleReconnect(clientId: string): void {
@@ -156,8 +158,13 @@ export function useDirectExecution(): DirectExecution {
       // ofetch's FetchError parses the JSON body onto `.data` on non-2xx
       // responses (see useInpaint.ts / useExplain.ts for the same convention).
       // ComfyUI's /prompt 400 body is `{ error: {...}, node_errors: {...} }`.
+      // Always surface *something*: a 400 with only `{ error: { message } }`, a
+      // 5xx, or a network failure must NOT resolve as a silent success (which
+      // let live runs fail with zero feedback). node_errors when present drives
+      // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
-      return { node_errors }
+      const error = err?.data?.error?.message ?? err?.message ?? String(err)
+      return { node_errors, error }
     }
   }
 

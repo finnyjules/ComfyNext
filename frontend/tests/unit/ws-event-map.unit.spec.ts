@@ -12,6 +12,21 @@ describe('mapWsEvent', () => {
     })
   })
 
+  it('emits percent 0 when max is 0 or absent (no NaN/Infinity)', () => {
+    expect(mapWsEvent({ type: 'progress', data: { value: 5, max: 0, prompt_id: 'p1', node: '7' } }, CID)).toEqual({
+      event: 'progress',
+      percent: 0,
+      prompt_id: 'p1',
+      node_id: '7',
+    })
+    expect(mapWsEvent({ type: 'progress', data: { value: 5, prompt_id: 'p1', node: '7' } }, CID)).toEqual({
+      event: 'progress',
+      percent: 0,
+      prompt_id: 'p1',
+      node_id: '7',
+    })
+  })
+
   it('maps progress computing percent from value/max', () => {
     expect(mapWsEvent({ type: 'progress', data: { value: 5, max: 10, prompt_id: 'p1', node: '7' } }, CID)).toEqual({
       event: 'progress',
@@ -174,5 +189,11 @@ describe('buildWsUrl', () => {
     expect(buildWsUrl('https://comfynext.fly.dev:8188', CID)).toBe(
       'wss://comfynext.fly.dev:8188/ws?clientId=client-abc',
     )
+  })
+
+  it('builds a same-origin ws URL from a browser location origin (the dev path)', () => {
+    // wsUrl() passes window.location.origin so the /ws upgrade goes to the Nuxt
+    // proxy on the SAME port the page loaded from, never :8188 directly.
+    expect(buildWsUrl('http://localhost:3002', CID)).toBe('ws://localhost:3002/ws?clientId=client-abc')
   })
 })

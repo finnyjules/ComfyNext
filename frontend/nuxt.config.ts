@@ -27,27 +27,60 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/color-mode',
     '@nuxt/fonts',
-    // Inline module: proxy WebSocket upgrades on /ws to ComfyUI.
-    // Vite's server.proxy ws:true doesn't work (Vite runs in middleware mode in Nuxt,
-    // no own HTTP server). Nitro's devProxy also doesn't hook 'upgrade' events.
-    // This hooks the actual Node HTTP server via Nuxt's 'listen' event.
+    // Inline module: proxy WebSocket upgrades on /ws to ComfyUI (dev only).
+    //
+    // WHY NOT `server.on('upgrade', …)`: Nuxt's dev CLI registers its OWN
+    // upgrade listener on the listhen server BEFORE our `listen` hook fires
+    // (see @nuxt/cli dev-*.mjs — it forwards every non-Vite-HMR upgrade to
+    // `nuxt.server.upgrade`, i.e. Vite/Nitro's WS layer). Node invokes ALL
+    // upgrade listeners, so a plain `.on('upgrade')` meant BOTH handlers ran on
+    // `/ws`: ours piped to ComfyUI while Nuxt's simultaneously routed it into
+    // SSR ("[Vue Router] No match found for /ws?clientId=…"), and the two
+    // writing the same socket produced an unhandled `write ECONNRESET` that
+    // CRASHED the dev server. The fix: capture and DETACH the pre-existing
+    // upgrade listeners, then install ONE dispatcher that owns `/ws` exclusively
+    // and delegates every other upgrade (Vite HMR etc.) to the saved listeners.
     function (_options, nuxt) {
       if (!nuxt.options.dev) return
       nuxt.hook('listen', (server: http.Server) => {
+        // Idempotency across Nitro rebuilds / hook re-fires: install once.
+        if ((server as any).__comfyWsProxyInstalled) return
+        ;(server as any).__comfyWsProxyInstalled = true
+
+        // Take over upgrade routing: snapshot the listeners Nuxt already added,
+        // remove them, and reinstall them behind our /ws gate.
+        const priorUpgradeListeners = server.listeners('upgrade') as Array<
+          (req: http.IncomingMessage, socket: any, head: Buffer) => void
+        >
+        server.removeAllListeners('upgrade')
+
         server.on('upgrade', (req, socket, head) => {
-          if (!req.url?.startsWith('/ws')) return
+          if (!req.url?.startsWith('/ws')) {
+            // Not ours — hand back to Vite HMR / Nitro's original handler(s).
+            for (const fn of priorUpgradeListeners) fn(req, socket, head)
+            return
+          }
+
+          // Guard our own end: a client that aborts mid-handshake must never
+          // become an unhandled 'error' (ECONNRESET/EPIPE) that crashes dev.
+          socket.on('error', () => socket.destroy())
 
           const proxyReq = http.request({
             hostname: '127.0.0.1',
             port: 8188,
             path: req.url,
             method: 'GET',
-            headers: { ...req.headers, host: '127.0.0.1:8188' },
+            // Rewrite Origin (and Host) to the ComfyUI origin so its
+            // origin-check middleware sees origin == host and returns 101
+            // instead of 403 — mirrors server/middleware/comfyui-proxy.ts.
+            headers: { ...req.headers, host: '127.0.0.1:8188', origin: 'http://127.0.0.1:8188' },
           })
 
-          proxyReq.on('upgrade', (_proxyRes, proxySocket, proxyHead) => {
+          proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+            proxySocket.on('error', () => socket.destroy())
+
             let response = 'HTTP/1.1 101 Switching Protocols\r\n'
-            for (const [key, value] of Object.entries(_proxyRes.headers)) {
+            for (const [key, value] of Object.entries(proxyRes.headers)) {
               if (value) response += `${key}: ${value}\r\n`
             }
             response += '\r\n'
@@ -55,12 +88,14 @@ export default defineNuxtConfig({
             if (proxyHead.length) socket.write(proxyHead)
             proxySocket.pipe(socket)
             socket.pipe(proxySocket)
+            // ECONNRESET/EPIPE on either side just tears down the peer — never
+            // an unhandled rejection.
             proxySocket.on('error', () => socket.destroy())
             socket.on('error', () => proxySocket.destroy())
           })
 
           proxyReq.on('error', (err) => {
-            console.error('[comfy-ws-proxy] error:', err.message)
+            console.error('[comfy-ws-proxy] upstream error:', (err as Error).message)
             socket.destroy()
           })
 
