@@ -84,3 +84,33 @@ describe('widgetSlots', () => {
     expect(() => widgetSlots('DoesNotExist', {})).toThrow(UnknownNodeTypeError)
   })
 })
+
+describe('V3-style string COMBO inputs (GenerateImageNode regression)', () => {
+  // Newer ComfyUI schemas encode combos as the literal type "COMBO" with
+  // options in the config, not as an inline array. Misclassifying them as
+  // connection inputs shifted every later positional value — the real-world
+  // symptom was the prompt string landing in the seed slot.
+  const OI = {
+    GenerateImageNode: {
+      input: {
+        required: {
+          model: ['COMBO', { default: 'flux-schnell', comfynext_widget: 'model_picker' }],
+          prompt: ['STRING', { multiline: true, default: '' }],
+          aspect_ratio: ['COMBO', { default: '1:1' }],
+          seed: ['INT', { default: 0, min: 0, control_after_generate: true }],
+          model_options: ['STRING', { comfynext_widget: 'json' }],
+        },
+      },
+    },
+  }
+
+  it('treats a literal "COMBO" type as a widget input', () => {
+    expect(isWidgetInput(['COMBO', { default: 'x' }])).toBe(true)
+  })
+
+  it('keeps positional alignment for GenerateImageNode-shaped schemas', () => {
+    expect(widgetSlots('GenerateImageNode', OI).map((s) => s.name)).toEqual([
+      'model', 'prompt', 'aspect_ratio', 'seed', 'seed__control', 'model_options',
+    ])
+  })
+})

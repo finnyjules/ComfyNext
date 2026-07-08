@@ -28,6 +28,11 @@ export function isWidgetInput(spec: InputSpec): boolean {
   const [type, opts] = spec
   if (opts?.forceInput === true) return false
   if (Array.isArray(type)) return true
+  // Newer (V3-style) schemas encode combos as the literal type "COMBO" with
+  // options in the config instead of an inline array — still a widget.
+  // Missing this shifted every later positional value (the prompt string
+  // ended up in GenerateImageNode's seed slot).
+  if (type === 'COMBO') return true
   if (typeof type === 'string' && WIDGET_PRIMITIVE_TYPES.has(type)) return true
   if (opts?.widget) return true
   return false
