@@ -16,6 +16,14 @@ export default defineNuxtConfig({
     // Set via NUXT_ANTHROPIC_API_KEY. Users may still paste their own key in
     // Settings → AI as a per-browser override; that one is sent per-request.
     anthropicApiKey: '',
+    // Max number of extra headless ComfyUI worker instances (see
+    // server/utils/comfyWorkerPool.ts) parallel dispatch can spawn for
+    // cloud-only prompts. Clamped to [0,4] at read time. Override via
+    // NUXT_COMFY_POOL_SIZE. Default 2.
+    comfyPoolSize: '',
+    // Python executable used to spawn worker ComfyUI instances. Defaults to
+    // `<repoRoot>/.venv/bin/python3.12`. Override via NUXT_COMFY_PYTHON.
+    comfyPython: '',
     public: {
       // Public origin the ComfyUI canvas iframe loads from. Empty in dev →
       // falls back to http://127.0.0.1:8188. In production set via
