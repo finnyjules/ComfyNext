@@ -2571,8 +2571,8 @@ function handleBridgeMessage(event: MessageEvent) {
       for (const e of edges.value) {
         if (e.source === nid && e.data?.running) e.data = { ...e.data, running: false }
       }
-    } else {
-      // No prompt_id (legacy) or unknown run: original clear-everything sweep.
+    } else if (!promptId) {
+      // No prompt_id at all (legacy path): original clear-everything sweep.
       for (const n of nodes.value) {
         if (n.data?.running || n.data?.progress) {
           n.data = { ...n.data, running: false, progress: undefined }
@@ -2585,6 +2585,11 @@ function handleBridgeMessage(event: MessageEvent) {
       }
       runningNodeByPrompt.clear()
     }
+    // else: a prompt_id we already finished — every run completes TWICE
+    // (ComfyUI's `executing: null` sentinel AND `execution_success` both map
+    // to execution_complete). The duplicate must be a no-op, not a sweep:
+    // sweeping here extinguished the sibling run's glow the moment the first
+    // run finished.
     // Drop the captured run set once NO runs remain — while a sibling run is
     // still in flight its edge-filtering set stays useful.
     if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
