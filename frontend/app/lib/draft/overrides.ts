@@ -20,11 +20,13 @@ export interface DraftRule {
 export const DRAFT_RULES: Record<string, DraftRule> = {
   GenerateImageNode: {
     set: { model: 'flux-schnell' },
-    mergeJson: { model_options: { megapixels: '0.5' } },
+    // Flux megapixels is an enum: only "1" or "0.25" (see image_models.py /
+    // nodes_replicate.py). "0.25" ≈ 512px — the fast/cheap draft tier.
+    mergeJson: { model_options: { megapixels: '0.25' } },
     usd: 0.003,
   },
   FluxLoRARemoteNode: {
-    set: { num_inference_steps: 8, megapixels: '0.5' },
+    set: { num_inference_steps: 8, megapixels: '0.25' },
     usd: 0.01,
   },
 }

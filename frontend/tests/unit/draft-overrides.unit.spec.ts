@@ -16,7 +16,7 @@ describe('applyDraftOverrides', () => {
     expect(res.overriddenIds).toEqual(['1'])
     expect(wf.nodes[0].widgets_values[0]).toBe('flux-schnell')
     // JSON widget merged, existing keys preserved
-    expect(JSON.parse(wf.nodes[0].widgets_values[4])).toEqual({ guidance: 3, megapixels: '0.5' })
+    expect(JSON.parse(wf.nodes[0].widgets_values[4])).toEqual({ guidance: 3, megapixels: '0.25' })
     // prompt / aspect / seed untouched
     expect(wf.nodes[0].widgets_values[1]).toBe('a cat')
     expect(wf.nodes[0].widgets_values[3]).toBe(42)
@@ -30,7 +30,7 @@ describe('applyDraftOverrides', () => {
     const vnodes = [vnode('2', 'FluxLoRARemoteNode', defs, ['hero shot', 'my-character', 28, '1', 7])]
     const res = applyDraftOverrides(wf, vnodes)
     expect(wf.nodes[0].widgets_values[2]).toBe(8)
-    expect(wf.nodes[0].widgets_values[3]).toBe('0.5')
+    expect(wf.nodes[0].widgets_values[3]).toBe('0.25')
     expect(wf.nodes[0].widgets_values[1]).toBe('my-character') // lora untouched
     expect(res.restoreById['2']).toEqual({ num_inference_steps: 28, megapixels: '1' })
   })
