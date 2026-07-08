@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_PHRASE_CHARS,
+  optionalApiKey,
   optionalString,
   optionalTier,
   requireApiKey,
   requireString,
+  resolveAnthropicKey,
 } from '../../server/lib/agentRequest'
 
 describe('requireString', () => {
@@ -69,5 +71,39 @@ describe('optionalTier', () => {
 describe('caps', () => {
   it('exports sane caps', () => {
     expect(MAX_PHRASE_CHARS).toBeGreaterThanOrEqual(2_000)
+  })
+})
+
+describe('resolveAnthropicKey', () => {
+  it('prefers the client key (BYOK override) over the server key', () => {
+    expect(resolveAnthropicKey('sk-server', 'sk-client')).toBe('sk-client')
+  })
+  it('falls back to the server key when the client sends none', () => {
+    expect(resolveAnthropicKey('sk-server', undefined)).toBe('sk-server')
+    expect(resolveAnthropicKey('sk-server', '')).toBe('sk-server')
+  })
+  it('throws 503 with remedy copy when neither key exists', () => {
+    try {
+      resolveAnthropicKey(undefined, undefined)
+      expect.unreachable('should have thrown')
+    } catch (e: any) {
+      expect(e.statusCode).toBe(503)
+      expect(e.message).toContain('NUXT_ANTHROPIC_API_KEY')
+    }
+  })
+  it('treats whitespace-only keys as absent', () => {
+    expect(() => resolveAnthropicKey('   ', '  ')).toThrow()
+  })
+})
+
+describe('optionalApiKey', () => {
+  it('passes through a real key and normalizes empty to undefined', () => {
+    expect(optionalApiKey('sk-abc')).toBe('sk-abc')
+    expect(optionalApiKey('')).toBeUndefined()
+    expect(optionalApiKey(undefined)).toBeUndefined()
+    expect(optionalApiKey(null)).toBeUndefined()
+  })
+  it('still rejects oversized keys', () => {
+    expect(() => optionalApiKey('x'.repeat(501))).toThrow()
   })
 })

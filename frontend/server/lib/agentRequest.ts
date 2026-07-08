@@ -37,6 +37,24 @@ export function requireApiKey(v: unknown): string {
   return requireString(v, 'apiKey', MAX_KEY_CHARS)
 }
 
+export function optionalApiKey(v: unknown): string | undefined {
+  return optionalString(v, 'apiKey', MAX_KEY_CHARS)
+}
+
+/** Shared-key resolution: the client's own key (BYOK override) wins, else the
+ *  server's env key. 503 (not 400) when neither — the request was fine, the
+ *  deployment isn't. */
+export function resolveAnthropicKey(serverKey: string | undefined, clientKey: string | undefined): string {
+  const key = (clientKey || '').trim() || (serverKey || '').trim()
+  if (!key) {
+    throw Object.assign(
+      new Error("AI assist isn't configured on this server. Set NUXT_ANTHROPIC_API_KEY when starting the app, or paste your own key in Settings → AI."),
+      { statusCode: 503 },
+    )
+  }
+  return key
+}
+
 /** Reject unknown tiers loudly — a typo would otherwise silently change model
  *  altitude (modelForTier defaults to 'plan'). */
 export function optionalTier(v: unknown): string | undefined {
