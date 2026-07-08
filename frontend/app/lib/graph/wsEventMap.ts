@@ -47,7 +47,9 @@ export function mapWsEvent(msg: { type: string; data: any } | null | undefined, 
 
     case 'progress': {
       const { value, max, prompt_id, node } = data
-      const percent = Math.round((value / max) * 100)
+      // Guard against max=0 / absent max: value/0 → Infinity, value/undefined →
+      // NaN, both of which would poison the progress bar. Emit 0 in that case.
+      const percent = max ? Math.round((value / max) * 100) : 0
       return { event: 'progress', percent, prompt_id: prompt_id ?? null, node_id: node ?? null }
     }
 
@@ -65,6 +67,8 @@ export function mapWsEvent(msg: { type: string; data: any } | null | undefined, 
     case 'executed':
       return {
         event: 'executed',
+        // VueNodeCanvas normalizes `node_id || node`, so emitting node_id here
+        // (from ComfyUI's `node` field) lands on the right node either way.
         node_id: data.node,
         output: data.output,
         prompt_id: data.prompt_id ?? null,

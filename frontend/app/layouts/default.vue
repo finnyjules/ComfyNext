@@ -850,9 +850,13 @@ async function runVueWorkflow(
     if (!opts.live) armQueueWatchdog(runTabId)
     try {
       const res = await direct.queue(directPrompt!, plainWorkflow)
-      if (res.node_errors && Object.keys(res.node_errors).length) {
-        // Same surfacing path the bridge 'queue_error' takes: red-ring + toast.
-        surfaceQueueError(res.node_errors)
+      const hasNodeErrors = res.node_errors && Object.keys(res.node_errors).length
+      if (hasNodeErrors || res.error) {
+        // Any failure (structured node_errors OR a plain error message from a
+        // 400/5xx/network drop) surfaces immediately through the same path the
+        // bridge 'queue_error' takes — red-ring + toast — and clears run state,
+        // instead of resolving silently and only tripping the ~15s watchdog.
+        surfaceQueueError(res.node_errors, res.error)
       }
     } catch (err) {
       console.error('[Run] direct queue failed', err)
@@ -2374,13 +2378,22 @@ onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
 
-  // Direct-execution WS events flow through the SAME handleBridgeEvent as the
-  // bridge's postMessages (mapWsEvent shapes them identically). Register once;
-  // onEvent's listener set dedupes, but guard anyway. Only hold the WS open
-  // while the flag is ON — connect now if enabled, and toggle with the setting.
+  // Direct-execution WS events must flow through the SAME window postMessage
+  // pipe the bridge iframe uses (mapWsEvent already shapes them identically),
+  // so BOTH this layout's own `handleBridgeMessage` listener AND
+  // VueNodeCanvas's separate `window.addEventListener('message', ...)` (which
+  // filters on the 'comfynext-bridge' envelope) receive them. Re-dispatching as
+  // a self-posted message — rather than calling handleBridgeEvent directly —
+  // means node glow, take/output landing, red rings and gate_paused all light
+  // up in direct mode, and the event flows exactly ONCE (no double-handling).
+  // The `direct: true` marker lets handleBridgeMessage accept a same-window
+  // source; VueNodeCanvas's eventWorker() maps the (non-iframe) source to
+  // worker 0 / the active tab, which is correct for the single direct channel.
   if (!directEventListenerRegistered) {
     directEventListenerRegistered = true
-    direct.onEvent((e) => handleBridgeEvent(e))
+    direct.onEvent((e) => {
+      window.postMessage({ type: 'comfynext-bridge', v: 2, direct: true, ...e }, window.location.origin)
+    })
   }
   if (directExecutionEnabled.value) direct.connect()
   watch(directExecutionEnabled, (on) => {
