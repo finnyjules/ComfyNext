@@ -1727,11 +1727,26 @@ watch(
     // so server and client-initial agree — no hydration mismatch.
     if (!isProject || canvasMountAllowed.value || !import.meta.client) return
     canvasOpening.value = true
-    requestAnimationFrame(() => requestAnimationFrame(async () => {
+    // rAF never fires in hidden/background tabs (cmd-clicked link, session
+    // restore, automation), which used to leave "Opening editor…" up forever.
+    // Race the rAF fast path against a timeout and visibilitychange→visible;
+    // whichever fires first latches the mount exactly once.
+    let latched = false
+    const onVisible = () => { if (document.visibilityState === 'visible') latch() }
+    const fallbackTimer = setTimeout(() => latch(), 1500)
+    async function latch() {
+      if (latched) return
+      latched = true
+      clearTimeout(fallbackTimer)
+      document.removeEventListener('visibilitychange', onVisible)
       canvasMountAllowed.value = true // mounts VueNodeCanvas (blocks the main thread)
       await nextTick()
+      // Overlay clear also needs a non-rAF fallback for hidden tabs.
       requestAnimationFrame(() => { canvasOpening.value = false })
-    }))
+      setTimeout(() => { canvasOpening.value = false }, 300)
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => latch()))
+    document.addEventListener('visibilitychange', onVisible)
   },
   { immediate: true },
 )
