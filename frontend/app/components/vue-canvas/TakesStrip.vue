@@ -4,7 +4,7 @@
  * Presentational: parent owns the data and applies the change on `select`.
  * See docs/plans/2026-06-02-creative-studio-project-takes-design.md.
  */
-import { Star, X, PencilLine, Maximize2 } from 'lucide-vue-next'
+import { Star, X, PencilLine, Maximize2, ArrowUpToLine } from 'lucide-vue-next'
 import type { Take } from '~/composables/useTakes'
 
 defineProps<{
@@ -17,6 +17,7 @@ const emit = defineEmits<{
   (e: 'pin', id: string): void
   (e: 'discard', id: string): void
   (e: 'expand'): void
+  (e: 'promote', id: string): void
 }>()
 
 function thumb(t: Take): string | null {
@@ -80,6 +81,14 @@ function thumb(t: Take): string | null {
         <div
           class="absolute inset-x-0 bottom-0 flex items-center justify-end gap-0.5 p-0.5 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
         >
+          <button
+            v-if="t.draft"
+            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-emerald-300"
+            title="Promote to full quality"
+            @click.stop="emit('promote', t.id)"
+          >
+            <ArrowUpToLine class="size-3" />
+          </button>
           <button
             class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-amber-300"
             :title="t.pinned ? 'Unpin' : 'Pin to library'"

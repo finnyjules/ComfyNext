@@ -11,7 +11,8 @@ import {
 import { toast } from 'vue-sonner'
 import { useDraftMode } from '~/composables/useDraftMode'
 import { applyDraftOverrides, draftUsdExprFor } from '~/lib/draft/overrides'
-import { markDraftRun, clearDraftRun } from '~/lib/draft/runMeta'
+import { markDraftRun, clearDraftRun, peekPendingPromote } from '~/lib/draft/runMeta'
+import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
 import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
@@ -575,6 +576,14 @@ async function runVueWorkflow(
     // A final submit supersedes any earlier draft marks for the nodes it runs.
     clearDraftRun((plainWorkflow.nodes as any[]).map((n: any) => String(n.id)))
   }
+
+  // One-shot promotes: substitute the take snapshot for any node with a pending
+  // promote. Registered by ArtifactImageNode.promoteTake just before it fires
+  // runFiltered. NOTE: consumption here is peek-free — a promote submitted in
+  // draft mode still renders final for that node. The actual consume (clearing
+  // the registry) happens at result time when the take is tagged (Task 4).
+  const vnodesForPromote = vueCanvasRef.value.getNodes?.() || []
+  applyPendingPromotes(plainWorkflow, vnodesForPromote, (nodeId) => peekPendingPromote(nodeId))
 
   // Cost guard: estimate the exact set of nodes about to run and confirm
   // expensive runs before any side-effecting prep (compositor uploads) or

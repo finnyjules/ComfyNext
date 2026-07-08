@@ -11,6 +11,9 @@ import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
 import { projectTake, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
+import { setPendingPromote } from '~/lib/draft/runMeta'
+import { promoteOverridesFor } from '~/lib/draft/promote'
+import { parseBadgeUsd } from '~/lib/costEstimate'
 import { toast } from 'vue-sonner'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -267,6 +270,20 @@ function removeBackground() {
 // and as a small re-render button in the populated footer.
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
+  window.dispatchEvent(
+    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
+  )
+}
+
+// Promote: re-run a draft take's exact snapshot at full quality (spec
+// §Promote). Registers the pending promote BEFORE firing the same self-scope
+// rerun runThisNode uses; runVueWorkflow substitutes the snapshot's widgets
+// into this node's run-path copy, winning over draft mode for this run.
+function promoteTake(takeId: string) {
+  const take = (props.data.takes ?? []).find((t: any) => t.id === takeId)
+  const overrides = take ? promoteOverridesFor(take) : null
+  if (!take || !overrides) return
+  setPendingPromote(String(props.id), { fromTakeId: take.id, overrides })
   window.dispatchEvent(
     new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
   )
@@ -532,6 +549,13 @@ function openEditMenuFromStrip() {
   nextSteps.dismiss()
   editMenuOpen.value = true
 }
+
+// Promote button price hint — this node's own price badge (a promote reruns
+// the SAME generator at full quality, so its badge is the right estimate).
+const promoteUsdLabel = computed(() => {
+  const cost = parseBadgeUsd((props.data as any)?.priceBadge?.expr)
+  return cost ? ` ~$${cost.usd.toFixed(2)}` : null
+})
 </script>
 
 <template>
@@ -790,6 +814,7 @@ function openEditMenuFromStrip() {
       @pin="pinTake"
       @discard="discardTake"
       @expand="lightTableOpen = true"
+      @promote="promoteTake"
     />
 
     <LightTableModal
@@ -797,11 +822,11 @@ function openEditMenuFromStrip() {
       :takes="data.takes ?? []"
       :active-take-id="data.activeTakeId"
       :title="data.title || 'Takes'"
-      :promote-usd-label="null"
+      :promote-usd-label="promoteUsdLabel"
       @select="selectTake"
       @pin="pinTake"
       @discard="discardTake"
-      @promote="() => {}"
+      @promote="promoteTake"
       @branch="() => {}"
       @discard-others="() => {}"
       @close="lightTableOpen = false"
