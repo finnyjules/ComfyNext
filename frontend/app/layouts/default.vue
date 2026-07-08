@@ -255,14 +255,6 @@ watch(() => activeTabId.value, (id) => {
   }
 })
 
-// Restore the Draft/Final toggle from the doc when switching tabs.
-watch(() => activeTab.value?.id, (tabId) => {
-  if (!tabId) return
-  const doc = savedWorkflows[tabId]
-  const wf = doc && isProjectDoc(doc) ? activeCanvasOf(doc)?.workflow : (doc as any)
-  if (wf?.extra?.draftMode !== undefined) draftMode.setDraft(tabId, !!wf.extra.draftMode)
-}, { immediate: true })
-
 // Real page navigations (e.g. /help) render in the Home tab's page slot —
 // switch there so the page is actually visible when a project tab is active.
 watch(() => route.path, (p) => {
@@ -1095,6 +1087,16 @@ function loadPersistedWorkflows(): Record<string, any> {
 }
 
 const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → ProjectDoc
+
+// Must stay below the savedWorkflows declaration above (and isProjectDoc/activeCanvasOf
+// imports) — it runs with immediate: true and reads them synchronously during setup.
+// Restore the Draft/Final toggle from the doc when switching tabs.
+watch(() => activeTab.value?.id, (tabId) => {
+  if (!tabId) return
+  const doc = savedWorkflows[tabId]
+  const wf = doc && isProjectDoc(doc) ? activeCanvasOf(doc)?.workflow : (doc as any)
+  if (wf?.extra?.draftMode !== undefined) draftMode.setDraft(tabId, !!wf.extra.draftMode)
+}, { immediate: true })
 
 // The workflow the Vue canvas should display: the active canvas of the active
 // tab's doc. Switching canvases (or restoring a version) swaps this to a new
