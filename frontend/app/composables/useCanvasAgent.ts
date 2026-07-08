@@ -191,8 +191,8 @@ export function useCanvasAgent(opts: {
       }
       if (tuneNotice) answer.value = tuneNotice
       changes.value = built
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+    } catch (e: any) {
+      error.value = e?.data?.message || e?.message || String(e)
       opts.discard(); opts.tuneRevert?.()
     } finally {
       busy.value = false
@@ -219,8 +219,8 @@ export function useCanvasAgent(opts: {
         if (rebuilt) { rebuilt.accepted = ch.accepted; changes.value.splice(i, 1, rebuilt) }
       }
       recompute()
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+    } catch (e: any) {
+      error.value = e?.data?.message || e?.message || String(e)
     } finally {
       busy.value = false
     }
@@ -329,8 +329,8 @@ export function useCanvasAgent(opts: {
       review.value = { assessment, issues: found }
       if (built.length) { changes.value = built; recompute() }
       else if (!found.length) answer.value = '✓ Looks right — the result matches what you asked.'
-    } catch (e) {
-      if (manual) error.value = e instanceof Error ? e.message : 'Couldn’t review the result.'
+    } catch (e: any) {
+      if (manual) error.value = e?.data?.message || (e instanceof Error ? e.message : 'Couldn’t review the result.')
       else if (auto) console.warn('[AutoReview] failed silently:', e)
     } finally { reviewing.value = false; analyzingNodeIds.value = new Set() }
   }
