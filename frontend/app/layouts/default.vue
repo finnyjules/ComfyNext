@@ -44,6 +44,7 @@ import { graphToPrompt } from '~/lib/graph/graphToPrompt'
 import { UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
 import { registerRun, markRunning, finishRun, inFlight } from '~/lib/graph/runRegistry'
 import { resolveEventTab } from '~/lib/graph/resolveEventTab'
+import { withKeyedLock } from '~/lib/graph/keyedLock'
 import { useDirectExecution } from '~/composables/useDirectExecution'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
 import { useShadowParity } from '~/composables/useShadowParity'
@@ -863,18 +864,38 @@ async function runVueWorkflow(
     extraTakes.push(nextTake)
   }
 
-  await sendLoadWorkflow(plainWorkflow, workerIdx)
+  // The worker iframe holds ONE graph at a time, and bridge-mode queueing is a
+  // two-step critical section (loadWorkflow → delay → queuePrompt) against it.
+  // Overlapping runs on the same worker used to interleave those steps: run B's
+  // load overwrote run A's graph before A's queuePrompt fired, so one node's
+  // graph queued twice and the other's never. Serialize the iframe section per
+  // worker; direct-mode queueing (own pre-built ApiPrompt, no iframe read at
+  // queue time) stays outside the lock and still overlaps freely.
+  await withKeyedLock(`bridge-run:${workerIdx}`, async () => {
+    await sendLoadWorkflow(plainWorkflow, workerIdx)
 
-  // Dev-only shadow parity: on EVERY run (direct or bridge), ask the freshly
-  // loaded iframe for its own graphToPrompt output and compare it to ours.
-  // Fire-and-forget: never blocks, delays, or fails the run.
-  if (import.meta.dev) {
-    try {
-      requestShadowParity(plainWorkflow, `run:${Date.now()}`)
-    } catch (err) {
-      console.warn('[Run] shadow parity request failed (ignored)', err)
+    // Dev-only shadow parity: on EVERY run (direct or bridge), ask the freshly
+    // loaded iframe for its own graphToPrompt output and compare it to ours.
+    // Fire-and-forget: never blocks, delays, or fails the run.
+    if (import.meta.dev) {
+      try {
+        requestShadowParity(plainWorkflow, `run:${Date.now()}`)
+      } catch (err) {
+        console.warn('[Run] shadow parity request failed (ignored)', err)
+      }
     }
-  }
+
+    if (!useDirect) {
+      await new Promise(r => setTimeout(r, 800))
+      console.log('[Run] sending queuePrompt to worker', workerIdx)
+      iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
+      // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
+      // continuously and silently by design, so they're exempt from the toast.
+      // Armed inside the lock so queued-behind runs measure from their own
+      // queue time, not from click time.
+      if (!opts.live) armQueueWatchdog(runTabId)
+    }
+  })
 
   if (useDirect) {
     try {
@@ -926,13 +947,6 @@ async function runVueWorkflow(
       if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
       currentRunSilent.value = false
     }
-  } else {
-    await new Promise(r => setTimeout(r, 800))
-    console.log('[Run] sending queuePrompt to worker', workerIdx)
-    iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
-    // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
-    // continuously and silently by design, so they're exempt from the toast.
-    if (!opts.live) armQueueWatchdog(runTabId)
   }
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
