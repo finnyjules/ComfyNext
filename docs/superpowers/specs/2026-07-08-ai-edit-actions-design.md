@@ -21,6 +21,17 @@ kontext, nano-gen, remove-bg — so **no new server routes** are needed.
 | Harmonize result | Replace layer content in place, one undo step reverts |
 | Node shape | One Python node per action (minimal clones of SwapProduct pattern) |
 
+## Implementation deviations (2026-07-08 plan)
+
+- Text Edit OCR pre-fill chips DEFERRED (no OCR server route exists); v1 ships
+  the free-text find/replace fields, which were already the degrade path.
+- Harmonize + Cut-out surface as inspector buttons in CompositorModal (neither
+  Frame surface has a layer context menu today; building one was out of scope).
+- §2's Edit-menu entry already existed (local BackgroundRemove splice) — the
+  cloud RemoveBackgroundNode remains reachable from the Actions panel. The
+  Compositor's existing local-layer "Remove background" button was consolidated
+  into the new in-place pipeline and renamed "Cut out subject".
+
 ## 1. Remove Object
 
 **Interactive (Edit menu → InpaintModal "remove" mode).** New Edit-menu entry
