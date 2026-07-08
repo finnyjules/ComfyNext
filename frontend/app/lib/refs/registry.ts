@@ -42,6 +42,7 @@ export function renameRef(reg: RefRegistry, from: string, to: string): RefRegist
   const fromKey = normalizeRefName(from)
   const toKey = normalizeRefName(to)
   if (!fromKey || !toKey || !(fromKey in reg)) return reg
+  if (fromKey === toKey) return reg
   const next: RefRegistry = { ...reg }
   next[toKey] = next[fromKey]!
   delete next[fromKey]

@@ -41,6 +41,12 @@ describe('registry CRUD (immutable)', () => {
     const r = setRef({}, 'a', { filename: 'a.png' })
     expect(renameRef(r, 'a', 'b')).toEqual({ b: { filename: 'a.png' } })
   })
+  it('renameRef is a no-op returning the input when from and to normalize to the same key', () => {
+    const r = setRef({}, 'a', { filename: 'a.png' })
+    expect(renameRef(r, 'a', 'a')).toBe(r)
+    expect(renameRef(r, 'a', '@a')).toBe(r)
+    expect(r).toEqual({ a: { filename: 'a.png' } })
+  })
   it('removeRef deletes without mutating input', () => {
     const r = setRef({}, 'a', { filename: 'a.png' })
     expect(removeRef(r, 'a')).toEqual({})
