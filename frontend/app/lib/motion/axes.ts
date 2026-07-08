@@ -3,7 +3,10 @@
  *  axis values over normalized time and formats them as CSS
  *  font-variation-settings. One implementation, two consumers. */
 
-import { applyEase } from '../../../shared/timeline/interpolate'
+// ~~/ alias, not a relative path: a relative import of a shared/** module
+// makes Rollup rewrite the SSR-externalized id chunk-relative
+// (makeAbsoluteExternalsRelative), which the Nitro build can't resolve.
+import { applyEase } from '~~/shared/timeline/interpolate'
 
 /** A keyframe for variable-font axis animation. Axes interpolate between
  *  keyframes over the animation's duration. */
