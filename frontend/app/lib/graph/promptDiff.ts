@@ -14,9 +14,13 @@
 //    insertion order.
 //  - `null` on one side vs the key being entirely absent on the other side
 //    are treated as equal (ComfyUI's own prompt builder is inconsistent
-//    about emitting explicit nulls for optional inputs).
+//    about emitting explicit nulls for optional inputs). This rule applies
+//    at the top level (inputs map); inside nested objects, null and missing
+//    are still treated as distinct for clarity.
 //  - Link-value arrays (`["4", 0]`) compare element-wise; a real value
 //    difference in either the origin id or the slot index is a divergence.
+//  - Nested plain objects compare by key set + recursively equal values.
+//  - Both-NaN compare as equal (NaN !== NaN in JS, but semantically identical).
 //
 // Real divergences (DO report):
 //  - `1` (number) vs `'1'` (string) — same apparent value, different type;
@@ -43,17 +47,30 @@ function isNullish(value: any): boolean {
 
 /** Strict, benign-rule-aware equality for a single field value. Arrays
  * (link values like `["4", 0]`) compare element-wise with the same rules
- * recursively; everything else falls back to `Object.is` semantics via
- * `===`, except NaN (not expected in prompt values, not special-cased). */
+ * recursively; plain objects compare by key set + recursively equal values;
+ * NaN === NaN special-cased to true; everything else falls back to `===`. */
 function valuesEqual(a: any, b: any): boolean {
   if (isNullish(a) && isNullish(b)) return true
   if (isNullish(a) || isNullish(b)) return false
+
+  // Special case: both-NaN compare as equal
+  if (Number.isNaN(a) && Number.isNaN(b)) return true
 
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false
     return a.every((v, i) => valuesEqual(v, b[i]))
   }
   if (Array.isArray(a) || Array.isArray(b)) return false
+
+  // Recurse into plain objects: same key set + all values recursively equal
+  if (typeof a === 'object' && typeof b === 'object' && a !== null && b !== null) {
+    const aKeys = Object.keys(a)
+    const bKeys = Object.keys(b)
+    if (aKeys.length !== bKeys.length) return false
+    const bKeySet = new Set(bKeys)
+    if (!aKeys.every(k => bKeySet.has(k))) return false
+    return aKeys.every(k => valuesEqual(a[k], b[k]))
+  }
 
   // Deliberately no numeric/string coercion here: 1 vs '1' must NOT be equal.
   return a === b

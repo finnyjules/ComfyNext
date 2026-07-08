@@ -125,6 +125,39 @@ describe('diffPrompts', () => {
       { nodeId: '1', field: 'class_type', ours: 'KSampler', theirs: 'KSamplerAdvanced' },
     ])
   })
+
+  it('treats identical nested plain objects as equal', () => {
+    const ours: ApiPrompt = {
+      '1': { class_type: 'Custom', inputs: { config: { a: 1, b: 2 } } },
+    }
+    const theirs: ApiPrompt = {
+      '1': { class_type: 'Custom', inputs: { config: { b: 2, a: 1 } } },
+    }
+    expect(diffPrompts(ours, theirs)).toEqual([])
+  })
+
+  it('reports divergence for differing nested object values', () => {
+    const ours: ApiPrompt = {
+      '1': { class_type: 'Custom', inputs: { config: { a: 1, b: 2 } } },
+    }
+    const theirs: ApiPrompt = {
+      '1': { class_type: 'Custom', inputs: { config: { a: 1, b: 3 } } },
+    }
+    const divergences = diffPrompts(ours, theirs)
+    expect(divergences).toEqual([
+      { nodeId: '1', field: 'inputs.config', ours: { a: 1, b: 2 }, theirs: { a: 1, b: 3 } },
+    ])
+  })
+
+  it('treats both-NaN as equal', () => {
+    const ours: ApiPrompt = {
+      '1': { class_type: 'KSampler', inputs: { value: NaN } },
+    }
+    const theirs: ApiPrompt = {
+      '1': { class_type: 'KSampler', inputs: { value: NaN } },
+    }
+    expect(diffPrompts(ours, theirs)).toEqual([])
+  })
 })
 
 describe('useShadowParity', () => {
@@ -135,6 +168,7 @@ describe('useShadowParity', () => {
   })
 
   it('records an entry with label, timestamp, and divergences', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { record, log } = useShadowParity()
     const ours: ApiPrompt = { '1': { class_type: 'KSampler', inputs: { seed: 1 } } }
     const theirs: ApiPrompt = { '1': { class_type: 'KSampler', inputs: { seed: 2 } } }
@@ -145,6 +179,7 @@ describe('useShadowParity', () => {
     expect(log.value[0].divergences).toEqual([
       { nodeId: '1', field: 'inputs.seed', ours: 1, theirs: 2 },
     ])
+    warnSpy.mockRestore()
   })
 
   it('shares state across separate useShadowParity() calls (module singleton)', () => {
