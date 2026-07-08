@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pickWorker } from '~/lib/graph/pickWorker'
+import { pickWorker, routeSingleRun } from '~/lib/graph/pickWorker'
 
 // pickWorker: pool workers are 1-based app-side indices 1..poolSize (0 = main,
 // which is never picked here). Given an in-flight count per app-side worker,
@@ -35,5 +35,23 @@ describe('pickWorker', () => {
     expect(pickWorker([0, 4], 2)).toBe(2)
     // fully empty array, poolSize 2 → both zero → lowest.
     expect(pickWorker([], 2)).toBe(1)
+  })
+})
+
+describe('routeSingleRun (spill-to-pool decision)', () => {
+  // Single direct runs: keep main when it's free (no worker-boot latency),
+  // spill to the least-loaded pool worker when main is busy and the prompt
+  // is pool-eligible; ineligible or pool-less prompts always stay on main.
+  it('stays on main when main is idle', () => {
+    expect(routeSingleRun({ eligible: true, mainInFlight: 0, poolInFlight: [0, 0], poolSize: 2 })).toBe(0)
+  })
+  it('spills to the least-loaded pool worker when main is busy', () => {
+    expect(routeSingleRun({ eligible: true, mainInFlight: 1, poolInFlight: [1, 0], poolSize: 2 })).toBe(2)
+  })
+  it('stays on main when ineligible, busy or not', () => {
+    expect(routeSingleRun({ eligible: false, mainInFlight: 3, poolInFlight: [0, 0], poolSize: 2 })).toBe(0)
+  })
+  it('stays on main when the pool is disabled', () => {
+    expect(routeSingleRun({ eligible: true, mainInFlight: 2, poolInFlight: [], poolSize: 0 })).toBe(0)
   })
 })

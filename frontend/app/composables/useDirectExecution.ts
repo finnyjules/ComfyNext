@@ -38,7 +38,7 @@ import type { ApiPrompt, LiteGraphWorkflow } from '~/lib/graph/graphToPrompt'
 import { mapWsEvent, type BridgeShapedEvent } from '~/lib/graph/wsEventMap'
 import { inFlight } from '~/lib/graph/runRegistry'
 import { isPoolEligible } from '~/lib/graph/cloudOnly'
-import { pickWorker } from '~/lib/graph/pickWorker'
+import { pickWorker, routeSingleRun } from '~/lib/graph/pickWorker'
 
 export interface QueueResult {
   prompt_id?: string
@@ -69,6 +69,7 @@ export interface DirectExecution {
   connect: () => void
   disconnect: () => void
   queue: (prompt: ApiPrompt, workflow: LiteGraphWorkflow, opts?: QueueOpts) => Promise<QueueResult>
+  queueSmart: (prompt: ApiPrompt, workflow: LiteGraphWorkflow, ctx: { objectInfo: Record<string, any> }) => Promise<QueueResult>
   queueParallel: (items: QueueParallelItem[], ctx: { objectInfo: Record<string, any> }) => Promise<QueueResult[]>
   onEvent: (cb: (e: BridgeShapedEvent) => void) => void
   clientId: string
@@ -478,11 +479,66 @@ export function useDirectExecution(): DirectExecution {
     )
   }
 
+  /**
+   * Single-run scheduler: prefer main while it's idle (no worker-boot
+   * latency, and a lone run gains nothing from the pool), spill a
+   * pool-eligible run to the least-loaded ready pool worker when main is
+   * already busy — so two quick back-to-back single runs execute
+   * concurrently instead of queueing on one ComfyUI instance. Any pool
+   * hiccup falls back to main; the run is never blocked.
+   */
+  async function queueSmart(
+    prompt: ApiPrompt,
+    workflow: LiteGraphWorkflow,
+    ctx: { objectInfo: Record<string, any> },
+  ): Promise<QueueResult> {
+    const mainInFlight = inFlight({ worker: 0 }).length
+    const eligible = isPoolEligible(prompt, ctx.objectInfo)
+    // Cheap early-out (the common case): no pool probing at all.
+    if (routeSingleRun({ eligible, mainInFlight, poolInFlight: [], poolSize: 0 }) === 0
+      && (mainInFlight === 0 || !eligible)) {
+      return queue(prompt, workflow)
+    }
+
+    // Main is busy and the prompt is eligible — probe the pool (same warm-up
+    // wave as queueParallel) and route via the pure decision.
+    const PROBE_POOL_INDICES = [0, 1]
+    const ensured = await Promise.allSettled(
+      PROBE_POOL_INDICES.map((idx) =>
+        $fetch<{ port: number; status: string }>('/api/pool/ensure', {
+          method: 'POST',
+          body: { worker: idx },
+        }).then((r) => ({ idx, status: r?.status })),
+      ),
+    )
+    const usable = ensured
+      .filter((r): r is PromiseFulfilledResult<{ idx: number; status: string }> =>
+        r.status === 'fulfilled' && r.value?.status === 'ready',
+      )
+      .map((r) => r.value.idx + 1)
+      .sort((a, b) => a - b)
+    if (usable.length === 0) {
+      console.warn('[queueSmart] main busy but no pool worker ready — queueing on main')
+      return queue(prompt, workflow)
+    }
+
+    // Dense compaction, same as queueParallel: position i (1-based) ↔ usable[i-1].
+    const denseLoads = usable.map((w) => inFlight({ worker: w }).length)
+    const dense = routeSingleRun({
+      eligible,
+      mainInFlight,
+      poolInFlight: denseLoads,
+      poolSize: usable.length,
+    })
+    if (dense === 0) return queue(prompt, workflow)
+    return queue(prompt, workflow, { worker: usable[dense - 1]! })
+  }
+
   function onEvent(cb: (e: BridgeShapedEvent) => void): void {
     listeners.add(cb)
   }
 
-  return { connect, disconnect, queue, queueParallel, onEvent, clientId }
+  return { connect, disconnect, queue, queueSmart, queueParallel, onEvent, clientId }
 }
 
 /** Sequential fallback: queue every item on main, in order, collecting each

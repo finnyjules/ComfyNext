@@ -928,7 +928,9 @@ async function runVueWorkflow(
         }
       } else {
         console.log('[Run] queueing prompt directly (bypassing bridge)')
-        const res = await direct.queue(directPrompt!, plainWorkflow)
+        // queueSmart: main while idle; spills a pool-eligible run to a pool
+        // worker when main is busy, so back-to-back single runs overlap.
+        const res = await direct.queueSmart(directPrompt!, plainWorkflow, { objectInfo: objectInfo.value })
         const hasNodeErrors = res.node_errors && Object.keys(res.node_errors).length
         if (hasNodeErrors || res.error) {
           // Any failure (structured node_errors OR a plain error message from a

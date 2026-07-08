@@ -27,3 +27,23 @@ export function pickWorker(inFlightByWorker: number[], poolSize: number): number
   }
   return best
 }
+
+// routeSingleRun — spill-to-pool decision for SINGLE direct runs.
+//
+// Main is preferred while idle: no worker-boot latency, and a lone run gains
+// nothing from the pool. Only when main already has a run in flight — and the
+// prompt is pool-eligible — does the run spill to the least-loaded pool
+// worker, so two quick back-to-back runs execute concurrently instead of
+// queueing behind each other on one ComfyUI instance.
+export function routeSingleRun(args: {
+  eligible: boolean
+  mainInFlight: number
+  poolInFlight: number[] // index 0 = pool worker 1's load, etc.
+  poolSize: number
+}): number {
+  if (!args.eligible || args.poolSize <= 0 || args.mainInFlight === 0) return 0
+  // pickWorker reads app-side indices (1-based); rebuild that shape.
+  const byWorker: number[] = [args.mainInFlight]
+  for (let i = 0; i < args.poolSize; i++) byWorker[i + 1] = args.poolInFlight[i] ?? 0
+  return pickWorker(byWorker, args.poolSize)
+}
