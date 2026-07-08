@@ -44,6 +44,30 @@ const OBJECT_INFO = {
       },
     },
   },
+  // Used for mute/bypass tests: single IMAGE in, IMAGE out, no widgets.
+  ImageEnhanceNode: {
+    input: {
+      required: {
+        image: ['IMAGE', {}],
+      },
+    },
+  },
+  // Used for the bypass-no-matching-input test: takes a MASK, not IMAGE.
+  MaskOnlyNode: {
+    input: {
+      required: {
+        mask: ['MASK', {}],
+      },
+    },
+  },
+  // Used as the real upstream IMAGE source in bypass-passthrough tests.
+  LoadImageNode: {
+    input: {
+      required: {
+        image: [['photo.png'], {}],
+      },
+    },
+  },
 }
 
 function baseWorkflow(overrides: Partial<LiteGraphWorkflow> = {}): LiteGraphWorkflow {
@@ -285,5 +309,241 @@ describe('graphToPrompt', () => {
     })
 
     expect(() => graphToPrompt(workflow, OBJECT_INFO)).toThrow(UnknownNodeTypeError)
+  })
+
+  describe('mute + bypass', () => {
+    it('(a) omits a consumer input fed by a muted upstream node', () => {
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 1,
+            type: 'CheckpointLoaderSimple',
+            pos: [0, 0],
+            size: [200, 100],
+            mode: 2, // muted
+            widgets_values: ['model_a.safetensors'],
+            outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }],
+          },
+          {
+            id: 2,
+            type: 'KSampler',
+            pos: [200, 0],
+            size: [200, 100],
+            widgets_values: [12345, 'randomize', 20, 7.5, 'euler'],
+            inputs: [
+              { name: 'model', type: 'MODEL', link: 1 },
+              { name: 'positive', type: 'CONDITIONING', link: null },
+              { name: 'negative', type: 'CONDITIONING', link: null },
+              { name: 'latent_image', type: 'LATENT', link: null },
+            ],
+          },
+        ],
+        links: [
+          [1, 1, 0, 2, 0, 'MODEL'],
+        ],
+      })
+
+      const prompt = graphToPrompt(workflow, OBJECT_INFO)
+
+      // Muted node itself is excluded from the prompt entirely.
+      expect(Object.keys(prompt)).toEqual(['2'])
+      // The `model` input fed by the muted node is simply omitted (not null).
+      expect(prompt['2'].inputs).toEqual({
+        seed: 12345,
+        steps: 20,
+        cfg: 7.5,
+        sampler_name: 'euler',
+      })
+    })
+
+    it('(b) re-routes a single bypassed node so IMAGE passes through', () => {
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 99,
+            type: 'LoadImageNode',
+            pos: [-200, 0],
+            size: [200, 100],
+            widgets_values: ['photo.png'],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }],
+          },
+          {
+            id: 1,
+            type: 'ImageEnhanceNode',
+            pos: [0, 0],
+            size: [200, 100],
+            mode: 4, // bypassed
+            inputs: [
+              { name: 'image', type: 'IMAGE', link: 10 },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }],
+          },
+          {
+            id: 2,
+            type: 'SaveImage',
+            pos: [200, 0],
+            size: [200, 100],
+            widgets_values: ['ComfyUI'],
+            inputs: [
+              { name: 'images', type: 'IMAGE', link: 1 },
+            ],
+          },
+        ],
+        links: [
+          [10, 99, 0, 1, 0, 'IMAGE'], // upstream source feeding the bypassed node's input
+          [1, 1, 0, 2, 0, 'IMAGE'],
+        ],
+      })
+
+      const prompt = graphToPrompt(workflow, OBJECT_INFO)
+
+      expect(Object.keys(prompt)).toEqual(['2', '99'])
+      expect(prompt['2'].inputs.images).toEqual(['99', 0])
+    })
+
+    it('(c) resolves a chained double bypass transitively', () => {
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 99,
+            type: 'LoadImageNode',
+            pos: [-200, 0],
+            size: [200, 100],
+            widgets_values: ['photo.png'],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [20] }],
+          },
+          {
+            id: 1,
+            type: 'ImageEnhanceNode',
+            pos: [0, 0],
+            size: [200, 100],
+            mode: 4, // bypassed
+            inputs: [
+              { name: 'image', type: 'IMAGE', link: 20 },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }],
+          },
+          {
+            id: 2,
+            type: 'ImageEnhanceNode',
+            pos: [200, 0],
+            size: [200, 100],
+            mode: 4, // bypassed
+            inputs: [
+              { name: 'image', type: 'IMAGE', link: 10 },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }],
+          },
+          {
+            id: 3,
+            type: 'SaveImage',
+            pos: [400, 0],
+            size: [200, 100],
+            widgets_values: ['ComfyUI'],
+            inputs: [
+              { name: 'images', type: 'IMAGE', link: 1 },
+            ],
+          },
+        ],
+        links: [
+          [20, 99, 0, 1, 0, 'IMAGE'], // original source feeding node 1
+          [10, 1, 0, 2, 0, 'IMAGE'],  // node 1 -> node 2 (both bypassed)
+          [1, 2, 0, 3, 0, 'IMAGE'],   // node 2 -> SaveImage
+        ],
+      })
+
+      const prompt = graphToPrompt(workflow, OBJECT_INFO)
+
+      expect(Object.keys(prompt)).toEqual(['3', '99'])
+      expect(prompt['3'].inputs.images).toEqual(['99', 0])
+    })
+
+    it('(d) treats a bypass with no matching input type as mute for that consumer', () => {
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 1,
+            type: 'MaskOnlyNode',
+            pos: [0, 0],
+            size: [200, 100],
+            mode: 4, // bypassed, but only has a MASK input — no IMAGE input to reroute to
+            inputs: [
+              { name: 'mask', type: 'MASK', link: null },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }],
+          },
+          {
+            id: 2,
+            type: 'SaveImage',
+            pos: [200, 0],
+            size: [200, 100],
+            widgets_values: ['ComfyUI'],
+            inputs: [
+              { name: 'images', type: 'IMAGE', link: 1 },
+            ],
+          },
+        ],
+        links: [
+          [1, 1, 0, 2, 0, 'IMAGE'],
+        ],
+      })
+
+      const prompt = graphToPrompt(workflow, OBJECT_INFO)
+
+      expect(Object.keys(prompt)).toEqual(['2'])
+      expect(prompt['2'].inputs).toEqual({
+        filename_prefix: 'ComfyUI',
+      })
+    })
+
+    it('(e) does not hang on a bypass cycle, and treats it as mute for the consumer', () => {
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 1,
+            type: 'ImageEnhanceNode',
+            pos: [0, 0],
+            size: [200, 100],
+            mode: 4, // bypassed, forms a cycle with node 2
+            inputs: [
+              { name: 'image', type: 'IMAGE', link: 2 },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }],
+          },
+          {
+            id: 2,
+            type: 'ImageEnhanceNode',
+            pos: [200, 0],
+            size: [200, 100],
+            mode: 4, // bypassed, forms a cycle with node 1
+            inputs: [
+              { name: 'image', type: 'IMAGE', link: 1 },
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [2] }],
+          },
+          {
+            id: 3,
+            type: 'SaveImage',
+            pos: [400, 0],
+            size: [200, 100],
+            widgets_values: ['ComfyUI'],
+            inputs: [
+              { name: 'images', type: 'IMAGE', link: 1 },
+            ],
+          },
+        ],
+        links: [
+          [1, 1, 0, 2, 0, 'IMAGE'],
+          [2, 2, 0, 1, 0, 'IMAGE'],
+        ],
+      })
+
+      const prompt = graphToPrompt(workflow, OBJECT_INFO)
+
+      expect(Object.keys(prompt)).toEqual(['3'])
+      expect(prompt['3'].inputs).toEqual({
+        filename_prefix: 'ComfyUI',
+      })
+    })
   })
 })
