@@ -2191,8 +2191,8 @@ async function handlePortIntentAi(intent: string) {
 
 // Listen for addNode events from NodeSearchDialog
 async function handleAddNode(e: Event) {
-  const detail = (e as CustomEvent<{ nodeType: string, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown> }>).detail
-  const { nodeType, widgetOverrides, propertyOverrides } = detail
+  const detail = (e as CustomEvent<{ nodeType: string, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>, dataOverrides?: Record<string, unknown> }>).detail
+  const { nodeType, widgetOverrides, propertyOverrides, dataOverrides } = detail
 
   // Refresh schema if we don't know this node type.
   if (!objectInfo.value[nodeType]) {
@@ -2210,6 +2210,9 @@ async function handleAddNode(e: Event) {
 
   const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   const newNode = createNodeData(nodeType, { x: center.x, y: center.y }, widgetOverrides, propertyOverrides)
+  if (dataOverrides && typeof dataOverrides === 'object') {
+    newNode.data = { ...newNode.data, ...dataOverrides }
+  }
   nodes.value.push(newNode)
   // Frontend-only Space Type node: do NOT auto-open the editor on add. The node
   // card shows a live preview from its saved config; the user clicks Edit to

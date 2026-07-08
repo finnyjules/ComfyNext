@@ -8,7 +8,7 @@ import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
 import NextStepsStrip from '~/components/vue-canvas/NextStepsStrip.vue'
 import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
-import { projectTake, type Take } from '~/composables/useTakes'
+import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import { setPendingPromote } from '~/lib/draft/runMeta'
@@ -512,6 +512,37 @@ function discardTake(id: string) {
     Object.assign(props.data, projectTake(props.data, fallback))
   }
 }
+// Writes a takes array + re-projects whichever take should now be active —
+// the same write/project mechanism discardTake uses above, generalized so
+// discard-others (and its undo) can both go through it.
+function setTakes(takes: Take[], activeId: string | null) {
+  ;(props.data as any).takes = takes
+  const active = takes.find((t) => t.id === activeId) ?? null
+  Object.assign(props.data, projectTake(props.data, active))
+}
+function onDiscardOthers(keepId: string) {
+  const before = [...(props.data.takes ?? [])]
+  const beforeActiveId = props.data.activeTakeId ?? null
+  const kept = discardOthers(before, keepId)
+  if (kept.length === before.length) return
+  setTakes(kept, keepId)
+  const n = before.length - kept.length
+  toast(`Discarded ${n} take${n === 1 ? '' : 's'}`, {
+    action: { label: 'Undo', onClick: () => setTakes(before, beforeActiveId) },
+  })
+}
+function branchFromTake(takeId: string) {
+  const take = (props.data.takes ?? []).find((t) => t.id === takeId)
+  const url = take?.images?.[0]
+  if (!take || !url) return
+  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+    detail: {
+      nodeType: 'Image',
+      dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },
+    },
+  }))
+  lightTableOpen.value = false
+}
 
 // Light Table — full-screen compare grid, opened from the strip's expand button.
 const lightTableOpen = ref(false)
@@ -827,8 +858,8 @@ const promoteUsdLabel = computed(() => {
       @pin="pinTake"
       @discard="discardTake"
       @promote="promoteTake"
-      @branch="() => {}"
-      @discard-others="() => {}"
+      @branch="branchFromTake"
+      @discard-others="onDiscardOthers"
       @close="lightTableOpen = false"
     />
 

@@ -162,6 +162,11 @@ export function appendTake<T extends TakeBearingData>(data: T, take: Take): T {
   return { ...projectTake(data, take), takes }
 }
 
+/** Keep the chosen take + all pinned takes; drop the rest. Pure. */
+export function discardOthers(takes: Take[], keepId: string): Take[] {
+  return (takes ?? []).filter(t => t.id === keepId || t.pinned)
+}
+
 /** Resolve the currently-active take from node data. */
 export function resolveActiveTake(data: TakeBearingData | undefined | null): Take | null {
   if (!data?.takes?.length) return null

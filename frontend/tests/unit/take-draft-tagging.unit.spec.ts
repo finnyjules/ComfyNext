@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tagTakeFromRunMeta, type Take } from '~/composables/useTakes'
+import { tagTakeFromRunMeta, discardOthers, type Take } from '~/composables/useTakes'
 
 const baseTake = (): Take => ({ id: 't1', createdAt: 1, promptId: 'p1', params: { seed: 5, model: 'flux-schnell' } })
 
@@ -28,5 +28,13 @@ describe('tagTakeFromRunMeta', () => {
     const t = tagTakeFromRunMeta(baseTake(), '7', { draftMetaFor: () => null, consumePendingPromote: () => null })
     expect(t.draft).toBeUndefined()
     expect(t.promotedFrom).toBeUndefined()
+  })
+})
+
+describe('discardOthers', () => {
+  const t = (id: string, pinned = false): Take => ({ id, createdAt: 0, promptId: null, pinned })
+  it('keeps the chosen take and every pinned take', () => {
+    const out = discardOthers([t('a'), t('b', true), t('c')], 'c')
+    expect(out.map(x => x.id)).toEqual(['b', 'c'])
   })
 })
