@@ -196,6 +196,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Collection: frontend-only data-table node (rows/columns of named
   // variables) — no backend class_type, reopen to re-edit like Space Type.
   Collection: 'collection',
+  // Reference: frontend-only shorthand card for an @name registry entry —
+  // no backend class_type, one IMAGE output resolved at submit time (Task 10).
+  Reference: 'reference',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

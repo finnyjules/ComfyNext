@@ -66,6 +66,7 @@ import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import CollectionNode from './CollectionNode.vue'
+import ReferenceNode from '~/components/vue-canvas/ReferenceNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
@@ -206,6 +207,7 @@ const nodeTypes = {
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
   'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
   'collection': markRaw(CollectionNode),
+  'reference': markRaw(ReferenceNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1458,6 +1460,11 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Character: frontend-only card, one CHARACTER output for casting into a Shot Director.
   if (nodeType === 'Character' && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'character', type: 'CHARACTER', links: null }]
+  }
+  // Reference: frontend-only @name shorthand card, one IMAGE output resolved
+  // to the registry entry's filename at submit time (Task 10).
+  if (nodeType === 'Reference' && (!data.data.outputs || data.data.outputs.length === 0)) {
+    data.data.outputs = [{ name: 'image', type: 'IMAGE', links: null }]
   }
   // Character Sheet: optional IMAGE source input + one CHARACTER output, once
   // the sheet is expanded and saved (mirrors Character above).
