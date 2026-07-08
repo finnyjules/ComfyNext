@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, PencilLine, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { getPartnerIcon } from '~/lib/partnerIcons'
@@ -113,6 +113,9 @@ const priceLabel = computed(() => {
 
 const isMuted = computed(() => props.data.mode === 2)
 const isBypassed = computed(() => props.data.mode === 4)
+// Sketch preset (Task 1): a plain generator dropped as a rough placeholder —
+// skinned with a dashed outline + header chip so it reads as "not final" at a glance.
+const isSketch = computed(() => !!(props.data?.properties as any)?.sketch)
 
 // Per-node Run button surfaces on:
 //   1. Generator nodes (costly API calls — Replicate, BFL, OpenAI, …).
@@ -1213,6 +1216,7 @@ watch(previewImages, (urls) => {
       'ring-2 ring-red-500': data.error,
       'border-white/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
+      'comfy-node--sketch': isSketch,
     }"
     :data-running="data.running || undefined"
     :data-mode="data.mode || 0"
@@ -1259,6 +1263,9 @@ watch(previewImages, (urls) => {
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || displayTitle }}</span>
+      <span v-if="isSketch" class="ml-1.5 inline-flex items-center gap-1 rounded-[3px] border border-dashed border-white/50 bg-black/40 px-1 py-px text-[9px] text-white/70">
+        <PencilLine class="size-2.5" /> sketch
+      </span>
       <!-- Seed lock: fix the seed so every run keeps the same options. Shares
            state with the inspector's seed widget. -->
       <button
@@ -1908,5 +1915,12 @@ watch(previewImages, (urls) => {
     transparent 6px,
     transparent 14px
   );
+}
+
+/* Sketch preset: a rough placeholder generator — dashed outline reads as
+   "not final" without shifting layout (outline, not border/ring). */
+.comfy-node--sketch {
+  outline: 1.5px dashed rgba(255, 255, 255, 0.45);
+  outline-offset: 2px;
 }
 </style>
