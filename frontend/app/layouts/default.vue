@@ -42,6 +42,8 @@ import {
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
 import { graphToPrompt } from '~/lib/graph/graphToPrompt'
 import { UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
+import { registerRun, markRunning, finishRun, inFlight } from '~/lib/graph/runRegistry'
+import { resolveEventTab } from '~/lib/graph/resolveEventTab'
 import { useDirectExecution } from '~/composables/useDirectExecution'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
 import { useShadowParity } from '~/composables/useShadowParity'
@@ -845,9 +847,6 @@ async function runVueWorkflow(
 
   if (useDirect) {
     console.log('[Run] queueing prompt directly (bypassing bridge)')
-    // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
-    // continuously and silently by design, so they're exempt from the toast.
-    if (!opts.live) armQueueWatchdog(runTabId)
     try {
       const res = await direct.queue(directPrompt!, plainWorkflow)
       const hasNodeErrors = res.node_errors && Object.keys(res.node_errors).length
@@ -857,6 +856,14 @@ async function runVueWorkflow(
         // bridge 'queue_error' takes — red-ring + toast — and clears run state,
         // instead of resolving silently and only tripping the ~15s watchdog.
         surfaceQueueError(res.node_errors, res.error)
+      } else if (res.prompt_id) {
+        // Track this run in the registry so its events attribute to runTabId
+        // (not just the active tab) and N direct runs can be in flight at once.
+        // worker becomes real in Task 6 — pass the chosen worker through.
+        registerRun({ promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: workerIdx })
+        // Explicit (non-live) runs get a per-run no-response watchdog. Live-preview
+        // runs fire continuously and silently by design, so they're exempt.
+        if (!opts.live) armDirectRunWatchdog(res.prompt_id, runTabId)
       }
     } catch (err) {
       console.error('[Run] direct queue failed', err)
@@ -1498,6 +1505,33 @@ const QUEUE_WATCHDOG_MS = 8000
 let queueWatchdogTimer: ReturnType<typeof setTimeout> | null = null
 function clearQueueWatchdog() {
   if (queueWatchdogTimer) { clearTimeout(queueWatchdogTimer); queueWatchdogTimer = null }
+}
+
+// Per-run watchdogs for DIRECT-mode runs, keyed by prompt_id. Direct mode has
+// no `queued` bridge event to clear the global watchdog, and N runs can be in
+// flight at once (across tabs/workers), so a single global timer can't serve
+// them. Each direct run arms its own timer right after registerRun; it's
+// cleared the moment handleBridgeEvent sees ANY event carrying that prompt_id.
+// On fire → same "Run didn't start" toast, finishRun(error), and idle the tab
+// only if it has no other in-flight runs. (Bridge mode keeps armQueueWatchdog.)
+// NB: `Map` here would resolve to the lucide-vue-next icon imported above,
+// not the global constructor — use globalThis.Map explicitly.
+const directRunWatchdogs = new globalThis.Map<string, ReturnType<typeof setTimeout>>()
+function clearDirectRunWatchdog(promptId: string) {
+  const t = directRunWatchdogs.get(promptId)
+  if (t) { clearTimeout(t); directRunWatchdogs.delete(promptId) }
+}
+function armDirectRunWatchdog(promptId: string, tabId: string) {
+  clearDirectRunWatchdog(promptId)
+  directRunWatchdogs.set(promptId, setTimeout(() => {
+    directRunWatchdogs.delete(promptId)
+    console.error('[Run] no execution event for direct prompt — server never acknowledged it')
+    toast.error('Run didn’t start', {
+      description: 'The ComfyUI canvas didn’t respond — it can go stale after a restart. Reload the page and try again.',
+    })
+    finishRun(promptId, 'error')
+    if (tabId && inFlight({ tabId }).length === 0) updateTabStatus(tabId, 'idle')
+  }, QUEUE_WATCHDOG_MS))
 }
 function armQueueWatchdog(tabId: string) {
   clearQueueWatchdog()
@@ -2600,6 +2634,17 @@ function handleBridgeEvent(data: any, source?: Window | null) {
 
   const { event: evt, percent, prompt_id, node_id } = data
 
+  // Registry attribution (direct mode): if this event carries a prompt_id the
+  // run registry knows, that run's originating tab wins over the active-tab
+  // fallback above — so a background/other-worker canvas keeps updating. Events
+  // with no prompt_id, or a prompt_id not in the registry (bridge-path runs),
+  // keep the tab resolved above unchanged. Any registry hit also clears that
+  // run's per-run watchdog: an event arriving means the server acknowledged it.
+  if (prompt_id) {
+    clearDirectRunWatchdog(prompt_id)
+    tabId = resolveEventTab(prompt_id, tabId)
+  }
+
   // TEMP DEBUG: surface bridge events so we can see why the tab indicator
   // sometimes doesn't update during a Run. Remove once the cause is found.
   if (evt && evt !== 'progress') {
@@ -2615,6 +2660,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
 
   if (evt === 'execution_start') {
     clearQueueWatchdog() // run reached the server — fallback clear for older bridges
+    if (prompt_id) markRunning(prompt_id) // registry no-op for bridge-path runs
     // Claim this run as silent if a live-run is pending — must happen
     // before any UI updates so the tab indicator can skip too.
     if (pendingLiveRuns.value > 0) {
@@ -2684,6 +2730,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     if (prompt_id) {
       delete promptProgress.value[prompt_id]
       delete promptNodeInfo.value[prompt_id]
+      finishRun(prompt_id, 'done') // remove this run before the tab-drain check below (registry no-op for bridge runs)
     }
     const wasSilent = currentRunSilent.value
     currentRunSilent.value = false
@@ -2720,8 +2767,14 @@ function handleBridgeEvent(data: any, source?: Window | null) {
       }
     }
     runOutputs.length = 0
+    // Does this tab still have OTHER direct runs in flight? finishRun above
+    // already removed THIS run, so this counts only the rest. Bridge-path runs
+    // never register, so inFlight is empty and this is false — preserving
+    // today's single-run 'done' → 'idle' flash verbatim. When true, we keep the
+    // tab's spinner (skip 'done'/'idle') but still record this run's result.
+    const tabStillRunning = tabId ? inFlight({ tabId }).length > 0 : false
     if (!wasSilent) {
-      updateTabStatus(tabId, 'done')
+      if (!tabStillRunning) updateTabStatus(tabId, 'done')
       if (validatedRun && lastRunResult.value?.kind !== 'error') {
         // Did any Replicate (BYOK, dollar-billed) node run? If yes, that's
         // the user's true cost surface — Comfy's credit balance won't change.
@@ -2746,15 +2799,24 @@ function handleBridgeEvent(data: any, source?: Window | null) {
           setTimeout(() => sendToBridgeIframe('refreshCredits'), 2500)
         }
       }
-      // Reset to idle after a brief moment
-      setTimeout(() => {
-        updateTabStatus(tabId!, 'idle')
-      }, 3000)
+      // Reset to idle after a brief moment — but only if no other run reclaims
+      // this tab in the meantime (re-check at fire time, not just now).
+      if (!tabStillRunning) {
+        setTimeout(() => {
+          if (tabId && inFlight({ tabId }).length > 0) return
+          updateTabStatus(tabId!, 'idle')
+        }, 3000)
+      }
     }
     // Refresh history if queue panel is open
     if (queueOpen.value) fetchQueueAndHistory()
   } else if (evt === 'execution_error') {
-    if (!currentRunSilent.value) updateTabStatus(tabId, 'idle')
+    // Remove this run first, then idle the tab only if it has no other run in
+    // flight — a second concurrent direct run must keep the spinner up. Bridge
+    // runs aren't registered, so inFlight is empty and this idles as before.
+    if (prompt_id) finishRun(prompt_id, 'error')
+    const tabDrained = tabId ? inFlight({ tabId }).length === 0 : true
+    if (!currentRunSilent.value && tabDrained) updateTabStatus(tabId, 'idle')
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null
