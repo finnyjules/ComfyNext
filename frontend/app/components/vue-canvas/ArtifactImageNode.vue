@@ -5,6 +5,7 @@ import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
+import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
 import NextStepsStrip from '~/components/vue-canvas/NextStepsStrip.vue'
 import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
 import { projectTake, type Take } from '~/composables/useTakes'
@@ -495,6 +496,9 @@ function discardTake(id: string) {
   }
 }
 
+// Light Table — full-screen compare grid, opened from the strip's expand button.
+const lightTableOpen = ref(false)
+
 // --- Post-render next-steps chip strip (ARPU lever 5) -----------------------
 // Shows on THIS artifact only when a take lands while the canvas is open and
 // this is the most recently rendered artifact (singleton). Baseline is taken
@@ -785,6 +789,22 @@ function openEditMenuFromStrip() {
       @select="selectTake"
       @pin="pinTake"
       @discard="discardTake"
+      @expand="lightTableOpen = true"
+    />
+
+    <LightTableModal
+      v-if="lightTableOpen"
+      :takes="data.takes ?? []"
+      :active-take-id="data.activeTakeId"
+      :title="data.title || 'Takes'"
+      :promote-usd-label="null"
+      @select="selectTake"
+      @pin="pinTake"
+      @discard="discardTake"
+      @promote="() => {}"
+      @branch="() => {}"
+      @discard-others="() => {}"
+      @close="lightTableOpen = false"
     />
 
     <!-- Secondary MASK output — small port + label below the frame so the

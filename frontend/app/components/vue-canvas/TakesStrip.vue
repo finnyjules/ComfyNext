@@ -4,7 +4,7 @@
  * Presentational: parent owns the data and applies the change on `select`.
  * See docs/plans/2026-06-02-creative-studio-project-takes-design.md.
  */
-import { Star, X, PencilLine } from 'lucide-vue-next'
+import { Star, X, PencilLine, Maximize2 } from 'lucide-vue-next'
 import type { Take } from '~/composables/useTakes'
 
 defineProps<{
@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'pin', id: string): void
   (e: 'discard', id: string): void
+  (e: 'expand'): void
 }>()
 
 function thumb(t: Take): string | null {
@@ -95,6 +96,15 @@ function thumb(t: Take): string | null {
           </button>
         </div>
       </div>
+
+      <button
+        v-if="takes.length"
+        class="shrink-0 size-12 rounded-md flex items-center justify-center ring-1 ring-white/10 text-white/50 hover:text-white hover:ring-white/30 cursor-pointer"
+        title="Open Light Table (compare takes)"
+        @click.stop="emit('expand')"
+      >
+        <Maximize2 class="size-4" />
+      </button>
     </div>
   </div>
 </template>
