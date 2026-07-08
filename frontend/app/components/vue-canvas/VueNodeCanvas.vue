@@ -29,6 +29,9 @@ import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { BINDINGS_PROP, COLLECTION_PROP, LOOKUP_TYPE, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
+import { applyRefPromptTokens } from '~/lib/refs/injectWorkflow'
+import { resolveRefFilename, type RefRegistry } from '~/lib/refs/registry'
+import { isRefBinding } from '~/lib/refs/binding'
 import { createCollection } from '~/lib/collection/model'
 import { autoMatchColumns, reconcileLinks } from '~/lib/collection/lookup'
 import { promoteLayoutElement } from '~/lib/collection/layoutBinding'
@@ -4451,6 +4454,32 @@ async function injectSmartLayoutBrand(workflow: any, kitKv: string): Promise<voi
   }
 }
 
+/**
+ * Resolve `@refs` into the outgoing workflow, client-side, before submit:
+ *  (a) prompt strings: substitute `@name` → the ref's text (Mode 1);
+ *  (b) image-loader widgets bound to `@name`: set the 'image' widget to the
+ *      resolved input filename.
+ * Frontend-only; ComfyUI never sees a reference.
+ */
+async function injectAssetRegistry(workflow: any, reg: RefRegistry): Promise<void> {
+  if (!reg || !Object.keys(reg).length || !workflow?.nodes?.length) return
+
+  // (a) prompt tokens
+  applyRefPromptTokens(workflow, reg)
+
+  // (b) image-loader widgets bound to @name
+  for (const node of workflow.nodes as any[]) {
+    if ((node.mode ?? 0) !== 0) continue // muted/bypassed won't execute
+    const bindings = node.properties?.[BINDINGS_PROP]
+    if (!bindings) continue
+    for (const b of Object.values(bindings) as any[]) {
+      if (!isRefBinding(b)) continue
+      const filename = resolveRefFilename(reg, b.refName)
+      if (filename) setNamedWidget(node, 'image', filename, objectInfo.value)
+    }
+  }
+}
+
 // ── Client-side Timeline preview ────────────────────────────────────────────
 // Mirrors the Compositor pattern but for video sources: each connected clip
 // has a hidden <video>; we seek each one to the timeline's middle frame and
@@ -6021,6 +6050,7 @@ defineExpose({
   injectCompositorMotionParams,
   injectCompositorCloners,
   injectSmartLayoutBrand,
+  injectAssetRegistry,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,
   selectedNode,

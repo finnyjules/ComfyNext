@@ -619,6 +619,17 @@ async function runVueWorkflow(
     toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
   }
 
+  // Resolve `@refs` (prompt tokens + image-loader bindings) into the outgoing
+  // workflow. No refs registered ⇒ no-op (byte-identical submit).
+  const assetReg = activeProjectDoc.value?.assetRegistry
+  if (assetReg && Object.keys(assetReg).length) {
+    try {
+      await vueCanvasRef.value.injectAssetRegistry?.(plainWorkflow, assetReg)
+    } catch (err) {
+      console.error('[Run] @refs injection failed', err)
+    }
+  }
+
   // Promote any standalone artifact image still pointing at an ephemeral temp
   // preview into a durable input upload — ComfyUI wipes temp/ on restart, so a
   // wired result would otherwise fail validation ("Invalid image file … [temp]").
