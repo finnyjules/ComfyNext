@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Loader2, Lock, LockOpen, PencilLine, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Layers, Loader2, Lock, LockOpen, PencilLine, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
 import { getPartnerIcon } from '~/lib/partnerIcons'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
-import { projectTake, type Take } from '~/composables/useTakes'
+import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
+import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
 import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
+import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
+import { toast } from 'vue-sonner'
 
 const props = defineProps<{
   id: string
@@ -173,6 +177,12 @@ function dispatchRun(detail: Record<string, any>) {
 // Primary: re-roll ONLY this node — upstream stays cached (ComfyUI cache-hits
 // it, no regen/re-billing), just this node + its preview recompute.
 function playThisNode() { dispatchRun({ rerollScope: 'self' }) }
+// Variant (direct-execution only): re-roll THIS node 4× in parallel across the
+// cloud pool — four fresh-seeded takes at once. Same 'self' scope + event; the
+// `takes` count flows through runVueWorkflow → queueParallel at the dispatch
+// site. Gated on the direct flag because the parallel pool is a direct-only path.
+const { directExecutionEnabled } = useDirectExecutionEnabled()
+function rerollTakesParallel() { dispatchRun({ rerollScope: 'self', takes: 4 }) }
 // Variant: fresh run of everything before this node, new seeds throughout.
 function runFromStart() { dispatchRun({}) }
 // Variant: push this node's current result through everything downstream.
@@ -232,6 +242,43 @@ function promoteTake(takeId: string) {
   window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
     detail: { sourceNodeId: props.id, nodeType: 'GenerateImageNode', ...built },
   }))
+}
+
+// Light Table: takes land on this generator card, so the compare modal is
+// hosted here (not in ArtifactImageNode). The strip's expand button opens it.
+const lightTableOpen = ref(false)
+
+// Write a new takes array + re-project the active take. Mirrors discardTake's
+// mutation but takes an explicit active id (used by discard-others + its undo).
+function setTakes(takes: Take[], activeId: string | null) {
+  props.data.takes = takes
+  const active = takes.find((t) => t.id === activeId) || takes.find((t) => t.pinned) || takes[takes.length - 1] || null
+  Object.assign(props.data, projectTake(props.data, active))
+}
+function onDiscardOthers(keepId: string) {
+  const before = [...(props.data.takes ?? [])]
+  const beforeActiveId = props.data.activeTakeId ?? null
+  const kept = discardOthers(before, keepId)
+  if (kept.length === before.length) return
+  setTakes(kept, keepId)
+  const n = before.length - kept.length
+  toast(`Discarded ${n} take${n === 1 ? '' : 's'}`, {
+    action: { label: 'Undo', onClick: () => setTakes(before, beforeActiveId) },
+  })
+}
+function branchFromTake(takeId: string) {
+  const take = (props.data.takes ?? []).find((t) => t.id === takeId)
+  const url = take?.images?.[0]
+  if (!take || !url) return
+  const imageWidgetValue = annotatedImageValueFromViewUrl(url)
+  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+    detail: {
+      nodeType: 'Image',
+      dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },
+      ...(imageWidgetValue ? { widgetOverrides: { image: imageWidgetValue } } : {}),
+    },
+  }))
+  lightTableOpen.value = false
 }
 
 // Live-preview node types: auto-run on widget change (debounced) so the
@@ -1792,6 +1839,23 @@ watch(previewImages, (urls) => {
       @pin="pinTake"
       @discard="discardTake"
       @promote="promoteTake"
+      @expand="lightTableOpen = true"
+    />
+
+    <LightTableModal
+      v-if="lightTableOpen"
+      :takes="data.takes ?? []"
+      :active-take-id="data.activeTakeId"
+      :title="data.title || 'Takes'"
+      :sketch="isSketch && data.nodeType === 'GenerateImageNode'"
+      :promote-usd-label="null"
+      @select="selectTake"
+      @pin="pinTake"
+      @discard="discardTake"
+      @promote="promoteTake"
+      @branch="branchFromTake"
+      @discard-others="onDiscardOthers"
+      @close="lightTableOpen = false"
     />
 
     <!-- Per-node run control (footer): one split button. The main face runs
@@ -1843,6 +1907,13 @@ watch(previewImages, (urls) => {
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run this node</span>
             <span class="block text-[10px] text-white/45 leading-snug">Re-roll this node, upstream stays cached</span>
+          </span>
+        </button>
+        <button v-if="directExecutionEnabled" class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="rerollTakesParallel">
+          <Layers class="size-3.5 mt-0.5 text-white/80 shrink-0" />
+          <span class="min-w-0">
+            <span class="block text-[11px] font-medium text-white/90">Re-roll ×4 (parallel)</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Four fresh takes at once across the cloud pool</span>
           </span>
         </button>
         <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runFromStart">

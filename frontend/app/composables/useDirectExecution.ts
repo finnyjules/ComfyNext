@@ -46,6 +46,11 @@ export interface QueueResult {
   /** Non-node error message (400 `{ error: { message } }`, network, 5xx). Set
    *  on any failure so callers can surface it instead of a silent success. */
   error?: string
+  /** App-side worker this item was dispatched to (0 = main). Stamped on every
+   *  result so a parallel caller can `registerRun` each prompt against the
+   *  worker it actually landed on (queueParallel decides assignment internally,
+   *  the sequential fallback always uses main / 0). */
+  worker?: number
 }
 
 /** worker: 0/absent = main (:8188, no query param); N>=1 = pool worker N,
@@ -310,7 +315,7 @@ export function useDirectExecution(): DirectExecution {
       // Record the prompt→worker mapping for pool workers so the socket layer can
       // close the socket once this worker's prompts drain.
       if (worker >= 1 && res?.prompt_id) promptWorker.set(res.prompt_id, worker)
-      return { prompt_id: res?.prompt_id }
+      return { prompt_id: res?.prompt_id, worker }
     } catch (err: any) {
       // ofetch's FetchError parses the JSON body onto `.data` on non-2xx
       // responses (see useInpaint.ts / useExplain.ts for the same convention).
@@ -321,7 +326,7 @@ export function useDirectExecution(): DirectExecution {
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
       const error = err?.data?.error?.message ?? err?.message ?? String(err)
-      return { node_errors, error }
+      return { node_errors, error, worker }
     } finally {
       // Release the reservation whether the POST succeeded or failed. On
       // failure, no promptWorker entry was recorded for this item, so this may

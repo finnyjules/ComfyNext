@@ -579,7 +579,7 @@ function injectLoraStyleIntoPrompt(workflow: any) {
 
 async function runVueWorkflow(
   targetIds?: string[],
-  opts: { rerollScope?: 'self' | 'variation', direction?: 'downstream', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number } = {},
+  opts: { rerollScope?: 'self' | 'variation', direction?: 'downstream', live?: boolean, skipCostConfirm?: boolean, costConfirmIterations?: number, takes?: number } = {},
 ): Promise<boolean> {
   if (!vueCanvasRef.value?.getWorkflow) {
     console.warn('[Run] no getWorkflow on vueCanvasRef')
@@ -610,155 +610,17 @@ async function runVueWorkflow(
     vueCanvasRef.value.materializeAutoImageSinks?.(activeIds)
   }
 
-  const workflow = targetIds?.length && vueCanvasRef.value.getFilteredWorkflow
-    ? vueCanvasRef.value.getFilteredWorkflow(targetIds, opts)
-    : vueCanvasRef.value.getWorkflow(opts.live ? { reroll: false } : undefined)
-  if (!workflow?.nodes?.length) {
-    console.warn('[Run] workflow has no nodes')
-    toast.error('Nothing to run', { description: 'No runnable nodes were found for this action.' })
-    return false
-  }
-
-  // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
-  let plainWorkflow = JSON.parse(JSON.stringify(workflow))
-
-  // Stamp the tab's stable project UUID so history entries can be grouped
-  if (activeTab.value.projectUuid) {
-    plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
-  }
-
-  // Draft mode: rewrite mapped generators on this run-only copy to the cheap/fast
-  // tier. Save paths never see this — they serialize the live canvas elsewhere.
-  let draftApp: { overriddenIds: string[]; restoreById: Record<string, Record<string, any>> } | null = null
-  if (draftMode.isDraft(activeTab.value?.id || '')) {
-    const vnodesForDraft = vueCanvasRef.value.getNodes?.() || []
-    draftApp = applyDraftOverrides(plainWorkflow, vnodesForDraft)
-    if (draftApp.overriddenIds.length) {
-      markDraftRun(draftApp.overriddenIds, draftApp.restoreById)
-      plainWorkflow.extra = { ...(plainWorkflow.extra || {}), draft: true }
-    }
-  } else {
-    // A final submit supersedes any earlier draft marks for the nodes it runs.
-    clearDraftRun((plainWorkflow.nodes as any[]).map((n: any) => String(n.id)))
-  }
-
-  // Cost guard: estimate the exact set of nodes about to run and confirm
-  // expensive runs before any side-effecting prep (compositor uploads) or
-  // queueing. Live-preview runs never prompt.
-  if (!opts.skipCostConfirm && !opts.live) {
-    const vnodes = vueCanvasRef.value.getNodes?.() || []
-    const estInput = (plainWorkflow.nodes as any[])
-      .filter((n: any) => (n.mode ?? 0) !== 2)
-      .map((wn: any) => {
-        const vn = vnodes.find((v: any) => String(v.id) === String(wn.id))
-        return {
-          id: String(wn.id),
-          type: String(wn.type || vn?.data?.nodeType || ''),
-          title: vn?.data?.title,
-          badgeExpr: draftApp?.overriddenIds.includes(String(wn.id))
-            ? draftUsdExprFor(String(wn.type || vn?.data?.nodeType || ''))
-            : (vn?.data?.priceBadge?.expr ?? null),
-          category: vn?.data?.category ?? null,
-        }
-      })
-    const single = estimateUsdForNodes(estInput)
-    if (single) {
-      const iterations = Math.max(1, opts.costConfirmIterations || 1)
-      const est: CostEstimate = { ...single, usd: single.usd * iterations }
-      if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
-        return false
-      }
-    }
-  }
-
-  // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
-  // ComfyUI input — keeps the schema stable) into its prompt widget at submit
-  // time. The live node's prompt stays clean (we only mutate this copy).
-  injectLoraStyleIntoPrompt(plainWorkflow)
-
-  // Bake any Compositor text/shape overlays into uploaded image layers and
-  // wire them into the workflow (mutates plainWorkflow in place).
-  try {
-    await vueCanvasRef.value.injectCompositorOverlays?.(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] compositor overlay injection failed', err)
-    toast.error('Frame compositing failed', { description: String((err as any)?.message || err).slice(0, 120) })
-  }
-
-  // Auto-wire any "protect in blend" layers into a downstream Blend Scene.
-  try {
-    vueCanvasRef.value.injectProtectMaskWiring?.(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] protect-mask wiring failed', err)
-  }
-
-  // Push each Timeline node's editor state (keyframes, multi-track clips) into
-  // its edit_state widget so node-run renders what the editor shows. Async:
-  // it may force a fresh /object_info fetch to self-heal a stale schema cache,
-  // and throws (→ toast with the remedy) if the widget is still missing.
-  try {
-    await vueCanvasRef.value.injectTimelineEditState?.(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] timeline edit_state injection failed', err)
-    toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 160) })
-  }
-
-  // Push each Compositor node's baked motion (Kinetic Slates PNG sequence)
-  // into its motion_params widget so the backend returns the baked animation
-  // as its image batch + video output instead of the static composite.
-  try {
-    await vueCanvasRef.value.injectCompositorMotionParams?.(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] compositor motion_params injection failed', err)
-    toast.error('Frame motion state failed', { description: String((err as any)?.message || err).slice(0, 160) })
-  }
-
-  // Push each Compositor node's wired-layer cloners into their layer{i}_cloner
-  // widgets so the rendered output matches the editor's cloned preview.
-  try {
-    await vueCanvasRef.value.injectCompositorCloners?.(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] compositor cloner injection failed', err)
-    toast.error('Frame cloner state failed', { description: String((err as any)?.message || err).slice(0, 160) })
-  }
-
-  // Fold the project's active brand kit under every SmartLayout node's wired
-  // brand, so Run output matches the kit-themed editor preview. No active
-  // kit ⇒ no-op (widgets untouched, byte-identical submit).
-  try {
-    const kit = brandLib.activeKit.value
-    await vueCanvasRef.value.injectSmartLayoutBrand?.(plainWorkflow, kit ? brandKitToKv(kit) : '')
-  } catch (err) {
-    console.error('[Run] smart layout brand_kit injection failed', err)
-    toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
-  }
-
-  // Resolve `@refs` (prompt tokens + image-loader bindings) into the outgoing
-  // workflow. No refs registered ⇒ no-op (byte-identical submit).
-  const assetReg = activeProjectDoc.value?.assetRegistry
-  if (assetReg && Object.keys(assetReg).length) {
-    try {
-      await vueCanvasRef.value.injectAssetRegistry?.(plainWorkflow, assetReg)
-    } catch (err) {
-      console.error('[Run] @refs injection failed', err)
-    }
-  }
-
-  // Promote any standalone artifact image still pointing at an ephemeral temp
-  // preview into a durable input upload — ComfyUI wipes temp/ on restart, so a
-  // wired result would otherwise fail validation ("Invalid image file … [temp]").
-  // If the bytes are already gone, abort with a clear message instead of letting
-  // the backend reject the run cryptically.
-  try {
-    await promoteTempImageInputs(plainWorkflow)
-  } catch (err) {
-    console.error('[Run] temp image promotion failed', err)
-    toast.error("Couldn't prepare source image", { description: String((err as any)?.message || err).slice(0, 200) })
-    return false
-  }
+  const useDirect = directExecutionEnabled.value
+  // Parallel takes: N fresh-seeded runs at once, direct-execution only. Each
+  // take re-invokes getFilteredWorkflow (which re-rolls seeds per call) and the
+  // full prep→graphToPrompt assembly below, so the workers get distinct seeds
+  // but otherwise-identical graphs. Absent/1/non-direct ⇒ exactly one pass,
+  // byte-identical to before.
+  const takeCount = (useDirect && (opts.takes ?? 1) > 1) ? Math.floor(opts.takes as number) : 1
 
   // Pick the worker for the tab being run (always 0 when the pool is off), so
   // separate canvases queue to separate ComfyUI servers and run concurrently.
+  // Once-only (worker assignment for parallel takes is decided by queueParallel).
   const runTabId = activeTab.value?.id || ''
   const workerIdx = workerForTab(runTabId)
   if (poolEnabled.value && runTabId) workerRunningTab[workerIdx] = runTabId
@@ -766,70 +628,239 @@ async function runVueWorkflow(
   const runDoc = savedWorkflows[runTabId]
   runningCanvasByWorker[workerIdx] = isProjectDoc(runDoc) ? runDoc.activeCanvasId : null
 
-  // Load workflow into that worker's LiteGraph, then queue
+  // Load workflow into that worker's LiteGraph, then queue. Once-only — the
+  // hidden iframe only backs dev shadow-parity, so loading the last take's
+  // graph is sufficient.
   const iframe = getWorkerIframe(workerIdx)
   if (!iframe?.contentWindow) {
     console.error('[Run] bridge iframe not found or not ready')
     toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
     return false
   }
-  // Frontend-only nodes (studios with no /object_info entry — Collection,
-  // SpaceType, GradientStudio, etc.) never execute server-side. Filtered runs
-  // already exclude them (buildFilteredWorkflow only keeps an explicit target
-  // set), but a global Run loads the full graph, and the bridge iframe's own
-  // graphToPrompt aborts the ENTIRE run the instant it hits a class_type-less
-  // node ("Node 'X' has no class_type"). Strip them from this run-only copy —
-  // never from anything a save path might still reference.
-  const { workflow: strippedWorkflow, removedTypes } = stripFrontendOnlyNodes(plainWorkflow, FRONTEND_ONLY_NODE_TYPES)
-  if (removedTypes.length) {
-    plainWorkflow = strippedWorkflow
-    console.log('[Run] excluded frontend-only node(s) from execution:', removedTypes)
-  }
-  // Execution-boundary guard: VARS links (Collection → Smart Layout) are kept
-  // all the way through getWorkflow/getFilteredWorkflow so saves/reloads keep
-  // the wire — this run-only copy is the one place they get stripped, since
-  // Collection has no backend class_type and a surviving VARS link would abort
-  // graphToPrompt with "No link found in parent graph".
-  stripVarsLinks(plainWorkflow as any)
 
-  // One-shot promotes: substitute the take snapshot for any node with a pending
-  // promote. Registered by ArtifactImageNode.promoteTake just before it fires
-  // runFiltered. NOTE: consumption here is peek-free — a promote submitted in
-  // draft mode still renders final for that node. The actual consume (clearing
-  // the registry) happens at result time when the take is tagged (Task 4).
-  // Placement: this must run AFTER every early-return gate above (cost-confirm
-  // cancel, temp-image-promotion failure, iframe-not-ready) so an aborted run
-  // never leaves the entry in promoteByNode to be wrongly consumed by the
-  // node's next ordinary re-roll — and immediately before the actual submit.
-  const vnodesForPromote = vueCanvasRef.value.getNodes?.() || []
-  applyPendingPromotes(plainWorkflow, vnodesForPromote, (nodeId) => peekPendingPromote(nodeId))
-
-  const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
-  console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
-    targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
-  // Direct-execution branch (Settings › "Direct execution (beta)", default OFF).
-  // When ON we build the ComfyUI API prompt in-app and POST it straight to
-  // /prompt via the native WS channel, bypassing the bridge iframe's queuePrompt.
-  // The builder can throw (UnknownNodeTypeError, subgraph guards) — surface that
-  // and abort BEFORE any dispatch so no spinner is left hanging. We ALSO still
-  // load the workflow into the iframe (harmless — it's hidden) so the dev-only
-  // shadow-parity comparison below has a valid graph to serialize against.
-  const useDirect = directExecutionEnabled.value
-  let directPrompt: import('~/lib/graph/graphToPrompt').ApiPrompt | null = null
-  if (useDirect) {
-    try {
-      directPrompt = graphToPrompt(plainWorkflow, objectInfo.value)
-    } catch (err) {
-      const msg = err instanceof UnknownNodeTypeError
-        ? err.message
-        : String((err as any)?.message || err)
-      console.error('[Run] direct prompt build failed', err)
-      toast.error("Couldn't build workflow", { description: msg.slice(0, 200) })
-      // Abort cleanly — nothing was dispatched, so just clear run state.
-      if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
-      currentRunSilent.value = false
-      return false
+  // Assemble one take: roll fresh seeds (getFilteredWorkflow does this per call),
+  // run the full prep chain + build the direct ApiPrompt. Returns the plain
+  // workflow + (direct-mode) ApiPrompt, or 'abort' on a fatal per-take failure
+  // that should stop the whole run. `isFirst` gates once-only gestures
+  // (cost-confirm dialog) so a takes×N run confirms cost a single time.
+  type AssembledTake = { plainWorkflow: any; directPrompt: import('~/lib/graph/graphToPrompt').ApiPrompt | null }
+  const assembleTake = async (isFirst: boolean): Promise<AssembledTake | 'abort'> => {
+    const workflow = targetIds?.length && vueCanvasRef.value!.getFilteredWorkflow
+      ? vueCanvasRef.value!.getFilteredWorkflow(targetIds, opts)
+      : vueCanvasRef.value!.getWorkflow(opts.live ? { reroll: false } : undefined)
+    if (!workflow?.nodes?.length) {
+      console.warn('[Run] workflow has no nodes')
+      toast.error('Nothing to run', { description: 'No runnable nodes were found for this action.' })
+      return 'abort'
     }
+
+    // Deep-copy to strip Vue reactivity proxies (postMessage can't clone Proxy objects)
+    let plainWorkflow = JSON.parse(JSON.stringify(workflow))
+
+    // Stamp the tab's stable project UUID so history entries can be grouped
+    if (activeTab.value.projectUuid) {
+      plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
+    }
+
+    // Draft mode: rewrite mapped generators on this run-only copy to the cheap/fast
+    // tier. Save paths never see this — they serialize the live canvas elsewhere.
+    let draftApp: { overriddenIds: string[]; restoreById: Record<string, Record<string, any>> } | null = null
+    if (draftMode.isDraft(activeTab.value?.id || '')) {
+      const vnodesForDraft = vueCanvasRef.value!.getNodes?.() || []
+      draftApp = applyDraftOverrides(plainWorkflow, vnodesForDraft)
+      if (draftApp.overriddenIds.length) {
+        markDraftRun(draftApp.overriddenIds, draftApp.restoreById)
+        plainWorkflow.extra = { ...(plainWorkflow.extra || {}), draft: true }
+      }
+    } else {
+      // A final submit supersedes any earlier draft marks for the nodes it runs.
+      clearDraftRun((plainWorkflow.nodes as any[]).map((n: any) => String(n.id)))
+    }
+
+    // Cost guard: estimate the exact set of nodes about to run and confirm
+    // expensive runs before any side-effecting prep (compositor uploads) or
+    // queueing. Live-preview runs never prompt. Confirmed once for the whole
+    // takes×N batch (multiply the estimate by the take count).
+    if (isFirst && !opts.skipCostConfirm && !opts.live) {
+      const vnodes = vueCanvasRef.value!.getNodes?.() || []
+      const estInput = (plainWorkflow.nodes as any[])
+        .filter((n: any) => (n.mode ?? 0) !== 2)
+        .map((wn: any) => {
+          const vn = vnodes.find((v: any) => String(v.id) === String(wn.id))
+          return {
+            id: String(wn.id),
+            type: String(wn.type || vn?.data?.nodeType || ''),
+            title: vn?.data?.title,
+            badgeExpr: draftApp?.overriddenIds.includes(String(wn.id))
+              ? draftUsdExprFor(String(wn.type || vn?.data?.nodeType || ''))
+              : (vn?.data?.priceBadge?.expr ?? null),
+            category: vn?.data?.category ?? null,
+          }
+        })
+      const single = estimateUsdForNodes(estInput)
+      if (single) {
+        const iterations = Math.max(1, (opts.costConfirmIterations || 1) * takeCount)
+        const est: CostEstimate = { ...single, usd: single.usd * iterations }
+        if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
+          return 'abort'
+        }
+      }
+    }
+
+    // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
+    // ComfyUI input — keeps the schema stable) into its prompt widget at submit
+    // time. The live node's prompt stays clean (we only mutate this copy).
+    injectLoraStyleIntoPrompt(plainWorkflow)
+
+    // Bake any Compositor text/shape overlays into uploaded image layers and
+    // wire them into the workflow (mutates plainWorkflow in place).
+    try {
+      await vueCanvasRef.value!.injectCompositorOverlays?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] compositor overlay injection failed', err)
+      toast.error('Frame compositing failed', { description: String((err as any)?.message || err).slice(0, 120) })
+    }
+
+    // Auto-wire any "protect in blend" layers into a downstream Blend Scene.
+    try {
+      vueCanvasRef.value!.injectProtectMaskWiring?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] protect-mask wiring failed', err)
+    }
+
+    // Push each Timeline node's editor state (keyframes, multi-track clips) into
+    // its edit_state widget so node-run renders what the editor shows. Async:
+    // it may force a fresh /object_info fetch to self-heal a stale schema cache,
+    // and throws (→ toast with the remedy) if the widget is still missing.
+    try {
+      await vueCanvasRef.value!.injectTimelineEditState?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] timeline edit_state injection failed', err)
+      toast.error('Timeline state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+    }
+
+    // Push each Compositor node's baked motion (Kinetic Slates PNG sequence)
+    // into its motion_params widget so the backend returns the baked animation
+    // as its image batch + video output instead of the static composite.
+    try {
+      await vueCanvasRef.value!.injectCompositorMotionParams?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] compositor motion_params injection failed', err)
+      toast.error('Frame motion state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+    }
+
+    // Push each Compositor node's wired-layer cloners into their layer{i}_cloner
+    // widgets so the rendered output matches the editor's cloned preview.
+    try {
+      await vueCanvasRef.value!.injectCompositorCloners?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] compositor cloner injection failed', err)
+      toast.error('Frame cloner state failed', { description: String((err as any)?.message || err).slice(0, 160) })
+    }
+
+    // Fold the project's active brand kit under every SmartLayout node's wired
+    // brand, so Run output matches the kit-themed editor preview. No active
+    // kit ⇒ no-op (widgets untouched, byte-identical submit).
+    try {
+      const kit = brandLib.activeKit.value
+      await vueCanvasRef.value!.injectSmartLayoutBrand?.(plainWorkflow, kit ? brandKitToKv(kit) : '')
+    } catch (err) {
+      console.error('[Run] smart layout brand_kit injection failed', err)
+      toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
+    }
+
+    // Resolve `@refs` (prompt tokens + image-loader bindings) into the outgoing
+    // workflow. No refs registered ⇒ no-op (byte-identical submit).
+    const assetReg = activeProjectDoc.value?.assetRegistry
+    if (assetReg && Object.keys(assetReg).length) {
+      try {
+        await vueCanvasRef.value!.injectAssetRegistry?.(plainWorkflow, assetReg)
+      } catch (err) {
+        console.error('[Run] @refs injection failed', err)
+      }
+    }
+
+    // Promote any standalone artifact image still pointing at an ephemeral temp
+    // preview into a durable input upload — ComfyUI wipes temp/ on restart, so a
+    // wired result would otherwise fail validation ("Invalid image file … [temp]").
+    // If the bytes are already gone, abort with a clear message instead of letting
+    // the backend reject the run cryptically.
+    try {
+      await promoteTempImageInputs(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] temp image promotion failed', err)
+      toast.error("Couldn't prepare source image", { description: String((err as any)?.message || err).slice(0, 200) })
+      return 'abort'
+    }
+
+    // Frontend-only nodes (studios with no /object_info entry — Collection,
+    // SpaceType, GradientStudio, etc.) never execute server-side. Filtered runs
+    // already exclude them (buildFilteredWorkflow only keeps an explicit target
+    // set), but a global Run loads the full graph, and the bridge iframe's own
+    // graphToPrompt aborts the ENTIRE run the instant it hits a class_type-less
+    // node ("Node 'X' has no class_type"). Strip them from this run-only copy —
+    // never from anything a save path might still reference.
+    const { workflow: strippedWorkflow, removedTypes } = stripFrontendOnlyNodes(plainWorkflow, FRONTEND_ONLY_NODE_TYPES)
+    if (removedTypes.length) {
+      plainWorkflow = strippedWorkflow
+      console.log('[Run] excluded frontend-only node(s) from execution:', removedTypes)
+    }
+    // Execution-boundary guard: VARS links (Collection → Smart Layout) are kept
+    // all the way through getWorkflow/getFilteredWorkflow so saves/reloads keep
+    // the wire — this run-only copy is the one place they get stripped, since
+    // Collection has no backend class_type and a surviving VARS link would abort
+    // graphToPrompt with "No link found in parent graph".
+    stripVarsLinks(plainWorkflow as any)
+
+    // One-shot promotes: substitute the take snapshot for any node with a pending
+    // promote. Registered by ArtifactImageNode.promoteTake just before it fires
+    // runFiltered. NOTE: consumption here is peek-free — a promote submitted in
+    // draft mode still renders final for that node. The actual consume (clearing
+    // the registry) happens at result time when the take is tagged (Task 4).
+    // Placement: this must run AFTER every early-return gate above (cost-confirm
+    // cancel, temp-image-promotion failure, iframe-not-ready) so an aborted run
+    // never leaves the entry in promoteByNode to be wrongly consumed by the
+    // node's next ordinary re-roll — and immediately before the actual submit.
+    const vnodesForPromote = vueCanvasRef.value!.getNodes?.() || []
+    applyPendingPromotes(plainWorkflow, vnodesForPromote, (nodeId) => peekPendingPromote(nodeId))
+
+    const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
+    console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
+      targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
+    // Direct-execution branch (Settings › "Direct execution (beta)", default OFF).
+    // When ON we build the ComfyUI API prompt in-app and POST it straight to
+    // /prompt via the native WS channel, bypassing the bridge iframe's queuePrompt.
+    // The builder can throw (UnknownNodeTypeError, subgraph guards) — surface that
+    // and abort BEFORE any dispatch so no spinner is left hanging.
+    let directPrompt: import('~/lib/graph/graphToPrompt').ApiPrompt | null = null
+    if (useDirect) {
+      try {
+        directPrompt = graphToPrompt(plainWorkflow, objectInfo.value)
+      } catch (err) {
+        const msg = err instanceof UnknownNodeTypeError
+          ? err.message
+          : String((err as any)?.message || err)
+        console.error('[Run] direct prompt build failed', err)
+        toast.error("Couldn't build workflow", { description: msg.slice(0, 200) })
+        // Abort cleanly — nothing was dispatched, so just clear run state.
+        if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
+        currentRunSilent.value = false
+        return 'abort'
+      }
+    }
+    return { plainWorkflow, directPrompt }
+  }
+
+  // Take 1 — assemble (also runs the once-only cost-confirm gate).
+  const firstTake = await assembleTake(true)
+  if (firstTake === 'abort') return false
+  const { plainWorkflow, directPrompt } = firstTake
+  // Extra parallel takes (direct-mode only) — each with its own fresh seeds.
+  const extraTakes: AssembledTake[] = []
+  for (let t = 1; t < takeCount; t++) {
+    const nextTake = await assembleTake(false)
+    if (nextTake === 'abort') return false
+    extraTakes.push(nextTake)
   }
 
   await sendLoadWorkflow(plainWorkflow, workerIdx)
@@ -846,24 +877,47 @@ async function runVueWorkflow(
   }
 
   if (useDirect) {
-    console.log('[Run] queueing prompt directly (bypassing bridge)')
     try {
-      const res = await direct.queue(directPrompt!, plainWorkflow)
-      const hasNodeErrors = res.node_errors && Object.keys(res.node_errors).length
-      if (hasNodeErrors || res.error) {
-        // Any failure (structured node_errors OR a plain error message from a
-        // 400/5xx/network drop) surfaces immediately through the same path the
-        // bridge 'queue_error' takes — red-ring + toast — and clears run state,
-        // instead of resolving silently and only tripping the ~15s watchdog.
-        surfaceQueueError(res.node_errors, res.error)
-      } else if (res.prompt_id) {
-        // Track this run in the registry so its events attribute to runTabId
-        // (not just the active tab) and N direct runs can be in flight at once.
-        // worker becomes real in Task 6 — pass the chosen worker through.
-        registerRun({ promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: workerIdx })
+      // Register a returned run + arm its per-run watchdog. Each parallel take
+      // lands on the worker queueParallel actually assigned it (res.worker),
+      // NOT the tab's own workerIdx — that's why QueueResult carries `worker`.
+      const registerResult = (res: import('~/composables/useDirectExecution').QueueResult) => {
+        if (!res.prompt_id) return
+        registerRun({ promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: res.worker ?? workerIdx })
         // Explicit (non-live) runs get a per-run no-response watchdog. Live-preview
         // runs fire continuously and silently by design, so they're exempt.
         if (!opts.live) armDirectRunWatchdog(res.prompt_id, runTabId)
+      }
+      if (takeCount > 1) {
+        // Parallel takes: fan N fresh-seeded prompts across the cloud pool.
+        // queueParallel decides worker assignment internally (and falls back to
+        // sequential-on-main when the pool is unavailable/ineligible). Register
+        // each success; surface the first failure once (aggregated).
+        console.log(`[Run] queueing ${takeCount} parallel takes directly (bypassing bridge)`)
+        const items = [firstTake, ...extraTakes].map((tk) => ({
+          prompt: tk.directPrompt!,
+          workflow: tk.plainWorkflow,
+        }))
+        const results = await direct.queueParallel(items, { objectInfo: objectInfo.value })
+        const failed = results.find((r) => (r.node_errors && Object.keys(r.node_errors).length) || r.error)
+        if (failed) surfaceQueueError(failed.node_errors, failed.error)
+        for (const res of results) {
+          if ((res.node_errors && Object.keys(res.node_errors).length) || res.error) continue
+          registerResult(res)
+        }
+      } else {
+        console.log('[Run] queueing prompt directly (bypassing bridge)')
+        const res = await direct.queue(directPrompt!, plainWorkflow)
+        const hasNodeErrors = res.node_errors && Object.keys(res.node_errors).length
+        if (hasNodeErrors || res.error) {
+          // Any failure (structured node_errors OR a plain error message from a
+          // 400/5xx/network drop) surfaces immediately through the same path the
+          // bridge 'queue_error' takes — red-ring + toast — and clears run state,
+          // instead of resolving silently and only tripping the ~15s watchdog.
+          surfaceQueueError(res.node_errors, res.error)
+        } else {
+          registerResult(res)
+        }
       }
     } catch (err) {
       console.error('[Run] direct queue failed', err)
@@ -910,13 +964,16 @@ async function handleRunFiltered(e: Event) {
   // 'downstream' = run this node + everything it feeds (push its current result
   // through the rest of the graph). Default/undefined = the upstream walk.
   const direction = detail?.direction as 'downstream' | undefined
+  // Parallel takes gesture: 'Re-roll ×4 (parallel)' passes takes:4 so the
+  // dispatch site fans out N fresh-seeded runs at once across the cloud pool.
+  const takes = detail?.takes as number | undefined
   // `live` runs are auto-previews (e.g. saving a Smart Layout): scope the run to
   // just these nodes (+ cached upstream), and skip the cost confirm / watchdog /
   // text-autofill dance that an explicit Run does.
   const live = detail?.live === true
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
   if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope, direction })) return
-  runVueWorkflow(expanded, { rerollScope, live, direction })
+  runVueWorkflow(expanded, { rerollScope, live, direction, takes })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
