@@ -1,0 +1,166 @@
+import { describe, it, expect } from 'vitest'
+import { mapWsEvent } from '~/lib/graph/wsEventMap'
+import { reconnectDelayMs } from '~/composables/useDirectExecution'
+
+const CID = 'client-abc'
+
+describe('mapWsEvent', () => {
+  it('maps execution_start to { event, prompt_id }', () => {
+    expect(mapWsEvent({ type: 'execution_start', data: { prompt_id: 'p1' } }, CID)).toEqual({
+      event: 'execution_start',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps progress computing percent from value/max', () => {
+    expect(mapWsEvent({ type: 'progress', data: { value: 5, max: 10, prompt_id: 'p1', node: '7' } }, CID)).toEqual({
+      event: 'progress',
+      percent: 50,
+      prompt_id: 'p1',
+      node_id: '7',
+    })
+  })
+
+  it('rounds percent', () => {
+    const out = mapWsEvent({ type: 'progress', data: { value: 1, max: 3, prompt_id: 'p1', node: '7' } }, CID)
+    expect(out?.percent).toBe(33)
+  })
+
+  it('maps executing with a node to { event, node_id }', () => {
+    expect(mapWsEvent({ type: 'executing', data: { node: '3', prompt_id: 'p1', display_node: '3' } }, CID)).toEqual({
+      event: 'executing',
+      node_id: '3',
+      display_node: '3',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps executing with node=null to execution_complete', () => {
+    expect(mapWsEvent({ type: 'executing', data: { node: null, prompt_id: 'p1' } }, CID)).toEqual({
+      event: 'execution_complete',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps executed to { event, node_id, output }', () => {
+    expect(
+      mapWsEvent({ type: 'executed', data: { node: '9', output: { images: [{ filename: 'a.png' }] }, prompt_id: 'p1' } }, CID)
+    ).toEqual({
+      event: 'executed',
+      node_id: '9',
+      output: { images: [{ filename: 'a.png' }] },
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps execution_error with traceback array joined to a string', () => {
+    expect(
+      mapWsEvent(
+        {
+          type: 'execution_error',
+          data: {
+            node_id: '4',
+            node_type: 'KSampler',
+            exception_message: 'boom',
+            exception_type: 'RuntimeError',
+            traceback: ['line1\n', 'line2\n'],
+            prompt_id: 'p1',
+          },
+        },
+        CID
+      )
+    ).toEqual({
+      event: 'execution_error',
+      node_id: '4',
+      node_type: 'KSampler',
+      exception_message: 'boom',
+      exception_type: 'RuntimeError',
+      traceback: 'line1\nline2\n',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps execution_success to execution_complete', () => {
+    expect(mapWsEvent({ type: 'execution_success', data: { prompt_id: 'p1' } }, CID)).toEqual({
+      event: 'execution_complete',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps execution_complete to execution_complete', () => {
+    expect(mapWsEvent({ type: 'execution_complete', data: { prompt_id: 'p1' } }, CID)).toEqual({
+      event: 'execution_complete',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('maps gate_paused to { event, node_id, prompt_id }', () => {
+    expect(mapWsEvent({ type: 'gate_paused', data: { node_id: '2', prompt_id: 'p1' } }, CID)).toEqual({
+      event: 'gate_paused',
+      node_id: '2',
+      prompt_id: 'p1',
+    })
+  })
+
+  it('ignores status messages (returns null)', () => {
+    expect(mapWsEvent({ type: 'status', data: { status: { exec_info: { queue_remaining: 0 } } } }, CID)).toBeNull()
+  })
+
+  it('returns null for an unknown type', () => {
+    expect(mapWsEvent({ type: 'some_future_event', data: {} }, CID)).toBeNull()
+  })
+
+  it('drops messages carrying a different clientId', () => {
+    expect(
+      mapWsEvent({ type: 'executing', data: { node: '3', prompt_id: 'p1', clientId: 'other-client' } }, CID)
+    ).toBeNull()
+  })
+
+  it('keeps messages carrying the same clientId', () => {
+    expect(
+      mapWsEvent({ type: 'executing', data: { node: '3', prompt_id: 'p1', clientId: CID } }, CID)
+    ).toEqual({
+      event: 'executing',
+      node_id: '3',
+      display_node: undefined,
+      prompt_id: 'p1',
+    })
+  })
+
+  it('drops messages with a different sid on status-shaped payloads', () => {
+    expect(mapWsEvent({ type: 'status', data: { sid: 'other-client' } }, CID)).toBeNull()
+  })
+
+  it('returns null for malformed/non-object data', () => {
+    expect(mapWsEvent({ type: 'executing', data: null }, CID)).toBeNull()
+    expect(mapWsEvent({ type: 'progress', data: undefined }, CID)).toBeNull()
+  })
+
+  it('returns null for a binary/non-JSON message shape', () => {
+    // Binary preview frames never reach mapWsEvent as { type, data } — but guard
+    // against garbage callers might pass after a failed parse.
+    expect(mapWsEvent(null as any, CID)).toBeNull()
+    expect(mapWsEvent(undefined as any, CID)).toBeNull()
+    expect(mapWsEvent({} as any, CID)).toBeNull()
+  })
+})
+
+describe('reconnectDelayMs', () => {
+  it('starts at 1s for the first attempt', () => {
+    expect(reconnectDelayMs(0)).toBe(1000)
+  })
+
+  it('doubles with each attempt', () => {
+    expect(reconnectDelayMs(1)).toBe(2000)
+    expect(reconnectDelayMs(2)).toBe(4000)
+  })
+
+  it('caps at 5s', () => {
+    expect(reconnectDelayMs(3)).toBe(5000)
+    expect(reconnectDelayMs(10)).toBe(5000)
+  })
+
+  it('never goes below 1s for negative/zero attempts', () => {
+    expect(reconnectDelayMs(-5)).toBe(1000)
+  })
+})
