@@ -69,6 +69,18 @@ export default defineNuxtConfig({
         console.log('[comfy-ws-proxy] WebSocket proxy for /ws → ComfyUI:8188 ready')
       })
     },
+    // Inline module: strip dev harness routes (pages/dev/**, engine-test,
+    // sgtest, …) from production builds so hosted deploys don't ship debug
+    // surfaces. `nuxt dev` keeps them all.
+    function (_options, nuxt) {
+      if (nuxt.options.dev) return
+      const DEV_PAGES = /^\/(dev(\/|$)|engine-test|sgtest|streamertest|timeline-harness|gl-conformance)/
+      nuxt.hook('pages:extend', (pages) => {
+        for (let i = pages.length - 1; i >= 0; i--) {
+          if (DEV_PAGES.test(pages[i]!.path)) pages.splice(i, 1)
+        }
+      })
+    },
   ],
 
   css: [
