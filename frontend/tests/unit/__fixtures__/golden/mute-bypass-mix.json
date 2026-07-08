@@ -1,0 +1,140 @@
+{
+  "last_node_id": 7,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "CheckpointLoaderSimple",
+      "pos": [40, 40],
+      "size": [270, 100],
+      "title": "Load Checkpoint (muted)",
+      "mode": 2,
+      "widgets_values": ["model_a.safetensors"],
+      "outputs": [
+        { "name": "MODEL", "type": "MODEL", "links": [1] }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 7,
+      "type": "ModelConsumerNode",
+      "pos": [400, 40],
+      "size": [200, 80],
+      "title": "Model Consumer",
+      "mode": 0,
+      "widgets_values": [],
+      "inputs": [
+        { "name": "model", "type": "MODEL", "link": 1 }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 2,
+      "type": "LoadImageNode",
+      "pos": [40, 220],
+      "size": [270, 100],
+      "title": "Load Image",
+      "mode": 0,
+      "widgets_values": ["photo.png"],
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [2] }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 4,
+      "type": "EnhanceNode",
+      "pos": [400, 220],
+      "size": [220, 120],
+      "title": "Enhance (bypassed)",
+      "mode": 4,
+      "color": "#3b2a2a",
+      "widgets_values": [0.9],
+      "inputs": [
+        { "name": "image", "type": "IMAGE", "link": 2 },
+        { "name": "strength", "type": "FLOAT", "link": null }
+      ],
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [3] }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 6,
+      "type": "FloatInputNode",
+      "pos": [400, 400],
+      "size": [200, 80],
+      "title": "Strength (converted widget)",
+      "mode": 0,
+      "widgets_values": [0.42],
+      "outputs": [
+        { "name": "FLOAT", "type": "FLOAT", "links": [5] }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 3,
+      "type": "EnhanceNode",
+      "pos": [720, 220],
+      "size": [220, 120],
+      "title": "Enhance (final)",
+      "mode": 0,
+      "widgets_values": [0.15],
+      "inputs": [
+        { "name": "image", "type": "IMAGE", "link": 3 },
+        { "name": "strength", "type": "FLOAT", "link": 5 }
+      ],
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [6] }
+      ],
+      "properties": {
+        "comfynext_preview": {
+          "images": [{ "filename": "stale.png", "type": "temp", "subfolder": "" }]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "SaveImage",
+      "pos": [1000, 220],
+      "size": [270, 260],
+      "title": "Save Image",
+      "mode": 0,
+      "widgets_values": ["ComfyUI"],
+      "inputs": [
+        { "name": "images", "type": "IMAGE", "link": 6 }
+      ],
+      "properties": {}
+    }
+  ],
+  "links": [
+    [1, 1, 0, 7, 0, "MODEL"],
+    [2, 2, 0, 4, 0, "IMAGE"],
+    [3, 4, 0, 3, 0, "IMAGE"],
+    [5, 6, 0, 3, 1, "FLOAT"],
+    [6, 3, 0, 5, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "title": "Mute demo",
+      "bounding": [10, 10, 700, 180],
+      "color": "#8e3f5e",
+      "font_size": 24
+    },
+    {
+      "title": "Bypass + converted-widget demo",
+      "bounding": [10, 200, 1260, 320],
+      "color": "#3f8e5e",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "comfynext": {
+      "annotations": [
+        { "id": "note-1", "text": "sanity check", "targetNodeId": 3 }
+      ]
+    }
+  },
+  "version": 0.4
+}

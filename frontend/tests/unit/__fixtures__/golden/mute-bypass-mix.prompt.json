@@ -1,0 +1,32 @@
+{
+  "2": {
+    "class_type": "LoadImageNode",
+    "inputs": {
+      "image": "photo.png"
+    }
+  },
+  "3": {
+    "class_type": "EnhanceNode",
+    "inputs": {
+      "strength": ["6", 0],
+      "image": ["2", 0]
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["3", 0],
+      "filename_prefix": "ComfyUI"
+    }
+  },
+  "6": {
+    "class_type": "FloatInputNode",
+    "inputs": {
+      "value": 0.42
+    }
+  },
+  "7": {
+    "class_type": "ModelConsumerNode",
+    "inputs": {}
+  }
+}

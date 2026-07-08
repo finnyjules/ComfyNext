@@ -1,0 +1,125 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "cccccccc-9999-4000-8000-000000000099",
+      "pos": [40, 40],
+      "size": [230, 60],
+      "title": "SeedGen",
+      "mode": 0,
+      "widgets_values": [918273, "randomize"],
+      "inputs": [],
+      "outputs": [
+        { "name": "INT", "type": "INT", "links": [1] }
+      ],
+      "properties": {
+        "proxyWidgets": [["3", "seed"], ["3", "control_after_generate"]]
+      }
+    },
+    {
+      "id": 4,
+      "type": "IntInputNode",
+      "pos": [40, 220],
+      "size": [200, 80],
+      "title": "Factor (converted widget)",
+      "mode": 0,
+      "widgets_values": [3],
+      "outputs": [
+        { "name": "INT", "type": "INT", "links": [2] }
+      ],
+      "properties": {}
+    },
+    {
+      "id": 3,
+      "type": "MultiplyNode",
+      "pos": [400, 40],
+      "size": [220, 120],
+      "title": "Multiply",
+      "color": "#2a3b3b",
+      "mode": 0,
+      "widgets_values": [111, 999],
+      "inputs": [
+        { "name": "value", "type": "INT", "link": 1 },
+        { "name": "factor", "type": "INT", "link": 2 }
+      ],
+      "outputs": [
+        { "name": "INT", "type": "INT", "links": [3] }
+      ],
+      "properties": {
+        "comfynext_preview": {
+          "text": "stale cached text"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "type": "IntSinkNode",
+      "pos": [720, 40],
+      "size": [200, 80],
+      "title": "Sink",
+      "mode": 0,
+      "widgets_values": [0],
+      "inputs": [
+        { "name": "value", "type": "INT", "link": 3 }
+      ],
+      "properties": {}
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "INT"],
+    [2, 4, 0, 3, 1, "INT"],
+    [3, 3, 0, 1, 0, "INT"]
+  ],
+  "groups": [
+    {
+      "title": "Subgraph + converted-widget demo",
+      "bounding": [10, 10, 950, 320],
+      "color": "#3f5e8e",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "comfynext": {
+      "annotations": []
+    }
+  },
+  "version": 0.4,
+  "definitions": {
+    "subgraphs": [
+      {
+        "id": "cccccccc-9999-4000-8000-000000000099",
+        "version": 1,
+        "state": { "lastNodeId": 3, "lastLinkId": 1 },
+        "name": "SeedGen",
+        "inputNode": { "id": -10, "bounding": [0, 0, 10, 10] },
+        "outputNode": { "id": -20, "bounding": [0, 0, 10, 10] },
+        "inputs": [],
+        "outputs": [
+          { "id": "o1", "name": "INT", "type": "INT", "linkIds": [1] }
+        ],
+        "nodes": [
+          {
+            "id": 3,
+            "type": "KSamplerIsh",
+            "pos": [0, 0],
+            "size": [0, 0],
+            "mode": 0,
+            "inputs": [],
+            "outputs": [
+              { "name": "INT", "type": "INT", "links": [1] }
+            ],
+            "widgets_values": [111, "fixed", 20]
+          }
+        ],
+        "groups": [],
+        "links": [
+          { "id": 1, "origin_id": 3, "origin_slot": 0, "target_id": -20, "target_slot": 0, "type": "INT" }
+        ],
+        "extra": {}
+      }
+    ]
+  }
+}

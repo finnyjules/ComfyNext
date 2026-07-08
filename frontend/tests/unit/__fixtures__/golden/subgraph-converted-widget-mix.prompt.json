@@ -1,0 +1,28 @@
+{
+  "1": {
+    "class_type": "IntSinkNode",
+    "inputs": {
+      "value": ["3", 0]
+    }
+  },
+  "3": {
+    "class_type": "MultiplyNode",
+    "inputs": {
+      "value": ["20003", 0],
+      "factor": ["4", 0]
+    }
+  },
+  "4": {
+    "class_type": "IntInputNode",
+    "inputs": {
+      "value": 3
+    }
+  },
+  "20003": {
+    "class_type": "KSamplerIsh",
+    "inputs": {
+      "seed": 918273,
+      "steps": 20
+    }
+  }
+}
