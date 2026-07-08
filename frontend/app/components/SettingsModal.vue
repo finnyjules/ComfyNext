@@ -78,6 +78,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
   ],
   appearance: [
     { id: 'Comfy.VueNodes.Enabled', label: 'Modern node design', type: 'toggle', description: 'Use the new Vue-based node rendering', local: true },
+    { id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', description: 'Queue prompts directly from the app, bypassing the bridge iframe', local: true },
     { id: 'Comfy.Node.Opacity', label: 'Node opacity', type: 'slider', min: 0.1, max: 1, step: 0.05 },
     { id: 'Comfy.Graph.CanvasInfo', label: 'Show canvas info (FPS)', type: 'toggle' },
     { id: 'Comfy.Graph.LinkMarkers', label: 'Link midpoint markers', type: 'select', options: [

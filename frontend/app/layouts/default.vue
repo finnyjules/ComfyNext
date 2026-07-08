@@ -40,9 +40,18 @@ import {
   type ProjectCanvas, type ProjectDoc,
 } from '~/lib/projectDoc'
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
+import { graphToPrompt } from '~/lib/graph/graphToPrompt'
+import { UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
+import { useDirectExecution } from '~/composables/useDirectExecution'
+import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
+import { useShadowParity } from '~/composables/useShadowParity'
+import { useVueNodes } from '~/composables/useVueNodes'
 
 const { tabs, activeTabId, activeTab, setActiveTab, closeTab, openTab, updateTabStatus, renameTab, runningCount } = useTabs()
 const { vueNodesEnabled } = useVueNodesEnabled()
+const { directExecutionEnabled } = useDirectExecutionEnabled()
+const direct = useDirectExecution()
+const { objectInfo } = useVueNodes()
 const route = useRoute()
 
 const draftMode = useDraftMode()
@@ -481,6 +490,68 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
   }
 }
 
+// Surface a ComfyUI node_errors validation map the same way the bridge
+// 'queue_error' postMessage does — per-node summary toast + clear run state so
+// spinners never hang. Shared by the bridge handler and the direct-execution
+// path (whose queue() resolves with { node_errors } on a /prompt 400).
+function surfaceQueueError(nodeErrors: any, fallbackMessage?: string) {
+  clearQueueWatchdog()
+  const { description } = summarizeNodeErrors(nodeErrors)
+  if (description) {
+    toast.error('Workflow validation failed', { description })
+  } else {
+    const msg = fallbackMessage || 'The canvas could not start this run.'
+    toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+  }
+  // Clear any pending run state so spinners don't hang.
+  if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
+  currentRunSilent.value = false
+}
+
+// Dev-only shadow parity: build OUR prompt for `workflow`, ask the bridge iframe
+// for ITS graphToPrompt output, and record any divergence. Strictly
+// fire-and-forget — any failure (build throw, no iframe, no/late reply) is
+// swallowed so the run is never blocked, delayed, or failed by this.
+function requestShadowParity(workflow: any, label: string) {
+  let ours: import('~/lib/graph/graphToPrompt').ApiPrompt
+  try {
+    ours = graphToPrompt(workflow, objectInfo.value)
+  } catch {
+    // Our builder disagreeing is itself a real divergence, but with nothing to
+    // compare against we can't record it here — the flag-ON path surfaces build
+    // failures directly. Silently skip parity for this run.
+    return
+  }
+  const iframe = getSharedIframe()
+  if (!iframe?.contentWindow) return
+
+  let done = false
+  const handler = (event: MessageEvent) => {
+    if (done) return
+    if (event.data?.type !== 'comfynext-bridge' || event.data?.event !== 'prompt_data') return
+    done = true
+    window.removeEventListener('message', handler)
+    try {
+      const result = event.data.prompt
+      // window.app.graphToPrompt() returns { workflow, output }; the API prompt
+      // is `.output`. Fall back to the raw result if a build already unwrapped it.
+      const theirs = result?.output ?? result
+      if (theirs) useShadowParity().record(ours, theirs, label)
+    } catch (err) {
+      console.warn('[shadow-parity] record failed (ignored)', err)
+    }
+  }
+  window.addEventListener('message', handler)
+  iframe.contentWindow.postMessage({ type: 'comfynext', action: 'getPrompt' }, '*')
+  // Give up quietly if the reply never comes — a missing prompt_data is fine.
+  setTimeout(() => {
+    if (!done) {
+      done = true
+      window.removeEventListener('message', handler)
+    }
+  }, 4000)
+}
+
 // Run workflow from Vue canvas — loads into bridge iframe, then queues via bridge.
 // When `targetIds` is provided, runs only that subset (plus upstream deps).
 // Forgiving filtering happens via buildFilteredWorkflow which mutes everything
@@ -734,13 +805,70 @@ async function runVueWorkflow(
   const activeCount = (plainWorkflow.nodes as any[]).filter((n: any) => (n.mode ?? 0) !== 2).length
   console.log('[Run] sending workflow with', plainWorkflow.nodes.length, 'nodes to worker', workerIdx,
     targetIds?.length ? `(filtered: ${activeCount} active, ${targetIds.length} targets)` : '')
+  // Direct-execution branch (Settings › "Direct execution (beta)", default OFF).
+  // When ON we build the ComfyUI API prompt in-app and POST it straight to
+  // /prompt via the native WS channel, bypassing the bridge iframe's queuePrompt.
+  // The builder can throw (UnknownNodeTypeError, subgraph guards) — surface that
+  // and abort BEFORE any dispatch so no spinner is left hanging. We ALSO still
+  // load the workflow into the iframe (harmless — it's hidden) so the dev-only
+  // shadow-parity comparison below has a valid graph to serialize against.
+  const useDirect = directExecutionEnabled.value
+  let directPrompt: import('~/lib/graph/graphToPrompt').ApiPrompt | null = null
+  if (useDirect) {
+    try {
+      directPrompt = graphToPrompt(plainWorkflow, objectInfo.value)
+    } catch (err) {
+      const msg = err instanceof UnknownNodeTypeError
+        ? err.message
+        : String((err as any)?.message || err)
+      console.error('[Run] direct prompt build failed', err)
+      toast.error("Couldn't build workflow", { description: msg.slice(0, 200) })
+      // Abort cleanly — nothing was dispatched, so just clear run state.
+      if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
+      currentRunSilent.value = false
+      return false
+    }
+  }
+
   await sendLoadWorkflow(plainWorkflow, workerIdx)
-  await new Promise(r => setTimeout(r, 800))
-  console.log('[Run] sending queuePrompt to worker', workerIdx)
-  iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
-  // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
-  // continuously and silently by design, so they're exempt from the toast.
-  if (!opts.live) armQueueWatchdog(runTabId)
+
+  // Dev-only shadow parity: on EVERY run (direct or bridge), ask the freshly
+  // loaded iframe for its own graphToPrompt output and compare it to ours.
+  // Fire-and-forget: never blocks, delays, or fails the run.
+  if (import.meta.dev) {
+    try {
+      requestShadowParity(plainWorkflow, `run:${Date.now()}`)
+    } catch (err) {
+      console.warn('[Run] shadow parity request failed (ignored)', err)
+    }
+  }
+
+  if (useDirect) {
+    console.log('[Run] queueing prompt directly (bypassing bridge)')
+    // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
+    // continuously and silently by design, so they're exempt from the toast.
+    if (!opts.live) armQueueWatchdog(runTabId)
+    try {
+      const res = await direct.queue(directPrompt!, plainWorkflow)
+      if (res.node_errors && Object.keys(res.node_errors).length) {
+        // Same surfacing path the bridge 'queue_error' takes: red-ring + toast.
+        surfaceQueueError(res.node_errors)
+      }
+    } catch (err) {
+      console.error('[Run] direct queue failed', err)
+      clearQueueWatchdog()
+      toast.error("Couldn't start run", { description: String((err as any)?.message || err).slice(0, 160) })
+      if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
+      currentRunSilent.value = false
+    }
+  } else {
+    await new Promise(r => setTimeout(r, 800))
+    console.log('[Run] sending queuePrompt to worker', workerIdx)
+    iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
+    // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
+    // continuously and silently by design, so they're exempt from the toast.
+    if (!opts.live) armQueueWatchdog(runTabId)
+  }
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
   // iframe sometimes retains focus after the postMessage handshake, and on
@@ -2225,6 +2353,11 @@ const groupedHistory = computed(() => {
 })
 
 // Listen for bridge messages from ComfyUI iframes
+// Guard so the direct-execution onEvent callback registers only once even if
+// the layout remounts (onEvent's Set dedupes identity, but each remount would
+// otherwise add a fresh closure).
+let directEventListenerRegistered = false
+
 onMounted(async () => {
   // Vue mode: load workflow for the active project tab immediately (no iframe needed)
   if (vueNodesEnabled.value && activeTab.value.type === 'project') {
@@ -2240,6 +2373,20 @@ onMounted(async () => {
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
+
+  // Direct-execution WS events flow through the SAME handleBridgeEvent as the
+  // bridge's postMessages (mapWsEvent shapes them identically). Register once;
+  // onEvent's listener set dedupes, but guard anyway. Only hold the WS open
+  // while the flag is ON — connect now if enabled, and toggle with the setting.
+  if (!directEventListenerRegistered) {
+    directEventListenerRegistered = true
+    direct.onEvent((e) => handleBridgeEvent(e))
+  }
+  if (directExecutionEnabled.value) direct.connect()
+  watch(directExecutionEnabled, (on) => {
+    if (on) direct.connect()
+    else direct.disconnect()
+  })
 
   // Persistent training queue: poll for status (badge + toasts) regardless of
   // whether the Queue panel is open, and refresh immediately when a job is
@@ -2266,6 +2413,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:trainingQueueUpdated', fetchTrainingJobs)
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null }
   if (trainingPollTimer) { clearInterval(trainingPollTimer); trainingPollTimer = null }
+  direct.disconnect()
 })
 
 const { settingsOpen, openSettings, closeSettings } = useSettingsModal()
@@ -2297,39 +2445,48 @@ function handleOpenBilling() {
   userPopupOpen.value = false
 }
 
+// Thin wrapper over the postMessage listener: unwrap the bridge envelope and
+// hand the payload to handleBridgeEvent. Direct-execution WS events are routed
+// through the SAME handleBridgeEvent (via direct.onEvent) so both channels share
+// one code path — see the onEvent registration in onMounted.
 function handleBridgeMessage(event: MessageEvent) {
   if (!event.data || event.data.type !== 'comfynext-bridge') return
+  handleBridgeEvent(event.data, event.source as Window | null)
+}
+
+function handleBridgeEvent(data: any, source?: Window | null) {
+  if (!data) return
 
   // Bridge signals ComfyUI is fully initialized and ready for workflow loads
-  if (event.data.status === 'ready') {
+  if (data.status === 'ready') {
     markBridgeReady() // global (worker-0 / single-worker path)
     if (poolEnabled.value) {
-      const w = workerIndexOfFrame(event.source as Window)
+      const w = workerIndexOfFrame(source as Window)
       if (w != null) markWorkerReady(w)
     }
     return
   }
 
   // Bridge confirms a workflow finished loading into the canvas
-  if (event.data.event === 'workflow_loaded') {
+  if (data.event === 'workflow_loaded') {
     endWorkflowLoading()
     return
   }
 
   // Handle credit updates (not tab-specific)
-  if (event.data.event === 'credits_update') {
-    credits.value = event.data.credits
+  if (data.event === 'credits_update') {
+    credits.value = data.credits
     return
   }
 
   // Handle user profile data
-  if (event.data.event === 'user_profile') {
-    userProfile.value = event.data.profile
+  if (data.event === 'user_profile') {
+    userProfile.value = data.profile
     return
   }
 
   // Handle sign out confirmation
-  if (event.data.event === 'signed_out') {
+  if (data.event === 'signed_out') {
     userProfile.value = null
     credits.value = null
     userPopupOpen.value = false
@@ -2337,17 +2494,17 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   // Handle checkout URL from bridge (after purchaseCredits)
-  if (event.data.event === 'checkout_url') {
+  if (data.event === 'checkout_url') {
     creditsBuying.value = false
     creditsModalOpen.value = false
-    if (event.data.url) {
-      window.open(event.data.url, '_blank')
+    if (data.url) {
+      window.open(data.url, '_blank')
     }
     return
   }
 
   // Handle purchase error
-  if (event.data.event === 'purchase_error') {
+  if (data.event === 'purchase_error') {
     creditsBuying.value = false
     return
   }
@@ -2359,25 +2516,15 @@ function handleBridgeMessage(event: MessageEvent) {
   // summary. The offending nodes get their red rings via VueNodeCanvas, which
   // listens to the same bridge postMessage directly (the exact path
   // execution_error events take — no re-dispatch needed).
-  if (event.data.event === 'queue_error') {
-    clearQueueWatchdog()
-    const { description } = summarizeNodeErrors(event.data.node_errors)
-    if (description) {
-      toast.error('Workflow validation failed', { description })
-    } else {
-      const msg = event.data.message || 'The canvas could not start this run.'
-      toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
-    }
-    // Clear any pending run state so spinners don't hang.
-    if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
-    currentRunSilent.value = false
+  if (data.event === 'queue_error') {
+    surfaceQueueError(data.node_errors, data.message)
     return
   }
 
   // Bridge acked a successful queue (POST /prompt returned a prompt_id) — the
   // run is on its way, so cancel the no-response watchdog. (Bridges predating
   // this event fall back to the execution_start clear below.)
-  if (event.data.event === 'queued') {
+  if (data.event === 'queued') {
     clearQueueWatchdog()
     return
   }
@@ -2385,14 +2532,14 @@ function handleBridgeMessage(event: MessageEvent) {
   // Non-fatal bridge diagnostics that the user must act on — e.g. the iframe's
   // LiteGraph node registry is stale after a ComfyUI restart (it dropped a
   // Timeline's edit_state at configure) and only a page reload can fix it.
-  if (event.data.event === 'bridge_warning') {
-    const msg = String(event.data.message || 'The ComfyUI canvas reported a problem.')
+  if (data.event === 'bridge_warning') {
+    const msg = String(data.message || 'The ComfyUI canvas reported a problem.')
     toast.warning('ComfyUI needs a reload', { description: msg.slice(0, 160) })
     return
   }
 
   // Space key forwarded from iframe → open Vue node search dialog
-  if (event.data.event === 'open_node_search') {
+  if (data.event === 'open_node_search') {
     if (activeTab.value.type === 'project') {
       openNodeSearch()
     }
@@ -2400,13 +2547,15 @@ function handleBridgeMessage(event: MessageEvent) {
   }
 
   // Debug messages from bridge
-  if (event.data.event === 'debug') {
-    console.log('[ComfyNext Debug]', event.data.msg)
+  if (data.event === 'debug') {
+    console.log('[ComfyNext Debug]', data.msg)
     return
   }
 
-  // Find which tab this iframe belongs to
-  const sourceFrame = event.source as Window
+  // Find which tab this iframe belongs to. Direct-execution WS events carry no
+  // source Window (source is undefined) — they fall through to the
+  // active-project-tab fallback below. Cast mirrors the original bridge path.
+  const sourceFrame = source as Window
   const projectTabs = tabs.value.filter((t) => t.type === 'project')
 
   let tabId: string | null = null
@@ -2436,7 +2585,7 @@ function handleBridgeMessage(event: MessageEvent) {
     if (activeProject) tabId = activeProject.id
   }
 
-  const { event: evt, percent, prompt_id, node_id } = event.data
+  const { event: evt, percent, prompt_id, node_id } = data
 
   // TEMP DEBUG: surface bridge events so we can see why the tab indicator
   // sometimes doesn't update during a Run. Remove once the cause is found.
@@ -2499,7 +2648,7 @@ function handleBridgeMessage(event: MessageEvent) {
     }
     currentRunningNode.value = displayName
   } else if (evt === 'executed') {
-    if (event.data.output) runOutputs.push(...extractOutputFiles(event.data.output))
+    if (data.output) runOutputs.push(...extractOutputFiles(data.output))
     // Track node completion for coarse progress
     tabNodeProgress.value.completed++
     const np = tabNodeProgress.value
@@ -2600,8 +2749,8 @@ function handleBridgeMessage(event: MessageEvent) {
     const wasSilent = currentRunSilent.value
     currentRunSilent.value = false
     if (!wasSilent) {
-      const nodeName = event.data.node_type || event.data.node_id || 'Unknown node'
-      const reason = event.data.exception_message || 'Unknown error'
+      const nodeName = data.node_type || data.node_id || 'Unknown node'
+      const reason = data.exception_message || 'Unknown error'
       setRunResult({ kind: 'error', nodeName, message: reason, at: Date.now() })
       toast.error(`${nodeName} failed`, { description: String(reason).slice(0, 200) })
     }
