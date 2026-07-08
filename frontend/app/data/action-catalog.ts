@@ -48,6 +48,9 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   SwapProductNode:       { useCase: 'Swap a product into a scene', model: 'Nano Banana 2',                            intent: 'edit' },
   SwapBackgroundNode:    { useCase: 'Swap the background behind a product', model: 'Nano Banana 2', intent: 'edit' },
   RotateCameraNode:      { useCase: 'Rotate the camera',              model: 'Qwen-Image-Edit-Plus',                     intent: 'edit' },
+  RemoveObjectNode:      { useCase: 'Remove an object',               model: 'Nano Banana 2',                            intent: 'edit', source: 'image' },
+  TextEditNode:          { useCase: 'Edit text in an image',          model: 'Nano Banana 2',                            intent: 'edit', source: 'image' },
+  RecolorObjectNode:     { useCase: 'Recolor an object',              model: 'Nano Banana 2',                            intent: 'edit', source: 'image' },
   // -- Image · enhance --------------------------------------------------------
   UpscaleImageNode:      { useCase: 'Upscale an image',               model: 'Clarity',                                  intent: 'enhance' },
   RestorePhotoNode:      { useCase: 'Restore an old photo',           model: 'Flux Kontext · Restore',                   intent: 'enhance' },
