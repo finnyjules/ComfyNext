@@ -103,6 +103,45 @@ const listeners = new Set<(e: BridgeShapedEvent) => void>()
 // the run registry into the hot message handler.
 const promptWorker = new Map<string, number>()
 
+// app-side worker → count of POSTs currently in flight (awaiting /prompt's
+// response) for that worker. Incremented BEFORE the await in queue(), so a
+// sibling item's fast execution_complete can't drain-close the socket while
+// this item's prompt_id → worker mapping hasn't landed yet (the race this
+// module fixes: mapping is only recorded AFTER the POST resolves). Decremented
+// in queue()'s finally, regardless of success/failure. Keys are deleted at 0
+// rather than left at 0 so "no entry" and "0 pending" are the same thing.
+const pendingPosts = new Map<number, number>()
+
+function reservePendingPost(worker: number): void {
+  if (worker < 1) return
+  pendingPosts.set(worker, (pendingPosts.get(worker) ?? 0) + 1)
+}
+
+function releasePendingPost(worker: number): void {
+  if (worker < 1) return
+  const next = (pendingPosts.get(worker) ?? 0) - 1
+  if (next <= 0) pendingPosts.delete(worker)
+  else pendingPosts.set(worker, next)
+}
+
+/** Pure decision helper for whether a pool worker's socket may be closed:
+ *  only when NOTHING is keeping it busy — no mapped in-flight prompts AND no
+ *  POST still awaiting its /prompt response. Worker 0 (main) is never closed
+ *  here; its lifecycle belongs to connect()/disconnect(). Exported for unit
+ *  testing (see direct-execution-drain.unit.spec.ts). */
+export function shouldCloseWorkerSocket(
+  worker: number,
+  mappedWorkers: Iterable<number>,
+  pendingCount: number,
+): boolean {
+  if (worker < 1) return false
+  if (pendingCount > 0) return false
+  for (const w of mappedWorkers) {
+    if (w === worker) return false
+  }
+  return true
+}
+
 function socketFor(worker: number): SocketState {
   let s = sockets.get(worker)
   if (!s) {
@@ -143,10 +182,7 @@ function scheduleReconnect(worker: number, clientId: string): void {
  *  drained. Main (worker 0) is never auto-closed — its lifecycle is the flag
  *  watcher's (connect/disconnect). */
 function maybeCloseDrainedPoolSocket(worker: number): void {
-  if (worker < 1) return
-  for (const w of promptWorker.values()) {
-    if (w === worker) return // still has prompts in flight
-  }
+  if (!shouldCloseWorkerSocket(worker, promptWorker.values(), pendingPosts.get(worker) ?? 0)) return
   const s = sockets.get(worker)
   if (!s) return
   s.wantConnected = false
@@ -256,6 +292,12 @@ export function useDirectExecution(): DirectExecution {
     // execution events. Main's socket is owned by connect() and left alone.
     if (worker >= 1) ensurePoolSocket(worker, clientId)
 
+    // Reserve this worker as busy BEFORE the await: without this, a sibling
+    // item on the same worker whose POST resolved first can see its
+    // execution_complete, find no promptWorker entries for this worker (this
+    // item's mapping only lands after ITS await resolves below), and close the
+    // socket out from under this still-in-flight request.
+    if (worker >= 1) reservePendingPost(worker)
     try {
       const res = await $fetch<{ prompt_id?: string }>(path, {
         method: 'POST',
@@ -279,11 +321,16 @@ export function useDirectExecution(): DirectExecution {
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
       const error = err?.data?.error?.message ?? err?.message ?? String(err)
-      // On a pool worker, a failed POST may leave a socket with nothing left to
-      // do — drain-check it (no prompt_id was recorded, so this only closes if
-      // the worker has no OTHER in-flight prompts).
-      if (worker >= 1) maybeCloseDrainedPoolSocket(worker)
       return { node_errors, error }
+    } finally {
+      // Release the reservation whether the POST succeeded or failed. On
+      // failure, no promptWorker entry was recorded for this item, so this may
+      // now leave the worker fully drained (no mappings, no other pending
+      // POSTs) — drain-check it here since the catch block no longer does.
+      if (worker >= 1) {
+        releasePendingPost(worker)
+        maybeCloseDrainedPoolSocket(worker)
+      }
     }
   }
 
