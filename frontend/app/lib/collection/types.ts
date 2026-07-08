@@ -36,6 +36,10 @@ export interface CollectionLink {
 export interface VarBinding {
   collectionId: string
   columnKey: string
+  /** Discriminator: undefined or 'collection' = data-merge binding; 'reference' = @refs binding. */
+  kind?: 'collection' | 'reference'
+  /** Bare reference handle when kind === 'reference'. */
+  refName?: string
   /** Last literal value, used when the binding dangles (deleted column/collection). */
   lastLiteral?: string | number
 }
