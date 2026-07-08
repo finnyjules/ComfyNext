@@ -4,6 +4,17 @@
 // `mapWsEvent` (wsEventMap.ts) produces those exact shapes so that handler
 // doesn't need to change.
 //
+// WHY DIRECT-TO-COMFYUI (not same-origin /ws): in dev, Nuxt's "comfy-ws-proxy"
+// hook in nuxt.config.ts is supposed to pipe same-origin /ws upgrades to
+// ComfyUI on 127.0.0.1:8188, but it does NOT reliably intercept the upgrade —
+// the request falls through to SSR/Vue Router ("No match found for location
+// with path /ws?clientId=...") followed by an unhandled `write ECONNRESET`
+// that CRASHES the Nuxt dev server. So this composable connects straight to
+// the ComfyUI origin instead, the same thing the bridge iframe already does
+// (see `comfyOrigin` in layouts/default.vue — the "iframe bypasses proxy"
+// pattern). If/when the comfy-ws-proxy hook is made reliable for hosted
+// deployments, this can revisit routing through same-origin /ws again.
+//
 // Module-singleton: one WS connection per app, regardless of how many
 // components call useDirectExecution().
 
@@ -47,9 +58,17 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let cachedClientId: string | null = null
 const listeners = new Set<(e: BridgeShapedEvent) => void>()
 
+/** Pure URL builder — ws(s):// + origin's host/port + /ws?clientId=. Exported for unit testing. */
+export function buildWsUrl(httpOrigin: string, clientId: string): string {
+  return `${httpOrigin.replace(/^http/, 'ws')}/ws?clientId=${clientId}`
+}
+
 function wsUrl(clientId: string): string {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${location.host}/ws?clientId=${clientId}`
+  // Same accessor the bridge iframe uses in layouts/default.vue — connect
+  // straight to ComfyUI's own origin rather than same-origin /ws (see the
+  // header comment above for why).
+  const comfyOrigin = useRuntimeConfig().public.comfyOrigin || 'http://127.0.0.1:8188'
+  return buildWsUrl(comfyOrigin, clientId)
 }
 
 function scheduleReconnect(clientId: string): void {

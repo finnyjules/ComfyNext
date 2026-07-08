@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mapWsEvent } from '~/lib/graph/wsEventMap'
-import { reconnectDelayMs } from '~/composables/useDirectExecution'
+import { reconnectDelayMs, buildWsUrl } from '~/composables/useDirectExecution'
 
 const CID = 'client-abc'
 
@@ -162,5 +162,17 @@ describe('reconnectDelayMs', () => {
 
   it('never goes below 1s for negative/zero attempts', () => {
     expect(reconnectDelayMs(-5)).toBe(1000)
+  })
+})
+
+describe('buildWsUrl', () => {
+  it('converts an http origin to ws and appends the clientId', () => {
+    expect(buildWsUrl('http://127.0.0.1:8188', CID)).toBe('ws://127.0.0.1:8188/ws?clientId=client-abc')
+  })
+
+  it('converts an https origin to wss', () => {
+    expect(buildWsUrl('https://comfynext.fly.dev:8188', CID)).toBe(
+      'wss://comfynext.fly.dev:8188/ws?clientId=client-abc',
+    )
   })
 })
