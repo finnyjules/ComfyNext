@@ -114,3 +114,38 @@ describe('V3-style string COMBO inputs (GenerateImageNode regression)', () => {
     ])
   })
 })
+
+describe('name-convention seed controls (seedHasControlWidget parity)', () => {
+  // The Vue layer adds a control widget for INT inputs NAMED seed/noise_seed
+  // even when control_after_generate is absent (useFilteredPrompt.ts
+  // seedHasControlWidget: `config?.control_after_generate ?? name-based`).
+  // widgetSlots must mirror that exactly or every value after the seed
+  // shifts by one (EditImageNode's safety_tolerance famously ate a control
+  // string this way).
+  const oiFor = (seedCfg: Record<string, unknown> | undefined, name = 'seed') => ({
+    N: { input: { required: {
+      [name]: seedCfg === undefined ? ['INT'] : ['INT', seedCfg],
+      steps: ['INT', { default: 20 }],
+    } } },
+  })
+
+  it('flag-less `seed` INT gets a control slot', () => {
+    expect(widgetSlots('N', oiFor({ default: 0 })).map((s) => s.name))
+      .toEqual(['seed', 'seed__control', 'steps'])
+  })
+
+  it('flag-less `noise_seed` INT gets a control slot', () => {
+    expect(widgetSlots('N', oiFor({ default: 0 }, 'noise_seed')).map((s) => s.name))
+      .toEqual(['noise_seed', 'noise_seed__control', 'steps'])
+  })
+
+  it('explicit control_after_generate: false suppresses the control slot', () => {
+    expect(widgetSlots('N', oiFor({ control_after_generate: false })).map((s) => s.name))
+      .toEqual(['seed', 'steps'])
+  })
+
+  it('an INT named seed with no opts at all still gets the control slot', () => {
+    expect(widgetSlots('N', oiFor(undefined)).map((s) => s.name))
+      .toEqual(['seed', 'seed__control', 'steps'])
+  })
+})

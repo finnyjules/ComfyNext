@@ -61,7 +61,15 @@ export function widgetSlots(classType: string, objectInfo: Record<string, any>):
       if (!isWidgetInput(spec)) continue
       slots.push({ name })
       const opts = spec[1]
-      if (opts?.control_after_generate === true) {
+      // Mirror the Vue layer's seedHasControlWidget convention EXACTLY
+      // (useFilteredPrompt.ts): an explicit control_after_generate wins;
+      // when the flag is absent, INT inputs literally named seed/noise_seed
+      // still get a control widget. 40 node types (EditImageNode,
+      // FluxLoRARemoteNode, …) rely on the name convention alone — missing
+      // it shifts every later positional value by one.
+      const hasControl = spec[0] === 'INT'
+        && (opts?.control_after_generate ?? ['seed', 'noise_seed'].includes(name))
+      if (hasControl) {
         slots.push({ name: `${name}__control`, control: true })
       }
     }
