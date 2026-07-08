@@ -73,15 +73,38 @@ export default defineNuxtConfig({
           // become an unhandled 'error' (ECONNRESET/EPIPE) that crashes dev.
           socket.on('error', () => socket.destroy())
 
+          // Resolve which ComfyUI instance to route to via `?comfyWorker=N`
+          // (N=0-based pool index → port 8189+N; absent/invalid/out-of-range
+          // → main instance :8188). This is an inlined duplicate of the
+          // ~10-line parse in server/utils/workerRoute.ts (resolveWorkerTarget)
+          // — that's the canonical implementation; nuxt.config.ts cannot
+          // import from server/utils at config-eval time, so keep these two
+          // in sync by hand if the rules ever change.
+          let wsPort = 8188
+          let wsPath = req.url ?? '/ws'
+          const qIdx = wsPath.indexOf('?')
+          if (qIdx !== -1) {
+            const params = new URLSearchParams(wsPath.slice(qIdx + 1))
+            if (params.has('comfyWorker')) {
+              const raw = params.get('comfyWorker')
+              const n = raw === null || raw === '' ? NaN : Number(raw)
+              if (Number.isInteger(n) && n >= 0 && n <= 7) wsPort = 8189 + n
+              params.delete('comfyWorker')
+              const rest = params.toString()
+              wsPath = rest ? `${wsPath.slice(0, qIdx)}?${rest}` : wsPath.slice(0, qIdx)
+            }
+          }
+          const wsTarget = `127.0.0.1:${wsPort}`
+
           const proxyReq = http.request({
             hostname: '127.0.0.1',
-            port: 8188,
-            path: req.url,
+            port: wsPort,
+            path: wsPath,
             method: 'GET',
             // Rewrite Origin (and Host) to the ComfyUI origin so its
             // origin-check middleware sees origin == host and returns 101
             // instead of 403 — mirrors server/middleware/comfyui-proxy.ts.
-            headers: { ...req.headers, host: '127.0.0.1:8188', origin: 'http://127.0.0.1:8188' },
+            headers: { ...req.headers, host: wsTarget, origin: `http://${wsTarget}` },
           })
 
           proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {

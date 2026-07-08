@@ -2,7 +2,7 @@
 // The ComfyUI iframes load directly from :8188, but the Nuxt frontend
 // still makes fetch() calls to these paths (e.g. /queue, /comfyui/settings).
 
-const COMFY_BACKEND = 'http://127.0.0.1:8188'
+import { resolveWorkerTarget } from '../utils/workerRoute'
 
 // Prefixes to proxy (without trailing slashes — matching uses startsWith)
 const PROXY_PREFIXES = [
@@ -38,14 +38,18 @@ export default defineEventHandler(async (event) => {
   for (const prefix of PROXY_PREFIXES) {
     // Match /view, /view/, /view?query=..., /view/subpath, etc.
     if (path === prefix || path.startsWith(prefix + '/') || path.startsWith(prefix + '?')) {
-      const backendPath = path.startsWith('/comfyui')
-        ? path.replace(/^\/comfyui/, '') || '/'
-        : path
+      // `?comfyWorker=N` selects a headless pool worker (8189+N) instead of
+      // the main instance (8188); see server/utils/workerRoute.ts.
+      const { port, cleanUrl } = resolveWorkerTarget(path)
+      const target = `http://127.0.0.1:${port}`
+      const backendPath = cleanUrl.startsWith('/comfyui')
+        ? cleanUrl.replace(/^\/comfyui/, '') || '/'
+        : cleanUrl
       // Override the Origin header so ComfyUI's origin-check middleware
-      // sees host == origin (both 127.0.0.1:8188) instead of blocking the
+      // sees host == origin (both 127.0.0.1:<port>) instead of blocking the
       // Nuxt dev-server port (3000) with a 403.
-      return proxyRequest(event, `${COMFY_BACKEND}${backendPath}`, {
-        fetchOptions: { headers: { origin: COMFY_BACKEND } },
+      return proxyRequest(event, `${target}${backendPath}`, {
+        fetchOptions: { headers: { origin: target } },
       })
     }
   }
