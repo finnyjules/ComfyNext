@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -249,6 +249,12 @@ function triggerUpload() {
 // Open the dedicated inpaint editor for this image (the canvas owns the modal).
 function openInpaint() {
   window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id } }))
+}
+
+// One-click remove: open the inpaint editor pre-set to click-select, which
+// auto-runs a removal as soon as an object is picked.
+function openRemoveObject() {
+  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
 }
 
 // Knock out the background: splice a local BackgroundRemove node after this image
@@ -713,6 +719,10 @@ const promoteUsdLabel = computed(() => {
               </button>
               <button class="edit-menu-item" @click.stop="runAction(openInpaint)">
                 <Brush class="size-3 shrink-0" /> Inpaint
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(openRemoveObject)">
+                <Scissors class="size-3 shrink-0" /> Remove object
+                <span class="edit-menu-hint">click it</span>
               </button>
               <button class="edit-menu-item" @click.stop="runAction(editWithNanoBanana)">
                 <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)

@@ -3005,9 +3005,13 @@ function publishStudioOutput(studioId: string, filename: string) {
 
 // Inpaint modal state (dedicated editor for an Image artifact).
 const inpaintOpenForId = ref<string | null>(null)
+const inpaintIntent = ref<'remove' | 'recolor' | null>(null)
 function handleOpenInpaint(e: Event) {
   const detail = (e as CustomEvent).detail
-  if (detail?.nodeId) inpaintOpenForId.value = String(detail.nodeId)
+  if (detail?.nodeId) {
+    inpaintOpenForId.value = String(detail.nodeId)
+    inpaintIntent.value = detail.intent === 'remove' || detail.intent === 'recolor' ? detail.intent : null
+  }
 }
 
 // Pose Mannequin 3D editor modal state.
@@ -6442,7 +6446,8 @@ defineExpose({
         :node-id="inpaintOpenForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
-        @close="inpaintOpenForId = null"
+        :intent="inpaintIntent"
+        @close="inpaintOpenForId = null; inpaintIntent = null"
       />
     </Teleport>
 

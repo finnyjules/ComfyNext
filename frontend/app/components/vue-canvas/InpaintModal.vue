@@ -21,6 +21,7 @@ const props = defineProps<{
   nodeId: string
   nodes: any[]
   edges: any[]
+  intent?: 'remove' | 'recolor' | null
 }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -118,6 +119,9 @@ watch(tool, (t) => {
   if (t === 'paint') brush.mode.value = 'add'
   else if (t === 'erase') brush.mode.value = 'erase'
 })
+// Intent flows (Remove object / Recolor) start on click-select: one click on
+// the object is the whole gesture.
+if (props.intent) tool.value = 'select'
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 const boxRect = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
 const boxDragging = ref(false)
@@ -389,6 +393,8 @@ async function doSamSelect(nx: number, ny: number) {
     const m = await loadImage(mask)
     samMask.value = imageToDataUrl(m, out.value.w, out.value.h)
     brush.clear()
+    // Remove intent: the click IS the command — erase immediately.
+    if (props.intent === 'remove') await runInpaint(true)
   } catch {
     inpaintError.value = 'Click-select unavailable (check SAM model); paint the area instead.'
     tool.value = 'paint'
