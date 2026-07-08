@@ -3,16 +3,32 @@
 // Selection-driven action sampler (IA spec §3): the top takes-input actions
 // for this media type, branching off the artifact via comfynext:applyEffect
 // (branch: true = new deliverable; never re-points the producing chain).
-// "All actions…" deep-links the Actions panel to this domain. Chips use the
-// quiet ns-chip look from NextStepsStrip — these are generic escalators, not
-// pastel reviewer-fix chips.
+// "All actions…" deep-links the Actions panel to this domain. Chips use a
+// quiet dark look — these are generic escalators, not pastel reviewer-fix chips.
+import { ref, onMounted } from 'vue'
 import { MoreHorizontal } from 'lucide-vue-next'
 import { ACTION_CATALOG, CHIPS_BY_DOMAIN, type ActionDomain } from '~/data/action-catalog'
 import { getGeneratorIcon } from '~/data/generator-icons'
+import { parseBadgeUsd } from '~/lib/costEstimate'
+import { fetchObjectInfo } from '~/composables/useVueNodes'
 
 const props = defineProps<{ nodeId: string; domain: ActionDomain; output: string }>()
 
 const chips = CHIPS_BY_DOMAIN[props.domain] ?? []
+
+// Truthful $ hints from the same price_badge the nodes themselves show —
+// no hand-maintained price list to drift. objectInfo is cached; this await
+// resolves instantly after the canvas's first fetch.
+const hints = ref<Record<string, string>>({})
+onMounted(async () => {
+  const info = await fetchObjectInfo()
+  const out: Record<string, string> = {}
+  for (const chip of chips) {
+    const cost = parseBadgeUsd(info?.[chip.nodeType]?.price_badge?.expr)
+    if (cost) out[chip.nodeType] = `${cost.approximate ? '~' : ''}$${cost.usd.toFixed(2)}`
+  }
+  hints.value = out
+})
 
 function fire(nodeType: string) {
   window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
@@ -35,6 +51,7 @@ function openAllActions() {
     >
       <component :is="getGeneratorIcon(chip.nodeType)" class="size-2.5" />
       {{ chip.chipLabel }}
+      <span v-if="hints[chip.nodeType]" class="text-white/35">{{ hints[chip.nodeType] }}</span>
     </button>
     <span class="flex-1" />
     <button class="sel-chip" title="All actions…" @click.stop="openAllActions()">
