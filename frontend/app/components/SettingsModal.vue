@@ -78,7 +78,6 @@ const settingsByCategory: Record<string, SettingDef[]> = {
   ],
   appearance: [
     { id: 'Comfy.VueNodes.Enabled', label: 'Modern node design', type: 'toggle', description: 'Use the new Vue-based node rendering', local: true },
-    { id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', description: 'Queue prompts directly from the app, bypassing the bridge iframe', local: true },
     { id: 'Comfy.Node.Opacity', label: 'Node opacity', type: 'slider', min: 0.1, max: 1, step: 0.05 },
     { id: 'Comfy.Graph.CanvasInfo', label: 'Show canvas info (FPS)', type: 'toggle' },
     { id: 'Comfy.Graph.LinkMarkers', label: 'Link midpoint markers', type: 'select', options: [
@@ -99,6 +98,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'LiteGraph.Canvas.MaximumFps', label: 'Maximum FPS', type: 'number', min: 15, max: 144 },
   ],
   execution: [
+    { id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', local: true, description: 'Queue runs directly from the app (bypasses the bridge iframe). Required for parallel runs and Re-roll ×4.' },
     { id: 'Comfy.Execution.PreviewMethod', label: 'Live preview method', type: 'select', options: [
       { label: 'Auto', value: 'auto' },
       { label: 'TAESD', value: 'taesd' },
