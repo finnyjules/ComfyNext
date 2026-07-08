@@ -251,7 +251,7 @@ watch(() => activeTabId.value, (id) => {
 // switch there so the page is actually visible when a project tab is active.
 watch(() => route.path, (p) => {
   if (p !== '/' && activeTab.value?.type !== 'home') setActiveTab('home')
-})
+}, { immediate: true })
 
 // Drop a starter generator onto a freshly-opened project. The canvas mounts a
 // tick or two after the tab activates, so retry until materializeStartGraph is
@@ -269,7 +269,11 @@ async function seedStarterGraph(nodeType: string, tries = 0) {
   } else if (tries < 40) {
     setTimeout(() => seedStarterGraph(nodeType, tries + 1), 50)
   } else {
-    toast.error('Couldn’t set up the project', { description: 'The canvas didn’t finish loading. Refresh the page and try again.' })
+    toast.error('Couldn’t set up the project', {
+      description: vueNodesEnabled.value
+        ? 'The canvas didn’t finish loading. Refresh the page and try again.'
+        : 'Turn on Settings → Modern node design to use starter projects.',
+    })
   }
 }
 
@@ -285,7 +289,11 @@ function onStartModalPick(payload: { nodeType: string; source?: ActionSource }) 
   nextTick(async () => {
     const canvas = vueCanvasRef.value
     if (!canvas?.materializeStartGraph) {
-      toast.error('Couldn’t set up the project', { description: 'The canvas didn’t finish loading. Refresh the page and try again.' })
+      toast.error('Couldn’t set up the project', {
+        description: vueNodesEnabled.value
+          ? 'The canvas didn’t finish loading. Refresh the page and try again.'
+          : 'Turn on Settings → Modern node design to use starter projects.',
+      })
       return
     }
     await canvas.refreshSchema?.()

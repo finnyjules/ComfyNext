@@ -1,7 +1,9 @@
 import { modelForTier } from '../lib/aiModels'
+import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'explain')
   const body = await readBody(event)
   const { graphData, apiKey: clientKey } = body || {}
   const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))

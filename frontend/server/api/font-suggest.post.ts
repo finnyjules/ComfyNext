@@ -5,6 +5,7 @@
 import { getGoogleCatalog } from '../utils/googleCatalog'
 import { groundSuggestions } from '../utils/fontMatch'
 import { extractModelText } from '../lib/modelText'
+import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 const SUGGEST_SCHEMA = {
@@ -35,6 +36,7 @@ const SUGGEST_SCHEMA = {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'font-suggest', 60)
   const body = await readBody(event)
   const { apiKey: clientKey, query } = body || {}
   const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))

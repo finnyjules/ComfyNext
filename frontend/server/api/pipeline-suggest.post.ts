@@ -1,6 +1,7 @@
 // Resolve a natural-language intent at a node port into 1..N nodes + wiring.
 // Sibling of explain.post.ts: raw fetch, user-supplied Anthropic key, no SDK.
 // Haiku + structured outputs keep this fast and a fraction of a cent per ask.
+import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 
 const SUGGESTION_SCHEMA = {
@@ -50,6 +51,7 @@ const SUGGESTION_SCHEMA = {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'pipeline-suggest', 60)
   const body = await readBody(event)
   const { apiKey: clientKey, intent, anchor, catalog, graphContext, validationErrors, previousAttempt } = body || {}
   const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(clientKey))
