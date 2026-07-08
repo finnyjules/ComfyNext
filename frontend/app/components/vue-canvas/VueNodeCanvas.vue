@@ -2878,6 +2878,31 @@ function handleSpaceTypeOutput(e: Event) {
   }
 }
 
+// Sketch node "Promote": spawn the full generator beside the sketch, seeded
+// with the promoted take's prompt/seed/aspect (sketchPromoteOverridesFor).
+// Placement mirrors handleSpaceTypeOutput; unlike that handler this draws NO
+// edge (the sketch and the finisher are independent, unwired generators) and
+// never auto-runs — the user aims the finisher, then runs it themselves.
+function handleSpawnBeside(e: Event) {
+  const detail = (e as CustomEvent<{
+    sourceNodeId: string
+    nodeType: string
+    widgetOverrides?: Record<string, unknown>
+    propertyOverrides?: Record<string, unknown>
+    dataOverrides?: Record<string, unknown>
+  }>).detail
+  const src = (nodes.value as any[]).find((n) => n.id === detail.sourceNodeId)
+  const pos = src
+    ? { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 80, y: src.position?.y ?? 0 }
+    : project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const node = createNodeData(detail.nodeType, pos, detail.widgetOverrides, detail.propertyOverrides)
+  if (detail.dataOverrides && typeof detail.dataOverrides === 'object') {
+    node.data = { ...node.data, ...detail.dataOverrides }
+  }
+  nodes.value.push(node)
+  nextTick(() => fitView({ nodes: [node.id], padding: 0.5, duration: 250 }))
+}
+
 // Character Library panel "Use in image": ready characters (linked LoRA) get a
 // prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
 // seeded from the default variant's cover photo. Always re-fetches the registry
@@ -3703,6 +3728,7 @@ onMounted(() => {
   window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
   window.addEventListener('comfynext:animateArtifact', handleAnimateArtifact)
+  window.addEventListener('comfynext:spawnBeside', handleSpawnBeside)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -3757,6 +3783,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
   window.removeEventListener('comfynext:animateArtifact', handleAnimateArtifact)
+  window.removeEventListener('comfynext:spawnBeside', handleSpawnBeside)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.

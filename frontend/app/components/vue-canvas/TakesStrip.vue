@@ -7,9 +7,12 @@
 import { Star, X, PencilLine, Maximize2, ArrowUpToLine } from 'lucide-vue-next'
 import type { Take } from '~/composables/useTakes'
 
-defineProps<{
+const props = defineProps<{
   takes: Take[]
   activeTakeId: string | null | undefined
+  /** This card is a Sketch node (properties.sketch) — every take here is
+   *  promotable to a full generator, not just draft-mode (`t.draft`) takes. */
+  sketch?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -82,9 +85,9 @@ function thumb(t: Take): string | null {
           class="absolute inset-x-0 bottom-0 flex items-center justify-end gap-0.5 p-0.5 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <button
-            v-if="t.draft"
+            v-if="t.draft || props.sketch"
             class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-emerald-300"
-            title="Promote to full quality"
+            :title="props.sketch ? 'Promote — spawn the full generator beside this sketch' : 'Promote to full quality'"
             @click.stop="emit('promote', t.id)"
           >
             <ArrowUpToLine class="size-3" />

@@ -8,6 +8,7 @@ import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import { projectTake, type Take } from '~/composables/useTakes'
+import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
 
 const props = defineProps<{
   id: string
@@ -215,6 +216,22 @@ function discardTake(id: string) {
     const fallback = takes.find((t) => t.pinned) || takes[takes.length - 1] || null
     Object.assign(props.data, projectTake(props.data, fallback))
   }
+}
+
+// Sketch node "Promote": takes land on the GenerateImageNode card itself (this
+// component), so no upstream walk is needed — this node IS the sketch. Spawn
+// the full-quality generator beside it, seeded from the take's prompt/seed/
+// aspect (never its model — the spawned node keeps the schema default/finisher
+// model). No edge, no auto-run: the user aims the finisher, then runs it.
+function promoteTake(takeId: string) {
+  if (!isSketch.value || props.data.nodeType !== 'GenerateImageNode') return
+  const take = (props.data.takes ?? []).find((t: any) => t.id === takeId)
+  if (!take) return
+  const built = sketchPromoteOverridesFor(take)
+  if (!built) return
+  window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
+    detail: { sourceNodeId: props.id, nodeType: 'GenerateImageNode', ...built },
+  }))
 }
 
 // Live-preview node types: auto-run on widget change (debounced) so the
@@ -1770,9 +1787,11 @@ watch(previewImages, (urls) => {
       v-if="(data.takes?.length ?? 0) >= 1"
       :takes="data.takes!"
       :active-take-id="data.activeTakeId"
+      :sketch="isSketch && data.nodeType === 'GenerateImageNode'"
       @select="selectTake"
       @pin="pinTake"
       @discard="discardTake"
+      @promote="promoteTake"
     />
 
     <!-- Per-node run control (footer): one split button. The main face runs
