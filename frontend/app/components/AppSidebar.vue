@@ -67,7 +67,7 @@ watch(() => userProfile.value?.photoURL, () => { avatarFailed.value = false })
   <nav class="w-[68px] h-screen bg-sidebar flex flex-col items-center shrink-0">
     <!-- Logo -->
     <div class="pt-7 pb-8">
-      <div class="text-white font-bold text-lg select-none">C</div>
+      <SailorMark class="w-[34px] h-[34px] select-none" />
     </div>
 
     <!-- Main nav -->

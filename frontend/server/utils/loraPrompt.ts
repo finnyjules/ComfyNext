@@ -32,14 +32,29 @@ export function parseSidecar(raw: string): Record<string, any> {
 }
 
 /**
+ * The aesthetic to inject into a GENERATION prompt for this LoRA. Style LoRAs
+ * get their sidecar aesthetic (that's the whole point of the style). Character
+ * LoRAs get none: the auto-filled aesthetic describes the training SET in
+ * plural prose ("the models", "the subjects"), which steers Flux toward
+ * multi-person outputs — the identity/look already lives in the LoRA weights.
+ */
+export function promptAesthetic(meta: Record<string, unknown> | null | undefined): string {
+  if (meta && meta.kind === 'character') return ''
+  return sidecarAesthetic(meta)
+}
+
+/**
  * Compose a trained-LoRA generation prompt from its sidecar style + the user's
  * text, mirroring the style branch of lora-cover.post.ts:
  *   "<aesthetic> <trigger>, <userPrompt>"
- * Any empty part is dropped. Returned string is trimmed.
+ * Any empty part is dropped. Returned string is trimmed. If the user prompt
+ * already leads with the trigger (sheet generation prepends it client-side),
+ * the trigger is not added a second time.
  */
 export function buildLoraPrompt(trigger: string, aesthetic: string, userPrompt: string): string {
   const t = (trigger || '').trim()
   const a = (aesthetic || '').trim()
   const p = (userPrompt || '').trim()
-  return [a, t ? `${t},` : '', p].filter(Boolean).join(' ').trim()
+  const hasTrigger = t && (p === t || p.startsWith(`${t},`) || p.startsWith(`${t} `))
+  return [a, t && !hasTrigger ? `${t},` : '', p].filter(Boolean).join(' ').trim()
 }

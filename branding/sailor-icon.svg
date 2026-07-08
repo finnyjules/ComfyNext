@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Sailor app icon: navy tile + faceted mark at 72% with optical centering for the 36-degree heading. -->
+  <rect width="512" height="512" rx="115" fill="#101A2E"/>
+  <g transform="translate(-6 6) rotate(36 256 256) translate(71.68 71.68) scale(0.72)">
+    <g fill="#2B4BF2">
+      <path d="M256 36 L465.23 188.02 L305.39 188.02 Z"/>
+      <path d="M465.23 188.02 L385.31 433.98 L335.92 281.97 Z"/>
+      <path d="M385.31 433.98 L126.69 433.98 L256 340.03 Z"/>
+      <path d="M126.69 433.98 L46.77 188.02 L176.08 281.97 Z"/>
+      <path d="M46.77 188.02 L256 36 L206.61 188.02 Z"/>
+      <path d="M305.39 188.02 L335.92 281.97 L256 340.03 L176.08 281.97 L206.61 188.02 Z"/>
+    </g>
+    <g fill="#EDF1FA">
+      <path d="M256 36 L305.39 188.02 L206.61 188.02 Z"/>
+      <path d="M465.23 188.02 L335.92 281.97 L305.39 188.02 Z"/>
+      <path d="M385.31 433.98 L256 340.03 L335.92 281.97 Z"/>
+      <path d="M126.69 433.98 L176.08 281.97 L256 340.03 Z"/>
+      <path d="M46.77 188.02 L206.61 188.02 L176.08 281.97 Z"/>
+    </g>
+  </g>
+</svg>

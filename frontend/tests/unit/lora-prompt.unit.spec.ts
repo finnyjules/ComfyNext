@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildLoraPrompt } from '../../server/utils/loraPrompt'
+import { buildLoraPrompt, promptAesthetic } from '../../server/utils/loraPrompt'
 
 describe('buildLoraPrompt', () => {
   it('composes aesthetic + trigger + prompt', () => {
@@ -14,5 +14,20 @@ describe('buildLoraPrompt', () => {
   })
   it('trims and tolerates all-empty', () => {
     expect(buildLoraPrompt('  ', '  ', '  ')).toBe('')
+  })
+  it('does not duplicate the trigger when the user prompt already leads with it', () => {
+    // Sheet generation prepends the trigger client-side; the server must not add it again.
+    expect(buildLoraPrompt('char_sheila_1', 'warm film look', 'char_sheila_1, close-up portrait'))
+      .toBe('warm film look char_sheila_1, close-up portrait')
+  })
+})
+
+describe('promptAesthetic', () => {
+  it('returns the sidecar aesthetic for style LoRAs', () => {
+    expect(promptAesthetic({ aesthetic: 'oil paint, warm', kind: 'style' })).toBe('oil paint, warm')
+    expect(promptAesthetic({ aesthetic: 'oil paint, warm' })).toBe('oil paint, warm') // legacy: no kind
+  })
+  it('returns nothing for character LoRAs (set-level prose like "the models" pushes multi-person outputs)', () => {
+    expect(promptAesthetic({ aesthetic: 'soft light on the models and the subjects', kind: 'character' })).toBe('')
   })
 })

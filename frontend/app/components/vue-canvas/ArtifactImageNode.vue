@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
-import NextStepsStrip from '~/components/vue-canvas/NextStepsStrip.vue'
-import { useNextStepsStrip } from '~/composables/useNextStepsStrip'
+import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
@@ -377,47 +376,51 @@ async function saveAsCharacter() {
   }
 }
 
-// Top-right "Edit" menu. Each item runs an existing action and closes the
-// menu; clicking outside dismisses it. The panel is TELEPORTED to <body> in
-// screen space — inside the node it gets clipped by the card's overflow and
-// the node bounds (10 rows never fit) — and clamped to the viewport with its
-// own scroll. Screen-space also means it stays readable at low canvas zoom.
+// Two hover-revealed side menus: EDIT refines THIS image (retouch / enhance +
+// any AI critique fixes), NEXT transforms it into something new (variations,
+// reframe, animate). Both panels are TELEPORTED to <body> in screen space —
+// inside the node they'd be clipped by the card's overflow and the node bounds
+// — and clamped to the viewport with their own scroll, so they stay readable at
+// low canvas zoom. Only one is open at a time; clicking outside dismisses it.
+const hovered = ref(false)
 const editMenuOpen = ref(false)
 const editMenuRef = ref<HTMLElement | null>(null)
 const editMenuPanelRef = ref<HTMLElement | null>(null)
 const editMenuStyle = ref<Record<string, string>>({})
+const nextMenuOpen = ref(false)
+const nextMenuRef = ref<HTMLElement | null>(null)
+const nextMenuPanelRef = ref<HTMLElement | null>(null)
+const nextMenuStyle = ref<Record<string, string>>({})
 onClickOutside(editMenuRef, () => { editMenuOpen.value = false }, { ignore: [editMenuPanelRef] })
-function closeEditMenuOnWheel() { editMenuOpen.value = false }
-watch(editMenuOpen, (open) => {
-  if (open) {
-    const nodeR = (editMenuRef.value?.closest('.artifact-image') as HTMLElement | null)?.getBoundingClientRect()
-    const btnR = editMenuRef.value?.getBoundingClientRect()
-    if (nodeR && btnR) {
-      // Beside the node's right edge, top-aligned with the Edit button;
-      // flips to the node's left when the viewport runs out. ~380px = the
-      // full 10-row menu; vertical position clamps so it always fits,
-      // scrolling internally as a last resort on short viewports.
-      const MENU_W = 210
-      const MENU_H = 380
-      const left = nodeR.right + 8 + MENU_W <= window.innerWidth
-        ? nodeR.right + 8
-        : Math.max(8, nodeR.left - 8 - MENU_W)
-      const top = Math.max(8, Math.min(btnR.top, window.innerHeight - MENU_H - 8))
-      editMenuStyle.value = {
-        left: `${left}px`,
-        top: `${top}px`,
-        maxHeight: `${window.innerHeight - top - 8}px`,
-      }
-    }
-    // Pan/zoom would leave the fixed panel floating at a stale spot — close instead.
-    window.addEventListener('wheel', closeEditMenuOnWheel, { passive: true })
-  } else {
-    window.removeEventListener('wheel', closeEditMenuOnWheel)
-  }
+onClickOutside(nextMenuRef, () => { nextMenuOpen.value = false }, { ignore: [nextMenuPanelRef] })
+
+// Beside the node's right edge, top-aligned with the button; flips to the
+// node's left when the viewport runs out. Vertical position clamps so the panel
+// always fits, scrolling internally as a last resort on short viewports.
+function menuStyleFor(anchor: HTMLElement | null): Record<string, string> {
+  const nodeR = (anchor?.closest('.artifact-image') as HTMLElement | null)?.getBoundingClientRect()
+  const btnR = anchor?.getBoundingClientRect()
+  if (!nodeR || !btnR) return {}
+  const MENU_W = 210
+  const MENU_H = 380
+  const left = nodeR.right + 8 + MENU_W <= window.innerWidth
+    ? nodeR.right + 8
+    : Math.max(8, nodeR.left - 8 - MENU_W)
+  const top = Math.max(8, Math.min(btnR.top, window.innerHeight - MENU_H - 8))
+  return { left: `${left}px`, top: `${top}px`, maxHeight: `${window.innerHeight - top - 8}px` }
+}
+// Pan/zoom would leave the fixed panel floating at a stale spot — close instead.
+function closeMenusOnWheel() { editMenuOpen.value = false; nextMenuOpen.value = false }
+watch([editMenuOpen, nextMenuOpen], ([edit, next], [prevEdit, prevNext]) => {
+  if (edit && !prevEdit) { nextMenuOpen.value = false; editMenuStyle.value = menuStyleFor(editMenuRef.value) }
+  if (next && !prevNext) { editMenuOpen.value = false; nextMenuStyle.value = menuStyleFor(nextMenuRef.value) }
+  if (edit || next) window.addEventListener('wheel', closeMenusOnWheel, { passive: true })
+  else window.removeEventListener('wheel', closeMenusOnWheel)
 })
-onBeforeUnmount(() => window.removeEventListener('wheel', closeEditMenuOnWheel))
-function runEdit(action: () => void) {
+onBeforeUnmount(() => window.removeEventListener('wheel', closeMenusOnWheel))
+function runAction(action: () => void) {
   editMenuOpen.value = false
+  nextMenuOpen.value = false
   action()
 }
 
@@ -547,15 +550,16 @@ function branchFromTake(takeId: string) {
 // Light Table — full-screen compare grid, opened from the strip's expand button.
 const lightTableOpen = ref(false)
 
-// --- Post-render next-steps chip strip (ARPU lever 5) -----------------------
-// Shows on THIS artifact only when a take lands while the canvas is open and
-// this is the most recently rendered artifact (singleton). Baseline is taken
-// at mount so restoring a saved canvas never pops strips.
+// --- AI critique fixes (surfaced in the Edit menu) --------------------------
+// A paid render triggers a quiet critique pass (gate lives in CanvasPromptBar);
+// any fixes it finds land on the `fixes` channel and show at the top of THIS
+// artifact's Edit menu. Baseline is taken at mount so restoring a saved canvas
+// never re-triggers reviews.
 const nextSteps = useNextStepsStrip()
 watch(() => props.data.takes?.length ?? 0, (now, before) => {
   if (now > (before ?? 0)) {
-    nextSteps.announceFreshTake(props.id)
-    // Paid renders get a quiet critique pass; the gate lives in CanvasPromptBar.
+    // A fresh render invalidates fixes found on the previous one.
+    nextSteps.clearFixes(props.id)
     const takeId = props.data.takes?.[props.data.takes.length - 1]?.id
     if (takeId) {
       window.dispatchEvent(new CustomEvent('comfynext:autoReview', {
@@ -564,21 +568,16 @@ watch(() => props.data.takes?.length ?? 0, (now, before) => {
     }
   }
 })
-const showGenericSteps = computed(() => nextSteps.active.value?.nodeId === props.id)
 const fixChipsForMe = computed(() => nextSteps.fixes.value?.nodeId === props.id ? nextSteps.fixes.value.chips : [])
-const showNextSteps = computed(() => showGenericSteps.value || fixChipsForMe.value.length > 0)
-function onStripTimeout() {
-  // The 12s timer retires only the generic suggestions; reviewer fixes are
-  // sticky (they ARRIVE ~10s late by nature) until clicked/dismissed/stale.
-  nextSteps.dismiss()
-}
-function onStripDismiss() {
-  nextSteps.dismiss()
+// The Edit / Next buttons fade in on hover, and stay while a menu is open or an
+// AI fix is pending (so a fresh critique result is never missed).
+const controlsVisible = computed(() =>
+  hovered.value || editMenuOpen.value || nextMenuOpen.value || fixChipsForMe.value.length > 0,
+)
+function applyFix(chip: FixChip) {
+  editMenuOpen.value = false
+  chip.apply()
   nextSteps.clearFixes(props.id)
-}
-function openEditMenuFromStrip() {
-  nextSteps.dismiss()
-  editMenuOpen.value = true
 }
 
 // Promote button price hint — this node's own price badge (a promote reruns
@@ -599,6 +598,8 @@ const promoteUsdLabel = computed(() => {
     }"
     :data-running="data.running || undefined"
     :style="{ '--port-color': imageColor } as any"
+    @mouseenter="hovered = true"
+    @mouseleave="hovered = false"
     @dragover="onDragOver"
     @drop="onDrop"
   >
@@ -655,92 +656,124 @@ const promoteUsdLabel = computed(() => {
 
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
-        <!-- Edit menu (top-right): Remove BG / Inpaint / Fix. Clear of the
-             right-edge output handle (which sits at vertical centre). -->
-        <div ref="editMenuRef" class="nopan nodrag absolute top-1 right-1 z-30">
-          <button
-            class="gen-pastel flex items-center gap-1 h-6 px-2.5 rounded-md text-[9px] font-medium text-neutral-900 cursor-pointer backdrop-blur-sm transition-[filter] duration-200 ease-out"
-            style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
-            title="Edit"
-            @click.stop="editMenuOpen = !editMenuOpen"
-          >
-            <Pencil class="size-3" /> Edit…
-          </button>
-          <Teleport to="body">
-          <div
-            v-if="editMenuOpen"
-            ref="editMenuPanelRef"
-            class="nopan nodrag fixed z-[9999] min-w-[190px] overflow-y-auto rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
-            :style="editMenuStyle"
-          >
-            <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Retouch</div>
-            <button class="edit-menu-item" @click.stop="runEdit(removeBackground)">
-              <Eraser class="size-3 shrink-0" /> Remove BG
-            </button>
-            <button class="edit-menu-item" @click.stop="runEdit(openInpaint)">
-              <Brush class="size-3 shrink-0" /> Inpaint
-            </button>
-            <button class="edit-menu-item" @click.stop="runEdit(editWithNanoBanana)">
-              <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
-              <span class="edit-menu-hint">{{ ACTION_HINTS['nano-banana'] }}</span>
-            </button>
-            <button v-if="data.images?.length" class="edit-menu-item" @click.stop="runEdit(critiqueResult)">
-              <Sparkles class="size-3 shrink-0" /> Fix
-            </button>
-
-            <div class="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Enhance</div>
-            <button class="edit-menu-item" @click.stop="runEdit(spawnEnhanceDetail)">
-              <Gem class="size-3 shrink-0" /> Enhance Detail
-              <span class="edit-menu-hint">{{ ACTION_HINTS.enhance }}</span>
-            </button>
-            <button class="edit-menu-item" @click.stop="runEdit(spawnUpscale)">
-              <ZoomIn class="size-3 shrink-0" /> Upscale
-              <span class="edit-menu-hint">{{ ACTION_HINTS.upscale }}</span>
-            </button>
-            <button class="edit-menu-item" @click.stop="runEdit(spawnRelight)">
-              <Lamp class="size-3 shrink-0" /> Relight
-              <span class="edit-menu-hint">{{ ACTION_HINTS.relight }}</span>
-            </button>
-            <button class="edit-menu-item" @click.stop="runEdit(spawnLensReframe)">
-              <Aperture class="size-3 shrink-0" /> Lens · Reframe
-              <span class="edit-menu-hint">{{ ACTION_HINTS.lens }}</span>
-            </button>
-
-            <div class="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Create</div>
+        <!-- Hover-revealed action buttons (top-right). EDIT refines this image;
+             NEXT transforms it into something new. Clear of the right-edge
+             output handle (vertical centre). Each opens a teleported side menu;
+             the row fades in on node hover (and stays while a menu is open or an
+             AI fix is pending). -->
+        <div
+          class="nopan nodrag absolute top-1 right-1 z-30 flex items-center gap-1 transition-opacity duration-150"
+          :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+        >
+          <!-- EDIT — fix / refine the current iteration -->
+          <div ref="editMenuRef" class="relative">
             <button
-              class="edit-menu-item disabled:opacity-35 disabled:cursor-default"
-              :disabled="!hasUpstream"
-              :title="hasUpstream ? 'Re-run the generator 4× with fresh seeds' : 'Nothing upstream to re-run — this image was uploaded'"
-              @click.stop="runEdit(runVariations)"
+              class="gen-pastel flex items-center gap-1 h-6 px-2.5 rounded-md text-[9px] font-medium text-neutral-900 cursor-pointer backdrop-blur-sm transition-[filter] duration-200 ease-out"
+              style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
+              title="Edit — refine this image"
+              @click.stop="editMenuOpen = !editMenuOpen"
             >
-              <Shuffle class="size-3 shrink-0" /> Variations ×4
-              <span class="edit-menu-hint">{{ ACTION_HINTS.variations }}</span>
+              <Pencil class="size-3" /> Edit…
+              <Sparkles v-if="fixChipsForMe.length" class="size-2.5 -mr-0.5" />
             </button>
-            <button class="edit-menu-item" @click.stop="runEdit(animateArtifact)">
-              <Clapperboard class="size-3 shrink-0" /> Animate
-              <span class="edit-menu-hint">{{ ACTION_HINTS.animate }}</span>
-            </button>
+            <Teleport to="body">
+            <div
+              v-if="editMenuOpen"
+              ref="editMenuPanelRef"
+              class="nopan nodrag fixed z-[9999] min-w-[190px] overflow-y-auto rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+              :style="editMenuStyle"
+            >
+              <!-- AI critique fixes lead the menu when the reviewer found any. -->
+              <template v-if="fixChipsForMe.length">
+                <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Suggested fixes</div>
+                <button
+                  v-for="chip in fixChipsForMe"
+                  :key="chip.id"
+                  class="edit-menu-item"
+                  :title="chip.hint ? `${chip.label} (${chip.hint})` : chip.label"
+                  @click.stop="applyFix(chip)"
+                >
+                  <Sparkles class="size-3 shrink-0" /> {{ chip.label }}
+                  <span v-if="chip.hint" class="edit-menu-hint">{{ chip.hint }}</span>
+                </button>
+                <div class="mt-1 border-t border-white/[0.06]" />
+              </template>
+              <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Retouch</div>
+              <button class="edit-menu-item" @click.stop="runAction(removeBackground)">
+                <Eraser class="size-3 shrink-0" /> Remove BG
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(openInpaint)">
+                <Brush class="size-3 shrink-0" /> Inpaint
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(editWithNanoBanana)">
+                <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
+                <span class="edit-menu-hint">{{ ACTION_HINTS['nano-banana'] }}</span>
+              </button>
+              <button v-if="data.images?.length" class="edit-menu-item" @click.stop="runAction(critiqueResult)">
+                <Sparkles class="size-3 shrink-0" /> Fix
+              </button>
+
+              <div class="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Enhance</div>
+              <button class="edit-menu-item" @click.stop="runAction(spawnEnhanceDetail)">
+                <Gem class="size-3 shrink-0" /> Enhance Detail
+                <span class="edit-menu-hint">{{ ACTION_HINTS.enhance }}</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(spawnUpscale)">
+                <ZoomIn class="size-3 shrink-0" /> Upscale
+                <span class="edit-menu-hint">{{ ACTION_HINTS.upscale }}</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(spawnRelight)">
+                <Lamp class="size-3 shrink-0" /> Relight
+                <span class="edit-menu-hint">{{ ACTION_HINTS.relight }}</span>
+              </button>
+            </div>
+            </Teleport>
           </div>
-          </Teleport>
+
+          <!-- NEXT — transform into something new -->
+          <div ref="nextMenuRef" class="relative">
+            <button
+              class="gen-pastel flex items-center gap-1 h-6 px-2.5 rounded-md text-[9px] font-medium text-neutral-900 cursor-pointer backdrop-blur-sm transition-[filter] duration-200 ease-out"
+              style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
+              title="Next — turn this into something new"
+              @click.stop="nextMenuOpen = !nextMenuOpen"
+            >
+              <ArrowRight class="size-3" /> Next…
+            </button>
+            <Teleport to="body">
+            <div
+              v-if="nextMenuOpen"
+              ref="nextMenuPanelRef"
+              class="nopan nodrag fixed z-[9999] min-w-[190px] overflow-y-auto rounded-md border border-white/10 bg-[#1a1a1a] shadow-lg py-1"
+              :style="nextMenuStyle"
+            >
+              <div class="px-2.5 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-white/30 select-none">Create</div>
+              <button
+                class="edit-menu-item disabled:opacity-35 disabled:cursor-default"
+                :disabled="!hasUpstream"
+                :title="hasUpstream ? 'Re-run the generator 4× with fresh seeds' : 'Nothing upstream to re-run — this image was uploaded'"
+                @click.stop="runAction(runVariations)"
+              >
+                <Shuffle class="size-3 shrink-0" /> Variations ×4
+                <span class="edit-menu-hint">{{ ACTION_HINTS.variations }}</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(spawnLensReframe)">
+                <Aperture class="size-3 shrink-0" /> Reframe · Format
+                <span class="edit-menu-hint">{{ ACTION_HINTS.lens }}</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(animateArtifact)">
+                <Clapperboard class="size-3 shrink-0" /> Animate
+                <span class="edit-menu-hint">{{ ACTION_HINTS.animate }}</span>
+              </button>
+            </div>
+            </Teleport>
+          </div>
         </div>
         <!-- Main image -->
         <img
           :src="displayedUrl"
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
-        />
-        <!-- Transient post-render escalator chips (latest-rendered artifact only). -->
-        <NextStepsStrip
-          v-if="showNextSteps && displayedUrl"
-          :can-vary="hasUpstream"
-          :show-generic="showGenericSteps"
-          :fix-chips="fixChipsForMe"
-          @variations="runVariations"
-          @upscale="spawnUpscale"
-          @animate="animateArtifact"
-          @more="openEditMenuFromStrip"
-          @timeout="onStripTimeout"
-          @dismiss="onStripDismiss"
         />
         <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">

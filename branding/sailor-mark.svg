@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Sailor mark, faceted build: 5 star points + 5 edge faces + heart pentagon.
+       Heading: rotate(36) = up-right (brand default). rotate(0) = upright. Never 180. -->
+  <g transform="rotate(36 256 256)">
+    <g id="faces" fill="#2B4BF2">
+      <path id="face-0" d="M256 36 L465.23 188.02 L305.39 188.02 Z"/>
+      <path id="face-1" d="M465.23 188.02 L385.31 433.98 L335.92 281.97 Z"/>
+      <path id="face-2" d="M385.31 433.98 L126.69 433.98 L256 340.03 Z"/>
+      <path id="face-3" d="M126.69 433.98 L46.77 188.02 L176.08 281.97 Z"/>
+      <path id="face-4" d="M46.77 188.02 L256 36 L206.61 188.02 Z"/>
+    </g>
+    <path id="heart" d="M305.39 188.02 L335.92 281.97 L256 340.03 L176.08 281.97 L206.61 188.02 Z" fill="#2B4BF2"/>
+    <g id="points" fill="#EDF1FA">
+      <path id="pt-0" d="M256 36 L305.39 188.02 L206.61 188.02 Z"/>
+      <path id="pt-1" d="M465.23 188.02 L335.92 281.97 L305.39 188.02 Z"/>
+      <path id="pt-2" d="M385.31 433.98 L256 340.03 L335.92 281.97 Z"/>
+      <path id="pt-3" d="M126.69 433.98 L176.08 281.97 L256 340.03 Z"/>
+      <path id="pt-4" d="M46.77 188.02 L206.61 188.02 L176.08 281.97 Z"/>
+    </g>
+  </g>
+</svg>

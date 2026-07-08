@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHARACTER_SHOT_SCENES, type CharacterShotScene, pickScenes, aspectForFraming, syntheticCount } from '~/data/character-shot-scenes'
+import { CHARACTER_SHOT_SCENES, CHARACTER_SHEET_CANONICAL, type CharacterShotScene, pickScenes, aspectForFraming, syntheticCount } from '~/data/character-shot-scenes'
 
 const byTier = (t: CharacterShotScene['framing']) =>
   CHARACTER_SHOT_SCENES.filter((s) => s.framing === t)
@@ -18,6 +18,14 @@ describe('CHARACTER_SHOT_SCENES', () => {
     expect(byTier('closeup').length).toBeGreaterThanOrEqual(10)
     expect(byTier('full').length).toBeGreaterThanOrEqual(8)
     expect(byTier('medium').length).toBeGreaterThanOrEqual(6)
+  })
+})
+
+describe('CHARACTER_SHEET_CANONICAL', () => {
+  it('every canonical sheet prompt carries a solo constraint (guards against Flux subject duplication)', () => {
+    for (const s of CHARACTER_SHEET_CANONICAL) {
+      expect(s.prompt).toMatch(/\bsolo\b/)
+    }
   })
 })
 

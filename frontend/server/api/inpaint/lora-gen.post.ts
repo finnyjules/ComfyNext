@@ -48,7 +48,7 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildLoraPrompt(
     String(meta.trigger ?? ''),
-    sidecarAesthetic(meta),
+    promptAesthetic(meta),
     userPrompt,
   )
 
