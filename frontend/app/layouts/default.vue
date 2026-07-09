@@ -6,12 +6,10 @@ import {
   AudioWaveform, Film, Box, Type, Frame,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
   Shapes, ListVideo,
-  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown, PencilLine,
+  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import { useDraftMode } from '~/composables/useDraftMode'
-import { applyDraftOverrides, draftUsdExprFor } from '~/lib/draft/overrides'
-import { markDraftRun, clearDraftRun, peekPendingPromote } from '~/lib/draft/runMeta'
+import { peekPendingPromote } from '~/lib/draft/runMeta'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
@@ -59,10 +57,6 @@ const { directExecutionEnabled } = useDirectExecutionEnabled()
 const direct = useDirectExecution()
 const { objectInfo } = useVueNodes()
 const route = useRoute()
-
-const draftMode = useDraftMode()
-const activeTabIsProject = computed(() => activeTab.value?.type === 'project')
-const activeDraft = computed(() => activeTabIsProject.value && draftMode.isDraft(activeTab.value.id))
 
 // Inline tab rename
 const editingTabId = ref<string | null>(null)
@@ -670,21 +664,6 @@ async function runVueWorkflow(
       plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
     }
 
-    // Draft mode: rewrite mapped generators on this run-only copy to the cheap/fast
-    // tier. Save paths never see this — they serialize the live canvas elsewhere.
-    let draftApp: { overriddenIds: string[]; restoreById: Record<string, Record<string, any>> } | null = null
-    if (draftMode.isDraft(activeTab.value?.id || '')) {
-      const vnodesForDraft = vueCanvasRef.value!.getNodes?.() || []
-      draftApp = applyDraftOverrides(plainWorkflow, vnodesForDraft)
-      if (draftApp.overriddenIds.length) {
-        markDraftRun(draftApp.overriddenIds, draftApp.restoreById)
-        plainWorkflow.extra = { ...(plainWorkflow.extra || {}), draft: true }
-      }
-    } else {
-      // A final submit supersedes any earlier draft marks for the nodes it runs.
-      clearDraftRun((plainWorkflow.nodes as any[]).map((n: any) => String(n.id)))
-    }
-
     // Cost guard: estimate the exact set of nodes about to run and confirm
     // expensive runs before any side-effecting prep (compositor uploads) or
     // queueing. Live-preview runs never prompt. Confirmed once for the whole
@@ -699,9 +678,7 @@ async function runVueWorkflow(
             id: String(wn.id),
             type: String(wn.type || vn?.data?.nodeType || ''),
             title: vn?.data?.title,
-            badgeExpr: draftApp?.overriddenIds.includes(String(wn.id))
-              ? draftUsdExprFor(String(wn.type || vn?.data?.nodeType || ''))
-              : (vn?.data?.priceBadge?.expr ?? null),
+            badgeExpr: vn?.data?.priceBadge?.expr ?? null,
             category: vn?.data?.category ?? null,
           }
         })
@@ -861,12 +838,11 @@ async function runVueWorkflow(
 
   // Assembly critical section (audit R1, scope-narrowed R3). Seeds are already
   // safe (each take snapshots them synchronously before any await), but the
-  // assembly below reads/mutates LIVE state and the draft+promote registries
-  // AFTER await points — applyDraftOverrides/markDraftRun/clearDraftRun and
-  // applyPendingPromotes/peekPendingPromote. Two overlapping runs interleaving
-  // those reads could cross-consume each other's draft/promote marks. Serialize
-  // ONLY the assemble window on ONE global key so overlapping runs assemble
-  // one-at-a-time.
+  // assembly below reads/mutates LIVE state and the promote registry AFTER
+  // await points — applyPendingPromotes/peekPendingPromote. Two overlapping
+  // runs interleaving those reads could cross-consume each other's promote
+  // marks. Serialize ONLY the assemble window on ONE global key so overlapping
+  // runs assemble one-at-a-time.
   //
   // SCOPE: this lock covers ONLY assembly — producing firstTake + extraTakes
   // (plainWorkflow + directPrompt) plus the once-only cost-confirm gate. It
@@ -1357,16 +1333,6 @@ function loadPersistedWorkflows(): Record<string, any> {
 
 const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → ProjectDoc
 
-// Must stay below the savedWorkflows declaration above (and isProjectDoc/activeCanvasOf
-// imports) — it runs with immediate: true and reads them synchronously during setup.
-// Restore the Draft/Final toggle from the doc when switching tabs.
-watch(() => activeTab.value?.id, (tabId) => {
-  if (!tabId) return
-  const doc = savedWorkflows[tabId]
-  const wf = doc && isProjectDoc(doc) ? activeCanvasOf(doc)?.workflow : (doc as any)
-  if (wf?.extra?.draftMode !== undefined) draftMode.setDraft(tabId, !!wf.extra.draftMode)
-}, { immediate: true })
-
 // The workflow the Vue canvas should display: the active canvas of the active
 // tab's doc. Switching canvases (or restoring a version) swaps this to a new
 // object reference, which is what VueNodeCanvas's prop watch keys on.
@@ -1412,7 +1378,7 @@ function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
   const canvas = vueCanvasRef.value
   const settled = canvas?.getWorkflow && !canvas.isApplyingWorkflow?.()
   const snapshot = settled ? canvas.getWorkflow({ reroll: false }) : null
-  if (snapshot) snapshot.extra = { ...(snapshot.extra || {}), draftMode: draftMode.isDraft(tabId) }
+  if (snapshot) snapshot.extra = { ...(snapshot.extra || {}) }
   const hasSnapshot = !!snapshot && (snapshot.nodes?.length ?? 0) > 0
   if (!savedWorkflows[tabId] && !hasSnapshot) return null
   const doc = toProjectDoc(savedWorkflows[tabId])
@@ -3565,22 +3531,6 @@ function dismissRunResult() {
 
         <!-- Right side: credits + run + running count -->
         <div class="flex items-center gap-2 pr-4 shrink-0">
-          <button
-            v-if="activeTabIsProject"
-            class="flex items-center gap-1.5 rounded-full px-3 py-1.5 border cursor-pointer transition-colors"
-            :class="activeDraft
-              ? 'bg-[#2a2313] border-amber-500/40 hover:bg-[#332b17]'
-              : 'bg-[#1a1a1a] border-[#2a2a2a] hover:bg-[#222]'"
-            :title="activeDraft
-              ? 'Draft mode: image generators run fast & cheap (~10×). Edit/video nodes run at full quality. Likeness softens in drafts — Promote for the real thing.'
-              : 'Final mode: everything renders at full quality.'"
-            @click="draftMode.toggle(activeTab.id)"
-          >
-            <PencilLine class="size-3" :class="activeDraft ? 'text-amber-300' : 'text-white/70'" />
-            <span class="text-xs font-medium" :class="activeDraft ? 'text-amber-300' : 'text-white/70'">
-              {{ activeDraft ? 'Draft' : 'Final' }}
-            </span>
-          </button>
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
             @click="openAddCredits"
