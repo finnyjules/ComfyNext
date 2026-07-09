@@ -91,9 +91,10 @@ covering node (or GAP) / agent-visible / interactive surface. Content:
 
 New spec `frontend/tests/unit/agent-coverage-guard.unit.spec.ts`:
 
-- For every `ACTION_CATALOG` entry with `intent: 'edit' | 'enhance'` and
-  `source: 'image'` (the agent-relevant image editors), assert the nodeType
-  is EITHER in `AGENT_CAPABILITIES` OR in a new exported
+- For every `ACTION_CATALOG` entry with `intent: 'edit' | 'enhance'` (all
+  domains — few entries carry a `source` field, so filtering on it would
+  cover only ~4 nodes and make the guard vacuous), assert the nodeType is
+  EITHER in `AGENT_CAPABILITIES` OR in a new exported
   `AGENT_EXCLUDED: Record<nodeType, reason>` list in `capabilities.ts`.
 - Failure message tells the developer exactly what to do (add a capability
   entry with intents, or an exclusion with a reason).
