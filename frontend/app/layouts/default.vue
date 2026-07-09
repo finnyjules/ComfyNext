@@ -43,7 +43,8 @@ import {
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
 import { graphToPrompt } from '~/lib/graph/graphToPrompt'
 import { UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
-import { registerRun, markRunning, finishRun, inFlight, perRun, dropRunState } from '~/lib/graph/runRegistry'
+import { registerRun, markRunning, finishRun, inFlight, perRun, dropRunState, getRun, inFlightCount } from '~/lib/graph/runRegistry'
+import { CostConfirmQueue } from '~/lib/graph/costConfirmQueue'
 import { resolveCreditDelta, type CreditWatchCandidate } from '~/lib/graph/creditAttribution'
 import { resolveEventTab } from '~/lib/graph/resolveEventTab'
 import { withKeyedLock } from '~/lib/graph/keyedLock'
@@ -2282,12 +2283,65 @@ interface HistoryItem {
 }
 const historyItems = ref<HistoryItem[]>([])
 
-// Per-prompt progress and executing node info from bridge events
+// Per-prompt fine progress (0-100) from bridge `progress`/`executed` events,
+// keyed by prompt_id. Drives the queue panel and the active-run status bar.
 const promptProgress = ref<Record<string, number>>({})
-const tabNodeProgress = ref({ completed: 0, total: 0 })
-const currentRunningNode = ref('')
-const executionStartTime = ref<number | null>(null)
-const currentRunProgressPct = ref(0)
+
+// The status bar and running-node label are now driven per-run (Tier 3): the
+// old single globals (tabNodeProgress / currentRunningNode / executionStartTime
+// / currentRunProgressPct) are gone for the DIRECT path. Instead the bar
+// reflects the ACTIVE tab's in-flight registered run, resolved from the registry.
+//
+// BRIDGE-path carry: bridge runs never register, so the registry can't drive
+// their bar. They keep a single-run display bag (bridgeDisplay) — the exact
+// old-globals behavior, only populated for UNREGISTERED runs — used as the
+// fallback when no registered run owns the active tab. This preserves today's
+// status-bar behavior byte-for-byte when direct execution is off.
+//
+// Because perRun() state is a plain (non-reactive) Map, `runDisplayTick` is
+// bumped on every per-run lifecycle mutation to re-run the computed;
+// inFlightCount (reactive) covers registered run add/drop.
+const runDisplayTick = ref(0)
+const bridgeDisplay = ref<{ startedAt: number | null; runningNode: string; completed: number; total: number; percent: number }>(
+  { startedAt: null, runningNode: '', completed: 0, total: 0, percent: 0 },
+)
+function resetBridgeDisplay() {
+  bridgeDisplay.value = { startedAt: null, runningNode: '', completed: 0, total: 0, percent: 0 }
+}
+const activeRunDisplay = computed(() => {
+  // Reactive deps: tick (per-run field mutations), inFlightCount (add/drop),
+  // activeTabId (tab switch), promptProgress (fine percent), bridgeDisplay.
+  void runDisplayTick.value
+  void inFlightCount.value
+  const tabId = activeTab.value?.type === 'project' ? activeTab.value.id : null
+  if (!tabId) return null
+  // Only real runs with a prompt_id drive the bar: skip reservations (empty
+  // promptId, no RunState) and live-preview runs (silent by design).
+  const runs = inFlight({ tabId }).filter((e) => e.promptId && !e.live)
+  // Newest wins if several overlap on one tab — its label is what the user just
+  // triggered.
+  const entry = runs.sort((a, b) => b.startedAt - a.startedAt)[0]
+  if (entry) {
+    const st = perRun(entry.promptId)
+    return {
+      startedAt: entry.startedAt,
+      progress: { completed: st.nodeProgress.completed, total: st.nodeProgress.total },
+      runningNode: st.runningNode || '',
+      percent: promptProgress.value[entry.promptId] ?? 0,
+    }
+  }
+  // Bridge-path fallback: a single unregistered run in flight (direct exec off).
+  const bd = bridgeDisplay.value
+  if (bd.startedAt !== null) {
+    return {
+      startedAt: bd.startedAt,
+      progress: { completed: bd.completed, total: bd.total },
+      runningNode: bd.runningNode,
+      percent: bd.percent,
+    }
+  }
+  return null
+})
 
 // Latest result for the canvas status bar. Cleared when a new run starts;
 // success auto-clears after a few seconds via the timeout below; errors
@@ -2435,13 +2489,22 @@ const userProfile = ref<{ email?: string | null, displayName?: string | null, ph
 const userPopupOpen = ref(false)
 
 // Pre-run cost guard — promise-based confirm so runVueWorkflow can await it.
-const costConfirm = ref<{ estimate: CostEstimate; iterations: number; resolve: (ok: boolean) => void } | null>(null)
+// FIFO queue (not a single slot): two independent threshold-crossing Runs each
+// get their own request + promise, so the first is never dropped/hung by the
+// second (audit R3). The dialog shows the queue HEAD; resolving it advances to
+// the next. `costConfirmHead` is a reactive mirror of the head for the template
+// (the queue itself is a plain class instance); onChange re-reads it after every
+// mutation.
+const costConfirmHead = ref<{ estimate: CostEstimate; iterations: number } | null>(null)
+const costConfirmQueue = new CostConfirmQueue<CostEstimate>(() => {
+  const h = costConfirmQueue.head
+  costConfirmHead.value = h ? { estimate: h.estimate, iterations: h.iterations } : null
+})
 function confirmRunCost(estimate: CostEstimate, iterations = 1): Promise<boolean> {
-  return new Promise((resolve) => { costConfirm.value = { estimate, iterations, resolve } })
+  return costConfirmQueue.enqueue(estimate, iterations)
 }
 function resolveCostConfirm(ok: boolean) {
-  costConfirm.value?.resolve(ok)
-  costConfirm.value = null
+  costConfirmQueue.resolveHead(ok)
 }
 function costConfirmThresholdUsd(): number {
   const raw = useLocalSettings().getLocalSetting('ComfyNext.Cost.ConfirmThresholdUsd')
@@ -2716,6 +2779,24 @@ function handleBridgeMessage(event: MessageEvent) {
   handleBridgeEvent(event.data, event.source as Window | null)
 }
 
+// Per-event silent determination (audit C4). A "silent" run (live-preview /
+// slider drag) suppresses status-bar + tab-indicator UI. Two sources, by path:
+//   - DIRECT (registered) runs carry their own `live` flag on the run entry
+//     (stamped at registerRun), so we read getRun(prompt_id)?.live — this is
+//     per-run, so a live run overlapping a real run can NEVER mis-tag the real
+//     run silent (the C4 bug the old single global caused).
+//   - BRIDGE-path (unregistered) runs never register, so getRun is null; they
+//     fall back to the single `currentRunSilent` flag, which ComfyUI's
+//     one-prompt-at-a-time bridge model makes safe (see pendingLiveRuns). This
+//     preserves today's behavior byte-for-byte when direct execution is off.
+function isSilentEvent(prompt_id: string | undefined | null): boolean {
+  if (prompt_id) {
+    const entry = getRun(prompt_id)
+    if (entry) return entry.live // registered → per-run truth
+  }
+  return currentRunSilent.value // bridge/unregistered → single flag fallback
+}
+
 function handleBridgeEvent(data: any, source?: Window | null) {
   if (!data) return
 
@@ -2880,17 +2961,29 @@ function handleBridgeEvent(data: any, source?: Window | null) {
   if (evt === 'execution_start') {
     clearQueueWatchdog() // run reached the server — fallback clear for older bridges
     if (prompt_id) markRunning(prompt_id) // registry no-op for bridge-path runs
-    // Claim this run as silent if a live-run is pending — must happen
-    // before any UI updates so the tab indicator can skip too.
-    if (pendingLiveRuns.value > 0) {
-      pendingLiveRuns.value--
-      currentRunSilent.value = true
-    } else {
-      currentRunSilent.value = false
+    // Silent-claim (audit C4). REGISTERED (direct) runs already carry their own
+    // `live` flag on the entry, so isSilentEvent reads that per-run and we must
+    // NOT touch the bridge globals here (doing so is exactly the C4 mis-tag: a
+    // live run's execution_start would flip currentRunSilent under an overlapping
+    // real run). For UNREGISTERED (bridge-path) runs, keep the single-flag
+    // mechanism: consume a pending live-run and set currentRunSilent, before any
+    // UI update so the tab indicator can skip too.
+    const registered = !!(prompt_id && getRun(prompt_id))
+    if (!registered) {
+      if (pendingLiveRuns.value > 0) {
+        pendingLiveRuns.value--
+        currentRunSilent.value = true
+      } else {
+        currentRunSilent.value = false
+      }
     }
-    tabNodeProgress.value = { completed: 0, total: 0 }
-    executionStartTime.value = Date.now()
-    currentRunProgressPct.value = 0
+    const silent = isSilentEvent(prompt_id)
+    // Bridge-path display: only unregistered runs use the single-run bag; a
+    // registered run's status bar is driven from its registry entry instead.
+    if (!registered) {
+      bridgeDisplay.value = { startedAt: Date.now(), runningNode: '', completed: 0, total: 0, percent: 0 }
+    }
+    runDisplayTick.value++
     if (prompt_id) {
       promptProgress.value[prompt_id] = 0
     }
@@ -2917,17 +3010,22 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     perRun(prompt_id).startCredits = credits.value
     // New run wipes any prior result from the status bar — the user wants
     // to know about THIS run, not the last one.
-    if (!currentRunSilent.value) {
+    if (!silent) {
       updateTabStatus(tabId, 'running', 0)
       setRunResult(null)
     }
   } else if (evt === 'progress') {
-    if (!currentRunSilent.value) updateTabStatus(tabId, 'running', percent)
+    if (!isSilentEvent(prompt_id)) updateTabStatus(tabId, 'running', percent)
     if (prompt_id) promptProgress.value[prompt_id] = percent
-    if (typeof percent === 'number') currentRunProgressPct.value = percent
+    // Bridge-path (unregistered) fine percent → single-run display bag.
+    if (typeof percent === 'number' && !(prompt_id && getRun(prompt_id))) {
+      bridgeDisplay.value = { ...bridgeDisplay.value, percent }
+    }
   } else if (evt === 'executing' && node_id) {
-    // Count total nodes for coarse progress
-    tabNodeProgress.value.total++
+    // Count total nodes for coarse progress — per-run (audit C5): scoped to THIS
+    // prompt_id so an overlapping run B's execution_start can't reset A's counter
+    // and drop A as a silent-failure at its own execution_complete.
+    perRun(prompt_id).nodeProgress.total++
     // Remember which nodes ran — needed for the Replicate USD cost estimate
     // at execution_complete (BYOK runs don't move Comfy's credit balance).
     // Per-run (not global): scoped to THIS prompt_id so concurrent runs don't
@@ -2940,25 +3038,52 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     if (prompt_id) {
       promptNodeInfo.value[prompt_id] = { nodeId: node_id, nodeType: displayName }
     }
-    currentRunningNode.value = displayName
+    // Per-run running-node label (drives the ACTIVE tab's status bar via
+    // activeRunDisplay). Per-run so a background run's node name can't hijack
+    // the label shown for the foreground run.
+    perRun(prompt_id).runningNode = displayName
+    // Bridge-path (unregistered) runs: mirror the label + running total into the
+    // single-run display bag, since their bar reads bridgeDisplay, not the registry.
+    if (!(prompt_id && getRun(prompt_id))) {
+      bridgeDisplay.value = { ...bridgeDisplay.value, runningNode: String(displayName), total: perRun(prompt_id).nodeProgress.total }
+    }
+    // Poke the display recompute — perRun mutations are non-reactive.
+    runDisplayTick.value++
   } else if (evt === 'executed') {
     if (data.output) perRun(prompt_id).outputs.push(...extractOutputFiles(data.output))
-    // Track node completion for coarse progress
-    tabNodeProgress.value.completed++
-    const np = tabNodeProgress.value
+    // Track node completion for coarse progress — per-run (audit C5).
+    const np = perRun(prompt_id).nodeProgress
+    np.completed++
+    runDisplayTick.value++
     if (np.total > 0) {
       const coarsePct = Math.round((np.completed / np.total) * 100)
-      if (!currentRunSilent.value) updateTabStatus(tabId, 'running', coarsePct)
+      if (!isSilentEvent(prompt_id)) updateTabStatus(tabId, 'running', coarsePct)
       if (prompt_id) promptProgress.value[prompt_id] = coarsePct
+    }
+    // Bridge-path display: mirror completed count + coarse percent.
+    if (!(prompt_id && getRun(prompt_id))) {
+      bridgeDisplay.value = {
+        ...bridgeDisplay.value,
+        completed: np.completed,
+        total: np.total,
+        percent: np.total > 0 ? Math.round((np.completed / np.total) * 100) : bridgeDisplay.value.percent,
+      }
     }
   } else if (evt === 'execution_complete') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is done — stop the stall timer
-    const durationMs = executionStartTime.value
-      ? (Date.now() - executionStartTime.value)
-      : 0
-    // Detect a silent failure: complete fired but Comfy validation rejected
-    // the prompt (no executed nodes, no node ran). Don't show "success" then.
-    const validatedRun = tabNodeProgress.value.completed > 0
+    // Duration: registered runs carry startedAt on their entry; bridge-path runs
+    // read the single-run display bag. Read BEFORE finishRun drops the entry.
+    const startEntry = prompt_id ? getRun(prompt_id) : null
+    const startAt = startEntry?.startedAt ?? bridgeDisplay.value.startedAt
+    const durationMs = startAt ? (Date.now() - startAt) : 0
+    // Detect a silent failure: complete fired but Comfy validation rejected the
+    // prompt (no executed nodes, no node ran). Read this run's OWN per-run node
+    // progress (audit C5) — an overlapping run B can no longer zero A's counter.
+    const validatedRun = perRun(prompt_id).nodeProgress.completed > 0
+    // Silent state for THIS run, snapshotted BEFORE finishRun drops the entry
+    // (getRun would then go null). Registered → per-run live flag; bridge → the
+    // single currentRunSilent flag.
+    const completeWasSilent = isSilentEvent(prompt_id)
     // Capture this run's per-run state BEFORE finishRun (below) drops it —
     // finishRun tears down the registered RunState for `prompt_id`, so reading
     // perRun() after that would hand back a brand-new, empty bag instead of
@@ -2976,16 +3101,19 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Credit baseline snapshot — read from the STILL-LIVE RunState before
     // finishRun drops it. This is the "before" number the credit delta subtracts.
     const runStartCredits = runState.startCredits
-    tabNodeProgress.value = { completed: 0, total: 0 }
-    currentRunningNode.value = ''
-    executionStartTime.value = null
-    currentRunProgressPct.value = 0
+    // Clear the bridge single-run display (no-op for a registered run, whose bar
+    // is driven off the registry and clears when finishRun removes the entry).
+    resetBridgeDisplay()
+    runDisplayTick.value++
     if (prompt_id) {
       delete promptProgress.value[prompt_id]
       delete promptNodeInfo.value[prompt_id]
       finishRun(prompt_id, 'done') // remove this run before the tab-drain check below (registry no-op for bridge runs)
     }
-    const wasSilent = currentRunSilent.value
+    // wasSilent: read the per-run/bridge silent state for THIS run BEFORE we
+    // reset it. finishRun already dropped the registered entry, so re-reading
+    // getRun here would be null — capture it above via a snapshot instead.
+    const wasSilent = completeWasSilent
     currentRunSilent.value = false
     // Durable generation record — silent/live runs count too (they spend real
     // money). Fire-and-forget; never blocks the UI path.
@@ -3113,18 +3241,19 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     dropRunState(prompt_id)
   } else if (evt === 'execution_error') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is terminal — stop the stall timer
+    // Snapshot silent state for THIS run BEFORE finishRun drops the entry
+    // (getRun would then go null). Registered → per-run live; bridge → the flag.
+    const errWasSilent = isSilentEvent(prompt_id)
     // Remove this run first, then idle the tab only if it has no other run in
     // flight — a second concurrent direct run must keep the spinner up. Bridge
     // runs aren't registered, so inFlight is empty and this idles as before.
     if (prompt_id) finishRun(prompt_id, 'error')
     const tabDrained = tabId ? inFlight({ tabId }).length === 0 : true
-    if (!currentRunSilent.value && tabDrained) updateTabStatus(tabId, 'idle')
+    if (!errWasSilent && tabDrained) updateTabStatus(tabId, 'idle')
     if (inFlight().length === 0) vueCanvasRef.value?.clearAllRunVisuals?.()
-    tabNodeProgress.value = { completed: 0, total: 0 }
-    currentRunningNode.value = ''
-    executionStartTime.value = null
-    currentRunProgressPct.value = 0
-    const wasSilent = currentRunSilent.value
+    resetBridgeDisplay()
+    runDisplayTick.value++
+    const wasSilent = errWasSilent
     currentRunSilent.value = false
     if (!wasSilent) {
       const nodeName = data.node_type || data.node_id || 'Unknown node'
@@ -3173,20 +3302,20 @@ function dismissRunResult() {
 
     <!-- Pre-run cost confirm -->
     <div
-      v-if="costConfirm"
+      v-if="costConfirmHead"
       class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60"
       @click.self="resolveCostConfirm(false)"
     >
       <div class="w-[360px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl p-4">
         <div class="text-sm font-semibold text-white mb-1">
-          This run costs ~${{ costConfirm.estimate.usd.toFixed(2) }}
+          This run costs ~${{ costConfirmHead.estimate.usd.toFixed(2) }}
         </div>
-        <div v-if="costConfirm.iterations > 1" class="text-[11px] text-white/50 mb-2">
-          {{ costConfirm.iterations }} runs × ~${{ (costConfirm.estimate.usd / costConfirm.iterations).toFixed(2) }} each
+        <div v-if="costConfirmHead.iterations > 1" class="text-[11px] text-white/50 mb-2">
+          {{ costConfirmHead.iterations }} runs × ~${{ (costConfirmHead.estimate.usd / costConfirmHead.iterations).toFixed(2) }} each
         </div>
         <div class="max-h-[160px] overflow-y-auto mb-3 space-y-1">
           <div
-            v-for="item in costConfirm.estimate.breakdown"
+            v-for="item in costConfirmHead.estimate.breakdown"
             :key="item.id"
             class="flex items-center justify-between gap-3 text-[11px] text-white/60"
           >
@@ -3805,11 +3934,11 @@ function dismissRunResult() {
              doesn't flicker on every drag tick. -->
         <CanvasStatusBar
           v-if="activeTab.type === 'project'"
-          :running="executionStartTime !== null && !currentRunSilent"
-          :current-node="currentRunningNode"
-          :progress="tabNodeProgress"
-          :percent="currentRunProgressPct"
-          :started-at="executionStartTime"
+          :running="!!activeRunDisplay"
+          :current-node="activeRunDisplay?.runningNode ?? ''"
+          :progress="activeRunDisplay?.progress ?? { completed: 0, total: 0 }"
+          :percent="activeRunDisplay?.percent ?? 0"
+          :started-at="activeRunDisplay?.startedAt ?? null"
           :last-result="lastRunResult"
           :backend-busy="backendBusy"
           :backend-label="backendLabel"
@@ -4102,8 +4231,8 @@ function dismissRunResult() {
                     <span class="text-xs font-medium text-white/90 truncate">{{ runningWorkflowName(item[1]) }}</span>
                     <span class="text-xs text-white/40 ml-auto shrink-0">{{ queueItemProgress(item[1]) }}%</span>
                   </div>
-                  <div v-if="promptNodeInfo[item[1]]?.nodeType || currentRunningNode" class="text-[11px] text-white/40 mb-2 ml-4 truncate">
-                    {{ promptNodeInfo[item[1]]?.nodeType || currentRunningNode }}
+                  <div v-if="promptNodeInfo[item[1]]?.nodeType || activeRunDisplay?.runningNode" class="text-[11px] text-white/40 mb-2 ml-4 truncate">
+                    {{ promptNodeInfo[item[1]]?.nodeType || activeRunDisplay?.runningNode }}
                   </div>
                   <!-- Progress bar -->
                   <div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
