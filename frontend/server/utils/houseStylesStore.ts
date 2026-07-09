@@ -49,3 +49,8 @@ export function upsertHouseStyle(entries: HouseStyleEntry[], entry: HouseStyleEn
   const rest = entries.filter(e => e.replicateModel !== entry.replicateModel)
   return [...rest, entry].sort((a, b) => a.label.localeCompare(b.label))
 }
+
+/** Same id, different replicateModel = would shadow the existing entry's thumbnail dir. */
+export function findIdCollision(entries: HouseStyleEntry[], entry: HouseStyleEntry): HouseStyleEntry | undefined {
+  return entries.find(e => e.id === entry.id && e.replicateModel !== entry.replicateModel)
+}

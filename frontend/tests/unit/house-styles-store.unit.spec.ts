@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateHouseStyleEntry, upsertHouseStyle, type HouseStyleEntry } from '../../server/utils/houseStylesStore'
+import { validateHouseStyleEntry, upsertHouseStyle, findIdCollision, type HouseStyleEntry } from '../../server/utils/houseStylesStore'
 
 const valid: HouseStyleEntry = {
   id: 'rough-cut-revival',
@@ -42,5 +42,20 @@ describe('upsertHouseStyle', () => {
     out = upsertHouseStyle(out, updated)
     expect(out.length).toBe(2)
     expect(out.find(e => e.replicateModel === valid.replicateModel)!.label).toBe('Rough Cut Revival v2')
+  })
+})
+
+describe('findIdCollision', () => {
+  it('flags same id with a different replicateModel', () => {
+    const conflicting = { ...valid, replicateModel: 'finnyjules/jules-different-model' }
+    expect(findIdCollision([valid], conflicting)).toEqual(valid)
+  })
+  it('allows same id with the same replicateModel (republish)', () => {
+    const republish = { ...valid, label: 'Rough Cut Revival v2' }
+    expect(findIdCollision([valid], republish)).toBeUndefined()
+  })
+  it('ignores unrelated entries', () => {
+    const other = { ...valid, id: 'azure-bloom', label: 'Azure Bloom', replicateModel: 'finnyjules/jules-azure' }
+    expect(findIdCollision([other], valid)).toBeUndefined()
   })
 })
