@@ -16,9 +16,37 @@ export interface RunEntry {
   label?: string
   startedAt: number // Date.now() at registration
   status: 'queued' | 'running' | 'done' | 'error'
+  canvasId: string | null
+}
+
+export interface GenOutputLike { [k: string]: any }
+
+// Mutable per-run accumulators (executed nodes, outputs, credits, progress)
+// that concurrent-run event handlers mutate in place. Kept in a SEPARATE map
+// from RunEntry so entry-snapshot churn (registerRun/markRunning/finishRun
+// all replace the RunEntry object) never touches these stable references.
+export interface RunState {
+  executedNodeIds: Set<string>
+  outputs: GenOutputLike[]
+  startCredits: number | null
+  costDeadline: number // 0 = credit watch disabled
+  nodeProgress: { completed: number; total: number }
+  runningNode: string | null
+  pendingGenRecord: any | null
 }
 
 const runs = new Map<string, RunEntry>()
+
+/** RunState for registered prompt_ids (parallels `runs`, keyed the same way). */
+const runStates = new Map<string, RunState>()
+
+/**
+ * RunState for prompt_ids that never went through registerRun — i.e. bridge-path
+ * runs, which never register. Keyed `local_${id ?? '_'}` so unregistered ids
+ * (including null/undefined) each still get a stable, distinct bag, preserving
+ * single bridge-run semantics (null/undefined share one bag: `local__`).
+ */
+const transientStates = new Map<string, RunState>()
 
 /** Reactive escape hatch: tracks registry size, updated on every mutation. Drives the "N running" pill without making the Map itself reactive. */
 export const inFlightCount = ref(0)
@@ -27,11 +55,53 @@ function syncCount() {
   inFlightCount.value = runs.size
 }
 
-export function registerRun(e: Omit<RunEntry, 'status' | 'startedAt'>): RunEntry {
-  const entry: RunEntry = { ...e, status: 'queued', startedAt: Date.now() }
+function freshRunState(): RunState {
+  return {
+    executedNodeIds: new Set<string>(),
+    outputs: [],
+    startCredits: null,
+    costDeadline: 0,
+    nodeProgress: { completed: 0, total: 0 },
+    runningNode: null,
+    pendingGenRecord: null,
+  }
+}
+
+export function registerRun(e: Omit<RunEntry, 'status' | 'startedAt' | 'canvasId'> & { canvasId?: string | null }): RunEntry {
+  const entry: RunEntry = { ...e, status: 'queued', startedAt: Date.now(), canvasId: e.canvasId ?? null }
   runs.set(entry.promptId, entry)
+  runStates.set(entry.promptId, freshRunState())
   syncCount()
   return entry
+}
+
+/**
+ * Returns the mutable RunState for a prompt_id: the registered state if the
+ * id is registered, otherwise a transient bag (created on first access) keyed
+ * `local_${id ?? '_'}`. The returned reference is STABLE across calls for the
+ * same id — callers mutate it in place and later calls see the same object.
+ */
+export function perRun(promptId: string | null | undefined): RunState {
+  if (promptId != null) {
+    const registered = runStates.get(promptId)
+    if (registered) return registered
+  }
+  const key = `local_${promptId ?? '_'}`
+  let state = transientStates.get(key)
+  if (!state) {
+    state = freshRunState()
+    transientStates.set(key, state)
+  }
+  return state
+}
+
+/** Tears down the RunState for a prompt_id (registered or transient). No-op for unknown ids. */
+export function dropRunState(promptId: string | null | undefined): void {
+  if (promptId != null) {
+    runStates.delete(promptId)
+  }
+  const key = `local_${promptId ?? '_'}`
+  transientStates.delete(key)
 }
 
 export function markRunning(promptId: string): RunEntry | null {
@@ -48,6 +118,7 @@ export function finishRun(promptId: string, status: 'done' | 'error'): RunEntry 
   if (!existing) return null
   const finished: RunEntry = { ...existing, status }
   runs.delete(promptId)
+  dropRunState(promptId)
   syncCount()
   return finished
 }
@@ -69,5 +140,7 @@ export function inFlight(filter?: { tabId?: string; worker?: number }): RunEntry
 /** Test hook + tab-close cleanup: clears the registry. */
 export function clearAllRuns(): void {
   runs.clear()
+  runStates.clear()
+  transientStates.clear()
   syncCount()
 }
