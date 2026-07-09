@@ -190,6 +190,15 @@ const PARAPHRASES: { phrase: string; expect: string }[] = [
   { phrase: 'make this copy sound more playful', expect: 'RewriteToneNode' },
   { phrase: 'give me ten name ideas for this brand', expect: 'BrainstormIdeasNode' },
   { phrase: 'turn my rough idea into a detailed prompt', expect: 'ImprovePromptNode' },
+  // Edit-action verbs (RemoveObject / TextEdit / RecolorObject)
+  { phrase: 'get that lamppost out of the shot', expect: 'RemoveObjectNode' },
+  { phrase: 'erase the tourist from the beach photo', expect: 'RemoveObjectNode' },
+  { phrase: 'the sign should say OPEN instead', expect: 'TextEditNode' },
+  { phrase: 'fix the spelling on the poster', expect: 'TextEditNode' },
+  { phrase: 'change what the label says', expect: 'TextEditNode' },
+  { phrase: 'make the sofa emerald green', expect: 'RecolorObjectNode' },
+  { phrase: 'give the car a different paint color', expect: 'RecolorObjectNode' },
+  { phrase: 'recolour the logo to match our brand', expect: 'RecolorObjectNode' },
 ]
 
 describe('paraphrases route to the right capability (top-3)', () => {
@@ -221,8 +230,9 @@ const WIDE: { phrase: string; expect: string }[] = [
   { phrase: 'make a gradiant background', expect: 'GradientStudio' },
   { phrase: 'make this transperent', expect: 'RemoveBackgroundNode' },
   // object/photo edits (NOT background removal)
-  { phrase: 'erase the power lines from this photo', expect: 'EditImageNode' },
-  { phrase: 'photoshop out the trash can', expect: 'EditImageNode' },
+  // object removal is its own capability now (was EditImageNode)
+  { phrase: 'erase the power lines from this photo', expect: 'RemoveObjectNode' },
+  { phrase: 'photoshop out the trash can', expect: 'RemoveObjectNode' },
   { phrase: 'make it look like nighttime', expect: 'EditImageNode' },
   // enhance / restore / faces
   { phrase: 'make it crisper', expect: 'EnhanceDetailNode' },
@@ -356,9 +366,9 @@ describe('collisions disambiguate', () => {
     { phrase: 'sharpen the face', expect: 'FixFacesNode' },
     { phrase: 'deblur the face', expect: 'FixFacesNode' },
     { phrase: 'sharpen this image', expect: 'EnhanceDetailNode' },
-    // object removal is an EDIT, not background removal
-    { phrase: 'remove the person from the photo', expect: 'EditImageNode' },
-    { phrase: 'erase the car from this picture', expect: 'EditImageNode' },
+    // object removal is its own capability now (was EditImageNode)
+    { phrase: 'remove the person from the photo', expect: 'RemoveObjectNode' },
+    { phrase: 'erase the car from this picture', expect: 'RemoveObjectNode' },
     // media-typed summaries / reads disambiguate by noun
     { phrase: 'summarize the video', expect: 'DescribeVideoNode' },
     { phrase: 'summarize this article', expect: 'SummarizeTextNode' },
@@ -367,6 +377,16 @@ describe('collisions disambiguate', () => {
     // animate: image → video; a word/title → kinetic type
     { phrase: 'animate this image', expect: 'GenerateVideoNode' },
     { phrase: 'animate the word HELLO', expect: 'SpaceType' },
+    // background removal must not be stolen by object removal
+    { phrase: 'remove the background', expect: 'RemoveBackgroundNode', notFirst: 'RemoveObjectNode' },
+    { phrase: 'cut out the subject', expect: 'RemoveBackgroundNode' },
+    // text EFFECT (typographic art) vs text EDIT (find/replace in a photo)
+    { phrase: 'make a text effect for the word SALE', expect: 'TextEffectNode', notFirst: 'TextEditNode' },
+    { phrase: 'change the text on the sign', expect: 'TextEditNode', notFirst: 'TextEffectNode' },
+    // recolor one object vs restyle the whole image vs generic edit
+    { phrase: 'change the color of the shirt', expect: 'RecolorObjectNode', notFirst: 'EditImageNode' },
+    { phrase: 'restyle this in the look of that reference', expect: 'RestyleFromImageNode', notFirst: 'RecolorObjectNode' },
+    { phrase: 'change her shirt to red', expect: 'EditImageNode' },
   ]
   for (const c of cases) {
     it(`"${c.phrase}" → ${c.expect}`, () => {

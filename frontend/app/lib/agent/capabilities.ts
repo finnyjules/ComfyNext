@@ -143,10 +143,16 @@ const GENERATORS: AgentCapability[] = [
 
   // ---- Image · editing & transformation ----
   { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana / Flux Kontext) — change, add, remove anything.', inputs: [{ name: 'input_image', type: 'IMAGE' }], outputs: IMG,
-    intents: ['edit this image', 'change the color of', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'tweak this image', 'photoshop this', 'photoshop out', 'add an object', 'add a hat', 'put glasses on', 'add a logo to the image',
-      // Object removal / replacement is an EDIT (not background removal) — specific
-      // enough to beat RemoveBackground for "remove the <thing>".
-      'remove an object', 'remove the person', 'remove the car', 'remove the object', 'erase the object', 'get rid of the object'] },
+    intents: ['edit this image', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'tweak this image', 'photoshop this', 'add an object', 'add a hat', 'put glasses on', 'add a logo to the image'] },
+    // Removal, recolor and in-image text edits have DEDICATED nodes below
+    // (RemoveObjectNode / RecolorObjectNode / TextEditNode) — their verbs
+    // moved there; EditImageNode keeps the broad/ambiguous edits.
+  { nodeType: 'RemoveObjectNode', kind: 'effect', title: 'Remove an object', summary: 'Erase a described object and seamlessly fill the hole from the scene (Nano Banana 2).', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+    intents: ['remove an object', 'remove the person', 'remove the car', 'remove the object', 'erase the object', 'get rid of the object', 'delete the object', 'remove the thing in the background', 'erase him from the picture', 'take out the object', 'photoshop out', 'remove the lamppost', 'clean up the distractions', 'erase the tourist'] },
+  { nodeType: 'TextEditNode', kind: 'effect', title: 'Edit text in an image', summary: 'Find and replace rendered text inside the image, matching the original typography (Nano Banana 2).', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+    intents: ['change the text', 'replace the text', 'edit the text in the image', 'make it say', 'fix the typo', 'fix the spelling', 'change the sign to say', 'change the words', 'rewrite the label', 'change the headline text', 'replace the word', 'update the text on the poster', 'the sign should say'] },
+  { nodeType: 'RecolorObjectNode', kind: 'effect', title: 'Recolor an object', summary: "Change one object's colour while keeping its material, texture and lighting (Nano Banana 2).", inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
+    intents: ['change the color of', 'recolor the object', 'recolour it', 'make the shirt red', 'change the car to blue', 'make it a different color', 'a different paint color', 'turn the dress green', 'make the sofa green', 'swap the color', 'recolor to the brand color', 'colorway', 'recolour the logo'] },
   { nodeType: 'RestyleFromImageNode', kind: 'effect', title: 'Restyle from image', summary: 'Apply the style of one reference image onto another content image.', inputs: [{ name: 'content_image', type: 'IMAGE' }, { name: 'style_image', type: 'IMAGE' }], outputs: IMG,
     intents: ['apply this style', 'make it look like this', 'style transfer', 'restyle using this image', 'use this as a style reference', 'match this aesthetic', 'transfer the look', 'paint in this style', 'copy the style of', 'give it this vibe'] },
   { nodeType: 'RestyleWithLoRANode', kind: 'effect', title: 'Restyle with a trained LoRA', summary: 'Restyle a content image with a trained LoRA, keeping structure.', inputs: [{ name: 'content_image', type: 'IMAGE' }], outputs: IMG,
