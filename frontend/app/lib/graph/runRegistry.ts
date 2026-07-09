@@ -37,6 +37,16 @@ export interface RunState {
 
 const runs = new Map<string, RunEntry>()
 
+/**
+ * Synchronous slot reservations: claims an in-flight slot for a worker BEFORE
+ * its POST completes, closing a race where two rapid dispatches both read a
+ * worker as idle. No tabId (the run hasn't been assigned one yet), so
+ * inFlight({tabId}) filtering ignores reservations — only inFlight({worker})
+ * and the unfiltered count see them.
+ */
+const reservations = new Map<number, { worker: number }>()
+let nextReservationId = 1
+
 /** RunState for registered prompt_ids (parallels `runs`, keyed the same way). */
 const runStates = new Map<string, RunState>()
 
@@ -52,7 +62,7 @@ const transientStates = new Map<string, RunState>()
 export const inFlightCount = ref(0)
 
 function syncCount() {
-  inFlightCount.value = runs.size
+  inFlightCount.value = runs.size + reservations.size
 }
 
 function freshRunState(): RunState {
@@ -67,10 +77,36 @@ function freshRunState(): RunState {
   }
 }
 
-export function registerRun(e: Omit<RunEntry, 'status' | 'startedAt' | 'canvasId'> & { canvasId?: string | null }): RunEntry {
+/**
+ * Claims an in-flight slot for `worker` synchronously, before the dispatch
+ * POST that will eventually registerRun() a real entry. Returns a
+ * reservationId to pass to registerRun (on success) or releaseReservation
+ * (on dispatch failure).
+ */
+export function reserve(worker: number): number {
+  const id = nextReservationId++
+  reservations.set(id, { worker })
+  syncCount()
+  return id
+}
+
+/** Drops a reservation without it ever becoming a real run (dispatch failed). No-op for unknown ids. */
+export function releaseReservation(id: number): void {
+  if (reservations.delete(id)) {
+    syncCount()
+  }
+}
+
+export function registerRun(
+  e: Omit<RunEntry, 'status' | 'startedAt' | 'canvasId'> & { canvasId?: string | null },
+  reservationId?: number,
+): RunEntry {
   const entry: RunEntry = { ...e, status: 'queued', startedAt: Date.now(), canvasId: e.canvasId ?? null }
   runs.set(entry.promptId, entry)
   runStates.set(entry.promptId, freshRunState())
+  if (reservationId !== undefined) {
+    reservations.delete(reservationId)
+  }
   syncCount()
   return entry
 }
@@ -127,8 +163,18 @@ export function getRun(promptId: string): RunEntry | null {
   return runs.get(promptId) ?? null
 }
 
+/**
+ * Synthesizes a RunEntry-shaped stand-in for a reservation so it can flow
+ * through the same filter/count path as real runs. Reservations have no
+ * tabId (`''`, deliberately unequal to any real tabId filter), which is how
+ * inFlight({tabId}) ends up ignoring them.
+ */
+function reservationAsEntry(worker: number): RunEntry {
+  return { promptId: '', tabId: '', live: false, worker, startedAt: 0, status: 'queued', canvasId: null }
+}
+
 export function inFlight(filter?: { tabId?: string; worker?: number }): RunEntry[] {
-  const all = Array.from(runs.values())
+  const all = [...runs.values(), ...Array.from(reservations.values(), (r) => reservationAsEntry(r.worker))]
   if (!filter) return all
   return all.filter((e) => {
     if (filter.tabId !== undefined && e.tabId !== filter.tabId) return false
@@ -142,5 +188,6 @@ export function clearAllRuns(): void {
   runs.clear()
   runStates.clear()
   transientStates.clear()
+  reservations.clear()
   syncCount()
 }
