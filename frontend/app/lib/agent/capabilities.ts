@@ -62,6 +62,17 @@ export function capabilityNodeTypes(caps: AgentCapability[] = AGENT_CAPABILITIES
   return new Set(caps.map(c => c.nodeType))
 }
 
+/** Actions-panel nodes deliberately NOT agent-plannable, with the reason.
+ *  The coverage guard (tests/unit/agent-coverage-guard.unit.spec.ts) forces
+ *  every edit/enhance catalog entry to appear here or in AGENT_CAPABILITIES —
+ *  an explicit decision either way. */
+export const AGENT_EXCLUDED: Record<string, string> = {
+  PersonSwap: 'Needs two required images — the scene AND a reference photo of the replacement person — the agent has no way to source a specific person-identity photo from a phrase alone.',
+  PoseMannequin: "Its primary workflow poses a 3D mannequin in a dedicated on-canvas editor (baked conditioning image); the agent can't drive that editor from text.",
+  SwapProductNode: 'Needs two required images — a finished packshot scene AND the product cutout to place into it — the agent cannot source or pair both from a phrase alone.',
+  LipSyncNode: "Driven by the Lip-Sync Studio's staged face/voice inputs (JSON model_options with face_image/face_video/audio URLs, branching between two engines) rather than ports the agent can wire directly.",
+}
+
 /** Raw node ids that a capability replaces — excluded from the agent palette so a
  *  redundant provider node can't be picked over the curated dispatcher. */
 export function supersededNodeTypes(caps: AgentCapability[] = AGENT_CAPABILITIES): Set<string> {
@@ -161,6 +172,10 @@ const GENERATORS: AgentCapability[] = [
     intents: ['blend these together', 'make it look like one photo', 'harmonize the composite', 'match the lighting', 'make the pasted object fit', 'add realistic shadows', 'merge the scene', 'unify this composite', 'integrate the cutout'] },
   { nodeType: 'ProductShotNode', kind: 'effect', title: 'Product shot', summary: 'Product photo + scene → studio-quality product shot, product kept pixel-exact.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
     intents: ['make a product shot', 'studio photo of my product', 'put my product in a scene', 'professional product photography', 'ecommerce photo', 'stage my product', 'product on a background', 'marketing shot of this', 'product mockup scene', 'commercial product image', 'advertising photo'] },
+  { nodeType: 'RelightNode', kind: 'effect', title: 'Relight a photo', summary: "Re-light an image via a light gimbal/preset — direction, intensity, or match a reference's lighting (Nano Banana 2).", inputs: [{ name: 'image', type: 'IMAGE' }, { name: 'reference', type: 'IMAGE', optional: true }], outputs: IMG,
+    intents: ['relight this photo', 'change the lighting', 'add dramatic lighting', 'relight to golden hour', 'light it from the side', 'add a rim light', 'give it studio lighting', 'warm up the lighting', 'add sunset lighting', 'make the lighting more dramatic', 're-light this image', 'change the light direction', 'match the lighting of this reference'] },
+  { nodeType: 'SwapBackgroundNode', kind: 'effect', title: 'Swap product background', summary: 'Lock the product, change the scene behind it — from a reference photo or a text description (Nano Banana 2).', inputs: [{ name: 'product', type: 'IMAGE' }, { name: 'background_reference', type: 'IMAGE', optional: true }], outputs: IMG,
+    intents: ['swap the background behind the product', 'put this product on a marble counter', 'change the scene behind this product', 'new backdrop for this product', 'move this product to a beach scene', 'put this product on a wood table', 'stage this product on a different surface', 'change the setting behind the product', 'replace the scene behind my product', 'put the product in a new environment'] },
   { nodeType: 'RotateCameraNode', kind: 'effect', title: 'Rotate camera', summary: 'Re-render an image from a new viewpoint via a 3-axis gimbal.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
     intents: ['rotate the camera', 'show me another angle', 'view from the side', 'turn it around', 'different viewpoint', 'see the back', 'change the angle', 'from above', 'low angle shot', 'spin the view', 'new camera position'] },
   { nodeType: 'OutpaintImageNode', kind: 'effect', title: 'Expand / outpaint', summary: 'Extend an image beyond its borders; model invents new surroundings.', inputs: [{ name: 'image', type: 'IMAGE' }], outputs: IMG,
