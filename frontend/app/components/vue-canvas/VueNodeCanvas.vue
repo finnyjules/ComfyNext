@@ -40,11 +40,12 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
-import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
+import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta, resolveActiveTake } from '~/composables/useTakes'
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { planSketchCards } from '~/lib/sketch/planSketchCards'
+import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -3100,6 +3101,34 @@ function materializeSketchCards(source: { id: string, data?: any, position?: { x
   source.data = { ...source.data, properties: { ...(source.data?.properties ?? {}), sketchOutputCardIds: cardIds } }
 }
 
+// Sketch-output card "Promote" (spec 2026-07-08-sketch-node-refinement.md,
+// Change 4): re-render the SOURCE sketch's idea at full quality, rather than
+// enhancing the specific card image. All 4 cards share one source, so which
+// card was clicked doesn't matter — this always looks up the sketch node by
+// `sketchSourceId` and reuses its active take's prompt/seed/aspect
+// (sketchPromoteOverridesFor), then spawns via the same comfynext:spawnBeside
+// path handleSpawnBeside already serves (focused, no run, no edge — model is
+// left at the finisher default, never copied from the sketch's Schnell lock).
+function handlePromoteSketchOutput(e: Event) {
+  const detail = (e as CustomEvent<{ sketchSourceId?: string }>).detail
+  const sourceId = detail?.sketchSourceId
+  if (!sourceId) return
+  const source = (nodes.value as any[]).find((n) => n.id === sourceId)
+  if (!source) return
+  const take = resolveActiveTake(source.data)
+  if (!take) return
+  const built = sketchPromoteOverridesFor(take)
+  if (!built) return
+  window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
+    detail: {
+      sourceNodeId: source.id,
+      nodeType: 'GenerateImageNode',
+      widgetOverrides: built.widgetOverrides,
+      propertyOverrides: built.propertyOverrides,
+    },
+  }))
+}
+
 // Character Library panel "Use in image": ready characters (linked LoRA) get a
 // prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
 // seeded from the default variant's cover photo. Always re-fetches the registry
@@ -3926,6 +3955,7 @@ onMounted(() => {
   window.addEventListener('comfynext:applyEffect', handleApplyEffect)
   window.addEventListener('comfynext:animateArtifact', handleAnimateArtifact)
   window.addEventListener('comfynext:spawnBeside', handleSpawnBeside)
+  window.addEventListener('comfynext:promoteSketchOutput', handlePromoteSketchOutput)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -3981,6 +4011,7 @@ onUnmounted(() => {
   window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
   window.removeEventListener('comfynext:animateArtifact', handleAnimateArtifact)
   window.removeEventListener('comfynext:spawnBeside', handleSpawnBeside)
+  window.removeEventListener('comfynext:promoteSketchOutput', handlePromoteSketchOutput)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.

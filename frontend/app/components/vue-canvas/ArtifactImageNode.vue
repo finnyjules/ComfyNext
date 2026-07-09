@@ -37,6 +37,7 @@ const props = defineProps<{
     // Takes (non-destructive variation loop) — flag-gated, additive.
     takes?: Take[]
     activeTakeId?: string | null
+    properties?: Record<string, unknown>
   }
 }>()
 
@@ -336,6 +337,25 @@ function spawnEnhanceDetail() { spliceEffect('EnhanceDetailNode', { focus: true,
 function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true, branch: true }) }
 function spawnRelight() { spliceEffect('RelightNode', { focus: true, branch: true }) }
 function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch: true }) }
+
+// ── Sketch-output card actions (spec 2026-07-08-sketch-node-refinement.md,
+// Change 4) ──────────────────────────────────────────────────────────────
+// Sketch cards (data.properties.sketchOutput) get their own primary action:
+// Enhance forces the Clarity engine (philz1337x/clarity-upscaler via
+// EnhanceDetailNode's "Creative" combo value — see ENHANCE_ENGINES in
+// comfy_api_nodes/replicate_refs.py) so "make this exact image real" always
+// resolves to the super-res path, regardless of EnhanceDetailNode's own
+// schema default. Promote is handled by VueNodeCanvas (it needs the sketch
+// source's take, not just this card), so this only dispatches the event.
+const isSketchOutput = computed(() => !!(props.data.properties as any)?.sketchOutput)
+function spawnEnhanceClarity() {
+  spliceEffect('EnhanceDetailNode', { focus: true, branch: true }, { model: 'Creative' })
+}
+function promoteSketchOutput() {
+  window.dispatchEvent(new CustomEvent('comfynext:promoteSketchOutput', {
+    detail: { sketchSourceId: (props.data.properties as any)?.sketchSourceId },
+  }))
+}
 
 // Variations ×4: sequential re-runs of the producing generator with fresh
 // seeds; results accumulate in the Takes strip. Needs something upstream to
@@ -847,6 +867,26 @@ const promoteUsdLabel = computed(() => {
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
         />
+        <!-- Sketch-output card actions (spec 2026-07-08-sketch-node-refinement.md,
+             Change 4): Enhance primary (make THIS image real), Promote secondary
+             (re-render the idea fresh). Strictly gated on properties.sketchOutput
+             so ordinary Image cards are byte-identical. -->
+        <div v-if="isSketchOutput" class="nopan nodrag flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
+          <button
+            class="flex-1 h-6 rounded-md text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
+            title="Make this exact image real (high-res)"
+            @click.stop="spawnEnhanceClarity"
+          >
+            Enhance
+          </button>
+          <button
+            class="h-6 px-2 rounded-md text-[10px] font-medium text-white/60 hover:text-white/90 border border-white/15 hover:border-white/25 transition-colors cursor-pointer"
+            title="Re-render the idea fresh at full quality"
+            @click.stop="promoteSketchOutput"
+          >
+            Promote
+          </button>
+        </div>
         <!-- Footer: dimensions + actions. -->
         <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
           <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
