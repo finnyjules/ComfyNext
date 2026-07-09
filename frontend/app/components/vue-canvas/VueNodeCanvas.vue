@@ -118,6 +118,19 @@ const props = defineProps<{
 // worker attribution (see the prompt_id routing in handleBridgeMessage).
 // Uses globalThis.Map (lucide's Map icon shadows the global in this scope).
 const runningNodeByPrompt = new globalThis.Map<string, string>()
+
+// prompt_id → the canvasId the run was dispatched from (Task 6 Part C). LOCAL
+// cache mirroring the registry entry's canvasId, because default.vue's window
+// 'message' handler (registered first, in the parent layout) calls finishRun()
+// synchronously on execution_complete/error — DELETING the registry entry —
+// BEFORE this component's own 'message' handler reads getRun() for the SAME
+// dispatched event. So getRun() returns null on terminal events and per-run
+// canvas routing would never fire on them. We populate this cache the first
+// time we see a live entry for a prompt (on 'executing') and resolve from it
+// on ALL events, so terminal events still find the canvas after finishRun
+// dropped the entry. Entry is deleted after the terminal event consumes it.
+// (globalThis.Map — lucide's Map icon shadows the global here too.)
+const canvasByPrompt = new globalThis.Map<string, string>()
 // Multi-canvas: does the in-flight run belong to the canvas on screen? Node
 // ids are small sequential ints that collide across a project's canvases, so
 // "find node by id" is only safe when the displayed canvas IS the run's
@@ -139,7 +152,7 @@ const runScopeMatches = computed(() =>
 function applyRunningForActiveWorker() {
   const targets = new globalThis.Set<string>()
   for (const [promptId, nodeIdForRun] of runningNodeByPrompt) {
-    const runCanvasId = getRun(promptId)?.canvasId ?? null
+    const runCanvasId = canvasByPrompt.get(promptId) ?? getRun(promptId)?.canvasId ?? null
     const belongs = runCanvasId != null
       ? (props.displayedCanvasId == null || runCanvasId === props.displayedCanvasId)
       : runScopeMatches.value
@@ -2418,16 +2431,27 @@ function handleBridgeMessage(event: MessageEvent) {
   const promptIdForRoute = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
   const entry = promptIdForRoute ? getRun(promptIdForRoute) : null
 
+  // Part C: populate the local canvas cache the FIRST time we see a live entry
+  // for this prompt (executing is the earliest per-run event that carries the
+  // registry entry — registerRun ran at dispatch, finishRun hasn't yet). This
+  // captured value survives finishRun's later deletion so terminal events can
+  // still resolve the run's canvas below.
+  if (evt === 'executing' && promptIdForRoute && entry?.canvasId && !canvasByPrompt.has(promptIdForRoute)) {
+    canvasByPrompt.set(promptIdForRoute, entry.canvasId)
+  }
+
   // Registered run whose canvas is known (Task 6 wires canvasId at register
   // time) and is NOT the one on screen: its node ids collide with the displayed
   // canvas's, so applying glow/results here would light the wrong nodes or
   // deliver a result to a same-id node. Buffer 'executed' for that canvas (it
   // lands when the canvas is shown again) and drop the rest.
   //
-  // Fallback (entry.canvasId == null — pre-Task-6, or entry == null — bridge
-  // path with no registered run): preserve today's displayed-canvas behavior,
-  // still gated by runScopeMatches so nothing regresses before Task 6 lands.
-  const runCanvasId = entry?.canvasId ?? null
+  // Resolve from the local cache FIRST (survives finishRun on terminal events),
+  // then the live registry entry, then null. Fallback (== null — pre-Task-6, or
+  // no registered run e.g. bridge path): preserve today's displayed-canvas
+  // behavior, still gated by runScopeMatches so nothing regresses.
+  const runCanvasId = (promptIdForRoute ? canvasByPrompt.get(promptIdForRoute) : null)
+    ?? entry?.canvasId ?? null
   if (runCanvasId != null) {
     if (props.displayedCanvasId != null && runCanvasId !== props.displayedCanvasId) {
       if (evt === 'executed' && nodeId && event.data.output) {
@@ -2565,6 +2589,9 @@ function handleBridgeMessage(event: MessageEvent) {
         }
       }
       if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
+      // Part C: this run is terminal — its routing above already consumed the
+      // cached canvas, so drop the entry to keep the cache bounded.
+      if (promptId) canvasByPrompt.delete(promptId)
     }
   }
 
@@ -2613,6 +2640,14 @@ function handleBridgeMessage(event: MessageEvent) {
     // Drop the captured run set once NO runs remain — while a sibling run is
     // still in flight its edge-filtering set stays useful.
     if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
+    // Part C: drop the cached canvas for this finished run. Guarded on the FIRST
+    // complete's presence in runningNodeByPrompt would race the duplicate
+    // complete (each run fires execution_complete twice); instead we delete
+    // unconditionally here — routing above already resolved runCanvasId for THIS
+    // event from the cache before this block, and any duplicate complete is a
+    // no-op whose mis-routing (cache-miss → runScopeMatches fallback) touches
+    // nothing (its runningNodeByPrompt entry is already gone).
+    if (promptId) canvasByPrompt.delete(promptId)
     // Let the agent close its run→look→fix loop (the prompt bar gates on whether a
     // Keep & Run is awaiting review).
     if (import.meta.client) window.dispatchEvent(new CustomEvent('comfynext:agentRunComplete'))

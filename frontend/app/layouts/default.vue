@@ -629,7 +629,11 @@ async function runVueWorkflow(
   if (poolEnabled.value && runTabId) workerRunningTab[workerIdx] = runTabId
   // Runs are always queued from the displayed canvas of the run tab.
   const runDoc = savedWorkflows[runTabId]
-  runningCanvasByWorker[workerIdx] = isProjectDoc(runDoc) ? runDoc.activeCanvasId : null
+  // The canvas this run is dispatched from — stamped on every registerRun below
+  // (Task 6 Part B) so VueNodeCanvas can route per-run events to the right canvas
+  // even across concurrent runs. Same value drives runningCanvasByWorker.
+  const runCanvasId = isProjectDoc(runDoc) ? runDoc.activeCanvasId : null
+  runningCanvasByWorker[workerIdx] = runCanvasId
 
   // Load workflow into that worker's LiteGraph, then queue. Once-only — the
   // hidden iframe only backs dev shadow-parity, so loading the last take's
@@ -906,7 +910,14 @@ async function runVueWorkflow(
       // NOT the tab's own workerIdx — that's why QueueResult carries `worker`.
       const registerResult = (res: import('~/composables/useDirectExecution').QueueResult) => {
         if (!res.prompt_id) return
-        registerRun({ promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: res.worker ?? workerIdx })
+        // Pass res.reservationId so the synchronous reservation (queueSmart/
+        // queueParallel claimed at worker-pick time) UPGRADES to a real run
+        // instead of double-counting. canvasId (Part B) lets per-run event
+        // routing find this run's canvas even on terminal events.
+        registerRun(
+          { promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: res.worker ?? workerIdx, canvasId: runCanvasId },
+          res.reservationId,
+        )
         // Explicit (non-live) runs get a per-run no-response watchdog. Live-preview
         // runs fire continuously and silently by design, so they're exempt.
         if (!opts.live) armDirectRunWatchdog(res.prompt_id, runTabId)

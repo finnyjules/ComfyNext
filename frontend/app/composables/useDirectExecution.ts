@@ -36,7 +36,7 @@
 
 import type { ApiPrompt, LiteGraphWorkflow } from '~/lib/graph/graphToPrompt'
 import { mapWsEvent, type BridgeShapedEvent } from '~/lib/graph/wsEventMap'
-import { inFlight } from '~/lib/graph/runRegistry'
+import { inFlight, reserve, releaseReservation } from '~/lib/graph/runRegistry'
 import { isPoolEligible } from '~/lib/graph/cloudOnly'
 import { pickWorker, routeSingleRun } from '~/lib/graph/pickWorker'
 
@@ -51,12 +51,22 @@ export interface QueueResult {
    *  worker it actually landed on (queueParallel decides assignment internally,
    *  the sequential fallback always uses main / 0). */
   worker?: number
+  /** Synchronous run-registry reservation claimed at worker-pick time (before
+   *  any await), so a second rapid dispatch sees this worker as busy and spills.
+   *  The caller passes it to `registerRun(entry, reservationId)` so the
+   *  reservation UPGRADES to a real run (no double count). On dispatch failure
+   *  the reservation is already released here, so this is only set on success. */
+  reservationId?: number
 }
 
 /** worker: 0/absent = main (:8188, no query param); N>=1 = pool worker N,
- *  routed to :8188+(N-1) via `?comfyWorker=${worker-1}`. */
+ *  routed to :8188+(N-1) via `?comfyWorker=${worker-1}`.
+ *  reservationId: a run-registry reservation (see runRegistry.reserve) claimed
+ *  synchronously by queueSmart/queueParallel at worker-pick time; queue()
+ *  threads it onto the QueueResult on success and releases it on failure. */
 export interface QueueOpts {
   worker?: number
+  reservationId?: number
 }
 
 export interface QueueParallelItem {
@@ -357,6 +367,7 @@ export function useDirectExecution(): DirectExecution {
     // Everything above/below queue() speaks app-side numbers; the only place a
     // worker number becomes 0-based is the `comfyWorker=${worker - 1}` here.
     const worker = opts?.worker ?? 0
+    const reservationId = opts?.reservationId
     const path = worker >= 1 ? `/prompt?comfyWorker=${worker - 1}` : '/prompt'
 
     // Before POSTing to a pool worker, ensure its WS is open so we receive its
@@ -381,7 +392,9 @@ export function useDirectExecution(): DirectExecution {
       // Record the prompt→worker mapping for pool workers so the socket layer can
       // close the socket once this worker's prompts drain.
       if (worker >= 1 && res?.prompt_id) promptWorker.set(res.prompt_id, worker)
-      return { prompt_id: res?.prompt_id, worker }
+      // Carry the reservationId through on success so the caller's registerRun
+      // consumes it (reservation → real run, no double count).
+      return { prompt_id: res?.prompt_id, worker, reservationId }
     } catch (err: any) {
       // ofetch's FetchError parses the JSON body onto `.data` on non-2xx
       // responses (see useInpaint.ts / useExplain.ts for the same convention).
@@ -392,6 +405,9 @@ export function useDirectExecution(): DirectExecution {
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
       const error = err?.data?.error?.message ?? err?.message ?? String(err)
+      // Dispatch failed: no run will ever registerRun this reservation, so free
+      // the reserved slot now (otherwise inFlight over-counts forever).
+      if (reservationId !== undefined) releaseReservation(reservationId)
       return { node_errors, error, worker }
     } finally {
       // Release the reservation whether the POST succeeded or failed. On
@@ -474,8 +490,14 @@ export function useDirectExecution(): DirectExecution {
       return workers[denseIdx - 1]! // dense → real app-side worker
     })
 
+    // Reserve every assigned worker SYNCHRONOUSLY (before the Promise.all await)
+    // so any concurrent dispatch — or a rapid follow-up run — sees these workers
+    // as busy. Each reservationId rides its item's QueueResult to the caller's
+    // registerRun (reservation → real run); queue() releases it on failure.
+    const reservationIds = assignedWorker.map((w) => reserve(w))
+
     return Promise.all(
-      items.map((it, i) => queue(it.prompt, it.workflow, { worker: assignedWorker[i] })),
+      items.map((it, i) => queue(it.prompt, it.workflow, { worker: assignedWorker[i], reservationId: reservationIds[i] })),
     )
   }
 
@@ -494,10 +516,15 @@ export function useDirectExecution(): DirectExecution {
   ): Promise<QueueResult> {
     const mainInFlight = inFlight({ worker: 0 }).length
     const eligible = isPoolEligible(prompt, ctx.objectInfo)
-    // Cheap early-out (the common case): no pool probing at all.
+    // Cheap early-out (the common case): no pool probing at all. Reserve worker 0
+    // SYNCHRONOUSLY (before any await) so a second back-to-back queueSmart sees
+    // main as busy via inFlight({worker:0}) and spills instead of also picking
+    // main — the reservation is claimed here, upgraded to a real run by the
+    // caller's registerRun(res.reservationId), or released by queue() on failure.
     if (routeSingleRun({ eligible, mainInFlight, poolInFlight: [], poolSize: 0 }) === 0
       && (mainInFlight === 0 || !eligible)) {
-      return queue(prompt, workflow)
+      const reservationId = reserve(0)
+      return queue(prompt, workflow, { reservationId })
     }
 
     // Main is busy and the prompt is eligible — probe the pool (same warm-up
@@ -519,7 +546,8 @@ export function useDirectExecution(): DirectExecution {
       .sort((a, b) => a - b)
     if (usable.length === 0) {
       console.warn('[queueSmart] main busy but no pool worker ready — queueing on main')
-      return queue(prompt, workflow)
+      const reservationId = reserve(0)
+      return queue(prompt, workflow, { reservationId })
     }
 
     // Dense compaction, same as queueParallel: position i (1-based) ↔ usable[i-1].
@@ -530,8 +558,15 @@ export function useDirectExecution(): DirectExecution {
       poolInFlight: denseLoads,
       poolSize: usable.length,
     })
-    if (dense === 0) return queue(prompt, workflow)
-    return queue(prompt, workflow, { worker: usable[dense - 1]! })
+    // Reserve the chosen worker synchronously so a subsequent rapid dispatch
+    // counts this one as busy (main via worker 0, or the picked pool worker).
+    if (dense === 0) {
+      const reservationId = reserve(0)
+      return queue(prompt, workflow, { reservationId })
+    }
+    const spillWorker = usable[dense - 1]!
+    const reservationId = reserve(spillWorker)
+    return queue(prompt, workflow, { worker: spillWorker, reservationId })
   }
 
   function onEvent(cb: (e: BridgeShapedEvent) => void): void {
