@@ -1478,6 +1478,7 @@ watch(previewImages, (urls) => {
           :is-fixed="isSeedFixed(widget, i)"
           :scale-def="loraScaleDef(widget.name)"
           :scale-value="loraScaleValue(widget.name)"
+          :model-picker-locked="isSketch && widget.name === 'model'"
           @update:model-value="data.widgetsValues[i] = $event"
           @update:is-fixed="setSeedFixed(widget, i, $event)"
           @update:scale="setLoraScale(widget.name, $event)"
