@@ -6279,6 +6279,9 @@ defineExpose({
       if (e.data?.running) e.data = { ...e.data, running: false }
     }
     runningNodeByPrompt.clear()
+    // Also drop the run→canvas routing cache; a watchdog-stalled run that never
+    // reaches its execution_success/error handler would otherwise leak one entry.
+    canvasByPrompt.clear()
     activeRunNodeIds.value = new Set()
   },
   // Global Run path. Match the per-node Run pre-processing: realign widget
