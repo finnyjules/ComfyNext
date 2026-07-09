@@ -2260,10 +2260,9 @@ function setRunResult(r: RunResult | null) {
 //     "before" number) for THIS run. Per-run (not global — see Task 3's
 //     executedNodeIds/outputs for the same pattern this mirrors) so two
 //     concurrent credit-billed runs each keep their own baseline instead of
-//     the second run's execution_start clobbering the first's.
-//   - perRun(promptId).costDeadline: stop watching for a delta after this
-//     timestamp; 0 disables the watch entirely (Replicate/BYOK runs don't
-//     move Comfy's credit balance, so there's nothing to watch for).
+//     the second run's execution_start clobbering the first's. At
+//     execution_complete this is snapshotted (while the RunState is still live)
+//     into the run's pendingCredits entry, which survives finishRun.
 //   - executedNodeIds (per-run, see lib/graph/runRegistry.ts perRun): every
 //     node id that fired an `executing` event during a run. Used to estimate
 //     the Replicate dollar cost from the price_badge of each node that ran
@@ -2272,108 +2271,115 @@ function setRunResult(r: RunResult | null) {
 //     don't union each other's nodes into one inflated tally.
 // We can't know either cost synchronously — Comfy/Replicate deduct mid-run
 // and Pinia's balance only refreshes after we refetch. So at execution_complete
-// we trigger a refresh and watch `credits` until the deadline. The watch()
-// call lives further down, after `credits` is declared, to avoid TDZ.
-// When multiple runs are concurrently armed, resolveCreditDelta (see
-// lib/graph/creditAttribution.ts) picks ONE to attribute the observed delta
-// to — see that file's doc comment for the heuristic and its rationale.
+// we trigger a refresh, record a pendingCredits entry with a deadline, and
+// watch `credits` until that deadline. The watch() call lives further down,
+// after `credits` is declared, to avoid TDZ. When multiple runs are concurrently
+// armed, resolveCreditDelta (see lib/graph/creditAttribution.ts) picks ONE to
+// attribute the observed delta to — see that file's doc comment for the
+// heuristic and its rationale.
 
 // Output files collected from `executed` events during a run (per-run, see
 // perRun(...).outputs) — the durable generation record is assembled from
 // these at execution_complete.
 
-// A record waiting for its cost, kept on perRun(promptId).pendingGenRecord
-// (NOT a global — two concurrent runs must not share one slot, or the
-// second run's record would overwrite the first's before it's flushed).
-// Replicate-billed runs flush immediately (Comfy's balance won't move);
-// credit-billed runs wait for the balance watcher's delta (or the deadline
-// timer) so the record carries real credits.
-interface PendingGenRecord {
+// The durable-save payload assembled at execution_complete: which project to
+// write into plus the GenerationRecord itself.
+interface DurableGenPayload {
   projectUuid: string
   projectName?: string
   record: GenerationRecord
+}
+
+// A credit resolution + durable record waiting on the post-run balance refresh.
+//
+// CRITICAL: this map is DELIBERATELY decoupled from the run registry's RunState.
+// execution_complete calls finishRun(prompt_id), which internally
+// dropRunState()s the registered RunState — so a captured RunState reference is
+// stale the instant finishRun returns, and any later perRun(id) lookup lazily
+// hands back a BRAND-NEW EMPTY bag. The credit balance refetch lands ~2.5s AFTER
+// execution_complete and the durable flush timer 9s after, both LONG past
+// finishRun. Keeping the pending credit/record here (module-level, untouched by
+// finishRun/dropRunState) is what lets watch(credits) and the 9s timer still
+// find this run's real startCredits + record. Pre-fix, direct-mode registered
+// runs lost BOTH the credit number and the durable record to that empty bag.
+//
+// Keyed by pcKey(prompt_id) so bridge-path runs (whose prompt_id may be
+// null/undefined) collapse to one stable key ('_'), matching perRun's own
+// `local_${id ?? '_'}` collapsing — a single bridge run resolves exactly once.
+// Plain object, NOT `new Map()` — `Map` is shadowed by a lucide-vue-next icon
+// import above.
+interface PendingCredit {
+  promptId: string | null
+  startCredits: number | null   // captured at execution_complete from the still-live RunState
+  deadline: number              // 0 = credit watch disabled (Replicate/BYOK run); else Date.now()+8000
+  record: DurableGenPayload | null
   flushed: boolean
   timer: ReturnType<typeof setTimeout> | null
 }
+const pendingCredits: Record<string, PendingCredit> = {}
 
-function flushPendingGen(promptId: string | null | undefined, creditsDelta?: number | null) {
-  const state = perRun(promptId)
-  const pending = state.pendingGenRecord as PendingGenRecord | null
+/** Stable map key for a prompt_id; null/undefined collapse to '_' (single bridge run). */
+function pcKey(promptId: string | null | undefined): string {
+  return promptId ?? '_'
+}
+
+// Resolves a pending credit entry: saves its durable record (stamping the
+// credit delta if we have one) and removes the entry. Idempotent via `flushed`
+// so the watch and the 9s timer can't double-save. Replaces the old
+// per-RunState flushPendingGen for the credit path — it reads pendingCredits,
+// which survives finishRun, instead of a RunState the registry may already have
+// torn down.
+function flushPendingCredit(promptId: string | null | undefined, creditsDelta?: number | null) {
+  const pending = pendingCredits[pcKey(promptId)]
   if (!pending || pending.flushed) return
   pending.flushed = true
   if (pending.timer) clearTimeout(pending.timer)
-  if (typeof creditsDelta === 'number' && creditsDelta > 0) pending.record.credits = creditsDelta
-  useProjects().saveGeneration(pending.projectUuid, pending.record, pending.projectName)
-  state.pendingGenRecord = null
-  // The record is saved and nothing else in RunState (executedNodeIds/
-  // outputs — already folded into the record above; startCredits/
-  // costDeadline — only ever read to get here) is needed after this. Safe to
-  // tear down now. execution_complete deliberately left this run's RunState
-  // in the registry past finishRun (see the deferred-drop check near the end
-  // of the execution_complete handler) specifically so watch(credits)'s
-  // perRun(id) lookups kept seeing the same object until this point.
-  dropRunState(promptId)
-  // Tell any open Assets panel a new generation just landed so it re-reads the
-  // server list. Without this the panel only refreshes on open, so newly
-  // generated images never show up until it's closed/reopened or reloaded.
-  window.dispatchEvent(new CustomEvent('comfynext:generationSaved'))
+  if (pending.record) {
+    if (typeof creditsDelta === 'number' && creditsDelta > 0) pending.record.record.credits = creditsDelta
+    useProjects().saveGeneration(pending.record.projectUuid, pending.record.record, pending.record.projectName)
+    // Tell any open Assets panel a new generation just landed so it re-reads the
+    // server list. Without this the panel only refreshes on open, so newly
+    // generated images never show up until it's closed/reopened or reloaded.
+    window.dispatchEvent(new CustomEvent('comfynext:generationSaved'))
+  }
+  delete pendingCredits[pcKey(promptId)]
 }
 
 const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>({})
-
-// Most recent bridge-path event's prompt_id (possibly null/undefined — the
-// bridge is a single serial iframe queue, so there is only ever ONE current
-// bridge run and no attribution ambiguity for it). inFlight() only enumerates
-// REGISTERED (direct-mode) runs, so this is threaded into the credit-watch
-// candidate list below as an extra always-included candidate — otherwise a
-// bridge-path run's perRun(...) bag (a transient, unregistered entry) would
-// never be considered and its credit delta would silently go unattributed.
-let lastEventPromptId: string | null = null
 
 let queuePollTimer: ReturnType<typeof setInterval> | null = null
 const credits = ref<number | null>(null)
 
 // Watch credits for the post-run delta. Must come after `credits` is declared.
-// Multiple credit-billed runs can be in flight at once, each with its own
-// perRun(id).startCredits/costDeadline (Task 1/3 pattern) — resolveCreditDelta
-// picks which ONE to attribute this balance observation to (see
-// lib/graph/creditAttribution.ts for the heuristic + rationale) so the record
-// that gets the delta is always a specific run's pendingGenRecord, never a
-// clobbered shared slot.
+// Multiple credit-billed runs can be in flight at once, each with its own entry
+// in pendingCredits (which SURVIVES finishRun — see PendingCredit above).
+// resolveCreditDelta picks which ONE to attribute this balance observation to
+// (see lib/graph/creditAttribution.ts for the heuristic + rationale) so the
+// record that gets the delta is always a specific run's, never a clobbered slot.
 watch(credits, (newVal) => {
   if (newVal == null) return
   const result = lastRunResult.value
   if (result?.kind !== 'success') return
   if (result.cost != null || result.usd != null) return // already accounted for
   const now = Date.now()
-  // Registered (direct-mode) in-flight runs, plus the current bridge-path run
-  // (if any) since inFlight() doesn't track unregistered/transient runs —
-  // see lastEventPromptId above. Dedup by the SAME key perRun() uses
-  // internally (registered id, or `local_${id}` for transient/bridge) so a
-  // bridge id that happens to also be registered isn't double-counted, while
-  // still preserving null vs '' as distinct transient keys (perRun's own
-  // `local_${promptId ?? '_'}` rule). Plain object, not `new Map()` — `Map`
-  // is shadowed by the lucide-vue-next icon import above.
-  const candidateIdsByKey: Record<string, string | null> = {}
-  for (const e of inFlight()) candidateIdsByKey[`reg:${e.promptId}`] = e.promptId
-  candidateIdsByKey[`local:${lastEventPromptId ?? '_'}`] = lastEventPromptId
-  const candidates: CreditWatchCandidate[] = Object.values(candidateIdsByKey).map((id) => {
-    const st = perRun(id)
-    return { promptId: id ?? '', startCredits: st.startCredits, costDeadline: st.costDeadline }
-  })
+  // Enumerate the ACTUAL pending-credit entries — not a single last-event id.
+  // This is what fixes the concurrent-completions miss: two runs that complete
+  // in the same tick each have their own pendingCredits entry, so both are
+  // surfaced as candidates instead of only whichever completed last.
+  // deadline maps onto the pure helper's costDeadline field 1:1.
+  const candidates: CreditWatchCandidate[] = Object.values(pendingCredits).map((pc) => ({
+    promptId: pc.promptId ?? '',
+    startCredits: pc.startCredits,
+    costDeadline: pc.deadline,
+  }))
   const resolution = resolveCreditDelta(candidates, newVal, now)
   if (!resolution) return
   lastRunResult.value = { ...result, cost: resolution.delta }
   const resolvedId = resolution.promptId || null
-  // Attribute + save the durable record if this run has one waiting.
-  flushPendingGen(resolvedId, resolution.delta)
-  // flushPendingGen only drops the RunState when it actually flushed a
-  // pendingGenRecord — a validated run with no outputs/estimate (so no
-  // record was ever created, see execution_complete) still arms costDeadline
-  // for this lastRunResult.cost display, and would otherwise leak its
-  // RunState forever once resolved here. This run's credit story is over
-  // either way (we just consumed its delta), so it's always safe to drop now.
-  dropRunState(resolvedId)
+  // Attribute + save the durable record (if this run has one) and remove the
+  // entry. flushPendingCredit reads pendingCredits, which is still here even
+  // though finishRun long ago dropped this run's RunState.
+  flushPendingCredit(resolvedId, resolution.delta)
 })
 const userProfile = ref<{ email?: string | null, displayName?: string | null, photoURL?: string | null, uid?: string | null, providerId?: string | null } | null>(null)
 const userPopupOpen = ref(false)
@@ -2792,7 +2798,6 @@ function handleBridgeEvent(data: any, source?: Window | null) {
   }
 
   const { event: evt, percent, prompt_id, node_id } = data
-  lastEventPromptId = prompt_id ?? null
 
   // Registry attribution (direct mode): if this event carries a prompt_id the
   // run registry knows, that run's originating tab wins over the active-tab
@@ -2842,17 +2847,17 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Registered (direct-mode) runs already get a fresh RunState from
     // registerRun, so this only matters for bridge-path / unregistered runs,
     // which share one stable transient bag per prompt_id key (see perRun in
-    // runRegistry.ts) that otherwise persists across runs. If that bag's
-    // PREVIOUS run left a pendingGenRecord still waiting on a credit delta,
-    // flush it as-is BEFORE dropping the bag below — dropRunState would
-    // otherwise silently discard it (this must run first; it flushes only
-    // THIS bag's own record, never another run's, since flushPendingGen now
-    // reads perRun(promptId).pendingGenRecord instead of a shared global).
-    flushPendingGen(prompt_id)
-    // Drop the (bridge-path) bag so the next perRun() read below recreates
-    // it empty, preserving the old "clear the global on start" semantics for
-    // that single-transient case. No-op for registered runs (registerRun
-    // already gave them a fresh bag).
+    // runRegistry.ts) that otherwise persists across runs. If the PREVIOUS run
+    // under this key left a pendingCredits entry still waiting on a credit
+    // delta, flush it as-is BEFORE this run overwrites that entry at its own
+    // execution_complete — otherwise the previous run's record would be
+    // silently discarded. flushPendingCredit is keyed by pcKey(prompt_id), so
+    // it touches only THIS key's entry, never another run's.
+    flushPendingCredit(prompt_id)
+    // Drop the (bridge-path) transient RunState bag so the next perRun() read
+    // below recreates it empty, preserving the old "clear the global on start"
+    // semantics for that single-transient case. No-op for registered runs
+    // (registerRun already gave them a fresh bag).
     dropRunState(prompt_id)
     // Snapshot the credits balance so we can show "−N credits" on success.
     // Done regardless of silent so the math is right even if the user's
@@ -2907,13 +2912,20 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Capture this run's per-run state BEFORE finishRun (below) drops it —
     // finishRun tears down the registered RunState for `prompt_id`, so reading
     // perRun() after that would hand back a brand-new, empty bag instead of
-    // this run's actual executed-node set / outputs.
+    // this run's actual executed-node set / outputs / credit baseline. Every
+    // value we need past finishRun is snapshotted into a local here; the
+    // durable record + credit resolution then live in pendingCredits (which
+    // finishRun does NOT touch), so watch(credits) 2.5s later and the 9s timer
+    // still find them even though the RunState is long gone.
     const runState = perRun(prompt_id)
     const runExecutedNodeIds = runState.executedNodeIds
     // RunState.outputs is typed as the registry's generic GenOutputLike[] (the
     // registry has no dependency on lib/generations.ts); every push site here
     // is extractOutputFiles(...), which always produces real GenOutput shapes.
     const runOutputs = runState.outputs as GenOutput[]
+    // Credit baseline snapshot — read from the STILL-LIVE RunState before
+    // finishRun drops it. This is the "before" number the credit delta subtracts.
+    const runStartCredits = runState.startCredits
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null
@@ -2931,13 +2943,19 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     const replicateEstimate = validatedRun
       ? tallyReplicateUsd(runExecutedNodeIds, vueCanvasRef.value?.getNodes?.() || [])
       : null
+    // Assemble the durable record (if this run produced one) so it can be
+    // stashed in pendingCredits below. Built here — not on the RunState — so it
+    // survives finishRun. A Replicate run flushes it immediately; a Comfy-native
+    // run holds it in pendingCredits until watch(credits) resolves the delta or
+    // the 9s timer times out.
+    let pendingRecord: DurableGenPayload | null = null
     if (runProjectUuid && validatedRun && (runOutputs.length || replicateEstimate)) {
       const runDoc = savedWorkflows[tabId]
       const vueNodes = vueCanvasRef.value?.getNodes?.() || []
       const ranTypes = [...runExecutedNodeIds]
         .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.nodeType)
         .filter(Boolean) as string[]
-      runState.pendingGenRecord = {
+      pendingRecord = {
         projectUuid: runProjectUuid,
         projectName: projectTabs.find((t) => t.id === tabId)?.label,
         record: {
@@ -2950,19 +2968,61 @@ function handleBridgeEvent(data: any, source?: Window | null) {
           credits: null,
           nodes: [...new Set(ranTypes)],
         },
+      } satisfies DurableGenPayload
+    }
+    // Did any Replicate (BYOK, dollar-billed) node run? If yes, that's the
+    // user's true cost surface — Comfy's credit balance won't move, so we don't
+    // arm the credit watch. This decision is independent of wasSilent: silent
+    // runs still spend real money and must save their record + resolve their
+    // credit exactly like a visible run.
+    const isReplicate = !!replicateEstimate
+    // Arm the credit watch for a validated Comfy-native run (record or not — a
+    // recordless validated run still needs the delta for the lastRunResult.cost
+    // display). Replicate/silent-invalid runs stay unarmed (deadline 0).
+    const armCreditWatch = validatedRun && !isReplicate && lastRunResult.value?.kind !== 'error'
+    const deadline = armCreditWatch ? Date.now() + 8000 : 0
+
+    // Stash the credit resolution + durable record in pendingCredits, which
+    // OUTLIVES finishRun (see PendingCredit above). This is THE fix: the entry
+    // survives so watch(credits) 2.5s later and the 9s timer can still find this
+    // run's startCredits + record — pre-fix they hit a fresh empty RunState bag
+    // and lost both the credit number and the record for direct-mode runs.
+    // Create the entry when there's a record to save OR a credit watch to
+    // resolve; otherwise there's nothing pending.
+    if (pendingRecord || armCreditWatch) {
+      const pc: PendingCredit = {
+        promptId: prompt_id ?? null,
+        startCredits: runStartCredits,
+        deadline,
+        record: pendingRecord,
         flushed: false,
         timer: null,
-      } satisfies PendingGenRecord
-      if (replicateEstimate) {
-        flushPendingGen(prompt_id) // also drops this run's RunState — see flushPendingGen
+      }
+      pendingCredits[pcKey(prompt_id)] = pc
+      if (isReplicate) {
+        // Replicate run — balance won't move; flush the record now with its USD
+        // estimate already baked in (no credit delta to wait for).
+        flushPendingCredit(prompt_id)
+      } else if (armCreditWatch) {
+        // Comfy-native run — kick off the credit refresh. Pinia's cached balance
+        // won't know about the deduction until we refetch. Two-stage refresh
+        // covers Firestore propagation latency. watch(credits) resolves the
+        // delta (and flushes the record) within the deadline; this 9s timer is
+        // the fallback that flushes the record with an unknown delta if the
+        // balance never moves. Whichever fires first deletes the entry (the
+        // other no-ops via `flushed`). This self-cleaning pair replaces the old
+        // 8.1s fallback sweep entirely — there is no leaked entry to sweep.
+        sendToBridgeIframe('refreshCredits')
+        setTimeout(() => sendToBridgeIframe('refreshCredits'), 2500)
+        pc.timer = setTimeout(() => flushPendingCredit(prompt_id, null), 9000)
       } else {
-        // flushPendingGen drops the RunState itself once it actually flushes
-        // (via the watch(credits) delta below, or this 9s timeout — whichever
-        // comes first; clearTimeout inside flushPendingGen cancels this one
-        // if the watcher already fired it).
-        ;(runState.pendingGenRecord as PendingGenRecord).timer = setTimeout(() => flushPendingGen(prompt_id), 9000)
+        // Record-only path with no credit watch (e.g. a SILENT Comfy run: it
+        // saves its record but doesn't chase the balance). Flush it after the
+        // same 9s grace so any in-flight refresh has a chance, then delete.
+        pc.timer = setTimeout(() => flushPendingCredit(prompt_id, null), 9000)
       }
     }
+
     // Does this tab still have OTHER direct runs in flight? finishRun above
     // already removed THIS run, so this counts only the rest. Bridge-path runs
     // never register, so inFlight is empty and this is false — preserving
@@ -2972,38 +3032,13 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     if (!wasSilent) {
       if (!tabStillRunning) updateTabStatus(tabId, 'done')
       if (validatedRun && lastRunResult.value?.kind !== 'error') {
-        // Did any Replicate (BYOK, dollar-billed) node run? If yes, that's
-        // the user's true cost surface — Comfy's credit balance won't change.
-        // Otherwise, lean on the credit-delta watcher below for the number.
-        const replicate = replicateEstimate
         setRunResult({
           kind: 'success',
           durationMs,
           at: Date.now(),
-          usd: replicate?.usd ?? null,
-          usdApproximate: replicate?.approximate ?? false,
+          usd: replicateEstimate?.usd ?? null,
+          usdApproximate: replicateEstimate?.approximate ?? false,
         })
-        if (replicate) {
-          // Replicate run — don't bother chasing the credit balance.
-          runState.costDeadline = 0
-        } else {
-          // Comfy-native run — kick off the credit refresh. Pinia's cached
-          // balance won't know about the deduction until we refetch. Two-stage
-          // refresh covers Firestore propagation latency. Per-run (perRun(
-          // prompt_id), not a global) so a second concurrent credit-billed
-          // run's deadline can't clobber this run's.
-          runState.costDeadline = Date.now() + 8000
-          sendToBridgeIframe('refreshCredits')
-          setTimeout(() => sendToBridgeIframe('refreshCredits'), 2500)
-          // Fallback sweep: if the credits ref never emits again before the
-          // deadline (refresh silently failed, or the new balance happens to
-          // equal a stale cached value so Vue's watch never fires), this run's
-          // RunState would otherwise never get dropped — the deferred-drop
-          // check below only defers past this handler, it doesn't schedule
-          // its own cleanup. No-op if the watch (or execution_start's own
-          // reuse of this promptId) already dropped it first.
-          setTimeout(() => dropRunState(prompt_id), 8100)
-        }
       }
       // Reset to idle after a brief moment — but only if no other run reclaims
       // this tab in the meantime (re-check at fire time, not just now).
@@ -3020,18 +3055,12 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // stranded by an HMR mid-run, or events lost to a dropped socket, would
     // otherwise shimmer forever now that unknown prompt_ids no-op).
     if (inFlight().length === 0) vueCanvasRef.value?.clearAllRunVisuals?.()
-    // Tear down this run's per-run state now that everything above has had
-    // its say. finishRun (above) already dropped it from the REGISTRY map for
-    // registered (direct-mode) runs, but we've kept mutating the STABLE
-    // object reference captured as `runState` (see the comment where it's
-    // captured) — this additionally covers bridge-path/unregistered
-    // prompt_ids, whose transient bag finishRun never touches. Skipped when
-    // either a pendingGenRecord is still waiting to flush OR the credit watch
-    // was just armed (costDeadline > 0) — watch(credits) and the 9s timeout
-    // above both look this run back up via perRun(prompt_id), which would
-    // otherwise silently hand back a fresh, empty bag once dropped. Whichever
-    // of those two fires first (flushPendingGen) drops the state itself.
-    if (!runState.pendingGenRecord && !(runState.costDeadline > Date.now())) dropRunState(prompt_id)
+    // Tear down this run's RunState. finishRun (above) already dropped it from
+    // the registry for registered (direct-mode) runs; this additionally covers
+    // bridge-path/unregistered prompt_ids, whose transient bag finishRun never
+    // touches. Safe to drop unconditionally now — the credit path no longer
+    // depends on the RunState surviving (it lives in pendingCredits instead).
+    dropRunState(prompt_id)
   } else if (evt === 'execution_error') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is terminal — stop the stall timer
     // Remove this run first, then idle the tab only if it has no other run in
