@@ -30,7 +30,8 @@ import StartProjectModal from '~/components/StartProjectModal.vue'
 import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vue'
 import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
-import { estimateUsdForNodes, vueNodesToEstimateInput, isReplicateBilled, type CostEstimate } from '~/lib/costEstimate'
+import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
@@ -42,7 +43,7 @@ import {
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
 import { graphToPrompt } from '~/lib/graph/graphToPrompt'
 import { UnknownNodeTypeError } from '~/lib/graph/widgetOrder'
-import { registerRun, markRunning, finishRun, inFlight } from '~/lib/graph/runRegistry'
+import { registerRun, markRunning, finishRun, inFlight, perRun, dropRunState } from '~/lib/graph/runRegistry'
 import { resolveEventTab } from '~/lib/graph/resolveEventTab'
 import { withKeyedLock } from '~/lib/graph/keyedLock'
 import { useDirectExecution } from '~/composables/useDirectExecution'
@@ -2256,21 +2257,22 @@ function setRunResult(r: RunResult | null) {
 // Credits accounting for the run cost display.
 //   - runStartCredits: balance at execution_start (the "before" number).
 //   - runCostDeadline: stop watching for a delta after this timestamp.
-//   - executedNodeIds: every node id that fired an `executing` event during
-//     the current run. Used to estimate the Replicate dollar cost from the
-//     price_badge of each node that ran (BYOK Replicate doesn't show up in
-//     Comfy's credit balance, so we can't use the delta there).
+//   - executedNodeIds (per-run, see lib/graph/runRegistry.ts perRun): every
+//     node id that fired an `executing` event during a run. Used to estimate
+//     the Replicate dollar cost from the price_badge of each node that ran
+//     (BYOK Replicate doesn't show up in Comfy's credit balance, so we can't
+//     use the delta there). Kept PER-RUN (not global) so concurrent runs
+//     don't union each other's nodes into one inflated tally.
 // We can't know either cost synchronously — Comfy/Replicate deduct mid-run
 // and Pinia's balance only refreshes after we refetch. So at execution_complete
 // we trigger a refresh and watch `credits` until the deadline. The watch()
 // call lives further down, after `credits` is declared, to avoid TDZ.
 let runStartCredits: number | null = null
 const runCostDeadline = ref(0)
-const executedNodeIds = new Set<string>()
 
-// Output files collected from `executed` events during the current run — the
-// durable generation record is assembled from these at execution_complete.
-const runOutputs: GenOutput[] = []
+// Output files collected from `executed` events during a run (per-run, see
+// perRun(...).outputs) — the durable generation record is assembled from
+// these at execution_complete.
 
 // A record waiting for its cost. Replicate-billed runs flush immediately
 // (Comfy's balance won't move); credit-billed runs wait for the balance
@@ -2294,20 +2296,6 @@ function flushPendingGen(creditsDelta?: number | null) {
   // server list. Without this the panel only refreshes on open, so newly
   // generated images never show up until it's closed/reopened or reloaded.
   window.dispatchEvent(new CustomEvent('comfynext:generationSaved'))
-}
-
-// Tally USD cost from the price_badge of every Replicate node that ran.
-// The badge parsing/summing lives in lib/costEstimate.ts (shared with the
-// pre-run estimate). Returns null when no priced Replicate node ran (so the
-// credit-delta path can win for Comfy-native workflows).
-// Filtered to Replicate-billed nodes only (unlike the pre-run estimate, which
-// also counts credit-billed API nodes) so credit-delta accounting still wins
-// for those.
-function estimateReplicateUsd(): { usd: number; approximate: boolean } | null {
-  const nodes = vueCanvasRef.value?.getNodes?.() || []
-  const ran = nodes.filter((n: any) => executedNodeIds.has(String(n.id)))
-  const est = estimateUsdForNodes(vueNodesToEstimateInput(ran).filter(isReplicateBilled))
-  return est ? { usd: est.usd, approximate: est.approximate } : null
 }
 
 const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>({})
@@ -2796,8 +2784,13 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Done regardless of silent so the math is right even if the user's
     // first live-run is followed by a real Run.
     runStartCredits = credits.value
-    executedNodeIds.clear()
-    runOutputs.length = 0
+    // Registered (direct-mode) runs already get a fresh RunState from
+    // registerRun. Bridge-path / unregistered runs share one stable transient
+    // bag per prompt_id key (see perRun in runRegistry.ts) that otherwise
+    // persists across runs — drop it here so the next perRun() read below
+    // recreates it empty, preserving the old "clear the global on start"
+    // semantics for that single-transient case.
+    dropRunState(prompt_id)
     flushPendingGen() // a previous run still waiting on credits records as-is
     // New run wipes any prior result from the status bar — the user wants
     // to know about THIS run, not the last one.
@@ -2814,7 +2807,9 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     tabNodeProgress.value.total++
     // Remember which nodes ran — needed for the Replicate USD cost estimate
     // at execution_complete (BYOK runs don't move Comfy's credit balance).
-    executedNodeIds.add(String(node_id))
+    // Per-run (not global): scoped to THIS prompt_id so concurrent runs don't
+    // union each other's executed nodes into one inflated tally.
+    perRun(prompt_id).executedNodeIds.add(String(node_id))
     // Look up display name from Vue canvas nodes
     const vueNodes = vueCanvasRef.value?.getNodes?.() || []
     const vueNode = vueNodes.find((n: any) => n.id === String(node_id))
@@ -2824,7 +2819,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     }
     currentRunningNode.value = displayName
   } else if (evt === 'executed') {
-    if (data.output) runOutputs.push(...extractOutputFiles(data.output))
+    if (data.output) perRun(prompt_id).outputs.push(...extractOutputFiles(data.output))
     // Track node completion for coarse progress
     tabNodeProgress.value.completed++
     const np = tabNodeProgress.value
@@ -2841,6 +2836,16 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Detect a silent failure: complete fired but Comfy validation rejected
     // the prompt (no executed nodes, no node ran). Don't show "success" then.
     const validatedRun = tabNodeProgress.value.completed > 0
+    // Capture this run's per-run state BEFORE finishRun (below) drops it —
+    // finishRun tears down the registered RunState for `prompt_id`, so reading
+    // perRun() after that would hand back a brand-new, empty bag instead of
+    // this run's actual executed-node set / outputs.
+    const runState = perRun(prompt_id)
+    const runExecutedNodeIds = runState.executedNodeIds
+    // RunState.outputs is typed as the registry's generic GenOutputLike[] (the
+    // registry has no dependency on lib/generations.ts); every push site here
+    // is extractOutputFiles(...), which always produces real GenOutput shapes.
+    const runOutputs = runState.outputs as GenOutput[]
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null
@@ -2855,11 +2860,13 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Durable generation record — silent/live runs count too (they spend real
     // money). Fire-and-forget; never blocks the UI path.
     const runProjectUuid = projectTabs.find((t) => t.id === tabId)?.projectUuid || null
-    const replicateEstimate = validatedRun ? estimateReplicateUsd() : null
+    const replicateEstimate = validatedRun
+      ? tallyReplicateUsd(runExecutedNodeIds, vueCanvasRef.value?.getNodes?.() || [])
+      : null
     if (runProjectUuid && validatedRun && (runOutputs.length || replicateEstimate)) {
       const runDoc = savedWorkflows[tabId]
       const vueNodes = vueCanvasRef.value?.getNodes?.() || []
-      const ranTypes = [...executedNodeIds]
+      const ranTypes = [...runExecutedNodeIds]
         .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.nodeType)
         .filter(Boolean) as string[]
       pendingGen = {
@@ -2884,7 +2891,12 @@ function handleBridgeEvent(data: any, source?: Window | null) {
         pendingGen.timer = setTimeout(() => flushPendingGen(), 9000)
       }
     }
-    runOutputs.length = 0
+    // Tear down this run's per-run state. finishRun (above) already dropped it
+    // for registered (direct-mode) runs; this additionally covers bridge-path/
+    // unregistered prompt_ids, whose transient bag (see perRun in
+    // runRegistry.ts) finishRun never touches — without this it would
+    // accumulate forever across bridge runs.
+    dropRunState(prompt_id)
     // Does this tab still have OTHER direct runs in flight? finishRun above
     // already removed THIS run, so this counts only the rest. Bridge-path runs
     // never register, so inFlight is empty and this is false — preserving
@@ -2953,6 +2965,10 @@ function handleBridgeEvent(data: any, source?: Window | null) {
       setRunResult({ kind: 'error', nodeName, message: reason, at: Date.now() })
       toast.error(`${nodeName} failed`, { description: String(reason).slice(0, 200) })
     }
+    // Tear down this run's per-run state. finishRun (above) already dropped it
+    // for registered runs; this additionally covers the bridge-path transient
+    // bag, which finishRun never touches.
+    dropRunState(prompt_id)
   }
 }
 
