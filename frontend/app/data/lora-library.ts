@@ -36,6 +36,8 @@ export interface LoRALibraryEntry {
   examplePrompt?: string
   /** Suggested lora_scale override (0–2). Most LoRAs work at 1.0. */
   suggestedScale?: number
+  /** Use-case tags for the Style Hub (see USE_CASE_TAGS in house-styles.ts). */
+  useCases?: import('./house-styles').UseCaseTag[]
 }
 
 export const LORA_LIBRARY: LoRALibraryEntry[] = [
@@ -48,6 +50,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'XLabs-AI',
     examplePrompt: 'photo of a woman walking through tokyo at night, neon reflections on wet pavement',
+    useCases: ['photography', 'editorial'],
   },
   {
     hfPath: 'alvdansen/flux-koda',
@@ -57,6 +60,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'alvdansen',
     examplePrompt: 'flmft style photo of a small fishing village at golden hour, vintage feel',
+    useCases: ['photography', 'editorial', 'fashion'],
   },
   {
     hfPath: 'multimodalart/flux-tarot-v1',
@@ -66,6 +70,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'multimodalart',
     examplePrompt: 'in the style of TOK a trtcrd tarot style card depicting a wandering knight',
+    useCases: ['illustration', 'poster'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Polaroid-Plus',
@@ -75,6 +80,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'strangerzonehf',
     examplePrompt: 'Polaroid Photo of a couple dancing in their kitchen at midnight',
+    useCases: ['photography', 'fashion'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Super-Realism-LoRA',
@@ -85,6 +91,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     author: 'strangerzonehf',
     examplePrompt: 'Super Realism portrait of an elderly carpenter in his workshop, dust in the light',
     suggestedScale: 0.8,
+    useCases: ['photography', 'ecomm'],
   },
   {
     hfPath: 'prithivMLmods/Canopus-LoRA-Flux-FaceRealism',
@@ -94,6 +101,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'prithivMLmods',
     examplePrompt: 'face realism, portrait of a woman in her late twenties with light brown hair, soft window light',
+    useCases: ['photography', 'editorial'],
   },
   {
     hfPath: 'alvdansen/pola-photo-flux',
@@ -103,6 +111,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'alvdansen',
     examplePrompt: 'a girl laughing at a beach party, polaroid style',
+    useCases: ['photography', 'fashion'],
   },
   {
     hfPath: 'dvyio/flux-lora-film-noir',
@@ -112,6 +121,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Realism',
     author: 'dvyio',
     examplePrompt: 'a parrot sitting in its cage, dramatic shadows cast against the wall, in the style of FLMNR',
+    useCases: ['photography', 'poster', 'editorial'],
   },
 
   // ── Illustration ──────────────────────────────────────────────────────
@@ -123,6 +133,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'alvdansen',
     examplePrompt: 'frstingln illustration of a tiny cottage in a misty forest at dawn',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'alvdansen/softpasty-flux-dev',
@@ -132,6 +143,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'alvdansen',
     examplePrompt: 'araminta_illus illustration style of two friends sharing tea in a sunlit kitchen',
+    useCases: ['illustration', 'editorial'],
   },
   {
     hfPath: 'alvdansen/littletinies',
@@ -141,6 +153,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'alvdansen',
     examplePrompt: 'lttntny style of a small wizard reading a giant book',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Sketch-Sized-LoRA',
@@ -150,6 +163,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'strangerzonehf',
     examplePrompt: 'Sketch Sized portrait of a violinist mid-performance',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'aleksa-codes/flux-ghibsky-illustration',
@@ -159,6 +173,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'aleksa-codes',
     examplePrompt: 'GHIBSKY style illustration of a girl on a bicycle riding through endless rice fields',
+    useCases: ['illustration', 'anime'],
   },
   {
     hfPath: 'alvdansen/sketchedoutmanga',
@@ -168,6 +183,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'alvdansen',
     examplePrompt: 'daiton style of a young hero leaping over rooftops, dramatic angle',
+    useCases: ['illustration', 'anime'],
   },
   {
     hfPath: 'prithivMLmods/Coloring-Book-Flux-LoRA',
@@ -177,6 +193,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'prithivMLmods',
     examplePrompt: 'Coloring Book illustration of a friendly dragon reading to a child',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'alvdansen/haunted_linework_flux',
@@ -186,6 +203,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'alvdansen',
     examplePrompt: 'closeup of a retro television set broadcasting dreams and memories, hntdlnwrk style',
+    useCases: ['illustration', 'poster'],
   },
   {
     hfPath: 'multimodalart/ms-paint-drawing-flux',
@@ -195,6 +213,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'multimodalart',
     examplePrompt: 'MSPaint portrait, MSPaint drawing of a chef holding a pizza, casual photograph repurposed',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'dvyio/flux-lora-stippled-illustration',
@@ -204,6 +223,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Illustration',
     author: 'dvyio',
     examplePrompt: 'close-up of an old wizard\'s face, stippled illustration in the style of STPPLD',
+    useCases: ['illustration', 'branding'],
   },
 
   // ── Anime ─────────────────────────────────────────────────────────────
@@ -215,6 +235,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'alvdansen',
     examplePrompt: 'nm22 style of a swordsman atop a windswept cliff at sunset',
+    useCases: ['anime', 'poster'],
   },
   {
     hfPath: 'dataautogpt3/FLUX-AestheticAnime',
@@ -224,6 +245,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'dataautogpt3',
     examplePrompt: 'anime portrait of a girl with headphones in a sunlit bedroom, lo-fi mood',
+    useCases: ['anime', 'editorial'],
   },
   {
     hfPath: 'glif/90s-anime-art',
@@ -233,6 +255,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'glif',
     examplePrompt: '90s anime art of a girl on a motorbike at neon-soaked night, retro vibes',
+    useCases: ['anime', 'poster'],
   },
   {
     hfPath: 'glif/anime-blockprint-style',
@@ -242,6 +265,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'glif',
     examplePrompt: 'blockprint of a samurai under a full moon, ukiyo-e composition',
+    useCases: ['anime', 'poster', 'texture'],
   },
   {
     hfPath: 'prithivMLmods/Canopus-LoRA-Flux-Anime',
@@ -251,6 +275,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'prithivMLmods',
     examplePrompt: 'Anime masterpiece, best quality, a girl with windswept hair on a clifftop, outdoor',
+    useCases: ['anime'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Animex-v2-LoRA',
@@ -260,6 +285,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Anime',
     author: 'strangerzonehf',
     examplePrompt: 'Animex, a vibrant cartoon drawing of a man\'s face, expressive eyes',
+    useCases: ['anime', 'illustration'],
   },
 
   // ── Stylized ──────────────────────────────────────────────────────────
@@ -271,6 +297,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'lichorosario',
     examplePrompt: 'isometric tiny coffee shop interior with warm lighting',
+    useCases: ['3d', 'branding'],
   },
   {
     hfPath: 'fofr/flux-handwriting',
@@ -280,6 +307,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'fofr',
     examplePrompt: 'HWRIT handwriting on lined paper saying "thank you for coming"',
+    useCases: ['typography', 'branding'],
   },
   {
     hfPath: 'multimodalart/product-design',
@@ -289,6 +317,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'multimodalart',
     examplePrompt: 'product design, in the style of pdsgn, minimalist ceramic teapot',
+    useCases: ['ecomm', 'branding', '3d'],
   },
   {
     hfPath: 'Shakker-Labs/FLUX.1-dev-LoRA-MiaoKa-Yarn-World',
@@ -298,6 +327,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'Shakker-Labs',
     examplePrompt: 'Yarn art style of a cozy mountain cabin in a snowy forest',
+    useCases: ['3d', 'texture', 'illustration'],
   },
   {
     hfPath: 'martintomov/retrofuturism-flux',
@@ -307,6 +337,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'martintomov',
     examplePrompt: 'retrofuturism poster of a moon colony market, vibrant analog feel',
+    useCases: ['poster', 'illustration'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Claymation-XC-LoRA',
@@ -316,6 +347,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'strangerzonehf',
     examplePrompt: 'Claymation of a tiny astronaut planting a flag on a cookie planet',
+    useCases: ['3d', 'illustration'],
   },
   {
     hfPath: 'prithivMLmods/Canopus-Pixar-3D-Flux-LoRA',
@@ -325,6 +357,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'prithivMLmods',
     examplePrompt: 'Pixar 3D, cute girl with a balloon walking through a windswept meadow',
+    useCases: ['3d', 'illustration'],
   },
   {
     hfPath: 'strangerzonehf/Flux-Cute-3D-Kawaii-LoRA',
@@ -334,6 +367,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'strangerzonehf',
     examplePrompt: 'Cute 3d Kawaii, a tiny cartoon figure standing on a light blue surface, soft pastel palette',
+    useCases: ['3d', 'illustration'],
   },
   {
     hfPath: 'alvdansen/plushy-world-flux',
@@ -343,6 +377,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'alvdansen',
     examplePrompt: 'a cute toad sitting on a mushroom, 3dcndylnd style',
+    useCases: ['3d', 'texture'],
   },
   {
     hfPath: 'fofr/flux-80s-cyberpunk',
@@ -352,6 +387,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Stylized',
     author: 'fofr',
     examplePrompt: 'style of 80s cyberpunk, a portrait photo of a hacker in a neon-lit alley',
+    useCases: ['poster', 'photography'],
   },
 
   // ── Niche ─────────────────────────────────────────────────────────────
@@ -363,6 +399,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'XLabs-AI',
     examplePrompt: 'furry fox character in a vintage detective coat',
+    useCases: ['illustration'],
   },
   {
     hfPath: 'dvyio/flux-lora-blueprint',
@@ -372,6 +409,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'dvyio',
     examplePrompt: 'BLUPRNT blueprint of an electric guitar with annotations',
+    useCases: ['architecture', 'branding', 'poster'],
   },
   {
     hfPath: 'prithivMLmods/Pixel-Background-Flux-LoRA',
@@ -381,6 +419,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'prithivMLmods',
     examplePrompt: 'Pixel Background of an ancient temple at sunset, parallax mountains behind',
+    useCases: ['illustration', 'texture'],
   },
   {
     hfPath: 'prithivMLmods/Castor-3D-Sketchfab-Flux-LoRA',
@@ -390,6 +429,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'prithivMLmods',
     examplePrompt: '3D Sketchfab model of a chunky low-poly fox on a hex tile',
+    useCases: ['3d', 'ecomm'],
   },
   {
     hfPath: 'fofr/flux-bad-70s-food',
@@ -399,6 +439,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'fofr',
     examplePrompt: 'a photo of bad 70s food, mystery loaf surrounded by canned peaches',
+    useCases: ['photography'],
   },
   {
     hfPath: 'dvyio/flux-lora-victorian-satire',
@@ -408,6 +449,7 @@ export const LORA_LIBRARY: LoRALibraryEntry[] = [
     category: 'Niche',
     author: 'dvyio',
     examplePrompt: 'a man talking on a telephone, in the style of a Victorian-era TOK cartoon illustration',
+    useCases: ['illustration', 'editorial'],
   },
 ]
 
