@@ -42,6 +42,7 @@ import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
 import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
+import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -109,23 +110,14 @@ const props = defineProps<{
   runningCanvasId?: string | null // multi-canvas: which doc canvas the in-flight run was queued from
 }>()
 
-// Parallel-run pool: which node is currently executing on each worker, so a
-// background tab's run events don't touch the active canvas, and the right
-// running node is re-lit when you switch to a still-running tab.
-const runningNodeByWorker: Record<number, string | null> = {}
 // prompt_id → the node that run is currently executing. Concurrent runs
 // (spill-to-pool singles, parallel takes) each animate independently; an
-// executing/complete event only touches its own run's glow. Uses globalThis.Map
-// (lucide's Map icon shadows the global in this file's import scope).
+// executing/complete event only touches its own run's glow. This is now the
+// single source of truth for "what's running" — the old per-worker map was
+// removed because DIRECT-mode re-broadcast made event.source unusable for
+// worker attribution (see the prompt_id routing in handleBridgeMessage).
+// Uses globalThis.Map (lucide's Map icon shadows the global in this scope).
 const runningNodeByPrompt = new globalThis.Map<string, string>()
-function eventWorker(src: Window | null): number {
-  if (!src) return 0
-  for (const f of document.querySelectorAll('iframe[data-worker]')) {
-    const frame = f as HTMLIFrameElement
-    if (frame.contentWindow === src) return Number(frame.dataset.worker)
-  }
-  return 0 // shared iframe / single-worker
-}
 // Multi-canvas: does the in-flight run belong to the canvas on screen? Node
 // ids are small sequential ints that collide across a project's canvases, so
 // "find node by id" is only safe when the displayed canvas IS the run's
@@ -137,18 +129,28 @@ const runScopeMatches = computed(() =>
   || props.runningCanvasId === props.displayedCanvasId,
 )
 
-// Re-light the node currently running on the now-active worker, so switching to
-// a still-running canvas shows its animation instead of going blank.
+// Re-light the nodes still running on the displayed canvas, so switching to a
+// still-running canvas shows its animation instead of going blank. Rebuilt from
+// runningNodeByPrompt (the per-run registry replaces the old per-worker map):
+// each in-flight prompt_id whose run belongs to the displayed canvas contributes
+// its executing node. A run's canvas comes from the registry entry's canvasId;
+// entries without one (pre-Task-6) or with no registry record fall back to the
+// legacy tab-level runScopeMatches gate so nothing regresses.
 function applyRunningForActiveWorker() {
-  const target = runScopeMatches.value
-    ? (runningNodeByWorker[props.activeWorker ?? 0] || null)
-    : null
+  const targets = new globalThis.Set<string>()
+  for (const [promptId, nodeIdForRun] of runningNodeByPrompt) {
+    const runCanvasId = getRun(promptId)?.canvasId ?? null
+    const belongs = runCanvasId != null
+      ? (props.displayedCanvasId == null || runCanvasId === props.displayedCanvasId)
+      : runScopeMatches.value
+    if (belongs) targets.add(nodeIdForRun)
+  }
   for (const n of nodes.value as any[]) {
-    const should = !!target && n.id === target
+    const should = targets.has(n.id)
     if (!!n.data?.running !== should) n.data = { ...n.data, running: should }
   }
   for (const e of edges.value as any[]) {
-    const should = !!target && e.source === target
+    const should = targets.has(e.source)
     if (!!e.data?.running !== should) e.data = { ...e.data, running: should }
   }
 }
@@ -2406,21 +2408,39 @@ function handleBridgeMessage(event: MessageEvent) {
     return
   }
 
-  // Parallel-run pool: track every worker's currently-running node, but only let
-  // the worker behind the *active* tab drive this canvas's animation — otherwise
-  // a background tab's run would clear the visible tab's glow. Single-worker:
-  // eventWorker and activeWorker are both 0, so nothing changes.
-  const evWorker = eventWorker(event.source as Window | null)
-  const isActiveWorker = evWorker === (props.activeWorker ?? 0)
-  if (evt === 'executing') runningNodeByWorker[evWorker] = nodeId ? String(nodeId) : null
-  if (evt === 'execution_complete') runningNodeByWorker[evWorker] = null
-  if (!isActiveWorker && evt !== 'executed' && evt !== 'execution_error') return
+  // Attribute this event to its run by prompt_id (audit C1/C3/C6). In DIRECT
+  // mode every worker's events are re-broadcast as same-window postMessage, so
+  // event.source is always this window and the old eventWorker(event.source)
+  // gate ALWAYS resolved to worker 0 — dropping executing/progress/complete for
+  // a viewed tab pinned to a pool worker (>=1), so its glow never cleared
+  // ("second run runs forever"). Route by the run registry instead: the run's
+  // own canvasId decides whether its events belong to the displayed graph.
+  const promptIdForRoute = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
+  const entry = promptIdForRoute ? getRun(promptIdForRoute) : null
 
-  // Multi-canvas: the run belongs to another canvas of this tab — don't let
-  // its events touch the displayed graph (node ids collide across canvases,
-  // so they'd falsely light up or receive the run's results). 'executed'
-  // payloads are buffered and land when the run's canvas is shown again.
-  if (isActiveWorker && !runScopeMatches.value) {
+  // Registered run whose canvas is known (Task 6 wires canvasId at register
+  // time) and is NOT the one on screen: its node ids collide with the displayed
+  // canvas's, so applying glow/results here would light the wrong nodes or
+  // deliver a result to a same-id node. Buffer 'executed' for that canvas (it
+  // lands when the canvas is shown again) and drop the rest.
+  //
+  // Fallback (entry.canvasId == null — pre-Task-6, or entry == null — bridge
+  // path with no registered run): preserve today's displayed-canvas behavior,
+  // still gated by runScopeMatches so nothing regresses before Task 6 lands.
+  const runCanvasId = entry?.canvasId ?? null
+  if (runCanvasId != null) {
+    if (props.displayedCanvasId != null && runCanvasId !== props.displayedCanvasId) {
+      if (evt === 'executed' && nodeId && event.data.output) {
+        const take = takeFromExecutedEvent(event)
+        if (take) {
+          ;(pendingTakesByCanvas[runCanvasId] ||= []).push({ nodeId: String(nodeId), take })
+        }
+      }
+      return
+    }
+    // else: runCanvasId matches the displayed canvas → fall through and place.
+  } else if (!runScopeMatches.value) {
+    // No per-run canvasId available yet: use the legacy tab-level scope prop.
     if (evt === 'executed' && nodeId && event.data.output && props.runningCanvasId) {
       const take = takeFromExecutedEvent(event)
       if (take) {
