@@ -29,10 +29,14 @@ export interface RunState {
   executedNodeIds: Set<string>
   outputs: GenOutputLike[]
   startCredits: number | null
-  costDeadline: number // 0 = credit watch disabled
   nodeProgress: { completed: number; total: number }
   runningNode: string | null
-  pendingGenRecord: any | null
+  // The run's OWN node catalog, captured at dispatch. Cost tally at
+  // execution_complete prices against THIS (not the active tab's displayed
+  // nodes) so a run completing while another canvas is shown still resolves
+  // its executed-node ids against its own nodes. Empty for bridge/transient
+  // runs → callers fall back to the live getNodes() (single-canvas anyway).
+  estimateNodes: any[]
 }
 
 const runs = new Map<string, RunEntry>()
@@ -70,10 +74,9 @@ function freshRunState(): RunState {
     executedNodeIds: new Set<string>(),
     outputs: [],
     startCredits: null,
-    costDeadline: 0,
     nodeProgress: { completed: 0, total: 0 },
     runningNode: null,
-    pendingGenRecord: null,
+    estimateNodes: [],
   }
 }
 

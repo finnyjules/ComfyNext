@@ -16,10 +16,9 @@ describe('perRun (registered)', () => {
     expect(state.executedNodeIds.size).toBe(0)
     expect(state.outputs).toEqual([])
     expect(state.startCredits).toBeNull()
-    expect(state.costDeadline).toBe(0)
     expect(state.nodeProgress).toEqual({ completed: 0, total: 0 })
     expect(state.runningNode).toBeNull()
-    expect(state.pendingGenRecord).toBeNull()
+    expect(state.estimateNodes).toEqual([])
   })
 
   it('is a stable reference across calls — mutations persist', () => {
@@ -47,10 +46,10 @@ describe('perRun (transient / unregistered)', () => {
 
   it('returns a stable `_`-keyed transient for null', () => {
     const a = perRun(null)
-    a.pendingGenRecord = { x: 1 }
+    a.estimateNodes = [{ x: 1 }]
     const b = perRun(null)
     expect(b).toBe(a)
-    expect(b.pendingGenRecord).toEqual({ x: 1 })
+    expect(b.estimateNodes).toEqual([{ x: 1 }])
   })
 
   it('returns a stable `_`-keyed transient for undefined', () => {
@@ -135,9 +134,8 @@ const _typeCheck: RunState = {
   executedNodeIds: new Set<string>(),
   outputs: [],
   startCredits: null,
-  costDeadline: 0,
   nodeProgress: { completed: 0, total: 0 },
   runningNode: null,
-  pendingGenRecord: null,
+  estimateNodes: [],
 }
 void _typeCheck
