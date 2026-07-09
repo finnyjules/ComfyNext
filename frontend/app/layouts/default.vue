@@ -630,6 +630,13 @@ async function runVueWorkflow(
   const runCanvasId = isProjectDoc(runDoc) ? runDoc.activeCanvasId : null
   runningCanvasByWorker[workerIdx] = runCanvasId
 
+  // Snapshot THIS run's own node catalog at dispatch time (the run's displayed
+  // canvas). Written onto each registered run's estimateNodes so execution_complete
+  // prices the run's executed-node-id SET against ITS OWN nodes — not the active
+  // tab's currently-displayed nodes, which collide by id across canvases. Captured
+  // once here (dispatch is single-canvas) and shared across parallel takes of this run.
+  const runEstimateNodes: any[] = vueCanvasRef.value!.getNodes?.() || []
+
   // Load workflow into that worker's LiteGraph, then queue. Once-only — the
   // hidden iframe only backs dev shadow-parity, so loading the last take's
   // graph is sufficient.
@@ -645,8 +652,42 @@ async function runVueWorkflow(
   // workflow + (direct-mode) ApiPrompt, or 'abort' on a fatal per-take failure
   // that should stop the whole run. `isFirst` gates once-only gestures
   // (cost-confirm dialog) so a takes×N run confirms cost a single time.
+  // Cost guard, HOISTED OUT OF the assemble-run lock (liveness fix): confirm the
+  // estimate BEFORE acquiring the lock so an unanswered cost-confirm dialog can't
+  // hold the global assemble lock and silently queue every other run behind it
+  // (which would also make the cost-confirm FIFO queue unreachable). The estimate
+  // needs only the live nodes + targetIds — NOT the assembled workflow — so it runs
+  // here without any lock held. Preserves the exact confirm semantics of the old
+  // in-assembly gate: once per run (not per take), the takes×costConfirmIterations
+  // multiply, live/skip runs never prompt, cancel → abort before any assembly.
+  if (!opts.skipCostConfirm && !opts.live) {
+    const vnodes = vueCanvasRef.value!.getNodes?.() || []
+    // The nodes about to run: for a targeted run, just the targetIds; otherwise
+    // every active (mode !== 2) node. Mirrors the old workflow-node filter, read
+    // straight off the live canvas (getWorkflow's node set is these same nodes).
+    const targetSet = targetIds?.length ? new globalThis.Set(targetIds.map((id) => String(id))) : null
+    const estInput = (vnodes as any[])
+      .filter((v: any) => (v.data?.mode ?? 0) !== 2)
+      .filter((v: any) => !targetSet || targetSet.has(String(v.id)))
+      .map((v: any) => ({
+        id: String(v.id),
+        type: String(v.data?.nodeType || ''),
+        title: v.data?.title,
+        badgeExpr: v.data?.priceBadge?.expr ?? null,
+        category: v.data?.category ?? null,
+      }))
+    const single = estimateUsdForNodes(estInput)
+    if (single) {
+      const iterations = Math.max(1, (opts.costConfirmIterations || 1) * takeCount)
+      const est: CostEstimate = { ...single, usd: single.usd * iterations }
+      if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
+        return false // cancelled at the cost gate — return before acquiring the lock
+      }
+    }
+  }
+
   type AssembledTake = { plainWorkflow: any; directPrompt: import('~/lib/graph/graphToPrompt').ApiPrompt | null }
-  const assembleTake = async (isFirst: boolean): Promise<AssembledTake | 'abort'> => {
+  const assembleTake = async (): Promise<AssembledTake | 'abort'> => {
     const workflow = targetIds?.length && vueCanvasRef.value!.getFilteredWorkflow
       ? vueCanvasRef.value!.getFilteredWorkflow(targetIds, opts)
       : vueCanvasRef.value!.getWorkflow(opts.live ? { reroll: false } : undefined)
@@ -662,34 +703,6 @@ async function runVueWorkflow(
     // Stamp the tab's stable project UUID so history entries can be grouped
     if (activeTab.value.projectUuid) {
       plainWorkflow.extra = { ...(plainWorkflow.extra || {}), projectUuid: activeTab.value.projectUuid }
-    }
-
-    // Cost guard: estimate the exact set of nodes about to run and confirm
-    // expensive runs before any side-effecting prep (compositor uploads) or
-    // queueing. Live-preview runs never prompt. Confirmed once for the whole
-    // takes×N batch (multiply the estimate by the take count).
-    if (isFirst && !opts.skipCostConfirm && !opts.live) {
-      const vnodes = vueCanvasRef.value!.getNodes?.() || []
-      const estInput = (plainWorkflow.nodes as any[])
-        .filter((n: any) => (n.mode ?? 0) !== 2)
-        .map((wn: any) => {
-          const vn = vnodes.find((v: any) => String(v.id) === String(wn.id))
-          return {
-            id: String(wn.id),
-            type: String(wn.type || vn?.data?.nodeType || ''),
-            title: vn?.data?.title,
-            badgeExpr: vn?.data?.priceBadge?.expr ?? null,
-            category: vn?.data?.category ?? null,
-          }
-        })
-      const single = estimateUsdForNodes(estInput)
-      if (single) {
-        const iterations = Math.max(1, (opts.costConfirmIterations || 1) * takeCount)
-        const est: CostEstimate = { ...single, usd: single.usd * iterations }
-        if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
-          return 'abort'
-        }
-      }
     }
 
     // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
@@ -857,13 +870,15 @@ async function runVueWorkflow(
   // the lock, release, then dispatch unlocked.
   type Assembled = { firstTake: AssembledTake; extraTakes: AssembledTake[] }
   const assembled = await withKeyedLock('assemble-run', async (): Promise<Assembled | 'abort'> => {
-    // Take 1 — assemble (also runs the once-only cost-confirm gate).
-    const firstTake = await assembleTake(true)
+    // Take 1 — assemble. The cost-confirm gate already ran (hoisted) BEFORE this
+    // lock, so no user-interaction await lives inside the lock: an open dialog can
+    // no longer stall every other run's assembly.
+    const firstTake = await assembleTake()
     if (firstTake === 'abort') return 'abort'
     // Extra parallel takes (direct-mode only) — each with its own fresh seeds.
     const extraTakes: AssembledTake[] = []
     for (let t = 1; t < takeCount; t++) {
-      const nextTake = await assembleTake(false)
+      const nextTake = await assembleTake()
       if (nextTake === 'abort') return 'abort'
       extraTakes.push(nextTake)
     }
@@ -924,6 +939,11 @@ async function runVueWorkflow(
           { promptId: res.prompt_id, tabId: runTabId, live: !!opts.live, worker: res.worker ?? workerIdx, canvasId: runCanvasId },
           res.reservationId,
         )
+        // Stash the run's OWN node catalog (captured at dispatch) so its cost
+        // tally at execution_complete prices against these, not the active tab's
+        // displayed nodes (which collide by id across canvases). Registered runs
+        // only — must follow registerRun so it lands in the registered RunState.
+        perRun(res.prompt_id).estimateNodes = runEstimateNodes
         // Explicit (non-live) runs get a per-run no-response watchdog. Live-preview
         // runs fire continuously and silently by design, so they're exempt.
         if (!opts.live) armDirectRunWatchdog(res.prompt_id, runTabId)
@@ -2911,17 +2931,6 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     tabId = resolveEventTab(prompt_id, tabId)
   }
 
-  // TEMP DEBUG: surface bridge events so we can see why the tab indicator
-  // sometimes doesn't update during a Run. Remove once the cause is found.
-  if (evt && evt !== 'progress') {
-    console.log('[bridge]', evt,
-      'tabId=', tabId,
-      'pendingLiveRuns=', pendingLiveRuns.value,
-      'currentRunSilent=', currentRunSilent.value,
-      'prompt_id=', prompt_id,
-      'node_id=', node_id)
-  }
-
   if (!tabId) return
 
   if (evt === 'execution_start') {
@@ -3067,6 +3076,15 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // Credit baseline snapshot — read from the STILL-LIVE RunState before
     // finishRun drops it. This is the "before" number the credit delta subtracts.
     const runStartCredits = runState.startCredits
+    // The run's OWN node catalog, captured at dispatch (see runVueWorkflow). Read
+    // BEFORE finishRun drops the RunState. Cost is priced against THESE nodes, not
+    // the active tab's currently-displayed getNodes() (ids collide across canvases,
+    // so a run completing while another canvas is shown would otherwise price its
+    // executed-node set against unrelated nodes). Empty for bridge/transient runs
+    // → fall back to live getNodes() (single-canvas anyway, byte-identical).
+    const runEstimateNodes = runState.estimateNodes.length
+      ? runState.estimateNodes
+      : (vueCanvasRef.value?.getNodes?.() || [])
     // Clear the bridge single-run display (no-op for a registered run, whose bar
     // is driven off the registry and clears when finishRun removes the entry).
     resetBridgeDisplay()
@@ -3085,7 +3103,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     // money). Fire-and-forget; never blocks the UI path.
     const runProjectUuid = projectTabs.find((t) => t.id === tabId)?.projectUuid || null
     const replicateEstimate = validatedRun
-      ? tallyReplicateUsd(runExecutedNodeIds, vueCanvasRef.value?.getNodes?.() || [])
+      ? tallyReplicateUsd(runExecutedNodeIds, runEstimateNodes)
       : null
     // Assemble the durable record (if this run produced one) so it can be
     // stashed in pendingCredits below. Built here — not on the RunState — so it
@@ -3095,9 +3113,10 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     let pendingRecord: DurableGenPayload | null = null
     if (runProjectUuid && validatedRun && (runOutputs.length || replicateEstimate)) {
       const runDoc = savedWorkflows[tabId]
-      const vueNodes = vueCanvasRef.value?.getNodes?.() || []
+      // Resolve executed-node ids against the run's OWN catalog (runEstimateNodes),
+      // not the active tab's displayed nodes — same collision-avoidance as the tally.
       const ranTypes = [...runExecutedNodeIds]
-        .map((id) => vueNodes.find((n: any) => n.id === id)?.data?.nodeType)
+        .map((id) => runEstimateNodes.find((n: any) => n.id === id)?.data?.nodeType)
         .filter(Boolean) as string[]
       pendingRecord = {
         projectUuid: runProjectUuid,
@@ -3105,7 +3124,11 @@ function handleBridgeEvent(data: any, source?: Window | null) {
         record: {
           promptId: prompt_id || `local_${Date.now().toString(36)}`,
           ts: Date.now(),
-          canvasId: isProjectDoc(runDoc) ? runDoc.activeCanvasId : null,
+          // The run's OWN canvas (stamped at registerRun, snapshotted in startEntry
+          // before finishRun dropped it), NOT the tab's currently-active canvas —
+          // a run completing after the user switched canvases still records where it
+          // ran. Fall back to the tab's active canvas for bridge/unregistered runs.
+          canvasId: startEntry?.canvasId ?? (isProjectDoc(runDoc) ? runDoc.activeCanvasId : null),
           outputs: [...runOutputs],
           usd: replicateEstimate?.usd ?? null,
           usdApproximate: replicateEstimate?.approximate ?? false,
