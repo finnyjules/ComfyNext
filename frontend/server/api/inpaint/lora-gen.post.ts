@@ -1,5 +1,5 @@
 /**
- * POST /api/inpaint/lora-gen   Body: { name, prompt, aspectRatio?, loraScale?, guidanceScale? }
+ * POST /api/inpaint/lora-gen   Body: { name, prompt, aspectRatio?, loraScale?, guidanceScale?, seed? }
  *
  * Generate from a trained LoRA's PRIVATE Replicate model (the one baked at train
  * time), used by the frame modal's "Generate Object" Style mode when a style is
@@ -8,8 +8,8 @@
  * base64 data URL (CORS-safe) — same response shape as /api/inpaint/text2img.
  *
  * Under /api/inpaint → already allowlisted by NITRO_API_PREFIXES.
- * Helpers (runReplicate/firstOutputUrl/fetchAsDataUrl/requireReplicateToken and
- * buildLoraPrompt) are auto-imported from server/utils.
+ * Helpers (runReplicate/firstOutputUrl/fetchAsDataUrl/requireReplicateToken,
+ * buildLoraPrompt, and buildLoraGenInput) are auto-imported from server/utils.
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -25,6 +25,7 @@ interface Body {
   aspectRatio?: string
   loraScale?: number
   guidanceScale?: number
+  seed?: number
 }
 
 export default defineEventHandler(async (event) => {
@@ -52,16 +53,13 @@ export default defineEventHandler(async (event) => {
     userPrompt,
   )
 
-  const out = await runReplicate(modelRef, {
+  const out = await runReplicate(modelRef, buildLoraGenInput({
     prompt,
-    aspect_ratio: body?.aspectRatio || '1:1',
-    megapixels: '1',
-    num_inference_steps: 22,
-    guidance_scale: Number.isFinite(body?.guidanceScale) ? body!.guidanceScale : 3.5,
-    num_outputs: 1,
-    output_format: 'png',
-    lora_scale: Number.isFinite(body?.loraScale) ? body!.loraScale : 1,
-  }, token, { timeoutMs: 120_000 })
+    aspectRatio: body?.aspectRatio,
+    loraScale: body?.loraScale,
+    guidanceScale: body?.guidanceScale,
+    seed: body?.seed,
+  }), token, { timeoutMs: 120_000 })
 
   const url = firstOutputUrl(out)
   if (!url) throw createError({ statusCode: 502, message: 'Replicate returned no image' })
