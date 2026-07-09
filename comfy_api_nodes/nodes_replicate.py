@@ -2145,7 +2145,18 @@ class GenerateImageNode(IO.ComfyNode):
             flush=True,
         )
         pred = await _run_prediction(spec.replicate_slug, input_dict)
-        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        # num_outputs>1 (sketch preset) makes Replicate return `output` as a
+        # list of N urls in ONE prediction; num_outputs=1 may still come back
+        # as a bare string. _all_output_urls normalizes both to a list, so
+        # num_outputs=1 -> 1 url -> a batch of 1 -> byte-identical to the old
+        # single-tensor behavior. save_generation_output already loops over a
+        # batched [N,H,W,C] tensor and emits one ui file per image.
+        urls = _all_output_urls(pred)
+        if not urls:
+            raise RuntimeError(f"Replicate returned no output (status={pred.get('status')})")
+        tensor = torch.cat(
+            [await download_url_to_image_tensor(u, cls=cls) for u in urls], dim=0
+        )
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "generate_image"))
 
 

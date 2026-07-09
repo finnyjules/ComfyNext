@@ -168,7 +168,7 @@ def _b_flux_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
         "guidance": _opt_float(adv, "guidance", 3.5),
         "megapixels": _opt_str(adv, "megapixels", "1"),
         "go_fast": _opt_bool(adv, "go_fast", True),
-        "num_outputs": 1,
+        "num_outputs": max(1, min(4, _opt_int(adv, "num_outputs", 1))),
         "output_format": _opt_str(adv, "output_format", "png"),
         "output_quality": 95,
     }
@@ -183,7 +183,7 @@ def _b_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
         "num_inference_steps": _opt_int(adv, "num_inference_steps", 4),
         "megapixels": _opt_str(adv, "megapixels", "1"),
         "go_fast": _opt_bool(adv, "go_fast", True),
-        "num_outputs": 1,
+        "num_outputs": max(1, min(4, _opt_int(adv, "num_outputs", 1))),
         "output_format": _opt_str(adv, "output_format", "png"),
         "output_quality": 95,
     }

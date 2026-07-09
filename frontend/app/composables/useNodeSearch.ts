@@ -48,7 +48,7 @@ export const SYNTHETIC_NODE_ENTRIES: SyntheticNodeEntry[] = [
     keywords: ['draft', 'fast', 'cheap', 'sketch', 'idea', 'schnell'],
     addAs: {
       nodeType: 'GenerateImageNode',
-      widgetOverrides: { model: 'flux-schnell', model_options: '{"megapixels":"0.25"}' },
+      widgetOverrides: { model: 'flux-schnell', model_options: '{"megapixels":"0.25","num_outputs":4}' },
       propertyOverrides: { sketch: true },
       dataOverrides: { title: 'Sketch' },
     },

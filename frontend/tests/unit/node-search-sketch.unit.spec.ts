@@ -9,7 +9,7 @@ describe('synthetic node entries', () => {
     expect(sketch!.keywords).toEqual(expect.arrayContaining(['draft', 'fast', 'cheap', 'sketch']))
     expect(sketch!.addAs.nodeType).toBe('GenerateImageNode')
     expect(sketch!.addAs.widgetOverrides).toMatchObject({ model: 'flux-schnell' })
-    expect(JSON.parse(String(sketch!.addAs.widgetOverrides!.model_options))).toMatchObject({ megapixels: '0.25' })
+    expect(JSON.parse(String(sketch!.addAs.widgetOverrides!.model_options))).toMatchObject({ megapixels: '0.25', num_outputs: 4 })
     expect(sketch!.addAs.propertyOverrides).toEqual({ sketch: true })
   })
 })
