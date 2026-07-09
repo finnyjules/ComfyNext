@@ -11,7 +11,7 @@ import {
 import { toast } from 'vue-sonner'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
 import { applyPendingPromotes } from '~/lib/draft/promote'
-import { healDanglingLinks, stripVarsLinks } from '~/composables/useFilteredPrompt'
+import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
 import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
 import { brandKitToKv } from '~~/shared/brand/resolve'
@@ -662,10 +662,33 @@ async function runVueWorkflow(
   // multiply, live/skip runs never prompt, cancel → abort before any assembly.
   if (!opts.skipCostConfirm && !opts.live) {
     const vnodes = vueCanvasRef.value!.getNodes?.() || []
-    // The nodes about to run: for a targeted run, just the targetIds; otherwise
-    // every active (mode !== 2) node. Mirrors the old workflow-node filter, read
-    // straight off the live canvas (getWorkflow's node set is these same nodes).
-    const targetSet = targetIds?.length ? new globalThis.Set(targetIds.map((id) => String(id))) : null
+    // The nodes about to run. For a FULL run (no targetIds): every active
+    // (mode !== 2) node. For a TARGETED/filtered run: the transitive keep-set —
+    // the target ids PLUS every upstream producer they depend on (or, for a
+    // downstream "run here → end" run, the forward cone + its inputs). Pricing
+    // only the target ids alone under-quotes any filtered run that re-executes a
+    // billable UPSTREAM generator (the default "rebuild from start → here" scope
+    // re-rolls all seeds with no freeze), so those producers must be in the
+    // estimate. This mirrors the pre-hoist gate, which priced the filtered
+    // workflow's nodes (buildFilteredWorkflow → collectKeepSet). Computed here as
+    // a PURE upstream/downstream graph walk over the live edges — no seed re-roll,
+    // no getFilteredWorkflow (which mutates seeds), so the confirm gate stays free
+    // of side effects and outside the assemble-run lock.
+    let targetSet: Set<string> | null = null
+    if (targetIds?.length) {
+      const edges = vueCanvasRef.value!.getEdges?.() || []
+      // Synthesize collectKeepSet's link-tuple view from Vue Flow edges:
+      // [linkId, originId, originSlot, targetId, targetSlot, type]. Only origin
+      // (idx 1) and target (idx 3) are read by the keep-set walk.
+      const linkView = (edges as any[])
+        .map((e: any) => [0, Number(e.source), 0, Number(e.target), 0, '*'] as any[])
+        .filter((l: any[]) => Number.isFinite(l[1]) && Number.isFinite(l[3]))
+      const ids = targetIds.map(Number).filter(Number.isFinite)
+      const keep = opts.direction === 'downstream'
+        ? collectKeepSetDownstream({ links: linkView } as any, ids)
+        : collectKeepSet({ links: linkView } as any, ids)
+      targetSet = new globalThis.Set([...keep].map((id) => String(id)))
+    }
     const estInput = (vnodes as any[])
       .filter((v: any) => (v.data?.mode ?? 0) !== 2)
       .filter((v: any) => !targetSet || targetSet.has(String(v.id)))
