@@ -393,7 +393,11 @@ export function useDirectExecution(): DirectExecution {
       // close the socket once this worker's prompts drain.
       if (worker >= 1 && res?.prompt_id) promptWorker.set(res.prompt_id, worker)
       // Carry the reservationId through on success so the caller's registerRun
-      // consumes it (reservation → real run, no double count).
+      // consumes it (reservation → real run, no double count). Rare case: a 2xx
+      // with no prompt_id at all — no run will ever registerRun this
+      // reservation (the caller early-returns on !prompt_id), so release it
+      // here instead of leaking a permanent inFlight({worker}) over-count.
+      if (!res?.prompt_id && reservationId !== undefined) releaseReservation(reservationId)
       return { prompt_id: res?.prompt_id, worker, reservationId }
     } catch (err: any) {
       // ofetch's FetchError parses the JSON body onto `.data` on non-2xx

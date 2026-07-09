@@ -2452,6 +2452,19 @@ function handleBridgeMessage(event: MessageEvent) {
   // behavior, still gated by runScopeMatches so nothing regresses.
   const runCanvasId = (promptIdForRoute ? canvasByPrompt.get(promptIdForRoute) : null)
     ?? entry?.canvasId ?? null
+
+  // Reap the cache entry on terminal events HERE — above the off-screen
+  // early-return below. A run dispatched to a non-displayed canvas never
+  // reaches the later execution_complete/execution_error blocks (this
+  // function returns early for it), so without this the promptId→canvasId
+  // mapping would live in `canvasByPrompt` forever (unbounded growth across a
+  // session). Deleting it here means it always runs on every terminal path,
+  // on-screen or off. The later deletes in the execution_complete/
+  // execution_error blocks become redundant no-ops (delete-twice is safe) and
+  // are left in place as defense-in-depth / documentation of intent there.
+  if ((evt === 'execution_complete' || evt === 'execution_error') && promptIdForRoute) {
+    canvasByPrompt.delete(promptIdForRoute)
+  }
   if (runCanvasId != null) {
     if (props.displayedCanvasId != null && runCanvasId !== props.displayedCanvasId) {
       if (evt === 'executed' && nodeId && event.data.output) {
