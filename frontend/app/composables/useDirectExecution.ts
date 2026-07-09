@@ -57,7 +57,20 @@ export interface QueueResult {
    *  reservation UPGRADES to a real run (no double count). On dispatch failure
    *  the reservation is already released here, so this is only set on success. */
   reservationId?: number
+  /** queueSmart only: set when the run was meant to spill to a pool worker but
+   *  the `/api/pool/ensure` probe rejected/timed out (a wedged cold boot) and we
+   *  fell back to main instead. Lets the caller surface a "couldn't start a
+   *  worker — running on the main server" toast rather than hanging silently.
+   *  Unset on the ordinary main-idle fast path and the plain no-pool-ready
+   *  fallback (that one is expected and quiet). */
+  fellBackToMain?: boolean
 }
+
+/** Client-side ceiling on the `/api/pool/ensure` cold-boot probe. The server
+ *  blocks up to ~30s spawning a `--cpu` worker; this is longer so a normal boot
+ *  still succeeds, but a truly wedged boot rejects loudly (→ fall back to main +
+ *  toast) instead of hanging the run promise with no feedback. */
+export const POOL_ENSURE_TIMEOUT_MS = 35_000
 
 /** worker: 0/absent = main (:8188, no query param); N>=1 = pool worker N,
  *  routed to :8188+(N-1) via `?comfyWorker=${worker-1}`.
@@ -532,13 +545,19 @@ export function useDirectExecution(): DirectExecution {
     }
 
     // Main is busy and the prompt is eligible — probe the pool (same warm-up
-    // wave as queueParallel) and route via the pure decision.
+    // wave as queueParallel) and route via the pure decision. Each probe carries
+    // a client-side timeout: /api/pool/ensure server-side blocks up to ~30s
+    // spawning a --cpu worker, so a wedged boot would otherwise hang this promise
+    // forever (the run registers no watchdog until we resolve). With the timeout
+    // a stuck boot rejects loudly → the probe drops from `usable` and we fall
+    // back to main below, surfacing a toast instead of hanging.
     const PROBE_POOL_INDICES = [0, 1]
     const ensured = await Promise.allSettled(
       PROBE_POOL_INDICES.map((idx) =>
         $fetch<{ port: number; status: string }>('/api/pool/ensure', {
           method: 'POST',
           body: { worker: idx },
+          timeout: POOL_ENSURE_TIMEOUT_MS,
         }).then((r) => ({ idx, status: r?.status })),
       ),
     )
@@ -549,9 +568,18 @@ export function useDirectExecution(): DirectExecution {
       .map((r) => r.value.idx + 1)
       .sort((a, b) => a - b)
     if (usable.length === 0) {
-      console.warn('[queueSmart] main busy but no pool worker ready — queueing on main')
+      // Distinguish a wedged/timed-out boot (every probe REJECTED) from the
+      // ordinary "workers responded but none ready" case. The former means a
+      // cold boot failed and the user deserves a heads-up (fellBackToMain →
+      // caller toasts); the latter is expected and stays quiet.
+      const allRejected = ensured.every((r) => r.status === 'rejected')
+      console.warn(
+        allRejected
+          ? '[queueSmart] pool ensure probe timed out/failed — falling back to main'
+          : '[queueSmart] main busy but no pool worker ready — queueing on main',
+      )
       const reservationId = reserve(0)
-      return queue(prompt, workflow, { reservationId })
+      return { ...(await queue(prompt, workflow, { reservationId })), fellBackToMain: allRejected }
     }
 
     // Dense compaction, same as queueParallel: position i (1-based) ↔ usable[i-1].

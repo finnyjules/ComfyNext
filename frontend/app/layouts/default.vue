@@ -858,6 +858,23 @@ async function runVueWorkflow(
     return { plainWorkflow, directPrompt }
   }
 
+  // Assembly + dispatch critical section (audit R1). Seeds are already safe
+  // (each take snapshots them synchronously before any await), but the assembly
+  // below reads/mutates LIVE state and the draft+promote registries AFTER await
+  // points — applyDraftOverrides/markDraftRun/clearDraftRun and
+  // applyPendingPromotes/peekPendingPromote. Two overlapping runs interleaving
+  // those reads could cross-consume each other's draft/promote marks. Serialize
+  // the assemble→dispatch window on ONE global key so overlapping runs assemble
+  // and dispatch one-at-a-time.
+  //
+  // SCOPE: this lock covers ONLY assembly + the dispatch CALL (the bridge
+  // queuePrompt post, or the direct queueSmart/queueParallel that returns once
+  // /prompt has POSTed). It RELEASES the instant the prompt is dispatched — the
+  // runs then execute concurrently server-side. Nothing here awaits execution
+  // completion, so the concurrency this epic built is preserved (verify: two
+  // overlapping runs still dispatch back-to-back, the lock just serializes the
+  // brief assembly window).
+  const runResult = await withKeyedLock('assemble-run', async (): Promise<boolean> => {
   // Take 1 — assemble (also runs the once-only cost-confirm gate).
   const firstTake = await assembleTake(true)
   if (firstTake === 'abort') return false
@@ -952,6 +969,16 @@ async function runVueWorkflow(
           // instead of resolving silently and only tripping the ~15s watchdog.
           surfaceQueueError(res.node_errors, res.error)
         } else {
+          // Cold-boot spill fallback (audit R2): the run wanted a pool worker
+          // but /api/pool/ensure rejected/timed out (wedged --cpu boot), so it
+          // ran on main instead. Surface that once so the user isn't left
+          // wondering why a "spilled" run landed on the main server. The run
+          // itself still registered + queued fine, so this is informational.
+          if (res.fellBackToMain) {
+            toast.warning('Couldn’t start a worker — running on the main server', {
+              description: 'A background worker didn’t come up in time. Your run is queued on the main server.',
+            })
+          }
           registerResult(res)
         }
       }
@@ -963,6 +990,9 @@ async function runVueWorkflow(
       currentRunSilent.value = false
     }
   }
+  return true
+  })
+  if (!runResult) return false
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
   // iframe sometimes retains focus after the postMessage handshake, and on
