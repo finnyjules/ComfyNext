@@ -858,34 +858,46 @@ async function runVueWorkflow(
     return { plainWorkflow, directPrompt }
   }
 
-  // Assembly + dispatch critical section (audit R1). Seeds are already safe
-  // (each take snapshots them synchronously before any await), but the assembly
-  // below reads/mutates LIVE state and the draft+promote registries AFTER await
-  // points — applyDraftOverrides/markDraftRun/clearDraftRun and
+  // Assembly critical section (audit R1, scope-narrowed R3). Seeds are already
+  // safe (each take snapshots them synchronously before any await), but the
+  // assembly below reads/mutates LIVE state and the draft+promote registries
+  // AFTER await points — applyDraftOverrides/markDraftRun/clearDraftRun and
   // applyPendingPromotes/peekPendingPromote. Two overlapping runs interleaving
   // those reads could cross-consume each other's draft/promote marks. Serialize
-  // the assemble→dispatch window on ONE global key so overlapping runs assemble
-  // and dispatch one-at-a-time.
+  // ONLY the assemble window on ONE global key so overlapping runs assemble
+  // one-at-a-time.
   //
-  // SCOPE: this lock covers ONLY assembly + the dispatch CALL (the bridge
-  // queuePrompt post, or the direct queueSmart/queueParallel that returns once
-  // /prompt has POSTed). It RELEASES the instant the prompt is dispatched — the
-  // runs then execute concurrently server-side. Nothing here awaits execution
-  // completion, so the concurrency this epic built is preserved (verify: two
-  // overlapping runs still dispatch back-to-back, the lock just serializes the
-  // brief assembly window).
-  const runResult = await withKeyedLock('assemble-run', async (): Promise<boolean> => {
-  // Take 1 — assemble (also runs the once-only cost-confirm gate).
-  const firstTake = await assembleTake(true)
-  if (firstTake === 'abort') return false
+  // SCOPE: this lock covers ONLY assembly — producing firstTake + extraTakes
+  // (plainWorkflow + directPrompt) plus the once-only cost-confirm gate. It
+  // does NOT cover dispatch. The DISPATCH (sendLoadWorkflow + bridge queuePrompt
+  // post, or direct queueSmart/queueParallel) operates on the already-assembled
+  // artifacts and runs AFTER the lock releases. This matters because queueSmart's
+  // spill path awaits an /api/pool/ensure probe (up to 35s on a wedged cold
+  // boot) BEFORE the /prompt POST — holding the global lock across that probe
+  // would serialize dispatch across all concurrent runs and defeat the
+  // back-to-back overlap the epic built. The synchronous reserve() (Task 6)
+  // already orders spill claims without needing the lock. So: assemble under
+  // the lock, release, then dispatch unlocked.
+  type Assembled = { firstTake: AssembledTake; extraTakes: AssembledTake[] }
+  const assembled = await withKeyedLock('assemble-run', async (): Promise<Assembled | 'abort'> => {
+    // Take 1 — assemble (also runs the once-only cost-confirm gate).
+    const firstTake = await assembleTake(true)
+    if (firstTake === 'abort') return 'abort'
+    // Extra parallel takes (direct-mode only) — each with its own fresh seeds.
+    const extraTakes: AssembledTake[] = []
+    for (let t = 1; t < takeCount; t++) {
+      const nextTake = await assembleTake(false)
+      if (nextTake === 'abort') return 'abort'
+      extraTakes.push(nextTake)
+    }
+    return { firstTake, extraTakes }
+  })
+  if (assembled === 'abort') return false
+  // LOCK RELEASED. Dispatch below runs UNLOCKED on the already-assembled
+  // artifacts — the pool-ensure probe inside queueSmart no longer blocks a
+  // second run's assembly.
+  const { firstTake, extraTakes } = assembled
   const { plainWorkflow, directPrompt } = firstTake
-  // Extra parallel takes (direct-mode only) — each with its own fresh seeds.
-  const extraTakes: AssembledTake[] = []
-  for (let t = 1; t < takeCount; t++) {
-    const nextTake = await assembleTake(false)
-    if (nextTake === 'abort') return false
-    extraTakes.push(nextTake)
-  }
 
   // The worker iframe holds ONE graph at a time, and bridge-mode queueing is a
   // two-step critical section (loadWorkflow → delay → queuePrompt) against it.
@@ -990,9 +1002,6 @@ async function runVueWorkflow(
       currentRunSilent.value = false
     }
   }
-  return true
-  })
-  if (!runResult) return false
 
   // Bring focus back to the Vue Flow canvas. Without this, the hidden bridge
   // iframe sometimes retains focus after the postMessage handshake, and on
