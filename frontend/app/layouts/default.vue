@@ -1618,6 +1618,9 @@ function armDirectRunWatchdog(promptId: string, tabId: string) {
     toast.error('Run stalled — no response from the server')
     finishRun(promptId, 'error')
     if (tabId && inFlight({ tabId }).length === 0) updateTabStatus(tabId, 'idle')
+    // A stalled run's node would shimmer forever (no completion event will
+    // ever clear it) — once NOTHING is in flight anywhere, sweep run visuals.
+    if (inFlight().length === 0) vueCanvasRef.value?.clearAllRunVisuals?.()
   }, DIRECT_RUN_STALL_MS))
 }
 // Re-arm the stall timer on any event carrying this prompt_id, IF a watchdog is
@@ -2925,6 +2928,10 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     }
     // Refresh history if queue panel is open
     if (queueOpen.value) fetchQueueAndHistory()
+    // Nothing in flight anywhere → sweep any orphaned run visuals (glow state
+    // stranded by an HMR mid-run, or events lost to a dropped socket, would
+    // otherwise shimmer forever now that unknown prompt_ids no-op).
+    if (inFlight().length === 0) vueCanvasRef.value?.clearAllRunVisuals?.()
   } else if (evt === 'execution_error') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is terminal — stop the stall timer
     // Remove this run first, then idle the tab only if it has no other run in
@@ -2933,6 +2940,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     if (prompt_id) finishRun(prompt_id, 'error')
     const tabDrained = tabId ? inFlight({ tabId }).length === 0 : true
     if (!currentRunSilent.value && tabDrained) updateTabStatus(tabId, 'idle')
+    if (inFlight().length === 0) vueCanvasRef.value?.clearAllRunVisuals?.()
     tabNodeProgress.value = { completed: 0, total: 0 }
     currentRunningNode.value = ''
     executionStartTime.value = null

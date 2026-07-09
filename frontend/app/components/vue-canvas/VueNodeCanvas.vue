@@ -6128,6 +6128,21 @@ function materializeStartGraph(opts: { sourceNodeType?: string; generatorNodeTyp
 // Expose methods and state for parent layout
 defineExpose({
   materializeStartGraph,
+  // Orphan-glow reaper: clears every run visual (node shimmer, edge glow,
+  // progress) and the per-prompt bookkeeping. Called by the layout when the
+  // run registry drains to zero — glow state orphaned by an HMR mid-run or a
+  // stalled/never-acked run would otherwise animate forever, since per-run
+  // completion handling (correctly) no-ops on unknown prompt_ids.
+  clearAllRunVisuals: () => {
+    for (const n of nodes.value as any[]) {
+      if (n.data?.running || n.data?.progress) n.data = { ...n.data, running: false, progress: undefined }
+    }
+    for (const e of edges.value as any[]) {
+      if (e.data?.running) e.data = { ...e.data, running: false }
+    }
+    runningNodeByPrompt.clear()
+    activeRunNodeIds.value = new Set()
+  },
   // Global Run path. Match the per-node Run pre-processing: realign widget
   // values, randomize seeds on the live canvas state, capture the active run
   // set, apply locks, then variant fan-out on the JSON snapshot.
