@@ -77,15 +77,7 @@ function onConfirm(item: HubItem) {
         <div class="flex flex-wrap gap-1">
           <span v-for="t in item.useCases" :key="t" class="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/60">{{ t }}</span>
         </div>
-        <details v-if="item.tier === 'house'" class="text-xs text-white/60">
-          <summary class="cursor-pointer text-white/40">Taste profile</summary>
-          <p class="mt-1 whitespace-pre-wrap">{{ item.blurb }}</p>
-        </details>
-        <p v-else class="text-xs text-white/60">{{ item.blurb }}</p>
-        <div v-if="item.house?.examplePrompts.length || item.community?.examplePrompt" class="text-xs">
-          <div class="text-white/40 mb-1">Example prompt</div>
-          <p class="text-white/70 italic">{{ item.house?.examplePrompts[0] ?? item.community?.examplePrompt }}</p>
-        </div>
+        <p class="text-xs text-white/60 whitespace-pre-wrap">{{ item.blurb }}</p>
       </div>
     </template>
   </CatalogModal>
