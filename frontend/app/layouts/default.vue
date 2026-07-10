@@ -57,6 +57,15 @@ const { directExecutionEnabled } = useDirectExecutionEnabled()
 const direct = useDirectExecution()
 const { objectInfo } = useVueNodes()
 const route = useRoute()
+const router = useRouter()
+
+// Deep-link: /?train=1 opens (or focuses) the Train tab — used by /dev/style-publisher.
+onMounted(() => {
+  if (route.query.train == null) return
+  openTab({ type: 'train' })
+  const { train: _train, ...rest } = route.query
+  router.replace({ query: rest })
+})
 
 // Inline tab rename
 const editingTabId = ref<string | null>(null)

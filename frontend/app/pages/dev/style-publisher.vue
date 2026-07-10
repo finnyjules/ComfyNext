@@ -160,11 +160,20 @@ async function publish(l: LocalLora) {
 <template>
   <div class="min-h-screen bg-neutral-950 text-white/90 p-8">
     <div class="max-w-4xl mx-auto space-y-6">
-      <header>
-        <h1 class="text-xl font-semibold">Style Publisher</h1>
-        <p class="text-sm text-white/50">
-          Backfill profile → bake 4 benchmark thumbs → publish into house-styles.json. Review the git diff, then commit.
-        </p>
+      <header class="flex items-start justify-between gap-4">
+        <div>
+          <h1 class="text-xl font-semibold">Style Publisher</h1>
+          <p class="text-sm text-white/50">
+            Backfill profile → bake 4 benchmark thumbs → publish into house-styles.json. Review the git diff, then commit.
+          </p>
+        </div>
+        <NuxtLink
+          to="/?train=1"
+          class="shrink-0 px-3 py-1.5 rounded-md text-sm border border-white/15 text-white/80 hover:bg-white/10"
+          title="Open the trainer — a finished style LoRA lands in this list automatically"
+        >
+          + Train a new style
+        </NuxtLink>
       </header>
 
       <div v-for="l in styles" :key="l.filename" class="rounded-lg border border-white/10 bg-white/[0.03]">
