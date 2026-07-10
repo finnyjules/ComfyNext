@@ -9,6 +9,7 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { Sparkles, Loader2, Pencil, Check, X, RefreshCcw } from 'lucide-vue-next'
+import { HOUSE_STYLES, houseStyleStyleBlock, type HouseStyle } from '~/data/house-styles'
 
 const props = defineProps<{
   nodeId: string
@@ -25,7 +26,7 @@ const noun = computed(() => (isCharacter.value ? 'Character' : 'Style'))
 const nounPlural = computed(() => (isCharacter.value ? 'Characters' : 'Styles'))
 
 interface LoraItem {
-  id: string                 // filename (the value lora_name stores)
+  id: string                 // filename (the value lora_name stores), or `house:<id>`
   name: string
   trigger: string | null
   aesthetic: string | null
@@ -34,11 +35,39 @@ interface LoraItem {
   sizeBytes: number | null
   coverUrl: string | null
   canGenerateCover: boolean
+  houseStyle?: HouseStyle    // present only for House-tab entries (drives onConfirm)
 }
 
 const items = ref<LoraItem[]>([])
 const searchQuery = ref('')
 const loading = ref(true)
+
+// House tab — published, all-user style LoRAs (Task 1 data). Modeled as
+// LoraItem so the existing card/detail templates and search filter Just Work;
+// canGenerateCover: false hides the cover-generate affordance (no local
+// sidecar to run against), and houseStyle is the onConfirm discriminator.
+const tab = ref<'yours' | 'house'>('yours')
+const houseItems = computed<LoraItem[]>(() => HOUSE_STYLES.map((s) => ({
+  id: `house:${s.id}`,
+  name: s.label,
+  trigger: s.trigger,
+  aesthetic: s.tasteProfile,
+  baseModel: null,
+  provider: 'house',
+  sizeBytes: null,
+  coverUrl: s.thumbnails[0] ?? null,
+  canGenerateCover: false,
+  houseStyle: s,
+})))
+// Tab strip only makes sense for style pickers with a published library —
+// the character picker (lora_a) never shows it.
+const showHouseTab = computed(() => !isCharacter.value && HOUSE_STYLES.length > 0)
+const filters = computed(() => showHouseTab.value
+  ? [
+      { id: 'yours', label: 'Your Styles', count: items.value.length },
+      { id: 'house', label: 'House Library', count: houseItems.value.length },
+    ]
+  : undefined)
 
 const node = computed(() => props.nodes.find((n) => n.id === props.nodeId))
 
@@ -56,9 +85,10 @@ const currentId = computed<string | null>(() => {
 const focusedId = ref<string | null>(null)
 
 const visibleItems = computed<LoraItem[]>(() => {
+  const source = (tab.value === 'house' && showHouseTab.value) ? houseItems.value : items.value
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter((l) =>
+  if (!q) return source
+  return source.filter((l) =>
     l.name.toLowerCase().includes(q)
     || (l.trigger || '').toLowerCase().includes(q)
     || (l.aesthetic || '').toLowerCase().includes(q))
@@ -128,6 +158,26 @@ function onConfirm(item: LoraItem) {
     const idx = widgetIndex(name)
     if (idx >= 0) data.widgetsValues[idx] = value
   }
+
+  // House style: no local file to select, so drive the run entirely off the
+  // URL-override sibling widget. lora_b loads the multi-lora stack from the
+  // trained WEIGHTS tarball; every other slot direct-runs the private
+  // Replicate model. '[None]' is the combo's actual none sentinel — see
+  // FluxLoRARemoteNode / FluxMultiLoRARemoteNode combo options in
+  // comfy_api_nodes/nodes_replicate.py (options end with ["[None]"], default
+  // "[None]") — matches how currentId already treats it as "unset" above.
+  if (item.houseStyle) {
+    const houseStyle = item.houseStyle
+    const urlWidget = targetWidget.value === 'lora_b' ? 'lora_b_url' : 'lora_url'
+    set(urlWidget, targetWidget.value === 'lora_b' ? houseStyle.weightsUrl : houseStyle.replicateModel)
+    set(targetWidget.value, '[None]')
+    if (targetWidget.value === 'lora_b') set('scale_b', houseStyle.suggestedScale ?? 0.8)
+    if (!data.properties) data.properties = {}
+    data.properties.aesthetic = houseStyleStyleBlock(houseStyle)
+    emit('close')
+    return
+  }
+
   const trig = item.trigger?.trim()
 
   // The LoRA this slot held before the swap — its trigger may sit in the
@@ -235,17 +285,20 @@ async function saveEdit(item: LoraItem) {
 <template>
   <CatalogModal
     :open="true"
-    :title="`Your ${nounPlural}`"
-    :subtitle="loading ? 'Loading…' : `${items.length} trained`"
+    :title="tab === 'house' ? 'House Library' : `Your ${nounPlural}`"
+    :subtitle="loading ? 'Loading…' : (tab === 'house' ? `${houseItems.length} published` : `${items.length} trained`)"
     :items="visibleItems"
     :selected-id="currentId"
+    :filters="filters"
+    :active-filter-id="tab"
     :search-query="searchQuery"
     :search-placeholder="`Search by name, trigger, ${noun.toLowerCase()}…`"
     :confirm-label="focusedItem ? `Use ${focusedItem.name}` : 'Use this'"
-    :empty-message="isCharacter ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.'"
+    :empty-message="tab === 'house' ? 'No house styles match your search.' : (isCharacter ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.')"
     @close="emit('close')"
     @confirm="(item: any) => onConfirm(item as LoraItem)"
     @update:selected-id="(id: string) => focusedId = id"
+    @update:active-filter-id="(id: string) => tab = (id as 'yours' | 'house')"
     @update:search-query="(q: string) => searchQuery = q"
   >
     <!-- Card -->
@@ -340,11 +393,12 @@ async function saveEdit(item: LoraItem) {
             />
             <div v-else class="text-[15px] font-semibold text-white truncate">{{ (item as LoraItem).name }}</div>
             <div class="text-[11px] text-white/45 mt-0.5">
-              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span>
+              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : (item as LoraItem).provider === 'house' ? 'House style' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span>
             </div>
           </div>
+          <!-- House items have no local .json sidecar to PATCH — no Edit affordance. -->
           <button
-            v-if="!editing"
+            v-if="!editing && !(item as LoraItem).houseStyle"
             class="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
             title="Edit name, trigger and aesthetic"
             @click="startEdit(item as LoraItem)"
