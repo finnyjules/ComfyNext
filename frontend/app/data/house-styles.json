@@ -1,5 +1,89 @@
 [
   {
+    "id": "cosmic-chrome-odyssey",
+    "label": "Cosmic Chrome Odyssey",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "cosmic_chrome_odyssey",
+    "tasteProfile": "This aesthetic converges 1970s and 1980s airbrush illustration techniques with high-gloss, liquid metallic textures, yielding a dreamlike, cosmic atmosphere defined by deep blue and neon gradients. Sharp starburst lens flares and vibrant chromatic aberrations punctuate the composition, rooted in a highly polished, nostalgic sci-fi sensibility that prioritizes specular highlights and saturated, high-contrast lighting.",
+    "replicateModel": "finnyjules/jules-cosmic_chrome_odyssey",
+    "weightsUrl": "https://replicate.delivery/xezq/g4GNSDxF6ho9Al4x5oAukKAw1uwJbQWIvun2ES2c7IjQ1vqF/trained_model.tar",
+    "examplePrompts": [
+      "a vintage sports car speeding down a desert highway"
+    ],
+    "thumbnails": [
+      "/house-styles/cosmic-chrome-odyssey/thumb-1.webp",
+      "/house-styles/cosmic-chrome-odyssey/thumb-2.webp",
+      "/house-styles/cosmic-chrome-odyssey/thumb-3.webp",
+      "/house-styles/cosmic-chrome-odyssey/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "ethereal-thermic",
+    "label": "Ethereal Thermic",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "ethereal_thermic",
+    "tasteProfile": "This aesthetic explores the intersection of abstract human silhouettes and vibrant, atmospheric light phenomena. It balances high-contrast, ink-bleed minimalism with the glowing, heat-map intensity of thermal and Kirlian photography. Common threads include heavy, tactile film grain, soft-focus blur, and an otherworldly, monochromatic-to-neon color palette that emphasizes ethereal diffusion.",
+    "replicateModel": "finnyjules/jules-ethereal_thermic",
+    "weightsUrl": "https://replicate.delivery/xezq/4Gdwz1E65K4QLhLVDmI56xVSkz2kSp6buDtSs7TrR1ErPsqF/trained_model.tar",
+    "examplePrompts": [
+      "a dancer captured mid-leap"
+    ],
+    "thumbnails": [
+      "/house-styles/ethereal-thermic/thumb-1.webp",
+      "/house-styles/ethereal-thermic/thumb-2.webp",
+      "/house-styles/ethereal-thermic/thumb-3.webp",
+      "/house-styles/ethereal-thermic/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "galactic-anime-revival",
+    "label": "Galactic Anime Revival",
+    "useCases": [
+      "anime",
+      "poster"
+    ],
+    "trigger": "galactic_anime_revival",
+    "tasteProfile": "This aesthetic combines the frenetic, retro-futuristic energy of 80s and 90s nostalgia with the dreamlike, otherworldly quality of cosmic surrealism. It is characterized by a sharp, illustrative style defined by cel-shading, metallic iridescence, and dramatic chromatic aberration. Key elements include a rich, synthwave-inspired color palette, flowing liquid-like gradients, and a pervasive sense of mystical, nostalgic longing achieved through subtle vintage grain texture.",
+    "replicateModel": "finnyjules/jules-galactic_anime_revival",
+    "weightsUrl": "https://replicate.delivery/xezq/T4ntRFC6eRWqcKnsKTnxUniEe2eeIT7pbtlUlUOYR8WVRIsaB/trained_model.tar",
+    "examplePrompts": [
+      "a pilot in a cockpit above a neon city"
+    ],
+    "thumbnails": [
+      "/house-styles/galactic-anime-revival/thumb-1.webp",
+      "/house-styles/galactic-anime-revival/thumb-2.webp",
+      "/house-styles/galactic-anime-revival/thumb-3.webp",
+      "/house-styles/galactic-anime-revival/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "gradient-neon-fusion",
+    "label": "Gradient Neon Fusion",
+    "useCases": [
+      "poster",
+      "branding"
+    ],
+    "trigger": "gradient_neon_fusion",
+    "tasteProfile": "This aesthetic harmonizes the earthy, tactile quality of vintage risograph printing with the striking, unpredictable essence of digital glitch art. It excels in the contrast between coarse, grainy textures and vivid, high-saturation neon gradients, yielding a distinctive visual identity that balances nostalgia and futurism. The overall style is characterized by its striking geometric compositions, chromatic aberration, and a radiant, technicolor palette that seamlessly connects analog print media with synthetic digital artifacts.",
+    "replicateModel": "finnyjules/jules-gradient_neon_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/tkz97eFr1NU5TaFKRXF1XrlxCEEBGSp02FJdtVIFzgTBZfqWA/trained_model.tar",
+    "examplePrompts": [
+      "a lone cactus in a desert at dawn"
+    ],
+    "thumbnails": [
+      "/house-styles/gradient-neon-fusion/thumb-1.webp",
+      "/house-styles/gradient-neon-fusion/thumb-2.webp",
+      "/house-styles/gradient-neon-fusion/thumb-3.webp",
+      "/house-styles/gradient-neon-fusion/thumb-4.webp"
+    ]
+  },
+  {
     "id": "midnight-celestial-fusion",
     "label": "Midnight Celestial Fusion",
     "useCases": [
@@ -18,6 +102,28 @@
       "/house-styles/midnight-celestial-fusion/thumb-2.webp",
       "/house-styles/midnight-celestial-fusion/thumb-3.webp",
       "/house-styles/midnight-celestial-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "rouge-lumineuse",
+    "label": "Rouge Lumineuse",
+    "useCases": [
+      "poster",
+      "branding",
+      "editorial"
+    ],
+    "trigger": "rouge_lumineuse",
+    "tasteProfile": "This aesthetic is rooted in a bold, dual-toned visual narrative, where rich, velvety crimson hues and radiant, electric cobalt blues converge in a striking interplay. Inspired by the dramatic lighting techniques of classic portraiture and modern graphic still life, it employs directional studio lighting to craft dramatic silhouettes from deep, enigmatic shadows. The overall atmosphere is theatrical and cinematic, characterized by a refined balance between vibrant color theory and stark, moody minimalism.",
+    "replicateModel": "finnyjules/jules-rouge_lumineuse",
+    "weightsUrl": "https://replicate.delivery/xezq/C7VFWIehYSVMKykPjS3kH1sJdmesqstCaf2Q9YGZTvLXX8VtA/trained_model.tar",
+    "examplePrompts": [
+      "a jazz musician playing saxophone"
+    ],
+    "thumbnails": [
+      "/house-styles/rouge-lumineuse/thumb-1.webp",
+      "/house-styles/rouge-lumineuse/thumb-2.webp",
+      "/house-styles/rouge-lumineuse/thumb-3.webp",
+      "/house-styles/rouge-lumineuse/thumb-4.webp"
     ]
   },
   {
@@ -40,6 +146,27 @@
       "/house-styles/rough-cut-revival/thumb-2.webp",
       "/house-styles/rough-cut-revival/thumb-3.webp",
       "/house-styles/rough-cut-revival/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "whispering-haze-elegance",
+    "label": "Whispering Haze Elegance",
+    "useCases": [
+      "editorial",
+      "photography"
+    ],
+    "trigger": "whispering_haze_elegance",
+    "tasteProfile": "This aesthetic combines the mystical with the understated, using soft-focus blending to craft luminous, dreamlike compositions. It emphasizes a tactile, paper-like quality through the consistent use of fine grain and subtle color transitions. The visual language is one of serene contemplation, characterized by organic, curvilinear forms and a radiant, yet balanced color spectrum.",
+    "replicateModel": "finnyjules/jules-whispering_haze_elegance",
+    "weightsUrl": "https://replicate.delivery/xezq/YDXAeI1o6AxenEDL8yapkFyrngQWHSjgVN0JufTwy2iwdfraB/trained_model.tar",
+    "examplePrompts": [
+      "a garden gate in morning fog"
+    ],
+    "thumbnails": [
+      "/house-styles/whispering-haze-elegance/thumb-1.webp",
+      "/house-styles/whispering-haze-elegance/thumb-2.webp",
+      "/house-styles/whispering-haze-elegance/thumb-3.webp",
+      "/house-styles/whispering-haze-elegance/thumb-4.webp"
     ]
   }
 ]
