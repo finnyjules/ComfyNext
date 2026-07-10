@@ -1,5 +1,111 @@
 [
   {
+    "id": "anime-brushed-dreams",
+    "label": "Anime Brushed Dreams",
+    "useCases": [
+      "anime",
+      "illustration"
+    ],
+    "trigger": "anime_brushed_dreams",
+    "tasteProfile": "This aesthetic combines the fluidity of digital brushwork with the dynamic energy of anime-inspired composition. It weaves together sun-kissed, nostalgic scenes and high-contrast, cinematic moments, united by a focus on textured brushstrokes, radiant light effects, and a sense of youthful, atmospheric enchantment.\n\nvibrant saturated palette, expressive brushstrokes, dynamic anime style, nostalgic slice of life, painterly digital art, sun-drenched atmosphere, cinematic lighting",
+    "replicateModel": "finnyjules/jules-anime_brushed_dreams",
+    "weightsUrl": "https://replicate.delivery/xezq/bK8DWNruPTKIJdC6AZtM1tNamHTrKPsKso7E2ZKBvDsPbEsF/trained_model.tar",
+    "examplePrompts": [
+      "a fox resting under cherry blossoms"
+    ],
+    "thumbnails": [
+      "/house-styles/anime-brushed-dreams/thumb-1.webp",
+      "/house-styles/anime-brushed-dreams/thumb-2.webp",
+      "/house-styles/anime-brushed-dreams/thumb-3.webp",
+      "/house-styles/anime-brushed-dreams/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "azure-bloom",
+    "label": "Azure Bloom",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "azure_bloom",
+    "tasteProfile": "This aesthetic converges the dramatic juxtaposition of lush, warm-toned botanicals against expansive, flat azure blue backdrops. It seamlessly merges the rough, textured quality of vintage photography with the stylized, painterly flair of fauvist brushwork, characterized by bold, graphic simplicity. The unifying thread is a dedication to high-contrast color theory and striking, minimalist compositions that emphasize visual tension through rich, saturated hues.\n\nsaturated warm-toned florals, fauvist brushwork, vivid orange and crimson, minimalist graphic composition, high-contrast color blocking, painterly texture, cobalt blue background",
+    "replicateModel": "finnyjules/jules-azure_bloom",
+    "weightsUrl": "https://replicate.delivery/xezq/zfcw8qxRBv2ARS9g1d6H2kbcufc5GfN0HluqoYCpDXQ0QYXtA/trained_model.tar",
+    "examplePrompts": [
+      "a sailboat on a calm sea"
+    ],
+    "thumbnails": [
+      "/house-styles/azure-bloom/thumb-1.webp",
+      "/house-styles/azure-bloom/thumb-2.webp",
+      "/house-styles/azure-bloom/thumb-3.webp",
+      "/house-styles/azure-bloom/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "cinematic-amber-clairobscur",
+    "label": "Cinematic Amber Clairobscur",
+    "useCases": [
+      "photography",
+      "editorial"
+    ],
+    "trigger": "cinematic_amber_clairobscur",
+    "tasteProfile": "This aesthetic centers on the interplay of deep shadow and warm, radiant light to create intimate, cinematic portraiture. It consistently utilizes high-contrast lighting techniques like rim backlighting and diagonal beams to define silhouettes against rich, saturated backgrounds. The overall mood is one of quiet, minimalist drama, characterized by a refined color palette of amber, gold, and crimson.\n\nwarm amber glow, high-contrast shadows, film grain texture, cinematic chiaroscuro, low-key silhouette, minimalist portraiture, dramatic rim lighting",
+    "replicateModel": "finnyjules/jules-cinematic_amber_clairobscur",
+    "weightsUrl": "https://replicate.delivery/xezq/ihxe0mQpgES6DSCQriMhNKeIoeYJ0jW6FVYOW8eRPBIRunuaB/trained_model.tar",
+    "examplePrompts": [
+      "a chef plating a dish in a dark kitchen"
+    ],
+    "thumbnails": [
+      "/house-styles/cinematic-amber-clairobscur/thumb-1.webp",
+      "/house-styles/cinematic-amber-clairobscur/thumb-2.webp",
+      "/house-styles/cinematic-amber-clairobscur/thumb-3.webp",
+      "/house-styles/cinematic-amber-clairobscur/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "clean-fisheye-focus",
+    "label": "Clean Fisheye Focus",
+    "useCases": [
+      "photography",
+      "editorial"
+    ],
+    "trigger": "clean_fisheye_focus",
+    "tasteProfile": "This aesthetic converges high-key studio photography with the unconventional effects of a fisheye lens, juxtaposing tight, detailed close-ups with dramatic, wide-angle perspectives that manipulate scale and shape. A crisp, stark white background and sharp focus maintain a minimalist, editorial tone, elevating everyday fashion and natural textures into a modern visual narrative.\n\nintimate close-up, wide-angle perspective, fisheye lens distortion, high-key studio lighting, minimalist fashion editorial, sharp focus, stark white background",
+    "replicateModel": "finnyjules/jules-clean_fisheye_focus",
+    "weightsUrl": "https://replicate.delivery/xezq/Ipn5WFjI7IYMKBugjDGiSoxHmjkcU5vq3kvFQdVxWeOQiOXLA/trained_model.tar",
+    "examplePrompts": [
+      "a skateboarder mid-trick in a parking garage"
+    ],
+    "thumbnails": [
+      "/house-styles/clean-fisheye-focus/thumb-1.webp",
+      "/house-styles/clean-fisheye-focus/thumb-2.webp",
+      "/house-styles/clean-fisheye-focus/thumb-3.webp",
+      "/house-styles/clean-fisheye-focus/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "collage-scribble",
+    "label": "Collage Scribble",
+    "useCases": [
+      "illustration",
+      "branding",
+      "poster"
+    ],
+    "trigger": "collage_scribble",
+    "tasteProfile": "This style combines vintage photographic fragments with dynamic, tactile artistic embellishments, juxtaposing high-contrast portraiture against bold, flat color blocks and expressive textures such as crayon scribbles and thick, impasto brushstrokes. The result is a sophisticated yet playful blend of retro print media and contemporary street art influences, evoking the raw energy of punk zine aesthetics and paper cutout style.\n\nhigh-contrast photography, mixed-media collage, hand-drawn doodle overlay, punk zine aesthetic, paper cutout style, vibrant color blocking, impasto texture",
+    "replicateModel": "finnyjules/jules-collage_scribble",
+    "weightsUrl": "https://replicate.delivery/xezq/c4VTDZUOeeucfo5tZ0Iy2PZiUoEBzRvNhIDSKeeHdX7pZnC2C/trained_model.tar",
+    "examplePrompts": [
+      "a bicycle leaning against a wall"
+    ],
+    "thumbnails": [
+      "/house-styles/collage-scribble/thumb-1.webp",
+      "/house-styles/collage-scribble/thumb-2.webp",
+      "/house-styles/collage-scribble/thumb-3.webp",
+      "/house-styles/collage-scribble/thumb-4.webp"
+    ]
+  },
+  {
     "id": "cosmic-chrome-odyssey",
     "label": "Cosmic Chrome Odyssey",
     "useCases": [
@@ -18,6 +124,111 @@
       "/house-styles/cosmic-chrome-odyssey/thumb-2.webp",
       "/house-styles/cosmic-chrome-odyssey/thumb-3.webp",
       "/house-styles/cosmic-chrome-odyssey/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "electric-grain-odyssey",
+    "label": "Electric Grain Odyssey",
+    "useCases": [
+      "poster",
+      "illustration"
+    ],
+    "trigger": "electric_grain_odyssey",
+    "tasteProfile": "This aesthetic converges on a bold fusion of high-contrast, neon-infused color schemes and distinctive, tactile textures with a grainy, stippled quality. It seamlessly merges post-apocalyptic landscapes with retro-futuristic illustrations, employing risograph-inspired halftone patterns and stippling techniques. A radiant, glowing ambiance pervades, elevating simple silhouettes into dreamlike, otherworldly compositions. Risograph print style, acid neon gradients, stipple grain texture, surreal dreamscape, halftone pointillism, vibrant high-contrast saturation, retro-futuristic silhouette",
+    "replicateModel": "finnyjules/jules-electric_grain_odyssey",
+    "weightsUrl": "https://replicate.delivery/xezq/QB0YIujabGp6ElEbZFuT3rLheuVKq2tN2p95gVkhlDAFPhVLA/trained_model.tar",
+    "examplePrompts": [
+      "a radio tower on a hilltop at night"
+    ],
+    "thumbnails": [
+      "/house-styles/electric-grain-odyssey/thumb-1.webp",
+      "/house-styles/electric-grain-odyssey/thumb-2.webp",
+      "/house-styles/electric-grain-odyssey/thumb-3.webp",
+      "/house-styles/electric-grain-odyssey/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "electric-kinetic",
+    "label": "Electric Kinetic",
+    "useCases": [
+      "poster",
+      "branding"
+    ],
+    "trigger": "electric_kinetic",
+    "tasteProfile": "This aesthetic converges dynamic motion and radiant light manipulation, employing extended exposure techniques to blur human silhouettes into kinetic energy. A muted, low-key color scheme prevails, with electric neon tones seeping into the frame through chromatic aberration and light streaks. The style seamlessly merges cinematic portraiture and experimental digital distortion, imbuing each subject with a dreamlike, holographic essence.\n\nchromatic aberration, neon light trails, cinematic moody lighting, vibrant color bleed, kinetic energy photography, holographic light streaks, long exposure motion blur, digital distortion",
+    "replicateModel": "finnyjules/jules-electric_kinetic",
+    "weightsUrl": "https://replicate.delivery/xezq/HAuV64v0b1Z5FVNKDGEPrfFFeW7DppZENgq7qLImpj4I22rWA/trained_model.tar",
+    "examplePrompts": [
+      "a sprinter exploding off the starting blocks"
+    ],
+    "thumbnails": [
+      "/house-styles/electric-kinetic/thumb-1.webp",
+      "/house-styles/electric-kinetic/thumb-2.webp",
+      "/house-styles/electric-kinetic/thumb-3.webp",
+      "/house-styles/electric-kinetic/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "electric-realism-painting",
+    "label": "Electric Realism Painting",
+    "useCases": [
+      "illustration",
+      "editorial"
+    ],
+    "trigger": "electric_realism_painting",
+    "tasteProfile": "This aesthetic celebrates bold, emotive painterly work that fuses traditional roughness with modern digital dynamism. It features striking, non-naturalistic color combinations and dynamic, gestural brushwork amplifying emotional depth. Throughout, a consistent emphasis on expressive mark-making: fluid midnight-blue washes and vibrant neon-infused impasto. Bold impasto brushstrokes, high-contrast lighting, saturated neon palette, textured painterly finish, raw emotional intensity, graphic color blocking.",
+    "replicateModel": "finnyjules/jules-electric_realism_painting",
+    "weightsUrl": "https://replicate.delivery/xezq/Lqo9mmJQeb2zXa5mDm1oNiSttYwNswZvGPyWO5ZCXlwGomVLA/trained_model.tar",
+    "examplePrompts": [
+      "a boxer resting in the corner of the ring"
+    ],
+    "thumbnails": [
+      "/house-styles/electric-realism-painting/thumb-1.webp",
+      "/house-styles/electric-realism-painting/thumb-2.webp",
+      "/house-styles/electric-realism-painting/thumb-3.webp",
+      "/house-styles/electric-realism-painting/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "electric-shadowplay",
+    "label": "Electric Shadowplay",
+    "useCases": [
+      "photography",
+      "poster"
+    ],
+    "trigger": "electric_shadowplay",
+    "tasteProfile": "This aesthetic is characterized by high-contrast, studio-lit portraits featuring bold, saturated duotone color schemes. It employs dramatic rim lighting and deep shadows to define subjects, generating a moody and theatrical ambiance. Typical elements include glossy textures, minimalist compositions, and a futuristic, high-fashion aesthetic inspired by editorial photography.\n\nsharp rim light, glossy skin texture, dramatic gel lighting, high-contrast studio portrait, cinematic neon noir, editorial fashion photography, bichromatic color palette",
+    "replicateModel": "finnyjules/jules-electric-shadowplay",
+    "weightsUrl": "https://replicate.delivery/xezq/Vvg84D8Emw4oNNUcHLLKamCoagvjvr3fEmfsnq3CWs7z5R0WA/trained_model.tar",
+    "examplePrompts": [
+      "a hand reaching into light through window blinds"
+    ],
+    "thumbnails": [
+      "/house-styles/electric-shadowplay/thumb-1.webp",
+      "/house-styles/electric-shadowplay/thumb-2.webp",
+      "/house-styles/electric-shadowplay/thumb-3.webp",
+      "/house-styles/electric-shadowplay/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "ethereal-radiance-fusion",
+    "label": "Ethereal Radiance Fusion",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "ethereal_radiance_fusion",
+    "tasteProfile": "This aesthetic combines the precision of digital minimalism with the fluidity of organic forms, featuring translucent, bulbous, and fluid shapes that emit a soft, internal glow. It pairs high-contrast, dark backgrounds with vibrant, light-reactive textures, showcasing iridescent glass-like effects and subsurface scattering. The result is a cohesive visual language defined by luminosity and depth, with a focus on the harmonious blend of digital and organic elements.",
+    "replicateModel": "finnyjules/jules-ethereal_radiance_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/mxqV2jlMs77BLJltAOfkGwAszYMbChswMeJiUKr16izWxArWA/trained_model.tar",
+    "examplePrompts": [
+      "a glass orb resting on silk fabric"
+    ],
+    "thumbnails": [
+      "/house-styles/ethereal-radiance-fusion/thumb-1.webp",
+      "/house-styles/ethereal-radiance-fusion/thumb-2.webp",
+      "/house-styles/ethereal-radiance-fusion/thumb-3.webp",
+      "/house-styles/ethereal-radiance-fusion/thumb-4.webp"
     ]
   },
   {
@@ -84,6 +295,155 @@
     ]
   },
   {
+    "id": "grainy-gradient-illustration",
+    "label": "Grainy Gradient Illustration",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "grainy_gradient_illustration",
+    "tasteProfile": "This aesthetic masterfully blends the crisp, modern lines of minimalist graphic design with the tactile, retro-inspired textures of a bygone era. It features bold, high-contrast color combinations, often pairing warm, vibrant hues like coral and orange with cool, calming accents like cerulean and periwinkle. The visual cohesion is achieved through the deliberate use of stippled grain and soft, airbrushed gradients, which add depth and a nostalgic, print-like quality to clean, modern vector shapes.\n\nretro vector art, risograph print style, bold color blocking, stippled texture, high-contrast palette, minimalist graphic illustration, grainy gradient",
+    "replicateModel": "finnyjules/jules-grainy-gradient-illustration",
+    "weightsUrl": "https://replicate.delivery/xezq/05QpedYCF4zKFSWuBwiRHMSMvlU4qH4wTW8GcN5AMwt0cHaLA/trained_model.tar",
+    "examplePrompts": [
+      "a lighthouse at dawn"
+    ],
+    "thumbnails": [
+      "/house-styles/grainy-gradient-illustration/thumb-1.webp",
+      "/house-styles/grainy-gradient-illustration/thumb-2.webp",
+      "/house-styles/grainy-gradient-illustration/thumb-3.webp",
+      "/house-styles/grainy-gradient-illustration/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "grand-theft-auto",
+    "label": "Grand Theft Auto",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "grand_theft_auto",
+    "tasteProfile": "A vibrant, cinematic illustration aesthetic in an ultra-detailed stylized game-art drawing style. Rich, warm palette with strong blues, greens, and reds; soft yet dramatic lighting mixing natural and artificial sources for depth. Sharp foreground focus against slightly blurred backgrounds; dynamic compositions spanning close-ups and wide shots. Bold outlines, saturated color, poster-like polish.",
+    "replicateModel": "finnyjules/jules-grand_theft_auto",
+    "weightsUrl": "https://replicate.delivery/xezq/nPDebB0YMd24caWB70anJ4doTwtrlPWrEgwgseVzl4q52NyWA/trained_model.tar",
+    "examplePrompts": [
+      "a convertible cruising a palm-lined boulevard"
+    ],
+    "thumbnails": [
+      "/house-styles/grand-theft-auto/thumb-1.webp",
+      "/house-styles/grand-theft-auto/thumb-2.webp",
+      "/house-styles/grand-theft-auto/thumb-3.webp",
+      "/house-styles/grand-theft-auto/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "grayscale-realist-portraits",
+    "label": "Grayscale Realist Portraits",
+    "useCases": [
+      "illustration",
+      "editorial"
+    ],
+    "trigger": "grayscale_realist_portraits",
+    "tasteProfile": "This aesthetic combines the technical precision of academic realism with the expressive, tactile quality of charcoal and graphite mark-making — high-contrast monochrome imagery emphasizing character and depth. Chiaroscuro lighting, hyper-detailed stippling, and cross-hatching textures against stark, clean white backgrounds contrasting rich, expressive detail.",
+    "replicateModel": "finnyjules/jules-grayscale_realist_portraits",
+    "weightsUrl": "https://replicate.delivery/xezq/gbZk5AcNeo2sPS3bD1FhKkicNpvZjNi2GS2Hh1WezlpleShtA/trained_model.tar",
+    "examplePrompts": [
+      "an old fisherman mending a net"
+    ],
+    "thumbnails": [
+      "/house-styles/grayscale-realist-portraits/thumb-1.webp",
+      "/house-styles/grayscale-realist-portraits/thumb-2.webp",
+      "/house-styles/grayscale-realist-portraits/thumb-3.webp",
+      "/house-styles/grayscale-realist-portraits/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "hyperneon-print",
+    "label": "Hyperneon Print",
+    "useCases": [
+      "poster",
+      "branding",
+      "typography"
+    ],
+    "trigger": "hyperneon_print",
+    "tasteProfile": "This aesthetic combines the intense, high-contrast intimacy of vintage portraiture with the tactile, imperfect qualities of analog print media. It employs bold, saturated palettes of neon hues and duotone contrasts to create dramatic separation between shadow and form through heavy dithered stipple textures and risograph halftone patterns. The overall style exudes a retro-futuristic, cinematic intensity that blurs the line between traditional screen-printing techniques and modern digital graphic design, with ink-splattered shadows adding a dynamic, expressive touch.\n\nscreen-printed aesthetic, dithered stipple texture, high-contrast duotone portrait, retro-futuristic graphic, risograph halftone pattern, ink-splattered shadows, saturated neon palette",
+    "replicateModel": "finnyjules/jules-hyperneon_print",
+    "weightsUrl": "https://replicate.delivery/xezq/aIxWvuAS59okL1seOLlegbEABs0malc8zmff1zc6ruS5dA4aB/trained_model.tar",
+    "examplePrompts": [
+      "a tiger mid-stride"
+    ],
+    "thumbnails": [
+      "/house-styles/hyperneon-print/thumb-1.webp",
+      "/house-styles/hyperneon-print/thumb-2.webp",
+      "/house-styles/hyperneon-print/thumb-3.webp",
+      "/house-styles/hyperneon-print/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "indigo-engraving-atlas",
+    "label": "Indigo Engraving Atlas",
+    "useCases": [
+      "illustration",
+      "editorial",
+      "branding"
+    ],
+    "trigger": "indigo_engraving_atlas",
+    "tasteProfile": "This aesthetic is defined by a sophisticated, monochromatic palette of indigo and cream, blending vintage scientific illustration with precise, rhythmic line art. It combines organic wildlife motifs with surreal, topographic forms, utilizing dense cross-hatching and stippling to create immersive depth. The visual language is characterized by clean, graphic compositions that balance intricate texture with generous negative space, evoking a sense of contemplative precision.\n\nvintage engraving style, surreal atmospheric linework, minimalist graphic composition, topographic contour lines, cross-hatching and stippling, warm cream paper texture, monochromatic indigo ink",
+    "replicateModel": "finnyjules/jules-indigo_engraving_atlas",
+    "weightsUrl": "https://replicate.delivery/xezq/e3FoLdoPTS3EekHCboxb75EVbrOSOH4mfxwX8WdOE6MIRXXtA/trained_model.tar",
+    "examplePrompts": [
+      "a mountain range with a winding river"
+    ],
+    "thumbnails": [
+      "/house-styles/indigo-engraving-atlas/thumb-1.webp",
+      "/house-styles/indigo-engraving-atlas/thumb-2.webp",
+      "/house-styles/indigo-engraving-atlas/thumb-3.webp",
+      "/house-styles/indigo-engraving-atlas/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "luminous-prism",
+    "label": "Luminous Prism",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "luminous_prism",
+    "tasteProfile": "This aesthetic converges the union of absolute darkness and the scientific phenomenon of light transmission through intricate, geometric glass forms. It highlights high-contrast arrangements where light is refracted into kaleidoscopic, spectral bands through precise chromatic dispersion. The overall ambiance is futuristic, sleek, and highly technical, emphasizing the clarity of sharp edges and the soft luminescence of caustic reflections.\n\ntranslucent crystalline geometry, stark black background, chromatic dispersion, caustic lighting, spectral rainbow light, glass prism refraction, minimalist 3D glass render",
+    "replicateModel": "finnyjules/jules-luminous_prism",
+    "weightsUrl": "https://replicate.delivery/xezq/3UDTnxcJEWZtG1vXrN63NEgsjO8vr1cr0eiHdYZ10TShVoWLA/trained_model.tar",
+    "examplePrompts": [
+      "a hummingbird hovering by a flower"
+    ],
+    "thumbnails": [
+      "/house-styles/luminous-prism/thumb-1.webp",
+      "/house-styles/luminous-prism/thumb-2.webp",
+      "/house-styles/luminous-prism/thumb-3.webp",
+      "/house-styles/luminous-prism/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "luminous-prismataire",
+    "label": "Luminous Prismataire",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "luminous_prismataire",
+    "tasteProfile": "This aesthetic converges on the fusion of lustrous, high-shine skin surfaces and kaleidoscopic, multidimensional light interactions. It harmonizes the intersection of avant-garde beauty photography and otherworldly, atmospheric portraiture. Recurring motifs include the employment of intense light refractions, prismatic lens flares, and high-contrast, saturated makeup details that accentuate texture and luminosity.",
+    "replicateModel": "finnyjules/jules-luminous_prismataire",
+    "weightsUrl": "https://replicate.delivery/xezq/RQxHeotPg2RWRausRUtm8QGcbvPG0fHNJv5388FOlQD0ACrWA/trained_model.tar",
+    "examplePrompts": [
+      "a perfume bottle on a mirrored surface"
+    ],
+    "thumbnails": [
+      "/house-styles/luminous-prismataire/thumb-1.webp",
+      "/house-styles/luminous-prismataire/thumb-2.webp",
+      "/house-styles/luminous-prismataire/thumb-3.webp",
+      "/house-styles/luminous-prismataire/thumb-4.webp"
+    ]
+  },
+  {
     "id": "midnight-celestial-fusion",
     "label": "Midnight Celestial Fusion",
     "useCases": [
@@ -102,6 +462,324 @@
       "/house-styles/midnight-celestial-fusion/thumb-2.webp",
       "/house-styles/midnight-celestial-fusion/thumb-3.webp",
       "/house-styles/midnight-celestial-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "midnight-electric-dreams",
+    "label": "Midnight Electric Dreams",
+    "useCases": [
+      "poster",
+      "photography"
+    ],
+    "trigger": "midnight_electric_dreams",
+    "tasteProfile": "This aesthetic combines the dramatic contrasts of classical chiaroscuro with the bold, electric hues of modern minimalism. It showcases deep, absolute black shadows that are suddenly illuminated by intense, vibrant cobalt and cyan light, creating a hauntingly sculptural visual experience. The style seamlessly blends organic, textured subjects with sleek, luminous highlights, resulting in a retro-futuristic atmosphere that is both stark and mesmerizing. Cobalt blue lighting, stark chiaroscuro, pitch black background, spectral glow, high contrast noir, sculptural textures, heavy film grain",
+    "replicateModel": "finnyjules/jules-midnight_electric_dreams",
+    "weightsUrl": "https://replicate.delivery/xezq/Ls3oK6qNKVJFMl7rYUHlAXs6ERqfLKQXgIzfMFkFH9CVdCrWA/trained_model.tar",
+    "examplePrompts": [
+      "a diner sign glowing on an empty road"
+    ],
+    "thumbnails": [
+      "/house-styles/midnight-electric-dreams/thumb-1.webp",
+      "/house-styles/midnight-electric-dreams/thumb-2.webp",
+      "/house-styles/midnight-electric-dreams/thumb-3.webp",
+      "/house-styles/midnight-electric-dreams/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "monochrome-engraving",
+    "label": "Monochrome Engraving",
+    "useCases": [
+      "illustration",
+      "editorial"
+    ],
+    "trigger": "monochrome_engraving",
+    "tasteProfile": "This aesthetic combines the precision of classical intaglio printmaking with the visual tension of modern optical art, resulting in high-contrast monochrome portraits that exploit the interplay between dense, rhythmic linework and precise parallel contours. By merging the historical gravitas of woodcut etchings with a graphic, hypnotic sensibility, the style achieves a striking balance between intricate detail and minimalist intensity, evoking the intricate topography of a meticulously crafted map.\n\nintaglio print aesthetic, topographic engraving, woodcut etching style, cross-hatching, concentric line art, optical contour portrait, high-contrast monochrome",
+    "replicateModel": "finnyjules/jules-monochrome_engraving",
+    "weightsUrl": "https://replicate.delivery/xezq/W2O3Z2nOCkJuEB5RCBESbkJMTjGGfqO9xtgmP0tQjQyJJxVLA/trained_model.tar",
+    "examplePrompts": [
+      "a raven perched on a branch"
+    ],
+    "thumbnails": [
+      "/house-styles/monochrome-engraving/thumb-1.webp",
+      "/house-styles/monochrome-engraving/thumb-2.webp",
+      "/house-styles/monochrome-engraving/thumb-3.webp",
+      "/house-styles/monochrome-engraving/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "monochrome-profile-focus",
+    "label": "Monochrome Profile Focus",
+    "useCases": [
+      "photography",
+      "editorial"
+    ],
+    "trigger": "monochrome_profile_focus",
+    "tasteProfile": "This style revolves around the harmonious union of light and shape within a rigorously monochromatic framework. It accentuates the graphic essence of silhouettes and the precision of rim-lit contours against understated gray backgrounds. By eliminating extraneous color, the aesthetic highlights the structural aspects of hair, fashion, and posture to craft a refined and contemplative visual story.\n\nminimalist profile portrait, neutral gray backdrop, monochromatic studio photography, high-contrast silhouette, sculptural form, stark rim lighting, graphic fashion portraiture",
+    "replicateModel": "finnyjules/jules-monochrome_profile_focus",
+    "weightsUrl": "https://replicate.delivery/xezq/fYH1gNCTN8SyeEMwJhtTDnEiAdse0sIF4kI183IhzSmatOXtA/trained_model.tar",
+    "examplePrompts": [
+      "a cellist playing on a bare stage"
+    ],
+    "thumbnails": [
+      "/house-styles/monochrome-profile-focus/thumb-1.webp",
+      "/house-styles/monochrome-profile-focus/thumb-2.webp",
+      "/house-styles/monochrome-profile-focus/thumb-3.webp",
+      "/house-styles/monochrome-profile-focus/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "monochrome-seinen-manga",
+    "label": "Monochrome Seinen Manga",
+    "useCases": [
+      "anime",
+      "illustration"
+    ],
+    "trigger": "monochrome_seinen_manga",
+    "tasteProfile": "This aesthetic combines the technical precision of high-contrast manga techniques with the emotional intensity of expressive brushstrokes, creating a sophisticated visual language. It relies on dramatic chiaroscuro lighting and psychological tension, emphasizing deep blacks and intricate textures to craft a suspenseful atmosphere. Character-driven storytelling is elevated by bold line art, gritty cross-hatching, and a cinematic approach, evoking the gritty realism of a monochrome graphic novel.\n\nseinen aesthetic, sharp cross-hatching, chiaroscuro lighting, monochrome graphic novel, high-contrast manga ink, expressive brushwork, dramatic noir shadows",
+    "replicateModel": "finnyjules/jules-monochrome-seinen-manga",
+    "weightsUrl": "https://replicate.delivery/xezq/16Q9JLbqB3qrINQsIIa0a6IaxbFktoRWoxDeziCffhwGOfQbB/trained_model.tar",
+    "examplePrompts": [
+      "a ronin walking through rain"
+    ],
+    "thumbnails": [
+      "/house-styles/monochrome-seinen-manga/thumb-1.webp",
+      "/house-styles/monochrome-seinen-manga/thumb-2.webp",
+      "/house-styles/monochrome-seinen-manga/thumb-3.webp",
+      "/house-styles/monochrome-seinen-manga/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "pop-clay",
+    "label": "Pop Clay",
+    "useCases": [
+      "3d",
+      "illustration",
+      "branding"
+    ],
+    "trigger": "pop_clay",
+    "tasteProfile": "This aesthetic harmoniously blends the tactile, rounded contours of playful 3D claymorphism with the dreamlike, melting geometry of surrealist art. It balances the soft, pillowy volumes of toy-like design with the fluid, psychedelic quality of digital art. Characterized by bold, saturated color palettes and smooth, organic forms that evoke both solidity and transformation, this aesthetic is defined by vibrant matte texture, high-contrast lighting, and minimalist studio composition.\n\nfluid surrealism, saturated color gradients, vibrant matte texture, high-contrast lighting, claymorphic 3D, rounded pillowy shapes, minimalist studio composition",
+    "replicateModel": "finnyjules/jules-pop-clay",
+    "weightsUrl": "https://replicate.delivery/xezq/wgMfKObLevhIw0wE1zXxLYceL1z4JZgiEqtO35h0lOHxNkotA/trained_model.tar",
+    "examplePrompts": [
+      "a stack of pancakes with syrup"
+    ],
+    "thumbnails": [
+      "/house-styles/pop-clay/thumb-1.webp",
+      "/house-styles/pop-clay/thumb-2.webp",
+      "/house-styles/pop-clay/thumb-3.webp",
+      "/house-styles/pop-clay/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "prism-haze-odyssey",
+    "label": "Prism Haze Odyssey",
+    "useCases": [
+      "poster",
+      "illustration"
+    ],
+    "trigger": "prism_haze_odyssey",
+    "tasteProfile": "This aesthetic converges the tactile, rough-hewn textures of aged film stock and the luminous, otherworldly beauty of prismatic light dispersion. It harmonizes the gritty, high-contrast backgrounds of vintage analog film with the radiant, rainbow-colored light effects of 80s airbrush artistry, creating a dreamlike atmosphere of retro-futuristic mystique and ethereal wonder.\n\nethereal iridescent glow, prismatic light dispersion, chromatic aberration, high-contrast dark composition, retro-futuristic aesthetic, vintage analog film grain, starburst lens flare",
+    "replicateModel": "finnyjules/jules-prism_haze_odyssey",
+    "weightsUrl": "https://replicate.delivery/xezq/5fMDEoxrhoSaLiSywUfJdJqhB6EiU2i1a9odjuaIvcaxmfWtA/trained_model.tar",
+    "examplePrompts": [
+      "a satellite drifting above the clouds"
+    ],
+    "thumbnails": [
+      "/house-styles/prism-haze-odyssey/thumb-1.webp",
+      "/house-styles/prism-haze-odyssey/thumb-2.webp",
+      "/house-styles/prism-haze-odyssey/thumb-3.webp",
+      "/house-styles/prism-haze-odyssey/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "red-black-studio",
+    "label": "Red Black Studio",
+    "useCases": [
+      "poster",
+      "branding",
+      "editorial"
+    ],
+    "trigger": "red_black_studio",
+    "tasteProfile": "This aesthetic converges around a striking visual dialect characterized by the juxtaposition of jet-black silhouettes against rich, velvety deep crimson backgrounds. It harmonizes the precision of studio portraiture with the dynamic, dreamlike quality of stroboscopic motion and multiple exposures. The overall aesthetic prioritizes dramatic chiaroscuro lighting that accentuates textures such as glossy fur, supple leather, and liquid surfaces within a minimalist, cinematic framework.\n\nstroboscopic motion blur, obsidian black subject, dramatic rim lighting, high-contrast chiaroscuro, minimalist cinematic composition, deep crimson red background, glossy texture highlights",
+    "replicateModel": "finnyjules/jules-red-black-studio",
+    "weightsUrl": "https://replicate.delivery/xezq/GeoZX5Zx5euUd0xj3CnjFtxTfcycW1ITHeytPUdCaL9JC7QbB/trained_model.tar",
+    "examplePrompts": [
+      "a ballerina mid-pirouette"
+    ],
+    "thumbnails": [
+      "/house-styles/red-black-studio/thumb-1.webp",
+      "/house-styles/red-black-studio/thumb-2.webp",
+      "/house-styles/red-black-studio/thumb-3.webp",
+      "/house-styles/red-black-studio/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "refracting-gradient-haze",
+    "label": "Refracting Gradient Haze",
+    "useCases": [
+      "branding",
+      "texture"
+    ],
+    "trigger": "whispering_gradient_haze",
+    "tasteProfile": "This aesthetic is characterized by the harmonious blend of delicate, flowing color transitions and the subtle manipulation of light through organic, textured surfaces such as fluted glass. It evokes a peaceful, otherworldly ambiance where pale, serene hues, deep indigo shadows, and warm, golden highlights are seamlessly connected by soft, painterly blends. The overall visual language is understated and atmospheric, emphasizing ethereal, weightless shapes over precise, realistic details.",
+    "replicateModel": "finnyjules/jules-refracting_gradient_haze",
+    "weightsUrl": "https://replicate.delivery/xezq/xJsPBc07tfUkWCinDZLDDbVYnZzwVtWeWR7U6bAQAqZlnBrWA/trained_model.tar",
+    "examplePrompts": [
+      "a curved glass sculpture"
+    ],
+    "thumbnails": [
+      "/house-styles/refracting-gradient-haze/thumb-1.webp",
+      "/house-styles/refracting-gradient-haze/thumb-2.webp",
+      "/house-styles/refracting-gradient-haze/thumb-3.webp",
+      "/house-styles/refracting-gradient-haze/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retro-flux-fusion",
+    "label": "Retro Flux Fusion",
+    "useCases": [
+      "poster",
+      "illustration"
+    ],
+    "trigger": "retro_flux_fusion",
+    "tasteProfile": "This aesthetic converges the tactile allure of vintage risograph printing with the jarring, unpredictable essence of digital glitch art. It excels in the juxtaposition of coarse, grainy textures and high-contrast neon gradients, yielding a harmonious visual language that feels both retro and avant-garde. The overall style is characterized by its striking geometric compositions, chromatic aberration, and a radiant, technicolor palette that seamlessly integrates analog print media and synthetic digital artifacts.\n\nrisograph print style, grainy tactile texture, airbrushed geometry, neon glitch art, chromatic aberration, retro-futuristic collage, saturated gradient",
+    "replicateModel": "finnyjules/jules-retro_flux_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/NoXFOKm3W9roPRwLTR3HPcWzGHuBqGI04WxtMefkWTCVmOtWA/trained_model.tar",
+    "examplePrompts": [
+      "a roadside motel at sunset"
+    ],
+    "thumbnails": [
+      "/house-styles/retro-flux-fusion/thumb-1.webp",
+      "/house-styles/retro-flux-fusion/thumb-2.webp",
+      "/house-styles/retro-flux-fusion/thumb-3.webp",
+      "/house-styles/retro-flux-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retro-fusion-disrupt",
+    "label": "Retro Fusion Disrupt",
+    "useCases": [
+      "poster",
+      "branding"
+    ],
+    "trigger": "retro_fusion_disrupt",
+    "tasteProfile": "This aesthetic converges retro print techniques with modern digital disruption, blending the free-spirited 1970s psychedelic era with the clean lines of Bauhaus-inspired minimalism. It showcases the dynamic interplay between tactile paper textures, deliberate misregistration, and bold organic shapes, juxtaposed with synthetic digital distortions and vibrant CMYK color experimentation, featuring halftone dot patterns, analog film grain, and chromatic aberration. Risograph print texture, CMYK color separation, chromatic aberration, halftone dot pattern, analog film grain, digital glitch distortion, bold geometric silhouettes, misregistered color layers",
+    "replicateModel": "finnyjules/jules-retro_fusion_disrupt",
+    "weightsUrl": "https://replicate.delivery/xezq/MYElHKC8v65LH9DDG6LZSmW6s2OBpBo9UKiEsu8AzrPB6wqF/trained_model.tar",
+    "examplePrompts": [
+      "a cassette tape unspooling"
+    ],
+    "thumbnails": [
+      "/house-styles/retro-fusion-disrupt/thumb-1.webp",
+      "/house-styles/retro-fusion-disrupt/thumb-2.webp",
+      "/house-styles/retro-fusion-disrupt/thumb-3.webp",
+      "/house-styles/retro-fusion-disrupt/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retro-fusion-overdrive",
+    "label": "Retro Fusion Overdrive",
+    "useCases": [
+      "poster",
+      "illustration"
+    ],
+    "trigger": "retro_fusion_overdrive",
+    "tasteProfile": "This aesthetic combines the tactile allure of vintage risograph printing with the jarring, high-contrast allure of digital glitch art. It excels in the contrast between rough, grainy textures and high-saturation neon gradients, resulting in a cohesive visual language that feels both nostalgic and futuristic. The overall style is characterized by its bold, geometric compositions, chromatic aberration, and a vibrant, technicolor palette that bridges the gap between analog print media and synthetic digital artifacts. Risograph print style, chromatic aberration, neon glitch art, grainy tactile texture, saturated gradient, retro-futuristic collage, airbrushed geometry",
+    "replicateModel": "finnyjules/jules-retro_fusion_overdrive",
+    "weightsUrl": "https://replicate.delivery/xezq/gHsvuSe1HJQkTKjUgJIuXNDPPqlD568SLGZUUPY1Vrl67hVLA/trained_model.tar",
+    "examplePrompts": [
+      "a muscle car burning rubber"
+    ],
+    "thumbnails": [
+      "/house-styles/retro-fusion-overdrive/thumb-1.webp",
+      "/house-styles/retro-fusion-overdrive/thumb-2.webp",
+      "/house-styles/retro-fusion-overdrive/thumb-3.webp",
+      "/house-styles/retro-fusion-overdrive/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retro-pop",
+    "label": "Retro Pop",
+    "useCases": [
+      "poster",
+      "branding",
+      "illustration"
+    ],
+    "trigger": "retro_pop",
+    "tasteProfile": "This aesthetic is characterized by striking, illustrative visuals defined by bold black ink outlines and a rich, retro color scheme. It combines elements of 90s indie comics, mid-century risograph printing, and vintage manga to create a cohesive, graphic, and playful visual style. The common threads across these influences are the use of flat color blocking, textured paper grain, and stylized, clean ink line work.\n\nbold black ink outlines, saturated pop art palette, risograph screenprint texture, halftone dot shading, vibrant vector style, flat graphic illustration, retro nostalgic mood",
+    "replicateModel": "finnyjules/jules-retro_pop",
+    "weightsUrl": "https://replicate.delivery/xezq/zGHFEBNCcKrDA1MrNnBCesNyngDK3RXWPcULcjsjUFDZf1rWA/trained_model.tar",
+    "examplePrompts": [
+      "a jukebox in a diner"
+    ],
+    "thumbnails": [
+      "/house-styles/retro-pop/thumb-1.webp",
+      "/house-styles/retro-pop/thumb-2.webp",
+      "/house-styles/retro-pop/thumb-3.webp",
+      "/house-styles/retro-pop/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retrograde-fusion",
+    "label": "Retrograde Fusion",
+    "useCases": [
+      "poster",
+      "illustration"
+    ],
+    "trigger": "retrograde_fusion",
+    "tasteProfile": "This aesthetic revolves around bold, high-contrast compositions characterized by sharp silhouettes and a bold, neon-infused color scheme of fiery red, electric pink, and inky black. Typical elements include the incorporation of coarse, stippled textures and smooth, airbrushed gradients that subtly blur the edges of geometric, futuristic, and synthetic shapes. The overall style exudes a sense of retro-futuristic mystery, blending crisp vector lines with hazy, luminous gradations. High-contrast silhouette, stippled grain texture, airbrushed gradient, minimalist surrealism, saturated neon palette, graphic poster art, synthetic humanoid form",
+    "replicateModel": "finnyjules/jules-retrograde_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/VJDEzRLQdV4AElrwbbWe6zLKFO0zAWyG8lT1m75NsLys8hVLA/trained_model.tar",
+    "examplePrompts": [
+      "an astronaut planting a flag"
+    ],
+    "thumbnails": [
+      "/house-styles/retrograde-fusion/thumb-1.webp",
+      "/house-styles/retrograde-fusion/thumb-2.webp",
+      "/house-styles/retrograde-fusion/thumb-3.webp",
+      "/house-styles/retrograde-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "retrograde-stipple",
+    "label": "Retrograde Stipple",
+    "useCases": [
+      "illustration",
+      "editorial"
+    ],
+    "trigger": "retrograde_stipple",
+    "tasteProfile": "This aesthetic combines the rough, tactile quality of vintage printing with the bright, saturated colors of modern pop art. It is characterized by consistent use of stippled shading, halftone textures, and high-contrast graphic compositions that transform simple shapes into striking, surreal images. By merging retro-digital color schemes with traditional engraving techniques, it creates a distinctive visual language that feels both nostalgic and cutting-edge.\n\nrisograph print style, stipple shading, high-contrast graphic design, vibrant duotone palette, grainy noise gradient, halftone texture, pop surrealism",
+    "replicateModel": "finnyjules/jules-retrograde_stipple",
+    "weightsUrl": "https://replicate.delivery/xezq/gZuO0mOrF3bVING4Z9klbfPWSW8Vy1kbU7wWKUV5JfGHEUtWA/trained_model.tar",
+    "examplePrompts": [
+      "a hot air balloon over a canyon"
+    ],
+    "thumbnails": [
+      "/house-styles/retrograde-stipple/thumb-1.webp",
+      "/house-styles/retrograde-stipple/thumb-2.webp",
+      "/house-styles/retrograde-stipple/thumb-3.webp",
+      "/house-styles/retrograde-stipple/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "ribbons",
+    "label": "Ribbons",
+    "useCases": [
+      "texture",
+      "branding"
+    ],
+    "trigger": "style_ribbons",
+    "tasteProfile": "The image set exhibits a vibrant and whimsical aesthetic, characterized by a rich and diverse color palette that ranges from bold primary hues to soft pastels. The composition is dynamic, with a mix of sharp, defined edges and softer, more organic forms, creating a sense of depth and movement. The use of contrast is striking, with bright colors set against darker backgrounds to draw attention to specific elements. The overall mood is cheerful and lively, with a playful and imaginative tone that invites viewers to explore the details and stories within the scenes. The texture is varied, with so",
+    "replicateModel": "finnyjules/jules-ribbons",
+    "weightsUrl": "https://replicate.delivery/xezq/3iDQsTmheYT2KSDUr0MSppNdbfcMf5MfdNTKsSalfJReERgqF/trained_model.tar",
+    "examplePrompts": [
+      "flowing ribbons of silk in midair"
+    ],
+    "thumbnails": [
+      "/house-styles/ribbons/thumb-1.webp",
+      "/house-styles/ribbons/thumb-2.webp",
+      "/house-styles/ribbons/thumb-3.webp",
+      "/house-styles/ribbons/thumb-4.webp"
     ]
   },
   {
@@ -146,6 +824,132 @@
       "/house-styles/rough-cut-revival/thumb-2.webp",
       "/house-styles/rough-cut-revival/thumb-3.webp",
       "/house-styles/rough-cut-revival/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "sunkissed-illustrations",
+    "label": "Sunkissed Illustrations",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "sunkissed_illustrations",
+    "tasteProfile": "This aesthetic is characterized by a radiant, sun-kissed representation of European urban landscapes through the fusion of stylized digital illustration and graphic novel techniques. It harmonizes striking, geometric architectural silhouettes with soft, painterly textures and high-contrast lighting that conjures a nostalgic, cinematic ambiance. By combining elements of bold, inked outlines, a warm terracotta and ochre color scheme, and dramatic, sharp shadows, the style crafts a cohesive narrative of timeless, sun-baked cityscapes.\n\nstylized digital illustration, European urban atmosphere, dramatic sharp shadows, warm terracotta and ochre palette, painterly texture, cinematic lighting, bold ink outlines, graphic architectural shapes",
+    "replicateModel": "finnyjules/jules-sunkissed-illustrations",
+    "weightsUrl": "https://replicate.delivery/xezq/aARcFJF6UkY9M5eqytQoIRQYC4zw10K27fvOZqW5e7vtxjotA/trained_model.tar",
+    "examplePrompts": [
+      "a picnic under an olive tree"
+    ],
+    "thumbnails": [
+      "/house-styles/sunkissed-illustrations/thumb-1.webp",
+      "/house-styles/sunkissed-illustrations/thumb-2.webp",
+      "/house-styles/sunkissed-illustrations/thumb-3.webp",
+      "/house-styles/sunkissed-illustrations/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "surreal-pop-illustrations",
+    "label": "Surreal Pop Illustrations",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "surreal_pop_illustrations",
+    "tasteProfile": "This aesthetic combines the essence of minimalist surrealism with the bold, graphic qualities of flat-vector pop art. It features striking, high-contrast color schemes, crisp geometric arrangements, and an air of contemplative mystery. Texture plays a subtle role, ranging from rough paper to smooth surfaces, while the core identity remains rooted in graphic simplicity, vibrant color, and surreal, atmospheric storytelling.\n\nbold color blocking, saturated pop palette, graphic composition, clean hard-edged shapes, dreamlike atmosphere, minimalist surrealism, flat vector illustration",
+    "replicateModel": "finnyjules/jules-surreal_pop_illustrations",
+    "weightsUrl": "https://replicate.delivery/xezq/jXXuCXUGNybLB5Kub2anLtQ3T4LTwK5txNvfAO4Gt2xCo0VLA/trained_model.tar",
+    "examplePrompts": [
+      "a whale floating above a wheat field"
+    ],
+    "thumbnails": [
+      "/house-styles/surreal-pop-illustrations/thumb-1.webp",
+      "/house-styles/surreal-pop-illustrations/thumb-2.webp",
+      "/house-styles/surreal-pop-illustrations/thumb-3.webp",
+      "/house-styles/surreal-pop-illustrations/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "vibrant-brushfire-fusion",
+    "label": "Vibrant Brushfire Fusion",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "vibrant_brushfire_fusion",
+    "tasteProfile": "This aesthetic embodies the fusion of modernist brushwork and Fauvist fervor, characterized by thick, textured strokes that imbue ordinary scenes with a dreamlike, high-octane quality. It favors non-naturalistic, highly chromatic color schemes that boldly reconfigure the visual landscape, while bold lighting and stylized forms bridge the gap between classical oil painting traditions and contemporary, kinetic visual narratives. Vivid impasto brushstrokes, saturated color palette, fauvism inspired, dynamic light and shadow, expressive oil painting style, stylized non-naturalistic colors, bold color blocking",
+    "replicateModel": "finnyjules/jules-vibrant_brushfire_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/B8HhWdbe85Q7DKPwATYBeBv0adTDgWrRZBMTCjvKywA8hfWtA/trained_model.tar",
+    "examplePrompts": [
+      "a rooster crowing at sunrise"
+    ],
+    "thumbnails": [
+      "/house-styles/vibrant-brushfire-fusion/thumb-1.webp",
+      "/house-styles/vibrant-brushfire-fusion/thumb-2.webp",
+      "/house-styles/vibrant-brushfire-fusion/thumb-3.webp",
+      "/house-styles/vibrant-brushfire-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "vibrant-doodle-collage",
+    "label": "Vibrant Doodle Collage",
+    "useCases": [
+      "illustration",
+      "branding"
+    ],
+    "trigger": "vibrant_doodle_collage",
+    "tasteProfile": "This aesthetic converges vintage photographic fragments with unbridled artistic expressions. It harmonizes dramatic, high-contrast portraits with dynamic, flat color planes and tactile textures, including expressive crayon marks and thick, impasto brushstrokes. The outcome is a refined yet whimsical synthesis of retro print media and modern street art influences.\n\npaper cutout style, high-contrast photography, impasto texture, hand-drawn doodle overlay, punk zine aesthetic, vibrant color blocking, mixed-media collage",
+    "replicateModel": "finnyjules/jules-vibrant_doodle_collage",
+    "weightsUrl": "https://replicate.delivery/xezq/g5JleQUpTevSdksrie52KM0umfkunr0UGC4gwAhiSkUTuIuaB/trained_model.tar",
+    "examplePrompts": [
+      "a busy street market"
+    ],
+    "thumbnails": [
+      "/house-styles/vibrant-doodle-collage/thumb-1.webp",
+      "/house-styles/vibrant-doodle-collage/thumb-2.webp",
+      "/house-styles/vibrant-doodle-collage/thumb-3.webp",
+      "/house-styles/vibrant-doodle-collage/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "vibrant-painting-fusion",
+    "label": "Vibrant Painting Fusion",
+    "useCases": [
+      "illustration",
+      "editorial"
+    ],
+    "trigger": "vibrant_painting_fusion",
+    "tasteProfile": "This aesthetic converges on striking, emotive portraiture characterized by a dynamic interplay between richly saturated hues and deep, dramatic silhouettes. It harmonizes classical composition with modern digital artistry, emphasizing visible brushstrokes and intense illumination to convey profound psychological resonance. A unifying thread throughout is a focus on stylized, angular profiles set against solid, evocative backgrounds that prioritize emotional intensity over photorealism, resulting in a captivating visual fusion.\n\ndramatic chiaroscuro, expressive brushwork, saturated color blocking, high-contrast lighting, vibrant digital painting, impasto texture, profile view portrait",
+    "replicateModel": "finnyjules/jules-vibrant_painting_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/fxTKmoYDEZy0aqYg9lIlYGfalsr5FaBwIRVaWRs2pUGpZnrWA/trained_model.tar",
+    "examplePrompts": [
+      "a vase of wildflowers on a windowsill"
+    ],
+    "thumbnails": [
+      "/house-styles/vibrant-painting-fusion/thumb-1.webp",
+      "/house-styles/vibrant-painting-fusion/thumb-2.webp",
+      "/house-styles/vibrant-painting-fusion/thumb-3.webp",
+      "/house-styles/vibrant-painting-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "vintage-fusion-illustration",
+    "label": "Vintage Fusion Illustration",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "vintage_fusion_illustration",
+    "tasteProfile": "This aesthetic combines the crisp, modern lines of minimalist graphic design with the tactile, nostalgic appeal of retro-inspired textures. It features bold, high-contrast color palettes, often pairing warm, vibrant tones like coral and orange with cool, calming accents in cerulean and periwinkle. The result is a dynamic visual tension, achieved through the deliberate use of stippled grain and soft, airbrushed gradients that add depth and a print-like quality to clean, modern vector shapes. Stippled texture, grainy gradient, minimalist graphic illustration, risograph print style, bold color blocking, retro vector art, high-contrast palette",
+    "replicateModel": "finnyjules/jules-vintage_fusion_illustration",
+    "weightsUrl": "https://replicate.delivery/xezq/sUvTd9MWXjY8GBogi7Qqb4IifwCXopxjnGHfG0pbipIc1DrWA/trained_model.tar",
+    "examplePrompts": [
+      "a steam train crossing a bridge"
+    ],
+    "thumbnails": [
+      "/house-styles/vintage-fusion-illustration/thumb-1.webp",
+      "/house-styles/vintage-fusion-illustration/thumb-2.webp",
+      "/house-styles/vintage-fusion-illustration/thumb-3.webp",
+      "/house-styles/vintage-fusion-illustration/thumb-4.webp"
     ]
   },
   {
