@@ -30,6 +30,7 @@ import { type Fill, fillTileBox } from '~/lib/spacetype/fillTile'
 import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
 import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
+import { layoutExpressive, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -205,6 +206,10 @@ export interface TextLayer extends LayerCommon {
    *  variable-axis path that renders on every browser); the full set is also
    *  applied via `fontVariationSettings` where the canvas supports it. */
   axes?: Record<string, number>
+  /** Expressive per-word layout. When present, words are grouped into lines by
+   *  count and each is placed by a seeded rule (overriding flow `align`).
+   *  Absent ⇒ normal line-based rendering (byte-identical to before). */
+  expressive?: ExpressiveParams
 }
 
 export interface RectLayer extends LayerCommon {
@@ -1010,8 +1015,9 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
 }
 
 function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
-  const lines = wrappedTextLines(ctx, layer, W)
   const lineH = layer.fontSize * W * layer.lineHeight
+  if (layer.expressive) { drawExpressiveText(ctx, layer, W, lineH); return }
+  const lines = wrappedTextLines(ctx, layer, W)
   applyFont(ctx, layer, W)
   ctx.textBaseline = 'middle'
   ctx.textAlign = layer.align
@@ -1048,6 +1054,53 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
       const left = layer.align === 'left' ? anchorX : layer.align === 'right' ? anchorX - lw : anchorX - lw / 2
       if (layer.underline) ctx.fillRect(left, y + fontPx * 0.34, lw, decoThick)
       if (layer.strikethrough) ctx.fillRect(left, y - decoThick / 2, lw, decoThick)
+    }
+  }
+}
+
+/**
+ * Expressive text: each word placed by the shared layout engine (overrides the
+ * flow `align`). The block is centered on origin exactly like `drawText`, but we
+ * position every word individually with a left anchor and the middle baseline.
+ * Horizontal bound = the text box if set, else the widest natural line.
+ */
+function drawExpressiveText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number, lineH: number) {
+  applyFont(ctx, layer, W)
+  const source = transformCase(layer.text ?? '', layer.textTransform)
+  let boxWidth = (layer.boxW ?? 0) * W
+  if (!(boxWidth > 0)) {
+    for (const ln of textLines(layer)) boxWidth = Math.max(boxWidth, ctx.measureText(ln || ' ').width)
+    boxWidth = Math.max(boxWidth, 1)
+  }
+  const lay = layoutExpressive({
+    text: source, boxWidth, lineHeight: lineH,
+    measure: (word) => ctx.measureText(word).width,
+    params: layer.expressive!,
+  })
+  if (!lay.words.length) return
+  const originX = -boxWidth / 2
+  const originY = -lay.height / 2
+  const textBox = { w: Math.max(boxWidth, 1), h: Math.max(lay.height, 1) }
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
+  if (stroke) {
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = layer.strokeWidth * W
+    ctx.strokeStyle = resolvePaint(ctx, layer.strokeColor, textBox)
+  }
+  ctx.fillStyle = resolvePaint(ctx, layer.color, textBox)
+  const fontPx = layer.fontSize * W
+  const deco = layer.underline || layer.strikethrough
+  const decoThick = Math.max(1, fontPx * 0.06)
+  for (const wd of lay.words) {
+    const x = originX + wd.x
+    const y = originY + wd.y + lineH / 2   // band top → line's vertical center
+    if (stroke) ctx.strokeText(wd.text, x, y)
+    ctx.fillText(wd.text, x, y)
+    if (deco && wd.text) {
+      if (layer.underline) ctx.fillRect(x, y + fontPx * 0.34, wd.w, decoThick)
+      if (layer.strikethrough) ctx.fillRect(x, y - decoThick / 2, wd.w, decoThick)
     }
   }
 }

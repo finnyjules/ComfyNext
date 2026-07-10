@@ -42,6 +42,7 @@ import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
+import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import { PhCheckerboard } from '@phosphor-icons/vue'
@@ -1543,6 +1544,21 @@ const outWidth = computed(() => {
 })
 function pxW(norm: number) { return Math.round(norm * outWidth.value) }
 function setSizePx(id: string, key: string, px: number) { setLocal(id, { [key]: Math.max(0, px) / outWidth.value }) }
+
+// ── Expressive text layout ────────────────────────────────────────────────
+function setExpressive(l: any, patch: Partial<ExpressiveParams>) {
+  if (!l) return
+  const cur: ExpressiveParams = l.expressive || defaultExpressiveParams()
+  setLocal(l.id, { expressive: { ...cur, ...patch } } as any)
+}
+function toggleExpressive(l: any) {
+  if (!l) return
+  setLocal(l.id, { expressive: l.expressive ? undefined : defaultExpressiveParams() } as any)
+}
+function rerollExpressive(l: any) {
+  if (!l?.expressive) return
+  setExpressive(l, { seed: ((l.expressive.seed | 0) + 1) })
+}
 
 // ── Drop-shadow layer effect ────────────────────────────────────────────────
 // Stored on layer.effects as a single drop_shadow; rendered by drawLocalLayer
@@ -3091,6 +3107,55 @@ onUnmounted(() => {
                   :class="(selectedLocal as any).textTransform === c ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
                   @click="setLocal(selectedLocal!.id, { textTransform: (selectedLocal as any).textTransform === c ? undefined : c })">
                   <component :is="c === 'uppercase' ? CaseUpper : c === 'lowercase' ? CaseLower : CaseSensitive" class="size-3.5" />
+                </button>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="panel-label" title="Place words individually — overrides Align">Expressive layout</div>
+                <button
+                  class="text-[10px] px-1.5 py-0.5 rounded border"
+                  :class="(selectedLocal as any).expressive ? 'text-yellow-400 border-yellow-400/50' : 'text-white/50 border-white/[0.08]'"
+                  @click="toggleExpressive(selectedLocal)">
+                  {{ (selectedLocal as any).expressive ? 'On' : 'Off' }}
+                </button>
+              </div>
+              <div v-if="(selectedLocal as any).expressive" class="space-y-2.5">
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <div class="panel-label mb-1">Words / line</div>
+                    <input type="number" min="1" max="12" :value="(selectedLocal as any).expressive.wordsPerLine"
+                      class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                      @input="setExpressive(selectedLocal, { wordsPerLine: Math.max(1, parseInt(($event.target as HTMLInputElement).value) || 1) })" />
+                  </div>
+                  <div>
+                    <div class="panel-label mb-1">Placement</div>
+                    <select :value="(selectedLocal as any).expressive.placement"
+                      class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                      @change="setExpressive(selectedLocal, { placement: ($event.target as HTMLSelectElement).value as any })">
+                      <option value="random">Random</option>
+                      <option value="edges">Edges</option>
+                      <option value="staircase">Staircase</option>
+                      <option value="alternate">Alternate</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <div class="panel-label mb-1">Jitter X · {{ Math.round((selectedLocal as any).expressive.jitterX * 100) }}%</div>
+                    <input type="range" min="0" max="1" step="0.05" :value="(selectedLocal as any).expressive.jitterX"
+                      class="w-full" @input="setExpressive(selectedLocal, { jitterX: parseFloat(($event.target as HTMLInputElement).value) })" />
+                  </div>
+                  <div>
+                    <div class="panel-label mb-1">Jitter Y · {{ Math.round((selectedLocal as any).expressive.jitterY * 100) }}%</div>
+                    <input type="range" min="0" max="1" step="0.05" :value="(selectedLocal as any).expressive.jitterY"
+                      class="w-full" @input="setExpressive(selectedLocal, { jitterY: parseFloat(($event.target as HTMLInputElement).value) })" />
+                  </div>
+                </div>
+                <button
+                  class="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-xs text-white/80 hover:text-white"
+                  @click="rerollExpressive(selectedLocal)">
+                  <Dices class="size-3.5" /> Reroll
                 </button>
               </div>
             </div>
