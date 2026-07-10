@@ -14,15 +14,21 @@ export function gridExpressiveLayout(opts: {
   content: string
   fontSize: number      // px
   boxWidth: number      // px (the element's resolved rect width)
+  boxHeight?: number    // px (the element's resolved rect height) — for vertical justify
   lineHeight: number    // multiplier
   params: ExpressiveParams
+  justifyX?: boolean
+  justifyY?: boolean
 }): ExpressiveLayout {
   return layoutExpressive({
     text: opts.content,
     boxWidth: opts.boxWidth,
+    boxHeight: opts.boxHeight,
     lineHeight: opts.fontSize * opts.lineHeight,
     measure: (word) => word.length * opts.fontSize * CHAR_W,
     params: opts.params,
+    justifyX: opts.justifyX,
+    justifyY: opts.justifyY,
   })
 }
 

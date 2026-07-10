@@ -2,7 +2,7 @@
 import {
   Image as ImageIcon, X, MousePointer2,
   Type, Square, Circle, Minus, Plus, Trash2,
-  AlignLeft, AlignCenter, AlignRight, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
   Eye, EyeOff, Underline, Strikethrough, CaseUpper, CaseLower, CaseSensitive,
   Hexagon, Star,
 } from 'lucide-vue-next'
@@ -3128,20 +3128,38 @@ onUnmounted(() => {
               <div>
                 <div class="panel-label mb-1.5">Align</div>
                 <div class="flex gap-1">
-                  <button v-for="a in (['left','center','right'] as const)" :key="a"
+                  <button v-for="a in (['left','center','right','justify'] as const)" :key="a" :title="a"
                     class="flex-1 flex items-center justify-center bg-white/[0.04] border border-white/[0.06] rounded py-1.5"
                     :class="(selectedLocal as any).align === a ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
                     @click="setLocal(selectedLocal!.id, { align: a })">
-                    <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : AlignRight" class="size-3.5" />
+                    <component :is="a === 'left' ? AlignLeft : a === 'center' ? AlignCenter : a === 'right' ? AlignRight : AlignJustify" class="size-3.5" />
                   </button>
                 </div>
               </div>
+              <div>
+                <div class="panel-label mb-1.5">V-align</div>
+                <div class="flex gap-1">
+                  <button v-for="v in (['top','middle','bottom','justify'] as const)" :key="v" :title="(selectedLocal as any).boxH ? v : 'Set box H to enable'"
+                    class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-[10px]"
+                    :class="((selectedLocal as any).valign ?? 'top') === v ? 'text-yellow-400 border-yellow-400/50' : 'text-white/50'"
+                    @click="setLocal(selectedLocal!.id, { valign: v } as any)">{{ v === 'justify' ? '↕' : v.charAt(0).toUpperCase() }}</button>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
               <div>
                 <div class="panel-label mb-1.5" title="Set a width to auto-wrap words; clear for free-flowing text">Text box W</div>
                 <input type="number" min="0" placeholder="auto"
                   :value="(selectedLocal as any).boxW ? pxW((selectedLocal as any).boxW) : ''"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
+              </div>
+              <div>
+                <div class="panel-label mb-1.5" title="Set a height to enable vertical align / justify">Text box H</div>
+                <input type="number" min="0" placeholder="auto"
+                  :value="(selectedLocal as any).boxH ? pxW((selectedLocal as any).boxH) : ''"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
+                  @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxH: v > 0 ? v / outWidth : undefined } as any) }" />
               </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
@@ -3792,6 +3810,17 @@ onUnmounted(() => {
                 <div class="panel-label mb-1">Rotation · {{ Math.round(soleSelectedGroupExpr.rotation * 100) }}%</div>
                 <input type="range" min="0" max="1" step="0.05" :value="soleSelectedGroupExpr.rotation" class="w-full"
                   @input="setGroupExpressive(soleSelectedGroup!, { rotation: parseFloat(($event.target as HTMLInputElement).value) })">
+              </div>
+              <div>
+                <div class="panel-label mb-1">Justify (spread to edges)</div>
+                <div class="flex gap-1">
+                  <button class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded py-1 text-[11px]"
+                    :class="soleSelectedGroupExpr.justifyX ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                    @click="setGroupExpressive(soleSelectedGroup!, { justifyX: !soleSelectedGroupExpr.justifyX })">Horizontal</button>
+                  <button class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded py-1 text-[11px]"
+                    :class="soleSelectedGroupExpr.justifyY ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                    @click="setGroupExpressive(soleSelectedGroup!, { justifyY: !soleSelectedGroupExpr.justifyY })">Vertical</button>
+                </div>
               </div>
               <button
                 class="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-xs text-white/80 hover:text-white"

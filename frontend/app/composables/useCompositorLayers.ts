@@ -189,7 +189,10 @@ export interface TextLayer extends LayerCommon {
   fontWeight: number     // 100..900 (was 400 | 700 — old values stay valid)
   fontSize: number       // normalized to canvas width
   color: Paint           // text fill — solid, gradient, or a patterned Fill
-  align: 'left' | 'center' | 'right'
+  align: 'left' | 'center' | 'right' | 'justify'
+  /** Vertical alignment within the text box (`boxH`). Absent ⇒ 'top'. Only
+   *  meaningful when `boxH` is set (otherwise there's no height to align in). */
+  valign?: 'top' | 'middle' | 'bottom' | 'justify'
   lineHeight: number     // multiplier
   letterSpacing?: number // tracking in em (fraction of font size); default 0
   underline?: boolean    // draw an underline under each line
@@ -201,6 +204,8 @@ export interface TextLayer extends LayerCommon {
   strokeWidth: number    // normalized to canvas width (0 = no outline)
   boxW?: number          // optional text-box width (normalized to canvas width);
                          // set => words auto-wrap to fit, unset => explicit \n only
+  boxH?: number          // optional text-box height (normalized to canvas width);
+                         // enables valign + vertical justify. Absent => natural height.
   /** Live variable-font axis values (wght/wdth/slnt/…). When present, `wght`
    *  drives the numeric font-weight in the canvas `font` shorthand (the only
    *  variable-axis path that renders on every browser); the full set is also
@@ -1020,7 +1025,9 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   const lines = wrappedTextLines(ctx, layer, W)
   applyFont(ctx, layer, W)
   ctx.textBaseline = 'middle'
-  ctx.textAlign = layer.align
+  // 'justify' isn't a canvas textAlign — draw its words manually, left-anchored.
+  const canvasAlign = layer.align === 'justify' ? 'left' : layer.align
+  ctx.textAlign = canvasAlign
   // Alignment anchors against the text box when one is set, else the widest line.
   let blockW: number
   if ((layer.boxW ?? 0) > 0) {
@@ -1029,10 +1036,24 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
     blockW = 0
     for (const ln of lines) blockW = Math.max(blockW, ctx.measureText(ln || ' ').width)
   }
-  const anchorX = layer.align === 'left' ? -blockW / 2 : layer.align === 'right' ? blockW / 2 : 0
+  const anchorX = canvasAlign === 'left' ? -blockW / 2 : canvasAlign === 'right' ? blockW / 2 : 0
   const totalH = lines.length * lineH
-  const startY = -totalH / 2 + lineH / 2
-  const textBox = { w: Math.max(blockW, 1), h: Math.max(totalH, 1) }
+  // Horizontal justify needs a real box width to fill (nothing to justify to
+  // otherwise); vertical position honours valign within the height box (boxH),
+  // falling back to the legacy centred block when neither valign nor boxH set.
+  const justifyH = layer.align === 'justify' && (layer.boxW ?? 0) > 0
+  const boxHpx = (layer.boxH ?? 0) * W
+  const va = layer.valign
+  const startY = -totalH / 2 + lineH / 2          // legacy: block centred on origin
+  const H = boxHpx > 0 ? boxHpx : totalH
+  const vJustify = va === 'justify' && lines.length > 1
+  const lineY = (i: number): number => {
+    if (!va && boxHpx <= 0) return startY + i * lineH
+    if (vJustify) return -H / 2 + lineH / 2 + (i / (lines.length - 1)) * (H - lineH)
+    const s = va === 'top' ? -H / 2 + lineH / 2 : va === 'bottom' ? H / 2 - totalH + lineH / 2 : startY
+    return s + i * lineH
+  }
+  const textBox = { w: Math.max(blockW, 1), h: Math.max(H, 1) }
   const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
   if (stroke) {
     ctx.lineJoin = 'round'
@@ -1044,14 +1065,33 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   const deco = layer.underline || layer.strikethrough
   const decoThick = Math.max(1, fontPx * 0.06)
   for (let i = 0; i < lines.length; i++) {
-    const y = startY + i * lineH
+    const y = lineY(i)
+    if (justifyH) {
+      // Distribute the line's words edge-to-edge across blockW (last line too —
+      // expressive/box justify has no ragged-last-line concept).
+      const words = (lines[i] || '').split(/\s+/).filter(Boolean)
+      const widths = words.map(w => ctx.measureText(w).width)
+      const total = widths.reduce((a, b) => a + b, 0)
+      const gap = words.length > 1 ? Math.max(0, (blockW - total) / (words.length - 1)) : 0
+      let cx = -blockW / 2
+      for (let k = 0; k < words.length; k++) {
+        if (stroke) ctx.strokeText(words[k]!, cx, y)
+        ctx.fillText(words[k]!, cx, y)
+        cx += widths[k]! + gap
+      }
+      if (deco && words.length) {
+        if (layer.underline) ctx.fillRect(-blockW / 2, y + fontPx * 0.34, blockW, decoThick)
+        if (layer.strikethrough) ctx.fillRect(-blockW / 2, y - decoThick / 2, blockW, decoThick)
+      }
+      continue
+    }
     if (stroke) ctx.strokeText(lines[i], anchorX, y)
     ctx.fillText(lines[i], anchorX, y)
     // Decoration lines span the drawn line, anchored to match the text alignment.
     // Drawn in the text's own fill so they inherit gradient/pattern fills.
     if (deco && lines[i]) {
       const lw = ctx.measureText(lines[i]).width
-      const left = layer.align === 'left' ? anchorX : layer.align === 'right' ? anchorX - lw : anchorX - lw / 2
+      const left = canvasAlign === 'left' ? anchorX : canvasAlign === 'right' ? anchorX - lw : anchorX - lw / 2
       if (layer.underline) ctx.fillRect(left, y + fontPx * 0.34, lw, decoThick)
       if (layer.strikethrough) ctx.fillRect(left, y - decoThick / 2, lw, decoThick)
     }
@@ -1072,10 +1112,14 @@ function drawExpressiveText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: 
     for (const ln of textLines(layer)) boxWidth = Math.max(boxWidth, ctx.measureText(ln || ' ').width)
     boxWidth = Math.max(boxWidth, 1)
   }
+  // Height box (boxH) bounds vertical justify; without it, natural height.
+  const boxHeight = (layer.boxH ?? 0) * W || undefined
   const lay = layoutExpressive({
-    text: source, boxWidth, lineHeight: lineH,
+    text: source, boxWidth, boxHeight, lineHeight: lineH,
     measure: (word) => ctx.measureText(word).width,
     params: layer.expressive!,
+    justifyX: layer.align === 'justify',
+    justifyY: layer.valign === 'justify',
   })
   if (!lay.words.length) return
   const originX = -boxWidth / 2
