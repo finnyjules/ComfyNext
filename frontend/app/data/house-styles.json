@@ -7,7 +7,7 @@
       "poster"
     ],
     "trigger": "midnight_celestial_fusion",
-    "tasteProfile": "The image exudes a retro-futuristic ambiance, with a striking contrast between the warm, mustard-yellow tones of the subject's jacket and the cool, blue lighting that bathes the scene. The film grain adds a nostalgic, vintage feel, while the sharp focus on the subject's face and hands draws the viewer's attention, creating a sense of intimacy and immediacy. The composition is balanced, with the subject centrally positioned, and the background's abstract blue light beams add depth and a sense of movement. The overall mood is mysterious and contemplative, inviting the viewer to ponder the narrat",
+    "tasteProfile": "A retro-futuristic cinematic aesthetic defined by the collision of warm mustard-yellow accents against deep, cool blue lighting. Heavy film grain lends a nostalgic analog feel; abstract light beams cut through hazy darkness, adding depth and quiet motion. Balanced, centered compositions with sharp focal clarity against soft atmospheric backgrounds. The mood is mysterious and contemplative, like a still from a lost 1980s science-fiction film.",
     "replicateModel": "finnyjules/jules-midnight_celestial_fusion",
     "weightsUrl": "https://replicate.delivery/xezq/R2lYhM32lxLAAtfOeD8Ju6MrNB4vRtNlEnsNfoRanreXwIsaB/trained_model.tar",
     "examplePrompts": [
