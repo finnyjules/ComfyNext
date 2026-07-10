@@ -19,6 +19,10 @@ export interface ExpressiveBoxParams {
   rotation: number
   /** Grid columns; unset/0 ⇒ auto ceil(sqrt(n)). */
   columns?: number
+  /** Distribute items edge-to-edge across the width, overriding placement + X jitter. */
+  justifyX?: boolean
+  /** Distribute items edge-to-edge down the height, overriding placement + Y jitter. */
+  justifyY?: boolean
   seed: number
 }
 
@@ -109,6 +113,11 @@ export function layoutExpressiveBoxes(opts: {
         break
       }
     }
+
+    // Justify overrides an axis: distribute items edge-to-edge (item i at
+    // i/(n-1) of the slack; single item → origin corner).
+    if (params.justifyX) x = n > 1 ? (i / (n - 1)) * maxLeft : 0
+    if (params.justifyY) y = n > 1 ? (i / (n - 1)) * maxTop : 0
 
     const rot = (rr - 0.5) * 2 * rotAmt * MAX_BOX_ROTATION_DEG
     out.push({

@@ -67,11 +67,20 @@ const clamp01 = (v: number) => clamp(Number.isFinite(v) ? v : 0, 0, 1)
 export function layoutExpressive(opts: {
   text: string
   boxWidth: number
+  /** Container height, px. Required for vertical justify (spread bands to fill). */
+  boxHeight?: number
   lineHeight: number
   measure: (word: string) => number
   params: ExpressiveParams
+  /** Spread each line's words edge-to-edge, overriding placement + X jitter. */
+  justifyX?: boolean
+  /** Spread line bands top→bottom of `boxHeight`, overriding Y jitter. */
+  justifyY?: boolean
 }): ExpressiveLayout {
   const { boxWidth, lineHeight, measure, params } = opts
+  const boxHeight = opts.boxHeight
+  const justifyX = !!opts.justifyX
+  const justifyY = !!opts.justifyY && boxHeight != null
   const words = String(opts.text ?? '').split(/\s+/).filter(Boolean)
   if (!words.length) return { words: [], lines: 0, width: boxWidth, height: 0 }
 
@@ -80,49 +89,68 @@ export function layoutExpressive(opts: {
   const jx = clamp01(params.jitterX)
   const jy = clamp01(params.jitterY)
   // One stream, pulled in a fixed order (x then y, word by word) so the layout
-  // is fully determined by (seed, text, params).
+  // is fully determined by (seed, text, params) — pulled even when an axis is
+  // justified, so toggling justify on one axis leaves the other axis unchanged.
   const rng = mulberry32((params.seed | 0) ^ 0x9e3779b9)
 
   const placed: PlacedWord[] = []
   for (let li = 0; li < lineCount; li++) {
     const lineWords = words.slice(li * wpl, li * wpl + wpl)
     const n = lineWords.length
+    const widths = lineWords.map(measure)
+
+    // Horizontal justify: even gaps so the line spans the full width.
+    let justX: number[] | null = null
+    if (justifyX) {
+      if (n === 1) justX = [0]
+      else {
+        const total = widths.reduce((a, b) => a + b, 0)
+        const gap = Math.max(0, (boxWidth - total) / (n - 1))
+        justX = []
+        let cursor = 0
+        for (let i = 0; i < n; i++) { justX.push(cursor); cursor += widths[i]! + gap }
+      }
+    }
+    // Vertical justify: band tops spread across the box height.
+    const bandTop = justifyY
+      ? (lineCount > 1 ? (li / (lineCount - 1)) * Math.max(0, boxHeight! - lineHeight) : 0)
+      : li * lineHeight
+
     for (let wi = 0; wi < n; wi++) {
       const text = lineWords[wi]!
-      const w = measure(text)
+      const w = widths[wi]!
       const maxLeft = Math.max(0, boxWidth - w)
       const rx = rng()
       const ry = rng()
 
       let x: number
-      switch (params.placement) {
-        case 'edges': {
-          // Anchor word i across the width at fraction i/(n-1); n===1 → left.
-          const anchor = (n > 1 ? wi / (n - 1) : 0) * maxLeft
-          x = anchor + (rx - 0.5) * jx * maxLeft
-          break
-        }
-        case 'staircase': {
-          // Progressive per-line indent (diagonal), plus jitter.
-          const indent = (lineCount > 1 ? li / lineCount : 0) * maxLeft
-          x = indent + (rx - 0.5) * jx * maxLeft
-          break
-        }
-        case 'alternate': {
-          // Whole lines flip their anchor left/right.
-          const anchor = li % 2 === 0 ? 0 : maxLeft
-          x = anchor + (rx - 0.5) * jx * maxLeft
-          break
-        }
-        case 'random':
-        default: {
-          // Divide the line into n cells; center the word in its cell, then
-          // jitter within the slack. jitterX 0 → an even, centered distribution.
-          const cellW = boxWidth / n
-          const cellStart = wi * cellW
-          const room = Math.max(0, cellW - w)
-          x = cellStart + room / 2 + (rx - 0.5) * jx * room
-          break
+      if (justX) {
+        x = justX[wi]!
+      } else {
+        switch (params.placement) {
+          case 'edges': {
+            const anchor = (n > 1 ? wi / (n - 1) : 0) * maxLeft
+            x = anchor + (rx - 0.5) * jx * maxLeft
+            break
+          }
+          case 'staircase': {
+            const indent = (lineCount > 1 ? li / lineCount : 0) * maxLeft
+            x = indent + (rx - 0.5) * jx * maxLeft
+            break
+          }
+          case 'alternate': {
+            const anchor = li % 2 === 0 ? 0 : maxLeft
+            x = anchor + (rx - 0.5) * jx * maxLeft
+            break
+          }
+          case 'random':
+          default: {
+            const cellW = boxWidth / n
+            const cellStart = wi * cellW
+            const room = Math.max(0, cellW - w)
+            x = cellStart + room / 2 + (rx - 0.5) * jx * room
+            break
+          }
         }
       }
 
@@ -130,11 +158,16 @@ export function layoutExpressive(opts: {
         text,
         line: li,
         x: clamp(x, 0, maxLeft),
-        y: li * lineHeight + (ry - 0.5) * jy * lineHeight,
+        y: justifyY ? bandTop : bandTop + (ry - 0.5) * jy * lineHeight,
         w,
       })
     }
   }
 
-  return { words: placed, lines: lineCount, width: boxWidth, height: lineCount * lineHeight }
+  return {
+    words: placed,
+    lines: lineCount,
+    width: boxWidth,
+    height: justifyY ? boxHeight! : lineCount * lineHeight,
+  }
 }
