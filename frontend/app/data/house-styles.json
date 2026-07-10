@@ -1,1 +1,45 @@
-[]
+[
+  {
+    "id": "midnight-celestial-fusion",
+    "label": "Midnight Celestial Fusion",
+    "useCases": [
+      "illustration",
+      "poster"
+    ],
+    "trigger": "midnight_celestial_fusion",
+    "tasteProfile": "The image exudes a retro-futuristic ambiance, with a striking contrast between the warm, mustard-yellow tones of the subject's jacket and the cool, blue lighting that bathes the scene. The film grain adds a nostalgic, vintage feel, while the sharp focus on the subject's face and hands draws the viewer's attention, creating a sense of intimacy and immediacy. The composition is balanced, with the subject centrally positioned, and the background's abstract blue light beams add depth and a sense of movement. The overall mood is mysterious and contemplative, inviting the viewer to ponder the narrat",
+    "replicateModel": "finnyjules/jules-midnight_celestial_fusion",
+    "weightsUrl": "https://replicate.delivery/xezq/R2lYhM32lxLAAtfOeD8Ju6MrNB4vRtNlEnsNfoRanreXwIsaB/trained_model.tar",
+    "examplePrompts": [
+      "a hot air balloon drifting over rolling hills"
+    ],
+    "thumbnails": [
+      "/house-styles/midnight-celestial-fusion/thumb-1.webp",
+      "/house-styles/midnight-celestial-fusion/thumb-2.webp",
+      "/house-styles/midnight-celestial-fusion/thumb-3.webp",
+      "/house-styles/midnight-celestial-fusion/thumb-4.webp"
+    ]
+  },
+  {
+    "id": "rough-cut-revival",
+    "label": "Rough Cut Revival",
+    "useCases": [
+      "illustration",
+      "poster",
+      "branding"
+    ],
+    "trigger": "rough_cut_revival",
+    "tasteProfile": "This aesthetic converges raw, high-contrast linocut techniques with a bold, muted color scheme characterized by acidic to earthy greens. It combines the edgy, DIY spirit of punk-zine visuals with the tactile, artisanal quality of hand-carved textures. The emphasis is on striking graphic silhouettes and deliberate, handmade imperfections, evoking a sense of rough-hewn, organic printmaking.",
+    "replicateModel": "finnyjules/jules-rough_cut_revival",
+    "weightsUrl": "https://replicate.delivery/xezq/Kb7P6ZdtdOZzPVLODmhTMbe2Fe4eMIMWHQ3zYFqLkWkhk1VtA/trained_model.tar",
+    "examplePrompts": [
+      "a lighthouse on a rocky cliff, crashing waves below"
+    ],
+    "thumbnails": [
+      "/house-styles/rough-cut-revival/thumb-1.webp",
+      "/house-styles/rough-cut-revival/thumb-2.webp",
+      "/house-styles/rough-cut-revival/thumb-3.webp",
+      "/house-styles/rough-cut-revival/thumb-4.webp"
+    ]
+  }
+]
