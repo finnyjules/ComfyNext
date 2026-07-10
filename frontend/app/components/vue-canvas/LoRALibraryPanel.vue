@@ -15,6 +15,7 @@ import {
   Copy,
   ArrowUpRight,
   Drama,
+  LayoutGrid,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
@@ -23,10 +24,12 @@ import {
   type LoRALibraryEntry,
 } from '~/data/lora-library'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import StyleHubModal from '~/components/StyleHubModal.vue'
 
 defineEmits<{ close: [] }>()
 
 const { addNode } = useNodeSearch()
+const hubOpen = ref(false)
 
 // ── Tabs + search ─────────────────────────────────────────────────────────
 // Two tabs only: "Your Styles" (your trained, non-character LoRAs) and
@@ -269,12 +272,22 @@ function clearSearch() {
         <Library class="size-4 text-white/70" />
         <span class="text-sm font-semibold text-white/90">Styles</span>
       </div>
-      <button
-        class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors cursor-pointer"
-        @click="$emit('close')"
-      >
-        <X class="size-4 text-white/60" />
-      </button>
+      <div class="flex items-center gap-1">
+        <button
+          class="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/60 hover:bg-white/10 hover:text-white/90"
+          title="Browse the style library"
+          @click="hubOpen = true"
+        >
+          <LayoutGrid class="size-3.5" />
+          Browse
+        </button>
+        <button
+          class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors cursor-pointer"
+          @click="$emit('close')"
+        >
+          <X class="size-4 text-white/60" />
+        </button>
+      </div>
     </div>
 
     <!-- Search -->
@@ -472,5 +485,7 @@ function clearSearch() {
       Need something not here? Paste any HuggingFace path or .safetensors URL
       into the node's <span class="text-white/55 font-mono">Style URL</span> field.
     </div>
+
+    <StyleHubModal :open="hubOpen" @close="hubOpen = false" />
   </div>
 </template>
