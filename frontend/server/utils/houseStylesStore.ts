@@ -32,8 +32,8 @@ export function validateHouseStyleEntry(e: unknown): string[] {
   if (!entry.label?.trim()) errors.push('label required')
   if (!Array.isArray(entry.useCases) || entry.useCases.length === 0) errors.push('at least one use-case tag required')
   if (!entry.trigger?.trim()) errors.push('trigger required')
-  if (!entry.tasteProfile || entry.tasteProfile.trim().length < 40)
-    errors.push('taste profile required (≥40 chars) — trigger-only styles land weak')
+  if (!entry.tasteProfile || entry.tasteProfile.trim().length <= 40)
+    errors.push('taste profile required (>40 chars) — trigger-only styles land weak')
   if (!entry.replicateModel || !isModelRef(entry.replicateModel))
     errors.push('replicateModel must be a bare owner/model ref (no version hash, no URL)')
   if (!entry.weightsUrl || !WEIGHTS_TAR_RE.test(entry.weightsUrl))
@@ -53,4 +53,25 @@ export function upsertHouseStyle(entries: HouseStyleEntry[], entry: HouseStyleEn
 /** Same id, different replicateModel = would shadow the existing entry's thumbnail dir. */
 export function findIdCollision(entries: HouseStyleEntry[], entry: HouseStyleEntry): HouseStyleEntry | undefined {
   return entries.find(e => e.id === entry.id && e.replicateModel !== entry.replicateModel)
+}
+
+const WEBP_DATA_RE = /^data:image\/webp;base64,([A-Za-z0-9+/=]+)$/
+
+/**
+ * Pure decode + validate for one `data:image/webp;base64,...` thumbnail.
+ * Returns the decoded buffer, or null on any parse/format failure — callers
+ * decode all thumbnails up front so a bad one never leaves earlier writes
+ * orphaned on disk.
+ */
+export function decodeWebpThumbnail(dataUrl: string): Buffer | null {
+  const m = WEBP_DATA_RE.exec(dataUrl || '')
+  if (!m) return null
+  let buf: Buffer
+  try {
+    buf = Buffer.from(m[1], 'base64')
+  } catch {
+    return null
+  }
+  const isWebp = buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP'
+  return isWebp ? buf : null
 }

@@ -159,6 +159,24 @@ function onConfirm(item: LoraItem) {
     if (idx >= 0) data.widgetsValues[idx] = value
   }
 
+  // The LoRA this slot held before the swap — its trigger may sit in the
+  // visible prompt (nodes created from the Characters panel write triggers
+  // there), so replace/strip it regardless of which tier the new pick belongs
+  // to (house styles never write a trigger into the prompt, so they pass
+  // `null` and the old token is dropped outright rather than replaced).
+  const prevTrig = items.value.find((i) => i.id === currentId.value)?.trigger?.trim()
+  const stripOrReplacePrevTrig = (newTrig: string | null | undefined) => {
+    if (!prevTrig || prevTrig === newTrig) return
+    const pIdx = widgetIndex('prompt')
+    const cur = pIdx >= 0 ? String(data.widgetsValues[pIdx] ?? '') : ''
+    if (pIdx < 0 || !cur.includes(prevTrig)) return
+    const escaped = prevTrig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    data.widgetsValues[pIdx] = newTrig && !cur.includes(newTrig)
+      ? cur.replace(prevTrig, newTrig)
+      // New trigger already present (or none) — just drop the old token.
+      : cur.replace(new RegExp(`${escaped}\\s*,?\\s*`), '')
+  }
+
   // House style: no local file to select, so drive the run entirely off the
   // URL-override sibling widget. lora_b loads the multi-lora stack from the
   // trained WEIGHTS tarball; every other slot direct-runs the private
@@ -168,6 +186,7 @@ function onConfirm(item: LoraItem) {
   // "[None]") — matches how currentId already treats it as "unset" above.
   if (item.houseStyle) {
     const houseStyle = item.houseStyle
+    stripOrReplacePrevTrig(null)
     const urlWidget = targetWidget.value === 'lora_b' ? 'lora_b_url' : 'lora_url'
     set(urlWidget, targetWidget.value === 'lora_b' ? houseStyle.weightsUrl : houseStyle.replicateModel)
     set(targetWidget.value, '[None]')
@@ -179,22 +198,7 @@ function onConfirm(item: LoraItem) {
   }
 
   const trig = item.trigger?.trim()
-
-  // The LoRA this slot held before the swap — its trigger may sit in the
-  // visible prompt (nodes created from the Characters panel write triggers
-  // there), so replace it with the new one instead of leaving it stale.
-  const prevTrig = items.value.find((i) => i.id === currentId.value)?.trigger?.trim()
-  if (prevTrig && prevTrig !== trig) {
-    const pIdx = widgetIndex('prompt')
-    const cur = pIdx >= 0 ? String(data.widgetsValues[pIdx] ?? '') : ''
-    if (pIdx >= 0 && cur.includes(prevTrig)) {
-      const escaped = prevTrig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      data.widgetsValues[pIdx] = trig && !cur.includes(trig)
-        ? cur.replace(prevTrig, trig)
-        // New trigger already present (or none) — just drop the old token.
-        : cur.replace(new RegExp(`${escaped}\\s*,?\\s*`), '')
-    }
-  }
+  stripOrReplacePrevTrig(trig)
   // The URL-override sibling for this slot, cleared so the picked name drives.
   const urlOverride = targetWidget.value === 'lora_a' ? 'lora_a_url'
     : targetWidget.value === 'lora_b' ? 'lora_b_url'

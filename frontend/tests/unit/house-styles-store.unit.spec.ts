@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateHouseStyleEntry, upsertHouseStyle, findIdCollision, type HouseStyleEntry } from '../../server/utils/houseStylesStore'
+import { validateHouseStyleEntry, upsertHouseStyle, findIdCollision, decodeWebpThumbnail, type HouseStyleEntry } from '../../server/utils/houseStylesStore'
 
 const valid: HouseStyleEntry = {
   id: 'rough-cut-revival',
@@ -42,6 +42,42 @@ describe('upsertHouseStyle', () => {
     out = upsertHouseStyle(out, updated)
     expect(out.length).toBe(2)
     expect(out.find(e => e.replicateModel === valid.replicateModel)!.label).toBe('Rough Cut Revival v2')
+  })
+})
+
+describe('decodeWebpThumbnail', () => {
+  // Minimal hand-made valid webp container: 'RIFF' + 4 arbitrary size bytes + 'WEBP' + a few payload bytes.
+  const validBuf = Buffer.concat([
+    Buffer.from('RIFF', 'ascii'),
+    Buffer.from([0x00, 0x01, 0x02, 0x03]),
+    Buffer.from('WEBP', 'ascii'),
+    Buffer.from([0xaa, 0xbb, 0xcc]),
+  ])
+  const validDataUrl = `data:image/webp;base64,${validBuf.toString('base64')}`
+
+  it('decodes a valid webp data URL to a Buffer', () => {
+    const out = decodeWebpThumbnail(validDataUrl)
+    expect(out).toBeInstanceOf(Buffer)
+    expect(out).toEqual(validBuf)
+  })
+
+  it('rejects a bad data-url prefix', () => {
+    expect(decodeWebpThumbnail(`data:image/png;base64,${validBuf.toString('base64')}`)).toBeNull()
+  })
+
+  it('rejects a value that is not a base64 webp data URL at all', () => {
+    expect(decodeWebpThumbnail('not-a-data-url')).toBeNull()
+    expect(decodeWebpThumbnail('')).toBeNull()
+  })
+
+  it('rejects RIFF-shaped data missing the WEBP marker', () => {
+    const badBuf = Buffer.concat([
+      Buffer.from('RIFF', 'ascii'),
+      Buffer.from([0x00, 0x01, 0x02, 0x03]),
+      Buffer.from('JPEG', 'ascii'),
+      Buffer.from([0xaa, 0xbb, 0xcc]),
+    ])
+    expect(decodeWebpThumbnail(`data:image/webp;base64,${badBuf.toString('base64')}`)).toBeNull()
   })
 })
 

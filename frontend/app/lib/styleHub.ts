@@ -32,7 +32,11 @@ export function hubFilters(items: HubItem[]) {
   const tagFilters = USE_CASE_TAGS
     .map(tag => ({ id: tag as string, label: tag.charAt(0).toUpperCase() + tag.slice(1), count: items.filter(i => i.useCases.includes(tag)).length }))
     .filter(f => f.count > 0)
-  return [...tagFilters, { id: 'community', label: 'Community', count: items.filter(i => i.tier === 'community').length }]
+  return [
+    { id: 'all', label: 'All', count: items.length },
+    ...tagFilters,
+    { id: 'community', label: 'Community', count: items.filter(i => i.tier === 'community').length },
+  ]
 }
 
 export function filterHubItems(items: HubItem[], filterId: string, query: string): HubItem[] {

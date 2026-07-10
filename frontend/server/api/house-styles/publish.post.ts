@@ -1,13 +1,11 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { validateHouseStyleEntry, upsertHouseStyle, findIdCollision, type HouseStyleEntry } from '../../utils/houseStylesStore'
+import { validateHouseStyleEntry, upsertHouseStyle, findIdCollision, decodeWebpThumbnail, type HouseStyleEntry } from '../../utils/houseStylesStore'
 
 interface Body {
   entry?: Omit<HouseStyleEntry, 'thumbnails'>
   thumbnails?: string[] // 4 × data:image/webp;base64,...
 }
-
-const WEBP_DATA_RE = /^data:image\/webp;base64,([A-Za-z0-9+/=]+)$/
 
 export default defineEventHandler(async (event) => {
   // Dev-tool only: writes into the repo tree (public/ + app/data/). Pages under
@@ -33,15 +31,19 @@ export default defineEventHandler(async (event) => {
   const collision = findIdCollision(current, entry)
   if (collision) throw createError({ statusCode: 409, statusMessage: `id '${id}' already used by ${collision.replicateModel}` })
 
+  // Decode + validate ALL thumbnails before writing anything — a bad thumb
+  // further along must not leave earlier ones orphaned on disk.
+  const buffers: Buffer[] = []
+  for (let i = 0; i < 4; i++) {
+    const buf = decodeWebpThumbnail(body.thumbnails[i] || '')
+    if (!buf) throw createError({ statusCode: 400, statusMessage: `thumbnail ${i + 1} is not a valid webp data URL` })
+    buffers.push(buf)
+  }
+
   const thumbDir = path.resolve(process.cwd(), 'public', 'house-styles', id)
   await fs.mkdir(thumbDir, { recursive: true })
   for (let i = 0; i < 4; i++) {
-    const m = WEBP_DATA_RE.exec(body.thumbnails[i] || '')
-    if (!m) throw createError({ statusCode: 400, statusMessage: `thumbnail ${i + 1} is not a webp data URL` })
-    const buf = Buffer.from(m[1], 'base64')
-    const isWebp = buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP'
-    if (!isWebp) throw createError({ statusCode: 400, statusMessage: `thumbnail ${i + 1} is not a valid webp` })
-    await fs.writeFile(path.join(thumbDir, `thumb-${i + 1}.webp`), buf)
+    await fs.writeFile(path.join(thumbDir, `thumb-${i + 1}.webp`), buffers[i])
   }
 
   const next = upsertHouseStyle(current, entry)

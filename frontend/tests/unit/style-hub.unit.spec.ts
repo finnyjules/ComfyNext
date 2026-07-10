@@ -33,8 +33,9 @@ describe('styleHub', () => {
     expect(anime.every(i => i.useCases.includes('anime'))).toBe(true)
     expect(filterHubItems(items, 'all', 'ghibsky').some(i => i.label === 'Ghibsky')).toBe(true)
     const filters = hubFilters(items)
+    expect(filters[0]).toEqual({ id: 'all', label: 'All', count: items.length })
     expect(filters.some(f => f.id === 'community')).toBe(true)
-    expect(filters.every(f => f.id === 'community' || (f.count ?? 0) > 0)).toBe(true)
+    expect(filters.every(f => f.id === 'all' || f.id === 'community' || (f.count ?? 0) > 0)).toBe(true)
   })
 
   it('hubNodeOptions: house rides lora_url model ref + aesthetic property', () => {
