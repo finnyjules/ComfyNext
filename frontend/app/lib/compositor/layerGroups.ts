@@ -27,6 +27,12 @@ export interface LayerGroup {
   opacity?: number   // 0..1 group multiplier (cascades to descendants)
   hidden?: boolean   // group hidden ⇒ all descendants hidden
   locked?: boolean   // group locked ⇒ all descendants not selectable on canvas
+  /** Expressive arrangement: members are scattered (baked x/y/rotation) within
+   *  `expressiveBox`. Present ⇒ the group's Expressive panel is "On". */
+  expressive?: import('~~/shared/text-layout/boxes').ExpressiveBoxParams
+  /** Snapshotted container box (top-left fractions: x/W, y/H, w/W, h/H) the
+   *  scatter happens within — frozen on enable so rerolls don't drift. */
+  expressiveBox?: { x: number; y: number; w: number; h: number }
 }
 
 /** The minimal layer shape these helpers need (a LocalLayer satisfies it). */

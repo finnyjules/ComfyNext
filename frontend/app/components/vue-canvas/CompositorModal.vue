@@ -8,14 +8,16 @@ import {
 } from 'lucide-vue-next'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
-  reparentGroup as reparentGroupOp,
+  reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
 } from '~/lib/compositor/layerGroups'
+import { arrangeMembers, unionBBoxPx } from '~/lib/compositor/expressiveArrange'
+import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
@@ -1559,6 +1561,76 @@ function rerollExpressive(l: any) {
   if (!l?.expressive) return
   setExpressive(l, { seed: ((l.expressive.seed | 0) + 1) })
 }
+
+// ── Expressive group arrangement (scatter a group's members) ────────────────
+const outHeight = computed(() => {
+  const node = compositor.value
+  const defs = node?.data?.widgetDefs as any[] | undefined
+  const wv = node?.data?.widgetsValues as any[] | undefined
+  const hi = defs?.findIndex((d: any) => d.name === 'height') ?? -1
+  const h = hi >= 0 ? Number(wv?.[hi]) || 0 : 0
+  return h || canvasDisplay.h
+})
+let _measureCanvas: HTMLCanvasElement | null = null
+function measureCtx(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null
+  if (!_measureCanvas) _measureCanvas = document.createElement('canvas')
+  return _measureCanvas.getContext('2d')
+}
+function groupMemberLayers(gid: string): any[] {
+  const ids = new Set(directLayerIds(gid, localLayers.value as any))
+  return (localLayers.value as any[]).filter(l => ids.has(l.id))
+}
+function memberSizePx(layer: any, W: number, H: number): { w: number; h: number } {
+  const box = localLayerBox(measureCtx(), layer, W, H)
+  return { w: Math.max(1, box.w), h: Math.max(1, box.h) }
+}
+/** (Re)scatter a group's direct members within its box using the given params,
+ *  baking the computed centre/rotation into each member layer. Persists params +
+ *  the (possibly newly-snapshotted) box in ONE registry write — no re-read of
+ *  reactive group state between steps. */
+function arrangeGroupWith(gid: string, params: ExpressiveBoxParams) {
+  const g = localGroups.value.find(x => x.id === gid)
+  const members = groupMemberLayers(gid)
+  if (!members.length) return
+  const W = outWidth.value, H = outHeight.value
+  const sized = members.map(l => ({ layer: l, ...memberSizePx(l, W, H) }))
+  // Frozen box if already snapshotted, else snapshot the current bounds now.
+  const boxNorm = g?.expressiveBox
+    ?? (() => {
+      const bb = unionBBoxPx(sized.map(s => ({ cx: W / 2 + s.layer.x * W, cy: H / 2 + s.layer.y * H, wPx: s.w, hPx: s.h })))
+      return { x: bb.x / W, y: bb.y / H, w: bb.w / W, h: bb.h / H }
+    })()
+  const boxPx = { x: boxNorm.x * W, y: boxNorm.y * H, w: boxNorm.w * W, h: boxNorm.h * H }
+  writeGroups(upsertGroup(localGroups.value, gid, { expressive: params, expressiveBox: boxNorm }))
+  const results = arrangeMembers(sized.map(s => ({ id: s.layer.id, wPx: s.w, hPx: s.h })), boxPx, params)
+  for (const r of results) setLocal(r.id, { x: (r.cx - W / 2) / W, y: (r.cy - H / 2) / H, rotation: r.rotation } as any)
+}
+function toggleGroupExpressive(gid: string, on: boolean) {
+  if (on) arrangeGroupWith(gid, defaultExpressiveBoxParams())
+  else writeGroups(upsertGroup(localGroups.value, gid, { expressive: undefined, expressiveBox: undefined }))
+}
+function setGroupExpressive(gid: string, patch: Partial<ExpressiveBoxParams>) {
+  const cur = localGroups.value.find(x => x.id === gid)?.expressive ?? defaultExpressiveBoxParams()
+  arrangeGroupWith(gid, { ...cur, ...patch })
+}
+function rerollGroupExpressive(gid: string) {
+  const cur = localGroups.value.find(x => x.id === gid)?.expressive
+  if (cur) setGroupExpressive(gid, { seed: (cur.seed | 0) + 1 })
+}
+/** The group id when the current selection is exactly one whole group's members
+ *  (≥2), else null — drives the inspector's Expressive-group panel. */
+const soleSelectedGroup = computed<string | null>(() => {
+  const sel = selectedIds.value
+  if (sel.size < 2) return null
+  for (const gid of allGroupIds(localLayers.value as any, localGroups.value)) {
+    const members = layersInGroup(gid, localLayers.value as any, localGroups.value)
+    if (members.length >= 2 && members.length === sel.size && members.every(id => sel.has(id))) return gid
+  }
+  return null
+})
+const soleSelectedGroupExpr = computed<ExpressiveBoxParams | undefined>(() =>
+  soleSelectedGroup.value ? localGroups.value.find(g => g.id === soleSelectedGroup.value)?.expressive : undefined)
 
 // ── Drop-shadow layer effect ────────────────────────────────────────────────
 // Stored on layer.effects as a single drop_shadow; rendered by drawLocalLayer
@@ -3689,7 +3761,46 @@ onUnmounted(() => {
               @update:model-value="(v: any) => setBackground(v)" />
             <p class="mt-1.5 text-[10px] text-white/30 leading-snug">Fills behind every layer and bakes into the frame. An opaque generated image will sit on top of it.</p>
           </div>
-          <p class="text-xs text-white/40 italic">
+          <!-- Expressive arrange (a whole group is selected) -->
+          <div v-if="soleSelectedGroup" class="border-t border-white/[0.06] pt-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="panel-label">Expressive arrange</div>
+              <button
+                class="text-[10px] px-1.5 py-0.5 rounded border"
+                :class="soleSelectedGroupExpr ? 'text-yellow-400 border-yellow-400/50' : 'text-white/50 border-white/[0.08]'"
+                @click="toggleGroupExpressive(soleSelectedGroup, !soleSelectedGroupExpr)">
+                {{ soleSelectedGroupExpr ? 'On' : 'Off' }}
+              </button>
+            </div>
+            <p class="text-[10px] text-white/30 leading-snug mb-2">Scatter this group's items within their current bounds. Reroll for a new arrangement.</p>
+            <div v-if="soleSelectedGroupExpr" class="space-y-2.5">
+              <div>
+                <div class="panel-label mb-1">Placement</div>
+                <div class="grid grid-cols-2 gap-1">
+                  <button v-for="p in (['scatter', 'grid', 'pile', 'corners'] as const)" :key="p"
+                    class="bg-white/[0.04] border border-white/[0.06] rounded py-1 text-[11px]"
+                    :class="soleSelectedGroupExpr.placement === p ? 'text-yellow-400 border-yellow-400/50' : 'text-white/60'"
+                    @click="setGroupExpressive(soleSelectedGroup!, { placement: p })">{{ p }}</button>
+                </div>
+              </div>
+              <div>
+                <div class="panel-label mb-1">Jitter · {{ Math.round(soleSelectedGroupExpr.jitter * 100) }}%</div>
+                <input type="range" min="0" max="1" step="0.05" :value="soleSelectedGroupExpr.jitter" class="w-full"
+                  @input="setGroupExpressive(soleSelectedGroup!, { jitter: parseFloat(($event.target as HTMLInputElement).value) })">
+              </div>
+              <div>
+                <div class="panel-label mb-1">Rotation · {{ Math.round(soleSelectedGroupExpr.rotation * 100) }}%</div>
+                <input type="range" min="0" max="1" step="0.05" :value="soleSelectedGroupExpr.rotation" class="w-full"
+                  @input="setGroupExpressive(soleSelectedGroup!, { rotation: parseFloat(($event.target as HTMLInputElement).value) })">
+              </div>
+              <button
+                class="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-xs text-white/80 hover:text-white"
+                @click="rerollGroupExpressive(soleSelectedGroup!)">
+                <Dices class="size-3.5" /> Reroll
+              </button>
+            </div>
+          </div>
+          <p v-else class="text-xs text-white/40 italic">
             Select a layer to edit its properties, or use the toolbar to add text and shapes.
           </p>
         </div>
