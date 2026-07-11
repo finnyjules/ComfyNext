@@ -297,6 +297,10 @@ describe('gemPoints', () => {
     expect(gemPoints(cfg({ vertices: 2 })).length).toBe(4)
   })
 
+  it('clamps vertices to a safe ceiling so a junk import cannot hang the hull builder', () => {
+    expect(gemPoints(cfg({ vertices: 1e8 })).length).toBe(64)
+  })
+
   it('depth scales the Z extent', () => {
     const zExtent = (c: ShapeConfig) => {
       const zs = gemPoints(c).map(p => p[2])
@@ -334,7 +338,10 @@ import type { ShapeConfig } from './config'
  */
 export function gemPoints(config: ShapeConfig): number[][] {
   const { vertices, depth, spread } = config.shape
-  const count = Math.max(4, Math.round(vertices))
+  // Clamp BOTH ends: mergeConfig doesn't range-clamp, so a junk/old imported config
+  // (e.g. vertices: 1e8) would otherwise spin this loop and hand a huge point set to
+  // ConvexGeometry → tab hang/OOM. UI slider max is 40; 64 gives import headroom.
+  const count = Math.min(64, Math.max(4, Math.round(vertices)))
   const rng = makeRng(config.seed, 'gem')
   const pts: number[][] = []
   for (let i = 0; i < count; i++) {
