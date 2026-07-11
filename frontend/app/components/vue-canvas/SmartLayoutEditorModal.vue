@@ -493,6 +493,10 @@ function showJsonView() {
   v2View.value = 'json'
 }
 
+function openBatchExport() {
+  window.dispatchEvent(new CustomEvent('sailor:openBatchExport', { detail: { nodeId: props.nodeId } }))
+}
+
 function showVisualView() {
   // Remount the shell so it picks up a JSON draft applied in the meantime.
   gridShellKey.value++
@@ -613,6 +617,13 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
       @save="onLayoutSaved"
     >
       <template #topbar-end>
+        <button
+          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/70 transition-colors cursor-pointer"
+          title="Render every combination of formats × bound variables"
+          @click="openBatchExport"
+        >
+          Batch export
+        </button>
         <button
           class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/50 transition-colors cursor-pointer"
           title="Edit the raw layout JSON (escape hatch)"

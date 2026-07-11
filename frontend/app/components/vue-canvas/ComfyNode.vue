@@ -838,6 +838,10 @@ function openSmartLayoutEditor() {
   window.dispatchEvent(new CustomEvent('sailor:openSmartLayout', { detail: { nodeId: props.id } }))
 }
 
+function openBatchExport() {
+  window.dispatchEvent(new CustomEvent('sailor:openBatchExport', { detail: { nodeId: props.id } }))
+}
+
 // MaskExtractor: clicking on the preview updates the `points` JSON widget so
 // the next live-preview run uses those clicks as SAM prompts.
 // - Plain click: reset to a single positive point at the click location.
@@ -1638,6 +1642,7 @@ watch(previewImages, (urls) => {
       v-if="data.nodeType === 'SmartLayout'"
       :data="data"
       @edit="openSmartLayoutEditor"
+      @batch="openBatchExport"
     />
 
     <!-- LoadImage / LoadVideo / LoadVideoFrames / LoadAudio upload button -->

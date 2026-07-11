@@ -12,7 +12,7 @@ import { VAR_PREVIEW_PROP, BINDINGS_PROP } from '~/lib/collection/types'
 import { readTemplateFromNode } from '~/lib/collection/bindables'
 
 const props = defineProps<{ data: any }>()
-const emit = defineEmits<{ edit: [] }>()
+const emit = defineEmits<{ edit: []; batch: [] }>()
 
 function widgetIdx(name: string): number {
   return (props.data.widgetDefs as any[] | undefined)?.findIndex(d => d.name === name) ?? -1
@@ -111,6 +111,13 @@ onBeforeUnmount(() => {
     >
       <LayoutTemplate class="size-3.5" />
       {{ elementCount ? 'Edit layout' : 'Design layout' }}
+    </button>
+    <!-- Batch export — cartesian render across formats × bound variables -->
+    <button
+      class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white text-[11px] transition-colors cursor-pointer border border-white/10"
+      @click="emit('batch')"
+    >
+      Batch export
     </button>
     <div class="text-[10px] text-white/35 text-center leading-snug">
       <template v-if="elementCount">

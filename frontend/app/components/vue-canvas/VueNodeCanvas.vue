@@ -30,6 +30,7 @@ import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { BINDINGS_PROP, COLLECTION_PROP, LOOKUP_TYPE, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
 import { injectSmartLayoutVars } from '~/lib/collection/injectVars'
+import { BATCH_PROP, type BatchGridPayload } from '~/lib/collection/matrix'
 import { applyRefPromptTokens, materializeReferenceNodes } from '~/lib/refs/injectWorkflow'
 import { resolveRefFilename, type RefRegistry } from '~/lib/refs/registry'
 import { isRefBinding } from '~/lib/refs/binding'
@@ -3744,6 +3745,28 @@ function handleOpenSmartLayout(e: Event) {
   if (detail?.nodeId) smartLayoutOpenForId.value = String(detail.nodeId)
 }
 
+// Batch export sheet state — cartesian render across formats × bound
+// variables, opened from the SmartLayout node body or the editor modal.
+const batchExportOpenForId = ref<string | null>(null)
+function handleOpenBatchExport(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string }>).detail
+  if (detail?.nodeId) batchExportOpenForId.value = String(detail.nodeId)
+}
+
+/** Spawn a BatchGrid node beside the source Smart Layout with the results.
+ *  Always a fresh node — batches are compared side by side, never refreshed. */
+function handleBatchSpawn(payload: BatchGridPayload) {
+  const src = (nodes.value as any[]).find(n => String(n.id) === payload.sourceNodeId)
+  const pos = src
+    ? { x: (src.position?.x ?? 0) + ((src.data?.size?.[0] ?? 260) as number) + 80, y: (src.position?.y ?? 0) + 40 }
+    : { x: 200, y: 200 }
+  const gridNode = createNodeData('BatchGrid', pos)
+  if (!gridNode.data.properties) gridNode.data.properties = {}
+  gridNode.data.properties[BATCH_PROP] = payload
+  gridNode.data.title = `Batch · ${payload.layoutName}`
+  nodes.value.push(gridNode)
+}
+
 // Model gallery modal state — opened by the WidgetModelPicker launcher on
 // generator nodes. Each gallery has its own open-state ref so two distinct
 // modals (image vs video) don't share mount lifecycle; the dispatcher reads
@@ -3765,7 +3788,7 @@ const anyEditorModalOpen = computed(() => !!(
   compositorOpenForId.value || inpaintOpenForId.value || kineticTypeOpenForId.value ||
   poseOpenForId.value ||
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
-  smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
+  smartLayoutOpenForId.value || batchExportOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
   voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
   shaderStudioOpenForId.value || textureStudioOpenForId.value || shapeStudioOpenForId.value ||
@@ -3958,6 +3981,7 @@ onMounted(() => {
   window.addEventListener('sailor:bindControl', handleBindControl)
   window.addEventListener('sailor:unbindControl', handleUnbindControl)
   window.addEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
+  window.addEventListener('sailor:openBatchExport', handleOpenBatchExport)
   window.addEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.addEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -4016,6 +4040,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:bindControl', handleBindControl)
   window.removeEventListener('sailor:unbindControl', handleUnbindControl)
   window.removeEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
+  window.removeEventListener('sailor:openBatchExport', handleOpenBatchExport)
   window.removeEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -6841,6 +6866,18 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="smartLayoutOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Smart Layout batch export sheet (cartesian formats × variables) -->
+    <Teleport to="body">
+      <VueCanvasBatchExportModal
+        v-if="batchExportOpenForId"
+        :node-id="batchExportOpenForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="batchExportOpenForId = null"
+        @spawn="handleBatchSpawn"
       />
     </Teleport>
 
