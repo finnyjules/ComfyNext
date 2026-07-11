@@ -26,7 +26,7 @@ const homeTab: Tab = {
 function loadPersistedTabs(): { tabs: Tab[], activeTabId: string, projectCounter: number } {
   if (import.meta.server) return { tabs: [homeTab], activeTabId: 'home', projectCounter: 0 }
   try {
-    const saved = sessionStorage.getItem('comfynext:tabs')
+    const saved = sessionStorage.getItem('sailor:tabs')
     if (saved) {
       const data = JSON.parse(saved)
       // Ensure home tab is always present
@@ -67,15 +67,37 @@ function loadPersistedTabs(): { tabs: Tab[], activeTabId: string, projectCounter
   return { tabs: [homeTab], activeTabId: 'home', projectCounter: 0 }
 }
 
-const persisted = loadPersistedTabs()
-const tabs = ref<Tab[]>(persisted.tabs)
-const activeTabId = ref(persisted.activeTabId)
-let projectCounter = persisted.projectCounter
+// Initial state matches what the server renders (home only). The persisted
+// session state is restored AFTER hydration (see restorePersistedTabsOnce,
+// called from plugins/tabs-restore.client.ts on app:mounted): restoring at
+// module scope ran before hydration, so the client's first render disagreed
+// with the SSR HTML and every tab-dependent v-if/class in the layout logged
+// "Hydration completed but contains mismatches".
+const tabs = ref<Tab[]>([homeTab])
+const activeTabId = ref('home')
+let projectCounter = 0
+
+let tabsRestored = false
+export function restorePersistedTabsOnce() {
+  if (tabsRestored || import.meta.server) return
+  tabsRestored = true
+  const persisted = loadPersistedTabs()
+  // Tabs opened before restore (e.g. a deep link during setup) win over the
+  // persisted session: keep them and keep their active selection.
+  const openedEarly = tabs.value.filter(t => t.id !== 'home')
+  const merged = [...persisted.tabs]
+  for (const t of openedEarly) {
+    if (!merged.find(m => m.id === t.id)) merged.push(t)
+  }
+  tabs.value = merged
+  activeTabId.value = activeTabId.value !== 'home' ? activeTabId.value : persisted.activeTabId
+  projectCounter = Math.max(projectCounter, persisted.projectCounter)
+}
 
 function persistTabs() {
   if (import.meta.server) return
   try {
-    sessionStorage.setItem('comfynext:tabs', JSON.stringify({
+    sessionStorage.setItem('sailor:tabs', JSON.stringify({
       tabs: tabs.value,
       activeTabId: activeTabId.value,
       projectCounter,

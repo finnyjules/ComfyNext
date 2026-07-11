@@ -58,8 +58,14 @@ const projectTypes = [
 // Background SVGs for template cards (bg_1.svg to bg_18.svg)
 const BG_COUNT = 18
 
-// Fetch newest ComfyUI templates (scraped from comfy.org, creator.id === 'cr_comfyui')
-const comfyTemplates = computed(() => {
+// Fetch newest ComfyUI templates (scraped from comfy.org, creator.id === 'cr_comfyui').
+// useState, not computed: the catalog comes from module-scope faker.seed()
+// generation, and the SSR bundle and client bundle consume the seeded stream in
+// slightly different order, so each side materializes a slightly different
+// list — hydration then logs attribute/text mismatches on the starter cards.
+// useState computes once on the server and transfers via the payload, so the
+// client renders the exact list the server rendered.
+const comfyTemplates = useState('home-comfy-templates', () => {
   const newest = getNewest(30)
   return newest.filter((w: any) => w.creator?.id === 'cr_comfyui').slice(0, 12)
 })
