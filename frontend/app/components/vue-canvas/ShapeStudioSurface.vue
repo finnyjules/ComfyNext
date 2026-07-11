@@ -185,6 +185,16 @@ const distortionFilter = computed(() => (config.value.style.distortion > 0 ? `ur
 const canvas = ref<HTMLCanvasElement | null>(null)
 const webglOk = ref(true)
 const exporting = ref(false)
+// Short-lived, user-visible failure notice for the Export/Import actions (network down,
+// upload endpoint 500, unreadable/invalid settings JSON). Without this the button just
+// silently reverts from "Exporting…" and the console.error is invisible to the user.
+const actionError = ref('')
+let actionErrorTimer: ReturnType<typeof setTimeout> | null = null
+function setActionError(msg: string) {
+  actionError.value = msg
+  if (actionErrorTimer) clearTimeout(actionErrorTimer)
+  actionErrorTimer = setTimeout(() => { actionError.value = '' }, 5000)
+}
 let engine: ShapeEngine | null = null
 let raf = 0
 let rebuildRaf = 0
@@ -259,6 +269,7 @@ onBeforeUnmount(() => {
   saveConfig()
   if (raf) cancelAnimationFrame(raf)
   if (rebuildRaf) cancelAnimationFrame(rebuildRaf)
+  if (actionErrorTimer) clearTimeout(actionErrorTimer)
   engine?.dispose()
   engine = null
 })
@@ -267,6 +278,7 @@ onBeforeUnmount(() => {
 async function exportPng() {
   if (!engine) return
   exporting.value = true
+  actionError.value = ''
   // Stop the live rAF loop while frameToBlob temporarily resizes the renderer — otherwise
   // the loop's own engine.render(orbit) can land mid-resize (same race Gradient/Space Type
   // avoid via stopPreview()/startPreview() around their bakes).
@@ -284,6 +296,7 @@ async function exportPng() {
     }
   } catch (e) {
     console.error('[shape-studio] export failed', e)
+    setActionError('Export failed — please try again')
   } finally {
     exporting.value = false
     raf = requestAnimationFrame(frame)
@@ -308,8 +321,10 @@ async function onImportFile(e: Event) {
   try {
     const text = await file.text()
     config.value = mergeConfig(JSON.parse(text))
+    actionError.value = ''
   } catch (err) {
     console.error('[shape-studio] import settings failed', err)
+    setActionError('Could not read settings file')
   } finally {
     input.value = ''
   }
@@ -350,6 +365,7 @@ async function onImportFile(e: Event) {
       <StudioButton variant="secondary" @click="triggerImport">Import settings</StudioButton>
       <StudioButton variant="secondary" @click="exportSettings">Export settings</StudioButton>
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
+      <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
       <span class="flex-1" />
       <button
         type="button"
