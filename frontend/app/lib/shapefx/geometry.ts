@@ -21,6 +21,32 @@ function primitiveGeometry(kind: PrimitiveKind, density: number): THREE.BufferGe
   }
 }
 
+/**
+ * ConvexGeometry (used for Gem mode) only sets `position` + `normal` — no `uv` —
+ * so a Surface-fill MeshBasicMaterial with a `map` has nothing to sample and every
+ * fragment reads UV (0,0), rendering as one flat texel instead of the mapped fill.
+ * Backfill a simple planar (front-facing XY, normalized to the shape's own bounds)
+ * UV so gradients/patterns sweep across the gem like they do on primitives.
+ */
+function ensureUV(geo: THREE.BufferGeometry): void {
+  if (geo.getAttribute('uv')) return
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const n = pos.count
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i), y = pos.getY(i)
+    if (x < minX) minX = x; if (x > maxX) maxX = x
+    if (y < minY) minY = y; if (y > maxY) maxY = y
+  }
+  const spanX = maxX - minX || 1, spanY = maxY - minY || 1
+  const uv = new Float32Array(n * 2)
+  for (let i = 0; i < n; i++) {
+    uv[i * 2] = (pos.getX(i) - minX) / spanX
+    uv[i * 2 + 1] = (pos.getY(i) - minY) / spanY
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+}
+
 /** Build the render geometry for a config. Non-indexed → flat/crisp facets. */
 export function buildGeometry(config: ShapeConfig): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry
@@ -42,5 +68,6 @@ export function buildGeometry(config: ShapeConfig): THREE.BufferGeometry {
   if (flat !== geo) geo.dispose()
   flat.computeVertexNormals()
   flat.center()
+  ensureUV(flat)
   return flat
 }
