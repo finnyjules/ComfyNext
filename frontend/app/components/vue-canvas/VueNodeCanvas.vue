@@ -29,6 +29,7 @@ import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { wiredTargets, pushVarPreview } from '~/lib/collection/preview'
 import { BINDINGS_PROP, COLLECTION_PROP, LOOKUP_TYPE, VARS_TYPE, type VarBindings } from '~/lib/collection/types'
+import { injectSmartLayoutVars } from '~/lib/collection/injectVars'
 import { applyRefPromptTokens, materializeReferenceNodes } from '~/lib/refs/injectWorkflow'
 import { resolveRefFilename, type RefRegistry } from '~/lib/refs/registry'
 import { isRefBinding } from '~/lib/refs/binding'
@@ -72,6 +73,7 @@ import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import CollectionNode from './CollectionNode.vue'
+import BatchGridNode from './BatchGridNode.vue'
 import ReferenceNode from '~/components/vue-canvas/ReferenceNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
@@ -235,6 +237,7 @@ const nodeTypes = {
   'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
   'collection': markRaw(CollectionNode),
   'reference': markRaw(ReferenceNode),
+  'batch-grid': markRaw(BatchGridNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }

@@ -202,6 +202,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Reference: frontend-only shorthand card for an @name registry entry —
   // no backend class_type, one IMAGE output resolved at submit time (Task 10).
   Reference: 'reference',
+  // BatchGrid: frontend-only results deck from Smart Layout batch export —
+  // no backend class_type; holds rendered output URLs in properties.
+  BatchGrid: 'batch-grid',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,
