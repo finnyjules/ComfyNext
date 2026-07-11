@@ -18,16 +18,28 @@ async function refresh(): Promise<void> {
 }
 
 async function save(entry: BrandKitEntry): Promise<void> {
+  // Optimistic upsert so rapid successive edits (e.g. add-color then
+  // rename) read each other's in-memory state instead of racing the PUT's
+  // round trip and silently overwriting one another.
+  const idx = kits.value.findIndex(k => k.id === entry.id)
+  if (idx === -1) kits.value = [...kits.value, entry]
+  else kits.value = kits.value.map((k, i) => (i === idx ? entry : k))
+
   const res = await fetch(`/api/brand-kits/${entry.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(entry),
   })
-  if (!res.ok) throw new Error(`save kit failed: ${res.status}`)
+  if (!res.ok) {
+    await refresh() // roll back optimistic state to server truth
+    throw new Error(`save kit failed: ${res.status}`)
+  }
   await refresh()
 }
 
 async function remove(id: string): Promise<void> {
+  // Optimistic removal — see save() above for rationale.
+  kits.value = kits.value.filter(k => k.id !== id)
   await fetch(`/api/brand-kits/${id}`, { method: 'DELETE' })
   await refresh()
 }
