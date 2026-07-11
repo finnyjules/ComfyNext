@@ -8,8 +8,11 @@
  */
 import { LayoutTemplate } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useNode, useVueFlow } from '@vue-flow/core'
 import { VAR_PREVIEW_PROP, BINDINGS_PROP } from '~/lib/collection/types'
 import { readTemplateFromNode } from '~/lib/collection/bindables'
+import { wiredLayerProps } from '~/lib/collection/wiredProps'
+import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
 
 const props = defineProps<{ data: any }>()
 const emit = defineEmits<{ edit: []; batch: [] }>()
@@ -56,16 +59,37 @@ let renderGeneration = 0
 
 const varCount = computed(() => Object.keys(props.data.properties?.[BINDINGS_PROP] ?? {}).length)
 
+// The node's graph context — for resolving wired image/text sockets into the
+// scrub preview so it matches what a real run bakes (not a text-only ghost).
+const { getNodes, getEdges } = useVueFlow()
+const vfNode = useNode()
+
+// Run results replace the scrub preview: once the node has real output
+// (ComfyNode's result section below this body), a second — client-rendered —
+// preview is just a duplicate, and historically a wrong one.
+const hasRunResults = computed(() => !!(props.data.images?.length))
+
 async function renderVarPreview() {
   const preview = props.data.properties?.[VAR_PREVIEW_PROP]
   const template = readTemplateFromNode({ data: props.data }) as any
-  if (!preview || !template) return
+  if (!preview || !template || hasRunResults.value) return
   const generation = ++renderGeneration
   try {
+    // Wired sockets layer UNDER the scrubbed collection values; image URLs
+    // absolutized for the server-side renderer.
+    const wired: Record<string, string> = {}
+    for (const [k, v] of Object.entries(wiredLayerProps(getNodes.value as any[], getEdges.value as any[], String(vfNode.id)))) {
+      wired[k] = k.startsWith('image_layer_') ? new URL(v, window.location.origin).toString() : v
+    }
+    const renderProps = { ...wired, ...(preview.props ?? {}) }
+    // Mirror the backend: seed an element for every connected socket the
+    // saved layout doesn't reference yet (full-bleed image_layer_1 etc.).
+    const clone = JSON.parse(JSON.stringify(template))
+    if (clone.version === 2 || clone.version === 3) autopopulateV2(clone, renderProps)
     const res = await fetch('/api/render-template', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ template, aspect: template.master, props: preview.props ?? {}, brand: preview.brand ?? {} }),
+      body: JSON.stringify({ template: clone, aspect: clone.master, props: renderProps, brand: preview.brand ?? {} }),
     })
     if (!res.ok) return
     const blob = await res.blob()
@@ -82,7 +106,7 @@ watch(
   () => props.data.properties?.[VAR_PREVIEW_PROP],
   (preview) => {
     if (debounceHandle) clearTimeout(debounceHandle)
-    if (!preview) return
+    if (!preview || hasRunResults.value) return
     debounceHandle = setTimeout(renderVarPreview, 400)
   },
   { deep: true, immediate: true },
@@ -99,8 +123,10 @@ onBeforeUnmount(() => {
     <div v-if="varCount" class="flex justify-end">
       <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/50">{{ varCount }} vars</span>
     </div>
+    <!-- Scrub preview — only until the node has real run results below;
+         after that it would just duplicate (and previously contradict) them. -->
     <img
-      v-if="previewUrl"
+      v-if="previewUrl && !hasRunResults"
       :src="previewUrl"
       class="w-full rounded-md border border-white/10 mb-1"
     />
