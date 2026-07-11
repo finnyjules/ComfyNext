@@ -12,7 +12,10 @@
 
 - **Work on `main`, no feature branches.** Commit directly to `main`.
 - **Stage explicitly.** Every commit uses explicit file paths (`git add <path> <path>`). NEVER `git add -A` / `git add .` — concurrent sessions stage mid-commit.
-- **Studio event bus uses the `sailor:` prefix** (product name), NOT `comfynext:`. Open event: `sailor:openShapeStudio`; output event: `sailor:shapeStudioOutput`.
+- **Repo lives at `/Users/julien/Documents/GitHub/Sailor`** (the ComfyNext→Sailor folder rename is done; there is no `ComfyNext` directory). All paths below are repo-relative from there.
+- **Studio event bus uses the `sailor:` prefix** (product name), NOT `comfynext:`. Open event: `sailor:openShapeStudio`; output event: `sailor:shapeStudioOutput`. Verified against the live codebase: every existing studio (`sailor:openSpaceType`, `sailor:openGradientStudio`, `sailor:gradientStudioOutput`, …) uses `sailor:` across 71 files.
+- **Backend route naming is `/sailor/…`** (e.g. the video fast-follow's encoder is `POST /sailor/spacetype_encode`, confirmed in `comfy_extras`). Not needed for the PNG-only v1, but don't type `/comfynext/`.
+- **Confirmed contracts (do not re-derive):** `fillTexture(three: typeof THREE, fill: Fill): THREE.Texture | null` in `frontend/app/lib/spacetype/fills.ts`; `detectWebGL(): boolean` in `frontend/app/lib/spacetype/webgl.ts`; registration targets `frontend/app/data/studio-options.ts`, `frontend/app/lib/agent/capabilities.ts` all exist as referenced.
 - **Prod-build import rule:** files under `frontend/shared/**` must be imported via the `~~/` alias, never relative. (This plan keeps all new code under `frontend/app/lib/**`, which uses normal relative/`~/` imports — but if any shared file is touched, honor this.)
 - **The studio is deliberately flat:** unlit `MeshBasicMaterial` only. No lights, no `MeshStandardMaterial`, no environment maps.
 - **Unit test files** live in `frontend/tests/unit/` and are named `*.unit.spec.ts`. Run with `npx vitest run <file>` (single) or `npm run test:unit` (all), from `frontend/`.
@@ -815,7 +818,7 @@ export function buildSurfaceTexture(config: ShapeConfig): THREE.Texture | null {
 - [ ] **Step 2: Typecheck compiles**
 
 Run: `cd frontend && npx vue-tsc --noEmit -p tsconfig.json 2>&1 | grep -i shapefx/surface || echo "no shapefx/surface type errors"`
-Expected: `no shapefx/surface type errors` (verify `fillTexture`'s signature matches `(three, fill)` — adjust the call if the real signature differs; confirm against `frontend/app/lib/spacetype/fills.ts`).
+Expected: `no shapefx/surface type errors`. (`fillTexture`'s signature is confirmed `fillTexture(three: typeof THREE, fill: Fill): THREE.Texture | null`, so the `fillTexture(THREE, fill)` call above is correct as written.)
 
 - [ ] **Step 3: Commit**
 
@@ -1183,4 +1186,6 @@ git commit -m "feat(shape-studio): register node + Studios-door entry + agent ca
 
 **Type consistency:** `ShapeConfig` shape is defined once in Task 1 and consumed unchanged in Tasks 2–9. `reroll`/`mergeConfig`/`buildGeometry`/`applyVertexColors`/`paletteFor`/`buildSurfaceTexture`/`ShapeEngine` names match across producer/consumer blocks. Orbit shape `{ yaw, pitch, zoom }` is consistent between Task 7 and Task 9. `sailor:openShapeStudio` / `sailor:shapeStudioOutput` consistent between Tasks 9 and 10.
 
-**One risk flagged for the implementer:** Task 6 assumes `fillTexture(THREE, fill)`'s signature; confirm against `frontend/app/lib/spacetype/fills.ts` before use and adjust the call if it differs. Task 9's `recordAsset`/output-emit must be copied from `GradientStudioSurface.vue` rather than guessed.
+**Naming verified for Sailor:** the `sailor:` event prefix, `/sailor/…` backend routes, `fillTexture`/`detectWebGL` signatures, and all registration targets are confirmed against the live repo (see Global Constraints). No `comfynext:`/`ComfyNext` contract remains that the plan depends on.
+
+**One risk flagged for the implementer:** Task 9's `recordAsset`/output-emit path must be copied from `GradientStudioSurface.vue`'s image path rather than guessed — it's the one contract not pinned to an exact signature here.
