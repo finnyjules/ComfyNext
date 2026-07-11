@@ -1,12 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import * as THREE from 'three'
 import { buildGeometry } from '../../app/lib/shapefx/geometry'
 import { applyVertexColors, paletteFor } from '../../app/lib/shapefx/color'
-import { DEFAULT_CONFIG, type ShapeConfig, type ColorRule } from '../../app/lib/shapefx/config'
+import { DEFAULT_CONFIG, type ShapeConfig, type ColoringMode, type ColorDirection } from '../../app/lib/shapefx/config'
 
-const cfg = (rule: ColorRule): ShapeConfig => ({
-  ...DEFAULT_CONFIG, palette: { ...DEFAULT_CONFIG.palette, rule },
+const cfg = (coloring: ColoringMode, direction: ColorDirection = 'vertical'): ShapeConfig => ({
+  ...DEFAULT_CONFIG, palette: { ...DEFAULT_CONFIG.palette, coloring, direction },
 })
+const colorsOf = (c: ShapeConfig): number[] => {
+  const g = buildGeometry(c); applyVertexColors(g, c)
+  return Array.from(g.getAttribute('color').array as Float32Array)
+}
+const uniqueCount = (arr: number[]): number => {
+  const set = new Set<string>()
+  for (let i = 0; i < arr.length; i += 3) set.add(`${arr[i]!.toFixed(3)},${arr[i + 1]!.toFixed(3)},${arr[i + 2]!.toFixed(3)}`)
+  return set.size
+}
 
 describe('shapefx color', () => {
   it('paletteFor returns hex swatches', () => {
@@ -16,30 +24,48 @@ describe('shapefx color', () => {
   })
 
   it('applyVertexColors adds a color attribute matching the position count', () => {
-    const g = buildGeometry(cfg('facet'))
-    applyVertexColors(g, cfg('facet'))
+    const g = buildGeometry(cfg('smooth')); applyVertexColors(g, cfg('smooth'))
     const col = g.getAttribute('color')
     expect(col).toBeTruthy()
     expect(col.count).toBe(g.getAttribute('position').count)
     expect(col.itemSize).toBe(3)
   })
 
-  it('is deterministic for a given seed + palette', () => {
-    const a = buildGeometry(cfg('facet')); applyVertexColors(a, cfg('facet'))
-    const b = buildGeometry(cfg('facet')); applyVertexColors(b, cfg('facet'))
-    expect(Array.from(a.getAttribute('color').array)).toEqual(Array.from(b.getAttribute('color').array))
+  it('is deterministic for a given seed + palette (all three modes)', () => {
+    for (const m of ['smooth', 'faceted', 'scatter'] as const) {
+      expect(colorsOf(cfg(m))).toEqual(colorsOf(cfg(m)))
+    }
   })
 
-  it('facet vs depth rules produce different colorings', () => {
-    const a = buildGeometry(cfg('facet')); applyVertexColors(a, cfg('facet'))
-    const b = buildGeometry(cfg('depth')); applyVertexColors(b, cfg('depth'))
-    expect(Array.from(a.getAttribute('color').array)).not.toEqual(Array.from(b.getAttribute('color').array))
+  it('the three coloring modes produce different colorings', () => {
+    const s = colorsOf(cfg('smooth')), f = colorsOf(cfg('faceted')), x = colorsOf(cfg('scatter'))
+    expect(s).not.toEqual(f)
+    expect(f).not.toEqual(x)
+    expect(s).not.toEqual(x)
   })
 
-  it('depth vs height rules produce different colorings (guards the cz/cy axis swap)', () => {
-    const d = buildGeometry(cfg('depth')); applyVertexColors(d, cfg('depth'))
-    const h = buildGeometry(cfg('height')); applyVertexColors(h, cfg('height'))
-    expect(Array.from(d.getAttribute('color').array)).not.toEqual(Array.from(h.getAttribute('color').array))
+  it('smooth/faceted are position-based (seed-independent); scatter is seed-driven', () => {
+    // the gradient depends only on geometry + palette params, never the seed…
+    for (const m of ['smooth', 'faceted'] as const) {
+      expect(colorsOf({ ...cfg(m), seed: '#aaaa1111' })).toEqual(colorsOf({ ...cfg(m), seed: '#bbbb2222' }))
+    }
+    // …but the confetti re-rolls with the seed.
+    expect(colorsOf({ ...cfg('scatter'), seed: '#aaaa1111' })).not.toEqual(colorsOf({ ...cfg('scatter'), seed: '#bbbb2222' }))
+  })
+
+  it('smooth on a rich shape yields a genuinely gradient (many-toned) surface', () => {
+    // a torus has vertices spread along Y, so a vertical smooth ramp must yield far more
+    // than the handful of discrete harmony swatches.
+    const torus: ShapeConfig = { ...DEFAULT_CONFIG, shape: { ...DEFAULT_CONFIG.shape, primitive: 'torus' }, palette: { ...DEFAULT_CONFIG.palette, coloring: 'smooth', direction: 'vertical' } }
+    expect(uniqueCount(colorsOf(torus))).toBeGreaterThan(paletteFor(torus).length * 4)
+  })
+
+  it('direction changes the smooth gradient (vertical vs radial vs angular differ)', () => {
+    // torus is a good probe: it has real extent on every axis
+    const torus: ShapeConfig = { ...DEFAULT_CONFIG, shape: { ...DEFAULT_CONFIG.shape, primitive: 'torus' } }
+    const withDir = (direction: ColorDirection) => colorsOf({ ...torus, palette: { ...torus.palette, coloring: 'smooth', direction } })
+    expect(withDir('vertical')).not.toEqual(withDir('radial'))
+    expect(withDir('radial')).not.toEqual(withDir('angular'))
   })
 
   it('a wheel harmony (triadic) yields distinct swatches, not modulo-duplicated hues', () => {

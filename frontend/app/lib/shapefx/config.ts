@@ -5,7 +5,13 @@ export type ShapeMode = 'primitive' | 'gem'
 export type PrimitiveKind =
   | 'cube' | 'sphere' | 'cone' | 'cylinder' | 'prism' | 'torus' | 'icosahedron' | 'octahedron'
 export type FillMode = 'facets' | 'surface'
-export type ColorRule = 'facet' | 'depth' | 'height'
+/** How the harmony ramp is painted onto the shape:
+ *   smooth  — per-vertex sample of the interpolated ramp (gradient sweeps the surface)
+ *   faceted — one flat ramp-tone per facet, progressing smoothly facet-to-facet
+ *   scatter — each facet a random discrete swatch + jitter (the low-poly confetti look) */
+export type ColoringMode = 'smooth' | 'faceted' | 'scatter'
+/** Which spatial axis the smooth/faceted ramp follows. */
+export type ColorDirection = 'vertical' | 'depth' | 'radial' | 'angular'
 export type Projection = 'orthographic' | 'perspective'
 export type SectionKey = 'shape' | 'palette' | 'style'
 
@@ -25,10 +31,11 @@ export interface ShapeParams {
 
 export interface PaletteParams {
   harmony: HarmonyType
-  baseHue: number      // 0–360
-  saturation: number   // 0–100
-  lightness: number    // 0–100
-  rule: ColorRule
+  baseHue: number         // 0–360
+  saturation: number      // 0–100
+  lightness: number       // 0–100
+  coloring: ColoringMode
+  direction: ColorDirection // used by smooth & faceted (ignored by scatter)
 }
 
 export interface StyleParams {
@@ -59,7 +66,7 @@ export const DEFAULT_CONFIG: ShapeConfig = {
   seed: '#3a7f21c0',
   fillMode: 'facets',
   shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, projection: 'orthographic' },
-  palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, rule: 'facet' },
+  palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'smooth', direction: 'vertical' },
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
   style: { grain: 20, distortion: 0, background: '#000000' },
   locks: { shape: false, palette: false, style: false },
@@ -74,8 +81,14 @@ const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : 
 const MODES = ['primitive', 'gem'] as const
 const PRIMS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron'] as const
 const FILLMODES = ['facets', 'surface'] as const
-const RULES = ['facet', 'depth', 'height'] as const
+const COLORINGS = ['smooth', 'faceted', 'scatter'] as const
+const DIRECTIONS = ['vertical', 'depth', 'radial', 'angular'] as const
 const PROJ = ['orthographic', 'perspective'] as const
+
+// Legacy migration: the shipped v1 used a single `rule` ('facet'|'depth'|'height').
+// Map old exported/persisted configs onto the new coloring+direction pair.
+const LEGACY_COLORING: Record<string, ColoringMode> = { facet: 'scatter', depth: 'faceted', height: 'faceted' }
+const LEGACY_DIRECTION: Record<string, ColorDirection> = { depth: 'depth', height: 'vertical' }
 const HARMONIES = ['monochromatic', 'complementary', 'split-complementary', 'analogous', 'accented-analogous', 'triadic', 'tetradic', 'compound'] as const
 const FILLTYPES = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr'] as const
 
@@ -105,7 +118,8 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       baseHue: num(pa.baseHue, d.palette.baseHue),
       saturation: num(pa.saturation, d.palette.saturation),
       lightness: num(pa.lightness, d.palette.lightness),
-      rule: oneOf(pa.rule, RULES, d.palette.rule),
+      coloring: oneOf(pa.coloring, COLORINGS, LEGACY_COLORING[pa.rule] ?? d.palette.coloring),
+      direction: oneOf(pa.direction, DIRECTIONS, LEGACY_DIRECTION[pa.rule] ?? d.palette.direction),
     },
     fill: {
       type: oneOf(fi.type, FILLTYPES, d.fill.type),

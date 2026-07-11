@@ -91,7 +91,8 @@ const shapeModeProxy = enumProxy(() => config.value.shape.mode, v => { config.va
 const primitiveProxy = enumProxy(() => config.value.shape.primitive, v => { config.value.shape.primitive = v })
 const projectionProxy = enumProxy(() => config.value.shape.projection, v => { config.value.shape.projection = v })
 const harmonyProxy = enumProxy(() => config.value.palette.harmony, v => { config.value.palette.harmony = v })
-const ruleProxy = enumProxy(() => config.value.palette.rule, v => { config.value.palette.rule = v })
+const coloringProxy = enumProxy(() => config.value.palette.coloring, v => { config.value.palette.coloring = v })
+const directionProxy = enumProxy(() => config.value.palette.direction, v => { config.value.palette.direction = v })
 const fillTypeProxy = enumProxy(() => config.value.fill.type, v => { config.value.fill.type = v })
 const fillModeProxy = enumProxy(() => config.value.fillMode, v => { config.value.fillMode = v })
 
@@ -446,8 +447,12 @@ async function onImportFile(e: Event) {
         <StudioSlider v-model="config.palette.saturation" label="Saturation" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.saturation" />
         <StudioSlider v-model="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness" />
         <div>
-          <label class="mb-1 block text-[11px] text-white/55">Rule</label>
-          <StudioSegmented v-model="ruleProxy" :options="['facet', 'depth', 'height']" />
+          <label class="mb-1 block text-[11px] text-white/55">Coloring</label>
+          <StudioSegmented v-model="coloringProxy" :options="['smooth', 'faceted', 'scatter']" />
+        </div>
+        <div v-if="config.palette.coloring !== 'scatter'">
+          <label class="mb-1 block text-[11px] text-white/55">Direction</label>
+          <StudioSegmented v-model="directionProxy" :options="['vertical', 'depth', 'radial', 'angular']" />
         </div>
       </StudioSection>
 
