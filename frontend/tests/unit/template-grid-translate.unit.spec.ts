@@ -121,6 +121,58 @@ describe('templateToSatori (v2)', () => {
     expect(text.props.style.borderRadius).toBe(8)
   })
 
+  it('does not stretch line-height into expressive word placement on vertical justify', () => {
+    // The expressive engine distributes word `top`s across the box height
+    // itself — the container's CSS line-height must stay at the element's own
+    // value (editor parity). The justify-stretched line-height (rect.h /
+    // numLines) is for the plain-text path only; leaking it here inflates
+    // every word's line box, shifting glyphs down and cropping the last line.
+    const t: any = {
+      ...T,
+      elements: [
+        { id: 'h', type: 'text', content: 'A new kind of skincare is coming', level: 'body', priority: 1,
+          region: { col: 2, colSpan: 14, row: 2, rowSpan: 14 },
+          style: { color: '#fff', valign: 'justify', fontSize: 100,
+            expressive: { wordsPerLine: 1, placement: 'random', jitterX: 1, jitterY: 0, seed: 4 } } },
+      ],
+    }
+    const nodes = flatten(templateToSatori(t, '1x1', {}).tree)
+    const container = nodes.find(n => Array.isArray(n?.props?.children)
+      && n.props.children.some((c: any) => c?.props?.children === 'coming'))
+    expect(container).toBeTruthy()
+    expect(container.props.style.lineHeight).toBe(1.1)
+    // Every word's line box must fit inside the element box.
+    const lineBox = 100 * 1.1
+    for (const w of container.props.children) {
+      const top = Number.parseFloat(w.props.style.top)
+      expect(top + lineBox).toBeLessThanOrEqual(Number.parseFloat(container.props.style.height) + 0.5)
+    }
+  })
+
+  it('applies manual word nudges in the export (editor parity, no translate code)', () => {
+    const mk = (nudges?: Record<number, { dx: number; dy: number }>): any => ({
+      ...T,
+      elements: [
+        { id: 'h', type: 'text', content: 'alpha beta', level: 'body', priority: 1,
+          region: { col: 2, colSpan: 14, row: 2, rowSpan: 14 },
+          style: { color: '#fff', fontSize: 100,
+            expressive: { wordsPerLine: 1, placement: 'random', jitterX: 0, jitterY: 0, seed: 1,
+              ...(nudges ? { nudges } : {}) } } },
+      ],
+    })
+    const px = (v: unknown) => Number.parseFloat(String(v))
+    const wordNode = (tree: any, text: string) => flatten(tree).find(n => n?.props?.children === text)
+    const container = flatten(templateToSatori(mk(), '1x1', {}).tree)
+      .find(n => Array.isArray(n?.props?.children) && n.props.children.some((c: any) => c?.props?.children === 'beta'))
+    const boxW = px(container.props.style.width)
+    const boxH = px(container.props.style.height)
+
+    const before = wordNode(templateToSatori(mk(), '1x1', {}).tree, 'beta')
+    const after = wordNode(templateToSatori(mk({ 1: { dx: 0.1, dy: 0.1 } }), '1x1', {}).tree, 'beta')
+    expect(px(after.props.style.left)).toBeCloseTo(px(before.props.style.left) + 0.1 * boxW, 1)
+    expect(px(after.props.style.top)).toBeCloseTo(px(before.props.style.top) + 0.1 * boxH, 1)
+  })
+
   it('lets a wired brand socket override the template brand', () => {
     const branded: any = {
       ...T,
