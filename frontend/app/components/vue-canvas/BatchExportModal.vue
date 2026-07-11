@@ -12,6 +12,7 @@ import { readTemplateFromNode } from '~/lib/collection/bindables'
 import { resolveBindings } from '~/lib/collection/resolve'
 import { findWiredCollectionNode } from '~/composables/useStudioVarBindings'
 import { wiredLayerProps } from '~/lib/collection/wiredProps'
+import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
 import { BINDINGS_PROP, COLLECTION_PROP } from '~/lib/collection/types'
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
 
@@ -50,6 +51,25 @@ const wiredProps = computed<Record<string, string>>(() => {
     out[k] = k.startsWith('image_layer_') ? new URL(v, window.location.origin).toString() : v
   }
   return out
+})
+
+/** The template the batch actually renders: a clone with a default element
+ *  auto-created for every connected socket no element references yet — the
+ *  client-side mirror of the backend's `_autopopulate_for_template`, without
+ *  which a saved layout that predates the wired image simply has no image
+ *  element to render into. Bound sockets count as connected too. */
+const renderTemplate = computed<any | null>(() => {
+  const t = template.value
+  if (!t) return null
+  const clone = JSON.parse(JSON.stringify(t))
+  const connected: Record<string, string> = { ...wiredProps.value }
+  for (const path of Object.keys(bindings.value)) {
+    if (path.startsWith('props.')) connected[path.slice(6)] ??= ''
+  }
+  if ((clone as any).version === 2 || (clone as any).version === 3) {
+    autopopulateV2(clone, connected)
+  }
+  return clone
 })
 
 /** All crossable pools with their FULL value lists (selection is separate). */
@@ -130,7 +150,7 @@ async function generate() {
     items.value = combos.map((c, i) => ({
       id: `m-${runStamp}-${i}`, rowIndex: i, rowId: '', outputId: c.format, status: 'queued' as const,
     }))
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp, template.value, wiredProps.value)
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp, renderTemplate.value, wiredProps.value)
     await runBatch(items.value, renderItem, {
       concurrency: 3, signal,
       onUpdate: () => { items.value = [...items.value] },
@@ -157,7 +177,7 @@ async function retryFailed() {
   const signal = { cancelled: false }
   runSignal.value = signal
   try {
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry', template.value, wiredProps.value)
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry', renderTemplate.value, wiredProps.value)
     await runBatch(failed, renderItem, { concurrency: 3, signal, onUpdate: () => { items.value = [...items.value] } })
   } finally {
     running.value = false

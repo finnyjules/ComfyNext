@@ -12,8 +12,7 @@ import type { ComputedRef } from 'vue'
 
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
-import { allElements } from '~~/shared/template-grid/sections'
-import { fineGridDims } from '~~/shared/template-grid/grid'
+import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE } from '~/lib/collection/types'
@@ -69,73 +68,8 @@ const isGrid = computed(() => {
   return v === 2 || v === 3
 })
 
-/** True when some element (top-level or section child) already renders the
- * `props.<key>` socket — so we seed a default element per connected socket
- * exactly once, and a layer wired *after* the layout has content still shows. */
-function refsSocket(layout: AnyTemplate, key: string): boolean {
-  const token = `props.${key}`
-  return allElements(layout as any).some((e: any) =>
-    e?.id === key || String(e?.content ?? '').includes(token))
-}
-
-/** v2 twin of the Python _autopopulate_elements_v2: one grid-region element
- * per connected layer socket that no element references yet — whether the
- * layout is empty or already has content (e.g. an image wired into a
- * text-only layout). Strip/skyscraper placement comes from the resolver's
- * default class layouts. */
-function autopopulateV2(layout: TemplateV2, connected: Record<string, string>) {
-  const keys = Object.keys(connected).sort()
-  for (const key of keys) {
-    if (refsSocket(layout, key)) continue
-    if (key.startsWith('image_layer_')) {
-      const idx = Number(key.slice('image_layer_'.length))
-      if (idx === 1) {
-        // First image = full-bleed background: spans the whole grid, bleeds to
-        // the canvas edges, and sits at the BACK of the z-order (front of the
-        // list / order) so it reads as the backdrop behind the text.
-        const { cols, rows } = fineGridDims(layout as any, layout.formats[layout.master])
-        layout.elements.unshift({
-          id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 4,
-          region: { col: 1, colSpan: cols, row: 1, rowSpan: rows },
-          bleed: true,
-          focal: { x: 0.5, y: 0.5 },
-          style: { fit: 'cover' },
-          content: `{{ props.${key} }}`,
-        })
-        const ord = (layout as any).order
-        if (Array.isArray(ord) && !ord.includes(key)) ord.unshift(key)
-      } else {
-        layout.elements.push({
-          id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 5 + idx,
-          region: { col: 6, colSpan: 1, row: Math.min(6, idx - 1), rowSpan: 1 },
-          collapse: 'mark',
-          style: { fit: 'cover' },
-          content: `{{ props.${key} }}`,
-        })
-      }
-    } else if (key.startsWith('text_layer_')) {
-      const idx = Number(key.slice('text_layer_'.length))
-      if (idx === 1) {
-        layout.elements.push({
-          id: key, type: 'text', role: `TEXT_LAYER_${idx}`, priority: 1,
-          level: 'display',
-          region: { col: 1, colSpan: 6, row: 4, rowSpan: 2 },
-          overflow: 'shrink-then-truncate',
-          style: { fontWeight: 700, color: '#ffffff' },
-          content: `{{ props.${key} }}`,
-        })
-      } else {
-        layout.elements.push({
-          id: key, type: 'text', role: `TEXT_LAYER_${idx}`, priority: 5,
-          level: 'subhead',
-          region: { col: 1, colSpan: 4, row: 6, rowSpan: 1 },
-          style: { color: '#ffffff' },
-          content: `{{ props.${key} }}`,
-        })
-      }
-    }
-  }
-}
+// refsSocket/autopopulateV2 moved to ~~/shared/template-grid/autopopulate —
+// shared with the batch-export render path so both mirror the backend.
 
 // Snapshot the initial layout once on mount — the editor mutates its own copy
 // and we only commit back on Save.
