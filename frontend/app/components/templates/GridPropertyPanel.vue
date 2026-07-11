@@ -4,15 +4,15 @@
  * setRegion so master vs format-class semantics live in one place; everything
  * else patches the element directly (v2 has no per-aspect style overrides).
  */
-import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2, Expand } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2, Expand, ArrowUp } from 'lucide-vue-next'
 
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useCopyAssist } from '~/composables/useCopyAssist'
-import type { CopyAssistMode } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
+import { BRAND_LOGO_SLOT_KEYS } from '~~/shared/brand/types'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { isBoundToken, nextFreeSocket, tokenizeElementContent, columnLabelForElement } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
@@ -106,8 +106,8 @@ function writeThroughBoundText(value: string) {
 // (frontend/server/lib/copyAssist.ts) — { options: { text, language? }[] }.
 
 const copyAssist = useCopyAssist()
-const copyMode = ref<CopyAssistMode>('variations')
 const copyBrief = ref('')
+const showTranslate = ref(false)
 const COPY_LANGUAGES = ['EN', 'FR', 'DE', 'ES', 'IT', 'PT', 'NL', 'JA'] as const
 const copyLanguages = ref<string[]>([])
 const copyLanguageCustom = ref('')
@@ -130,18 +130,25 @@ const copySourceText = computed(() => {
   return boundSocket.value ? resolvedBoundValue.value : textEl.value.content
 })
 
-async function runCopyAssist() {
+// context.brandTone would add campaign coherence, but no brand-tone field exists
+// on the brand kit today (shared/brand/types.ts has colors/fonts/logo only) —
+// skipped per the plan's "skip if not cheaply available" clause.
+
+/** Rewrite the current copy: plain (no instruction) or a one-tap nudge
+ *  (Shorter / Punchier), always returning a list of options. */
+async function runVariations(instruction?: string) {
   if (!textEl.value) return
-  const payload: Parameters<typeof copyAssist.run>[0] =
-    copyMode.value === 'translate'
-      ? { mode: 'translate', text: copySourceText.value, languages: copyLanguages.value, count: 5 }
-      : copyMode.value === 'brief'
-        ? { mode: 'brief', text: copySourceText.value, brief: copyBrief.value, count: 5 }
-        : { mode: 'variations', text: copySourceText.value, count: 5 }
-  // context.brandTone would add campaign coherence, but no brand-tone field
-  // exists on the brand kit today (shared/brand/types.ts has colors/fonts/logo
-  // only) — skipped per the plan's "skip if not cheaply available" clause.
-  await copyAssist.run(payload)
+  await copyAssist.run({ mode: 'variations', text: copySourceText.value, instruction, count: 5 })
+}
+/** Write fresh copy for the slot from the free-text brief. */
+async function runBrief() {
+  if (!textEl.value || !copyBrief.value.trim()) return
+  await copyAssist.run({ mode: 'brief', text: copySourceText.value, brief: copyBrief.value, count: 5 })
+}
+/** Localize the current copy into the picked languages (one option each). */
+async function runTranslate() {
+  if (!textEl.value || !copyLanguages.value.length) return
+  await copyAssist.run({ mode: 'translate', text: copySourceText.value, languages: copyLanguages.value })
 }
 
 /** Click an option: apply to the element (bound → cell write-through,
@@ -200,7 +207,7 @@ watch(() => el.value?.id, () => {
   copyBrief.value = ''
   copyLanguages.value = []
   copyLanguageCustom.value = ''
-  copyMode.value = 'variations'
+  showTranslate.value = false
 })
 
 /** Display name for the current output (variation-aware). */
@@ -316,6 +323,18 @@ function bindFontToBrand(slot: 'fontDisplay' | 'fontBody') {
 }
 const hasBrandLogo = computed(() => typeof (effectiveBrand.value as any).logo === 'string')
 const usingBrandLogo = computed(() => el.value?.type === 'image' && (el.value as any).content === '{{ brand.logo }}')
+// Non-primary logo slots available on the effective brand (primary is covered
+// by the existing "Use brand logo" button via the legacy back-fill).
+const brandLogoSlots = computed(() => {
+  const logos = (effectiveBrand.value as any).logos as Record<string, string> | undefined
+  if (!logos) return [] as string[]
+  return BRAND_LOGO_SLOT_KEYS.filter(s => s !== 'primary' && typeof logos[s] === 'string')
+})
+const brandAssets = computed(() =>
+  (((effectiveBrand.value as any).assets ?? []) as { id: string; name: string; path: string }[]))
+function usingSlot(slot: string) {
+  return el.value?.type === 'image' && (el.value as any).content === `{{ brand.logos.${slot} }}`
+}
 
 // -- Text panel / scrim ------------------------------------------------------
 const panel = computed(() => textEl.value?.style?.panel ?? null)
@@ -561,108 +580,6 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </div>
     </StudioSection>
 
-    <!-- Copy assistant — AI affordance, gen-pastel treatment. Text elements only. -->
-    <div v-if="textEl" class="rounded-lg gen-pastel p-[1px]">
-      <div class="rounded-[7px] bg-[#15151a] p-2.5 flex flex-col gap-2">
-        <div class="flex items-center gap-1.5">
-          <Sparkles class="size-3.5 text-white/70" />
-          <p class="text-[11px] font-medium text-white/85">Copy assistant</p>
-        </div>
-
-        <!-- Mode chips -->
-        <div class="flex gap-1">
-          <button
-            v-for="m in (['variations', 'brief', 'translate'] as const)" :key="m"
-            class="flex-1 h-6 rounded text-[10.5px] transition-colors cursor-pointer"
-            :class="copyMode === m ? 'bg-white/15 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/[0.08]'"
-            @click="copyMode = m"
-          >{{ m === 'variations' ? 'Variations' : m === 'brief' ? 'Write from brief…' : 'Translate…' }}</button>
-        </div>
-
-        <!-- Brief textarea -->
-        <textarea
-          v-if="copyMode === 'brief'"
-          v-model="copyBrief"
-          rows="2"
-          placeholder="What should this say? Audience, tone, offer…"
-          :class="inputCls"
-          class="h-auto py-1.5 resize-y"
-        />
-
-        <!-- Translate languages -->
-        <div v-if="copyMode === 'translate'" class="flex flex-col gap-1.5">
-          <div class="flex flex-wrap gap-1">
-            <button
-              v-for="lang in COPY_LANGUAGES" :key="lang"
-              class="h-6 px-1.5 rounded text-[10.5px] transition-colors cursor-pointer"
-              :class="copyLanguages.includes(lang) ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
-              @click="toggleCopyLanguage(lang)"
-            >{{ lang }}</button>
-          </div>
-          <div class="flex gap-1">
-            <input
-              v-model="copyLanguageCustom"
-              placeholder="Add a language…"
-              :class="inputCls"
-              @keydown.enter.prevent="addCustomCopyLanguage"
-            >
-            <button
-              class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white transition-colors cursor-pointer shrink-0"
-              @click="addCustomCopyLanguage"
-            >Add</button>
-          </div>
-          <div v-if="copyLanguages.length" class="flex flex-wrap gap-1">
-            <span
-              v-for="lang in copyLanguages" :key="lang"
-              class="h-5 px-1.5 rounded-full bg-white/10 text-[9.5px] text-white/70 flex items-center gap-1"
-            >
-              {{ lang }}
-              <button class="text-white/40 hover:text-white/80 cursor-pointer" @click="toggleCopyLanguage(lang)">×</button>
-            </span>
-          </div>
-        </div>
-
-        <!-- Generate -->
-        <button
-          class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
-          :disabled="copyAssist.loading.value || (copyMode === 'brief' ? !copyBrief.trim() : !copySourceText.trim()) || (copyMode === 'translate' && !copyLanguages.length)"
-          @click="runCopyAssist"
-        >
-          <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
-          <span>Generate</span>
-        </button>
-
-        <p v-if="copyAssist.error.value" class="text-[10.5px] text-red-300/90">{{ copyAssist.error.value }}</p>
-
-        <!-- Results -->
-        <div v-if="copyAssist.options.value.length" class="flex flex-col gap-1 mt-0.5">
-          <button
-            v-for="(opt, i) in copyAssist.options.value" :key="i"
-            class="w-full text-left px-2 py-1.5 rounded bg-white/[0.04] hover:bg-white/[0.09] transition-colors cursor-pointer flex items-start gap-1.5"
-            @click="applyCopyOption(opt.text)"
-          >
-            <span v-if="opt.language" class="shrink-0 mt-0.5 h-4 px-1 rounded-full bg-white/10 text-[9px] text-white/60 uppercase tracking-wide">{{ opt.language }}</span>
-            <span class="text-[11.5px] text-white/80 leading-snug">{{ opt.text }}</span>
-          </button>
-
-          <button
-            v-if="boundSocket"
-            class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
-            @click="addCopyOptionsAsRows"
-          >
-            Add all as rows
-          </button>
-          <button
-            v-else-if="binding"
-            class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
-            @click="promoteThenAddCopyOptionsAsRows"
-          >
-            Make variable + add as rows
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Text -->
     <template v-if="textEl">
       <StudioSection :title="boundSocket ? 'Text' : 'Content'" :badge="boundSocket ? 'Bound' : 'Text'">
@@ -697,6 +614,137 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           @change="(e: any) => patchElement(el!.id, { content: e.target.value })"
         />
       </StudioSection>
+
+      <!-- Copy assistant — content-first: attached right under the text it edits.
+           One instruction input (brief) + quick chips (variations / shorter /
+           punchier / translate). All still return a list of options to pick from. -->
+      <div class="rounded-lg gen-pastel p-[1px]">
+        <div class="rounded-[7px] bg-[#15151a] p-2.5 flex flex-col gap-2">
+          <div class="flex items-center gap-1.5">
+            <Sparkles class="size-3.5 text-white/70" />
+            <p class="text-[11px] font-medium text-white/85">Ask AI</p>
+          </div>
+
+          <!-- Brief: describe the copy you want -->
+          <div class="flex gap-1.5">
+            <input
+              v-model="copyBrief"
+              placeholder="Describe the copy you want…"
+              :class="inputCls"
+              :disabled="copyAssist.loading.value"
+              @keydown.enter.prevent="runBrief"
+            >
+            <button
+              class="gen-pastel size-7 shrink-0 rounded-md text-neutral-900 flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              title="Write from this brief"
+              :disabled="copyAssist.loading.value || !copyBrief.trim()"
+              @click="runBrief"
+            >
+              <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
+              <ArrowUp v-else class="size-3.5" />
+            </button>
+          </div>
+
+          <!-- Quick actions on the current text -->
+          <div class="flex flex-wrap gap-1">
+            <button
+              class="h-6 px-2 rounded-full text-[10.5px] flex items-center gap-1 transition-colors cursor-pointer bg-[#d7f5e6]/[0.12] border border-[#d7f5e6]/25 text-[#cdeede] hover:bg-[#d7f5e6]/20 disabled:opacity-40 disabled:cursor-default"
+              title="Generate variations of the current copy"
+              :disabled="copyAssist.loading.value || !copySourceText.trim()"
+              @click="runVariations()"
+            >
+              <Sparkles class="size-3" /> 4 variations
+            </button>
+            <button
+              class="h-6 px-2 rounded-full text-[10.5px] bg-white/[0.05] border border-white/[0.09] text-white/60 hover:bg-white/[0.1] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              :disabled="copyAssist.loading.value || !copySourceText.trim()"
+              @click="runVariations('Make each option noticeably shorter and tighter than the original.')"
+            >Shorter</button>
+            <button
+              class="h-6 px-2 rounded-full text-[10.5px] bg-white/[0.05] border border-white/[0.09] text-white/60 hover:bg-white/[0.1] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              :disabled="copyAssist.loading.value || !copySourceText.trim()"
+              @click="runVariations('Make each option punchier, bolder, and more energetic.')"
+            >Punchier</button>
+            <button
+              class="h-6 px-2 rounded-full text-[10.5px] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              :class="showTranslate ? 'bg-white/15 text-white border border-white/20' : 'bg-white/[0.05] border border-white/[0.09] text-white/60 hover:bg-white/[0.1] hover:text-white'"
+              :disabled="copyAssist.loading.value || !copySourceText.trim()"
+              @click="showTranslate = !showTranslate"
+            >Translate…</button>
+          </div>
+
+          <!-- Translate disclosure -->
+          <div v-if="showTranslate" class="flex flex-col gap-1.5 rounded-md bg-white/[0.03] p-2">
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="lang in COPY_LANGUAGES" :key="lang"
+                class="h-6 px-1.5 rounded text-[10.5px] transition-colors cursor-pointer"
+                :class="copyLanguages.includes(lang) ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+                @click="toggleCopyLanguage(lang)"
+              >{{ lang }}</button>
+            </div>
+            <div class="flex gap-1">
+              <input
+                v-model="copyLanguageCustom"
+                placeholder="Add a language…"
+                :class="inputCls"
+                @keydown.enter.prevent="addCustomCopyLanguage"
+              >
+              <button
+                class="h-7 px-2 rounded text-[11px] bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white transition-colors cursor-pointer shrink-0"
+                @click="addCustomCopyLanguage"
+              >Add</button>
+            </div>
+            <div v-if="copyLanguages.length" class="flex flex-wrap gap-1">
+              <span
+                v-for="lang in copyLanguages" :key="lang"
+                class="h-5 px-1.5 rounded-full bg-white/10 text-[9.5px] text-white/70 flex items-center gap-1"
+              >
+                {{ lang }}
+                <button class="text-white/40 hover:text-white/80 cursor-pointer" @click="toggleCopyLanguage(lang)">×</button>
+              </span>
+            </div>
+            <button
+              class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
+              :disabled="copyAssist.loading.value || !copyLanguages.length"
+              @click="runTranslate"
+            >
+              <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
+              <span>Translate to {{ copyLanguages.length || '…' }}</span>
+            </button>
+          </div>
+
+          <p v-if="copyAssist.error.value" class="text-[10.5px] text-red-300/90">{{ copyAssist.error.value }}</p>
+
+          <!-- Results -->
+          <div v-if="copyAssist.options.value.length" class="flex flex-col gap-1 mt-0.5">
+            <button
+              v-for="(opt, i) in copyAssist.options.value" :key="i"
+              class="w-full text-left px-2 py-1.5 rounded bg-white/[0.04] hover:bg-white/[0.09] transition-colors cursor-pointer flex items-start gap-1.5"
+              @click="applyCopyOption(opt.text)"
+            >
+              <span v-if="opt.language" class="shrink-0 mt-0.5 h-4 px-1 rounded-full bg-white/10 text-[9px] text-white/60 uppercase tracking-wide">{{ opt.language }}</span>
+              <span class="text-[11.5px] text-white/80 leading-snug">{{ opt.text }}</span>
+            </button>
+
+            <button
+              v-if="boundSocket"
+              class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
+              @click="addCopyOptionsAsRows"
+            >
+              Add all as rows
+            </button>
+            <button
+              v-else-if="binding"
+              class="mt-1 h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/75 hover:text-white transition-colors cursor-pointer"
+              @click="promoteThenAddCopyOptionsAsRows"
+            >
+              Make variable + add as rows
+            </button>
+          </div>
+        </div>
+      </div>
+
       <StudioSection title="Typography">
         <div>
           <p :class="labelCls" class="mb-1.5">Font</p>
@@ -937,6 +985,29 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         >
           Use brand logo
         </button>
+        <button
+          v-for="slot in brandLogoSlots" :key="slot"
+          class="mt-1.5 ml-1.5 px-2 h-6 rounded text-[10px] transition-colors cursor-pointer"
+          :class="usingSlot(slot) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+          @click="patchElement(el!.id, { content: `{{ brand.logos.${slot} }}` })"
+        >
+          {{ slot === 'onDark' ? 'On-dark logo' : slot[0].toUpperCase() + slot.slice(1) }}
+        </button>
+        <div v-if="brandAssets.length" class="mt-2">
+          <p :class="labelCls" class="mb-1.5">Brand assets</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="a in brandAssets" :key="a.id"
+              class="flex items-center gap-1.5 px-1.5 h-7 rounded bg-white/[0.04] hover:bg-white/[0.08] transition-colors cursor-pointer"
+              :class="el!.content === a.path ? 'bg-[#96b4ff]/25' : ''"
+              :title="a.name" @click="patchElement(el!.id, { content: a.path })"
+            >
+              <span class="size-5 rounded-sm border border-white/10 bg-[#1a1a1a] bg-center bg-contain bg-no-repeat"
+                    :style="{ backgroundImage: `url(${JSON.stringify(a.path)})` }" />
+              <span class="max-w-24 truncate text-[10px] text-white/60">{{ a.name }}</span>
+            </button>
+          </div>
+        </div>
       </div>
       <!-- Outpaint to fit: generatively extend to this format's aspect -->
       <div>
