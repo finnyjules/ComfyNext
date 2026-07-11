@@ -13,6 +13,7 @@ import { useCopyAssist } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 import { BRAND_LOGO_SLOT_KEYS } from '~~/shared/brand/types'
+import { paletteSlug } from '~~/shared/brand/resolve'
 import { defaultExpressiveParams } from '~~/shared/text-layout/expressive'
 import { mergeExpressivePatch } from '~~/shared/template-grid/expressive'
 import type { GridExpressiveParams } from '~~/shared/template-grid/types'
@@ -291,6 +292,17 @@ const BRAND_COLOR_SLOTS = ['primary', 'secondary', 'accent', 'foreground', 'back
 const brandColorSlots = computed(() =>
   BRAND_COLOR_SLOTS.filter(k => typeof (effectiveBrand.value as any)[k] === 'string'))
 
+// Named palette entries → one-click {{ brand.palette.<slug> }} binds, next to
+// the role-slot binds. Names carry user meaning ("viridian"), roles carry
+// template meaning — both stay available. Legacy kits have no `palette` field
+// on effectiveBrand, so this is naturally empty and the buttons stay hidden.
+const brandPaletteEntries = computed(() =>
+  (((effectiveBrand.value as any).palette ?? []) as { id: string; name: string; hex: string }[])
+    .filter(e => e.name && e.hex && paletteSlug(e.name)))
+function paletteTokenFor(name: string): string {
+  return `{{ brand.palette.${paletteSlug(name)} }}`
+}
+
 function brandTokenKey(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const m = v.match(/^\{\{\s*brand\.(\w+)\s*\}\}$/)
@@ -307,6 +319,11 @@ function resolvedColor(v: unknown, fallback: string): string {
 }
 function bindColorToBrand(styleKey: 'color' | 'fill', slot: string) {
   if (el.value) patchStyle(el.value.id, { [styleKey]: `{{ brand.${slot} }}` })
+}
+/** Sibling to bindColorToBrand for palette entries, which bind to a full
+ *  `{{ brand.palette.<slug> }}` token rather than a role slot key. */
+function bindColorToken(styleKey: 'color' | 'fill', token: string) {
+  if (el.value) patchStyle(el.value.id, { [styleKey]: token })
 }
 
 const brandFontSlots = computed(() => {
@@ -347,6 +364,10 @@ function setPanel(patch: Record<string, unknown> | null) {
 }
 function bindPanelToBrand(slot: string) {
   setPanel({ fill: `{{ brand.${slot} }}` })
+}
+/** Sibling to bindPanelToBrand for palette entries — full token, not a slot key. */
+function bindPanelToToken(token: string) {
+  setPanel({ fill: token })
 }
 
 // -- Expressive text layout --------------------------------------------------
@@ -622,29 +643,29 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       <!-- Copy assistant — content-first: attached right under the text it edits.
            One instruction input (brief) + quick chips (variations / shorter /
            punchier / translate). All still return a list of options to pick from. -->
-      <div class="rounded-lg gen-pastel p-[1px]">
-        <div class="rounded-[7px] bg-[#15151a] p-2.5 flex flex-col gap-2">
+      <div class="pastel-hairline rounded-lg p-2.5 flex flex-col gap-2.5" style="--pastel-hairline-bg: #15151a">
           <div class="flex items-center gap-1.5">
             <Sparkles class="size-3.5 text-white/70" />
-            <p class="text-[11px] font-medium text-white/85">Ask AI</p>
+            <p class="text-[11px] font-medium text-white/85">Rewrite copy</p>
           </div>
 
-          <!-- Brief: describe the copy you want -->
-          <div class="flex gap-1.5">
+          <!-- Brief: describe the copy you want (arrow embedded, composer-style) -->
+          <div class="relative">
             <input
               v-model="copyBrief"
               placeholder="Describe the copy you want…"
               :class="inputCls"
+              class="pr-9"
               :disabled="copyAssist.loading.value"
               @keydown.enter.prevent="runBrief"
             >
             <button
-              class="gen-pastel size-7 shrink-0 rounded-md text-neutral-900 flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              class="gen-pastel absolute right-1 top-1/2 -translate-y-1/2 size-[22px] rounded-md text-neutral-900 flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-default"
               title="Write from this brief"
               :disabled="copyAssist.loading.value || !copyBrief.trim()"
               @click="runBrief"
             >
-              <Loader2 v-if="copyAssist.loading.value" class="size-3.5 animate-spin" />
+              <Loader2 v-if="copyAssist.loading.value" class="size-3 animate-spin" />
               <ArrowUp v-else class="size-3.5" />
             </button>
           </div>
@@ -746,7 +767,6 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
               Make variable + add as rows
             </button>
           </div>
-        </div>
       </div>
 
       <StudioSection title="Typography">
@@ -910,6 +930,15 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             :title="`Bind to brand.${slot}`"
             @click="bindColorToBrand('color', slot)"
           />
+          <button
+            v-for="e in brandPaletteEntries" :key="e.id"
+            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+            :title="`Bind to ${e.name}`"
+            @click="bindColorToken('color', paletteTokenFor(e.name))"
+          >
+            <span class="size-3 rounded-sm border border-white/10" :style="{ background: e.hex }" />
+            {{ e.name }}
+          </button>
         </div>
       </div>
 
@@ -946,6 +975,15 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
               :title="`Bind panel to brand.${slot}`"
               @click="bindPanelToBrand(slot)"
             />
+            <button
+              v-for="e in brandPaletteEntries" :key="e.id"
+              class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+              :title="`Bind panel to ${e.name}`"
+              @click="bindPanelToToken(paletteTokenFor(e.name))"
+            >
+              <span class="size-3 rounded-sm border border-white/10" :style="{ background: e.hex }" />
+              {{ e.name }}
+            </button>
           </div>
           <div class="grid grid-cols-2 gap-2 mt-2">
             <div>
@@ -1103,6 +1141,15 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             :title="`Bind to brand.${slot}`"
             @click="bindColorToBrand('fill', slot)"
           />
+          <button
+            v-for="e in brandPaletteEntries" :key="e.id"
+            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+            :title="`Bind to ${e.name}`"
+            @click="bindColorToken('fill', paletteTokenFor(e.name))"
+          >
+            <span class="size-3 rounded-sm border border-white/10" :style="{ background: e.hex }" />
+            {{ e.name }}
+          </button>
         </div>
       </div>
       <div v-if="el.shape === 'rect'">
