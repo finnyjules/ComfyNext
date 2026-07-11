@@ -2843,6 +2843,7 @@ onUnmounted(() => {
         <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
         </button>
+        <BrandImagePicker @add="(name, aspect) => addImageFromName(name, aspect)" />
         <button
           v-if="KINETIC_ENABLED"
           class="flex items-center justify-center size-8 rounded-md cursor-pointer"

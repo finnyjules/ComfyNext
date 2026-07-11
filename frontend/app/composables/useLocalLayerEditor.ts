@@ -24,6 +24,8 @@ import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdi
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
+import { inject, type Ref } from 'vue'
+import type { BrandKit } from '~~/shared/brand/types'
 
 interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
@@ -60,6 +62,10 @@ export function boxHandles(cx: number, cy: number, hw: number, hh: number, rotat
 
 export function useLocalLayerEditor(opts: EditorOpts) {
   const { node, dims, getRect } = opts
+
+  // Active brand kit → font default for new text layers. Optional: the
+  // editor also runs in dev labs with no project shell above it.
+  const projectBrand = inject<{ activeKit: Ref<BrandKit | undefined> } | null>('sailor:brand', null)
 
   const localLayers = computed<LocalLayer[]>(() =>
     (node()?.data?.properties?.sailor_localLayers as LocalLayer[]) ?? [])
@@ -632,7 +638,11 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   onScopeDispose(() => window.removeEventListener('pointermove', onMove))
 
   // ── Factories ────────────────────────────────────────────────────────────--
-  function addText() { const l = createTextLayer(); addLocal(l); nextTick(() => beginEdit(l.id)); return l }
+  function addText() {
+    const fontDisplay = projectBrand?.activeKit.value?.fontDisplay
+    const l = createTextLayer(fontDisplay ? { fontFamily: fontDisplay } : {})
+    addLocal(l); nextTick(() => beginEdit(l.id)); return l
+  }
   function addRect() { addLocal(createRectLayer()) }
   function addEllipse() { addLocal(createEllipseLayer()) }
   function addLine() { addLocal(createLineLayer()) }

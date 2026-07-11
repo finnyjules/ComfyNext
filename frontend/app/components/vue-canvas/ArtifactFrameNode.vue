@@ -814,6 +814,7 @@ onUnmounted(() => {
         <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add line" @click="editor.addLine()"><Minus class="size-3" /></button>
         <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add image" @click="triggerAddImage"><ImagePlus class="size-3" /></button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
+        <BrandImagePicker @add="(name, aspect) => editor.addImageFromName(name, aspect)" />
         <span class="w-px h-4 bg-white/10 mx-0.5" />
         <button v-if="editor.selectedId.value" class="nopan nodrag size-6 rounded flex items-center justify-center text-white/50 hover:text-rose-300 hover:bg-rose-500/10" title="Delete layer" @click="editor.deleteLocal(editor.selectedId.value)"><Trash2 class="size-3" /></button>
         <span class="flex-1" />
