@@ -67,7 +67,7 @@ def _image_layer_to_url(image: torch.Tensor, role: str) -> str:
 
 # The Nuxt server hosts the renderer. Default to the dev port; can be
 # overridden via env for production / hosted setups.
-_RENDER_ORIGIN = os.environ.get("SAILOR_RENDER_ORIGIN", "http://127.0.0.1:3002")
+_RENDER_ORIGIN = os.environ.get("SAILOR_RENDER_ORIGIN", "http://127.0.0.1:3000")
 _RENDER_PATH = "/api/render-template"
 
 
@@ -151,6 +151,12 @@ def _render_one(
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:400] if hasattr(e, "read") else ""
         raise RuntimeError(f"Render failed (HTTP {e.code}): {detail}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"Could not reach the layout renderer at {_RENDER_ORIGIN} — is the "
+            f"frontend dev server running (`cd frontend && npm run dev`)? "
+            f"Override the address with SAILOR_RENDER_ORIGIN if it runs elsewhere. ({e.reason})"
+        ) from e
 
     pil = PILImage.open(_io.BytesIO(png_bytes)).convert("RGB")
     arr = np.asarray(pil, dtype=np.float32) / 255.0
