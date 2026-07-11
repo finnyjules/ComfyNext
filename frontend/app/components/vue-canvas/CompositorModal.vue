@@ -47,6 +47,8 @@ import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
+import type { BrandKit } from '~~/shared/brand/types'
+import { brandSwatches } from '~~/shared/brand/resolve'
 import { PhCheckerboard } from '@phosphor-icons/vue'
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -339,7 +341,11 @@ const {
   changes: caChanges, issues: caIssues, review: caReview, reviewing: caReviewing, hasProposal: caHasProposal, hovered: caHovered,
   ask: caAsk, acceptChange: caAccept, rejectChange: caReject, reroll: caReroll, keep: caKeep, revert: caRevert,
 } = useCompositorAgent({
-  getState: () => ({ layers: localLayers.value, background: background.value }),
+  getState: () => ({
+    layers: localLayers.value,
+    background: background.value,
+    brandPalette: brandSwatches(projectBrand?.activeKit.value),
+  }),
   setState: (s) => { commit(s.layers); if (s.background !== background.value) setBackground(s.background) },
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
@@ -1320,6 +1326,7 @@ function loadSlateFixture() {
 // toolbar entry opens the same library popover the project menu uses, so
 // "Set active" here and there write to the one doc-owned brandKitId.
 const projectBrand = inject<{
+  activeKit: ComputedRef<BrandKit | undefined>
   activeKitId: ComputedRef<string | null>
   setBrandKit: (id: string | null) => void
 } | null>('sailor:brand', null)

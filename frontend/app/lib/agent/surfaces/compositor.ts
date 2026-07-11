@@ -16,6 +16,9 @@ import { SWISS_LIMITS } from '~/lib/agent/designPrinciples'
 export interface CompositorState {
   layers: LocalLayer[]
   background?: Paint
+  /** Active brand kit's named palette — context only (compositor paints are
+   *  literal hexes; the model translates "viridian" → its hex). */
+  brandPalette?: { name: string; hex: string }[]
 }
 
 function clone<T>(v: T): T {
@@ -115,6 +118,9 @@ export function describeCompositor(state: CompositorState): SurfaceSnapshot {
       background: paintLabel(state.background),
       // The frame is a unit square in normalized coords: x/y/sizes are 0..1.
       coordinateSpace: 'normalized 0..1 (0,0 = top-left, 0.5,0.5 = centre)',
+      ...(state.brandPalette?.length
+        ? { brandPalette: state.brandPalette.map(s => `${s.name} ${s.hex}`).join(', ') }
+        : {}),
     },
   })
   return { surface: 'compositor', objects, commands: COMPOSITOR_COMMANDS }
