@@ -25,14 +25,19 @@ async function save(entry: BrandKitEntry): Promise<void> {
   if (idx === -1) kits.value = [...kits.value, entry]
   else kits.value = kits.value.map((k, i) => (i === idx ? entry : k))
 
-  const res = await fetch(`/api/brand-kits/${entry.id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(entry),
-  })
-  if (!res.ok) {
-    await refresh() // roll back optimistic state to server truth
-    throw new Error(`save kit failed: ${res.status}`)
+  try {
+    const res = await fetch(`/api/brand-kits/${entry.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    })
+    if (!res.ok) throw new Error(`save kit failed: ${res.status}`)
+  } catch (e) {
+    // Covers both a !res.ok response AND a network-level rejection (fetch
+    // throws, e.g. offline/DNS/CORS) — either way, roll back the optimistic
+    // entry to server truth before the caller sees the failure.
+    await refresh().catch(() => {}) // best-effort: never let rollback mask the original error
+    throw e
   }
   await refresh()
 }

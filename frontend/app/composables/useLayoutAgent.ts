@@ -83,6 +83,10 @@ export function useLayoutAgent(opts: {
   /** Sample data so the visual-review render resolves {{ props.* }} / brand. */
   sampleProps?: () => Record<string, unknown>
   sampleBrand?: () => BrandKit
+  /** The caller's EFFECTIVE brand context (active kit palette merged with the
+   *  template's own overrides) — threaded into every agent snapshot so the
+   *  model sees the palette.* tokens actually available to bind to. */
+  effectiveBrand?: () => Record<string, unknown>
 }) {
   const busy = ref(false)
   const error = ref('')
@@ -110,7 +114,7 @@ export function useLayoutAgent(opts: {
   /** Ask the model for a plan (single request, strict JSON). Surfaces the model's
    *  `reasoning` for display. Non-streaming on purpose — see agent-plan.post.ts. */
   async function callModel(prompt: string) {
-    const snapshot = describeSmartLayout(opts.template.value)
+    const snapshot = describeSmartLayout(opts.template.value, opts.effectiveBrand?.())
     const schema = buildCommandSchema(snapshot.commands)
     const key = opts.apiKey()
     const res = await $fetch<{ text: string }>('/api/agent-plan', {
@@ -225,7 +229,7 @@ export function useLayoutAgent(opts: {
     try {
       const image = await renderPreview()
       if (!image) return
-      const snapshot = describeSmartLayout(opts.template.value)
+      const snapshot = describeSmartLayout(opts.template.value, opts.effectiveBrand?.())
       const schema = buildReviewSchema(snapshot.commands)
       const res = await $fetch<{ text: string }>('/api/agent-review', {
         method: 'POST',
@@ -258,7 +262,7 @@ export function useLayoutAgent(opts: {
     busy.value = true; error.value = ''; notice.value = ''; reasoning.value = ''; issues.value = []; review.value = null; lastPhrase.value = p
     try {
       original = clone(opts.template.value)
-      const { commands, changeRationales, message } = await callModel(buildAgentPrompt(describeSmartLayout(opts.template.value), p))
+      const { commands, changeRationales, message } = await callModel(buildAgentPrompt(describeSmartLayout(opts.template.value, opts.effectiveBrand?.()), p))
       const { resolved, genFailed } = await resolveGenerative(commands, changeRationales)
       const built: ProposedChange[] = []
       let probe = clone(original)
@@ -303,7 +307,7 @@ export function useLayoutAgent(opts: {
       // not a different colour) while still varying from the current value.
       const intent = lastPhrase.value ? `The user's original request was: "${lastPhrase.value}". ` : ''
       const phrase = `${intent}Re-roll ONLY the "${ch.label}" change — its current value is "${ch.after}". Propose a DIFFERENT option that STILL satisfies the original request (e.g. a different shade or variation of the same idea), but NOT "${ch.after}" and not a near-duplicate. Use the same action (op "${ch.command.op}"${ch.command.target ? ` on "${ch.command.target}"` : ''}) and change nothing else. (variation seed ${nonce})`
-      const { commands, changeRationales } = await callModel(buildAgentPrompt(describeSmartLayout(opts.template.value), phrase))
+      const { commands, changeRationales } = await callModel(buildAgentPrompt(describeSmartLayout(opts.template.value, opts.effectiveBrand?.()), phrase))
       const idx = commands.findIndex(c => c.op === ch.command.op && (c.target ?? '') === (ch.command.target ?? ''))
       const next = idx >= 0 ? commands[idx] : commands[0]
       if (next) {

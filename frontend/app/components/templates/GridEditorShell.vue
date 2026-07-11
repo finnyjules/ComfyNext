@@ -63,6 +63,7 @@ const {
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   sampleProps: () => sampleProps.value,
   sampleBrand: () => sampleBrand.value as BrandKit,
+  effectiveBrand: () => ctx.effectiveBrand.value as Record<string, unknown>,
 })
 function onAgentHover(i: number | null) { agentHovered.value = i }
 // The agent's progress / proposal take over the right panel while it's active.

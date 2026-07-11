@@ -34,6 +34,16 @@ describe('useBrandLibrary optimistic writes', () => {
     expect(lib.kits.value.find(k => k.id === 'k2')).toBeUndefined()
   })
 
+  it('save() rolls back to server truth when the PUT fetch rejects (network-level failure, not !res.ok)', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') return Promise.reject(new Error('network down'))
+      return Promise.resolve(new Response(JSON.stringify({ kits: [] }), { status: 200 }))
+    }))
+    const lib = useBrandLibrary()
+    await expect(lib.save({ id: 'k4', name: 'D', kit: {}, updatedAt: '' })).rejects.toThrow()
+    expect(lib.kits.value.find(k => k.id === 'k4')).toBeUndefined()
+  })
+
   it('remove() drops the entry before the DELETE resolves', async () => {
     let resolveDel: (v: Response) => void
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {

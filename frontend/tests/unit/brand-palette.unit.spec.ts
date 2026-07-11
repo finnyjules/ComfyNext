@@ -74,6 +74,10 @@ describe('effectiveBrand — palette & roles', () => {
     const b = effectiveBrand(undefined, { palette: [VIRIDIAN] }) as unknown as Record<string, unknown>
     expect(b['palette.deep_viridian']).toBe('#2A8C6E')
   })
+  it('legacy kits (no explicit palette) mint no flat palette.* token keys', () => {
+    const b = effectiveBrand(undefined, { primary: '#111111' }) as unknown as Record<string, unknown>
+    expect(Object.keys(b).some(k => k.startsWith('palette.'))).toBe(false)
+  })
   it('a later layer palette replaces the whole array; roles merge per-role', () => {
     const b = effectiveBrand(
       { palette: [CORAL], roles: { primary: 'e2', accent: 'e2' } },

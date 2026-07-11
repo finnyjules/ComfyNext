@@ -129,8 +129,11 @@ const SMART_LAYOUT_COMMANDS: CommandSpec[] = [
 ]
 
 /** Read a Smart Layout template as an agent-readable snapshot: each section
- *  becomes an addressable object carrying its current grid region. */
-export function describeSmartLayout(template: TemplateV3): SurfaceSnapshot {
+ *  becomes an addressable object carrying its current grid region. `brand`, when
+ *  given, is the caller's EFFECTIVE brand context (e.g. the active kit's palette
+ *  merged with the template's own overrides) — it takes priority over
+ *  `template.brand` so the agent sees the palette tokens actually in effect. */
+export function describeSmartLayout(template: TemplateV3, brand?: Record<string, unknown>): SurfaceSnapshot {
   const masterFmt = template.formats[template.master]
   const gridSize = masterFmt ? fineGridDims(template, masterFmt) : { cols: 0, rows: 0 }
   return {
@@ -169,7 +172,7 @@ export function describeSmartLayout(template: TemplateV3): SurfaceSnapshot {
           grid: gridSize,
           // The brand kit's actual values (so the agent knows what {{ brand.* }}
           // resolves to) and the variable slots the template is wired to.
-          brand: template.brand ?? {},
+          brand: brand ?? template.brand ?? {},
           props: propSlots(template),
         },
       },

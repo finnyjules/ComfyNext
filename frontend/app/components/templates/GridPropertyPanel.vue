@@ -305,7 +305,7 @@ function paletteTokenFor(name: string): string {
 
 function brandTokenKey(v: unknown): string | null {
   if (typeof v !== 'string') return null
-  const m = v.match(/^\{\{\s*brand\.(\w+)\s*\}\}$/)
+  const m = v.match(/^\{\{\s*brand\.([\w.]+)\s*\}\}$/)
   return m ? m[1] : null
 }
 function brandSwatch(key: string): string {
@@ -932,7 +932,8 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           />
           <button
             v-for="e in brandPaletteEntries" :key="e.id"
-            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+            :class="brandTokenKey(styleOf().color) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
             :title="`Bind to ${e.name}`"
             @click="bindColorToken('color', paletteTokenFor(e.name))"
           >
@@ -977,7 +978,8 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             />
             <button
               v-for="e in brandPaletteEntries" :key="e.id"
-              class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+              class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+              :class="brandTokenKey(panel.fill) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
               :title="`Bind panel to ${e.name}`"
               @click="bindPanelToToken(paletteTokenFor(e.name))"
             >
@@ -1143,7 +1145,8 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           />
           <button
             v-for="e in brandPaletteEntries" :key="e.id"
-            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer bg-white/[0.04] text-white/45 hover:bg-white/[0.08]"
+            class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+            :class="brandTokenKey(styleOf().fill) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
             :title="`Bind to ${e.name}`"
             @click="bindColorToken('fill', paletteTokenFor(e.name))"
           >

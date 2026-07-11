@@ -659,6 +659,23 @@ describe('describeSmartLayout — document', () => {
     expect(cur.brand?.primary).toBe('#0057FF')
     expect(cur.props).toContain('hero_image')
   })
+
+  it('uses the caller-supplied effective brand (with flat palette.* tokens) over template.brand', () => {
+    const t = { ...fixture(), brand: { primary: '#0057FF', fontDisplay: 'Anton' } }
+    const doc = describeSmartLayout(t, { 'palette.viridian': '#2A8C6E', primary: '#111111' })
+      .objects.find(o => o.type === 'document')!
+    const cur = doc.current as { brand?: Record<string, string> }
+    expect(cur.brand?.['palette.viridian']).toBe('#2A8C6E')
+    expect(cur.brand?.primary).toBe('#111111')
+  })
+
+  it('falls back to template.brand when no effective brand is supplied (unchanged behaviour)', () => {
+    const t = { ...fixture(), brand: { primary: '#0057FF', fontDisplay: 'Anton' } }
+    const doc = describeSmartLayout(t).objects.find(o => o.type === 'document')!
+    const cur = doc.current as { brand?: Record<string, string> }
+    expect(cur.brand?.primary).toBe('#0057FF')
+    expect(cur.brand?.fontDisplay).toBe('Anton')
+  })
 })
 
 describe('describeSmartLayout — element detail', () => {
