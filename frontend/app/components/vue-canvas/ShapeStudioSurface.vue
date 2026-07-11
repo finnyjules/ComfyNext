@@ -13,7 +13,7 @@ import { DEFAULT_CONFIG, mergeConfig, type ShapeConfig } from '~/lib/shapefx/con
 import { reroll } from '~/lib/shapefx/randomize'
 import { paletteFor } from '~/lib/shapefx/color'
 import { detectWebGL } from '~/lib/spacetype/webgl'
-import { HARMONY_TYPES } from '~/lib/color/harmony'
+import { HARMONY_TYPES, HARMONY_LABELS, toStops } from '~/lib/color/harmony'
 import { hexToOklch, oklchToHex } from '~/lib/color/convert'
 import { FILL_TYPES } from '~/lib/spacetype/fillTile'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -24,7 +24,6 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
-import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
@@ -90,7 +89,6 @@ function enumProxy<T extends string>(get: () => T, set: (v: T) => void) {
 const shapeModeProxy = enumProxy(() => config.value.shape.mode, v => { config.value.shape.mode = v })
 const primitiveProxy = enumProxy(() => config.value.shape.primitive, v => { config.value.shape.primitive = v })
 const projectionProxy = enumProxy(() => config.value.shape.projection, v => { config.value.shape.projection = v })
-const harmonyProxy = enumProxy(() => config.value.palette.harmony, v => { config.value.palette.harmony = v })
 const coloringProxy = enumProxy(() => config.value.palette.coloring, v => { config.value.palette.coloring = v })
 const directionProxy = enumProxy(() => config.value.palette.direction, v => { config.value.palette.direction = v })
 const fillTypeProxy = enumProxy(() => config.value.fill.type, v => { config.value.fill.type = v })
@@ -105,29 +103,27 @@ function locked(key: 'shape' | 'palette' | 'style') { return !!config.value.lock
 // ── re-roll ──────────────────────────────────────────────────────────────────────────────
 function rerollConfig() { config.value = reroll(config.value) }
 
-// ── Palette section: PalettePicker is a hex/stops picker (shared with Duotone/Gradient
-// Map); Shape's palette is fully parametric (harmony + hue/sat/light + rule), so rather
-// than bolt a free-form stop list onto the schema, PalettePicker is used as a quick "seed"
-// tool — applying a curated palette or a seed-color harmony inverts paletteFor()'s own
-// hue/sat/light → OKLCH mapping to land baseHue/saturation/lightness, and the harmony/rule
-// selects (already in this section) decide how paletteFor() re-expands that seed. This
-// keeps a single source of truth (the four palette fields) while still reusing the shared
-// control instead of reinventing a picker.
-const paletteSeedHex = computed(() => {
-  const { baseHue, saturation, lightness } = config.value.palette
-  const L = 0.25 + (lightness / 100) * 0.6
-  const C = (saturation / 100) * 0.22
-  return oklchToHex(L, C, baseHue)
+// ── Palette section — native, parametric. The four fields (harmony + hue/sat/light) ARE
+// the palette; everything here reads/writes them directly, so what you see is what renders.
+// Base color is a two-way shortcut: it maps a single hex to hue/sat/light (the exact inverse
+// of paletteFor()'s hue/sat/light → OKLCH seed), and reads back as that seed color.
+const baseColorHex = computed<string>({
+  get: () => {
+    const { baseHue, saturation, lightness } = config.value.palette
+    return oklchToHex(0.25 + (lightness / 100) * 0.6, (saturation / 100) * 0.22, baseHue)
+  },
+  set: (hex: string) => {
+    const [L, C, H] = hexToOklch(hex)
+    config.value.palette.baseHue = Math.round(((H % 360) + 360) % 360)
+    config.value.palette.saturation = Math.round(Math.max(0, Math.min(100, (C / 0.22) * 100)))
+    config.value.palette.lightness = Math.round(Math.max(0, Math.min(100, ((L - 0.25) / 0.6) * 100)))
+  },
 })
+// Live previews of the ACTUAL output: the discrete harmony swatches, and the interpolated
+// ramp that prismatic/smooth/faceted paint onto the shape.
 const paletteSwatches = computed(() => paletteFor(config.value))
-function onPaletteApply(stops: { pos: number; color: string }[]) {
-  const hex = stops[0]?.color
-  if (!hex) return
-  const [L, C, H] = hexToOklch(hex)
-  config.value.palette.baseHue = Math.round(((H % 360) + 360) % 360)
-  config.value.palette.saturation = Math.round(Math.max(0, Math.min(100, (C / 0.22) * 100)))
-  config.value.palette.lightness = Math.round(Math.max(0, Math.min(100, ((L - 0.25) / 0.6) * 100)))
-}
+const paletteRampCss = computed(() =>
+  `linear-gradient(to right, ${toStops(paletteFor(config.value), 8).map(s => s.color).join(', ')})`)
 
 // ── Fill section (surface mode) — mirrors Space Type's fillNeedsB/fillHasAngle/
 // fillHasDensity helpers for the same FillType union.
@@ -435,17 +431,31 @@ async function onImportFile(e: Event) {
             <component :is="locked('palette') ? Lock : Unlock" class="h-3 w-3" />
           </button>
         </template>
-        <PalettePicker mode="stops" :stop-count="5" :seed="paletteSeedHex" @apply-stops="onPaletteApply" />
-        <div class="flex h-4 gap-0.5 overflow-hidden rounded">
-          <div v-for="(c, i) in paletteSwatches" :key="i" class="flex-1" :style="{ background: c }" />
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Base color</label>
+          <StudioColor v-model="baseColorHex" />
         </div>
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Harmony</label>
-          <StudioSelect v-model="harmonyProxy" :options="HARMONY_TYPES" />
+          <div class="grid grid-cols-2 gap-1">
+            <button
+              v-for="h in HARMONY_TYPES" :key="h" type="button"
+              class="rounded px-2 py-1 text-left text-[11px] transition-colors"
+              :class="config.palette.harmony === h ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5 hover:text-white/80'"
+              @click="config.palette.harmony = h"
+            >{{ HARMONY_LABELS[h] }}</button>
+          </div>
         </div>
         <StudioSlider v-model="config.palette.baseHue" label="Hue" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.palette.baseHue" />
         <StudioSlider v-model="config.palette.saturation" label="Saturation" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.saturation" />
         <StudioSlider v-model="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness" />
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Preview</label>
+          <div class="h-4 rounded" :style="{ background: paletteRampCss }" />
+          <div class="mt-1 flex h-2.5 gap-0.5 overflow-hidden rounded">
+            <div v-for="(c, i) in paletteSwatches" :key="i" class="flex-1" :style="{ background: c }" />
+          </div>
+        </div>
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Coloring</label>
           <StudioSegmented v-model="coloringProxy" :options="['prismatic', 'smooth', 'faceted', 'scatter']" />
