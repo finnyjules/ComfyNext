@@ -63,8 +63,12 @@ assignment.
   trim — "Deep Viridian" → `deep_viridian`. Collisions after slugging: last
   entry wins (documented).
 - Tokens: `{{ brand.palette.deep_viridian }}` rides the existing deep-path
-  lookup. Role tokens (`{{ brand.primary }}`) unchanged and remain the
-  rename-stable currency for templates.
+  lookup — for kits with an **explicit** palette. Legacy (virtual) palettes do
+  not expose palette tokens: that would break the pinned back-compat contract
+  (`effectiveBrand` of a legacy kit equals its input exactly), and no surface
+  offers palette tokens for un-migrated kits anyway. Role tokens
+  (`{{ brand.primary }}`) unchanged and remain the rename-stable currency for
+  templates.
 - KV wire: `brandKitToKv` adds `palette.<slug>=<hex>` lines (after roles/fonts/
   logos). The Python SmartLayout node's flat first-`=` parse and the resolver's
   flat-first lookup already handle them. Role keys keep being emitted with
