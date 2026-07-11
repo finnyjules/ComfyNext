@@ -4723,6 +4723,15 @@ async function injectCompositorCloners(workflow: any): Promise<void> {
  *  no active kit ⇒ leave every widget untouched (byte-identical submit).
  *  The kit lands in the `brand_kit` widget, which the node merges UNDER any
  *  wired `brand` socket values — the graph stays the ultimate override. */
+/** Bake Collection-bound layout vars (element↔column bindings) into each
+ *  SmartLayout node's `layout` widget at submit, resolved against the
+ *  collection's preview row — so a plain canvas Generate renders the same
+ *  values the node-face preview shows instead of the raw `{{ props.… }}`
+ *  tokens (the Collection node itself never reaches ComfyUI). */
+function injectSmartLayoutCollectionVars(workflow: any): void {
+  injectSmartLayoutVars(workflow, objectInfo.value)
+}
+
 async function injectSmartLayoutBrand(workflow: any, kitKv: string): Promise<void> {
   if (!kitKv || !workflow?.nodes?.length) return
   const layouts = (workflow.nodes as any[]).filter(n => n.type === 'SmartLayout')
@@ -6363,6 +6372,7 @@ defineExpose({
   injectCompositorMotionParams,
   injectCompositorCloners,
   injectSmartLayoutBrand,
+  injectSmartLayoutCollectionVars,
   injectAssetRegistry,
   materializeAutoImageSinks,
   getNodes: () => nodes.value,

@@ -799,6 +799,19 @@ async function runVueWorkflow(
       toast.error('Brand kit injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
     }
 
+    // Bake Collection-bound layout vars (element↔column bindings) into each
+    // SmartLayout's layout widget, resolved against the collection's preview
+    // row — the Collection node is frontend-only and gets stripped below, so
+    // without this the backend renders the raw `{{ props.… }}` tokens. Must
+    // run BEFORE stripFrontendOnlyNodes (the Collection holds the values).
+    // No bindings ⇒ no-op (byte-identical submit).
+    try {
+      vueCanvasRef.value!.injectSmartLayoutCollectionVars?.(plainWorkflow)
+    } catch (err) {
+      console.error('[Run] smart layout collection vars injection failed', err)
+      toast.error('Layout vars injection failed', { description: String((err as any)?.message || err).slice(0, 160) })
+    }
+
     // Resolve `@refs` (prompt tokens + image-loader bindings) into the outgoing
     // workflow. No refs registered ⇒ no-op (byte-identical submit).
     const assetReg = activeProjectDoc.value?.assetRegistry
