@@ -11,7 +11,7 @@ function primitiveGeometry(kind: PrimitiveKind, density: number): THREE.BufferGe
   const s = seg(density)
   switch (kind) {
     case 'cube':         return new THREE.BoxGeometry(2, 2, 2)
-    case 'sphere':       return new THREE.IcosahedronGeometry(1.4, Math.max(0, Math.round(density))) // faceted sphere via icosa detail
+    case 'sphere':       return new THREE.IcosahedronGeometry(1.4, Math.max(0, Math.min(4, Math.round(density)))) // faceted sphere; clamp detail 0–4
     case 'cone':         return new THREE.ConeGeometry(1.3, 2.4, Math.max(3, s))
     case 'cylinder':     return new THREE.CylinderGeometry(1.1, 1.1, 2.4, Math.max(3, s))
     case 'prism':        return new THREE.CylinderGeometry(1.3, 1.3, 2.4, 3) // triangular prism

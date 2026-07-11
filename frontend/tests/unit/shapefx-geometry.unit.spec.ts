@@ -27,8 +27,7 @@ describe('buildGeometry', () => {
     expect(g.getAttribute('position').count).toBeGreaterThanOrEqual(12) // ≥ 4 tris
   })
 
-  it('degenerate gem input falls back to a tetrahedron (12 verts) rather than throwing', () => {
-    // vertices=4 collinear-ish still must yield a solid; forcing minimum path
+  it('a small 4-vertex gem still yields a valid solid', () => {
     const g = buildGeometry(gem('#x', 4))
     expect(g.getAttribute('position').count).toBeGreaterThanOrEqual(12)
   })
