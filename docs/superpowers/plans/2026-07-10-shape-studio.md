@@ -735,6 +735,18 @@ describe('reroll', () => {
     expect(out.fillMode).toBe('surface')
     expect(out.locks).toEqual(start.locks)
   })
+
+  it('never aliases the input config (every section is a fresh object)', () => {
+    const start = withLocks({ shape: true, palette: true, style: true })
+    const out = reroll(start)
+    // locked sections keep their VALUES but must be COPIES, so mutating `out` can't corrupt `start`
+    expect(out.shape).toEqual(start.shape)
+    expect(out.shape).not.toBe(start.shape)
+    expect(out.palette).not.toBe(start.palette)
+    expect(out.style).not.toBe(start.style)
+    expect(out.locks).not.toBe(start.locks)
+    expect(out.fill).not.toBe(start.fill)
+  })
 })
 ```
 
@@ -783,15 +795,24 @@ function rollStyle(seed: string, prev: StyleParams): StyleParams {
   return { ...prev, grain: r.int(0, 45), distortion: r.int(0, 20) }
 }
 
-/** Fresh seed + regenerate each UNLOCKED section; locked sections carry over unchanged. */
+/**
+ * Fresh seed + regenerate each UNLOCKED section; locked sections carry over unchanged.
+ * Returns a fully fresh config that NEVER aliases the input: locked sections and the
+ * `fill`/`locks` records are spread-copied (their fields are all primitives, so a shallow
+ * spread is a full copy), so a caller mutating the returned config in place — a common Vue
+ * pattern — can't corrupt the config that was passed in. The roll* helpers already return
+ * new objects, so unlocked sections are fresh too.
+ */
 export function reroll(config: ShapeConfig): ShapeConfig {
   const seed = randomSeed()
   return {
     ...config,
     seed,
-    shape: config.locks.shape ? config.shape : rollShape(seed, config.shape),
-    palette: config.locks.palette ? config.palette : rollPalette(seed, config.palette),
-    style: config.locks.style ? config.style : rollStyle(seed, config.style),
+    fill: { ...config.fill },
+    locks: { ...config.locks },
+    shape: config.locks.shape ? { ...config.shape } : rollShape(seed, config.shape),
+    palette: config.locks.palette ? { ...config.palette } : rollPalette(seed, config.palette),
+    style: config.locks.style ? { ...config.style } : rollStyle(seed, config.style),
   }
 }
 ```
