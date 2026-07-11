@@ -82,6 +82,9 @@ export class ShapeEngine {
     if (this.mesh) {
       this.mesh.rotation.y = orbit.yaw
       this.mesh.rotation.x = orbit.pitch
+      // Persisted uniform scale (config). Applied here so it survives mesh rebuilds and works
+      // in orthographic mode, where moving the camera along z doesn't change apparent size.
+      this.mesh.scale.setScalar(this.config?.shape.scale ?? 1)
     }
     const z = CAM_Z / Math.max(0.2, orbit.zoom)
     this.perspCam.position.z = z

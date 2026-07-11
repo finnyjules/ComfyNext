@@ -419,6 +419,7 @@ async function onImportFile(e: Event) {
           <StudioSlider v-model="config.shape.spread" label="Spread" :min="0.1" :max="1" :step="0.05" :default="DEFAULT_CONFIG.shape.spread" />
         </template>
         <StudioSlider v-model="config.shape.jitter" label="Jitter" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.shape.jitter" />
+        <StudioSlider v-model="config.shape.scale" label="Scale" :min="0.25" :max="3" :step="0.05" :default="DEFAULT_CONFIG.shape.scale" />
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Projection</label>
           <StudioSegmented v-model="projectionProxy" :options="['orthographic', 'perspective']" />

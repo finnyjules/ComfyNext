@@ -15,6 +15,8 @@ describe('shapefx config', () => {
     expect(merged.palette.baseHue).toBe(200)
     expect(merged.palette.harmony).toBe(DEFAULT_CONFIG.palette.harmony) // untouched → default
     expect(merged.shape.primitive).toBe(DEFAULT_CONFIG.shape.primitive)
+    expect(merged.shape.jitter).toBe(DEFAULT_CONFIG.shape.jitter)       // new fields default in
+    expect(merged.shape.scale).toBe(DEFAULT_CONFIG.shape.scale)
   })
 
   it('mergeConfig rejects junk types and falls back to defaults', () => {

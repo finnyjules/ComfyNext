@@ -21,6 +21,7 @@ function setFill(fillMode: ShapeConfig['fillMode']) { config.value = { ...config
 function setColoring(coloring: ShapeConfig['palette']['coloring']) { config.value = { ...config.value, palette: { ...config.value.palette, coloring } }; draw() }
 function setDirection(direction: ShapeConfig['palette']['direction']) { config.value = { ...config.value, palette: { ...config.value.palette, direction } }; draw() }
 function setJitter(jitter: number) { config.value = { ...config.value, shape: { ...config.value.shape, jitter } }; draw() }
+function setScale(scale: number) { config.value = { ...config.value, shape: { ...config.value.shape, scale } }; draw() }
 function roll() { config.value = reroll(config.value); draw() }
 
 onMounted(() => {
@@ -57,6 +58,11 @@ onBeforeUnmount(() => engine?.dispose())
         <button @click="setJitter(0)">Jitter 0</button>
         <button @click="setJitter(30)">Jitter 30</button>
         <button @click="setJitter(70)">Jitter 70</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button @click="setScale(0.5)">Scale 0.5</button>
+        <button @click="setScale(1)">Scale 1</button>
+        <button @click="setScale(2)">Scale 2</button>
       </div>
       <button @click="roll">Re-roll</button>
       <pre style="font-size:11px;max-width:280px;white-space:pre-wrap;">{{ config }}</pre>
