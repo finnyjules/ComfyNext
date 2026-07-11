@@ -58,9 +58,11 @@ interface BrandKit {
 are additive and optional.
 
 **Tokens:** `frontend/shared/template-grid/tokens.ts` gains
-`{{ brand.logo.primary }}`, `{{ brand.logo.mark }}`, `{{ brand.logo.wordmark }}`,
-`{{ brand.logo.onDark }}`. Bare `{{ brand.logo }}` keeps resolving via the
+`{{ brand.logos.primary }}`, `{{ brand.logos.mark }}`, `{{ brand.logos.wordmark }}`,
+`{{ brand.logos.onDark }}`. Bare `{{ brand.logo }}` keeps resolving via the
 fallback chain. `brandKitToKv` in `resolve.ts` serializes the new keys.
+(Note: slot tokens live under `logos` — plural, matching the schema field;
+bare `{{ brand.logo }}` remains the legacy/effective-primary token.)
 
 ## 2. Persistence
 
@@ -154,7 +156,7 @@ Run-time `brand` widget injection in `default.vue`). Additions only:
 - Unit (extend `frontend/tests/unit`):
   - `resolve.ts` back-compat: `logos.primary ?? logo` chain, `brandKitToKv`
     with and without new fields.
-  - Token resolution for `{{ brand.logo.* }}` including bare-`logo` fallback.
+  - Token resolution for `{{ brand.logos.* }}` including bare-`logo` fallback.
 - Manual verification via dev preview: Brand page CRUD, Frame swatch row /
   image picker / text defaults, Smart Layout asset picker, no-brand hidden
   states.

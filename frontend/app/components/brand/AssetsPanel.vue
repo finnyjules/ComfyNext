@@ -3,6 +3,7 @@
  *  Metadata lives on the kit; files live in the ComfyUI input folder. */
 import type { BrandAsset, BrandKit } from '~~/shared/brand/types'
 import { uploadBrandImage } from '~/lib/brand/upload'
+import { toast } from 'vue-sonner'
 
 const props = defineProps<{ kit: BrandKit }>()
 const emit = defineEmits<{ update: [patch: Partial<BrandKit>] }>()
@@ -22,7 +23,10 @@ async function onFiles(e: Event) {
         name: (file.name || 'asset').replace(/\.[^.]+$/, ''),
         path: await uploadBrandImage(file),
       })
-    } catch (err) { console.error('[Brand] asset upload:', err) }
+    } catch (err) {
+      console.error('[Brand] asset upload:', err)
+      toast.error(`Upload failed: ${file.name}`)
+    }
   }
   if (added.length) emit('update', { assets: [...assets.value, ...added] })
 }

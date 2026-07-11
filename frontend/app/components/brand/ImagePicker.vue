@@ -8,6 +8,7 @@ import { BRAND_LOGO_SLOT_KEYS, type BrandKit } from '~~/shared/brand/types'
 import { brandLogoUrl } from '~~/shared/brand/resolve'
 import { inputNameFromViewUrl } from '~~/shared/brand/assets'
 import { uploadBrandImage } from '~/lib/brand/upload'
+import { toast } from 'vue-sonner'
 
 const emit = defineEmits<{ add: [name: string, aspect: number] }>()
 
@@ -54,6 +55,7 @@ async function pick(item: { label: string; url: string }) {
     open.value = false
   } catch (err) {
     console.error('[Brand] add image:', err)
+    toast.error('Could not add brand image')
   } finally {
     busy.value = false
   }

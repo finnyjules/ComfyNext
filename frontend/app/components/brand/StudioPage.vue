@@ -4,6 +4,7 @@
  *  ProjectMenu popover; this page never touches ProjectDoc.brandKitId. */
 import type { BrandKit, BrandKitEntry } from '~~/shared/brand/types'
 import { useBrandLibrary, slugifyKitName } from '~/composables/useBrandLibrary'
+import { toast } from 'vue-sonner'
 
 const { kits, loaded, refresh, save, remove } = useBrandLibrary()
 void refresh()
@@ -20,8 +21,13 @@ const selected = computed<BrandKitEntry | null>(() =>
 async function newKit() {
   const name = `Kit ${kits.value.length + 1}`
   const entry: BrandKitEntry = { id: `${slugifyKitName(name)}-${Date.now().toString(36)}`, name, kit: {}, updatedAt: '' }
-  await save(entry)
-  selectedId.value = entry.id
+  try {
+    await save(entry)
+    selectedId.value = entry.id
+  } catch (err) {
+    console.error('[Brand] save kit:', err)
+    toast.error('Brand kit save failed')
+  }
 }
 async function duplicateKit() {
   if (!selected.value) return
@@ -32,21 +38,41 @@ async function duplicateKit() {
     kit: { ...src.kit, logos: src.kit.logos ? { ...src.kit.logos } : undefined, assets: src.kit.assets?.map(a => ({ ...a })) },
     updatedAt: '',
   }
-  await save(entry)
-  selectedId.value = entry.id
+  try {
+    await save(entry)
+    selectedId.value = entry.id
+  } catch (err) {
+    console.error('[Brand] save kit:', err)
+    toast.error('Brand kit save failed')
+  }
 }
 async function renameKit(name: string) {
   if (!selected.value || !name.trim()) return
-  await save({ ...selected.value, name: name.trim() })
+  try {
+    await save({ ...selected.value, name: name.trim() })
+  } catch (err) {
+    console.error('[Brand] save kit:', err)
+    toast.error('Brand kit save failed')
+  }
 }
 async function deleteKit() {
   if (!selected.value) return
-  await remove(selected.value.id)
-  selectedId.value = kits.value[0]?.id ?? null
+  try {
+    await remove(selected.value.id)
+    selectedId.value = kits.value[0]?.id ?? null
+  } catch (err) {
+    console.error('[Brand] delete kit:', err)
+    toast.error('Brand kit delete failed')
+  }
 }
 async function patchKit(patch: Partial<BrandKit>) {
   if (!selected.value) return
-  await save({ ...selected.value, kit: { ...selected.value.kit, ...patch } })
+  try {
+    await save({ ...selected.value, kit: { ...selected.value.kit, ...patch } })
+  } catch (err) {
+    console.error('[Brand] save kit:', err)
+    toast.error('Brand kit save failed')
+  }
 }
 
 const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const

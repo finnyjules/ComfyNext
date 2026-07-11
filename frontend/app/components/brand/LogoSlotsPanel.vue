@@ -6,6 +6,7 @@
 import { BRAND_LOGO_SLOT_KEYS, type BrandKit, type BrandLogoSlotKey } from '~~/shared/brand/types'
 import { brandLogoUrl } from '~~/shared/brand/resolve'
 import { uploadBrandImage } from '~/lib/brand/upload'
+import { toast } from 'vue-sonner'
 
 const props = defineProps<{ kit: BrandKit }>()
 const emit = defineEmits<{ update: [patch: Partial<BrandKit>] }>()
@@ -28,7 +29,10 @@ async function onFile(slot: BrandLogoSlotKey, e: Event) {
   input.value = ''
   if (!file) return
   try { setSlot(slot, await uploadBrandImage(file)) }
-  catch (err) { console.error('[Brand] logo upload:', err) }
+  catch (err) {
+    console.error('[Brand] logo upload:', err)
+    toast.error('Logo upload failed')
+  }
 }
 </script>
 
