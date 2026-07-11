@@ -412,10 +412,40 @@ describe('buildGeometry', () => {
     expect(g.getAttribute('position').count).toBeGreaterThanOrEqual(12) // ≥ 4 tris
   })
 
-  it('degenerate gem input falls back to a tetrahedron (12 verts) rather than throwing', () => {
-    // vertices=4 collinear-ish still must yield a solid; forcing minimum path
+  it('a small 4-vertex gem still yields a valid solid', () => {
+    // NOTE: 4 random points form a valid hull directly — this does NOT exercise the
+    // fallback catch. The genuine fallback path is covered in the separate mock test below.
     const g = buildGeometry(gem('#x', 4))
     expect(g.getAttribute('position').count).toBeGreaterThanOrEqual(12)
+  })
+})
+```
+
+The fallback catch only fires when `ConvexGeometry` throws (or yields < 12 verts) — which random points won't do. Cover it with a **separate** test file that mocks `gemPoints` to return coincident points, so `ConvexGeometry` genuinely fails and the tetrahedron fallback runs. Distinguish the fallback from a real hull by its signature: `TetrahedronGeometry(1.4, 0)` is centered with every vertex at radius 1.4.
+
+Create `frontend/tests/unit/shapefx-geometry-fallback.unit.spec.ts`:
+
+```ts
+import { describe, it, expect, vi } from 'vitest'
+
+// Coincident points → ConvexGeometry throws → buildGeometry's catch → TetrahedronGeometry(1.4,0).
+vi.mock('../../app/lib/shapefx/points', () => ({
+  gemPoints: () => [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+}))
+
+import { buildGeometry } from '../../app/lib/shapefx/geometry'
+import { DEFAULT_CONFIG, type ShapeConfig } from '../../app/lib/shapefx/config'
+
+const degenerateGem: ShapeConfig = {
+  ...DEFAULT_CONFIG, shape: { ...DEFAULT_CONFIG.shape, mode: 'gem', vertices: 4 },
+}
+
+describe('buildGeometry degenerate fallback', () => {
+  it('falls back to the tetrahedron when the hull is degenerate', () => {
+    const g = buildGeometry(degenerateGem)               // must not throw
+    g.computeBoundingSphere()
+    expect(g.getAttribute('position').count).toBe(12)    // tetra = 4 tris × 3, non-indexed
+    expect(g.boundingSphere!.radius).toBeCloseTo(1.4, 1) // the fallback's signature radius
   })
 })
 ```
@@ -443,7 +473,7 @@ function primitiveGeometry(kind: PrimitiveKind, density: number): THREE.BufferGe
   const s = seg(density)
   switch (kind) {
     case 'cube':         return new THREE.BoxGeometry(2, 2, 2)
-    case 'sphere':       return new THREE.IcosahedronGeometry(1.4, Math.max(0, Math.round(density))) // faceted sphere via icosa detail
+    case 'sphere':       return new THREE.IcosahedronGeometry(1.4, Math.max(0, Math.min(4, Math.round(density)))) // faceted sphere; clamp detail 0–4 (mergeConfig doesn't range-clamp, and unbounded detail = 4^detail subdivision → OOM)
     case 'cone':         return new THREE.ConeGeometry(1.3, 2.4, Math.max(3, s))
     case 'cylinder':     return new THREE.CylinderGeometry(1.1, 1.1, 2.4, Math.max(3, s))
     case 'prism':        return new THREE.CylinderGeometry(1.3, 1.3, 2.4, 3) // triangular prism
