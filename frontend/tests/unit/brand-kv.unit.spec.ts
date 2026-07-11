@@ -40,3 +40,18 @@ describe('brandKitToKv — logo slots', () => {
     expect(brandKitToKv({ assets: [{ id: 'a', name: 'x', path: '/x.png' }] })).toBe('')
   })
 })
+
+describe('brandKitToKv — palette', () => {
+  it('emits palette.<slug>= lines and materialized role lines', () => {
+    expect(brandKitToKv({
+      palette: [{ id: 'e1', name: 'Deep Viridian', hex: '#2A8C6E' }],
+      roles: { background: 'e1' },
+    })).toBe([
+      'background=#2A8C6E',
+      'palette.deep_viridian=#2A8C6E',
+    ].join('\n'))
+  })
+  it('skips palette entries with empty name or hex', () => {
+    expect(brandKitToKv({ palette: [{ id: 'x', name: '', hex: '#fff' }, { id: 'y', name: 'Ok', hex: '' }] })).toBe('')
+  })
+})

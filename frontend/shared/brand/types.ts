@@ -20,6 +20,12 @@ export interface BrandAsset {
   path: string       // /view?… or external URL
 }
 
+export interface BrandPaletteEntry {
+  id: string     // stable (e.g. crypto.randomUUID()); role refs survive renames
+  name: string   // user-chosen, e.g. "Deep Viridian" — agents match on this
+  hex: string    // #RRGGBB
+}
+
 export interface BrandKit {
   primary?: string
   secondary?: string
@@ -34,6 +40,11 @@ export interface BrandKit {
   logo?: string        // legacy single logo; logos.primary wins when set
   logos?: BrandLogoSlots
   assets?: BrandAsset[]
+  /** Named color palette — the editing model. Legacy flat role fields above
+   *  remain readable; new kits stop writing them once a palette exists. */
+  palette?: BrandPaletteEntry[]
+  /** Role → palette entry id. Roles are how templates bind ({{ brand.primary }}). */
+  roles?: Partial<Record<BrandColorKey, string>>
 }
 
 export const BRAND_COLOR_KEYS = ['primary', 'secondary', 'accent', 'accent2', 'foreground', 'background'] as const
