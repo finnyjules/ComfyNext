@@ -20,3 +20,23 @@ describe('brandKitToKv', () => {
     expect(v).toBe('/view?filename=logo.png&type=input')
   })
 })
+
+describe('brandKitToKv — logo slots', () => {
+  it('logo= line carries the effective primary; slots serialize as dotted keys', () => {
+    expect(brandKitToKv({
+      primary: '#0a0a0a',
+      logos: { primary: '/view?filename=p.png&type=input', mark: '/view?filename=m.png&type=input' },
+    })).toBe([
+      'primary=#0a0a0a',
+      'logo=/view?filename=p.png&type=input',
+      'logos.primary=/view?filename=p.png&type=input',
+      'logos.mark=/view?filename=m.png&type=input',
+    ].join('\n'))
+  })
+  it('legacy logo still emits when no slots exist', () => {
+    expect(brandKitToKv({ logo: '/old.png' })).toBe('logo=/old.png')
+  })
+  it('assets never serialize to KV', () => {
+    expect(brandKitToKv({ assets: [{ id: 'a', name: 'x', path: '/x.png' }] })).toBe('')
+  })
+})

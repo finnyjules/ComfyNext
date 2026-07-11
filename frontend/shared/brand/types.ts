@@ -7,6 +7,19 @@
  * project picks its active kit via ProjectDoc.brandKitId.
  */
 
+export interface BrandLogoSlots {
+  primary?: string   // /view?filename=…&type=input or external URL
+  mark?: string      // square mark / favicon-style
+  wordmark?: string
+  onDark?: string    // light-on-dark variant
+}
+
+export interface BrandAsset {
+  id: string
+  name: string
+  path: string       // /view?… or external URL
+}
+
 export interface BrandKit {
   primary?: string
   secondary?: string
@@ -18,11 +31,16 @@ export interface BrandKit {
   background?: string
   fontDisplay?: string
   fontBody?: string
-  logo?: string        // URL or uploaded-file path
+  logo?: string        // legacy single logo; logos.primary wins when set
+  logos?: BrandLogoSlots
+  assets?: BrandAsset[]
 }
 
 export const BRAND_COLOR_KEYS = ['primary', 'secondary', 'accent', 'accent2', 'foreground', 'background'] as const
 export type BrandColorKey = typeof BRAND_COLOR_KEYS[number]
+
+export const BRAND_LOGO_SLOT_KEYS = ['primary', 'mark', 'wordmark', 'onDark'] as const
+export type BrandLogoSlotKey = typeof BRAND_LOGO_SLOT_KEYS[number]
 
 export interface BrandKitEntry {
   id: string           // slug, [a-z0-9-]
