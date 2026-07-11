@@ -8,7 +8,9 @@ import type { ShapeConfig } from './config'
  */
 export function gemPoints(config: ShapeConfig): number[][] {
   const { vertices, depth, spread } = config.shape
-  const count = Math.max(4, Math.round(vertices))
+  // Clamp BOTH ends: mergeConfig doesn't range-clamp, so a junk import (vertices: 1e8)
+  // would otherwise hang ConvexGeometry. UI slider max is 40; 64 gives import headroom.
+  const count = Math.min(64, Math.max(4, Math.round(vertices)))
   const rng = makeRng(config.seed, 'gem')
   const pts: number[][] = []
   for (let i = 0; i < count; i++) {

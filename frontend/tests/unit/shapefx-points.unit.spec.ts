@@ -20,6 +20,10 @@ describe('gemPoints', () => {
     expect(gemPoints(cfg({ vertices: 2 })).length).toBe(4)
   })
 
+  it('clamps vertices to a safe ceiling so a junk import cannot hang the hull builder', () => {
+    expect(gemPoints(cfg({ vertices: 1e8 })).length).toBe(64)
+  })
+
   it('depth scales the Z extent', () => {
     const zExtent = (c: ShapeConfig) => {
       const zs = gemPoints(c).map(p => p[2])
