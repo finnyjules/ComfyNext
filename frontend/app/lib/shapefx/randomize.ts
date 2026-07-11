@@ -39,8 +39,10 @@ export function reroll(config: ShapeConfig): ShapeConfig {
   return {
     ...config,
     seed,
-    shape: config.locks.shape ? config.shape : rollShape(seed, config.shape),
-    palette: config.locks.palette ? config.palette : rollPalette(seed, config.palette),
-    style: config.locks.style ? config.style : rollStyle(seed, config.style),
+    fill: { ...config.fill },
+    locks: { ...config.locks },
+    shape: config.locks.shape ? { ...config.shape } : rollShape(seed, config.shape),
+    palette: config.locks.palette ? { ...config.palette } : rollPalette(seed, config.palette),
+    style: config.locks.style ? { ...config.style } : rollStyle(seed, config.style),
   }
 }

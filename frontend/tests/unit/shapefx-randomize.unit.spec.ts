@@ -34,4 +34,15 @@ describe('reroll', () => {
     expect(out.fillMode).toBe('surface')
     expect(out.locks).toEqual(start.locks)
   })
+
+  it('never aliases the input config (every section is a fresh object)', () => {
+    const start = withLocks({ shape: true, palette: true, style: true })
+    const out = reroll(start)
+    expect(out.shape).toEqual(start.shape)
+    expect(out.shape).not.toBe(start.shape)
+    expect(out.palette).not.toBe(start.palette)
+    expect(out.style).not.toBe(start.style)
+    expect(out.locks).not.toBe(start.locks)
+    expect(out.fill).not.toBe(start.fill)
+  })
 })
