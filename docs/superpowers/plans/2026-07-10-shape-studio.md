@@ -571,10 +571,21 @@ describe('shapefx color', () => {
     expect(Array.from(a.getAttribute('color').array)).toEqual(Array.from(b.getAttribute('color').array))
   })
 
-  it('different rules produce different colorings', () => {
+  it('facet vs depth rules produce different colorings', () => {
     const a = buildGeometry(cfg('facet')); applyVertexColors(a, cfg('facet'))
     const b = buildGeometry(cfg('depth')); applyVertexColors(b, cfg('depth'))
     expect(Array.from(a.getAttribute('color').array)).not.toEqual(Array.from(b.getAttribute('color').array))
+  })
+
+  it('depth vs height rules produce different colorings (guards the cz/cy axis swap)', () => {
+    const d = buildGeometry(cfg('depth')); applyVertexColors(d, cfg('depth'))
+    const h = buildGeometry(cfg('height')); applyVertexColors(h, cfg('height'))
+    expect(Array.from(d.getAttribute('color').array)).not.toEqual(Array.from(h.getAttribute('color').array))
+  })
+
+  it('a wheel harmony (triadic) yields distinct swatches, not modulo-duplicated hues', () => {
+    const p = paletteFor({ ...DEFAULT_CONFIG, palette: { ...DEFAULT_CONFIG.palette, harmony: 'triadic' } })
+    expect(new Set(p).size).toBe(p.length) // no duplicate swatches
   })
 })
 ```
@@ -602,7 +613,11 @@ export function paletteFor(config: ShapeConfig): string[] {
   const L = 0.25 + (lightness / 100) * 0.6      // 0.25–0.85
   const C = (saturation / 100) * 0.22           // 0–0.22 chroma
   const seedHex = oklchToHex(L, C, baseHue)
-  const out = harmonize(seedHex, harmony, Math.max(5, 5))
+  // Use each harmony's NATURAL swatch count (2–4 hues; monochromatic = a 5-step tonal ramp).
+  // Do NOT over-request a fixed count — wheel-symmetric harmonies cycle their fixed hue offsets
+  // via modulo, yielding DUPLICATE swatches (e.g. complementary → [A,B,A,B,A]). Per-vertex tone
+  // jitter in applyVertexColors supplies gradient richness, so few base hues is fine.
+  const out = harmonize(seedHex, harmony)
   return out.length ? out : [seedHex]
 }
 
