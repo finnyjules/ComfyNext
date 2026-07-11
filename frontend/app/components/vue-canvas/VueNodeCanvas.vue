@@ -64,6 +64,7 @@ import SpaceTypeNode from '~/components/vue-canvas/SpaceTypeNode.vue'
 import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
 import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
+import ShapeStudioNode from '~/components/vue-canvas/ShapeStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
 import LipSyncStudioNode from '~/components/vue-canvas/LipSyncStudioNode.vue'
@@ -199,7 +200,7 @@ function applyPendingTakesForDisplayedCanvas() {
 // the circular dep (useVueNodes wants the bridge, useCanvasGroups wants
 // the nodes ref that useVueNodes creates).
 const groupsBridge = { load: (_: any[] | undefined | null) => {}, export: () => [] as any[] }
-// Same dance for annotations — they live under workflow.extra.comfynext.
+// Same dance for annotations — they live under workflow.extra.sailor.
 const annotationsBridge = { load: (_: unknown) => {}, export: () => ({}) as unknown }
 
 const { nodes, edges, objectInfo, convertFromLiteGraph, convertToLiteGraph } = useVueNodes({ groupsBridge, annotationsBridge })
@@ -228,7 +229,8 @@ const nodeTypes = {
   'pose-mannequin': markRaw(PoseMannequinNode), 'shader-effect': markRaw(ShaderEffectNode),
   'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
-  'texture-studio': markRaw(TextureStudioNode), 'shot-director': markRaw(ShotDirectorNode),
+  'texture-studio': markRaw(TextureStudioNode), 'shape-studio': markRaw(ShapeStudioNode),
+  'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
   'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
   'collection': markRaw(CollectionNode),
@@ -1475,7 +1477,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
   // empty. Give it ONE wildcard output so the generated Image/Video artifact can
   // be wired from it (visual/provenance link only — SpaceType never executes).
-  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShotDirector' || nodeType === 'LipSyncStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
+  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShapeStudio' || nodeType === 'ShotDirector' || nodeType === 'LipSyncStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'output', type: '*', links: null }]
   }
   // Shader Studio consumes an image — give it one input handle (input-0).
@@ -1745,7 +1747,7 @@ async function handleApplyEffect(e: Event) {
     // One-tap actions (Upscale): run the new node immediately; 'self' scope
     // freezes the upstream artifact so it feeds its image instead of re-running
     // (and re-billing) the chain that produced it.
-    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
       detail: { targetIds: [newId], rerollScope: 'self' },
     }))
   }
@@ -1823,9 +1825,9 @@ async function handleDrop(event: DragEvent) {
   // return null on every cache-miss drop (e.g. right after a ComfyUI restart).
   const canvasEl = event.currentTarget as HTMLElement
   // Assets panel drops carry our custom MIME type with a JSON payload.
-  if (event.dataTransfer?.types.includes('application/x-comfynext-asset')) {
+  if (event.dataTransfer?.types.includes('application/x-sailor-asset')) {
     try {
-      const a = JSON.parse(event.dataTransfer.getData('application/x-comfynext-asset')) as DroppedAsset
+      const a = JSON.parse(event.dataTransfer.getData('application/x-sailor-asset')) as DroppedAsset
       const rect = canvasEl.getBoundingClientRect()
       const position = project({ x: event.clientX - rect.left, y: event.clientY - rect.top })
       nodes.value.push(await addAssetNodeData(a, position))
@@ -1834,7 +1836,7 @@ async function handleDrop(event: DragEvent) {
   }
   // Block library drops carry our custom MIME type; route them first since
   // the text/plain payload is just a fallback prefixed with "block:".
-  if (event.dataTransfer?.types.includes('application/x-comfynext-block')) {
+  if (event.dataTransfer?.types.includes('application/x-sailor-block')) {
     tryHandleBlockDrop(event)
     return
   }
@@ -1972,7 +1974,7 @@ onConnect((params) => {
     }
     const fixed = grabbedSource ? (fixTarget() || fixSource()) : (fixSource() || fixTarget())
     if (fixed) {
-      console.debug('[ComfyNext] retargeted snapped connection to type-compatible port:',
+      console.debug('[Sailor] retargeted snapped connection to type-compatible port:',
         { from: { sourceHandle: params.sourceHandle, targetHandle: params.targetHandle }, to: { sourceHandle, targetHandle } })
     }
   }
@@ -2282,15 +2284,15 @@ async function handleEditAsFrame(e: Event) {
   }
 
   if (parsed) {
-    frameProps.comfynext_frame = { ...(frameProps.comfynext_frame || {}), preset: 'custom' }
-    frameProps.comfynext_localLayers = parsed.textLayers
+    frameProps.sailor_frame = { ...(frameProps.sailor_frame || {}), preset: 'custom' }
+    frameProps.sailor_localLayers = parsed.textLayers
     // Background at the bottom of the unified stack, every text layer above.
-    frameProps.comfynext_stackOrder = ['w:1', ...parsed.textLayers.map((l) => `l:${l.id}`)]
+    frameProps.sailor_stackOrder = ['w:1', ...parsed.textLayers.map((l) => `l:${l.id}`)]
     ensureLayerFonts(parsed.textLayers as any, parsed.width).catch(() => {})
     nodes.value.push(frame as any)
     wire(0, 'layer1') // text-free background
   } else {
-    frameProps.comfynext_stackOrder = ['w:1', 'w:2']
+    frameProps.sailor_stackOrder = ['w:1', 'w:2']
     nodes.value.push(frame as any)
     wire(1, 'layer1') // clean background plate → bottom
     wire(0, 'layer2') // subject cutout → top
@@ -2402,7 +2404,7 @@ function takeFromExecutedEvent(event: MessageEvent): any | null {
 
 // Listen for execution progress from bridge (via postMessage)
 function handleBridgeMessage(event: MessageEvent) {
-  if (event.data?.type !== 'comfynext-bridge') return
+  if (event.data?.type !== 'sailor-bridge') return
 
   const { event: evt, node_id, node, percent, progress: prog } = event.data
   const nodeId = node_id || node // bridge sends node_id, normalize
@@ -2672,7 +2674,7 @@ function handleBridgeMessage(event: MessageEvent) {
     if (promptId) canvasByPrompt.delete(promptId)
     // Let the agent close its run→look→fix loop (the prompt bar gates on whether a
     // Keep & Run is awaiting review).
-    if (import.meta.client) window.dispatchEvent(new CustomEvent('comfynext:agentRunComplete'))
+    if (import.meta.client) window.dispatchEvent(new CustomEvent('sailor:agentRunComplete'))
   }
 
   if (evt === 'gate_paused') {
@@ -2725,6 +2727,13 @@ function handleOpenTextureStudio(e: Event) {
   if (detail?.nodeId) textureStudioOpenForId.value = String(detail.nodeId)
 }
 
+// Shape Studio editor open-state (same pattern as Gradient Studio).
+const shapeStudioOpenForId = ref<string | null>(null)
+function handleOpenShapeStudio(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) shapeStudioOpenForId.value = String(detail.nodeId)
+}
+
 // Shader Studio editor open-state (same pattern as Gradient Studio).
 const shaderStudioOpenForId = ref<string | null>(null)
 const shaderStudioWiredUrl = ref<string | null>(null)
@@ -2759,7 +2768,7 @@ async function handleAnimateArtifact(e: Event) {
     // (firstFrame mode exists on the sheet but has no compile/dispatch wiring yet.)
     const sheet = addRef(hydrateShotSheet(undefined), 'image', refUrl, 'composition-lock')
     const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
-    const node = createNodeData('ShotDirector', pos, undefined, { comfynext_shotDirector: sheet })
+    const node = createNodeData('ShotDirector', pos, undefined, { sailor_shotDirector: sheet })
     nodes.value.push(node)
     await nextTick()
     fitView({ nodes: [node.id], padding: 0.5, duration: 250 })
@@ -2788,7 +2797,7 @@ async function handleLipSyncGenerate(e: Event) {
   if (!studio.data) studio.data = {}
   studio.data.lipSyncError = null
 
-  const sheet = hydrateLipSyncSheet(studio.data?.properties?.comfynext_lipSync)
+  const sheet = hydrateLipSyncSheet(studio.data?.properties?.sailor_lipSync)
   const compiled = compileLipSync(sheet)
   const errors = compiled.issues.filter(i => i.level === 'error')
   if (errors.length) { studio.data.lipSyncError = errors[0]!.message; return }
@@ -2818,7 +2827,7 @@ async function handleLipSyncGenerate(e: Event) {
   }
 
   // Find-or-spawn the LipSyncNode render target (remembered on the studio node).
-  let targetId: string | null = studio.data?.properties?.comfynext_lipSyncTargetId ?? null
+  let targetId: string | null = studio.data?.properties?.sailor_lipSyncTargetId ?? null
   if (targetId && !(nodes.value as any[]).some(n => String(n.id) === String(targetId) && n.data?.nodeType === 'LipSyncNode')) {
     targetId = null
   }
@@ -2831,7 +2840,7 @@ async function handleLipSyncGenerate(e: Event) {
     nodes.value.push(target)
     targetId = String(target.id)
     if (!studio.data.properties) studio.data.properties = {}
-    studio.data.properties.comfynext_lipSyncTargetId = targetId
+    studio.data.properties.sailor_lipSyncTargetId = targetId
   }
 
   const target = (nodes.value as any[]).find(n => String(n.id) === String(targetId))
@@ -2845,7 +2854,7 @@ async function handleLipSyncGenerate(e: Event) {
     }
   }
   for (const [name, value] of Object.entries(patch)) setNodeWidget(target, name, value)
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { targetIds: [targetId], direction: 'downstream' },
   }))
 }
@@ -2869,7 +2878,7 @@ async function handleShotDirectorGenerate(e: Event) {
   if (!studio.data) studio.data = {}
   studio.data.shotError = null
 
-  const sheet = hydrateShotSheet(studio.data?.properties?.comfynext_shotDirector)
+  const sheet = hydrateShotSheet(studio.data?.properties?.sailor_shotDirector)
 
   let effectiveSheet = sheet
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
@@ -2905,7 +2914,7 @@ async function handleShotDirectorGenerate(e: Event) {
   const patch = buildFilmShotPatch(effectiveSheet, result)
   const lite = (nodes.value as any[]).map(n => ({ id: String(n.id), nodeType: n.data?.nodeType as string | undefined }))
   const liteEdges = (edges.value as any[]).map(e => ({ source: String(e.source), target: String(e.target) }))
-  let targetId = findShotTarget(lite, liteEdges, String(studio.id), studio.data?.properties?.comfynext_shotDirectorTargetId)
+  let targetId = findShotTarget(lite, liteEdges, String(studio.id), studio.data?.properties?.sailor_shotDirectorTargetId)
 
   if (!targetId) {
     const pos = {
@@ -2916,7 +2925,7 @@ async function handleShotDirectorGenerate(e: Event) {
     nodes.value.push(film)
     targetId = String(film.id)
     if (!studio.data.properties) studio.data.properties = {}
-    studio.data.properties.comfynext_shotDirectorTargetId = targetId
+    studio.data.properties.sailor_shotDirectorTargetId = targetId
   }
 
   const film = (nodes.value as any[]).find(n => String(n.id) === targetId)
@@ -2936,7 +2945,7 @@ async function handleShotDirectorGenerate(e: Event) {
   for (const [name, value] of Object.entries(patch)) {
     setNodeWidget(film, name, value)
   }
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { targetIds: [targetId], direction: 'downstream' },
   }))
 }
@@ -2947,21 +2956,21 @@ async function handleShotDirectorGenerate(e: Event) {
 function syncAllShotDirectorCasts() {
   const liteNodes = (nodes.value as any[]).map(n => ({
     id: String(n.id), nodeType: n.data?.nodeType as string | undefined,
-    characterSlug: n.data?.properties?.comfynext_characterSlug ?? null,
-    characterName: n.data?.properties?.comfynext_characterName ?? null,
-    characterVariantId: n.data?.properties?.comfynext_characterVariantId ?? null,
+    characterSlug: n.data?.properties?.sailor_characterSlug ?? null,
+    characterName: n.data?.properties?.sailor_characterName ?? null,
+    characterVariantId: n.data?.properties?.sailor_characterVariantId ?? null,
   }))
   const liteEdges = (edges.value as any[]).map(e => ({
     source: String(e.source), target: String(e.target), targetHandle: e.targetHandle ?? null,
   }))
   for (const n of nodes.value as any[]) {
     if (n.data?.nodeType !== 'ShotDirector') continue
-    const raw = n.data?.properties?.comfynext_shotDirector
+    const raw = n.data?.properties?.sailor_shotDirector
     const sheet = hydrateShotSheet(raw)
     const next = syncCast(sheet.cast, wireCastFor(String(n.id), liteNodes, liteEdges))
     if (next) {
       if (!n.data.properties) n.data.properties = {}
-      n.data.properties.comfynext_shotDirector = { ...sheet, cast: next }
+      n.data.properties.sailor_shotDirector = { ...sheet, cast: next }
     }
   }
 }
@@ -2974,7 +2983,7 @@ function handleUncastCharacter(e: Event) {
   const drop = (edges.value as any[]).filter((ed) => {
     if (String(ed.target) !== String(nodeId)) return false
     const src = (nodes.value as any[]).find(n => String(n.id) === String(ed.source))
-    return src?.data?.properties?.comfynext_characterSlug === slug
+    return src?.data?.properties?.sailor_characterSlug === slug
   })
   if (drop.length) removeEdges(drop.map((d: any) => d.id))
 }
@@ -3106,7 +3115,7 @@ function materializeSketchCards(source: { id: string, data?: any, position?: { x
 // enhancing the specific card image. All 4 cards share one source, so which
 // card was clicked doesn't matter — this always looks up the sketch node by
 // `sketchSourceId` and reuses its active take's prompt/seed/aspect
-// (sketchPromoteOverridesFor), then spawns via the same comfynext:spawnBeside
+// (sketchPromoteOverridesFor), then spawns via the same sailor:spawnBeside
 // path handleSpawnBeside already serves (focused, no run, no edge — model is
 // left at the finisher default, never copied from the sketch's Schnell lock).
 function handlePromoteSketchOutput(e: Event) {
@@ -3119,7 +3128,7 @@ function handlePromoteSketchOutput(e: Event) {
   if (!take) return
   const built = sketchPromoteOverridesFor(take)
   if (!built) return
-  window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
+  window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
     detail: {
       sourceNodeId: source.id,
       nodeType: 'GenerateImageNode',
@@ -3194,15 +3203,15 @@ function handleAddCharacterCastNode(e: Event) {
   if (!slug || !name) return
   // Defense in depth: normalize the 'default' sentinel away here too, in case
   // some other caller of this event forgets to (see CharacterLibraryPanel's
-  // castInShot for why 'default' must never reach comfynext_characterVariantId).
+  // castInShot for why 'default' must never reach sailor_characterVariantId).
   const variantId = rawVariantId === 'default' ? undefined : rawVariantId
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   nodes.value.push(createNodeData('Character', pos, undefined, {
-    comfynext_characterSlug: slug,
-    comfynext_characterName: name,
-    ...(variantId ? { comfynext_characterVariantId: variantId } : {}),
+    sailor_characterSlug: slug,
+    sailor_characterName: name,
+    ...(variantId ? { sailor_characterVariantId: variantId } : {}),
   }))
-  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
 }
 
 // Studio render cascade: a studio node's footer "Render" button re-bakes it and
@@ -3217,7 +3226,7 @@ async function handleStudioRender(e: Event) {
     getEdges: () => edges.value as any[],
     upload: async (blob, prefix) => { const [f] = await uploadFrameBatch([blob], prefix); return f ?? null },
     publish: (studioId, filename) => publishStudioOutput(studioId, filename),
-    runBackendDownstream: (startId) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [startId], direction: 'downstream' } })),
+    runBackendDownstream: (startId) => window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [startId], direction: 'downstream' } })),
     setBusy: (nodeId, busy) => {
       const n = (nodes.value as any[]).find(x => String(x.id) === String(nodeId))
       if (n) { if (!n.data) n.data = {}; (n.data as any).studioBusy = busy }
@@ -3242,7 +3251,7 @@ function publishStudioOutput(studioId: string, filename: string) {
     .filter((n): n is any => !!n && (n.data?.nodeType === 'Image' || String(n.type).startsWith('artifact-')))
   if (!targets.length) {
     // No artifact yet — reuse the studio-output handler to create + wire one.
-    window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', { detail: { sourceNodeId: studioId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
+    window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', { detail: { sourceNodeId: studioId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
     return
   }
   for (const art of targets) {
@@ -3343,7 +3352,7 @@ function handlePoseGenerate(e: Event) {
   const sink = ensurePoseImageSink(poseNode)
   const rerollScope = detail?.rerollScope as 'self' | undefined
   nextTick(() => {
-    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
       detail: { targetIds: [nodeId, String(sink.id)], live: true, rerollScope },
     }))
   })
@@ -3439,8 +3448,8 @@ async function handleFrameDropImage(e: Event) {
   const node = (nodes.value as any[]).find(n => n.id === String(nodeId))
   if (!node) return
   if (!node.data.properties) node.data.properties = {}
-  const existing: any[] = Array.isArray(node.data.properties.comfynext_localLayers)
-    ? node.data.properties.comfynext_localLayers : []
+  const existing: any[] = Array.isArray(node.data.properties.sailor_localLayers)
+    ? node.data.properties.sailor_localLayers : []
   const added: any[] = []
   for (const file of Array.from(files)) {
     if (!file.type.startsWith('image/')) continue
@@ -3464,7 +3473,7 @@ async function handleFrameDropImage(e: Event) {
       console.error('[Frame] image drop failed:', err)
     }
   }
-  if (added.length) node.data.properties.comfynext_localLayers = [...existing, ...added]
+  if (added.length) node.data.properties.sailor_localLayers = [...existing, ...added]
 }
 
 // ASCII options drawer state.
@@ -3495,9 +3504,9 @@ function handleOpenCollection(e: Event) {
 }
 
 // Sweep auto-run handoff (Slice 2a Task 8b): a studio surface's Sweep popover
-// appends rows to the wired collection, dispatches `comfynext:openCollection`
+// appends rows to the wired collection, dispatches `sailor:openCollection`
 // to open the drawer for that collection, then immediately dispatches
-// `comfynext:runSweepRows` with the new row ids + the target studio's node id.
+// `sailor:runSweepRows` with the new row ids + the target studio's node id.
 // The drawer that's about to mount (openCollection above) isn't listening yet
 // when runSweepRows fires synchronously right after it — both events land in
 // the same tick, before Vue has re-rendered `v-if="collectionDrawerForId"`.
@@ -3623,7 +3632,7 @@ function pushPreviewAndOpenCollection(targetId: string) {
   const collectionNode = collectionId ? allNodes.find(n => String(n.id) === String(collectionId)) : undefined
   if (collectionNode) {
     pushVarPreview(collectionNode, wiredTargets(String(collectionId), allNodes, allEdges), allNodes)
-    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(collectionId) } }))
+    window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(collectionId) } }))
   }
 }
 
@@ -3756,7 +3765,7 @@ const anyEditorModalOpen = computed(() => !!(
   smartLayoutOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
   voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
-  shaderStudioOpenForId.value || textureStudioOpenForId.value ||
+  shaderStudioOpenForId.value || textureStudioOpenForId.value || shapeStudioOpenForId.value ||
   shotDirectorOpenForId.value || !!collectionDrawerForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
@@ -3863,7 +3872,7 @@ async function handlePaste(e: ClipboardEvent) {
 
   // Spawn a unified `Image` artifact node (not a brittle LoadImage) with the
   // uploaded file — it's already in the input folder, so it runs natively.
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Image',
       widgetOverrides: { image: uploadedName },
@@ -3902,116 +3911,121 @@ function handleAddAnnotationEvent(event: Event) {
 }
 
 onMounted(() => {
-  window.addEventListener('comfynext:addNode', handleAddNode)
-  window.addEventListener('comfynext:addAssetNode', handleAddAssetNode)
-  window.addEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
+  window.addEventListener('sailor:addNode', handleAddNode)
+  window.addEventListener('sailor:addAssetNode', handleAddAssetNode)
+  window.addEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
-  window.addEventListener('comfynext:openCompositor', handleOpenCompositor)
-  window.addEventListener('comfynext:openSpaceType', handleOpenSpaceType)
-  window.addEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
-  window.addEventListener('comfynext:openGradientStudio', handleOpenGradientStudio)
+  window.addEventListener('sailor:openCompositor', handleOpenCompositor)
+  window.addEventListener('sailor:openSpaceType', handleOpenSpaceType)
+  window.addEventListener('sailor:spaceTypeOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   // Gradient Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
-  window.addEventListener('comfynext:gradientStudioOutput', handleSpaceTypeOutput)
-  window.addEventListener('comfynext:openTextureStudio', handleOpenTextureStudio)
+  window.addEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   // Texture Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
-  window.addEventListener('comfynext:textureStudioOutput', handleSpaceTypeOutput)
-  window.addEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
+  window.addEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
   // Shader Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
-  window.addEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
-  window.addEventListener('comfynext:openShotDirector', handleOpenShotDirector)
+  window.addEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
+  // Shape Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openShotDirector', handleOpenShotDirector)
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
-  window.addEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
-  window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
-  window.addEventListener('comfynext:openLipSync', handleOpenLipSync)
-  window.addEventListener('comfynext:lipSyncGenerate', handleLipSyncGenerate)
-  window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
-  window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
-  window.addEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
-  window.addEventListener('comfynext:addCharacterCastNode', handleAddCharacterCastNode)
-  window.addEventListener('comfynext:studioRender', handleStudioRender)
-  window.addEventListener('comfynext:editAsFrame', handleEditAsFrame)
-  window.addEventListener('comfynext:openInpaint', handleOpenInpaint)
-  window.addEventListener('comfynext:frameDropImage', handleFrameDropImage)
-  window.addEventListener('comfynext:openAsciiOptions', handleOpenAscii)
-  window.addEventListener('comfynext:openTimeline', handleOpenTimeline)
-  window.addEventListener('comfynext:openCrossfade', handleOpenCrossfade)
-  window.addEventListener('comfynext:openCollection', handleOpenCollection)
-  window.addEventListener('comfynext:runSweepRows', handleRunSweepRows)
-  window.addEventListener('comfynext:collectionScrub', handleCollectionScrub)
-  window.addEventListener('comfynext:promoteControl', handlePromoteControl)
-  window.addEventListener('comfynext:promoteLayoutElement', handlePromoteLayoutElement)
-  window.addEventListener('comfynext:bindControl', handleBindControl)
-  window.addEventListener('comfynext:unbindControl', handleUnbindControl)
-  window.addEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
-  window.addEventListener('comfynext:openModelGallery', handleOpenModelGallery)
-  window.addEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
-  window.addEventListener('comfynext:openVoiceGallery', handleOpenVoiceGallery)
-  window.addEventListener('comfynext:openKineticType', handleOpenKineticType)
-  window.addEventListener('comfynext:openPose', handleOpenPose)
-  window.addEventListener('comfynext:poseResult', handlePoseResult)
-  window.addEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
-  window.addEventListener('comfynext:poseGenerate', handlePoseGenerate)
-  window.addEventListener('comfynext:edgeInsert', handleEdgeInsert)
-  window.addEventListener('comfynext:applyEffect', handleApplyEffect)
-  window.addEventListener('comfynext:animateArtifact', handleAnimateArtifact)
-  window.addEventListener('comfynext:spawnBeside', handleSpawnBeside)
-  window.addEventListener('comfynext:promoteSketchOutput', handlePromoteSketchOutput)
+  window.addEventListener('sailor:shotDirectorOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.addEventListener('sailor:openLipSync', handleOpenLipSync)
+  window.addEventListener('sailor:lipSyncGenerate', handleLipSyncGenerate)
+  window.addEventListener('sailor:castEdgesChanged', syncAllShotDirectorCasts)
+  window.addEventListener('sailor:uncastCharacter', handleUncastCharacter)
+  window.addEventListener('sailor:addCharacterImageGen', handleAddCharacterImageGen)
+  window.addEventListener('sailor:addCharacterCastNode', handleAddCharacterCastNode)
+  window.addEventListener('sailor:studioRender', handleStudioRender)
+  window.addEventListener('sailor:editAsFrame', handleEditAsFrame)
+  window.addEventListener('sailor:openInpaint', handleOpenInpaint)
+  window.addEventListener('sailor:frameDropImage', handleFrameDropImage)
+  window.addEventListener('sailor:openAsciiOptions', handleOpenAscii)
+  window.addEventListener('sailor:openTimeline', handleOpenTimeline)
+  window.addEventListener('sailor:openCrossfade', handleOpenCrossfade)
+  window.addEventListener('sailor:openCollection', handleOpenCollection)
+  window.addEventListener('sailor:runSweepRows', handleRunSweepRows)
+  window.addEventListener('sailor:collectionScrub', handleCollectionScrub)
+  window.addEventListener('sailor:promoteControl', handlePromoteControl)
+  window.addEventListener('sailor:promoteLayoutElement', handlePromoteLayoutElement)
+  window.addEventListener('sailor:bindControl', handleBindControl)
+  window.addEventListener('sailor:unbindControl', handleUnbindControl)
+  window.addEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
+  window.addEventListener('sailor:openModelGallery', handleOpenModelGallery)
+  window.addEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
+  window.addEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
+  window.addEventListener('sailor:openKineticType', handleOpenKineticType)
+  window.addEventListener('sailor:openPose', handleOpenPose)
+  window.addEventListener('sailor:poseResult', handlePoseResult)
+  window.addEventListener('sailor:poseMultiResult', handlePoseMultiResult)
+  window.addEventListener('sailor:poseGenerate', handlePoseGenerate)
+  window.addEventListener('sailor:edgeInsert', handleEdgeInsert)
+  window.addEventListener('sailor:applyEffect', handleApplyEffect)
+  window.addEventListener('sailor:animateArtifact', handleAnimateArtifact)
+  window.addEventListener('sailor:spawnBeside', handleSpawnBeside)
+  window.addEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
   fetchObjectInfo()
 })
 onUnmounted(() => {
-  window.removeEventListener('comfynext:addNode', handleAddNode)
-  window.removeEventListener('comfynext:addAssetNode', handleAddAssetNode)
-  window.removeEventListener('comfynext:addAnnotation', handleAddAnnotationEvent)
+  window.removeEventListener('sailor:addNode', handleAddNode)
+  window.removeEventListener('sailor:addAssetNode', handleAddAssetNode)
+  window.removeEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
-  window.removeEventListener('comfynext:openCompositor', handleOpenCompositor)
-  window.removeEventListener('comfynext:openSpaceType', handleOpenSpaceType)
-  window.removeEventListener('comfynext:openGradientStudio', handleOpenGradientStudio)
-  window.removeEventListener('comfynext:gradientStudioOutput', handleSpaceTypeOutput)
-  window.removeEventListener('comfynext:openTextureStudio', handleOpenTextureStudio)
-  window.removeEventListener('comfynext:textureStudioOutput', handleSpaceTypeOutput)
-  window.removeEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
-  window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
-  window.removeEventListener('comfynext:openShotDirector', handleOpenShotDirector)
-  window.removeEventListener('comfynext:shotDirectorOutput', handleSpaceTypeOutput)
-  window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
-  window.removeEventListener('comfynext:openLipSync', handleOpenLipSync)
-  window.removeEventListener('comfynext:lipSyncGenerate', handleLipSyncGenerate)
-  window.removeEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
-  window.removeEventListener('comfynext:uncastCharacter', handleUncastCharacter)
-  window.removeEventListener('comfynext:addCharacterImageGen', handleAddCharacterImageGen)
-  window.removeEventListener('comfynext:addCharacterCastNode', handleAddCharacterCastNode)
-  window.removeEventListener('comfynext:spaceTypeOutput', handleSpaceTypeOutput)
-  window.removeEventListener('comfynext:studioRender', handleStudioRender)
-  window.removeEventListener('comfynext:editAsFrame', handleEditAsFrame)
-  window.removeEventListener('comfynext:openInpaint', handleOpenInpaint)
-  window.removeEventListener('comfynext:frameDropImage', handleFrameDropImage)
-  window.removeEventListener('comfynext:openAsciiOptions', handleOpenAscii)
-  window.removeEventListener('comfynext:openTimeline', handleOpenTimeline)
-  window.removeEventListener('comfynext:openCrossfade', handleOpenCrossfade)
-  window.removeEventListener('comfynext:openCollection', handleOpenCollection)
-  window.removeEventListener('comfynext:runSweepRows', handleRunSweepRows)
-  window.removeEventListener('comfynext:collectionScrub', handleCollectionScrub)
-  window.removeEventListener('comfynext:promoteControl', handlePromoteControl)
-  window.removeEventListener('comfynext:promoteLayoutElement', handlePromoteLayoutElement)
-  window.removeEventListener('comfynext:bindControl', handleBindControl)
-  window.removeEventListener('comfynext:unbindControl', handleUnbindControl)
-  window.removeEventListener('comfynext:openSmartLayout', handleOpenSmartLayout)
-  window.removeEventListener('comfynext:openModelGallery', handleOpenModelGallery)
-  window.removeEventListener('comfynext:openLoraGallery', handleOpenLoraGallery)
-  window.removeEventListener('comfynext:openVoiceGallery', handleOpenVoiceGallery)
-  window.removeEventListener('comfynext:openKineticType', handleOpenKineticType)
-  window.removeEventListener('comfynext:openPose', handleOpenPose)
-  window.removeEventListener('comfynext:poseResult', handlePoseResult)
-  window.removeEventListener('comfynext:poseMultiResult', handlePoseMultiResult)
-  window.removeEventListener('comfynext:poseGenerate', handlePoseGenerate)
-  window.removeEventListener('comfynext:edgeInsert', handleEdgeInsert)
-  window.removeEventListener('comfynext:applyEffect', handleApplyEffect)
-  window.removeEventListener('comfynext:animateArtifact', handleAnimateArtifact)
-  window.removeEventListener('comfynext:spawnBeside', handleSpawnBeside)
-  window.removeEventListener('comfynext:promoteSketchOutput', handlePromoteSketchOutput)
+  window.removeEventListener('sailor:openCompositor', handleOpenCompositor)
+  window.removeEventListener('sailor:openSpaceType', handleOpenSpaceType)
+  window.removeEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
+  window.removeEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
+  window.removeEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
+  window.removeEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
+  window.removeEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openShotDirector', handleOpenShotDirector)
+  window.removeEventListener('sailor:shotDirectorOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
+  window.removeEventListener('sailor:openLipSync', handleOpenLipSync)
+  window.removeEventListener('sailor:lipSyncGenerate', handleLipSyncGenerate)
+  window.removeEventListener('sailor:castEdgesChanged', syncAllShotDirectorCasts)
+  window.removeEventListener('sailor:uncastCharacter', handleUncastCharacter)
+  window.removeEventListener('sailor:addCharacterImageGen', handleAddCharacterImageGen)
+  window.removeEventListener('sailor:addCharacterCastNode', handleAddCharacterCastNode)
+  window.removeEventListener('sailor:spaceTypeOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:studioRender', handleStudioRender)
+  window.removeEventListener('sailor:editAsFrame', handleEditAsFrame)
+  window.removeEventListener('sailor:openInpaint', handleOpenInpaint)
+  window.removeEventListener('sailor:frameDropImage', handleFrameDropImage)
+  window.removeEventListener('sailor:openAsciiOptions', handleOpenAscii)
+  window.removeEventListener('sailor:openTimeline', handleOpenTimeline)
+  window.removeEventListener('sailor:openCrossfade', handleOpenCrossfade)
+  window.removeEventListener('sailor:openCollection', handleOpenCollection)
+  window.removeEventListener('sailor:runSweepRows', handleRunSweepRows)
+  window.removeEventListener('sailor:collectionScrub', handleCollectionScrub)
+  window.removeEventListener('sailor:promoteControl', handlePromoteControl)
+  window.removeEventListener('sailor:promoteLayoutElement', handlePromoteLayoutElement)
+  window.removeEventListener('sailor:bindControl', handleBindControl)
+  window.removeEventListener('sailor:unbindControl', handleUnbindControl)
+  window.removeEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
+  window.removeEventListener('sailor:openModelGallery', handleOpenModelGallery)
+  window.removeEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
+  window.removeEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
+  window.removeEventListener('sailor:openKineticType', handleOpenKineticType)
+  window.removeEventListener('sailor:openPose', handleOpenPose)
+  window.removeEventListener('sailor:poseResult', handlePoseResult)
+  window.removeEventListener('sailor:poseMultiResult', handlePoseMultiResult)
+  window.removeEventListener('sailor:poseGenerate', handlePoseGenerate)
+  window.removeEventListener('sailor:edgeInsert', handleEdgeInsert)
+  window.removeEventListener('sailor:applyEffect', handleApplyEffect)
+  window.removeEventListener('sailor:animateArtifact', handleAnimateArtifact)
+  window.removeEventListener('sailor:spawnBeside', handleSpawnBeside)
+  window.removeEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -4268,7 +4282,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     if (!liveNode) continue
     if (!Array.isArray(comp.inputs)) comp.inputs = []
 
-    const locals = (comp.properties?.comfynext_localLayers as LocalLayer[] | undefined) ?? []
+    const locals = (comp.properties?.sailor_localLayers as LocalLayer[] | undefined) ?? []
 
     // Reconcile the saved stack order against what's actually present — the
     // exact reconciliation the Frame renders with. Keys: `w:<slot>` (0-based
@@ -4287,7 +4301,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     ]
     if (!presentKeys.length) continue
     const present = new Set(presentKeys)
-    const saved = (comp.properties?.comfynext_stackOrder as string[] | undefined) ?? []
+    const saved = (comp.properties?.sailor_stackOrder as string[] | undefined) ?? []
     const kept = saved.filter(k => present.has(k))
     const keptSet = new Set(kept)
     const order = [...kept, ...presentKeys.filter(k => !keptSet.has(k))]
@@ -4343,7 +4357,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       if (slot < 0) { console.warn('[compositor] no spare layer slot for local run'); return }
       usedSlots.add(slot)
 
-      const file = new File([blob], `comfynext_local_${comp.id}_${slot}_${Date.now()}.png`, { type: 'image/png' })
+      const file = new File([blob], `sailor_local_${comp.id}_${slot}_${Date.now()}.png`, { type: 'image/png' })
       const fd = new FormData()
       fd.append('image', file)
       fd.append('overwrite', 'true')
@@ -4471,7 +4485,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
       if (!blob) { console.warn('[compositor mask] toBlob returned null for slot', contentSlot); continue }
 
-      const file = new File([blob], `comfynext_mask_${comp.id}_${contentSlot}_${Date.now()}.png`, { type: 'image/png' })
+      const file = new File([blob], `sailor_mask_${comp.id}_${contentSlot}_${Date.now()}.png`, { type: 'image/png' })
       const fd = new FormData()
       fd.append('image', file)
       fd.append('overwrite', 'true')
@@ -4530,7 +4544,7 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     // Hidden layers are skipped entirely; a local layer with a non-normal blend
     // mode bakes as its own single-layer run so the backend applies the mode.
     const hiddenWired = new Set<number>(
-      ((comp.properties?.comfynext_hiddenWired as number[] | undefined) ?? []).map(Number),
+      ((comp.properties?.sailor_hiddenWired as number[] | undefined) ?? []).map(Number),
     )
     let run: LocalLayer[] = []
     let runZ = 0
@@ -4649,7 +4663,7 @@ async function injectTimelineEditState(workflow: any): Promise<void> {
 // Inject each Compositor node's baked motion params (Kinetic Slates) into its
 // `motion_params` widget at submit. The Frame editor's bake persists
 // {fps, duration, rendered: [...input PNGs...], source_key} on the node
-// (data.properties.comfynext_motionParams — see CompositorModal.vue); we pass
+// (data.properties.sailor_motionParams — see CompositorModal.vue); we pass
 // the stored JSON through verbatim. No staleness recompute here — the editor's
 // stale badge is the user-facing guard, and the backend gets source_key for
 // future use. Same stale-schema self-heal as injectTimelineEditState above.
@@ -4660,7 +4674,7 @@ async function injectCompositorMotionParams(workflow: any): Promise<void> {
   for (const comp of comps) {
     if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
     const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
-    const raw = liveNode?.data?.properties?.comfynext_motionParams ?? comp.properties?.comfynext_motionParams
+    const raw = liveNode?.data?.properties?.sailor_motionParams ?? comp.properties?.sailor_motionParams
     if (!raw) continue
     const json = typeof raw === 'string' ? raw : JSON.stringify(raw)
     if (setNamedWidget(comp, 'motion_params', json, objectInfo.value)) continue
@@ -4675,7 +4689,7 @@ async function injectCompositorMotionParams(workflow: any): Promise<void> {
 }
 
 // Push each Compositor node's wired-layer cloners (editor state on the
-// comfynext_wiredCloners property — see CompositorModal.vue) into their
+// sailor_wiredCloners property — see CompositorModal.vue) into their
 // layer{i}_cloner widgets so the backend stamps the same clones the editor
 // previews. Only ENABLED cloners are written; absent ⇒ widgets stay at "" (a
 // single instance). Same stale-schema self-heal as injectCompositorMotionParams:
@@ -4688,8 +4702,8 @@ async function injectCompositorCloners(workflow: any): Promise<void> {
   for (const comp of comps) {
     if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
     const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
-    const map = liveNode?.data?.properties?.comfynext_wiredCloners
-      ?? comp.properties?.comfynext_wiredCloners
+    const map = liveNode?.data?.properties?.sailor_wiredCloners
+      ?? comp.properties?.sailor_wiredCloners
     const entries = wiredClonerWidgetEntries(map)
     for (const { name, json } of entries) {
       if (setNamedWidget(comp, name, json, objectInfo.value)) continue
@@ -5124,11 +5138,11 @@ function preflightMediaInputs(targetIds?: Set<string>): boolean {
 
 function emitRunFiltered(targetIds: string[]) {
   if (!preflightMediaInputs(new Set(targetIds))) return
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds } }))
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds } }))
 }
 function emitRunAll() {
   if (!preflightMediaInputs()) return
-  window.dispatchEvent(new CustomEvent('comfynext:runAll'))
+  window.dispatchEvent(new CustomEvent('sailor:runAll'))
 }
 
 // Actions that operate on a set of node ids ---------------------------------
@@ -5349,7 +5363,7 @@ function insertBlock(blockId: string, position: { x: number; y: number }) {
 
 /** Drop-handler counterpart for block payloads (vs node-type strings). */
 function tryHandleBlockDrop(event: DragEvent): boolean {
-  const blockId = event.dataTransfer?.getData('application/x-comfynext-block')
+  const blockId = event.dataTransfer?.getData('application/x-sailor-block')
   if (!blockId) return false
   const canvasEl = event.currentTarget as HTMLElement
   const rect = canvasEl.getBoundingClientRect()
@@ -5381,8 +5395,8 @@ function handleInsertBlockEvent(e: Event) {
     y: centerGraph.y - block.bounds.height / 2,
   })
 }
-onMounted(() => window.addEventListener('comfynext:insertBlock', handleInsertBlockEvent))
-onBeforeUnmount(() => window.removeEventListener('comfynext:insertBlock', handleInsertBlockEvent))
+onMounted(() => window.addEventListener('sailor:insertBlock', handleInsertBlockEvent))
+onBeforeUnmount(() => window.removeEventListener('sailor:insertBlock', handleInsertBlockEvent))
 
 function actionSaveGroupAsBlock(groupId: string) {
   const group = groups.value.find(g => g.id === groupId)
@@ -6659,7 +6673,7 @@ defineExpose({
         :node-id="spaceTypeOpenForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
-        @close="spaceTypeOpenForId = null; window.dispatchEvent(new CustomEvent('comfynext:closeSpaceType'))"
+        @close="spaceTypeOpenForId = null; window.dispatchEvent(new CustomEvent('sailor:closeSpaceType'))"
       />
     </Teleport>
 
@@ -6694,6 +6708,16 @@ defineExpose({
         :edges="edges as any[]"
         :wired-url="shaderStudioWiredUrl"
         @close="shaderStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Shape Studio editor modal (frontend-only config node) -->
+    <Teleport to="body">
+      <VueCanvasShapeStudioSurface
+        v-if="shapeStudioOpenForId"
+        :node-id="shapeStudioOpenForId"
+        :nodes="nodes as any[]"
+        @close="shapeStudioOpenForId = null"
       />
     </Teleport>
 
@@ -6880,7 +6904,7 @@ defineExpose({
 </template>
 
 <style>
-/* Override Vue Flow defaults to match ComfyNext dark theme */
+/* Override Vue Flow defaults to match Sailor dark theme */
 .vue-node-canvas .vue-flow__node {
   background: transparent;
   border: none;

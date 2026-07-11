@@ -178,6 +178,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Texture Studio: client-side WebGL tileable texture generator. Frontend-only
   // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
   TextureStudio: 'texture-studio',
+  // Shape Studio: client-side Three.js faceted flat-shape generator. Frontend-only
+  // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
+  ShapeStudio: 'shape-studio',
   // Shot Director: frontend-only config node for driving video models (Seedance etc.)
   // via a guardrailed shot-sheet UI — no backend class_type, reopen to re-edit.
   ShotDirector: 'shot-director',
@@ -290,8 +293,8 @@ export interface GroupsBridge {
 
 /**
  * Optional hook for callers that own a `useCanvasAnnotations()` instance.
- * Annotations are a ComfyNext-only concept, so they live under the
- * `workflow.extra.comfynext` namespace where LiteGraph won't touch them.
+ * Annotations are a Sailor-only concept, so they live under the
+ * `workflow.extra.sailor` namespace where LiteGraph won't touch them.
  */
 export interface AnnotationsBridge {
   load: (raw: unknown) => void
@@ -311,13 +314,13 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
     // node's own link refs.
     const repairedIds = repairInvalidNodeIds(workflow as any)
     if (repairedIds.length) {
-      console.warn('[ComfyNext] repaired node(s) with invalid id on load:', repairedIds)
+      console.warn('[Sailor] repaired node(s) with invalid id on load:', repairedIds)
     }
     lastWorkflow = workflow
     opts.groupsBridge?.load(workflow.groups)
-    // Annotations live under workflow.extra.comfynext — a namespaced sub-object
+    // Annotations live under workflow.extra.sailor — a namespaced sub-object
     // so other tools that read `extra` for their own purposes won't collide.
-    opts.annotationsBridge?.load((workflow.extra as any)?.comfynext)
+    opts.annotationsBridge?.load((workflow.extra as any)?.sailor)
 
     // Build a lookup map for subgraph definitions
     const subgraphDefs = new Map<string, any>()
@@ -422,7 +425,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       // Rehydrate any stashed runtime preview (see convertToLiteGraph) back onto
       // node.data so the artifact shows its last generated image after a tab
       // switch / reload, rather than an empty node.
-      const stashedPreview = (lgNode.properties as any)?.comfynext_preview
+      const stashedPreview = (lgNode.properties as any)?.sailor_preview
       const previewData: any = {}
       if (stashedPreview && typeof stashedPreview === 'object') {
         if (Array.isArray(stashedPreview.images) && stashedPreview.images.length) {
@@ -517,7 +520,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       if (Array.isArray(d.audios) && d.audios.length) preview.audios = d.audios
       if (typeof d.text === 'string' && d.text) preview.text = d.text
       if (Object.keys(preview).length) {
-        properties = { ...(d.properties || {}), comfynext_preview: preview }
+        properties = { ...(d.properties || {}), sailor_preview: preview }
       }
       return {
         id: Number(n.id),
@@ -543,14 +546,14 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
     const lgLinks = assembleWorkflowLinks(lgNodes, edges.value as any[])
     const linkId = lgLinks.length
 
-    // Merge annotations into `extra.comfynext`, preserving any sibling keys
-    // the rest of ComfyNext (or other tools) might have stashed there.
+    // Merge annotations into `extra.sailor`, preserving any sibling keys
+    // the rest of Sailor (or other tools) might have stashed there.
     const baseExtra = (base.extra && typeof base.extra === 'object') ? { ...base.extra } : {}
     if (opts.annotationsBridge) {
-      const existingCnext = (baseExtra as any).comfynext && typeof (baseExtra as any).comfynext === 'object'
-        ? (baseExtra as any).comfynext
+      const existingCnext = (baseExtra as any).sailor && typeof (baseExtra as any).sailor === 'object'
+        ? (baseExtra as any).sailor
         : {}
-      ;(baseExtra as any).comfynext = { ...existingCnext, ...(opts.annotationsBridge.export() as object) }
+      ;(baseExtra as any).sailor = { ...existingCnext, ...(opts.annotationsBridge.export() as object) }
     }
 
     const result: any = {
