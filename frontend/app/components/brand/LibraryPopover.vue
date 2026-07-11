@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import type { BrandKit, BrandKitEntry } from '~~/shared/brand/types'
+import { brandSwatches } from '~~/shared/brand/resolve'
 import { useBrandLibrary, slugifyKitName } from '~/composables/useBrandLibrary'
 
 const props = defineProps<{ activeKitId: string | null | undefined; embedded?: boolean }>()
@@ -44,8 +45,6 @@ async function patchKit(patch: Partial<BrandKit>) {
   if (!selected.value) return
   await save({ ...selected.value, kit: { ...selected.value.kit, ...patch } })
 }
-
-const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
 </script>
 
 <template>
@@ -65,8 +64,8 @@ const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
          @click="selectedId = k.id">
       <span class="flex items-center gap-2 min-w-0">
         <span class="flex gap-0.5 shrink-0">
-          <span v-for="s in SWATCH_KEYS" :key="s" class="size-3 rounded-sm border border-white/10"
-                :style="{ background: k.kit[s] || 'transparent' }" />
+          <span v-for="s in brandSwatches(k.kit).slice(0, 3)" :key="s.name + s.hex" class="size-3 rounded-sm border border-white/10"
+                :style="{ background: s.hex }" />
         </span>
         <span class="truncate text-white/80">{{ k.name }}</span>
       </span>

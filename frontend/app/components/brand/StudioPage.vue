@@ -3,6 +3,7 @@
  *  colors, fonts, logo slots, assets. Assignment to a project stays in the
  *  ProjectMenu popover; this page never touches ProjectDoc.brandKitId. */
 import type { BrandKit, BrandKitEntry } from '~~/shared/brand/types'
+import { brandSwatches } from '~~/shared/brand/resolve'
 import { useBrandLibrary, slugifyKitName } from '~/composables/useBrandLibrary'
 import { toast } from 'vue-sonner'
 
@@ -74,8 +75,6 @@ async function patchKit(patch: Partial<BrandKit>) {
     toast.error('Brand kit save failed')
   }
 }
-
-const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
 </script>
 
 <template>
@@ -97,8 +96,8 @@ const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
           @click="selectedId = k.id"
         >
           <span class="flex gap-0.5 shrink-0">
-            <span v-for="s in SWATCH_KEYS" :key="s" class="size-3 rounded-sm border border-white/10"
-                  :style="{ background: k.kit[s] || 'transparent' }" />
+            <span v-for="s in brandSwatches(k.kit).slice(0, 3)" :key="s.name + s.hex" class="size-3 rounded-sm border border-white/10"
+                  :style="{ background: s.hex }" />
           </span>
           <span class="truncate text-xs text-white/80">{{ k.name }}</span>
         </button>

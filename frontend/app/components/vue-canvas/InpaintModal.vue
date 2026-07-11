@@ -18,7 +18,7 @@ import { useStageView } from '~/composables/useStageView'
 import { useRegionFx } from '~/composables/useRegionFx'
 import { useBrandLibrary } from '~/composables/useBrandLibrary'
 import { recolorPrompt } from '~/lib/editActions/prompts'
-import { BRAND_COLOR_KEYS } from '~~/shared/brand/types'
+import { brandSwatches } from '~~/shared/brand/resolve'
 import type { ComputedRef } from 'vue'
 
 const props = defineProps<{
@@ -441,13 +441,9 @@ const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandK
 const brandLib = useBrandLibrary(projectBrand?.activeKitId)
 /** Active-kit colors first (deduped), else a small neutral default set. */
 const recolorSwatches = computed<{ label: string; hex: string }[]>(() => {
-  const kit = brandLib.activeKit.value as Record<string, string | undefined> | undefined
   const out: { label: string; hex: string }[] = []
-  if (kit) {
-    for (const key of BRAND_COLOR_KEYS) {
-      const hex = kit[key]
-      if (hex && !out.some(s => s.hex.toLowerCase() === hex.toLowerCase())) out.push({ label: key, hex })
-    }
+  for (const s of brandSwatches(brandLib.activeKit.value)) {
+    if (!out.some(x => x.hex.toLowerCase() === s.hex.toLowerCase())) out.push({ label: s.name, hex: s.hex })
   }
   if (!out.length) {
     out.push(

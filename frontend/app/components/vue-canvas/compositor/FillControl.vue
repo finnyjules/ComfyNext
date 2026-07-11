@@ -15,7 +15,8 @@ import GradientEditor from '~/components/vue-canvas/compositor/GradientEditor.vu
 import { type Fill, type FillType, FILL_TYPES, DEFAULT_FILL, fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { rollPaintItem, gradientFromPaint } from '~/lib/compositor/fillPalette'
 import { type Paint, type Gradient, isFill, isGradient } from '~/composables/useCompositorLayers'
-import { BRAND_COLOR_KEYS, type BrandKit } from '~~/shared/brand/types'
+import type { BrandKit } from '~~/shared/brand/types'
+import { brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
 
 const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean }>(), { allowNone: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
@@ -94,11 +95,7 @@ function toggleNone() {
 // Active project brand kit → one-click swatches. Null-safe: FillControl also
 // renders in contexts without a project (dev labs), where the inject is absent.
 const projectBrand = inject<{ activeKit: ComputedRef<BrandKit | undefined> } | null>('sailor:brand', null)
-const brandSwatches = computed(() => {
-  const k = projectBrand?.activeKit.value
-  if (!k) return []
-  return BRAND_COLOR_KEYS.map(key => k[key]).filter((v): v is string => !!v)
-})
+const brandSwatches = computed(() => kitSwatches(projectBrand?.activeKit.value))
 function applyBrandColor(hex: string) {
   if (fill.type === 'gradient') fill.type = 'solid'
   setColor('a', hex)
@@ -160,9 +157,9 @@ watch(grad, drawPreview, { deep: true })
       <div v-if="brandSwatches.length" class="flex items-center gap-1.5">
         <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Brand</span>
         <button
-          v-for="(c, i) in brandSwatches" :key="i" type="button"
+          v-for="s in brandSwatches" :key="s.name + s.hex" type="button"
           class="size-5 rounded border border-white/15 cursor-pointer hover:scale-110 transition-transform"
-          :style="{ background: c }" :title="c" @click="applyBrandColor(c)"
+          :style="{ background: s.hex }" :title="s.name" @click="applyBrandColor(s.hex)"
         />
       </div>
 
