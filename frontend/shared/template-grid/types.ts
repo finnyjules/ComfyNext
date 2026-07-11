@@ -9,6 +9,18 @@ export type { ExpressiveParams } from '../text-layout/expressive'
 import type { ExpressiveBoxParams } from '../text-layout/boxes'
 export type { ExpressiveBoxParams } from '../text-layout/boxes'
 
+/** Manual per-word offset, stored as FRACTIONS of the element box
+ *  (dx × boxWidth px) so a nudge scales proportionally across formats. */
+export interface WordNudge { dx: number; dy: number }
+
+/** ExpressiveParams + Smart-Layout-only manual per-word overrides. The core
+ *  engine never sees `nudges`; the grid adapter applies them post-layout. */
+export interface GridExpressiveParams extends ExpressiveParams {
+  /** Word index (0-based, reading order) → offset. Cleared by any engine-param
+   *  change (see mergeExpressivePatch); out-of-range indices are ignored. */
+  nudges?: Record<number, WordNudge>
+}
+
 export type FormatClass = 'square' | 'portrait' | 'landscape' | 'strip' | 'skyscraper'
 export type TextLevel = 'caption' | 'body' | 'subhead' | 'headline' | 'display'
 export type TextOverflow = 'shrink' | 'shrink-then-truncate' | 'grow'
@@ -103,7 +115,7 @@ export interface TextStyleV2 {
   /** Expressive per-word layout (overrides flow `align`/`valign`). When present,
    *  words are placed individually by the shared engine — identical in the
    *  editor DOM and the Satori export. Absent ⇒ normal flow (unchanged). */
-  expressive?: ExpressiveParams
+  expressive?: GridExpressiveParams
 }
 
 export interface TextElementV2 extends ElementV2Base {
