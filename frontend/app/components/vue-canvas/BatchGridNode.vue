@@ -31,37 +31,40 @@ function openGallery() {
 
 <template>
   <div class="w-[220px] select-none">
-    <!-- Fixed frame caps the pile regardless of output aspect (a 9x16 Story
-         would otherwise stretch the node into a skyscraper); covers crop. -->
+    <!-- The cover scales down uncropped (ratio kept) within 220×190 max; the
+         shrink-wrap wrapper makes the peek cards track the cover's exact box. -->
     <button
-      class="relative block w-full h-[190px] cursor-pointer group nopan nodrag"
+      class="relative flex justify-center w-full cursor-pointer group nopan nodrag"
       title="Browse outputs"
       @click="openGallery"
     >
-      <!-- peek cards — real outputs poking out at odd angles -->
-      <img
-        v-for="(peek, i) in peeks"
-        :key="peek.filename"
-        :src="peek.url"
-        class="absolute inset-0 w-full h-full object-cover rounded-lg border border-white/15 shadow-lg"
-        :style="{ transform: `rotate(${tilt(i + 1)}deg) translate(${(i + 1) * 4}px, ${(i + 1) * 3}px)` }"
-        draggable="false"
-      >
-      <!-- cover -->
-      <img
-        v-if="items[0]"
-        :src="items[0].url"
-        class="relative w-full h-full object-cover rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
-        :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
-        draggable="false"
-      >
-      <div v-else class="relative w-full h-full rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
-        no outputs
+      <div class="relative inline-block max-w-full">
+        <!-- peek cards — real outputs poking out at odd angles (cropped to the
+             cover's box; they're decorative backdrop) -->
+        <img
+          v-for="(peek, i) in peeks"
+          :key="peek.filename"
+          :src="peek.url"
+          class="absolute inset-0 w-full h-full object-cover rounded-lg border border-white/15 shadow-lg"
+          :style="{ transform: `rotate(${tilt(i + 1)}deg) translate(${(i + 1) * 4}px, ${(i + 1) * 3}px)` }"
+          draggable="false"
+        >
+        <!-- cover — never cropped -->
+        <img
+          v-if="items[0]"
+          :src="items[0].url"
+          class="relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
+          :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
+          draggable="false"
+        >
+        <div v-else class="relative w-[190px] h-[150px] rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
+          no outputs
+        </div>
+        <!-- count badge — pinned to the pile itself, not the full-width button -->
+        <span class="absolute -top-2 -right-2 min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
+          {{ count }}
+        </span>
       </div>
-      <!-- count badge -->
-      <span class="absolute -top-2 -right-2 min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
-        {{ count }}
-      </span>
     </button>
     <p class="mt-2 text-[10px] text-white/40 text-center truncate">
       {{ payload?.layoutName || 'Batch' }} · click to browse
