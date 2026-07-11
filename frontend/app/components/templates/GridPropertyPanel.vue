@@ -13,7 +13,9 @@ import { useCopyAssist } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
 import { BRAND_LOGO_SLOT_KEYS } from '~~/shared/brand/types'
-import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
+import { defaultExpressiveParams } from '~~/shared/text-layout/expressive'
+import { mergeExpressivePatch } from '~~/shared/template-grid/expressive'
+import type { GridExpressiveParams } from '~~/shared/template-grid/types'
 import { isBoundToken, nextFreeSocket, tokenizeElementContent, columnLabelForElement } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import { COLLECTION_PROP } from '~/lib/collection/types'
@@ -348,10 +350,12 @@ function bindPanelToBrand(slot: string) {
 }
 
 // -- Expressive text layout --------------------------------------------------
-const expressive = computed<ExpressiveParams | undefined>(() => styleOf().expressive)
-function setExpressive(patch: Partial<ExpressiveParams>) {
+const expressive = computed<GridExpressiveParams | undefined>(() => styleOf().expressive)
+function setExpressive(patch: Partial<GridExpressiveParams>) {
   if (!el.value) return
-  patchStyle(el.value.id, { expressive: { ...(expressive.value ?? defaultExpressiveParams()), ...patch } })
+  // mergeExpressivePatch drops manual word nudges on any engine-param change
+  // (Shuffle, placement, words-per-line, jitter) — "re-roll means start over".
+  patchStyle(el.value.id, { expressive: mergeExpressivePatch(expressive.value ?? defaultExpressiveParams(), patch) })
 }
 function toggleExpressive(on: boolean) {
   if (!el.value) return
