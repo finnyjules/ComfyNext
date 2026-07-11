@@ -11,7 +11,8 @@ export function paletteFor(config: ShapeConfig): string[] {
   const L = 0.25 + (lightness / 100) * 0.6      // 0.25–0.85
   const C = (saturation / 100) * 0.22           // 0–0.22 chroma
   const seedHex = oklchToHex(L, C, baseHue)
-  const out = harmonize(seedHex, harmony, Math.max(5, 5))
+  // Use each harmony's NATURAL swatch count; over-requesting cycles hues into duplicate swatches.
+  const out = harmonize(seedHex, harmony)
   return out.length ? out : [seedHex]
 }
 

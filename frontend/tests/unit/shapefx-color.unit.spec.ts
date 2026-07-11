@@ -30,9 +30,20 @@ describe('shapefx color', () => {
     expect(Array.from(a.getAttribute('color').array)).toEqual(Array.from(b.getAttribute('color').array))
   })
 
-  it('different rules produce different colorings', () => {
+  it('facet vs depth rules produce different colorings', () => {
     const a = buildGeometry(cfg('facet')); applyVertexColors(a, cfg('facet'))
     const b = buildGeometry(cfg('depth')); applyVertexColors(b, cfg('depth'))
     expect(Array.from(a.getAttribute('color').array)).not.toEqual(Array.from(b.getAttribute('color').array))
+  })
+
+  it('depth vs height rules produce different colorings (guards the cz/cy axis swap)', () => {
+    const d = buildGeometry(cfg('depth')); applyVertexColors(d, cfg('depth'))
+    const h = buildGeometry(cfg('height')); applyVertexColors(h, cfg('height'))
+    expect(Array.from(d.getAttribute('color').array)).not.toEqual(Array.from(h.getAttribute('color').array))
+  })
+
+  it('a wheel harmony (triadic) yields distinct swatches, not modulo-duplicated hues', () => {
+    const p = paletteFor({ ...DEFAULT_CONFIG, palette: { ...DEFAULT_CONFIG.palette, harmony: 'triadic' } })
+    expect(new Set(p).size).toBe(p.length)
   })
 })
