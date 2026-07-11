@@ -2,6 +2,7 @@
 // Pure module — no Vue imports. See the design spec:
 // docs/superpowers/specs/2026-07-11-smart-layout-batch-export-design.md
 
+import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import type { CollectionData } from './types'
 import { sanitize } from './generate'
 
@@ -45,6 +46,27 @@ export function planMatrix(pools: MatrixPool[]): MatrixCombo[] {
     combos = next
   }
   return combos
+}
+
+/** The format axis for a template: its outputs, WIDENED with any extra
+ *  formats named in the node's `aspects` CSV. Legacy templates often carry a
+ *  single-entry outputs list (just the master) while the aspects widget names
+ *  more formats — the batch sheet should offer them all. */
+export function formatPool(template: any, aspectsCsv: string): MatrixPool {
+  const values: MatrixPoolValue[] = []
+  const seen = new Set<string>()
+  const push = (id: string, label?: string) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    values.push({ value: id, label: label || id })
+  }
+  for (const o of deriveOutputs(template, aspectsCsv)) {
+    push(o.id, o.label ?? template?.formats?.[o.format]?.label)
+  }
+  for (const k of aspectsCsv.split(',').map(s => s.trim()).filter(Boolean)) {
+    if (template?.formats?.[k]) push(k, template.formats[k]?.label)
+  }
+  return { key: 'format', label: 'Formats', kind: 'format', values }
 }
 
 /** Distinct, non-empty cell values of a column, in row order. */

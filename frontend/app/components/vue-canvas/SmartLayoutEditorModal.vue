@@ -494,7 +494,13 @@ function showJsonView() {
 }
 
 function openBatchExport() {
-  window.dispatchEvent(new CustomEvent('sailor:openBatchExport', { detail: { nodeId: props.nodeId } }))
+  // Pass the editor's LIVE draft along — the node widget only updates on
+  // Save & close, and the batch sheet must offer the formats/elements the
+  // user is looking at right now, not the last-saved state.
+  const draft = initial.value ? JSON.parse(JSON.stringify(initial.value)) : undefined
+  window.dispatchEvent(new CustomEvent('sailor:openBatchExport', {
+    detail: { nodeId: props.nodeId, template: draft },
+  }))
 }
 
 function showVisualView() {

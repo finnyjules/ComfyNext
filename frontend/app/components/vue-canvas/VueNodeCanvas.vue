@@ -3748,9 +3748,14 @@ function handleOpenSmartLayout(e: Event) {
 // Batch export sheet state — cartesian render across formats × bound
 // variables, opened from the SmartLayout node body or the editor modal.
 const batchExportOpenForId = ref<string | null>(null)
+// Live editor draft passed by SmartLayoutEditorModal — the node widget only
+// updates on Save & close, so the sheet prefers this when present.
+const batchExportTemplate = ref<any | null>(null)
 function handleOpenBatchExport(e: Event) {
-  const detail = (e as CustomEvent<{ nodeId: string }>).detail
-  if (detail?.nodeId) batchExportOpenForId.value = String(detail.nodeId)
+  const detail = (e as CustomEvent<{ nodeId: string; template?: any }>).detail
+  if (!detail?.nodeId) return
+  batchExportTemplate.value = detail.template ?? null
+  batchExportOpenForId.value = String(detail.nodeId)
 }
 
 /** Spawn a BatchGrid node beside the source Smart Layout with the results.
@@ -6876,7 +6881,8 @@ defineExpose({
         :node-id="batchExportOpenForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
-        @close="batchExportOpenForId = null"
+        :template-override="batchExportTemplate"
+        @close="batchExportOpenForId = null; batchExportTemplate = null"
         @spawn="handleBatchSpawn"
       />
     </Teleport>

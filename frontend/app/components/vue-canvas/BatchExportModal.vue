@@ -5,22 +5,31 @@
 // drop a BatchGrid node. Spec: docs/superpowers/specs/
 // 2026-07-11-smart-layout-batch-export-design.md
 import { Grid3X3, Loader2, X } from 'lucide-vue-next'
-import { planMatrix, columnPool, comboFilename, buildBatchPayload, type MatrixPool, type MatrixCombo, type BatchGridPayload } from '~/lib/collection/matrix'
+import { planMatrix, columnPool, comboFilename, buildBatchPayload, formatPool, type MatrixPool, type MatrixCombo, type BatchGridPayload } from '~/lib/collection/matrix'
 import { buildMatrixRenderItem } from '~/lib/collection/generate'
 import { runBatch, type BatchItem } from '~/lib/collection/batch'
 import { readTemplateFromNode } from '~/lib/collection/bindables'
 import { resolveBindings } from '~/lib/collection/resolve'
-import { deriveOutputs } from '~~/shared/template-grid/resolve'
 import { findWiredCollectionNode } from '~/composables/useStudioVarBindings'
 import { BINDINGS_PROP, COLLECTION_PROP } from '~/lib/collection/types'
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
 
-const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
+const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[]; templateOverride?: any }>()
 const emit = defineEmits<{ close: []; spawn: [payload: BatchGridPayload] }>()
 
 const node = computed(() => props.nodes.find((n: any) => String(n.id) === String(props.nodeId)))
-const template = computed(() => readTemplateFromNode(node.value))
+// Prefer the editor's live draft (passed when opened from the modal) — the
+// node widget only reflects the last Save & close.
+const template = computed(() => props.templateOverride ?? readTemplateFromNode(node.value))
 const layoutName = computed(() => (template.value as any)?.name || 'Layout')
+
+/** The node's `aspects` CSV widget — widens the format pool for legacy
+ *  templates whose outputs list is shorter than the widget. */
+const aspectsCsv = computed<string>(() => {
+  const defs = (node.value?.data?.widgetDefs ?? []) as { name: string }[]
+  const i = defs.findIndex(d => d.name === 'aspects')
+  return i >= 0 ? String(node.value?.data?.widgetsValues?.[i] ?? '') : ''
+})
 
 const collection = computed<CollectionData | undefined>(() => {
   const colNode = findWiredCollectionNode(props.nodes, props.edges, String(props.nodeId))
@@ -32,11 +41,7 @@ const bindings = computed<VarBindings>(() =>
 /** All crossable pools with their FULL value lists (selection is separate). */
 const pools = computed<MatrixPool[]>(() => {
   const out: MatrixPool[] = []
-  const outputs = template.value ? deriveOutputs(template.value as any) : []
-  out.push({
-    key: 'format', label: 'Formats', kind: 'format',
-    values: outputs.map((o: any) => ({ value: o.id, label: o.label ?? o.format ?? o.id })),
-  })
+  if (template.value) out.push(formatPool(template.value, aspectsCsv.value))
   const c = collection.value
   if (c) {
     for (const [path, b] of Object.entries(bindings.value)) {
@@ -111,7 +116,7 @@ async function generate() {
     items.value = combos.map((c, i) => ({
       id: `m-${runStamp}-${i}`, rowIndex: i, rowId: '', outputId: c.format, status: 'queued' as const,
     }))
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp)
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp, template.value)
     await runBatch(items.value, renderItem, {
       concurrency: 3, signal,
       onUpdate: () => { items.value = [...items.value] },
@@ -138,7 +143,7 @@ async function retryFailed() {
   const signal = { cancelled: false }
   runSignal.value = signal
   try {
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry')
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry', template.value)
     await runBatch(failed, renderItem, { concurrency: 3, signal, onUpdate: () => { items.value = [...items.value] } })
   } finally {
     running.value = false

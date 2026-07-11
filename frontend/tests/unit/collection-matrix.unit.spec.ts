@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planMatrix, columnPool, comboFilename, buildBatchPayload, type MatrixPool } from '~/lib/collection/matrix'
+import { planMatrix, columnPool, comboFilename, buildBatchPayload, formatPool, type MatrixPool } from '~/lib/collection/matrix'
 import { createCollection, addColumn, addRow, setCell } from '~/lib/collection/model'
 
 const P = (key: string, label: string, kind: 'format' | 'text' | 'image', vals: string[]): MatrixPool =>
@@ -57,6 +57,48 @@ describe('columnPool', () => {
   })
   it('unknown column → empty pool', () => {
     expect(columnPool(createCollection('T'), 'nope')).toEqual([])
+  })
+})
+
+describe('formatPool', () => {
+  const template = {
+    version: 3, master: '1x1',
+    formats: {
+      '1x1': { w: 1080, h: 1080, label: 'Square' },
+      '9x16': { w: 1080, h: 1920, label: 'Story' },
+      '16x9': { w: 1920, h: 1080, label: 'Wide' },
+    },
+  }
+
+  it('uses the template outputs when present', () => {
+    const t = { ...template, outputs: [
+      { id: '1x1', format: '1x1', label: 'Square' },
+      { id: '9x16', format: '9x16', label: 'Story' },
+    ] }
+    expect(formatPool(t, '')).toMatchObject({
+      key: 'format',
+      values: [{ value: '1x1', label: 'Square' }, { value: '9x16', label: 'Story' }],
+    })
+  })
+
+  it('falls back to the aspects CSV when the template has no outputs', () => {
+    expect(formatPool(template, '1x1,9x16,16x9').values).toEqual([
+      { value: '1x1', label: 'Square' },
+      { value: '9x16', label: 'Story' },
+      { value: '16x9', label: 'Wide' },
+    ])
+  })
+
+  it('a single-entry outputs list widens to the aspects CSV superset', () => {
+    // Legacy templates carry outputs=[master] while the node aspects widget
+    // lists more formats — the batch sheet should offer them all.
+    const t = { ...template, outputs: [{ id: '1x1', format: '1x1', label: 'Square' }] }
+    const pool = formatPool(t, '1x1,9x16,16x9')
+    expect(pool.values.map(v => v.value)).toEqual(['1x1', '9x16', '16x9'])
+  })
+
+  it('falls back to the master format when nothing else is available', () => {
+    expect(formatPool(template, '').values).toEqual([{ value: '1x1', label: 'Square' }])
   })
 })
 

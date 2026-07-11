@@ -136,16 +136,19 @@ export function matrixRenderPayload(
 }
 
 /** Per-item render fn for a matrix batch: `item.rowIndex` indexes `combos`.
- *  Mirrors buildRenderItem's render → upload → register flow. */
+ *  Mirrors buildRenderItem's render → upload → register flow.
+ *  `templateOverride` renders an unsaved editor draft instead of the node's
+ *  last-saved widget (the batch sheet passes it when opened from the modal). */
 export function buildMatrixRenderItem(
   target: { data?: { widgetDefs?: { name: string }[]; widgetsValues?: unknown[] } },
   collection: CollectionData | undefined,
   bindings: VarBindings,
   combos: MatrixCombo[],
   runStamp: string,
+  templateOverride?: unknown,
 ): (item: BatchItem) => Promise<void> {
   return async (item: BatchItem) => {
-    const template = readTemplateFromNode(target)
+    const template = templateOverride ?? readTemplateFromNode(target)
     if (!template) throw new Error('render failed: no template')
     const combo = combos[item.rowIndex]
     if (!combo) throw new Error('render failed: no combo for item')
