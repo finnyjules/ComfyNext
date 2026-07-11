@@ -18,8 +18,8 @@ describe('shapefx config', () => {
   })
 
   it('mergeConfig rejects junk types and falls back to defaults', () => {
-    const merged = mergeConfig({ mode: 'nonsense', fillMode: 42, locks: 'no' })
-    expect(merged.mode).toBe(DEFAULT_CONFIG.mode)
+    const merged = mergeConfig({ shape: { mode: 'nonsense' }, fillMode: 42, locks: 'no' })
+    expect(merged.shape.mode).toBe(DEFAULT_CONFIG.shape.mode) // junk nested enum rejected
     expect(merged.fillMode).toBe(DEFAULT_CONFIG.fillMode)
     expect(merged.locks).toEqual(DEFAULT_CONFIG.locks)
   })
