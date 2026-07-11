@@ -79,7 +79,7 @@ import { DEFAULT_CONFIG, mergeConfig, type ShapeConfig } from '../../app/lib/sha
 
 describe('shapefx config', () => {
   it('DEFAULT_CONFIG is internally consistent', () => {
-    expect(DEFAULT_CONFIG.mode).toBe('primitive')
+    expect(DEFAULT_CONFIG.shape.mode).toBe('primitive')
     expect(DEFAULT_CONFIG.fillMode).toBe('facets')
     expect(DEFAULT_CONFIG.locks).toEqual({ shape: false, palette: false, style: false })
     expect(typeof DEFAULT_CONFIG.seed).toBe('string')
@@ -94,8 +94,8 @@ describe('shapefx config', () => {
   })
 
   it('mergeConfig rejects junk types and falls back to defaults', () => {
-    const merged = mergeConfig({ mode: 'nonsense', fillMode: 42, locks: 'no' })
-    expect(merged.mode).toBe(DEFAULT_CONFIG.mode)
+    const merged = mergeConfig({ shape: { mode: 'nonsense' }, fillMode: 42, locks: 'no' })
+    expect(merged.shape.mode).toBe(DEFAULT_CONFIG.shape.mode) // junk nested enum rejected
     expect(merged.fillMode).toBe(DEFAULT_CONFIG.fillMode)
     expect(merged.locks).toEqual(DEFAULT_CONFIG.locks)
   })
