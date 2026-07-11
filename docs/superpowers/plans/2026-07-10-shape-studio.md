@@ -1008,15 +1008,16 @@ export class ShapeEngine {
     this.renderer.render(this.scene, this.cam)
   }
 
-  /** Render at an optional target size and read back a PNG blob. */
+  /** Render at an optional target size and read back a PNG blob, then restore the preview size. */
   async frameToBlob(w?: number, h?: number): Promise<Blob> {
-    const tw = w ?? this.w, th = h ?? this.h
-    const restore = (this.w !== tw || this.h !== th)
-    if (restore) this.setSize(tw, th)
+    const ow = this.w, oh = this.h            // capture BEFORE setSize mutates this.w/this.h
+    const tw = w ?? ow, th = h ?? oh
+    const resized = (ow !== tw || oh !== th)
+    if (resized) this.setSize(tw, th)
     this.renderer.render(this.scene, this.cam)
     const blob: Blob = await new Promise((res, rej) =>
       this.renderer.domElement.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
-    if (restore) this.setSize(this.w, this.h)
+    if (resized) this.setSize(ow, oh)         // restore the true original preview size
     return blob
   }
 
