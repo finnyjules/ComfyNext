@@ -28,6 +28,8 @@ export interface ShapeParams {
   spread: number
   /** Primitive facet density → segment count / detail. 0–4 (integer steps). */
   density: number
+  /** Seeded vertex-position jitter, 0–100 (0 = clean primitive; higher = crumpled/organic). */
+  jitter: number
   projection: Projection
 }
 
@@ -67,7 +69,7 @@ export interface ShapeConfig {
 export const DEFAULT_CONFIG: ShapeConfig = {
   seed: '#3a7f21c0',
   fillMode: 'facets',
-  shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, projection: 'orthographic' },
+  shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, jitter: 0, projection: 'orthographic' },
   palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'prismatic', direction: 'vertical' },
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
   style: { grain: 20, distortion: 0, background: '#000000' },
@@ -113,6 +115,7 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       depth: num(sh.depth, d.shape.depth),
       spread: num(sh.spread, d.shape.spread),
       density: num(sh.density, d.shape.density),
+      jitter: num(sh.jitter, d.shape.jitter),
       projection: oneOf(sh.projection, PROJ, d.shape.projection),
     },
     palette: {

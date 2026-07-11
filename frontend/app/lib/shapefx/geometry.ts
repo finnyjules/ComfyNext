@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js'
 import { gemPoints } from './points'
+import { xmur3, mulberry32 } from './rng'
 import type { ShapeConfig, PrimitiveKind } from './config'
 
 // Facet density 0–4 → segment counts. Low = chunky facets, high = fine.
@@ -47,6 +48,29 @@ function ensureUV(geo: THREE.BufferGeometry): void {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
 }
 
+/**
+ * Seeded vertex jitter. Offsets each vertex by a small random amount so clean primitives
+ * turn crumpled/organic. The offset is a hash of the vertex's ORIGINAL (rounded) position +
+ * seed, so vertices that were coincident get the SAME offset and the non-indexed mesh doesn't
+ * tear at shared corners. Amount scales with the shape's own size. No-op at jitter 0.
+ */
+function applyJitter(geo: THREE.BufferGeometry, config: ShapeConfig): void {
+  const amt = (config.shape.jitter || 0) / 100
+  if (amt <= 0) return
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const n = pos.count
+  geo.computeBoundingSphere()
+  const maxOff = amt * (geo.boundingSphere?.radius || 1) * 0.35
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i)
+    // quantize to group coincident verts, then hash → a stable per-position offset
+    const key = `${config.seed}|${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`
+    const rnd = mulberry32(xmur3(key))
+    pos.setXYZ(i, x + (rnd() * 2 - 1) * maxOff, y + (rnd() * 2 - 1) * maxOff, z + (rnd() * 2 - 1) * maxOff)
+  }
+  pos.needsUpdate = true
+}
+
 /** Build the render geometry for a config. Non-indexed → flat/crisp facets. */
 export function buildGeometry(config: ShapeConfig): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry
@@ -66,6 +90,7 @@ export function buildGeometry(config: ShapeConfig): THREE.BufferGeometry {
   // is a no-op cost there but harmless.
   const flat = geo.index ? geo.toNonIndexed() : geo
   if (flat !== geo) geo.dispose()
+  applyJitter(flat, config)          // perturb before normals/center so both reflect the jitter
   flat.computeVertexNormals()
   flat.center()
   ensureUV(flat)

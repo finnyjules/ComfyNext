@@ -20,6 +20,7 @@ function setMode(m: 'primitive' | 'gem', primitive?: ShapeConfig['shape']['primi
 function setFill(fillMode: ShapeConfig['fillMode']) { config.value = { ...config.value, fillMode }; draw() }
 function setColoring(coloring: ShapeConfig['palette']['coloring']) { config.value = { ...config.value, palette: { ...config.value.palette, coloring } }; draw() }
 function setDirection(direction: ShapeConfig['palette']['direction']) { config.value = { ...config.value, palette: { ...config.value.palette, direction } }; draw() }
+function setJitter(jitter: number) { config.value = { ...config.value, shape: { ...config.value.shape, jitter } }; draw() }
 function roll() { config.value = reroll(config.value); draw() }
 
 onMounted(() => {
@@ -51,6 +52,11 @@ onBeforeUnmount(() => engine?.dispose())
         <button @click="setDirection('depth')">Depth</button>
         <button @click="setDirection('radial')">Radial</button>
         <button @click="setDirection('angular')">Angular</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button @click="setJitter(0)">Jitter 0</button>
+        <button @click="setJitter(30)">Jitter 30</button>
+        <button @click="setJitter(70)">Jitter 70</button>
       </div>
       <button @click="roll">Re-roll</button>
       <pre style="font-size:11px;max-width:280px;white-space:pre-wrap;">{{ config }}</pre>
