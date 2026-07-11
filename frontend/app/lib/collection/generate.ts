@@ -6,6 +6,7 @@ import { rowLabel } from './model'
 import { readTemplateFromNode } from './bindables'
 import { getStudioParamBaker } from '~/lib/studio/cascade'
 import { makeLookupResolver } from './lookup'
+import type { MatrixCombo } from './matrix'
 
 export function sanitize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
@@ -109,6 +110,59 @@ export function buildStudioRenderItem(
 
     item.assetName = rel
     item.url = viewUrl
+  }
+}
+
+/** PURE payload builder for one matrix combo: preview-row resolution is the
+ *  base (non-crossed bindings keep their current values), combo values merge
+ *  OVER it. Exported separately from the fetch/upload wrapper for testing. */
+export function matrixRenderPayload(
+  template: unknown,
+  collection: CollectionData | undefined,
+  bindings: VarBindings,
+  combo: MatrixCombo,
+): { outputId: string; aspect: string; props: Record<string, string>; brand: Record<string, string> } {
+  let props: Record<string, string> = {}
+  let brand: Record<string, string> = {}
+  if (collection) {
+    const { values } = resolveBindings(collection, bindings, collection.previewRow)
+    ;({ props, brand } = splitRenderOverrides(values))
+  }
+  for (const [path, v] of Object.entries(combo.values)) {
+    if (path.startsWith('props.')) props[path.slice(6)] = v
+    else if (path.startsWith('brand.')) brand[path.slice(6)] = v
+  }
+  return { outputId: combo.format, aspect: outputFormatFor(template, combo.format), props, brand }
+}
+
+/** Per-item render fn for a matrix batch: `item.rowIndex` indexes `combos`.
+ *  Mirrors buildRenderItem's render → upload → register flow. */
+export function buildMatrixRenderItem(
+  target: { data?: { widgetDefs?: { name: string }[]; widgetsValues?: unknown[] } },
+  collection: CollectionData | undefined,
+  bindings: VarBindings,
+  combos: MatrixCombo[],
+  runStamp: string,
+): (item: BatchItem) => Promise<void> {
+  return async (item: BatchItem) => {
+    const template = readTemplateFromNode(target)
+    if (!template) throw new Error('render failed: no template')
+    const combo = combos[item.rowIndex]
+    if (!combo) throw new Error('render failed: no combo for item')
+
+    const { outputId, aspect, props, brand } = matrixRenderPayload(template, collection, bindings, combo)
+    const res = await fetch('/api/render-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template, outputId, aspect, props, brand }),
+    })
+    if (!res.ok) throw new Error('render failed: ' + res.status)
+    const blob = await res.blob()
+
+    const fname = combo.filename ?? `batch_${runStamp}_${item.rowIndex + 1}.png`
+    const { viewUrl } = await uploadAndRegister(blob, fname)
+    item.url = viewUrl
+    item.assetName = fname
   }
 }
 
