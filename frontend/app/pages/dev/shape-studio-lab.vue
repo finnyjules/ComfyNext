@@ -46,6 +46,7 @@ onBeforeUnmount(() => engine?.dispose())
         <button @click="setColoring('prismatic')">Prismatic</button>
         <button @click="setColoring('smooth')">Smooth</button>
         <button @click="setColoring('faceted')">Faceted</button>
+        <button @click="setColoring('ombre')">Ombré</button>
         <button @click="setColoring('scatter')">Scatter</button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">

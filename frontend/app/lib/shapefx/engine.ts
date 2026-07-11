@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { buildGeometry } from './geometry'
-import { applyVertexColors } from './color'
+import { applyVertexColors, vertexRampT, rampHexes } from './color'
+import { makeOmbreMaterial } from './ombre'
 import { buildSurfaceTexture } from './surface'
 import type { ShapeConfig } from './config'
 
@@ -50,21 +51,27 @@ export class ShapeEngine {
     if (!this.mesh) return
     this.scene.remove(this.mesh)
     this.mesh.geometry.dispose()
-    const mat = this.mesh.material as THREE.MeshBasicMaterial
+    const mat = this.mesh.material as THREE.Material & { map?: THREE.Texture | null }
     mat.map?.dispose()
     mat.dispose()
     this.mesh = null
   }
 
-  /** Rebuild geometry + material for a config. Unlit MeshBasicMaterial keeps it flat. */
+  /** Rebuild geometry + material for a config. Always unlit (MeshBasic or the ombré shader). */
   setConfig(config: ShapeConfig): void {
     this.config = config
     this.disposeMesh()
     const geo = buildGeometry(config)
-    let mat: THREE.MeshBasicMaterial
+    let mat: THREE.Material
     if (config.fillMode === 'facets') {
-      applyVertexColors(geo, config)
-      mat = new THREE.MeshBasicMaterial({ vertexColors: true })
+      if (config.palette.coloring === 'ombre') {
+        // GPU dither path: per-vertex ramp position + a ShaderMaterial that speckles per pixel.
+        geo.setAttribute('aT', new THREE.BufferAttribute(vertexRampT(geo, config), 1))
+        mat = makeOmbreMaterial(rampHexes(config))
+      } else {
+        applyVertexColors(geo, config)
+        mat = new THREE.MeshBasicMaterial({ vertexColors: true })
+      }
     } else {
       const tex = buildSurfaceTexture(config)
       mat = tex

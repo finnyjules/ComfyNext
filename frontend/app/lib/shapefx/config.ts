@@ -10,8 +10,9 @@ export type FillMode = 'facets' | 'surface'
  *               spread across the facet along a per-facet direction) → cut-gem shimmer
  *   smooth    — per-vertex sample of the interpolated ramp (one gradient sweeps the surface)
  *   faceted   — one flat ramp-tone per facet, progressing smoothly facet-to-facet
+ *   ombre     — the ramp rendered with a per-pixel grainy dither (solid → speckle → solid)
  *   scatter   — each facet a random discrete swatch + jitter (the low-poly confetti look) */
-export type ColoringMode = 'prismatic' | 'smooth' | 'faceted' | 'scatter'
+export type ColoringMode = 'prismatic' | 'smooth' | 'faceted' | 'ombre' | 'scatter'
 /** Which spatial axis the smooth/faceted ramp follows. */
 export type ColorDirection = 'vertical' | 'depth' | 'radial' | 'angular'
 export type Projection = 'orthographic' | 'perspective'
@@ -87,7 +88,7 @@ const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : 
 const MODES = ['primitive', 'gem'] as const
 const PRIMS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron'] as const
 const FILLMODES = ['facets', 'surface'] as const
-const COLORINGS = ['prismatic', 'smooth', 'faceted', 'scatter'] as const
+const COLORINGS = ['prismatic', 'smooth', 'faceted', 'ombre', 'scatter'] as const
 const DIRECTIONS = ['vertical', 'depth', 'radial', 'angular'] as const
 const PROJ = ['orthographic', 'perspective'] as const
 

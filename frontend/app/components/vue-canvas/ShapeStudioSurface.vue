@@ -460,7 +460,7 @@ async function onImportFile(e: Event) {
         </div>
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Coloring</label>
-          <StudioSegmented v-model="coloringProxy" :options="['prismatic', 'smooth', 'faceted', 'scatter']" />
+          <StudioSegmented v-model="coloringProxy" :options="['prismatic', 'smooth', 'faceted', 'ombre', 'scatter']" />
         </div>
         <div v-if="config.palette.coloring !== 'scatter'">
           <label class="mb-1 block text-[11px] text-white/55">Direction</label>

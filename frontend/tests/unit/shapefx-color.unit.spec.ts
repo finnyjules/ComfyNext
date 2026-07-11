@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildGeometry } from '../../app/lib/shapefx/geometry'
-import { applyVertexColors, paletteFor } from '../../app/lib/shapefx/color'
+import { applyVertexColors, paletteFor, rampHexes, vertexRampT } from '../../app/lib/shapefx/color'
 import { DEFAULT_CONFIG, type ShapeConfig, type ColoringMode, type ColorDirection } from '../../app/lib/shapefx/config'
 
 const cfg = (coloring: ColoringMode, direction: ColorDirection = 'vertical'): ShapeConfig => ({
@@ -81,6 +81,23 @@ describe('shapefx color', () => {
     const withDir = (direction: ColorDirection) => colorsOf({ ...torus, palette: { ...torus.palette, coloring: 'smooth', direction } })
     expect(withDir('vertical')).not.toEqual(withDir('radial'))
     expect(withDir('radial')).not.toEqual(withDir('angular'))
+  })
+
+  it('rampHexes returns the interpolated ramp as hex colors (for the ombré shader)', () => {
+    const r = rampHexes(DEFAULT_CONFIG)
+    expect(r.length).toBeGreaterThanOrEqual(2)
+    expect(r.every(h => /^#[0-9a-f]{6}$/i.test(h))).toBe(true)
+  })
+
+  it('vertexRampT gives a per-vertex ramp position in [0,1], deterministic, direction-sensitive', () => {
+    const torus: ShapeConfig = { ...DEFAULT_CONFIG, shape: { ...DEFAULT_CONFIG.shape, primitive: 'torus' } }
+    const g = buildGeometry(torus)
+    const tv = (direction: ColorDirection) => Array.from(vertexRampT(g, { ...torus, palette: { ...torus.palette, direction } }))
+    const vertical = tv('vertical')
+    expect(vertical.length).toBe(g.getAttribute('position').count)      // one t per vertex
+    expect(vertical.every(t => t >= 0 && t <= 1)).toBe(true)            // normalized
+    expect(tv('vertical')).toEqual(vertical)                            // deterministic
+    expect(tv('radial')).not.toEqual(vertical)                         // direction changes it
   })
 
   it('a wheel harmony (triadic) yields distinct swatches, not modulo-duplicated hues', () => {
