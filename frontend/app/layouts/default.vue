@@ -6,7 +6,7 @@ import {
   AudioWaveform, Film, Box, Type, Frame,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
   Shapes, ListVideo,
-  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown,
+  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown, Palette,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
@@ -3493,6 +3493,7 @@ function dismissRunResult() {
               <AppWindow v-else-if="tab.type === 'app'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <Wand v-else-if="tab.type === 'train'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <LayoutGrid v-else-if="tab.type === 'all-projects'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
+              <Palette v-else-if="tab.type === 'brand'" class="size-4" :class="tab.id === activeTabId ? 'text-white' : 'text-white/50'" />
               <!-- Project tab: status indicator -->
               <template v-else>
                 <!-- Idle: green dot -->
@@ -3675,6 +3676,15 @@ function dismissRunResult() {
           class="h-full overflow-auto"
         >
           <AllProjectsView />
+        </div>
+        <!-- Brand page tab (app-wide kit library) -->
+        <div
+          v-for="tab in tabs.filter((t) => t.type === 'brand')"
+          :key="tab.id"
+          v-show="tab.id === activeTabId"
+          class="h-full overflow-auto"
+        >
+          <BrandStudioPage />
         </div>
         <!-- Vue Node Canvas (when Modern node design enabled). canvasMountAllowed
              gates the FIRST mount so the opening overlay paints before this heavy

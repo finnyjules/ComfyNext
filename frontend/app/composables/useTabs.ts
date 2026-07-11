@@ -3,7 +3,7 @@ export type TabStatus = 'idle' | 'running' | 'done'
 export interface Tab {
   id: string
   label: string
-  type: 'home' | 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects'
+  type: 'home' | 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects' | 'brand'
   closable: boolean
   status?: TabStatus
   progress?: number // 0-100, only used when status is 'running'
@@ -114,7 +114,7 @@ export function useTabs() {
     tabs.value.find((t) => t.id === activeTabId.value) ?? homeTab,
   )
 
-  function openTab(opts: { type: 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects'; label?: string; workflowId?: string; promptId?: string; projectUuid?: string; appId?: string; templateEditId?: string; seedNodeType?: string }) {
+  function openTab(opts: { type: 'project' | 'assets' | 'community' | 'app' | 'train' | 'template-editor' | 'all-projects' | 'brand'; label?: string; workflowId?: string; promptId?: string; projectUuid?: string; appId?: string; templateEditId?: string; seedNodeType?: string }) {
     // Template editor: one tab per template id, switch to existing if open.
     if (opts.type === 'template-editor' && opts.templateEditId) {
       const existing = tabs.value.find((t) => t.type === 'template-editor' && t.templateEditId === opts.templateEditId)
@@ -164,6 +164,23 @@ export function useTabs() {
         id: 'assets',
         label: opts.label ?? 'Assets',
         type: 'assets',
+        closable: true,
+      }
+      tabs.value.push(tab)
+      activeTabId.value = tab.id
+      return tab
+    }
+
+    if (opts.type === 'brand') {
+      const existing = tabs.value.find((t) => t.type === 'brand')
+      if (existing) {
+        activeTabId.value = existing.id
+        return existing
+      }
+      const tab: Tab = {
+        id: 'brand',
+        label: opts.label ?? 'Brand',
+        type: 'brand',
         closable: true,
       }
       tabs.value.push(tab)

@@ -7,6 +7,7 @@ import {
   CircleHelp,
   Settings,
   Wand,
+  Palette,
 } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -15,6 +16,7 @@ const navItems = [
   { icon: House, label: 'Home', to: '/' },
   { icon: LayoutGrid, label: 'Projects', action: 'openAllProjects' },
   { icon: Image, label: 'Assets', action: 'openAssets' },
+  { icon: Palette, label: 'Brand', action: 'openBrand' },
   { icon: Wand, label: 'Create a Style', action: 'openTrain' },
   { icon: Globe, label: 'Community', action: 'openCommunity' },
 ]
@@ -38,6 +40,7 @@ function handleAction(action: string) {
   else if (action === 'openCommunity') openTab({ type: 'community' })
   else if (action === 'openTrain') openTab({ type: 'train' })
   else if (action === 'openAllProjects') openTab({ type: 'all-projects', label: 'All projects' })
+  else if (action === 'openBrand') openTab({ type: 'brand' })
 }
 
 function getActionActive(action: string): boolean {
@@ -45,6 +48,7 @@ function getActionActive(action: string): boolean {
   if (action === 'openCommunity') return activeTab.value.type === 'community'
   if (action === 'openTrain') return activeTab.value.type === 'train'
   if (action === 'openAllProjects') return activeTab.value.type === 'all-projects'
+  if (action === 'openBrand') return activeTab.value.type === 'brand'
   return false
 }
 

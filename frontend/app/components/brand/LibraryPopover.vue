@@ -9,6 +9,7 @@ const emit = defineEmits<{ 'set-active': [id: string | null] }>()
 const activeIdRef = computed(() => props.activeKitId)
 const { kits, refresh, save, remove } = useBrandLibrary(activeIdRef)
 void refresh()
+const { openTab } = useTabs()
 
 const selectedId = ref<string | null>(props.activeKitId ?? null)
 watch(() => props.activeKitId, (v) => { if (v) selectedId.value = v })
@@ -87,6 +88,12 @@ const SWATCH_KEYS = ['primary', 'accent', 'accent2'] as const
     <!-- App-wide brand fonts (shared across kits + projects) -->
     <div class="pt-2 border-t border-white/10">
       <BrandFontsPanel />
+    </div>
+
+    <div class="pt-2 border-t border-white/10">
+      <button class="text-white/50 hover:text-white/80 cursor-pointer" @click="openTab({ type: 'brand' })">
+        Manage brands →
+      </button>
     </div>
   </div>
 </template>
