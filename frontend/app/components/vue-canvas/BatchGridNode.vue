@@ -1,52 +1,68 @@
 <script setup lang="ts">
-// Frontend-only results deck from a Smart Layout batch export. Shows the
-// first output as a stacked deck + count badge; click opens the gallery
-// modal (owned here, teleported to body). Data lives in
+// Frontend-only results pile from a Smart Layout batch export — chromeless
+// like the artifact cards: a slightly disorderly stack of outputs with a
+// count badge. Clicking dispatches sailor:openBatchGallery; the gallery
+// modal is owned by VueNodeCanvas (codebase convention — node-local modal
+// state doesn't survive Vue Flow node re-renders). Data lives in
 // properties.sailor_batch and rehydrates with the workflow.
-import { Images } from 'lucide-vue-next'
 import { BATCH_PROP, type BatchGridPayload } from '~/lib/collection/matrix'
 
 const props = defineProps<{ id: string; data: any }>()
 
 const payload = computed<BatchGridPayload | null>(
   () => props.data?.properties?.[BATCH_PROP] ?? null)
-const cover = computed(() => payload.value?.items?.[0]?.url ?? '')
-const count = computed(() => payload.value?.items?.length ?? 0)
+const items = computed(() => payload.value?.items ?? [])
+const count = computed(() => items.value.length)
 
-const galleryOpen = ref(false)
+// The messy pile: up to two peek cards behind the cover, each with its own
+// tilt. Deterministic per node (id-seeded) so the pile doesn't reshuffle on
+// every re-render, but different nodes lean differently.
+const seed = computed(() => [...String(props.id)].reduce((a, ch) => a + ch.charCodeAt(0), 0))
+const tilt = (i: number) => {
+  const base = [-6, 5, -2][i % 3]!
+  return base + ((seed.value >> (i * 2)) % 3) - 1
+}
+const peeks = computed(() => items.value.slice(1, 3))
+
+function openGallery() {
+  window.dispatchEvent(new CustomEvent('sailor:openBatchGallery', { detail: { nodeId: props.id } }))
+}
 </script>
 
 <template>
-  <div class="w-[240px] rounded-xl bg-[#141419] border border-white/10 shadow-lg select-none">
-    <div class="flex items-center gap-1.5 px-3 h-9 border-b border-white/[0.06]">
-      <Images class="size-3.5 text-white/60" />
-      <span class="text-xs text-white/85 truncate">{{ payload?.layoutName || 'Batch' }}</span>
-      <span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/60">{{ count }}</span>
-    </div>
-    <div class="p-3 nopan nodrag">
-      <button
-        class="relative block w-full cursor-pointer group"
-        title="Open gallery"
-        @click="galleryOpen = true"
+  <div class="w-[220px] select-none">
+    <button
+      class="relative block w-full cursor-pointer group nopan nodrag"
+      title="Browse outputs"
+      @click="openGallery"
+    >
+      <!-- peek cards — real outputs poking out at odd angles -->
+      <img
+        v-for="(peek, i) in peeks"
+        :key="peek.filename"
+        :src="peek.url"
+        class="absolute inset-0 w-full rounded-lg border border-white/15 shadow-lg"
+        :style="{ transform: `rotate(${tilt(i + 1)}deg) translate(${(i + 1) * 4}px, ${(i + 1) * 3}px)` }"
+        draggable="false"
       >
-        <!-- deck shadows -->
-        <div class="absolute inset-0 translate-x-2 translate-y-2 rounded-md bg-white/[0.04] border border-white/10" />
-        <div class="absolute inset-0 translate-x-1 translate-y-1 rounded-md bg-white/[0.07] border border-white/10" />
-        <img
-          v-if="cover"
-          :src="cover"
-          class="relative w-full rounded-md border border-white/15 group-hover:border-white/30 transition-colors"
-          draggable="false"
-        >
-        <div v-else class="relative w-full aspect-square rounded-md bg-white/[0.05] flex items-center justify-center text-white/30 text-xs">
-          no outputs
-        </div>
-      </button>
-      <p class="mt-2 text-[10px] text-white/40 text-center">Click to browse {{ count }} outputs</p>
-    </div>
-
-    <Teleport to="body">
-      <VueCanvasBatchGridModal v-if="galleryOpen && payload" :payload="payload" @close="galleryOpen = false" />
-    </Teleport>
+      <!-- cover -->
+      <img
+        v-if="items[0]"
+        :src="items[0].url"
+        class="relative w-full rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
+        :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
+        draggable="false"
+      >
+      <div v-else class="relative w-full aspect-square rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
+        no outputs
+      </div>
+      <!-- count badge -->
+      <span class="absolute -top-2 -right-2 min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
+        {{ count }}
+      </span>
+    </button>
+    <p class="mt-2 text-[10px] text-white/40 text-center truncate">
+      {{ payload?.layoutName || 'Batch' }} · click to browse
+    </p>
   </div>
 </template>

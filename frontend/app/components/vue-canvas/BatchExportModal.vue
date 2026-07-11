@@ -11,6 +11,7 @@ import { runBatch, type BatchItem } from '~/lib/collection/batch'
 import { readTemplateFromNode } from '~/lib/collection/bindables'
 import { resolveBindings } from '~/lib/collection/resolve'
 import { findWiredCollectionNode } from '~/composables/useStudioVarBindings'
+import { wiredLayerProps } from '~/lib/collection/wiredProps'
 import { BINDINGS_PROP, COLLECTION_PROP } from '~/lib/collection/types'
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
 
@@ -37,6 +38,19 @@ const collection = computed<CollectionData | undefined>(() => {
 })
 const bindings = computed<VarBindings>(() =>
   (node.value?.data?.properties?.[BINDINGS_PROP] ?? {}) as VarBindings)
+
+/** Wired-socket values (upstream Text nodes, image previews) — the base
+ *  props layer under collection bindings, so wired images/text render in
+ *  the batch exactly like the editor preview. Image URLs absolutized —
+ *  satori fetches them server-side. */
+const wiredProps = computed<Record<string, string>>(() => {
+  const raw = wiredLayerProps(props.nodes, props.edges, String(props.nodeId))
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw)) {
+    out[k] = k.startsWith('image_layer_') ? new URL(v, window.location.origin).toString() : v
+  }
+  return out
+})
 
 /** All crossable pools with their FULL value lists (selection is separate). */
 const pools = computed<MatrixPool[]>(() => {
@@ -116,7 +130,7 @@ async function generate() {
     items.value = combos.map((c, i) => ({
       id: `m-${runStamp}-${i}`, rowIndex: i, rowId: '', outputId: c.format, status: 'queued' as const,
     }))
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp, template.value)
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, runStamp, template.value, wiredProps.value)
     await runBatch(items.value, renderItem, {
       concurrency: 3, signal,
       onUpdate: () => { items.value = [...items.value] },
@@ -143,7 +157,7 @@ async function retryFailed() {
   const signal = { cancelled: false }
   runSignal.value = signal
   try {
-    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry', template.value)
+    const renderItem = buildMatrixRenderItem(node.value, collection.value, bindings.value, combos, 'retry', template.value, wiredProps.value)
     await runBatch(failed, renderItem, { concurrency: 3, signal, onUpdate: () => { items.value = [...items.value] } })
   } finally {
     running.value = false

@@ -121,12 +121,16 @@ export function matrixRenderPayload(
   collection: CollectionData | undefined,
   bindings: VarBindings,
   combo: MatrixCombo,
+  baseProps: Record<string, string> = {},
 ): { outputId: string; aspect: string; props: Record<string, string>; brand: Record<string, string> } {
-  let props: Record<string, string> = {}
+  // Layering: wired-socket values (baseProps) < preview-row bindings < combo.
+  let props: Record<string, string> = { ...baseProps }
   let brand: Record<string, string> = {}
   if (collection) {
     const { values } = resolveBindings(collection, bindings, collection.previewRow)
-    ;({ props, brand } = splitRenderOverrides(values))
+    const split = splitRenderOverrides(values)
+    props = { ...props, ...split.props }
+    brand = split.brand
   }
   for (const [path, v] of Object.entries(combo.values)) {
     if (path.startsWith('props.')) props[path.slice(6)] = v
@@ -146,6 +150,7 @@ export function buildMatrixRenderItem(
   combos: MatrixCombo[],
   runStamp: string,
   templateOverride?: unknown,
+  baseProps: Record<string, string> = {},
 ): (item: BatchItem) => Promise<void> {
   return async (item: BatchItem) => {
     const template = templateOverride ?? readTemplateFromNode(target)
@@ -153,7 +158,7 @@ export function buildMatrixRenderItem(
     const combo = combos[item.rowIndex]
     if (!combo) throw new Error('render failed: no combo for item')
 
-    const { outputId, aspect, props, brand } = matrixRenderPayload(template, collection, bindings, combo)
+    const { outputId, aspect, props, brand } = matrixRenderPayload(template, collection, bindings, combo, baseProps)
     const res = await fetch('/api/render-template', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

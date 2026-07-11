@@ -3758,6 +3758,19 @@ function handleOpenBatchExport(e: Event) {
   batchExportOpenForId.value = String(detail.nodeId)
 }
 
+// Gallery for a BatchGrid node — canvas-owned (node-local modal state
+// wouldn't survive Vue Flow node re-renders).
+const batchGalleryForId = ref<string | null>(null)
+function handleOpenBatchGallery(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string }>).detail
+  if (detail?.nodeId) batchGalleryForId.value = String(detail.nodeId)
+}
+const batchGalleryPayload = computed<BatchGridPayload | null>(() => {
+  if (!batchGalleryForId.value) return null
+  const n = (nodes.value as any[]).find(x => String(x.id) === batchGalleryForId.value)
+  return n?.data?.properties?.[BATCH_PROP] ?? null
+})
+
 /** Spawn a BatchGrid node beside the source Smart Layout with the results.
  *  Always a fresh node — batches are compared side by side, never refreshed. */
 function handleBatchSpawn(payload: BatchGridPayload) {
@@ -3987,6 +4000,7 @@ onMounted(() => {
   window.addEventListener('sailor:unbindControl', handleUnbindControl)
   window.addEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('sailor:openBatchExport', handleOpenBatchExport)
+  window.addEventListener('sailor:openBatchGallery', handleOpenBatchGallery)
   window.addEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.addEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -4046,6 +4060,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:unbindControl', handleUnbindControl)
   window.removeEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('sailor:openBatchExport', handleOpenBatchExport)
+  window.removeEventListener('sailor:openBatchGallery', handleOpenBatchGallery)
   window.removeEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -6884,6 +6899,15 @@ defineExpose({
         :template-override="batchExportTemplate"
         @close="batchExportOpenForId = null; batchExportTemplate = null"
         @spawn="handleBatchSpawn"
+      />
+    </Teleport>
+
+    <!-- BatchGrid gallery (canvas-owned; opened by sailor:openBatchGallery) -->
+    <Teleport to="body">
+      <VueCanvasBatchGridModal
+        v-if="batchGalleryPayload"
+        :payload="batchGalleryPayload"
+        @close="batchGalleryForId = null"
       />
     </Teleport>
 

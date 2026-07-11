@@ -49,4 +49,14 @@ describe('matrixRenderPayload', () => {
     expect(p.props).toEqual({})
     expect(p.brand).toEqual({})
   })
+
+  it('layers baseProps (wired sockets) UNDER collection and combo values', () => {
+    const { c, bindings } = fixture()
+    const base = { image_layer_1: 'http://x/bottle.png', text_layer_1: 'wired text' }
+    const p = matrixRenderPayload(TEMPLATE, c, bindings, {
+      format: '1x1', values: {}, labels: {},
+    }, base)
+    expect(p.props.image_layer_1).toBe('http://x/bottle.png')  // wired image survives
+    expect(p.props.text_layer_1).toBe('preview tagline')       // collection binding wins over wired
+  })
 })
