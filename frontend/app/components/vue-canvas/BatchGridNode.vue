@@ -31,8 +31,10 @@ function openGallery() {
 
 <template>
   <div class="w-[220px] select-none">
+    <!-- Fixed frame caps the pile regardless of output aspect (a 9x16 Story
+         would otherwise stretch the node into a skyscraper); covers crop. -->
     <button
-      class="relative block w-full cursor-pointer group nopan nodrag"
+      class="relative block w-full h-[190px] cursor-pointer group nopan nodrag"
       title="Browse outputs"
       @click="openGallery"
     >
@@ -41,7 +43,7 @@ function openGallery() {
         v-for="(peek, i) in peeks"
         :key="peek.filename"
         :src="peek.url"
-        class="absolute inset-0 w-full rounded-lg border border-white/15 shadow-lg"
+        class="absolute inset-0 w-full h-full object-cover rounded-lg border border-white/15 shadow-lg"
         :style="{ transform: `rotate(${tilt(i + 1)}deg) translate(${(i + 1) * 4}px, ${(i + 1) * 3}px)` }"
         draggable="false"
       >
@@ -49,11 +51,11 @@ function openGallery() {
       <img
         v-if="items[0]"
         :src="items[0].url"
-        class="relative w-full rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
+        class="relative w-full h-full object-cover rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
         :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
         draggable="false"
       >
-      <div v-else class="relative w-full aspect-square rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
+      <div v-else class="relative w-full h-full rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
         no outputs
       </div>
       <!-- count badge -->
