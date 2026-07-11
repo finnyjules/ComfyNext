@@ -640,7 +640,7 @@ async function renderViaFFmpeg() {
 
   isRendering.value = true
   try {
-    const res = await fetch('/comfynext/render_timeline', {
+    const res = await fetch('/sailor/render_timeline', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),

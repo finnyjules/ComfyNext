@@ -72,7 +72,7 @@ async function dropAtFlowAndWait(
         const clientX = rect.left + fx * zoom + tx
         const clientY = rect.top + fy * zoom + ty
         const dt = new DataTransfer()
-        if (p.asset) dt.setData('application/x-comfynext-asset', JSON.stringify(p.asset))
+        if (p.asset) dt.setData('application/x-sailor-asset', JSON.stringify(p.asset))
         else dt.setData('text/plain', p.nodeType!)
         pane.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true, clientX, clientY }))
       }, { p: payload, fx: flow.x, fy: flow.y })

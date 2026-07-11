@@ -186,8 +186,8 @@ describe('buildWsUrl', () => {
   })
 
   it('converts an https origin to wss', () => {
-    expect(buildWsUrl('https://comfynext.fly.dev:8188', CID)).toBe(
-      'wss://comfynext.fly.dev:8188/ws?clientId=client-abc',
+    expect(buildWsUrl('https://sailor.fly.dev:8188', CID)).toBe(
+      'wss://sailor.fly.dev:8188/ws?clientId=client-abc',
     )
   })
 

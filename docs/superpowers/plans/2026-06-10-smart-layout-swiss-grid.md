@@ -13,7 +13,7 @@
 **Scope note:** This plan delivers the engine, render path, Python node, and a minimal editor compatibility mode (server-rendered format previews + JSON editing for v2). The full visual grid editor (snap-to-cell drag, class tabs, focal picker, convert button UI) is a separate follow-up plan — the engine is shippable without it.
 
 **Conventions:**
-- All commands run from `/Users/julien/Documents/GitHub/ComfyNext/frontend` unless noted.
+- All commands run from `/Users/julien/Documents/GitHub/Sailor/frontend` unless noted.
 - Imports: inside `server/` use relative paths to `shared/`; inside `app/` and `tests/` use the `~~/` root alias.
 - Commit after every green test run. Branch: `feat/smart-layout-swiss-grid`.
 

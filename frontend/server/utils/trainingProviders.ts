@@ -47,7 +47,7 @@ async function downloadWeights(outputUrl: string, destPath: string): Promise<{ o
       return { ok: true }
     }
 
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'comfynext-lora-'))
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sailor-lora-'))
     const tarPath = path.join(tmpDir, 'out.tar')
     try {
       await fs.writeFile(tarPath, buf)
@@ -102,7 +102,7 @@ async function startLora(job: TrainingJob, token: string): Promise<ProviderResul
   const createRes = await fetch(`${REPLICATE}/models`, {
     method: 'POST',
     headers: authHeaders(token, true),
-    body: JSON.stringify({ owner: username, name: destName, visibility: 'private', hardware: 'gpu-t4', description: 'LoRA trained from ComfyNext.' }),
+    body: JSON.stringify({ owner: username, name: destName, visibility: 'private', hardware: 'gpu-t4', description: 'LoRA trained from Sailor.' }),
   })
   if (!createRes.ok && createRes.status !== 409) {
     const text = await createRes.text().catch(() => '')

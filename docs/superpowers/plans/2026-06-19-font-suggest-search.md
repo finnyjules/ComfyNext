@@ -564,7 +564,7 @@ export function useFontSuggest() {
   }
 
   async function suggest(query: string) {
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
     const req = buildSuggestRequest(apiKey, query)
     if (!req.ok) {
       error.value = req.error ?? ''

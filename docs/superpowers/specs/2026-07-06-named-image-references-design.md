@@ -51,7 +51,7 @@ the token you type to **consume** one are the same symbol.
 This is intentionally *not* a new data system. It rides three systems the app already ships:
 
 - **Assets** — persistent, cross-canvas image store (`Asset { id, path, kind, name }`,
-  `/comfynext/assets`). Holds the pixels and survives reloads.
+  `/sailor/assets`). Holds the pixels and survives reloads.
 - **Variables binding machinery** — the pink `--var-accent` "this input is bound" affordance,
   the `promoteControl` one-click promote idiom, and client-side resolution at submit.
 - **A flat registry** — a `name → assetId` map, **project-scoped** so a reference is reusable
@@ -147,7 +147,7 @@ work is required for the primitive.**
 | Image is a valid bindable type | `VariableType` already includes `'image'` (used by `brand.logo`, `image_layer_*`) | `frontend/app/lib/collection/types.ts`, `frontend/app/lib/collection/bindables.ts` |
 | Binding data model + pink affordance | `VarBinding`, `BINDINGS_PROP`, `promoteControl`/`unbind` | `frontend/app/lib/collection/types.ts`, `frontend/app/composables/useStudioVarBindings.ts` |
 | Client-side resolution at submit | `resolveBindings()`, `stripVarsLinks()` | `frontend/app/lib/collection/resolve.ts`, `useFilteredPrompt.ts` |
-| Persistent, cross-canvas image store | Assets (`Asset`, `/comfynext/assets`, `assetUrl`) | `frontend/app/composables/useAssetLibrary.ts`, `frontend/shared/timeline/types.ts` |
+| Persistent, cross-canvas image store | Assets (`Asset`, `/sailor/assets`, `assetUrl`) | `frontend/app/composables/useAssetLibrary.ts`, `frontend/shared/timeline/types.ts` |
 | Paste birth hook | `handlePaste()` uploads to input dir, spawns `Image` node | `frontend/app/components/vue-canvas/VueNodeCanvas.vue` |
 | Generation birth hook | output images populate `node.data.images[]` | `frontend/app/components/vue-canvas/ArtifactImageNode.vue` |
 | Mode 2 model + call shape | Nano-Banana-2 multi-image edit nodes | `comfy_extras/nodes_person_swap.py`, `_pose_prompts.py`, `nodes_swap_product.py` |

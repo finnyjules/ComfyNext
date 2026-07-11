@@ -55,7 +55,7 @@ describe('buildStudioRenderItem', () => {
       if (url === '/upload/image') {
         return new Response(JSON.stringify({ name: 'baked.png', subfolder: 'collections' }), { status: 200 })
       }
-      if (url === '/comfynext/asset_import') {
+      if (url === '/sailor/asset_import') {
         return new Response(JSON.stringify({ ok: true }), { status: 200 })
       }
       throw new Error('unexpected fetch: ' + url)
@@ -126,7 +126,7 @@ describe('buildStudioRenderItem', () => {
       if (url === '/upload/image') {
         return new Response(JSON.stringify({ name: 'baked.png', subfolder: 'collections' }), { status: 200 })
       }
-      if (url === '/comfynext/asset_import') {
+      if (url === '/sailor/asset_import') {
         return new Response(JSON.stringify({ ok: true }), { status: 200 })
       }
       throw new Error('unexpected fetch: ' + url)

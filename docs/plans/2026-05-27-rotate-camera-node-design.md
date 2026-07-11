@@ -24,7 +24,7 @@ now, structured so Nano Banana / Seedream-Edit can drop in later).
 ## The gimbal widget
 
 `frontend/app/components/vue-canvas/widgets/WidgetCameraGimbal.vue`.
-Activated by `extra_dict={"comfynext_widget": "camera_gimbal"}` on the
+Activated by `extra_dict={"sailor_widget": "camera_gimbal"}` on the
 `camera` input — same routing pattern as `model_picker`.
 
 **Visual** — SVG, ~240×240px:

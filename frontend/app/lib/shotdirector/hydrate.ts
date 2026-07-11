@@ -1,5 +1,5 @@
 // frontend/app/lib/shotdirector/hydrate.ts
-// Defensive hydration of a persisted ShotSheet (node.data.properties.comfynext_shotDirector)
+// Defensive hydration of a persisted ShotSheet (node.data.properties.sailor_shotDirector)
 // and pure reference-list helpers. Mirrors the shaderstudio hydrateConfig pattern.
 
 import {

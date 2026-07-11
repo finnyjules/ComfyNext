@@ -71,7 +71,7 @@ def test_base_prompt_keeps_scene_fixed():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_product_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_product_prompts_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._swap_product_prompts'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -118,13 +118,13 @@ def swap_product_instruction(instructions: str = "") -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_product_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_product_prompts_test.py -v`
 Expected: PASS — 5 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_swap_product_prompts.py tests-unit/comfy_extras_test/swap_product_prompts_test.py
 git commit -m "feat(swap-product): product-swap prompt builder + unit tests
 
@@ -256,18 +256,18 @@ In `nodes.py`, find the `extras_files` list entry `"nodes_relight.py",` (line 25
 
 - [ ] **Step 3: Verify the module imports cleanly (no torch/API runtime needed for the import path)**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_swap_product.py').read()); print('syntax ok')"`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_swap_product.py').read()); print('syntax ok')"`
 Expected: `syntax ok`
 
 Then confirm the registration line is present:
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && grep -n "nodes_swap_product.py" nodes.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && grep -n "nodes_swap_product.py" nodes.py`
 Expected: one match inside the `extras_files` list.
 
 - [ ] **Step 4: Restart ComfyUI and confirm the node loads**
 
 Kill any running ComfyUI, relaunch:
-`cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
+`cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
 
 Wait for startup, then in another shell confirm the node is registered:
 Run: `curl -s http://127.0.0.1:8188/object_info/SwapProductNode | head -c 200`
@@ -276,7 +276,7 @@ Expected: JSON describing the `SwapProductNode` (non-empty, contains `"display_n
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/nodes_swap_product.py nodes.py
 git commit -m "feat(swap-product): SwapProductNode (nano-banana-2 two-image swap)
 
@@ -327,7 +327,7 @@ describe('Swap Product node registration', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/swap-product-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/swap-product-catalog.unit.spec.ts`
 Expected: FAIL — `ACTION_CATALOG.SwapProductNode` is undefined.
 
 - [ ] **Step 3a: Add the action-catalog entry**
@@ -362,13 +362,13 @@ In `frontend/app/data/generator-icons.ts`, in the `NODE_MODEL_BRAND` object, add
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/swap-product-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/swap-product-catalog.unit.spec.ts`
 Expected: PASS — 3 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/data/action-catalog.ts frontend/app/data/generator-icons.ts frontend/tests/unit/swap-product-catalog.unit.spec.ts
 git commit -m "feat(swap-product): register Swap Product node in the frontend catalog
 
@@ -386,7 +386,7 @@ A visual node is not shippable on unit tests alone. Prove it works in the real a
 - [ ] **Step 1: Ensure both servers are running**
 
 - ComfyUI on `127.0.0.1:8188` (restarted in Task 2 so it has the new node).
-- Frontend: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npm run dev`.
+- Frontend: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npm run dev`.
 
 - [ ] **Step 2: Build the swap in the canvas**
 

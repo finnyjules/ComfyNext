@@ -17,7 +17,7 @@ export function webglPreviewSupported(): boolean {
 
 /**
  * WebGL twin of usePlaybackEngine — same surface, swapped behind the
- * 'comfynext:Engine.WebGLPreview' flag in TimelineEditor. The store transport
+ * 'sailor:Engine.WebGLPreview' flag in TimelineEditor. The store transport
  * stays master (playhead in seconds, ticked by the editor's rAF); this engine
  * renders the playhead's frame each rAF with an unchanged-frame early-out, and
  * audio FOLLOWS transport (re-anchored on play and on seek jumps). Drift between

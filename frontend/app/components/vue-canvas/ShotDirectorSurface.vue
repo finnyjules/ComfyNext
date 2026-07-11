@@ -28,12 +28,12 @@ function persist(s: any) {
   if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  n.data.properties.comfynext_shotDirector = s
+  n.data.properties.sailor_shotDirector = s
 }
 
 const { resolveVariantRefs, coverUrl, characters } = useCharacters()
 const { sheet, result, addReference, removeReference, update, rerollSeed, addCastMember, removeCastMember } = useShotDirector(
-  node.value?.data?.properties?.comfynext_shotDirector,
+  node.value?.data?.properties?.sailor_shotDirector,
   persist,
   picks => resolveVariantRefs(picks),
   picks => missingVariantIssues(picks, characters.value),
@@ -88,7 +88,7 @@ function onRemoveCast(m: CastMember) {
   // same-slug wire can be lingering (picker-add then wire: dedupe keeps the
   // picker entry but the edge stays), and a stray edge left behind would
   // resurrect the cast member on the next edge sync.
-  window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
+  window.dispatchEvent(new CustomEvent('sailor:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
   removeCastMember(m.slug)
 }
 
@@ -103,7 +103,7 @@ function onGenerate() {
   // Close the modal so the user returns to the canvas and can actually SEE the
   // spawned FilmShotNode run — otherwise the full-screen modal hides it and the
   // launch looks like it did nothing. Handler errors surface on the node card.
-  window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
+  window.dispatchEvent(new CustomEvent('sailor:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
   emit('close')
 }
 

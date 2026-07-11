@@ -50,7 +50,7 @@ const { recordAsset } = useProjectGenerations()
 const { activeTab } = useTabs()
 
 // Locate this node + its saved config blob on the canvas. The config lives at
-// node.data.properties.comfynext_spaceType so it survives serialization
+// node.data.properties.sailor_spaceType so it survives serialization
 // (convertToLiteGraph stashes `properties`), letting the editor be reopened.
 function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
 
@@ -348,8 +348,8 @@ function applySweep(values: (string | number)[]) {
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
     detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
   }))
 }
@@ -363,7 +363,7 @@ function wiredCollectionNodeId(): string | null {
 }
 function goToCollection() {
   const nodeId = wiredCollectionNodeId()
-  if (nodeId) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId } }))
+  if (nodeId) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId } }))
 }
 
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
@@ -383,7 +383,7 @@ function openVarMenuDesc(e: MouseEvent, desc: StudioControlDesc, liveValue: stri
         label: 'Bind to',
         children: compatCols.map(col => ({
           label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
             detail: { nodeId: props.nodeId, path: `params.${desc.key}`, columnKey: col.key },
           })),
         })),
@@ -617,7 +617,7 @@ let hydrating = false
 // the editor on an existing node restores exactly what the user last authored.
 function loadConfig() {
   const n = currentNode()
-  const c = n?.data?.properties?.comfynext_spaceType
+  const c = n?.data?.properties?.sailor_spaceType
   if (!c) return // first edit of a fresh node — keep the defaults.
   hydrating = true
   // Restore effectId BEFORE params so the engine builds with the right effect
@@ -655,8 +655,8 @@ function saveConfig() {
   const n = currentNode(); if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  const prev = n.data.properties.comfynext_spaceType || {}
-  n.data.properties.comfynext_spaceType = {
+  const prev = n.data.properties.sailor_spaceType || {}
+  n.data.properties.sailor_spaceType = {
     ...prev,
     effectId: effectId.value,
     params: { ...params },
@@ -675,7 +675,7 @@ onMounted(async () => {
   if (!canvas.value) return
   // Restore saved config BEFORE building the engine so the first render is
   // already the user's authored state (not the defaults).
-  const hadConfig = !!currentNode()?.data?.properties?.comfynext_spaceType
+  const hadConfig = !!currentNode()?.data?.properties?.sailor_spaceType
   loadConfig()
   pullTextLines()
   pullFills()
@@ -943,11 +943,11 @@ async function generateImage() {
       if (n) {
         if (!n.data) n.data = {}
         if (!n.data.properties) n.data.properties = {}
-        const prev = n.data.properties.comfynext_spaceType || {}
-        n.data.properties.comfynext_spaceType = { ...prev, thumb: `/view?filename=${filename}&type=input` }
+        const prev = n.data.properties.sailor_spaceType || {}
+        n.data.properties.sailor_spaceType = { ...prev, thumb: `/view?filename=${filename}&type=input` }
       }
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
       closeEditor()
@@ -978,7 +978,7 @@ async function generateVideo() {
       renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
     })
     engine.setSize(W.value, H.value)
-    const res = await fetch('/comfynext/spacetype_encode', {
+    const res = await fetch('/sailor/spacetype_encode', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value }),
@@ -986,7 +986,7 @@ async function generateVideo() {
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-      window.dispatchEvent(new CustomEvent('comfynext:spaceTypeOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
       }))
       closeEditor()

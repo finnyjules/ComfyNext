@@ -24,7 +24,7 @@ real grid under everything.
   2. A Collection is found (wired) or auto-created + VARS-wired to the Smart Layout node.
   3. A column is created — named from the element (its name/role if present, else a slug of the
      current text, else `text_layer_N`) — and the **current content seeds the preview row's cell**,
-     so the design renders identically before/after. Binding written to `comfynext_varBindings`.
+     so the design renders identically before/after. Binding written to `sailor_varBindings`.
   4. The element shows a **variable chip/badge** in the editor (and its inspector gains a
      "Variable" row: column name, go-to-collection, unbind-freezes-current-text).
 - **Bound display:** the editor canvas renders the RESOLVED value (via the same varPreview/props

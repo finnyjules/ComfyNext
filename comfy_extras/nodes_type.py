@@ -69,7 +69,7 @@ class RenderTypeNode(IO.ComfyNode):
                     "params",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "font_playground"},
+                    extra_dict={"sailor_widget": "font_playground"},
                     tooltip="Font playground state (managed by the widget).",
                 ),
             ],

@@ -18,7 +18,7 @@ const props = defineProps<{
   }
 }>()
 
-const sheet = computed(() => hydrateLipSyncSheet(props.data?.properties?.comfynext_lipSync))
+const sheet = computed(() => hydrateLipSyncSheet(props.data?.properties?.sailor_lipSync))
 const compiled = computed(() => compileLipSync(sheet.value))
 const engineLabel = computed(() => resolveEngine(sheet.value) === 'sync' ? 'Sync' : 'Fabric')
 
@@ -43,13 +43,13 @@ const statusDotClass = computed(() => {
 })
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openLipSync', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openLipSync', { detail: { nodeId: props.id } }))
 }
 
 const hasError = computed(() => compiled.value.issues.some(i => i.level === 'error'))
 function generate() {
   if (hasError.value) return
-  window.dispatchEvent(new CustomEvent('comfynext:lipSyncGenerate', { detail: { sourceNodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:lipSyncGenerate', { detail: { sourceNodeId: props.id } }))
 }
 </script>
 

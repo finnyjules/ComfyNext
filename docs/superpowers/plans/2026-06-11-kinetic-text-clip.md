@@ -693,7 +693,7 @@ git add frontend/app/components/vue-canvas/timeline/MotionClipInspector.vue
 git commit -m "Timeline: animate variable-font axes (from→to) on a Motion clip"
 ```
 
-- [ ] **Step 3: Browser acceptance** (Chrome MCP, app :3002; a Timeline node/editor open — add one if needed; ComfyUI :8188 up; `comfynext:Comfy.VueNodes.Enabled` = true if required):
+- [ ] **Step 3: Browser acceptance** (Chrome MCP, app :3002; a Timeline node/editor open — add one if needed; ComfyUI :8188 up; `sailor:Comfy.VueNodes.Enabled` = true if required):
   1. Open the timeline editor. Click **Kinetic Text** → a Motion clip appears on a video track at the playhead, selected; the inspector shows Text/Font/Size/Color/Axes/Animation.
   2. Play the timeline → the text reveals with the default `mask-up` per-char stagger; scrub → it tracks the playhead.
   3. Change the font to a variable font (e.g. one with a `wght` axis), drag the **wght** base slider → the preview thickens live.

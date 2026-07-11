@@ -180,7 +180,7 @@ export function useNodeSearch() {
       const widgetOverrides = { ...(synthetic?.addAs.widgetOverrides ?? {}), ...(opts.widgetOverrides ?? {}) }
       const propertyOverrides = { ...(synthetic?.addAs.propertyOverrides ?? {}), ...(opts.propertyOverrides ?? {}) }
       const dataOverrides = { ...(synthetic?.addAs.dataOverrides ?? {}), ...(opts.dataOverrides ?? {}) }
-      window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+      window.dispatchEvent(new CustomEvent('sailor:addNode', {
         detail: {
           nodeType: resolvedType,
           widgetOverrides: Object.keys(widgetOverrides).length ? widgetOverrides : undefined,
@@ -204,7 +204,7 @@ export function useNodeSearch() {
     const iframe = container?.querySelector('iframe') as HTMLIFrameElement | null
     if (iframe?.contentWindow) {
       iframe.contentWindow.postMessage(
-        { type: 'comfynext', action: 'addNodeAtCenter', nodeType: resolvedType, widgetOverrides },
+        { type: 'sailor', action: 'addNodeAtCenter', nodeType: resolvedType, widgetOverrides },
         '*',
       )
     }

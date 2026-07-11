@@ -1,4 +1,4 @@
-# ComfyNext — Rough Roadmap to Launch (gamed 2026-07-03)
+# Sailor — Rough Roadmap to Launch (gamed 2026-07-03)
 
 One founder, sequenced strictly — the binding constraint is solo bandwidth, so nothing here is parallel except "frontier velocity" (new-model adoption), which stays a standing ~20% tax.
 

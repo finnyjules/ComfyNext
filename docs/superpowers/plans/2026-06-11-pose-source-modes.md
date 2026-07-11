@@ -4,7 +4,7 @@
 
 **Goal:** Let the Pose Mannequin node re-pose a wired character three ways — pose a 3D mannequin (today), wire a pose reference image, or type a pose prompt — selected by a segmented toggle on the node.
 
-**Architecture:** Pure prompt-building logic moves into a new dependency-light module (`comfy_extras/_pose_prompts.py`) so it is unit-testable without torch/network. The Python node gains a `pose_source` combo, an optional `pose_image` IMAGE input, and a `pose_prompt` string; `execute()` branches on the mode. The Vue node renders a 3-segment toggle and a per-mode body; image/prompt modes generate through the existing scoped-run path (`comfynext:runFiltered { targetIds, live: true }`) after ensuring a downstream image sink exists.
+**Architecture:** Pure prompt-building logic moves into a new dependency-light module (`comfy_extras/_pose_prompts.py`) so it is unit-testable without torch/network. The Python node gains a `pose_source` combo, an optional `pose_image` IMAGE input, and a `pose_prompt` string; `execute()` branches on the mode. The Vue node renders a 3-segment toggle and a per-mode body; image/prompt modes generate through the existing scoped-run path (`sailor:runFiltered { targetIds, live: true }`) after ensuring a downstream image sink exists.
 
 **Tech Stack:** Python (ComfyUI custom node, `comfy_api.latest.IO`), pytest, Vue 3 + TypeScript (`@vue-flow/core`), nano-banana-2 via Replicate.
 
@@ -15,7 +15,7 @@
 - **The node today** ([comfy_extras/nodes_pose_mannequin.py](../../comfy_extras/nodes_pose_mannequin.py)): `PoseMannequinNode.execute()` takes `character` (IMAGE) + several editor-managed string widgets (`prompt`, `pose_state`, `mannequin_image`, `pose_cond_image`, `result_image`). It (1) returns the baked `result_image` if set, else (2) generates via nano-banana-2 from `character` + a normal-map conditioning render, else (3) passes the character through. The Replicate call uses helpers imported lazily from `comfy_api_nodes.nodes_replicate`: `_image_tensor_to_data_url(tensor) -> str`, `_run_prediction(model, input_dict) -> dict`, `_first_output_url(pred) -> str`, `download_url_to_image_tensor(url, cls=cls) -> tensor`.
 - **The Vue node** ([frontend/app/components/vue-canvas/PoseMannequinNode.vue](../../frontend/app/components/vue-canvas/PoseMannequinNode.vue)): a custom renderer. Reads widgets by NAME via `widgetIdx`/`widgetStr` (order-independent), so appending widgets in Python is safe. Writes happen by mutating `props.data.widgetsValues[i] = v` directly (see [ArtifactTextNode.vue:87-89](../../frontend/app/components/vue-canvas/ArtifactTextNode.vue)).
 - **Result routing** lives in [VueNodeCanvas.vue](../../frontend/app/components/vue-canvas/VueNodeCanvas.vue), NOT in the node component (the node has no access to the nodes/edges arrays). `handlePoseResult` (line ~1660) find-or-creates a downstream `Image` artifact node wired from the pose node's IMAGE output. `materializeAutoImageSinks` deliberately SKIPS PoseMannequin (it's in `ARTIFACT_NODE_COMPONENTS`), so a scoped run will NOT auto-create a sink — we must include the sink id in `targetIds` ourselves.
-- **Scoped run:** `comfynext:runFiltered { targetIds: string[], live: true }` is handled in [default.vue](../../frontend/app/layouts/default.vue) `handleRunFiltered` — runs just the listed nodes (+ cached upstream), skipping the cost-confirm/watchdog. SmartLayout dispatches it on save ([SmartLayoutEditorModal.vue:372](../../frontend/app/components/vue-canvas/SmartLayoutEditorModal.vue)).
+- **Scoped run:** `sailor:runFiltered { targetIds: string[], live: true }` is handled in [default.vue](../../frontend/app/layouts/default.vue) `handleRunFiltered` — runs just the listed nodes (+ cached upstream), skipping the cost-confirm/watchdog. SmartLayout dispatches it on save ([SmartLayoutEditorModal.vue:372](../../frontend/app/components/vue-canvas/SmartLayoutEditorModal.vue)).
 - **Schema-change gotcha:** adding inputs shifts widget positions; existing canvas instances misalign and must be deleted + re-added. Python node changes require a ComfyUI restart (a supervisor relaunches it on 8188 when the pid is killed).
 
 ---
@@ -369,7 +369,7 @@ function handlePoseGenerate(e: Event) {
   if (!poseNode) return
   const sink = ensurePoseImageSink(poseNode)
   nextTick(() => {
-    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
       detail: { targetIds: [nodeId, String(sink.id)], live: true },
     }))
   })
@@ -380,18 +380,18 @@ function handlePoseGenerate(e: Event) {
 
 - [ ] **Step 2: Register the listener (mount, ~line 2030)**
 
-After `window.addEventListener('comfynext:poseMultiResult', handlePoseMultiResult)` add:
+After `window.addEventListener('sailor:poseMultiResult', handlePoseMultiResult)` add:
 
 ```typescript
-  window.addEventListener('comfynext:poseGenerate', handlePoseGenerate)
+  window.addEventListener('sailor:poseGenerate', handlePoseGenerate)
 ```
 
 - [ ] **Step 3: Unregister the listener (unmount, ~line 2056)**
 
-After `window.removeEventListener('comfynext:poseMultiResult', handlePoseMultiResult)` add:
+After `window.removeEventListener('sailor:poseMultiResult', handlePoseMultiResult)` add:
 
 ```typescript
-  window.removeEventListener('comfynext:poseGenerate', handlePoseGenerate)
+  window.removeEventListener('sailor:poseGenerate', handlePoseGenerate)
 ```
 
 - [ ] **Step 4: Type-check**
@@ -452,7 +452,7 @@ const MODES: { id: PoseMode; label: string }[] = [
 ]
 
 function generate() {
-  window.dispatchEvent(new CustomEvent('comfynext:poseGenerate', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:poseGenerate', { detail: { nodeId: props.id } }))
 }
 ```
 
@@ -608,5 +608,5 @@ git commit -m "docs(pose): record in-browser verification results"
 ## Self-review notes
 
 - **Spec coverage:** `pose_source` toggle (Task 5) ✓; wired-only `pose_image` input (Tasks 2, 5) ✓; image + prompt base prompts distinct from the mannequin normal-map prompt (Task 1) ✓; scoped-run generation via `runFiltered` with a materialized sink (Tasks 3–5) ✓; mannequin path + `/api/inpaint/pose` untouched (Task 2 keeps the else-branch; route not modified) ✓; unit tests for branch/prompt selection (Task 1) ✓; in-browser real-generation verification (Task 6) ✓.
-- **Naming consistency:** `pose_instruction`, `ensurePoseImageSink`, `handlePoseGenerate`, `comfynext:poseGenerate`, widget names `pose_source`/`pose_image`/`pose_prompt` are used identically across Python, the canvas, and the node component.
+- **Naming consistency:** `pose_instruction`, `ensurePoseImageSink`, `handlePoseGenerate`, `sailor:poseGenerate`, widget names `pose_source`/`pose_image`/`pose_prompt` are used identically across Python, the canvas, and the node component.
 - **Guard rails:** image mode with no wired image and prompt mode with empty text fall through to character passthrough in `execute()` (Task 2); the Image-mode Generate button is `:disabled` until a pose image is connected (Task 5).

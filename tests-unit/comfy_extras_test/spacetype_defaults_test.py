@@ -14,4 +14,4 @@ def test_valid_effect_id_rejects_traversal_and_caps():
 def test_scene_defaults_dir_is_under_bridge(tmp_path, monkeypatch):
     d = nt._scene_defaults_dir()
     assert d.endswith("scene_defaults")
-    assert "comfynext_bridge" in d
+    assert "sailor_bridge" in d

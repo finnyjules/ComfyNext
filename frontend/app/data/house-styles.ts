@@ -1,5 +1,5 @@
 /**
- * House style library — ComfyNext-trained style LoRAs published for all users.
+ * House style library — Sailor-trained style LoRAs published for all users.
  * Entries are SELF-CONTAINED: no dependency on the local models/loras sidecars
  * (those exist only on the dev machine). Published via /dev/style-publisher,
  * which upserts house-styles.json and writes thumbnails to

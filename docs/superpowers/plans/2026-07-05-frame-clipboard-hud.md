@@ -174,7 +174,7 @@ Expected: PASS
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerClipboard.ts frontend/tests/unit/layer-clipboard.unit.spec.ts
 git commit -m "feat(frame): layerClipboard pure copy/paste + clipboard singleton"
 ```
@@ -303,7 +303,7 @@ Add `copySelection, pasteClipboard` to the returned object (append to the line t
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): copy/paste (Cmd+C, Cmd+V, Cmd+Shift+V) via editor + keymap"
 ```
@@ -385,7 +385,7 @@ Add `hud` to the returned object (append to the `snapGuides, marquee, …` line)
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): dragHud helper + hud computed (dimension readout)"
 ```
@@ -425,7 +425,7 @@ Run: `cd frontend && npx vitest run tests/unit` (no unit change expected; confir
 Note in the report: the HUD render + copy/paste have NO Vue-side unit coverage — CONTROLLER browser-verifies on `/dev/frame-lab` (port 3017).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): render live dimension HUD while dragging"
 ```

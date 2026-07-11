@@ -17,7 +17,7 @@
 - `frontend/app/lib/shaderfx/{types.ts,params.ts}`, `frontend/tests/unit/shaderfx-params.unit.spec.ts`
 - `frontend/app/components/vue-canvas/{ShaderEffectNode.vue,ShaderStudioSurface.vue}` (param loops)
 
-**Conventions:** repo root `/Users/julien/Documents/GitHub/ComfyNext`. Python via `.venv/bin/python`. Frontend tests from `frontend/`: `npm run test:unit -- <file>`. No purple/violet accents in UI. Commit after each task. `bayer_dither` keeps its id; default `u_pattern=1` (Bayer 4×4) preserves the current look.
+**Conventions:** repo root `/Users/julien/Documents/GitHub/Sailor`. Python via `.venv/bin/python`. Frontend tests from `frontend/`: `npm run test:unit -- <file>`. No purple/violet accents in UI. Commit after each task. `bayer_dither` keeps its id; default `u_pattern=1` (Bayer 4×4) preserves the current look.
 
 ---
 
@@ -128,14 +128,14 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run it to generate the asset**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python shader_effects/bake_blue_noise.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python shader_effects/bake_blue_noise.py`
 Expected: prints `wrote .../assets/blue_noise.png  (64x64)`.
 
 - [ ] **Step 3: Verify dimensions + determinism**
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python -c "from PIL import Image; im=Image.open('shader_effects/assets/blue_noise.png'); print(im.size, im.mode)"
 md5 shader_effects/assets/blue_noise.png
 .venv/bin/python shader_effects/bake_blue_noise.py >/dev/null && md5 shader_effects/assets/blue_noise.png
@@ -204,7 +204,7 @@ def test_float_still_clamps():
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
 Expected: FAIL — `EffectParam.__init__` got an unexpected keyword `options` (and missing min/max/step).
 
 - [ ] **Step 3: Update `EffectParam`, `load_catalog`, `resolve_params`**
@@ -258,14 +258,14 @@ In `resolve_params`, replace the per-param loop body (currently lines ~103-109):
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Confirm the existing catalog still loads (float effects unaffected)**
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python -c "import sys; from unittest.mock import MagicMock; sys.modules.setdefault('nodes', MagicMock()); from comfy_extras._shader_effects import load_catalog; c=load_catalog(refresh=True); print('effects:', len(c.effects))"
 ```
 Expected: prints `effects: 49` (loads with no error — float params still validate).
@@ -511,7 +511,7 @@ In `shader_effects/manifest.json`, find the `bayer_dither` effect object and rep
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python -c "
 import sys, numpy as np
 from unittest.mock import MagicMock
@@ -558,12 +558,12 @@ The golden generator binds manifest textures, so it now binds `blue_noise.png` f
 
 - [ ] **Step 1: Regenerate all goldens**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py`
 Expected: prints `golden: <id>_<size>.png` for every effect, including `bayer_dither_128.png` and `_256.png`.
 
 - [ ] **Step 2: Confirm only bayer_dither goldens changed**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && git status --short tests-unit/shaderfx_golden/`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && git status --short tests-unit/shaderfx_golden/`
 Expected: only `bayer_dither_128.png` and `bayer_dither_256.png` show as modified (other effects' shaders/params are untouched, so their goldens regenerate identically). If other goldens changed, STOP and investigate — nothing else should have moved.
 
 - [ ] **Step 3: Commit**
@@ -654,14 +654,14 @@ git commit -m "feat(dither): enum param dropdown in ShaderEffect + Shader Studio
 
 - [ ] **Step 1: Python**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q`
 Expected: PASS (4).
 
 - [ ] **Step 2: Golden regression (server render == committed goldens)**
 
 If the golden pytest exists, run it; otherwise re-run the generator and confirm git shows no diff (idempotent):
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py >/dev/null
 git status --short tests-unit/shaderfx_golden/
 ```
@@ -684,7 +684,7 @@ git add -A && git commit -m "test(dither): suites green"
 
 Manual (GPU/preview-gated). Start servers per `CLAUDE.md`:
 - `cd frontend && npm run dev`
-- `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188` (restart ComfyUI so the rewritten shader + manifest reload)
+- `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188` (restart ComfyUI so the rewritten shader + manifest reload)
 
 - [ ] **Step 1:** Add a **ShaderEffect** node, pick "Dither" — confirm a **Pattern** dropdown appears with all 12 entries, plus Size/Levels/Colored sliders.
 - [ ] **Step 2:** Switch through all 12 patterns — confirm each renders distinctly; the three Blue Noise variants look like smooth blue-noise grain (not blocky/white), differing in grain scale.

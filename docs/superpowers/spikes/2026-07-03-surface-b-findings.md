@@ -12,7 +12,7 @@ All money logic is in-memory mocks whose signatures mirror the real `ledger.ts` 
 
 ## Key engine facts discovered
 - **`execution_success` is client-targeted, not broadcast** (`execution.py:793` → `add_message(..., broadcast=False)` → `execution.py:680` targets `self.server.client_id`). A server-side ws listener with its own clientId would not see it. → the spike settles by polling `GET /history/{prompt_id}`, whose entry carries `status: {status_str: 'success'|'error', completed: bool}` (`execution.py:1216`).
-- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt` straight to `:8188` (`custom_nodes/comfynext_bridge/js/bridge.js:1126`) — bypassing Nitro. This is the §6 hole.
+- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt` straight to `:8188` (`custom_nodes/sailor_bridge/js/bridge.js:1126`) — bypassing Nitro. This is the §6 hole.
 
 ## Mock → real swap points (for Phases 1–5)
 | Spike module | Replaced by | Phase |

@@ -9,7 +9,7 @@
   <div v-if="bootPhase !== 'gone'" class="fixed inset-x-0 top-0 z-[99999] pointer-events-none">
     <CanvasStatusBar
       :backend-busy="bootPhase === 'loading'"
-      backend-label="Loading ComfyNext…"
+      backend-label="Loading Sailor…"
       :backend-success="bootPhase === 'ready'"
       backend-success-label="Ready to go"
       :running="false"

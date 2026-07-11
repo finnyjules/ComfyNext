@@ -43,7 +43,7 @@ class RelightNode(IO.ComfyNode):
                     "light",
                     default='{"azimuth":-30,"elevation":20,"intensity":0.6}',
                     multiline=False,
-                    extra_dict={"comfynext_widget": "light_gimbal"},
+                    extra_dict={"sailor_widget": "light_gimbal"},
                     tooltip="Light direction + intensity. Edited via the gimbal widget.",
                 ),
                 IO.Boolean.Input("keep_background", default=True, optional=True,

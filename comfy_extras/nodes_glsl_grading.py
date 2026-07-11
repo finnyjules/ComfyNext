@@ -26,7 +26,7 @@ class DuotoneNode(IO.ComfyNode):
                 IO.String.Input(
                     "duotone",
                     default='{"shadow":"#1a1a2e","highlight":"#f5f5f5"}',
-                    extra_dict={"comfynext_widget": "gradient_editor", "gradient_mode": "duotone"},
+                    extra_dict={"sailor_widget": "gradient_editor", "gradient_mode": "duotone"},
                     tooltip="Shadow + highlight colours (managed by the palette widget).",
                 ),
             ],

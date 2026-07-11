@@ -80,7 +80,7 @@ established by SpaceType / Gradient / Shader / Texture studios.
    to `NODE_TYPE_MAP`.
 2. `frontend/app/components/vue-canvas/VueNodeCanvas.vue` — component map
    `markRaw` registration; dangling-output guard list; `shapeStudioOpenForId` ref
-   + `handleOpenShapeStudio`; `window.addEventListener('comfynext:openShapeStudio', ...)`;
+   + `handleOpenShapeStudio`; `window.addEventListener('sailor:openShapeStudio', ...)`;
    mount `<ShapeStudioSurface v-if="shapeStudioOpenForId" :node-id="...">`.
 3. `frontend/app/data/studio-options.ts` — add a `StudioOption`
    (label "Shape Studio", a lucide icon e.g. `Box` or `Gem`, `nodeType: 'ShapeStudio'`).
@@ -91,8 +91,8 @@ established by SpaceType / Gradient / Shader / Texture studios.
    `PalettePicker`, `FillSwatch`).
 
 Communication uses the existing `window` `CustomEvent` bus: open with
-`comfynext:openShapeStudio { detail: { nodeId } }`; emit the result with
-`comfynext:shapeStudioOutput { detail: { sourceNodeId, nodeType: 'Image', widgetOverrides } }`
+`sailor:openShapeStudio { detail: { nodeId } }`; emit the result with
+`sailor:shapeStudioOutput { detail: { sourceNodeId, nodeType: 'Image', widgetOverrides } }`
 (all studios reuse the SpaceType output handler).
 
 ## The Render Engine (`shapefx/engine.ts`)
@@ -182,7 +182,7 @@ palette.
   not part of `ShapeConfig`, but is captured at export time so the PNG matches
   the framed view.
 - **Export:** `engine.frameToBlob(w, h)` → `recordAsset(...)` → emit
-  `comfynext:shapeStudioOutput` with `nodeType: 'Image'`.
+  `sailor:shapeStudioOutput` with `nodeType: 'Image'`.
 
 ## Error Handling
 
@@ -219,7 +219,7 @@ palette.
 
 - **Looping video export** — reuse `lib/spacetype/bake.ts`
   (`ensureSpaceTypeBake`) → `uploadFrameBatch(blobs, 'spacetype')` →
-  `POST /comfynext/spacetype_encode` → emit `shapeStudioOutput` with
+  `POST /sailor/spacetype_encode` → emit `shapeStudioOutput` with
   `nodeType: 'Video'`. A slow auto-rotate / gradient-drift becomes the loop.
 - **Variation grid** — a 2×2 / 3×3 of nearby-seed variations to promote from,
   reusing the sketchbook/light-table thinking.

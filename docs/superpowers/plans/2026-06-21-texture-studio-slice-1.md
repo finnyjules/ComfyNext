@@ -425,9 +425,9 @@ class TextureFxRenderer {
   }
 }
 
-interface Scope { __comfynextTextureFx?: TextureFxRenderer }
+interface Scope { __sailorTextureFx?: TextureFxRenderer }
 export function resolveTextureFx(scope: Scope): TextureFxRenderer {
-  return scope.__comfynextTextureFx ?? (scope.__comfynextTextureFx = new TextureFxRenderer())
+  return scope.__sailorTextureFx ?? (scope.__sailorTextureFx = new TextureFxRenderer())
 }
 export const textureFx = resolveTextureFx(globalThis as unknown as Scope)
 ```
@@ -469,7 +469,7 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
 
 const params = computed<Params>(
-  () => (props.data?.properties?.comfynext_textureStudio as Params) ?? textureDefaults(),
+  () => (props.data?.properties?.sailor_textureStudio as Params) ?? textureDefaults(),
 )
 
 function renderFrame() {
@@ -486,7 +486,7 @@ onMounted(renderFrame)
 onBeforeUnmount(() => clearTimeout(timer))
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openTextureStudio', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openTextureStudio', { detail: { nodeId: props.id } }))
 }
 </script>
 
@@ -521,7 +521,7 @@ git commit -m "feat(texture-studio): node card with live seamless preview"
 **Files:**
 - Create: `frontend/app/components/vue-canvas/TextureStudioSurface.vue`
 
-This mirrors `GradientStudioSurface.vue`: load/save params on the node, a repeat preview with 1×/2×/3× + seam highlight, Roll (reseed), PNG export via `uploadFrameBatch`, and Send-to-canvas via the `comfynext:textureStudioOutput` event.
+This mirrors `GradientStudioSurface.vue`: load/save params on the node, a repeat preview with 1×/2×/3× + seam highlight, Roll (reseed), PNG export via `uploadFrameBatch`, and Send-to-canvas via the `sailor:textureStudioOutput` event.
 
 - [ ] **Step 1: Write the component**
 
@@ -557,13 +557,13 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 function currentNode() { return props.nodes.find((n) => String(n.id) === String(props.nodeId)) }
 
 function loadParams() {
-  const p = currentNode()?.data?.properties?.comfynext_textureStudio
+  const p = currentNode()?.data?.properties?.sailor_textureStudio
   if (p && typeof p === 'object') Object.assign(params, { ...textureDefaults(), ...cloneParams(p) })
 }
 function saveParams() {
   const n = currentNode(); if (!n) return
   n.data ||= {}; n.data.properties ||= {}
-  n.data.properties.comfynext_textureStudio = cloneParams({ ...params })
+  n.data.properties.sailor_textureStudio = cloneParams({ ...params })
 }
 function closeEditor() { try { saveParams() } catch (e) { console.error('[texture] save failed', e) }; emit('close') }
 
@@ -611,7 +611,7 @@ async function sendToCanvas() {
     if (filename) {
       saveParams()
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:textureStudioOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:textureStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
       closeEditor()
@@ -693,7 +693,7 @@ git commit -m "feat(texture-studio): modal surface with repeat preview, seams, r
 ## Task 6: Register in `VueNodeCanvas.vue`
 
 **Files:**
-- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (mirror the Gradient Studio blocks; search for `gradientStudioOpenForId`, `handleOpenGradientStudio`, `comfynext:openGradientStudio`, and the `GradientStudioOutput` listener and Teleport).
+- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (mirror the Gradient Studio blocks; search for `gradientStudioOpenForId`, `handleOpenGradientStudio`, `sailor:openGradientStudio`, and the `GradientStudioOutput` listener and Teleport).
 
 - [ ] **Step 1: Add the open-state ref + handler** (next to `handleOpenGradientStudio`)
 
@@ -705,14 +705,14 @@ function handleOpenTextureStudio(e: Event) {
 }
 ```
 
-- [ ] **Step 2: Register listeners** (next to the `comfynext:openGradientStudio` and `comfynext:gradientStudioOutput` listeners — reuse the **existing** output handler used for gradient/spacetype outputs; find its exact name in the file, e.g. `handleSpaceTypeOutput`, and add a matching `addEventListener` for the texture event)
+- [ ] **Step 2: Register listeners** (next to the `sailor:openGradientStudio` and `sailor:gradientStudioOutput` listeners — reuse the **existing** output handler used for gradient/spacetype outputs; find its exact name in the file, e.g. `handleSpaceTypeOutput`, and add a matching `addEventListener` for the texture event)
 
 ```typescript
-window.addEventListener('comfynext:openTextureStudio', handleOpenTextureStudio)
-window.addEventListener('comfynext:textureStudioOutput', handleSpaceTypeOutput) // same {sourceNodeId,nodeType,widgetOverrides} contract
+window.addEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
+window.addEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput) // same {sourceNodeId,nodeType,widgetOverrides} contract
 ```
 
-Add the matching `removeEventListener` calls wherever the gradient ones are torn down (search `removeEventListener('comfynext:openGradientStudio'`).
+Add the matching `removeEventListener` calls wherever the gradient ones are torn down (search `removeEventListener('sailor:openGradientStudio'`).
 
 - [ ] **Step 3: Add the Teleport** (next to the `GradientStudioSurface` Teleport)
 
@@ -802,7 +802,7 @@ git commit -m "test(texture-studio): visual seamlessness harness"
 
 ## Self-review (completed)
 
-- **Spec coverage (Slice 1 scope):** lattice (square/brick/diagonal — *hex deferred to Slice 2, noted*), procedural cell content, live repeat preview + highlight-seams, seeded Roll, PNG export + Send-to-canvas, persistence to `comfynext_textureStudio`, registration, seamless unit tests, visual harness — all have tasks. Truchet, stylize, raster, AI-seamless, WFC, SVG/video are explicitly out of Slice 1 (roadmap §2–6).
+- **Spec coverage (Slice 1 scope):** lattice (square/brick/diagonal — *hex deferred to Slice 2, noted*), procedural cell content, live repeat preview + highlight-seams, seeded Roll, PNG export + Send-to-canvas, persistence to `sailor_textureStudio`, registration, seamless unit tests, visual harness — all have tasks. Truchet, stylize, raster, AI-seamless, WFC, SVG/video are explicitly out of Slice 1 (roadmap §2–6).
 - **Placeholder scan:** no TBD/TODO; every code step shows complete code; every command has expected output.
-- **Type consistency:** `patternColor`/`latticeCell` signatures match between `pattern.ts`, the test, and the GLSL mirror; `textureDefaults()` returns the same keys used by `controls.ts`, the renderer, node, and surface; event names (`comfynext:openTextureStudio`, `comfynext:textureStudioOutput`) and property key (`comfynext_textureStudio`) are identical everywhere; output event detail matches the existing `{ sourceNodeId, nodeType, widgetOverrides }` handler.
+- **Type consistency:** `patternColor`/`latticeCell` signatures match between `pattern.ts`, the test, and the GLSL mirror; `textureDefaults()` returns the same keys used by `controls.ts`, the renderer, node, and surface; event names (`sailor:openTextureStudio`, `sailor:textureStudioOutput`) and property key (`sailor_textureStudio`) are identical everywhere; output event detail matches the existing `{ sourceNodeId, nodeType, widgetOverrides }` handler.
 - **Known follow-ups for executor:** confirm `StudioModalShell` slot names and the existing output-handler function name in `VueNodeCanvas.vue` before wiring (flagged inline in Tasks 5–6).

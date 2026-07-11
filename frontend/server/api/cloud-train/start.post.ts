@@ -105,7 +105,7 @@ export default defineEventHandler(async (event) => {
       name: destName,
       visibility: 'private',
       hardware: 'gpu-t4',
-      description: 'LoRA trained from ComfyNext.',
+      description: 'LoRA trained from Sailor.',
     }),
   })
   if (!createRes.ok && createRes.status !== 409) {

@@ -52,7 +52,7 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvisi
 # build avoids GUI deps. Separate layer so the heavy torch layer stays cached.
 RUN pip install opencv-python-headless
 
-# ComfyUI source + the comfynext bridge custom node + LoRA sidecars/covers.
+# ComfyUI source + the sailor bridge custom node + LoRA sidecars/covers.
 # .dockerignore keeps models/loras/*.json + *.cover.* but drops the heavy
 # .safetensors weights (inference runs on Replicate, not locally).
 COPY . .

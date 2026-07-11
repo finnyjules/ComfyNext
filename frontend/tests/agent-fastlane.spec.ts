@@ -10,7 +10,7 @@ import { openBlankWorkflow, waitForBackend } from './_helpers'
  * Resolved seams (from source, 2026-07-04):
  *  - /api/agent-plan returns { text: <json-string> }; parseAgentResponse decodes
  *    that inner JSON: { reasoning, commands[], message } (+ per-command rationale).
- *  - agent key gate: opts.apiKey() reads localStorage 'comfynext:ComfyNext.AI.AnthropicApiKey'.
+ *  - agent key gate: opts.apiKey() reads localStorage 'sailor:Sailor.AI.AnthropicApiKey'.
  *  - proposal card's primary buttons are "Keep all" / "Keep & Run" (a per-row
  *    check button has title "Keep" — assert on the card-level labels only).
  *  - bar placeholder: "Ask about the graph, or tell me to change a node…".
@@ -28,7 +28,7 @@ function planText(commands: unknown[], message = ''): string {
 
 async function seedAgentKey(page: Page) {
   await page.addInitScript(() => {
-    try { localStorage.setItem('comfynext:ComfyNext.AI.AnthropicApiKey', 'sk-ant-test-fastlane') } catch {}
+    try { localStorage.setItem('sailor:Sailor.AI.AnthropicApiKey', 'sk-ant-test-fastlane') } catch {}
   })
 }
 

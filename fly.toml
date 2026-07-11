@@ -1,4 +1,4 @@
-# Fly.io config for ComfyNext — Nuxt frontend + CPU-only ComfyUI in one machine.
+# Fly.io config for Sailor — Nuxt frontend + CPU-only ComfyUI in one machine.
 # Generation runs on Replicate, so no GPU is required.
 #
 # IMPORTANT: the app name below must match NUXT_PUBLIC_COMFY_ORIGIN's hostname.

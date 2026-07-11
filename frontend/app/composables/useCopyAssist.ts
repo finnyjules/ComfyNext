@@ -40,7 +40,7 @@ export function useCopyAssist() {
   async function run(payload: CopyAssistPayload): Promise<void> {
     if (loading.value) return // guard against double-fire
 
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
 
     loading.value = true
     error.value = null

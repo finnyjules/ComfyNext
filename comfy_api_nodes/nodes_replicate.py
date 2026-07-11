@@ -1,4 +1,4 @@
-"""Replicate API nodes — BYOK suite for ComfyNext.
+"""Replicate API nodes — BYOK suite for Sailor.
 
 A parallel set to Comfy's official partner nodes, but pointed at Replicate
 instead of Comfy's /proxy/ infrastructure. Goal: one API token
@@ -433,7 +433,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
                     ),
                     # Render a gallery launcher (WidgetLoraPicker) instead of a
                     # plain dropdown; the combo still serializes a filename string.
-                    extra_dict={"comfynext_widget": "lora_picker"},
+                    extra_dict={"sailor_widget": "lora_picker"},
                 ),
                 IO.String.Input(
                     "lora_url",
@@ -629,7 +629,7 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     options=lora_options,
                     default="[None]",
                     tooltip="First LoRA — the character. Opens your Characters gallery.",
-                    extra_dict={"comfynext_widget": "lora_picker", "lora_kind": "character"},
+                    extra_dict={"sailor_widget": "lora_picker", "lora_kind": "character"},
                 ),
                 IO.String.Input(
                     "lora_a_url",
@@ -654,7 +654,7 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     options=lora_options,
                     default="[None]",
                     tooltip="Second LoRA — e.g. the style.",
-                    extra_dict={"comfynext_widget": "lora_picker"},
+                    extra_dict={"sailor_widget": "lora_picker"},
                 ),
                 IO.String.Input(
                     "lora_b_url",
@@ -2083,7 +2083,7 @@ class GenerateImageNode(IO.ComfyNode):
                     options=_IMAGE_GEN_MODEL_IDS,
                     default=_IMAGE_DEFAULT_MODEL_ID,
                     tooltip="Click to choose a model from the gallery.",
-                    extra_dict={"comfynext_widget": "model_picker"},
+                    extra_dict={"sailor_widget": "model_picker"},
                 ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="What to generate."),
@@ -2102,7 +2102,7 @@ class GenerateImageNode(IO.ComfyNode):
                 # auto-instantiates LiteGraph widgets for required inputs; on
                 # optional inputs, our Vue-side widgets_values update never
                 # gets a slot in graphToPrompt and the bag silently stays
-                # at the schema default. The `comfynext_widget: "internal"`
+                # at the schema default. The `sailor_widget: "internal"`
                 # hint tells the Vue node body to skip rendering it (see
                 # the widget filter in ComfyNode.vue), so users still see a
                 # clean 4-widget node.
@@ -2110,7 +2110,7 @@ class GenerateImageNode(IO.ComfyNode):
                     "model_options",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "internal"},
+                    extra_dict={"sailor_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
             ],
@@ -2529,7 +2529,7 @@ class RestyleWithLoRANode(IO.ComfyNode):
                     options=folder_paths.get_filename_list("loras") + ["[None]"],
                     default="[None]",
                     tooltip="Your style LoRA (needs a sidecar .json from the cloud trainer).",
-                    extra_dict={"comfynext_widget": "lora_picker"},
+                    extra_dict={"sailor_widget": "lora_picker"},
                 ),
                 IO.Float.Input("style_strength", default=0.5, min=0.0, max=1.0, step=0.05,
                                tooltip="Higher = bolder restyle (looser structure); "
@@ -2885,7 +2885,7 @@ class RotateCameraNode(IO.ComfyNode):
                     "camera",
                     default='{"yaw":0,"pitch":0,"roll":0}',
                     multiline=False,
-                    extra_dict={"comfynext_widget": "camera_gimbal"},
+                    extra_dict={"sailor_widget": "camera_gimbal"},
                     tooltip="3-axis camera orientation. Edited via the gimbal widget.",
                 ),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
@@ -2969,7 +2969,7 @@ class TextEffectNode(IO.ComfyNode):
                     options=_TEXT_EFFECT_IDS,
                     default=_TEXT_DEFAULT_EFFECT_ID,
                     tooltip="Click to choose a treatment from the effect gallery.",
-                    extra_dict={"comfynext_widget": "text_effect_picker"},
+                    extra_dict={"sailor_widget": "text_effect_picker"},
                 ),
                 IO.Combo.Input("aspect_ratio", options=_TEXT_EFFECT_AR, default="1:1",
                                tooltip="Output ratio — 16:9 for wordmarks, 1:1 for icons. "
@@ -3144,7 +3144,7 @@ class GenerateVideoNode(IO.ComfyNode):
                     options=_VIDEO_GEN_MODEL_IDS,
                     default=_VIDEO_DEFAULT_MODEL_ID,
                     tooltip="Click to choose a model from the video gallery.",
-                    extra_dict={"comfynext_widget": "video_model_picker"},
+                    extra_dict={"sailor_widget": "video_model_picker"},
                 ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="Describe the shot. Include camera moves, mood, lighting."),
@@ -3170,7 +3170,7 @@ class GenerateVideoNode(IO.ComfyNode):
                     "model_options",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "internal"},
+                    extra_dict={"sailor_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
             ],
@@ -3291,7 +3291,7 @@ class FilmShotNode(IO.ComfyNode):
                     options=_SHOT_PRESET_IDS,
                     default=_SHOT_DEFAULT_PRESET_ID,
                     tooltip="Click to choose a shot from the preset gallery.",
-                    extra_dict={"comfynext_widget": "shot_preset_picker"},
+                    extra_dict={"sailor_widget": "shot_preset_picker"},
                 ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="The subject of the shot — who/what and where. "
@@ -3305,7 +3305,7 @@ class FilmShotNode(IO.ComfyNode):
                     default=_FILM_SHOT_DEFAULT_MODEL_ID,
                     tooltip="Video model. Kling v2.5 Turbo Pro recommended for "
                             "camera-language adherence.",
-                    extra_dict={"comfynext_widget": "video_model_picker"},
+                    extra_dict={"sailor_widget": "video_model_picker"},
                 ),
                 IO.Combo.Input("aspect_ratio", options=_VIDEO_GEN_ASPECT_RATIOS, default="16:9",
                                tooltip="Auto-falls back to the model's nearest supported ratio."),
@@ -3318,7 +3318,7 @@ class FilmShotNode(IO.ComfyNode):
                     "model_options",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "internal"},
+                    extra_dict={"sailor_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
                 # ADVANCED per-dimension overrides. Option strings ARE the
@@ -4285,7 +4285,7 @@ class GenerateSpeechNode(IO.ComfyNode):
                 IO.Combo.Input("model", options=["MiniMax Speech-02 HD"], default="MiniMax Speech-02 HD"),
                 IO.String.Input("text", multiline=True, default="", tooltip="What to say."),
                 IO.Combo.Input("voice_id", options=_MINIMAX_VOICES + _list_cloned_voice_ids(), default="Wise_Woman",
-                               extra_dict={"comfynext_widget": "voice_picker"}),
+                               extra_dict={"sailor_widget": "voice_picker"}),
                 IO.Combo.Input("emotion", options=_MINIMAX_EMOTIONS, default="auto", advanced=True),
                 IO.Float.Input("speed", default=1.0, min=0.5, max=2.0, step=0.05),
                 IO.Float.Input("volume", default=1.0, min=0.1, max=10.0, step=0.1, advanced=True),
@@ -4434,7 +4434,7 @@ class ExtractTextNode(IO.ComfyNode):
 # =============================================================================
 
 
-# Removed: Replicate FaceSwapNode. ComfyNext ships a faster local face-swap
+# Removed: Replicate FaceSwapNode. Sailor ships a faster local face-swap
 # node (`FaceSwap` in comfy_extras/nodes_face.py) backed by InsightFace +
 # inswapper_128.onnx. It runs on the user's GPU, handles video batches with
 # identity tracking, and is free after the one-time model download. The

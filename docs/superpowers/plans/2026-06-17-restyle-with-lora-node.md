@@ -620,7 +620,7 @@ class RestyleWithLoRANode(IO.ComfyNode):
                     options=folder_paths.get_filename_list("loras") + ["[None]"],
                     default="[None]",
                     tooltip="Your style LoRA (needs a sidecar .json from the cloud trainer).",
-                    extra_dict={"comfynext_widget": "lora_picker"},
+                    extra_dict={"sailor_widget": "lora_picker"},
                 ),
                 IO.Float.Input("style_strength", default=0.5, min=0.0, max=1.0, step=0.05,
                                tooltip="Higher = bolder restyle (looser structure); "
@@ -848,7 +848,7 @@ actually proven. Requires `REPLICATE_API_TOKEN` set and a LoRA with a sidecar in
 
 Kill the running ComfyUI process, then:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188
 ```
 Expected: starts with no traceback; logs show the Replicate extension nodes loaded.
 

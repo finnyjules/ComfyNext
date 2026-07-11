@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ComfyNext image import)', 'Accept': 'image/*' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Sailor image import)', 'Accept': 'image/*' },
     redirect: 'follow',
     signal: AbortSignal.timeout(20_000),
   }).catch((err: unknown) => {

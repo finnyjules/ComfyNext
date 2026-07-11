@@ -4,7 +4,7 @@
 
 **Goal:** Lay the foundation for the CapCut-parity video editor (spec: `docs/plans/2026-06-09-capcut-parity-video-editor-design.md`): extend the timeline data model to v2 (transitions, speed/reverse, filters, captions, mattes, bake refs), formalize every timeline mutation as a serializable typed command, and build the golden-frame parity harness that will keep the Python exporter and the Phase-1 WebGL engine pixel-identical.
 
-**Architecture:** `frontend/shared/timeline/types.ts` stays the single source of truth, bumped to `version: 2` with a migration that accepts v1. A new `commands.ts` holds a pure `applyCommand(state, cmd)` the store dispatches through (undo/redo unchanged; commands become the text-to-edit tool surface later). On the Python side, the per-frame composite inside `render_timeline_to_file` is extracted into `render_frame_np()` — the single source of export-path pixel math — used by the export loop, a new `/comfynext/timeline/render_frame` PNG endpoint, and a golden-frame CLI. Committed fixture timelines + golden PNGs + a pytest diff gate Python regressions; a Playwright harness page proves the browser-side comparison pipeline end-to-end so the Phase-1 WebGL renderer plugs straight in.
+**Architecture:** `frontend/shared/timeline/types.ts` stays the single source of truth, bumped to `version: 2` with a migration that accepts v1. A new `commands.ts` holds a pure `applyCommand(state, cmd)` the store dispatches through (undo/redo unchanged; commands become the text-to-edit tool surface later). On the Python side, the per-frame composite inside `render_timeline_to_file` is extracted into `render_frame_np()` — the single source of export-path pixel math — used by the export loop, a new `/sailor/timeline/render_frame` PNG endpoint, and a golden-frame CLI. Committed fixture timelines + golden PNGs + a pytest diff gate Python regressions; a Playwright harness page proves the browser-side comparison pipeline end-to-end so the Phase-1 WebGL renderer plugs straight in.
 
 **Tech Stack:** TypeScript (Nuxt 4 / Vue 3), Vitest (new, unit tests for shared logic), Playwright (existing, against live servers on :3002/:8188), Python (pytest in `tests-unit/`, numpy/PIL/PyAV in `.venv`).
 
@@ -1128,10 +1128,10 @@ def _is_edit_state(state) -> bool:
 2. `_adapt_edit_state` (line ~534): replace
    `if state.get("version") != 1:` with
    `if not _is_edit_state(state):`
-3. `/comfynext/render_timeline_stream` route (line ~822): replace
+3. `/sailor/render_timeline_stream` route (line ~822): replace
    `if state.get("version") == 1:` with
    `if _is_edit_state(state):`
-4. `/comfynext/render_timeline` route (line ~882): replace
+4. `/sailor/render_timeline` route (line ~882): replace
    `if state.get("version") == 1:` with
    `if _is_edit_state(state):`
 
@@ -1177,7 +1177,7 @@ Create `tests-unit/comfy_extras_test/timeline_render_frame_test.py`:
 
 ```python
 """Unit tests for render_frame_np — the single-frame composite the FFmpeg
-export, the golden harness, and /comfynext/timeline/render_frame all share."""
+export, the golden harness, and /sailor/timeline/render_frame all share."""
 import importlib.util
 import os
 import sys
@@ -1319,7 +1319,7 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
     """Composite output frame `f` of the flat timeline `state` (the
     render_timeline_to_file shape) over its bg color. Returns float32 [H,W,3]
     in [0,1]. Single source of export-path pixel math: the FFmpeg export loop,
-    the golden-frame harness, and /comfynext/timeline/render_frame all call
+    the golden-frame harness, and /sailor/timeline/render_frame all call
     this — divergence between them is impossible by construction."""
     fps = int(state.get("fps", 30))
     W = int(state.get("canvas_width", 1280))
@@ -1869,10 +1869,10 @@ export interface PreviewRenderer {
 
 - [ ] **Step 2: Add the frame endpoint to `comfy_extras/nodes_timeline.py`**
 
-Inside the existing `try: from server import PromptServer ...` block, after the `/comfynext/render_timeline` route, add:
+Inside the existing `try: from server import PromptServer ...` block, after the `/sailor/render_timeline` route, add:
 
 ```python
-    @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
+    @PromptServer.instance.routes.post("/sailor/timeline/render_frame")
     async def _render_frame_route(request):
         """Render one composited frame of an edit state to PNG. Harness/debug
         surface: the browser golden harness compares PreviewRenderer output
@@ -1912,7 +1912,7 @@ import type { EditState } from '~~/shared/timeline/types'
 import type { PreviewRenderer } from '~~/shared/timeline/previewRenderer'
 
 // PreviewRenderer that asks the Python exporter for each frame
-// (/comfynext/timeline/render_frame → render_frame_np). Slow by design — it
+// (/sailor/timeline/render_frame → render_frame_np). Slow by design — it
 // exists as ground truth: it validates the harness pipeline in Phase 0 and is
 // the reference the WebGL engine gets diffed against during Phase-1 bring-up.
 export class ServerFrameRenderer implements PreviewRenderer {
@@ -1924,7 +1924,7 @@ export class ServerFrameRenderer implements PreviewRenderer {
 
   async renderFrame(frame: number, target: HTMLCanvasElement): Promise<void> {
     if (!this.state) throw new Error('ServerFrameRenderer: load() first')
-    const res = await fetch('/comfynext/timeline/render_frame', {
+    const res = await fetch('/sailor/timeline/render_frame', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: this.state, frame }),
@@ -1943,7 +1943,7 @@ export class ServerFrameRenderer implements PreviewRenderer {
 }
 ```
 
-(The relative `/comfynext/...` fetch matches the existing convention, e.g. `useAssetLibrary.ts` — the Nuxt dev server proxies it to :8188.)
+(The relative `/sailor/...` fetch matches the existing convention, e.g. `useAssetLibrary.ts` — the Nuxt dev server proxies it to :8188.)
 
 - [ ] **Step 4: Create `frontend/app/pages/timeline-harness.vue`**
 
@@ -2000,7 +2000,7 @@ onBeforeUnmount(() => {
 Open `http://127.0.0.1:3002/timeline-harness` in a browser (or via the preview tools), then in the console:
 
 ```js
-const r = await fetch('/comfynext/timeline/render_frame', {
+const r = await fetch('/sailor/timeline/render_frame', {
   method: 'POST', headers: {'Content-Type': 'application/json'},
   body: JSON.stringify({ state: { fps: 30, total_frames: 5, canvas_width: 64, canvas_height: 36, bg_color: '#336699', clips: [] }, frame: 0 }),
 })
@@ -2049,7 +2049,7 @@ import { PNG } from 'pngjs'
 // engine and this becomes the real parity gate.
 //
 // Requires both dev servers (see playwright.config.ts header) and a Python
-// server new enough to have /comfynext/timeline/render_frame.
+// server new enough to have /sailor/timeline/render_frame.
 
 const repoRoot = path.resolve(__dirname, '../..')
 const fixturesDir = path.join(repoRoot, 'tests-unit', 'timeline_fixtures')

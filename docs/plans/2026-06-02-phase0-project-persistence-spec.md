@@ -19,11 +19,11 @@ one implicit "current version" per project.
 
 | Concern | Today | After Phase 0 |
 |---|---|---|
-| Active graph | `sessionStorage comfynext:workflows` ([default.vue](../../frontend/app/layouts/default.vue)) | unchanged (hot cache) + flushed into a Project version on save |
+| Active graph | `sessionStorage sailor:workflows` ([default.vue](../../frontend/app/layouts/default.vue)) | unchanged (hot cache) + flushed into a Project version on save |
 | Project identity | `workflow.extra.projectUuid` stamped per run | promoted to a durable `Project.uuid` |
-| Project name | `localStorage comfynext:project-names` | moved into `Project.name` (server) |
-| Home list | `/history` grouped by UUID ([useRecentProjects.ts](../../frontend/app/composables/useRecentProjects.ts:58)) | `/comfynext/projects`, fall back to history for un-migrated |
-| Tabs | `comfynext:tabs` w/ `projectUuid` ([useTabs.ts](../../frontend/app/composables/useTabs.ts)) | tab carries `projectUuid` → loads the Project |
+| Project name | `localStorage sailor:project-names` | moved into `Project.name` (server) |
+| Home list | `/history` grouped by UUID ([useRecentProjects.ts](../../frontend/app/composables/useRecentProjects.ts:58)) | `/sailor/projects`, fall back to history for un-migrated |
+| Tabs | `sailor:tabs` w/ `projectUuid` ([useTabs.ts](../../frontend/app/composables/useTabs.ts)) | tab carries `projectUuid` → loads the Project |
 
 The key leverage: **`projectUuid` already exists on every tab and every run**, so
 there is no new identity to assign — only durable storage to attach to it.
@@ -31,12 +31,12 @@ there is no new identity to assign — only durable storage to attach to it.
 ## Storage
 
 Server-side JSON under the ComfyUI user dir (consistent with the existing
-`/comfynext/assets` precedent — survives frontend-only reloads, shareable later):
+`/sailor/assets` precedent — survives frontend-only reloads, shareable later):
 
 ```
-user/comfynext/projects/<uuid>/project.json     # Project metadata + version index
-user/comfynext/projects/<uuid>/versions/<vid>.json   # one ProjectVersion each
-user/comfynext/projects/<uuid>/cover.webp       # optional thumbnail
+user/sailor/projects/<uuid>/project.json     # Project metadata + version index
+user/sailor/projects/<uuid>/versions/<vid>.json   # one ProjectVersion each
+user/sailor/projects/<uuid>/cover.webp       # optional thumbnail
 ```
 
 Splitting versions into their own files keeps `project.json` small (the Home
@@ -73,16 +73,16 @@ list only needs metadata) and makes a version an append, not a rewrite.
 ## Endpoints
 
 Implement as a ComfyUI custom-node route (the open decision in the design doc
-leans this way for consistency with `/comfynext/assets`). All JSON.
+leans this way for consistency with `/sailor/assets`). All JSON.
 
 | Route | Verb | Body / Query | Returns |
 |---|---|---|---|
-| `/comfynext/projects` | GET | — | `[{uuid,name,cover,updatedAt}]` (index only) |
-| `/comfynext/projects/{uuid}` | GET | — | full `Project` + `currentVersion` body |
-| `/comfynext/projects/{uuid}` | PUT | `{name?, cover?}` | updated metadata |
-| `/comfynext/projects/{uuid}` | DELETE | — | `{ok:true}` |
-| `/comfynext/projects/{uuid}/versions` | POST | `ProjectVersion` (no id) | `{id}` (assigns id, updates index + currentVersionId) |
-| `/comfynext/projects/{uuid}/versions/{vid}` | GET | — | full `ProjectVersion` |
+| `/sailor/projects` | GET | — | `[{uuid,name,cover,updatedAt}]` (index only) |
+| `/sailor/projects/{uuid}` | GET | — | full `Project` + `currentVersion` body |
+| `/sailor/projects/{uuid}` | PUT | `{name?, cover?}` | updated metadata |
+| `/sailor/projects/{uuid}` | DELETE | — | `{ok:true}` |
+| `/sailor/projects/{uuid}/versions` | POST | `ProjectVersion` (no id) | `{id}` (assigns id, updates index + currentVersionId) |
+| `/sailor/projects/{uuid}/versions/{vid}` | GET | — | full `ProjectVersion` |
 
 Writes are atomic (temp file + rename). Concurrent saves from two tabs of the
 same project: last-write-wins on `project.json`, but versions are append-only so
@@ -118,7 +118,7 @@ version instead of (or before) the sessionStorage hot cache.
 
 No big-bang migration. The first time a project is saved:
 1. `ensureProject(projectUuid, seed)` creates `project.json` if absent, seeded
-   from the current graph + name (from the `comfynext:project-names` cache).
+   from the current graph + name (from the `sailor:project-names` cache).
 2. Optionally back-fill one version per past `/history` promptId for that UUID
    so the timeline isn't empty — best-effort, skipped on error.
 
@@ -138,11 +138,11 @@ so nothing disappears and there's no flag-day.
 
 **New**
 - `frontend/app/composables/useProjects.ts`
-- `custom_nodes/comfynext_bridge/…/projects.py` (or wherever `/comfynext/assets` lives) — the routes + storage layer
+- `custom_nodes/sailor_bridge/…/projects.py` (or wherever `/sailor/assets` lives) — the routes + storage layer
 - `tests-unit/…/projects_storage_test.py`
 
 **Modified**
-- `frontend/app/composables/useRecentProjects.ts` — source from `/comfynext/projects`, history fallback
+- `frontend/app/composables/useRecentProjects.ts` — source from `/sailor/projects`, history fallback
 - `frontend/app/composables/useTabs.ts`, `frontend/app/layouts/default.vue` — load project on tab open, snapshot hooks
 - (Phase 1 hook) version `activeTakes` is filled once takes land
 

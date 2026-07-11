@@ -16,13 +16,13 @@
 - `tests-unit/shaderfx_golden/generate_goldens.py`
 - The Dither plan `docs/superpowers/plans/2026-06-16-dither-patterns.md` (same shape of work, for reference)
 
-**Conventions:** repo root `/Users/julien/Documents/GitHub/ComfyNext`. Python = `.venv/bin/python` (or the absolute main-venv path when in a worktree). No purple accents (N/A — no UI changes). Commit after each task. Keep id `ascii_dither`; default `u_shape=7` (Hash = row 0) preserves the current look.
+**Conventions:** repo root `/Users/julien/Documents/GitHub/Sailor`. Python = `.venv/bin/python` (or the absolute main-venv path when in a worktree). No purple accents (N/A — no UI changes). Commit after each task. Keep id `ascii_dither`; default `u_shape=7` (Hash = row 0) preserves the current look.
 
 ---
 
 ## Prerequisite: Isolated branch
 
-Create a worktree off `feat/gradient-studio` HEAD (use `superpowers:using-git-worktrees`). Branch: `feat/ascii-shapes`. In a worktree, run Python via the absolute main-venv path `/Users/julien/Documents/GitHub/ComfyNext/.venv/bin/python` with cwd = the worktree (the worktree has no `.venv`).
+Create a worktree off `feat/gradient-studio` HEAD (use `superpowers:using-git-worktrees`). Branch: `feat/ascii-shapes`. In a worktree, run Python via the absolute main-venv path `/Users/julien/Documents/GitHub/Sailor/.venv/bin/python` with cwd = the worktree (the worktree has no `.venv`).
 
 ---
 
@@ -47,7 +47,7 @@ No frontend or schema files change.
 
 - [ ] **Step 1: Save the current atlas for the back-compat check**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && cp shader_effects/assets/glyph_atlas.png /tmp/old_glyph_atlas.png && .venv/bin/python -c "from PIL import Image; print(Image.open('/tmp/old_glyph_atlas.png').size)"`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && cp shader_effects/assets/glyph_atlas.png /tmp/old_glyph_atlas.png && .venv/bin/python -c "from PIL import Image; print(Image.open('/tmp/old_glyph_atlas.png').size)"`
 Expected: prints `(320, 48)` (10 glyphs × 32 wide, 1 row × 48 tall).
 
 - [ ] **Step 2: Rewrite the generator**
@@ -169,14 +169,14 @@ if __name__ == "__main__":
 
 - [ ] **Step 3: Run the bake**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python shader_effects/assets/generate_glyph_atlas.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python shader_effects/assets/generate_glyph_atlas.py`
 Expected: prints `glyph_atlas.png: 7 rows x 10 glyphs at 32x48` (no `.notdef` SystemExit). If it raises a `.notdef` error, the chosen font lacks a glyph — adjust `UNICODE_FONT_CANDIDATES` (try `/System/Library/Fonts/Apple Symbols.ttf` or a Hiragino font) and report.
 
 - [ ] **Step 4: Verify dimensions, 7 rows, and row-0 byte-identity**
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python -c "
 import numpy as np
 from PIL import Image
@@ -345,7 +345,7 @@ In `shader_effects/manifest.json`, replace the `ascii_dither` effect object (kee
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python -c "
 import sys, os, itertools, numpy as np
 from unittest.mock import MagicMock
@@ -392,14 +392,14 @@ The goldens render at default params (`u_shape=7`, row 0). With the row-0 atlas 
 
 - [ ] **Step 1: Regenerate**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py`
 Expected: prints a `golden: <id>_<size>.png` line per effect including `ascii_dither_128.png` / `_256.png`.
 
 - [ ] **Step 2: Confirm only ascii_dither goldens (if any) changed, and the diff is tiny**
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git status --short tests-unit/shaderfx_golden/
 .venv/bin/python -c "
 import numpy as np, subprocess
@@ -428,7 +428,7 @@ git commit -m "test(ascii): regenerate ASCII goldens (shader rewritten)" || echo
 
 Run:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 .venv/bin/python tests-unit/shaderfx_golden/generate_goldens.py >/dev/null
 git status --short tests-unit/shaderfx_golden/   # expect empty (idempotent)
 .venv/bin/python -m pytest tests-unit/test_shader_effects_enum.py -q   # expect 7 passed (unchanged)

@@ -11,7 +11,7 @@ Re-runnable; fill the **Result** column each pass.
   `/object_info/Compositor` schema check and a `/prompt` execution smoke.
 - **Frontend compile:** request each touched SFC/module through Vite
   (`GET /_nuxt/@fs/<abs path>`), expect HTTP 200 (real transform, not just lint).
-- **Frontend UI:** enable Vue nodes (`localStorage['comfynext:Comfy.VueNodes.Enabled']='true'`),
+- **Frontend UI:** enable Vue nodes (`localStorage['sailor:Comfy.VueNodes.Enabled']='true'`),
   open a blank project, drop a **Frame**, then drive each C-case.
 
 Severity: **P0** = broken/data-loss · **P1** = wrong behavior · **P2** = polish.
@@ -69,7 +69,7 @@ Severity: **P0** = broken/data-loss · **P1** = wrong behavior · **P2** = polis
 
 | ID | Case | Expected | Sev | Result |
 |----|------|----------|-----|--------|
-| E1 | Round-trip | `comfynext_localLayers` + `comfynext_frame` survive save/reload (via node `properties`) | P1 | |
+| E1 | Round-trip | `sailor_localLayers` + `sailor_frame` survive save/reload (via node `properties`) | P1 | |
 | E2 | Legacy compositor | a pre-existing Compositor (no local layers) still renders + runs | P1 | |
 
 ## Results summary

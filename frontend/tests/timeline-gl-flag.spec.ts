@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { openBlankWorkflow, openTimelineEditor, timelineEditorOverlay, waitForBackend } from './_helpers'
 
-// Flag-on smoke: with comfynext:Engine.WebGLPreview set, the timeline editor
+// Flag-on smoke: with sailor:Engine.WebGLPreview set, the timeline editor
 // boots the WebGL engine (canvas tagged data-engine="webgl"), renders without
 // fallback warnings, and draws real pixels when a clip is added.
 // The default-flag path is covered by timeline.spec.ts (Canvas2D, unchanged).
@@ -15,7 +15,7 @@ test.describe('Timeline editor — WebGL engine flag', () => {
       if (msg.type() === 'error' && (text.includes('usePlaybackEngineGL') || text.includes('WebGLPreviewRenderer'))) problems.push(text)
     })
     await page.addInitScript(() => {
-      try { localStorage.setItem('comfynext:Engine.WebGLPreview', 'true') } catch {}
+      try { localStorage.setItem('sailor:Engine.WebGLPreview', 'true') } catch {}
     })
 
     await waitForBackend(page)

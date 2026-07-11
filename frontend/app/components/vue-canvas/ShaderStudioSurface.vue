@@ -69,7 +69,7 @@ const activeAgentControls = computed(() => shaderAgentControls(config.value, eff
 // The shell renders the prompt + results from this object (see StudioModalShell).
 const shaderAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio',
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   // Force a fresh synchronous render of the current config to the preview canvas,
   // then export it for the agent's visual self-review.
   render: () => { renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
@@ -132,8 +132,8 @@ function applySweep(values: (string | number)[]) {
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
     detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
   }))
 }
@@ -153,7 +153,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
         label: 'Bind to',
         children: compatCols.map(col => ({
           label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
             detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
           })),
         })),
@@ -165,7 +165,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
       action: () => {
         const edgeList = props.edges ?? []
         const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
+        if (edge) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(edge.source) } }))
       },
     })
     items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
@@ -364,8 +364,8 @@ function addTrack() {
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
 
 // ── persistence ────────────────────────────────────────────────────────────────
-function loadConfig() { const c = currentNode()?.data?.properties?.comfynext_shaderStudio; if (c && typeof c === 'object') config.value = hydrateConfig(c) }
-function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.comfynext_shaderStudio = cloneConfig(config.value) }
+function loadConfig() { const c = currentNode()?.data?.properties?.sailor_shaderStudio; if (c && typeof c === 'object') config.value = hydrateConfig(c) }
+function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.sailor_shaderStudio = cloneConfig(config.value) }
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
@@ -419,7 +419,7 @@ async function generateImage() {
     if (filename) {
       saveConfig()
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
+      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
       closeEditor()
     }
   } catch (e) { console.error('[shader-studio] image failed', e); bakeMsg.value = 'Failed — see console.' }
@@ -439,11 +439,11 @@ async function generateVideo() {
       renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / m.fps) },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/comfynext/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }) })
+    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }) })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-      window.dispatchEvent(new CustomEvent('comfynext:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } } }))
+      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } } }))
       closeEditor()
     } else { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[shader-studio] encode failed', data) }
   } catch (e) { console.error('[shader-studio] video failed', e); bakeMsg.value = 'Failed — see console.' }

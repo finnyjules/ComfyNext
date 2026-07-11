@@ -313,7 +313,7 @@ interface Comment {
 const comments = ref<Comment[]>([])
 const newComment = ref('')
 
-const storageKey = computed(() => `comfynext-comments-${props.promptId}`)
+const storageKey = computed(() => `sailor-comments-${props.promptId}`)
 
 function loadComments() {
   try {
@@ -393,7 +393,7 @@ git commit -m "feat: add comments section with localStorage persistence"
 
 **Files:**
 - Modify: `app/components/AssetDetailOverlay.vue`
-- Modify: `custom_nodes/comfynext_bridge/js/bridge.js` (in `/Users/julien/Documents/GitHub/ComfyNext/`)
+- Modify: `custom_nodes/sailor_bridge/js/bridge.js` (in `/Users/julien/Documents/GitHub/Sailor/`)
 
 **Step 1: Store full history entry and add openWorkflow function**
 
@@ -425,7 +425,7 @@ function openWorkflow() {
     const targetIframe = iframes[iframes.length - 1] as HTMLIFrameElement
     if (targetIframe?.contentWindow) {
       targetIframe.contentWindow.postMessage({
-        type: 'comfynext',
+        type: 'sailor',
         action: 'loadWorkflow',
         workflow,
         prompt: promptDict,
@@ -447,9 +447,9 @@ if (action === "loadWorkflow") {
   if (workflow && window.app) {
     try {
       window.app.loadGraphData(workflow);
-      console.log("[ComfyNext Bridge] Loaded workflow from asset detail");
+      console.log("[Sailor Bridge] Loaded workflow from asset detail");
     } catch (e) {
-      console.error("[ComfyNext Bridge] Failed to load workflow:", e);
+      console.error("[Sailor Bridge] Failed to load workflow:", e);
     }
   }
 }
@@ -459,7 +459,7 @@ if (action === "loadWorkflow") {
 
 ```bash
 git add app/components/AssetDetailOverlay.vue
-cd /Users/julien/Documents/GitHub/ComfyNext && git add custom_nodes/comfynext_bridge/js/bridge.js
+cd /Users/julien/Documents/GitHub/Sailor && git add custom_nodes/sailor_bridge/js/bridge.js
 git commit -m "feat: open workflow from asset detail via bridge postMessage"
 ```
 

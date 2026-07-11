@@ -4,7 +4,7 @@
 
 **Goal:** The Shot Director studio's Generate button compiles the ShotSheet and runs a real Seedance 2.0 generation through the existing FilmShotNode rails, with the video landing as a downstream artifact; plus a "New take" reroll and a $-cost estimate.
 
-**Architecture:** Shot Director stays a config-only studio. Generate → `compileShot()` (already built) → a pure `buildFilmShotPatch()` splits the compiled Replicate input into FilmShotNode widget values (prompt/model/aspect_ratio/duration/seed) + a `model_options` JSON carrying references/resolution/audio flags → the canvas finds-or-spawns an adjacent FilmShotNode, patches its widgets, and fires the existing `comfynext:runFiltered` run. On the Python side, `_b_seedance_2_0` learns to forward those `model_options` keys and drops the schema-invalid `camera_fixed`/`fps`. **No graph edge studio→film in v1** — ShotDirector bakes nothing (null baker), so we track the target via `comfynext_shotDirectorTargetId` in the studio node's data instead of risking a dangling edge into the film node's optional image input.
+**Architecture:** Shot Director stays a config-only studio. Generate → `compileShot()` (already built) → a pure `buildFilmShotPatch()` splits the compiled Replicate input into FilmShotNode widget values (prompt/model/aspect_ratio/duration/seed) + a `model_options` JSON carrying references/resolution/audio flags → the canvas finds-or-spawns an adjacent FilmShotNode, patches its widgets, and fires the existing `sailor:runFiltered` run. On the Python side, `_b_seedance_2_0` learns to forward those `model_options` keys and drops the schema-invalid `camera_fixed`/`fps`. **No graph edge studio→film in v1** — ShotDirector bakes nothing (null baker), so we track the target via `sailor_shotDirectorTargetId` in the studio node's data instead of risking a dangling edge into the film node's optional image input.
 
 **Tech Stack:** Vue 3 / Nuxt 4 / TypeScript (frontend), Vitest unit tests, Python ComfyUI custom API nodes, pytest.
 
@@ -402,8 +402,8 @@ git commit -m "feat(shot-director): pure dispatch mapping — ShotSheet -> FilmS
 - Modify: `frontend/app/components/vue-canvas/ShotDirectorNode.vue` (footer Generate button next to the Edit button at :114-121)
 
 **Interfaces:**
-- Consumes: `buildFilmShotPatch`, `findShotTarget` (Task 3); `hydrateShotSheet` from `~/lib/shotdirector/hydrate`; `compileShot` from `~/lib/shotdirector/compile`; `getProfile` from `~/lib/shotdirector/profiles`; existing `createNodeData(nodeType, position, widgetOverrides?, propertyOverrides?)` (VueNodeCanvas.vue:1321); existing `comfynext:runFiltered` CustomEvent contract `{ detail: { targetIds: string[], direction?: 'downstream' } }`.
-- Produces: window CustomEvent contract **`comfynext:shotDirectorGenerate`** with `detail: { sourceNodeId: string }` (Task 5 dispatches the same event from the surface). Studio node data key `comfynext_shotDirectorTargetId` (string) and transient `data.shotError` (string | null) shown on the card.
+- Consumes: `buildFilmShotPatch`, `findShotTarget` (Task 3); `hydrateShotSheet` from `~/lib/shotdirector/hydrate`; `compileShot` from `~/lib/shotdirector/compile`; `getProfile` from `~/lib/shotdirector/profiles`; existing `createNodeData(nodeType, position, widgetOverrides?, propertyOverrides?)` (VueNodeCanvas.vue:1321); existing `sailor:runFiltered` CustomEvent contract `{ detail: { targetIds: string[], direction?: 'downstream' } }`.
+- Produces: window CustomEvent contract **`sailor:shotDirectorGenerate`** with `detail: { sourceNodeId: string }` (Task 5 dispatches the same event from the surface). Studio node data key `sailor_shotDirectorTargetId` (string) and transient `data.shotError` (string | null) shown on the card.
 
 - [ ] **Step 1: Add the handler in VueNodeCanvas.vue**
 
@@ -436,7 +436,7 @@ function handleShotDirectorGenerate(e: Event) {
   if (!studio.data) studio.data = {}
   studio.data.shotError = null
 
-  const sheet = hydrateShotSheet(studio.data?.properties?.comfynext_shotDirector)
+  const sheet = hydrateShotSheet(studio.data?.properties?.sailor_shotDirector)
   const result = compileShot(sheet, getProfile('seedance-2.0'))
   const errors = result.issues.filter(i => i.level === 'error')
   if (errors.length) {
@@ -447,7 +447,7 @@ function handleShotDirectorGenerate(e: Event) {
   const patch = buildFilmShotPatch(sheet, result)
   const lite = (nodes.value as any[]).map(n => ({ id: String(n.id), nodeType: n.data?.nodeType as string | undefined }))
   const liteEdges = (edges.value as any[]).map(e => ({ source: String(e.source), target: String(e.target) }))
-  let targetId = findShotTarget(lite, liteEdges, String(studio.id), studio.data?.properties?.comfynext_shotDirectorTargetId)
+  let targetId = findShotTarget(lite, liteEdges, String(studio.id), studio.data?.properties?.sailor_shotDirectorTargetId)
 
   if (!targetId) {
     const pos = {
@@ -458,7 +458,7 @@ function handleShotDirectorGenerate(e: Event) {
     nodes.value.push(film)
     targetId = String(film.id)
     if (!studio.data.properties) studio.data.properties = {}
-    studio.data.properties.comfynext_shotDirectorTargetId = targetId
+    studio.data.properties.sailor_shotDirectorTargetId = targetId
   }
 
   const film = (nodes.value as any[]).find(n => String(n.id) === targetId)
@@ -469,18 +469,18 @@ function handleShotDirectorGenerate(e: Event) {
       return
     }
   }
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { targetIds: [targetId], direction: 'downstream' },
   }))
 }
 ```
 
-Register/unregister next to the existing `comfynext:openShotDirector` lines (:2949 / :2988):
+Register/unregister next to the existing `sailor:openShotDirector` lines (:2949 / :2988):
 
 ```typescript
-window.addEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+window.addEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
 // ...and in the teardown block:
-window.removeEventListener('comfynext:shotDirectorGenerate', handleShotDirectorGenerate)
+window.removeEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
 ```
 
 - [ ] **Step 2: Add the Generate button + error line to ShotDirectorNode.vue**
@@ -491,13 +491,13 @@ Next to the existing Edit button (:114-121), following the same class idiom (eme
 <button
   class="rounded bg-emerald-500/15 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25"
   title="Compile the shot and run Seedance"
-  @click.stop="window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.id } }))"
+  @click.stop="window.dispatchEvent(new CustomEvent('sailor:shotDirectorGenerate', { detail: { sourceNodeId: props.id } }))"
 >
   Generate
 </button>
 ```
 
-(If the SFC template can't reference `window` directly in this codebase's lint setup, add a `function generate() { window.dispatchEvent(...) }` in script setup and call `@click.stop="generate"` — match how the Edit button dispatches `comfynext:openShotDirector`.)
+(If the SFC template can't reference `window` directly in this codebase's lint setup, add a `function generate() { window.dispatchEvent(...) }` in script setup and call `@click.stop="generate"` — match how the Edit button dispatches `sailor:openShotDirector`.)
 
 Below the footer, an error line bound to the transient flag:
 
@@ -532,7 +532,7 @@ git commit -m "feat(shot-director): Generate wiring — patch + run a found-or-s
 - Modify (only if needed): `frontend/app/composables/useShotDirector.ts` (expose a `rerollSeed()` helper if seed isn't already writable from the surface)
 
 **Interfaces:**
-- Consumes: the `comfynext:shotDirectorGenerate` event contract from Task 4; the surface's existing compiled-result computed and its node-id prop; `ShotSheet.format.seed`.
+- Consumes: the `sailor:shotDirectorGenerate` event contract from Task 4; the surface's existing compiled-result computed and its node-id prop; `ShotSheet.format.seed`.
 - Produces: `rerollSeed(): void` on `useShotDirector` — sets `sheet.format.seed = Math.floor(Math.random() * 2_147_483_646) + 1` (visible, reproducible, always > 0).
 
 - [ ] **Step 1: Add `rerollSeed` to useShotDirector.ts**
@@ -573,7 +573,7 @@ In the surface footer (same row as the compiled-prompt word meter), two buttons 
 ```typescript
 const hasErrors = computed(() => compiled.value.issues.some(i => i.level === 'error'))
 function onGenerate() {
-  window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
+  window.dispatchEvent(new CustomEvent('sailor:shotDirectorGenerate', { detail: { sourceNodeId: props.nodeId } }))
 }
 function onNewTake() {
   rerollSeed()
@@ -720,7 +720,7 @@ git commit -m "feat(shot-director): per-shot cost estimate (~\$) in the editor f
 
 Per the design spec's testing section, this is a manual sanity check, not automation. **It spends real money (~$0.90 for a 720p/5s shot) and needs the Replicate token configured in Settings → AI.** Stop and ask the user before running it.
 
-- [ ] **Step 1: Restart ComfyUI** (Task 1's Python change requires it): kill the running process, then `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`.
+- [ ] **Step 1: Restart ComfyUI** (Task 1's Python change requires it): kill the running process, then `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`.
 - [ ] **Step 2: With the user's go-ahead:** Shot Director → subject/action/lighting filled, one image reference attached (identity-lock), 720p / 5s → Generate.
 - [ ] **Step 3: Verify:** run completes; a Video artifact materializes downstream of the FilmShotNode; the clip respects the reference and the compiled prompt's shot grammar; the result appears in Assets (type `output`).
 - [ ] **Step 4: Verify "New take":** seed changes, second clip differs, SAME FilmShotNode reused.

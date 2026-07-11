@@ -53,7 +53,7 @@ function applyPatch(base: GradientConfig, patch: Record<string, ParamValue>): Gr
 }
 
 async function run() {
-  const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+  const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
   if (!apiKey) { window.alert('Set your Anthropic key in Settings → AI first.'); return }
   running.value = true
   results.value = []

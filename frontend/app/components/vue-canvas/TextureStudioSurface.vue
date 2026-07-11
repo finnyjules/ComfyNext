@@ -50,7 +50,7 @@ const { getLocalSetting } = useLocalSettings()
 const textureAgent = useTextureAgent({
   getState: () => ({ params }),
   setState: (s) => { Object.assign(params, s.params); (params as any).fills = (s.params as any).fills; onParam() },
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   render: () => renderTileForReview(),
 })
 
@@ -229,8 +229,8 @@ function applySweep(values: (string | number)[]) {
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
     detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
   }))
 }
@@ -244,7 +244,7 @@ function wiredCollectionNodeId(): string | null {
 }
 function goToCollection() {
   const nodeId = wiredCollectionNodeId()
-  if (nodeId) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId } }))
+  if (nodeId) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId } }))
 }
 
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
@@ -262,7 +262,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
         label: 'Bind to',
         children: compatCols.map(col => ({
           label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
             detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
           })),
         })),
@@ -278,7 +278,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
 }
 
 function loadParams() {
-  const p = currentNode()?.data?.properties?.comfynext_textureStudio
+  const p = currentNode()?.data?.properties?.sailor_textureStudio
   if (p && typeof p === 'object') Object.assign(params, { ...textureDefaults(), ...cloneParams(p) })
   if (String(params.mode) === 'raster' && params.rasterSrc) {
     loadRaster(String(params.rasterSrc)).then(renderPreview).catch(() => {})
@@ -288,7 +288,7 @@ function saveParams() {
   const n = currentNode(); if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  n.data.properties.comfynext_textureStudio = cloneParams({ ...params })
+  n.data.properties.sailor_textureStudio = cloneParams({ ...params })
 }
 function closeEditor() {
   try { saveParams() } catch (e) { console.error('[texture] save failed', e) }
@@ -550,7 +550,7 @@ async function sendToCanvas() {
     if (filename) {
       saveParams()
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:textureStudioOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:textureStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
       closeEditor()

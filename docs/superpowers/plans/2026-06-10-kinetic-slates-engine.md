@@ -1037,17 +1037,17 @@ import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(
 
 const motionDoc = computed<FrameMotion>(() => {
   const props_ = compositor.value?.data?.properties as Record<string, any> | undefined
-  return { ...DEFAULT_FRAME_MOTION, ...(props_?.comfynext_motion ?? {}) }
+  return { ...DEFAULT_FRAME_MOTION, ...(props_?.sailor_motion ?? {}) }
 })
 function setMotion(patch: Partial<FrameMotion>) {
   const node = compositor.value
   if (!node) return
   const p = (node.data.properties ||= {})
-  p.comfynext_motion = { ...motionDoc.value, ...patch }
+  p.sailor_motion = { ...motionDoc.value, ...patch }
 }
 ```
 
-Persistence: `comfynext_motion` rides `node.data.properties` exactly like `comfynext_localLayers` / `comfynext_hiddenWired`. Confirm by checking how `toggleWiredFlag` (CompositorModal.vue, search for `comfynext_hiddenWired`) marks the graph dirty — if it calls a helper after mutation (e.g. a `persist()`/`touch()` emit), call the same helper in `setMotion`.
+Persistence: `sailor_motion` rides `node.data.properties` exactly like `sailor_localLayers` / `sailor_hiddenWired`. Confirm by checking how `toggleWiredFlag` (CompositorModal.vue, search for `sailor_hiddenWired`) marks the graph dirty — if it calls a helper after mutation (e.g. a `persist()`/`touch()` emit), call the same helper in `setMotion`.
 
 - [ ] **Step 2: Transport state + rAF loop + renderStack(t)**
 

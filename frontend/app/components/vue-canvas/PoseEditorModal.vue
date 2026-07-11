@@ -320,7 +320,7 @@ async function generateMultiView() {
     setWidget('mannequin_image', await inpaint.uploadDataUrl(bake('gray'), `pose_mannequin_${props.nodeId}`))
     setWidget('pose_cond_image', await inpaint.uploadDataUrl(bake('normal'), `pose_cond_${props.nodeId}`))
     setWidget('pose_state', JSON.stringify(currentState()))
-    window.dispatchEvent(new CustomEvent('comfynext:poseMultiResult', { detail: { nodeId: props.nodeId, views: out } }))
+    window.dispatchEvent(new CustomEvent('sailor:poseMultiResult', { detail: { nodeId: props.nodeId, views: out } }))
     emit('close')
   } catch (err: any) {
     errorMsg.value = err?.data?.message || err?.message || 'Multi-view generation failed'
@@ -349,7 +349,7 @@ async function applyResult(dataUrl: string) {
     setWidget('prompt', prompt.value.trim())
     // Route the result to a downstream artifact-image node (canvas owns node/edge
     // creation). The pose node itself shows only the mannequin.
-    window.dispatchEvent(new CustomEvent('comfynext:poseResult', {
+    window.dispatchEvent(new CustomEvent('sailor:poseResult', {
       detail: { nodeId: props.nodeId, filename: resultFn },
     }))
     emit('close')

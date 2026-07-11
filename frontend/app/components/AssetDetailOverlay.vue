@@ -31,7 +31,7 @@ const imageDimensions = ref<{ width: number; height: number } | null>(null)
 const runUsd = ref<number | null>(null)
 
 // Comments
-const commentsKey = computed(() => `comfynext-comments-${props.promptId}`)
+const commentsKey = computed(() => `sailor-comments-${props.promptId}`)
 const comments = ref<string[]>([])
 const newComment = ref('')
 
@@ -47,8 +47,8 @@ onMounted(async () => {
   } catch {}
 
   // Load like/save state
-  liked.value = localStorage.getItem(`comfynext-liked-${props.image.filename}`) === '1'
-  saved.value = localStorage.getItem(`comfynext-saved-${props.promptId}`) === '1'
+  liked.value = localStorage.getItem(`sailor-liked-${props.image.filename}`) === '1'
+  saved.value = localStorage.getItem(`sailor-saved-${props.promptId}`) === '1'
 
   // Fetch history for this prompt
   try {
@@ -189,7 +189,7 @@ function onImageLoad(e: Event) {
 function toggleLike() {
   liked.value = !liked.value
   localStorage.setItem(
-    `comfynext-liked-${props.image.filename}`,
+    `sailor-liked-${props.image.filename}`,
     liked.value ? '1' : '0',
   )
 }
@@ -197,7 +197,7 @@ function toggleLike() {
 function toggleSave() {
   saved.value = !saved.value
   localStorage.setItem(
-    `comfynext-saved-${props.promptId}`,
+    `sailor-saved-${props.promptId}`,
     saved.value ? '1' : '0',
   )
 }
@@ -231,7 +231,7 @@ function openWorkflow() {
     if (lastIframe?.contentWindow) {
       lastIframe.contentWindow.postMessage(
         {
-          type: 'comfynext',
+          type: 'sailor',
           action: 'loadWorkflow',
           workflow,
         },

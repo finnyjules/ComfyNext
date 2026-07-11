@@ -57,9 +57,9 @@ async function loadCloned() {
 onMounted(() => {
   loadCloned()
   // A clone just finished in the Train tab → refresh "Your voices".
-  window.addEventListener('comfynext:voicesUpdated', loadCloned)
+  window.addEventListener('sailor:voicesUpdated', loadCloned)
 })
-onBeforeUnmount(() => window.removeEventListener('comfynext:voicesUpdated', loadCloned))
+onBeforeUnmount(() => window.removeEventListener('sailor:voicesUpdated', loadCloned))
 
 const allVoices = computed<VoiceMeta[]>(() => galleryVoices(optionIds.value, clonedVoices.value))
 

@@ -8,7 +8,7 @@ import { VARS_TYPE } from '~/lib/collection/types'
  *   control_after_generate ?? ["seed","noise_seed"].includes(name)
  *
  * i.e. an explicit schema flag wins; when the flag is unset, any INT named
- * `seed`/`noise_seed` still gets the control widget. ComfyNext must agree, or
+ * `seed`/`noise_seed` still gets the control widget. Sailor must agree, or
  * every widget after the seed shifts by one slot when the graph round-trips
  * through the iframe's LiteGraph. That shift is what made EditImageNode's
  * `safety_tolerance` read the next value (`0`, below its min of 1): ComfyUI then
@@ -520,7 +520,7 @@ export function realignWidgetValues(
     if (current.length !== expected.length) {
       if (controlCount > 0 && current.length === expected.length - controlCount) {
         // Legacy array saved before a seed's control_after_generate slot was
-        // accounted for (a name-only `seed` whose slot ComfyNext used to omit).
+        // accounted for (a name-only `seed` whose slot Sailor used to omit).
         // Interleave the control defaults back in, consuming a current value
         // only for non-control slots. The naive positional rebuild below would
         // otherwise shift every post-seed widget by one — the bug that fed `0`

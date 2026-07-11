@@ -36,7 +36,7 @@ pydantic-settings~=2.0
 PyOpenGL
 glfw
 
-# ComfyNext: YouTube-segment voice capture for the voice trainer
+# Sailor: YouTube-segment voice capture for the voice trainer
 # (scripts/youtube_voice_clip.py → /api/voice-clone/from-youtube)
 yt-dlp
 static-ffmpeg

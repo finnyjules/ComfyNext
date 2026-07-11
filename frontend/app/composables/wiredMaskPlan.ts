@@ -2,7 +2,7 @@
  * Decide which wired layers need a silhouette mask compiled into the backend
  * Compositor node at submit. Pure so it's unit-testable. `connectedSlots1Based`
  * are the 1-based wired slots actually connected; `treatments` is
- * comfynext_wiredTreatments. Returns one job per wired content slot that is
+ * sailor_wiredTreatments. Returns one job per wired content slot that is
  * masked and present.
  */
 export interface WiredMaskJob {

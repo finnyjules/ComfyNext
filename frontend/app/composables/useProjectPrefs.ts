@@ -3,8 +3,8 @@ import { ref } from 'vue'
 // Per-project shelf state (pinned / hidden), keyed by workflowId and persisted
 // to localStorage. Module-scoped refs so every consumer — the home row and the
 // All-projects grid — shares one reactive source of truth.
-const PIN_KEY = 'comfynext:pinned-projects'
-const HIDE_KEY = 'comfynext:hidden-projects'
+const PIN_KEY = 'sailor:pinned-projects'
+const HIDE_KEY = 'sailor:hidden-projects'
 
 const pinned = ref<string[]>([])
 const hidden = ref<string[]>([])

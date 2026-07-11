@@ -2,10 +2,10 @@
 
 ## Context
 
-ComfyNext now has a working local LoRA trainer surface (Apple Silicon M3 Pro: estimated 8–16 hours per Flux LoRA, painfully slow). The goal of this work is two-fold:
+Sailor now has a working local LoRA trainer surface (Apple Silicon M3 Pro: estimated 8–16 hours per Flux LoRA, painfully slow). The goal of this work is two-fold:
 
-1. **Replace Krea Pro ($35/mo) for this user's personal workflow.** Most of Krea's tools (face swap, bg remove, upscale, video, audio) are already in ComfyNext. The missing piece is fast Flux LoRA training and Flux+LoRA inference.
-2. **Set up the architecture for distribution later.** This is built BYOK from day one so a future packaged release of ComfyNext lets each user bring their own Replicate token. No central billing problem to solve.
+1. **Replace Krea Pro ($35/mo) for this user's personal workflow.** Most of Krea's tools (face swap, bg remove, upscale, video, audio) are already in Sailor. The missing piece is fast Flux LoRA training and Flux+LoRA inference.
+2. **Set up the architecture for distribution later.** This is built BYOK from day one so a future packaged release of Sailor lets each user bring their own Replicate token. No central billing problem to solve.
 
 The plan adds two features that close the loop end-to-end:
 
@@ -187,7 +187,7 @@ The Flux+LoRA inference node reads this to translate "selected LoRA filename" in
 ## What this is NOT
 
 - Not a multi-provider abstraction. Replicate only in V1; add others later if needed.
-- Not a hosted SaaS. ComfyNext stays self-hosted; users bring their own Replicate token.
+- Not a hosted SaaS. Sailor stays self-hosted; users bring their own Replicate token.
 - Not a cancellation/resume system. If the user closes the tab mid-training, the Replicate job keeps running on its own; the next time they open the surface we can offer "you have a training in progress, resume polling?" but that's Phase 3.
 - Not a Replicate-only future. The cloud trainer abstraction is intentionally thin so adding fal.ai / RunPod later is a swap, not a rewrite.
 

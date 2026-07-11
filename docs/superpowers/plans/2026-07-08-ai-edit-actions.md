@@ -113,7 +113,7 @@ def test_recolor_appends_extra_instructions():
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/edit_action_prompts_test.py -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/edit_action_prompts_test.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._edit_action_prompts'`
 
 - [ ] **Step 3: Write the implementation**
@@ -181,13 +181,13 @@ def recolor_instruction(target: str, color: str, instructions: str = "") -> str:
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/edit_action_prompts_test.py -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/edit_action_prompts_test.py -q`
 Expected: `11 passed`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_edit_action_prompts.py tests-unit/comfy_extras_test/edit_action_prompts_test.py
 git commit -m "feat(edit-actions): prompt builders for remove/text-edit/recolor instructions"
 ```
@@ -400,7 +400,7 @@ Expected: all pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/nodes_edit_actions.py nodes.py
 git commit -m "feat(edit-actions): RemoveObject / TextEdit / RecolorObject cloud nodes (nano-banana-2)"
 ```
@@ -457,7 +457,7 @@ describe('HARMONIZE_PROMPT', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/edit-action-prompts.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/edit-action-prompts.unit.spec.ts`
 Expected: FAIL — cannot resolve `~/lib/editActions/prompts`
 
 - [ ] **Step 3: Write the implementation**
@@ -497,13 +497,13 @@ export const HARMONIZE_PROMPT =
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/edit-action-prompts.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/edit-action-prompts.unit.spec.ts`
 Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/editActions/prompts.ts frontend/tests/unit/edit-action-prompts.unit.spec.ts
 git commit -m "feat(edit-actions): frontend prompt builders for recolor + harmonize"
 ```
@@ -532,13 +532,13 @@ In `frontend/app/data/action-catalog.ts`, after the `RotateCameraNode:` line, ad
 
 - [ ] **Step 2: Run the catalog test**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/action-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/action-catalog.unit.spec.ts`
 Expected: PASS. If a test asserts an exact entry count, update that count — nothing else.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/data/action-catalog.ts
 git commit -m "feat(edit-actions): catalog entries for RemoveObject / TextEdit / RecolorObject"
 ```
@@ -555,8 +555,8 @@ git commit -m "feat(edit-actions): catalog entries for RemoveObject / TextEdit /
 - Modify: `frontend/app/components/vue-canvas/InpaintModal.vue` (props line 20; tool init; `doSamSelect` line 381)
 
 **Interfaces:**
-- Consumes: existing `comfynext:openInpaint` event, `doSamSelect()`, `runInpaint(removeMode)` (InpaintModal.vue:317), `tool` ref (line 110).
-- Produces: `intent?: 'remove' | 'recolor'` prop on InpaintModal and an `intent` field on the `comfynext:openInpaint` event detail. Task 6 reuses both.
+- Consumes: existing `sailor:openInpaint` event, `doSamSelect()`, `runInpaint(removeMode)` (InpaintModal.vue:317), `tool` ref (line 110).
+- Produces: `intent?: 'remove' | 'recolor'` prop on InpaintModal and an `intent` field on the `sailor:openInpaint` event detail. Task 6 reuses both.
 
 - [ ] **Step 1: ArtifactImageNode — menu entry + intent event**
 
@@ -566,7 +566,7 @@ Below `openInpaint()` (line ~252), add:
 // One-click remove: open the inpaint editor pre-set to click-select, which
 // auto-runs a removal as soon as an object is picked.
 function openRemoveObject() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
 }
 ```
 
@@ -645,7 +645,7 @@ Start the dev preview, open a canvas with an image artifact, then: Edit menu →
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/ArtifactImageNode.vue frontend/app/components/vue-canvas/VueNodeCanvas.vue frontend/app/components/vue-canvas/InpaintModal.vue
 git commit -m "feat(edit-actions): one-click Remove object — Edit menu intent + auto-run in InpaintModal"
 ```
@@ -659,7 +659,7 @@ git commit -m "feat(edit-actions): one-click Remove object — Edit menu intent 
 - Modify: `frontend/app/components/vue-canvas/ArtifactImageNode.vue` (menu entry)
 
 **Interfaces:**
-- Consumes: `intent` prop from Task 5; `recolorPrompt` from Task 3; `inpaint.fluxFill(image, mask, prompt, opts)` (useInpaint.ts:164); `inject('comfynext:brand')` (provided by the default layout — see CompositorModal.vue:1317 for the shape); `useBrandLibrary(activeKitId)` (useBrandLibrary.ts:39); `BRAND_COLOR_KEYS` from `~~/shared/brand/types`.
+- Consumes: `intent` prop from Task 5; `recolorPrompt` from Task 3; `inpaint.fluxFill(image, mask, prompt, opts)` (useInpaint.ts:164); `inject('sailor:brand')` (provided by the default layout — see CompositorModal.vue:1317 for the shape); `useBrandLibrary(activeKitId)` (useBrandLibrary.ts:39); `BRAND_COLOR_KEYS` from `~~/shared/brand/types`.
 - Produces: nothing consumed downstream.
 
 - [ ] **Step 1: ArtifactImageNode — menu entry**
@@ -668,7 +668,7 @@ Below `openRemoveObject()`, add:
 
 ```typescript
 function openRecolor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'recolor' } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInpaint', { detail: { nodeId: props.id, intent: 'recolor' } }))
 }
 ```
 
@@ -697,7 +697,7 @@ import { BRAND_COLOR_KEYS } from '~~/shared/brand/types'
 
 ```typescript
 // ── Recolor intent: brand-kit swatches + free picker ─────────────────────────
-const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandKit: (id: string | null) => void } | null>('comfynext:brand', null)
+const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandKit: (id: string | null) => void } | null>('sailor:brand', null)
 const brandLib = useBrandLibrary(projectBrand?.activeKitId)
 /** Active-kit colors first (deduped), else a small neutral default set. */
 const recolorSwatches = computed<{ label: string; hex: string }[]>(() => {
@@ -761,7 +761,7 @@ Edit menu → "Recolor…" → select tool active → click an object → swatch
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/InpaintModal.vue frontend/app/components/vue-canvas/ArtifactImageNode.vue
 git commit -m "feat(edit-actions): Recolor object — SAM click + brand-kit swatch strip"
 ```
@@ -846,7 +846,7 @@ Edit menu → "Edit text…" → popover with two fields; fill both → "Replace
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/ArtifactImageNode.vue
 git commit -m "feat(edit-actions): Edit text popover — find/replace spawns a TextEditNode"
 ```
@@ -954,7 +954,7 @@ Open a Frame with an image layer → select it → "Cut out subject" → layer c
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useLayerImageEdit.ts frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(edit-actions): Cut out subject on Frame image layers (in-place, undoable)"
 ```
@@ -1082,7 +1082,7 @@ Frame with a scene (wired base image) + a pasted-looking image layer → select 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useInpaint.ts frontend/app/composables/useLayerImageEdit.ts frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(edit-actions): Harmonize layer — relight+grade a Frame layer to its scene, in place"
 ```
@@ -1096,9 +1096,9 @@ git commit -m "feat(edit-actions): Harmonize layer — relight+grade a Frame lay
 
 - [ ] **Step 1: Run all unit suites**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npm run test:unit`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npm run test:unit`
 Expected: all pass.
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ -q`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ -q`
 Expected: all pass.
 
 - [ ] **Step 2: Browser smoke of every free mechanic**
@@ -1123,7 +1123,7 @@ In the spec, under `## Locked decisions`, append a `## Implementation deviations
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add docs/superpowers/specs/2026-07-08-ai-edit-actions-design.md
 git commit -m "docs(edit-actions): record implementation deviations in the spec"
 ```

@@ -1431,7 +1431,7 @@ git commit -m "Engine: webkit-engine Playwright project — Safari-engine verifi
 
 ```bash
 cd frontend && pnpm run test:unit
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ 2>&1 | tail -1
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ 2>&1 | tail -1
 cd frontend && npx playwright test --reporter=line 2>&1 | tail -5
 ```
 Expected: unit green; Python green (incl. the new media-fixture test); the full Playwright run green across chromium + webkit-engine (documented skips acceptable; the pre-existing "no video files in input/" skip persists).

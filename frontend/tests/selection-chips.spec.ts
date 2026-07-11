@@ -4,7 +4,7 @@ import { dropNode, openBlankWorkflow, waitForBackend } from './_helpers'
 /**
  * Selection action chips (IA phase 4): selecting a video/audio artifact node
  * surfaces a chip sampler (takes-input actions + "All actions…"). Chips branch
- * a new action node off the artifact via comfynext:applyEffect; "All actions…"
+ * a new action node off the artifact via sailor:applyEffect; "All actions…"
  * deep-links the Actions panel to the artifact's domain.
  *
  * Selection mechanics: artifact bodies are one big "drop or click a file"

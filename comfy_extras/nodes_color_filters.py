@@ -203,7 +203,7 @@ class GradientMapNode(IO.ComfyNode):
                 IO.String.Input(
                     "stops",
                     default='[{"pos":0,"color":"#06283d"},{"pos":0.5,"color":"#256d85"},{"pos":1,"color":"#47b5ff"}]',
-                    extra_dict={"comfynext_widget": "gradient_editor", "gradient_mode": "stops"},
+                    extra_dict={"sailor_widget": "gradient_editor", "gradient_mode": "stops"},
                     tooltip="Gradient-map colour stops (managed by the palette widget).",
                 ),
                 IO.Float.Input("mix", default=1.0, min=0.0, max=1.0, step=0.01),

@@ -3,7 +3,7 @@
  * Shared footer Render control for studio nodes — a white split button (Render +
  * caret) mirroring the generator's Play/Re-roll, but "Render" because studios bake
  * locally rather than run a backend. The caret offers the three run scopes; all
- * dispatch `comfynext:studioRender` which VueNodeCanvas turns into a cascade.
+ * dispatch `sailor:studioRender` which VueNodeCanvas turns into a cascade.
  */
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Play, ChevronUp, Loader2 } from 'lucide-vue-next'
@@ -13,7 +13,7 @@ const open = ref(false)
 
 function fire(scope: 'self' | 'upstream' | 'downstream') {
   open.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:studioRender', { detail: { sourceNodeId: props.nodeId, scope } }))
+  window.dispatchEvent(new CustomEvent('sailor:studioRender', { detail: { sourceNodeId: props.nodeId, scope } }))
 }
 function onOutside(e: MouseEvent) {
   if (!(e.target as HTMLElement)?.closest?.('[data-studio-render]')) open.value = false

@@ -60,7 +60,7 @@ class TextMaskNode(IO.ComfyNode):
                     "params",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "text_mask"},
+                    extra_dict={"sailor_widget": "text_mask"},
                     tooltip="Text mask state (managed by the widget).",
                 ),
                 IO.Image.Input(

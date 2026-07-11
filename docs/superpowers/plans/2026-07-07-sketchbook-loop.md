@@ -1140,7 +1140,7 @@ function promoteTake(takeId: string) {
   setPendingPromote(String(props.id), { fromTakeId: take.id, overrides })
   // Same event runThisNode dispatches — self scope reruns just this node;
   // the pending promote then rewrites its widgets at submit time.
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { nodeIds: [String(props.id)], rerollScope: 'self' },
   }))
 }
@@ -1195,12 +1195,12 @@ git commit -m "feat(draft): promote — one-shot take-snapshot rerun at full qua
 
 **Files:**
 - Modify: `frontend/app/components/vue-canvas/ArtifactImageNode.vue`
-- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (extend the `comfynext:addNode` listener with `dataOverrides`)
+- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (extend the `sailor:addNode` listener with `dataOverrides`)
 - Test: extend `frontend/tests/unit/take-draft-tagging.unit.spec.ts` with a pure discard-others helper test
 
 **Interfaces:**
 - Consumes: Task 6 modal emits.
-- Produces: `discardOthers(takes: Take[], keepId: string): Take[]` exported from `useTakes.ts` (keeps `keepId` + pinned takes); `comfynext:addNode` event detail gains optional `dataOverrides: Record<string, any>` merged onto the new node's `data` after creation.
+- Produces: `discardOthers(takes: Take[], keepId: string): Take[]` exported from `useTakes.ts` (keeps `keepId` + pinned takes); `sailor:addNode` event detail gains optional `dataOverrides: Record<string, any>` merged onto the new node's `data` after creation.
 
 - [ ] **Step 1: Write the failing test (pure helper)**
 
@@ -1250,7 +1250,7 @@ function onDiscardOthers(keepId: string) {
 
 - [ ] **Step 4: Branch winner**
 
-In `VueNodeCanvas.vue`, find the `comfynext:addNode` event listener (handler for the event dispatched by `useNodeSearch.addNode`, accepting `widgetOverrides`/`propertyOverrides`). Extend its detail handling: after the node is created and its `data` initialized, merge `detail.dataOverrides` if present:
+In `VueNodeCanvas.vue`, find the `sailor:addNode` event listener (handler for the event dispatched by `useNodeSearch.addNode`, accepting `widgetOverrides`/`propertyOverrides`). Extend its detail handling: after the node is created and its `data` initialized, merge `detail.dataOverrides` if present:
 
 ```ts
 if (detail.dataOverrides && typeof detail.dataOverrides === 'object') {
@@ -1265,7 +1265,7 @@ function branchFromTake(takeId: string) {
   const take = (props.data.takes ?? []).find((t: any) => t.id === takeId)
   const url = take?.images?.[0]
   if (!take || !url) return
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Image',
       dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },

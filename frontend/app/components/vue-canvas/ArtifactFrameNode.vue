@@ -84,7 +84,7 @@ const activePresetId = computed<string>(() => {
 function applyPreset(id: string) { const p = PRESETS.find(x => x.id === id); if (!p) return; setWidget('width', p.w); setWidget('height', p.h); rememberPreset(id) }
 function rememberPreset(id: string) {
   if (!props.data.properties) (props.data as any).properties = {}
-  ;(props.data.properties as any).comfynext_frame = { ...(props.data.properties as any).comfynext_frame, preset: id }
+  ;(props.data.properties as any).sailor_frame = { ...(props.data.properties as any).sailor_frame, preset: id }
 }
 function onPresetChange(e: Event) { const v = (e.target as HTMLSelectElement).value; if (v && v !== 'custom') applyPreset(v) }
 function setDim(which: 'width' | 'height', e: Event) { setWidget(which, Math.max(0, Math.round(parseFloat((e.target as HTMLInputElement).value) || 0))); rememberPreset('custom') }
@@ -101,11 +101,11 @@ const aspect = computed(() => {
 // On-canvas display size (the frame's longest edge in logical px) — the size
 // you *work* at on the canvas, distinct from the output resolution (the W×H
 // widgets / presets). Drag the corner grip to change it; persisted on the node.
-const displayEdge = computed(() => Number((props.data.properties as any)?.comfynext_frame?.displayEdge) || 300)
+const displayEdge = computed(() => Number((props.data.properties as any)?.sailor_frame?.displayEdge) || 300)
 function setDisplayEdge(v: number) {
   if (!props.data.properties) (props.data as any).properties = {}
-  ;(props.data.properties as any).comfynext_frame = {
-    ...(props.data.properties as any).comfynext_frame, displayEdge: clamp(Math.round(v), 180, 1600),
+  ;(props.data.properties as any).sailor_frame = {
+    ...(props.data.properties as any).sailor_frame, displayEdge: clamp(Math.round(v), 180, 1600),
   }
 }
 const box = computed(() => {
@@ -193,7 +193,7 @@ interface WiredLayer { slot: number; url: string; x: number; y: number; rotation
 function wiredCloner(slot: number): Cloner | undefined {
   // Editor state on a node property (1-based slot, like layer{i}_cloner), mirrored
   // from the Compositor modal — not the widget (which only exists post-restart).
-  const map = (props.data.properties as any)?.comfynext_wiredCloners
+  const map = (props.data.properties as any)?.sailor_wiredCloners
   return map?.[slot + 1] as Cloner | undefined
 }
 const wiredLayers = computed<WiredLayer[]>(() => {
@@ -243,9 +243,9 @@ function wiredGeom(l: WiredLayer) {
 // slot arrays (layerN numbering, same as the w:N stack keys and the modal).
 // Internal WiredLayer.slot stays 0-based — hence the +1 at every lookup.
 const hiddenWiredSet = computed(() =>
-  new Set((((props.data.properties as any)?.comfynext_hiddenWired as number[]) ?? []).map(Number)))
+  new Set((((props.data.properties as any)?.sailor_hiddenWired as number[]) ?? []).map(Number)))
 const lockedWiredSet = computed(() =>
-  new Set((((props.data.properties as any)?.comfynext_lockedWired as number[]) ?? []).map(Number)))
+  new Set((((props.data.properties as any)?.sailor_lockedWired as number[]) ?? []).map(Number)))
 
 function wiredHitTest(clientX: number, clientY: number): number | null {
   const r = artboardRef.value?.getBoundingClientRect()
@@ -374,7 +374,7 @@ const editingStyle = computed(() => {
 
 // ── Unified z-order stack (wired + local layers in ONE ordered list) ─────────
 // Keys: `w:<slot>` for a wired/connected layer, `l:<id>` for a local layer.
-// Persisted on the node as `comfynext_stackOrder`; array order is bottom→top.
+// Persisted on the node as `sailor_stackOrder`; array order is bottom→top.
 // This is the single source of truth for depth, so any layer — a dropped shape
 // or a wired image — can sit above or below any other, like Figma/Photoshop.
 type StackKey = string
@@ -395,7 +395,7 @@ const presentKeys = computed<StackKey[]>(() => [
 // for layers still here, then append any newcomers on top. So adding a shape or
 // wiring an image floats it to the top, and removing one just drops out.
 const stackKeys = computed<StackKey[]>(() => {
-  const saved = ((props.data.properties as any)?.comfynext_stackOrder as StackKey[]) ?? []
+  const saved = ((props.data.properties as any)?.sailor_stackOrder as StackKey[]) ?? []
   const present = new Set(presentKeys.value)
   const kept = saved.filter(k => present.has(k))
   const keptSet = new Set(kept)
@@ -428,7 +428,7 @@ function moveStackZ(key: StackKey, dir: -1 | 1) {
   if (i < 0 || j < 0 || j >= arr.length) return
   ;[arr[i], arr[j]] = [arr[j], arr[i]]
   if (!props.data.properties) (props.data as any).properties = {}
-  ;(props.data.properties as any).comfynext_stackOrder = arr
+  ;(props.data.properties as any).sailor_stackOrder = arr
 }
 function moveSelectedZ(dir: number) {
   const key = selectedStackKey.value
@@ -506,7 +506,7 @@ async function onAddImageFile(e: Event) {
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────
-function openEditor() { window.dispatchEvent(new CustomEvent('comfynext:openCompositor', { detail: { nodeId: props.id } })) }
+function openEditor() { window.dispatchEvent(new CustomEvent('sailor:openCompositor', { detail: { nodeId: props.id } })) }
 // Render the WYSIWYG stack (wired + local layers, in z-order) to an offscreen
 // canvas at full output resolution. This is what the artboard shows — so Save
 // matches the canvas exactly, including local shapes/text, with no dependency
@@ -604,7 +604,7 @@ function onDragLeave() { dragOver.value = false }
 function onDrop(e: DragEvent) {
   if (!e.dataTransfer?.files?.length) return
   e.preventDefault(); dragOver.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:frameDropImage', { detail: { nodeId: props.id, files: e.dataTransfer.files } }))
+  window.dispatchEvent(new CustomEvent('sailor:frameDropImage', { detail: { nodeId: props.id, files: e.dataTransfer.files } }))
 }
 
 function onKeydown(e: KeyboardEvent) {

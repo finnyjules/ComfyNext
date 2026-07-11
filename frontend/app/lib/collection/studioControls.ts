@@ -1,5 +1,5 @@
 // Studio → StudioControlDesc[] adapter for the drawer bindings strip
-// (`comfynext:promoteControl` + CollectionDrawer.vue).
+// (`sailor:promoteControl` + CollectionDrawer.vue).
 //
 // Kept OUT of studioBindables.ts on purpose: resolving a studio's live control
 // list touches the same modules the in-studio "vibe" tuner uses (SpaceType's
@@ -37,19 +37,19 @@ function mapAll(specs: ControlSpec[]): StudioControlDesc[] {
 }
 
 /** Space Type: the active effect's own ControlSpec list (registry lookup by
- *  `comfynext_spaceType.effectId`, defaulting like the node/surface do). */
+ *  `sailor_spaceType.effectId`, defaulting like the node/surface do). */
 async function spaceTypeControls(node: any): Promise<StudioControlDesc[]> {
   const [{ getEffect }, { defaultSpaceTypeState }] = await Promise.all([
     import('~/lib/spacetype/effects'),
     import('~/lib/spacetype/state'),
   ])
-  const saved = node?.data?.properties?.comfynext_spaceType
+  const saved = node?.data?.properties?.sailor_spaceType
   const effectId = saved?.effectId ?? defaultSpaceTypeState().effectId
   const effect = getEffect(effectId)
   return mapAll(effect.controls)
 }
 
-/** Gradient Studio: same config the canvas tuner reads (comfynext_gradientStudio,
+/** Gradient Studio: same config the canvas tuner reads (sailor_gradientStudio,
  *  falling back to a fresh default config), controls scoped to the current layout. */
 async function gradientControls(node: any): Promise<StudioControlDesc[]> {
   const [{ cloneConfig }, { defaultConfig }, { gradientAgentControls }] = await Promise.all([
@@ -57,7 +57,7 @@ async function gradientControls(node: any): Promise<StudioControlDesc[]> {
     import('~/lib/gradientfx/randomize'),
     import('~/lib/gradientfx/agentControls'),
   ])
-  const saved = node?.data?.properties?.comfynext_gradientStudio
+  const saved = node?.data?.properties?.sailor_gradientStudio
   const config = saved ? cloneConfig(saved) : defaultConfig()
   return mapAll(gradientAgentControls(config, { includePreset: true }))
 }
@@ -70,13 +70,13 @@ async function shaderControls(node: any): Promise<StudioControlDesc[]> {
     import('~/lib/shaderstudio/agentControls'),
     import('~/lib/shaderfx/catalog'),
   ])
-  const saved = node?.data?.properties?.comfynext_shaderStudio
+  const saved = node?.data?.properties?.sailor_shaderStudio
   const config = saved && typeof saved === 'object' ? hydrateConfig(saved) : defaultConfig()
   const effectDef = config.effect?.id ? await getEffect(config.effect.id) : null
   return mapAll(shaderAgentControls(config, effectDef))
 }
 
-/** Texture Studio: flat Params bag under comfynext_textureStudio, static control
+/** Texture Studio: flat Params bag under sailor_textureStudio, static control
  *  list (no per-layout gating like Gradient/Shader — `when` predicates live in
  *  the surface, not here, so this offers the full vocabulary). */
 async function textureControls(node: any): Promise<StudioControlDesc[]> {

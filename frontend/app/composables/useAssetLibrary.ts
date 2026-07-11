@@ -8,7 +8,7 @@ export function useAssetLibrary() {
   async function fetchAssets() {
     loading.value = true
     try {
-      const res = await fetch('/comfynext/assets')
+      const res = await fetch('/sailor/assets')
       const data = await res.json()
       assets.value = data.assets ?? []
     } catch {
@@ -20,7 +20,7 @@ export function useAssetLibrary() {
 
   async function importAsset(path: string): Promise<Asset | null> {
     try {
-      const res = await fetch('/comfynext/asset_import', {
+      const res = await fetch('/sailor/asset_import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -36,14 +36,14 @@ export function useAssetLibrary() {
 
   async function removeAsset(assetId: string) {
     try {
-      await fetch(`/comfynext/assets/${assetId}`, { method: 'DELETE' })
+      await fetch(`/sailor/assets/${assetId}`, { method: 'DELETE' })
       assets.value = assets.value.filter(a => a.id !== assetId)
     } catch {}
   }
 
   async function fetchInputFiles(): Promise<Array<{ filename: string; path: string; type: string; size: number }>> {
     try {
-      const res = await fetch('/comfynext/input_listing')
+      const res = await fetch('/sailor/input_listing')
       const data = await res.json()
       return data.items ?? []
     } catch {

@@ -19,7 +19,7 @@ const PROXY_PREFIXES = [
   '/object_info',
   '/global_subgraphs',
   '/gate',
-  '/comfynext',
+  '/sailor',
 ]
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied

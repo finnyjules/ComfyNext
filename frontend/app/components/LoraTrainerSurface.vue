@@ -8,7 +8,7 @@
  *
  * Flow:
  *   1. Upload images to input/<sessionFolder>/  via /upload/image
- *   2. Post captions to /comfynext/lora/save_captions  → writes .txt sidecars
+ *   2. Post captions to /sailor/lora/save_captions  → writes .txt sidecars
  *   3. Build graph: CheckpointLoaderSimple → LoadImageTextDataSetFromFolder
  *      → MakeTrainingDataset → TrainLoraNode → SaveLoRA
  *   4. POST /prompt, poll /history/<id>
@@ -94,7 +94,7 @@ const fluxReady = ref(false)
 
 async function probeFluxReady() {
   try {
-    const r = await fetch('/comfynext/models/status?key=lora-base-flux-schnell')
+    const r = await fetch('/sailor/models/status?key=lora-base-flux-schnell')
     if (r.ok) {
       const status = await r.json()
       fluxReady.value = !!status.ready
@@ -131,7 +131,7 @@ async function downloadCheckpoint(key: string) {
 
   try {
     // Quick status probe first — if already on disk we can skip the stream.
-    const probe = await fetch(`/comfynext/models/status?key=${key}`)
+    const probe = await fetch(`/sailor/models/status?key=${key}`)
     if (probe.ok) {
       const status = await probe.json()
       if (status.ready) {
@@ -148,7 +148,7 @@ async function downloadCheckpoint(key: string) {
   }
 
   await new Promise<void>((resolve) => {
-    const es = new EventSource(`/comfynext/models/download?key=${key}`)
+    const es = new EventSource(`/sailor/models/download?key=${key}`)
     es.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data)
@@ -343,7 +343,7 @@ function useTrainedLoraInWorkflow() {
     version: 0.4,
   }
   const tab = openTab({ type: 'project', label: `Style: ${(form.outputName || 'style').trim()}` })
-  window.dispatchEvent(new CustomEvent('comfynext:loadTabWorkflow', {
+  window.dispatchEvent(new CustomEvent('sailor:loadTabWorkflow', {
     detail: { tabId: tab.id, workflow },
   }))
 }
@@ -1117,7 +1117,7 @@ async function saveCaptionsToDisk() {
   for (const img of images.value) {
     captions[img.filename] = img.caption ?? ''
   }
-  const res = await fetch('/comfynext/lora/save_captions', {
+  const res = await fetch('/sailor/lora/save_captions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folder: sessionFolder, captions }),
@@ -1401,7 +1401,7 @@ async function startCloudTraining() {
     }
 
     // Tell the Queue panel to refresh, then reset for the next style.
-    window.dispatchEvent(new CustomEvent('comfynext:trainingQueueUpdated'))
+    window.dispatchEvent(new CustomEvent('sailor:trainingQueueUpdated'))
     clearDataset() // resets the form + sets status back to 'idle'
     status.value = 'queued'
     queuedName.value = displayName

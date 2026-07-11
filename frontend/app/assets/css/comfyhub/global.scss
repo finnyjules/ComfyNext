@@ -1,7 +1,7 @@
 @import 'variables';
 @import 'mixins';
 
-// Scoped to .comfyhub wrapper to avoid conflicts with ComfyNext's Tailwind styles
+// Scoped to .comfyhub wrapper to avoid conflicts with Sailor's Tailwind styles
 .comfyhub {
   @import 'typography';
   @import 'animations';

@@ -86,19 +86,19 @@ const canGenerate = computed(() => !(poseSource.value === 'image' && !poseImageL
 // VueNodeCanvas). Mirrors a regular node's run button.
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running || !canGenerate.value) return
-  window.dispatchEvent(new CustomEvent('comfynext:poseGenerate', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:poseGenerate', { detail: { nodeId: props.id } }))
 }
 // Header ⚄ Re-roll: re-pose again for a fresh variation, reusing cached upstream.
 function rerollThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running || !canGenerate.value) return
-  window.dispatchEvent(new CustomEvent('comfynext:poseGenerate', { detail: { nodeId: props.id, rerollScope: 'self' } }))
+  window.dispatchEvent(new CustomEvent('sailor:poseGenerate', { detail: { nodeId: props.id, rerollScope: 'self' } }))
 }
 
 const characterInIdx = computed(() => Math.max(0, inputIdx('character')))
 const imageOutIdx = computed(() => outputIdx('image'))
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openPose', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openPose', { detail: { nodeId: props.id } }))
 }
 </script>
 

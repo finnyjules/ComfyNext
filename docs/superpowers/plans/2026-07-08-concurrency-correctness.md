@@ -177,7 +177,7 @@ Transformation (audit C4/C5 + Tier 3 + R3):
 
 **Files:** none (report + screenshots; fixes pathspec as needed)
 
-- [ ] **Step 1:** ComfyUI main on 8188; start `frontend-harness`; navigate via 127.0.0.1 (localhost 426 gotcha); wait for the "Loading ComfyNext" boot pill to clear before clicking (project-create no-ops during boot); enable Direct execution; pump frames if a hidden tab stalls the mount.
+- [ ] **Step 1:** ComfyUI main on 8188; start `frontend-harness`; navigate via 127.0.0.1 (localhost 426 gotcha); wait for the "Loading Sailor" boot pill to clear before clicking (project-create no-ops during boot); enable Direct execution; pump frames if a hidden tab stalls the mount.
 - [ ] **Step 2:** Two cloud generator nodes (Flux Schnell, draft, ~$0.03 each). Run node A, immediately Run node B. Instrument `window.fetch` to capture `/prompt` POSTs. Verify: BOTH dispatch (one may carry `?comfyWorker=`), both glimm simultaneously and each clears on ITS OWN completion (not when the first finishes), both images land on their own nodes.
 - [ ] **Step 3:** Billing check: after both complete, read the two generation records' recorded cost (via the app's history/generation store in `window` or the result cards) — each must show ~$0.03, NOT one showing $0.06 or $0. This is the N² bug's live proof.
 - [ ] **Step 4:** Re-roll ×4 on one node: 4 takes land, total recorded cost ≈ 4×$0.03 = $0.12, not $0.48.

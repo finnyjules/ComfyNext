@@ -1,6 +1,6 @@
 // Gradient Studio — the serializable config that fully describes a gradient.
 // One GradientConfig is the single source of truth: it lives in the node's
-// data.properties.comfynext_gradientStudio blob, drives the renderer, and (given
+// data.properties.sailor_gradientStudio blob, drives the renderer, and (given
 // the same seed + locks) reproduces an identical image.
 
 import { defaultMesh } from './mesh'

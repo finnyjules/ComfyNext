@@ -1,7 +1,7 @@
 <!-- frontend/app/components/vue-canvas/SelectionActionChips.vue -->
 <script setup lang="ts">
 // Selection-driven action sampler (IA spec §3): the top takes-input actions
-// for this media type, branching off the artifact via comfynext:applyEffect
+// for this media type, branching off the artifact via sailor:applyEffect
 // (branch: true = new deliverable; never re-points the producing chain).
 // "All actions…" deep-links the Actions panel to this domain. Chips use a
 // quiet dark look — these are generic escalators, not pastel reviewer-fix chips.
@@ -31,12 +31,12 @@ onMounted(async () => {
 })
 
 function fire(nodeType: string) {
-  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
     detail: { nodeId: props.nodeId, nodeType, output: props.output, branch: true, focus: true },
   }))
 }
 function openAllActions() {
-  window.dispatchEvent(new CustomEvent('comfynext:openActions', { detail: { domain: props.domain } }))
+  window.dispatchEvent(new CustomEvent('sailor:openActions', { detail: { domain: props.domain } }))
 }
 </script>
 

@@ -13,7 +13,7 @@
 - **Params, not pixels:** the AI only emits parameter changes; never images, never the user's text content.
 - **Authority = params within the current effect only.** Never switch effect/mode. AI-editable kinds: `slider`, `select`, `color`, `font`. Excluded: `text`, `textList`, `fillList`, `path`.
 - **Model:** `claude-haiku-4-5` exactly (bare string, no date suffix). Structured outputs via `output_config: { format: { type: 'json_schema', schema } }`.
-- **Anthropic key:** user-supplied, read on the frontend via `getLocalSetting('ComfyNext.AI.AnthropicApiKey')`, passed in the request body — same as `usePortIntent` / `useExplain`.
+- **Anthropic key:** user-supplied, read on the frontend via `getLocalSetting('Sailor.AI.AnthropicApiKey')`, passed in the request body — same as `usePortIntent` / `useExplain`.
 - **No purple/violet accents.** AI-touched = amber; commit/Keep = emerald; primary = white. Build only on existing `Studio*` primitives + current dark tokens — no parallel design language.
 - **Structured-output schema rule:** every object needs `additionalProperties: false`; dynamic-key maps are NOT allowed, so the patch is returned as a fixed-shape `changes: [{key, value}]` array (mirrors `pipeline-suggest`'s `widgets`).
 - Commit messages end with: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
@@ -214,7 +214,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/spacetype/effect.ts frontend/app/lib/spacetype/controlDescriptor.ts frontend/tests/unit/vibe-control.unit.spec.ts
 git commit -m "feat(vibe-control): control descriptor + patch validator
 
@@ -329,7 +329,7 @@ Expected: PASS (7 tests total).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/vibePrompt.ts frontend/tests/unit/vibe-control.unit.spec.ts
 git commit -m "feat(vibe-control): prompt builder + structured-output schema
 
@@ -435,7 +435,7 @@ Expected: JSON like `{"changes":[{"key":"depth","value":0.8}],"rationale":"..."}
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/server/api/vibe.post.ts
 git commit -m "feat(vibe-control): /api/vibe route (Haiku, structured output)
 
@@ -470,7 +470,7 @@ export function useVibeControl() {
     effectLabel: string,
     phrase: string,
   ): Promise<{ patch: Record<string, ParamValue>; rationale: string }> {
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
     if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
 
     const described = describeControls(controls, params)
@@ -499,7 +499,7 @@ Expected: `no vibe type errors` (or a clean run). Fix any reported `vibe`-relate
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useVibeControl.ts
 git commit -m "feat(vibe-control): useVibeControl composable (build descriptor, validate patch)
 
@@ -593,7 +593,7 @@ Start the dev server, open Type Studio, and confirm the bar appears at the top o
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/VibeControlBar.vue
 git commit -m "feat(vibe-control): VibeControlBar component (prompt + proposal header)
 
@@ -726,7 +726,7 @@ Capture a screenshot of the proposal state for the record.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/SpaceTypeSurface.vue
 git commit -m "feat(vibe-control): wire copilot into Type Studio (live apply, revert, highlights)
 
@@ -763,7 +763,7 @@ Restart the dev server, open Type Studio → Extrude, and run a vibe like "subtl
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/spacetype/effects/boost.ts
 git commit -m "feat(vibe-control): add semantic hints to Extrude controls
 

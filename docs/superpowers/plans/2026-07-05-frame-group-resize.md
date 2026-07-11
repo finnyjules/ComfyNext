@@ -157,7 +157,7 @@ Expected: PASS
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/groupResize.ts frontend/tests/unit/group-resize.unit.spec.ts
 git commit -m "feat(frame): groupResize geometry (union box, scale-about-anchor, factor)"
 ```
@@ -260,7 +260,7 @@ Add `selectionBox, selectionHandles, startGroupResize` to the returned object.
 Run: `cd frontend && npx vitest run tests/unit` (no unit change beyond Task 1; group-resize is browser-verified). Confirm nothing broke.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): group/multi-selection proportional resize drag mode"
 ```
@@ -307,7 +307,7 @@ When `selectionBox` is non-null (≥2 selected), render a dashed bounding rectan
 Run: `cd frontend && npx vitest run tests/unit` (confirms nothing broke).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): render selection bounding box + group resize handles"
 ```

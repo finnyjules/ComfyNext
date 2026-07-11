@@ -1,4 +1,4 @@
-"""ComfyNext durable Project persistence — Phase 0.
+"""Sailor durable Project persistence — Phase 0.
 
 See docs/plans/2026-06-02-phase0-project-persistence-spec.md.
 
@@ -10,11 +10,11 @@ Two layers:
   * a PURE storage layer (functions taking an explicit `root` dir) — no ComfyUI
     imports, unit-tested in tests-unit/comfy_api_test/projects_storage_test.py;
   * a thin aiohttp route shell registered on the ComfyUI PromptServer, mirroring
-    the /comfynext/assets precedent in nodes_timeline.py.
+    the /sailor/assets precedent in nodes_timeline.py.
 
 On-disk layout (under the ComfyUI user dir):
-    user/comfynext/projects/<uuid>/project.json
-    user/comfynext/projects/<uuid>/versions/<vid>.json
+    user/sailor/projects/<uuid>/project.json
+    user/sailor/projects/<uuid>/versions/<vid>.json
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import uuid as uuidlib
 # ---------- pure storage layer (dependency-light, unit-tested) --------------
 
 def projects_root(user_dir: str) -> str:
-    return os.path.join(user_dir, "comfynext", "projects")
+    return os.path.join(user_dir, "sailor", "projects")
 
 
 def _is_safe_id(value) -> bool:
@@ -226,7 +226,7 @@ def append_generation(root: str, uuid: str, record: dict, *, now: int = 0) -> di
 def spend_file(user_dir: str) -> str:
     """Global spend ledger — NOT under projects/, so deleting a project keeps
     its historical spend (the ledger stays accurate)."""
-    return os.path.join(user_dir, "comfynext", "spend.jsonl")
+    return os.path.join(user_dir, "sailor", "spend.jsonl")
 
 
 def append_spend(path: str, entry: dict) -> None:
@@ -291,17 +291,92 @@ try:
     from aiohttp import web
     from server import PromptServer
 
+    def _migrate_legacy_user_dir() -> None:
+        """One-time rename of the pre-rebrand user data dir (Sailor was formerly
+        "ComfyNext"). Moves <user>/comfynext -> <user>/sailor in place so existing
+        projects, assets, spend, and timeline data survive the rename on
+        environments (e.g. the Fly volume) that still hold the legacy dir. Idempotent:
+        no-ops once the new dir exists."""
+        try:
+            base = folder_paths.get_user_directory()
+            legacy = os.path.join(base, "comfynext")
+            current = os.path.join(base, "sailor")
+            if os.path.isdir(legacy) and not os.path.exists(current):
+                os.rename(legacy, current)
+        except Exception:
+            pass  # never let a data migration block server boot
+
+    def _migrate_legacy_project_keys() -> None:
+        """One-time rebrand migration for saved project JSON. Pre-rename projects
+        store node properties under `comfynext_*` keys and annotations under
+        `workflow.extra.comfynext`; the renamed frontend reads `sailor_*` /
+        `extra.sailor`, so that config is invisible until the KEYS are renamed.
+        KEYS ONLY — values are preserved verbatim: they legitimately reference
+        on-disk files that keep legacy names (e.g. input/comfynext_frame_*.png).
+        Guarded by a marker file so the walk runs once per volume; atomic writes
+        mirror _atomic_write's tmp+replace pattern."""
+        try:
+            root = projects_root(folder_paths.get_user_directory())
+            marker = os.path.join(os.path.dirname(root), ".migrated-project-keys-v1")
+            if os.path.exists(marker) or not os.path.isdir(root):
+                return
+
+            def rename_key(k):
+                if k == "comfynext":
+                    return "sailor"
+                if isinstance(k, str) and k.startswith("comfynext_"):
+                    return "sailor_" + k[len("comfynext_"):]
+                return k
+
+            def walk(obj):
+                if isinstance(obj, dict):
+                    out = {}
+                    for k, v in obj.items():
+                        nk = rename_key(k)
+                        if nk in out:  # half-migrated: keep existing sailor_* value
+                            continue
+                        out[nk] = walk(v)
+                    return out
+                if isinstance(obj, list):
+                    return [walk(v) for v in obj]
+                return obj
+
+            for dirpath, _dirs, files in os.walk(root):
+                for name in files:
+                    if not name.endswith(".json"):
+                        continue
+                    path = os.path.join(dirpath, name)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            raw = f.read()
+                        if '"comfynext' not in raw:
+                            continue  # keys always appear quote-prefixed in JSON
+                        migrated = walk(json.loads(raw))
+                        tmp = path + ".migtmp"
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            json.dump(migrated, f, ensure_ascii=False, separators=(",", ":"))
+                        os.replace(tmp, path)
+                    except Exception:
+                        continue  # skip unreadable file, migrate the rest
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("1\n")
+        except Exception:
+            pass  # never let a data migration block server boot
+
+    _migrate_legacy_user_dir()
+    _migrate_legacy_project_keys()
+
     def _root() -> str:
         return projects_root(folder_paths.get_user_directory())
 
     def _now_ms() -> int:
         return int(_time.time() * 1000)
 
-    @PromptServer.instance.routes.get("/comfynext/projects")
+    @PromptServer.instance.routes.get("/sailor/projects")
     async def _projects_list_route(_request):
         return web.json_response({"projects": list_projects(_root())})
 
-    @PromptServer.instance.routes.get("/comfynext/projects/{uuid}")
+    @PromptServer.instance.routes.get("/sailor/projects/{uuid}")
     async def _projects_get_route(request):
         uid = request.match_info["uuid"]
         project = read_project(_root(), uid)
@@ -311,7 +386,7 @@ try:
         version = read_version(_root(), uid, cur) if cur else None
         return web.json_response({"project": project, "currentVersion": version})
 
-    @PromptServer.instance.routes.put("/comfynext/projects/{uuid}")
+    @PromptServer.instance.routes.put("/sailor/projects/{uuid}")
     async def _projects_put_route(request):
         uid = request.match_info["uuid"]
         try:
@@ -329,12 +404,12 @@ try:
         write_project(_root(), project)
         return web.json_response({"project": project})
 
-    @PromptServer.instance.routes.delete("/comfynext/projects/{uuid}")
+    @PromptServer.instance.routes.delete("/sailor/projects/{uuid}")
     async def _projects_delete_route(request):
         delete_project(_root(), request.match_info["uuid"])
         return web.json_response({"ok": True})
 
-    @PromptServer.instance.routes.post("/comfynext/projects/{uuid}/versions")
+    @PromptServer.instance.routes.post("/sailor/projects/{uuid}/versions")
     async def _versions_post_route(request):
         uid = request.match_info["uuid"]
         try:
@@ -354,14 +429,14 @@ try:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response({"id": version["id"]})
 
-    @PromptServer.instance.routes.get("/comfynext/projects/{uuid}/versions/{vid}")
+    @PromptServer.instance.routes.get("/sailor/projects/{uuid}/versions/{vid}")
     async def _versions_get_route(request):
         version = read_version(_root(), request.match_info["uuid"], request.match_info["vid"])
         if version is None:
             return web.json_response({"error": "not found"}, status=404)
         return web.json_response({"version": version})
 
-    @PromptServer.instance.routes.post("/comfynext/projects/{uuid}/generations")
+    @PromptServer.instance.routes.post("/sailor/projects/{uuid}/generations")
     async def _generations_post_route(request):
         uid = request.match_info["uuid"]
         try:
@@ -392,11 +467,11 @@ try:
             write_project(_root(), project)
         return web.json_response({"id": stored["id"]})
 
-    @PromptServer.instance.routes.get("/comfynext/projects/{uuid}/generations")
+    @PromptServer.instance.routes.get("/sailor/projects/{uuid}/generations")
     async def _generations_list_route(request):
         return web.json_response({"generations": list_generations(_root(), request.match_info["uuid"])})
 
-    @PromptServer.instance.routes.get("/comfynext/spend/summary")
+    @PromptServer.instance.routes.get("/sailor/spend/summary")
     async def _spend_summary_route(_request):
         path = spend_file(folder_paths.get_user_directory())
         return web.json_response(spend_summary(path, now_ms=_now_ms()))
@@ -404,7 +479,7 @@ try:
 except Exception as e:  # pragma: no cover - exercised only at server boot
     # No PromptServer (e.g. imported in a test / headless context) — the pure
     # storage layer above is still usable and tested directly.
-    print(f"[ComfyNext] project routes not registered: {e}")
+    print(f"[Sailor] project routes not registered: {e}")
 
 
 # ComfyUI expects these symbols from a comfy_extras module.

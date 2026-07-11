@@ -10,7 +10,7 @@ Effects work), zero AI-generated pixels.
 
 ## Goal
 
-Make ComfyNext able to produce broadcast-quality kinetic typography and motion
+Make Sailor able to produce broadcast-quality kinetic typography and motion
 slates. Two layers, built in order:
 
 1. **Engine (B-core):** the Frame/Compositor unified layer stack gains a time

@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - Work on `main`, no branches. Explicit staging + pathspec commits ONLY (`git commit -m "..." -- <paths>`); NEVER `git add -A` (a concurrent session shares this repo).
-- Direct mode only: everything here is inert when `comfynext:Comfy.DirectExecution.Enabled` is not 'true'. Bridge path (flag OFF) behavior must be byte-identical.
-- Do NOT touch `custom_nodes/comfynext_bridge/`, sketchbook-owned files (`useTakes.ts`, `LightTableModal.vue`, `lib/draft/*`, `lib/artifact/takeDiff.ts`) except where a task explicitly says so, or flag defaults.
+- Direct mode only: everything here is inert when `sailor:Comfy.DirectExecution.Enabled` is not 'true'. Bridge path (flag OFF) behavior must be byte-identical.
+- Do NOT touch `custom_nodes/sailor_bridge/`, sketchbook-owned files (`useTakes.ts`, `LightTableModal.vue`, `lib/draft/*`, `lib/artifact/takeDiff.ts`) except where a task explicitly says so, or flag defaults.
 - `mapWsEvent` already forwards `prompt_id` on every event (wsEventMap.ts:46-95) — rely on it, don't re-add.
 - `useDirectExecution.queue()` already returns `{ prompt_id?, node_errors?, error? }` — extend, don't rewrite.
 - Known suite noise: ~8 pre-existing failures in concurrent-session specs (spacetype-palette, video-model-adapt, …). Zero NEW failures allowed; all graph/ws/direct specs green.

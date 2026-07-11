@@ -46,7 +46,7 @@ async function loadEffectTextures(effect: EffectDef): Promise<{ textures: Record
   for (const t of effect.textures ?? []) {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.src = assetUrl(t.file, t.v) // /comfynext/shader_effects/assets/<file> — same route as ShaderStudio
+    img.src = assetUrl(t.file, t.v) // /sailor/shader_effects/assets/<file> — same route as ShaderStudio
     await img.decode().catch(() => {})
     textures[t.uniform] = img
     Object.assign(uniforms, t.extraUniforms ?? {})

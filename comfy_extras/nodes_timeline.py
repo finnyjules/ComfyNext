@@ -32,13 +32,13 @@ def _valid_effect_id(s: str) -> bool:
     return isinstance(s, str) and re.fullmatch(r"[a-z0-9]+", s) is not None
 
 def _scene_defaults_dir() -> str:
-    # comfy_extras/ -> repo root -> custom_nodes/comfynext_bridge/scene_defaults
+    # comfy_extras/ -> repo root -> custom_nodes/sailor_bridge/scene_defaults
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_defaults"))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "sailor_bridge", "scene_defaults"))
 
 def _scene_thumbnails_dir() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_thumbnails"))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "sailor_bridge", "scene_thumbnails"))
 
 
 # Maximum clip ports preallocated on the Timeline node. The frontend's
@@ -898,7 +898,7 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
     """Composite output frame `f` of the flat timeline `state` (the
     render_timeline_to_file shape) over its bg color. Returns float32 [H,W,3]
     in [0,1]. Single source of export-path pixel math: the FFmpeg export loop,
-    the golden-frame harness, and /comfynext/timeline/render_frame all call
+    the golden-frame harness, and /sailor/timeline/render_frame all call
     this — divergence between them is impossible by construction."""
     fps = int(state.get("fps", 30))
     W = int(state.get("canvas_width", 1280))
@@ -1090,7 +1090,7 @@ try:
     # Streaming variant: NDJSON progress events while the render runs, plus
     # a final "result" line with the file metadata. Same JSON body as the
     # non-streaming endpoint.
-    @PromptServer.instance.routes.post("/comfynext/render_timeline_stream")
+    @PromptServer.instance.routes.post("/sailor/render_timeline_stream")
     async def _render_timeline_stream_route(request):
         try:
             state = await request.json()
@@ -1147,7 +1147,7 @@ try:
         await resp.write_eof()
         return resp
 
-    @PromptServer.instance.routes.post("/comfynext/render_timeline")
+    @PromptServer.instance.routes.post("/sailor/render_timeline")
     async def _render_timeline_route(request):
         try:
             state = await request.json()
@@ -1182,7 +1182,7 @@ try:
             )
         return web.json_response(result)
 
-    @PromptServer.instance.routes.post("/comfynext/spacetype_encode")
+    @PromptServer.instance.routes.post("/sailor/spacetype_encode")
     async def _spacetype_encode_route(request):
         """Encode a sequence of PNG frames (from input/) into an MP4 video.
 
@@ -1263,7 +1263,7 @@ try:
 
         return web.json_response({"filename": out_name})
 
-    @PromptServer.instance.routes.get("/comfynext/space_defaults")
+    @PromptServer.instance.routes.get("/sailor/space_defaults")
     async def _space_defaults_list(request):
         out = {}
         d = _scene_defaults_dir()
@@ -1277,7 +1277,7 @@ try:
                         pass
         return web.json_response(out)
 
-    @PromptServer.instance.routes.post("/comfynext/space_default/{effect_id}")
+    @PromptServer.instance.routes.post("/sailor/space_default/{effect_id}")
     async def _space_default_save(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -1294,7 +1294,7 @@ try:
             json.dump(scene, f, indent=2)
         return web.json_response({"ok": True})
 
-    @PromptServer.instance.routes.get("/comfynext/space_thumbnails")
+    @PromptServer.instance.routes.get("/sailor/space_thumbnails")
     async def _space_thumbnails_list(request):
         out = {}
         d = _scene_thumbnails_dir()
@@ -1303,10 +1303,10 @@ try:
                 if fn.endswith(".png") and _valid_effect_id(fn[:-4]):
                     eid = fn[:-4]
                     mtime = int(os.path.getmtime(os.path.join(d, fn)))
-                    out[eid] = f"/comfynext/space_thumbnail/{eid}?v={mtime}"
+                    out[eid] = f"/sailor/space_thumbnail/{eid}?v={mtime}"
         return web.json_response(out)
 
-    @PromptServer.instance.routes.post("/comfynext/space_thumbnail/{effect_id}")
+    @PromptServer.instance.routes.post("/sailor/space_thumbnail/{effect_id}")
     async def _space_thumbnail_save(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -1320,7 +1320,7 @@ try:
             f.write(data)
         return web.json_response({"ok": True})
 
-    @PromptServer.instance.routes.get("/comfynext/space_thumbnail/{effect_id}")
+    @PromptServer.instance.routes.get("/sailor/space_thumbnail/{effect_id}")
     async def _space_thumbnail_get(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -1331,7 +1331,7 @@ try:
         with open(p, "rb") as f:
             return web.Response(body=f.read(), content_type="image/png")
 
-    @PromptServer.instance.routes.post("/comfynext/timeline/render_frame")
+    @PromptServer.instance.routes.post("/sailor/timeline/render_frame")
     async def _render_frame_route(request):
         """Render one composited frame of an edit state to PNG. Harness/debug
         surface: the browser golden harness compares PreviewRenderer output
@@ -1367,7 +1367,7 @@ try:
     # ── Media listing endpoint ──────────────────────────────────────────────
     #
     # Comfy's /history is in-memory and lost on every server restart, and
-    # files written through side-channel endpoints (like /comfynext/render_
+    # files written through side-channel endpoints (like /sailor/render_
     # timeline) never enter it. The Assets tab calls this endpoint to get a
     # complete listing of media files actually on disk in output/.
 
@@ -1377,7 +1377,7 @@ try:
         ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac",   # audio
     }
 
-    @PromptServer.instance.routes.get("/comfynext/output_listing")
+    @PromptServer.instance.routes.get("/sailor/output_listing")
     async def _output_listing_route(_request):
         output_dir = folder_paths.get_output_directory()
         items: list[dict] = []
@@ -1475,11 +1475,11 @@ try:
             info["kind"] = "video"
         return info
 
-    @PromptServer.instance.routes.get("/comfynext/assets")
+    @PromptServer.instance.routes.get("/sailor/assets")
     async def _assets_list_route(_request):
         return web.json_response({"assets": _load_assets()})
 
-    @PromptServer.instance.routes.post("/comfynext/asset_import")
+    @PromptServer.instance.routes.post("/sailor/asset_import")
     async def _asset_import_route(request):
         try:
             body = await request.json()
@@ -1517,7 +1517,7 @@ try:
         _save_assets(assets)
         return web.json_response({"asset": asset, "created": True})
 
-    @PromptServer.instance.routes.delete("/comfynext/assets/{asset_id}")
+    @PromptServer.instance.routes.delete("/sailor/assets/{asset_id}")
     async def _asset_delete_route(request):
         asset_id = request.match_info["asset_id"]
         assets = [a for a in _load_assets() if a["id"] != asset_id]
@@ -1604,7 +1604,7 @@ try:
         except Exception:
             return []
 
-    @PromptServer.instance.routes.get("/comfynext/asset_thumbnails")
+    @PromptServer.instance.routes.get("/sailor/asset_thumbnails")
     async def _asset_thumbs_route(request):
         asset_id = request.query.get("asset_id")
         try:
@@ -1677,7 +1677,7 @@ try:
         except Exception:
             return []
 
-    @PromptServer.instance.routes.get("/comfynext/asset_waveform")
+    @PromptServer.instance.routes.get("/sailor/asset_waveform")
     async def _asset_waveform_route(request):
         asset_id = request.query.get("asset_id")
         try:
@@ -1714,7 +1714,7 @@ try:
     # The "Input Files" pane in the editor uses this to enumerate media files
     # the user can drag into the timeline as assets.
 
-    @PromptServer.instance.routes.get("/comfynext/input_listing")
+    @PromptServer.instance.routes.get("/sailor/input_listing")
     async def _input_listing_route(_request):
         input_dir = folder_paths.get_input_directory()
         items: list[dict] = []
@@ -1761,7 +1761,7 @@ try:
             return None
         return candidate
 
-    @PromptServer.instance.routes.delete("/comfynext/input_file")
+    @PromptServer.instance.routes.delete("/sailor/input_file")
     async def _input_file_delete_route(request):
         filename = request.query.get("filename", "")
         target = _safe_resolve(folder_paths.get_input_directory(), "", filename)
@@ -1775,7 +1775,7 @@ try:
             return web.json_response({"error": str(e)}, status=500)
         return web.json_response({"ok": True})
 
-    @PromptServer.instance.routes.delete("/comfynext/output_file")
+    @PromptServer.instance.routes.delete("/sailor/output_file")
     async def _output_file_delete_route(request):
         filename = request.query.get("filename", "")
         subfolder = request.query.get("subfolder", "")

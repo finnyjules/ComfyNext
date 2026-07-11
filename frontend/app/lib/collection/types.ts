@@ -47,8 +47,8 @@ export interface VarBinding {
 /** Keyed by bindable path, e.g. 'props.text_layer_1' or 'brand.primary'. */
 export type VarBindings = Record<string, VarBinding>
 
-export const COLLECTION_PROP = 'comfynext_collection'
-export const BINDINGS_PROP = 'comfynext_varBindings'
-export const VAR_PREVIEW_PROP = 'comfynext_varPreview'
+export const COLLECTION_PROP = 'sailor_collection'
+export const BINDINGS_PROP = 'sailor_varBindings'
+export const VAR_PREVIEW_PROP = 'sailor_varPreview'
 export const VARS_TYPE = 'VARS'
 export const LOOKUP_TYPE = 'LOOKUP'

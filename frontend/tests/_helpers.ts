@@ -2,11 +2,11 @@ import { Page, expect } from '@playwright/test'
 
 /**
  * Open the home page and switch to a blank workflow so VueNodeCanvas is mounted.
- * The canvas listens for `comfynext:openTimeline` and `comfynext:openSmartLayout`
+ * The canvas listens for `sailor:openTimeline` and `sailor:openSmartLayout`
  * custom events to launch the respective full-screen editors.
  *
  * The VueFlow node canvas only mounts when the localStorage feature flag
- * `comfynext:Comfy.VueNodes.Enabled` is set to 'true'. Playwright starts
+ * `sailor:Comfy.VueNodes.Enabled` is set to 'true'. Playwright starts
  * fresh, so we seed it before navigation.
  */
 export async function openBlankWorkflow(page: Page) {
@@ -15,7 +15,7 @@ export async function openBlankWorkflow(page: Page) {
   // side call but a race against the layout's v-if leaves the legacy iframe
   // mounted on first navigation. Cleanest fix: seed localStorage, then reload.
   await page.addInitScript(() => {
-    try { localStorage.setItem('comfynext:Comfy.VueNodes.Enabled', 'true') } catch {}
+    try { localStorage.setItem('sailor:Comfy.VueNodes.Enabled', 'true') } catch {}
   })
   await page.goto('/')
   await page.waitForLoadState('networkidle')
@@ -44,7 +44,7 @@ export function timelineEditorOverlay(page: Page) {
 /** Wait for the timeline editor overlay to appear. */
 export async function openTimelineEditor(page: Page) {
   await page.evaluate(() =>
-    window.dispatchEvent(new CustomEvent('comfynext:openTimeline', { detail: { nodeId: 'pw-fake' } })),
+    window.dispatchEvent(new CustomEvent('sailor:openTimeline', { detail: { nodeId: 'pw-fake' } })),
   )
   await timelineEditorOverlay(page).waitFor({ state: 'visible', timeout: 10_000 })
 }
@@ -52,7 +52,7 @@ export async function openTimelineEditor(page: Page) {
 /** Wait for the SmartLayout editor overlay to appear (uses its own modal). */
 export async function openSmartLayoutEditor(page: Page, nodeId: string) {
   await page.evaluate((id) =>
-    window.dispatchEvent(new CustomEvent('comfynext:openSmartLayout', { detail: { nodeId: id } })),
+    window.dispatchEvent(new CustomEvent('sailor:openSmartLayout', { detail: { nodeId: id } })),
     nodeId,
   )
 }
@@ -60,11 +60,11 @@ export async function openSmartLayoutEditor(page: Page, nodeId: string) {
 /**
  * Add a node to the canvas. Bypasses the synthetic HTML5 DnD path (whose
  * DataTransfer doesn't survive `dispatchEvent`) by using the existing
- * `comfynext:addNode` custom event that VueNodeCanvas listens for.
+ * `sailor:addNode` custom event that VueNodeCanvas listens for.
  */
 export async function dropNode(page: Page, nodeType: string) {
   await page.evaluate((type) => {
-    window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: type } }))
+    window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType: type } }))
   }, nodeType)
   // The node renders on the next render tick.
   await page.waitForTimeout(300)

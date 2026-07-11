@@ -44,13 +44,13 @@ const vueNodesEnabled = ref(false)
 export function useVueNodesEnabled() {
   function load() {
     if (import.meta.server) return
-    vueNodesEnabled.value = localStorage.getItem('comfynext:Comfy.VueNodes.Enabled') === 'true'
+    vueNodesEnabled.value = localStorage.getItem('sailor:Comfy.VueNodes.Enabled') === 'true'
   }
 
   // Listen for storage changes (from settings modal)
   if (import.meta.client) {
     window.addEventListener('storage', (e) => {
-      if (e.key === 'comfynext:Comfy.VueNodes.Enabled') load()
+      if (e.key === 'sailor:Comfy.VueNodes.Enabled') load()
     })
     load()
   }
@@ -533,7 +533,7 @@ defineExpose({
 </template>
 
 <style>
-/* Override Vue Flow defaults to match ComfyNext dark theme */
+/* Override Vue Flow defaults to match Sailor dark theme */
 .vue-node-canvas .vue-flow__node {
   background: transparent;
   border: none;
@@ -911,7 +911,7 @@ function addNode(nodeType: string) {
   const { vueNodesEnabled } = useVueNodesEnabled()
   if (vueNodesEnabled.value) {
     // Dispatch custom event for Vue canvas to handle
-    window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+    window.dispatchEvent(new CustomEvent('sailor:addNode', {
       detail: { nodeType },
     }))
     closeNodeSearch()
@@ -923,7 +923,7 @@ function addNode(nodeType: string) {
   const iframe = container?.querySelector('iframe') as HTMLIFrameElement | null
   if (iframe?.contentWindow) {
     iframe.contentWindow.postMessage(
-      { type: 'comfynext', action: 'addNodeAtCenter', nodeType },
+      { type: 'sailor', action: 'addNodeAtCenter', nodeType },
       '*',
     )
   }
@@ -937,10 +937,10 @@ Add to `VueNodeCanvas.vue` setup:
 ```typescript
 // Listen for addNode events from NodeSearchDialog
 onMounted(() => {
-  window.addEventListener('comfynext:addNode', handleAddNode as EventListener)
+  window.addEventListener('sailor:addNode', handleAddNode as EventListener)
 })
 onUnmounted(() => {
-  window.removeEventListener('comfynext:addNode', handleAddNode as EventListener)
+  window.removeEventListener('sailor:addNode', handleAddNode as EventListener)
 })
 
 function handleAddNode(e: CustomEvent<{ nodeType: string }>) {
@@ -1023,7 +1023,7 @@ Add to `VueNodeCanvas.vue`:
 ```typescript
 // Listen for execution progress from bridge
 function handleBridgeMessage(event: MessageEvent) {
-  if (event.data?.type !== 'comfynext-bridge') return
+  if (event.data?.type !== 'sailor-bridge') return
   const { event: evt, node } = event.data
   if (evt === 'executing') {
     // Clear all running states, set new running node

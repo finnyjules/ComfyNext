@@ -16,7 +16,7 @@
 - `TimelineEditor.vue:171`: `const engine = usePlaybackEngine(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview)`; `engine.start()` ~line 67 (onMounted), `engine.destroy()` ~line 96 (onUnmounted); preview canvas `ref="canvasRef"` ~line 1289. `resolveClipPreview` (~lines 154–169) resolves asset clips via `getAsset`/`getAssetUrl` and workflow clips via `resolveClipSource`; returns null for audio/text/title/lower_third (titles render inline in the old engine).
 - `playhead` is SECONDS; TimelineEditor's own rAF calls `store.tickPlayhead()` (~line 175).
 - `renderTitleClip(ctx, clip, localFrame, canvasW, canvasH, fps)` / `renderLowerThirdClip(...)` in `~/composables/useAnimatedTextRenderer` are pure synchronous ctx draws.
-- Flag pattern: `getLocalSetting(key)`/`setLocalSetting` in `frontend/app/composables/useLocalSettings.ts` (auto `comfynext:` prefix).
+- Flag pattern: `getLocalSetting(key)`/`setLocalSetting` in `frontend/app/composables/useLocalSettings.ts` (auto `sailor:` prefix).
 - Python exporter LOOPS video sources (`ct = (local_t + in_frame) % src_T` in `render_frame_np`); the old Canvas2D preview loops too (`targetTime % v.duration`). M2's WebCodecsSource CLAMPS — that's the odd one out and gets fixed here (Task 1).
 - ComfyUI `/view` serves byte ranges (probe-verified 206) — `VideoElementSource` can seek real assets.
 
@@ -460,7 +460,7 @@ export function webglPreviewSupported(): boolean {
 
 /**
  * WebGL twin of usePlaybackEngine — same surface, swapped behind the
- * 'comfynext:Engine.WebGLPreview' flag in TimelineEditor. The store transport
+ * 'sailor:Engine.WebGLPreview' flag in TimelineEditor. The store transport
  * stays master (playhead in seconds, ticked by the editor's rAF); this engine
  * renders the playhead's frame each rAF with an unchanged-frame early-out, and
  * audio FOLLOWS transport (re-anchored on play and on seek jumps). Drift between
@@ -630,7 +630,7 @@ function resolveAudioUrl(clip: Clip): string | null {
 }
 
 // WebGL preview engine (Phase 1 M3): opt-in via
-//   localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
+//   localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
 // Falls back to the Canvas2D engine when WebGL2 is unavailable.
 const wantGl = getLocalSetting('Engine.WebGLPreview') === 'true'
 const useGl = wantGl && webglPreviewSupported()
@@ -663,7 +663,7 @@ git commit -m "Timeline: WebGL preview engine behind the Engine.WebGLPreview fla
 import { test, expect } from '@playwright/test'
 import { openBlankWorkflow, openTimelineEditor, timelineEditorOverlay, waitForBackend } from './_helpers'
 
-// Flag-on smoke: with comfynext:Engine.WebGLPreview set, the timeline editor
+// Flag-on smoke: with sailor:Engine.WebGLPreview set, the timeline editor
 // boots the WebGL engine (canvas tagged data-engine="webgl"), renders without
 // fallback warnings, and draws real pixels when a clip is added.
 // The default-flag path is covered by timeline.spec.ts (Canvas2D, unchanged).
@@ -676,7 +676,7 @@ test.describe('Timeline editor — WebGL engine flag', () => {
       if (msg.type() === 'error' && msg.text().includes('usePlaybackEngineGL')) warnings.push(msg.text())
     })
     await page.addInitScript(() => {
-      try { localStorage.setItem('comfynext:Engine.WebGLPreview', 'true') } catch {}
+      try { localStorage.setItem('sailor:Engine.WebGLPreview', 'true') } catch {}
     })
 
     await waitForBackend(page)
@@ -762,7 +762,7 @@ git commit -m "Engine: dev-gate the three harness pages (404 in prod builds) —
 
 **Enable** (browser console, then reload the editor):
 \`\`\`js
-localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
+localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
 \`\`\`
 **Disable:** set to 'false' or remove the key. The Canvas2D engine remains the default; WebGL2-less browsers fall back automatically (one console warning).
 
@@ -774,7 +774,7 @@ localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
 - [ ] Long video assets (the >96MB WebCodecs cap routes them to the element source — look for the console note)
 - [ ] Odd codecs / screen recordings / WebM (should warn + fall back per clip, never blank the preview)
 - [ ] Long sessions: memory stays flat-ish while scrubbing (decoded-frame LRU is bounded at 24 frames/clip)
-- [ ] Compare a render (`/comfynext/render_timeline`) against what the preview showed — WYSIWYG spot checks, esp. rotated/scaled clips
+- [ ] Compare a render (`/sailor/render_timeline`) against what the preview showed — WYSIWYG spot checks, esp. rotated/scaled clips
 
 ## Known accepted differences vs the old preview
 - Titles/lower-thirds now honor transforms/keyframes/fades (matches exports; the old preview ignored them on live titles).
@@ -794,7 +794,7 @@ Console warnings prefixed `WebGLPreviewRenderer:` / `usePlaybackEngineGL:` are t
 **M4 gate:** a week of real use with no fallback triggers and no visual complaints → flip the default (design doc M4).
 ```
 
-- [ ] **Step 2:** Design doc M3 row → `3. **M3 — Editor flag.** 🚧 Implementation landed <date> (plan: docs/plans/2026-06-09-phase1-m3-editor-flag-plan.md); dogfooding IN PROGRESS per docs/plans/2026-06-09-phase1-m3-dogfooding-checklist.md. usePlaybackEngineGL behind \`comfynext:Engine.WebGLPreview\` (default off), Canvas2D auto-fallback, kinetic/title/sequence/audio wired, per-clip skip-and-warn, WebCodecs size cap, harness pages dev-gated.`
+- [ ] **Step 2:** Design doc M3 row → `3. **M3 — Editor flag.** 🚧 Implementation landed <date> (plan: docs/plans/2026-06-09-phase1-m3-editor-flag-plan.md); dogfooding IN PROGRESS per docs/plans/2026-06-09-phase1-m3-dogfooding-checklist.md. usePlaybackEngineGL behind \`sailor:Engine.WebGLPreview\` (default off), Canvas2D auto-fallback, kinetic/title/sequence/audio wired, per-clip skip-and-warn, WebCodecs size cap, harness pages dev-gated.`
 
 - [ ] **Step 3: Commit**
 ```bash

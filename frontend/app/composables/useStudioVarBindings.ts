@@ -10,7 +10,7 @@
 // channel they have (props, a store, etc.) without this file importing
 // canvas internals directly. When a surface has no way to create a
 // collection node itself, `promote()` falls back to dispatching a
-// `comfynext:promoteControl` CustomEvent for VueNodeCanvas to handle.
+// `sailor:promoteControl` CustomEvent for VueNodeCanvas to handle.
 
 import { computed, watch } from 'vue'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
@@ -186,7 +186,7 @@ export interface StudioVarBindingsAccessors {
   edges: () => any[]
   /** Creates a new Collection node + VARS edge into the studio and returns the node.
    *  When absent (surface has no direct canvas access), `promote()` falls back to
-   *  dispatching a `comfynext:promoteControl` CustomEvent for VueNodeCanvas to handle. */
+   *  dispatching a `sailor:promoteControl` CustomEvent for VueNodeCanvas to handle. */
   createCollectionNode?: () => any
 }
 
@@ -239,7 +239,7 @@ export function useStudioVarBindings(
     const wired = findWiredCollectionNode(nodes(), edges(), nodeId)
     if (!wired && !createCollectionNode) {
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('comfynext:promoteControl', {
+        window.dispatchEvent(new CustomEvent('sailor:promoteControl', {
           detail: { nodeId, control, currentValue },
         }))
       }

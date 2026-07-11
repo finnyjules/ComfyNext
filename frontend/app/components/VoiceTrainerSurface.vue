@@ -113,7 +113,7 @@ async function startClone() {
       },
     })
 
-    window.dispatchEvent(new CustomEvent('comfynext:trainingQueueUpdated'))
+    window.dispatchEvent(new CustomEvent('sailor:trainingQueueUpdated'))
     job.status = 'queued'
     queuedName.value = displayName
     // Reset for the next voice.
@@ -179,7 +179,7 @@ async function startYoutubeClone() {
         },
       },
     })
-    window.dispatchEvent(new CustomEvent('comfynext:trainingQueueUpdated'))
+    window.dispatchEvent(new CustomEvent('sailor:trainingQueueUpdated'))
     job.status = 'queued'
     queuedName.value = displayName
     ytUrl.value = ''; ytStart.value = ''; ytEnd.value = ''; ytRights.value = false; name.value = ''

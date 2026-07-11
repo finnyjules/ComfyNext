@@ -29,13 +29,13 @@ const node = reactive({
     widgetsValues: [], widgetDefs: [{ name: 'width' }, { name: 'height' }],
     images: [] as string[],
     properties: {
-      comfynext_localLayers: [plain, tracked, underlined, struck, upper, combo, a1, a2, b1],
-      comfynext_localGroups: [
+      sailor_localLayers: [plain, tracked, underlined, struck, upper, combo, a1, a2, b1],
+      sailor_localGroups: [
         { id: 'A', parentId: 'C', name: 'Row' },
         { id: 'B', parentId: 'C', name: 'Side' },
         { id: 'C', name: 'Header' },
       ],
-      comfynext_localBg: '#12131a',
+      sailor_localBg: '#12131a',
     },
     mode: 0,
   },

@@ -114,7 +114,7 @@ New tiny component: **`LookupMatchPicker.vue`** (two selects + confirm), shown o
 
 - Linked columns (`linkedColumns(collection, resolve)`) render **after** the real columns, **read-only**, with a link glyph + faint tint. Each cell = `resolveLinkedCell(...)`; **no-match → "—"**.
 - The **key column** (Country) stays fully editable — it's the lookup input.
-- A linked column header shows its source and an **"edit in <Foreign>"** action that opens the foreign collection's drawer (`comfynext:openCollection`).
+- A linked column header shows its source and an **"edit in <Foreign>"** action that opens the foreign collection's drawer (`sailor:openCollection`).
 - A compact "Linked from **Themes** (Country)" chip near the toolbar makes the relationship legible; clicking it re-opens the match picker to change/clear the key.
 
 ## 6. Studio binding (`SpaceType/Gradient/Shader/Texture` surfaces)

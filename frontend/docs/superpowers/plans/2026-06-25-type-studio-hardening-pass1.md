@@ -603,12 +603,12 @@ Each mounted node holds a live WebGL2 context + a forever-running rAF, with no o
 - Modify: `app/components/vue-canvas/SpaceTypeNode.vue` (lifecycle + gating)
 
 **Interfaces:**
-- Consumes: the existing `comfynext:openSpaceType` CustomEvent (dispatched by `openEditor`, line 146) and a matching close signal. Inspect `VueNodeCanvas.vue` for how the modal closes (the surface emits `close` → the canvas clears `spaceTypeOpenForId`). Listen for the canvas's open/close; if no close event exists, add one: when the modal closes, `VueNodeCanvas` dispatches `window.dispatchEvent(new CustomEvent('comfynext:closeSpaceType'))`.
+- Consumes: the existing `sailor:openSpaceType` CustomEvent (dispatched by `openEditor`, line 146) and a matching close signal. Inspect `VueNodeCanvas.vue` for how the modal closes (the surface emits `close` → the canvas clears `spaceTypeOpenForId`). Listen for the canvas's open/close; if no close event exists, add one: when the modal closes, `VueNodeCanvas` dispatches `window.dispatchEvent(new CustomEvent('sailor:closeSpaceType'))`.
 - Produces: node preview runs only when visible, tab-active, and not being edited.
 
 - [ ] **Step 1: Confirm the close signal**
 
-Read `app/components/vue-canvas/VueNodeCanvas.vue` around the `spaceTypeOpenForId` handling (~line 4765) and the `comfynext:openSpaceType` listener. Determine the exact event/flow used to close the modal. If the canvas already toggles a known signal, use it; otherwise add a `comfynext:closeSpaceType` window event dispatched when `spaceTypeOpenForId` is cleared.
+Read `app/components/vue-canvas/VueNodeCanvas.vue` around the `spaceTypeOpenForId` handling (~line 4765) and the `sailor:openSpaceType` listener. Determine the exact event/flow used to close the modal. If the canvas already toggles a known signal, use it; otherwise add a `sailor:closeSpaceType` window event dispatched when `spaceTypeOpenForId` is cleared.
 
 - [ ] **Step 2: Add gating state + a single resume/pause gate**
 
@@ -639,11 +639,11 @@ At the end of `onMounted` (after `registerStudioBaker(props.id, bakeOutput)`, li
   document.addEventListener('visibilitychange', onVisibility)
   onOpen = (e: Event) => { if ((e as CustomEvent).detail?.nodeId === props.id) { gate.editing = true; applyGate() } }
   onClose = () => { gate.editing = false; applyGate() }
-  window.addEventListener('comfynext:openSpaceType', onOpen as EventListener)
-  window.addEventListener('comfynext:closeSpaceType', onClose as EventListener)
+  window.addEventListener('sailor:openSpaceType', onOpen as EventListener)
+  window.addEventListener('sailor:closeSpaceType', onClose as EventListener)
 ```
 
-(If Step 1 found a different close mechanism, listen to that instead of `comfynext:closeSpaceType`.)
+(If Step 1 found a different close mechanism, listen to that instead of `sailor:closeSpaceType`.)
 
 - [ ] **Step 4: Tear down in `onBeforeUnmount`**
 
@@ -654,8 +654,8 @@ onBeforeUnmount(() => {
   stopPreview()
   io?.disconnect(); io = null
   if (onVisibility) document.removeEventListener('visibilitychange', onVisibility)
-  if (onOpen) window.removeEventListener('comfynext:openSpaceType', onOpen as EventListener)
-  if (onClose) window.removeEventListener('comfynext:closeSpaceType', onClose as EventListener)
+  if (onOpen) window.removeEventListener('sailor:openSpaceType', onOpen as EventListener)
+  if (onClose) window.removeEventListener('sailor:closeSpaceType', onClose as EventListener)
   unregisterStudioBaker(props.id)
   engine?.dispose()
   engine = null

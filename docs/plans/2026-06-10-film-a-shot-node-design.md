@@ -35,7 +35,7 @@ Category `api node/video/Replicate`, display name **"Film a shot"**.
 
 | Input | Type | Notes |
 |---|---|---|
-| `preset` | Combo over 28 preset ids | default `push-in`; `extra_dict={"comfynext_widget": "shot_preset_picker"}` |
+| `preset` | Combo over 28 preset ids | default `push-in`; `extra_dict={"sailor_widget": "shot_preset_picker"}` |
 | `prompt` | String, multiline | the *subject*; the preset supplies the cinematography |
 | `image` | Image, optional | start frame → image-to-video |
 | `model` | Combo | same registry + `video_model_picker` widget as GenerateVideoNode; default `kling-v2.5-turbo-pro` |

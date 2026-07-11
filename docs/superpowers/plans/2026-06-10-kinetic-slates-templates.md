@@ -4,7 +4,7 @@
 
 **Goal:** Six LIV-style motion slate templates — brand-token-driven, instantiated from a gallery into ordinary animated Frame nodes — so a user fills text/media slots and gets a broadcast-grade branded slate clip with zero animation work.
 
-**Architecture:** A slate template is data: token-bearing layer definitions (`{{ brand.* }}` for colors/fonts via the shipped brand library, `{{ props.* }}` for user text slots) + per-layer `LayerAnimation` choreography + `FrameMotion`. A pure `instantiateSlate()` resolves tokens through the existing `resolveTokens` + `effectiveBrand` and emits concrete `LocalLayer[]` — a placed slate is a plain editable Frame, no live template link. The gallery follows the Film-a-Shot preset-modal pattern; placement rides the existing `comfynext:addNode` event with a new optional properties payload.
+**Architecture:** A slate template is data: token-bearing layer definitions (`{{ brand.* }}` for colors/fonts via the shipped brand library, `{{ props.* }}` for user text slots) + per-layer `LayerAnimation` choreography + `FrameMotion`. A pure `instantiateSlate()` resolves tokens through the existing `resolveTokens` + `effectiveBrand` and emits concrete `LocalLayer[]` — a placed slate is a plain editable Frame, no live template link. The gallery follows the Film-a-Shot preset-modal pattern; placement rides the existing `sailor:addNode` event with a new optional properties payload.
 
 **Tech Stack:** Vue 3 + TS (Nuxt 4), the Phase 1 motion engine (`frontend/app/lib/motion/`), brand library (`frontend/shared/brand/`), vitest.
 
@@ -425,7 +425,7 @@ git commit -m "Slates: gallery modal with brand-aware thumbnails + slot filling"
 - Modify: `frontend/app/layouts/default.vue` (~line 107: the Add-menu items array; plus modal mount + handler)
 - Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (`handleAddNode` ~line 1974-2040: optional properties payload)
 
-- [ ] **Step 1: extend the addNode event.** Read `handleAddNode` in VueNodeCanvas.vue. The Add menu (default.vue:107 `{ label: 'Frame', nodeType: 'Compositor' }`) dispatches `comfynext:addNode`. Extend the event detail with optional `properties?: Record<string, unknown>`: in `handleAddNode`, after the node is created, `Object.assign(node.data.properties ||= {}, detail.properties ?? {})` (match the actual node-object shape used there — read how the created node's `data.properties` is initialized; if creation is async/deferred, apply properties at the same place position/type are applied).
+- [ ] **Step 1: extend the addNode event.** Read `handleAddNode` in VueNodeCanvas.vue. The Add menu (default.vue:107 `{ label: 'Frame', nodeType: 'Compositor' }`) dispatches `sailor:addNode`. Extend the event detail with optional `properties?: Record<string, unknown>`: in `handleAddNode`, after the node is created, `Object.assign(node.data.properties ||= {}, detail.properties ?? {})` (match the actual node-object shape used there — read how the created node's `data.properties` is initialized; if creation is async/deferred, apply properties at the same place position/type are applied).
 
 - [ ] **Step 2: Add-menu item + modal.** In default.vue: add `{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }` after the Frame item (import Clapperboard from lucide; read how menu items dispatch — if items are pure nodeType dispatchers, add a special-case branch that opens the gallery instead). Mount:
 
@@ -442,12 +442,12 @@ git commit -m "Slates: gallery modal with brand-aware thumbnails + slot filling"
 const slateGalleryOpen = ref(false)
 function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
   slateGalleryOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Compositor',
       properties: {
-        comfynext_localLayers: payload.layers,
-        comfynext_motion: payload.motion,
+        sailor_localLayers: payload.layers,
+        sailor_motion: payload.motion,
       },
       // + whatever positioning fields the existing dispatch includes — copy them
     },

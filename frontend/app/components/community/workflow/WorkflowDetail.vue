@@ -73,7 +73,7 @@ async function openWorkflow() {
     const tab = openTab({ type: 'project', label: wf.title })
 
     // Dispatch event so the layout can store the workflow for this tab
-    window.dispatchEvent(new CustomEvent('comfynext:loadTabWorkflow', {
+    window.dispatchEvent(new CustomEvent('sailor:loadTabWorkflow', {
       detail: { tabId: tab.id, workflow: workflowJson },
     }))
   } catch (err) {

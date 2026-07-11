@@ -5,7 +5,7 @@
 
 ## Goal
 
-Reproduce Unicorn Studio's shader effects as first-class ComfyNext nodes: a live,
+Reproduce Unicorn Studio's shader effects as first-class Sailor nodes: a live,
 animated, 60fps WebGL preview in the node body (tweak params in real time, no server
 round-trip), and the *same* GLSL executed server-side on Run to produce real
 IMAGE/frame-batch outputs for the rest of the graph. Local GPU only — zero credits.
@@ -60,8 +60,8 @@ at ~300px while the server renders at full resolution; pixel-unit params would m
 the run output visibly different from the preview. Enforced in shader review and by
 the golden tests running at two resolutions.
 
-The ComfyUI server exposes `GET /comfynext/shader_effects` (manifest with .frag
-sources inlined) and `GET /comfynext/shader_effects/assets/{name}` (texture assets). The Nuxt frontend fetches
+The ComfyUI server exposes `GET /sailor/shader_effects` (manifest with .frag
+sources inlined) and `GET /sailor/shader_effects/assets/{name}` (texture assets). The Nuxt frontend fetches
 from it at runtime — no copies in the frontend bundle, so browser preview and server
 render can never drift to different sources.
 

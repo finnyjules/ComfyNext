@@ -44,11 +44,11 @@ changes. This mirrors the established `lora_picker` / `model_picker` pattern.
 
 ```
 Generate speech node
-  voice_id (Combo, string)  ──marked comfynext_widget:"voice_picker"──┐
+  voice_id (Combo, string)  ──marked sailor_widget:"voice_picker"──┐
                                                                        │
 ComfyNodeWidget.vue ── v-else-if voice_picker ──► WidgetVoicePicker.vue (launcher button)
                                                           │ dispatch window CustomEvent
-                                                          ▼  'comfynext:openVoiceGallery'
+                                                          ▼  'sailor:openVoiceGallery'
 VueNodeCanvas.vue ── handleOpenVoiceGallery ──► VoiceGalleryModal.vue
                                                           │ wraps CatalogModal
                                                           │ items = voiceCatalog ∩ node options
@@ -62,7 +62,7 @@ VueNodeCanvas.vue ── handleOpenVoiceGallery ──► VoiceGalleryModal.vue
 
 **1. Backend — mark the combo (1 line).**
 `comfy_api_nodes/nodes_replicate.py`, `GenerateSpeechNode.define_schema`: add
-`extra_dict={"comfynext_widget": "voice_picker"}` to the `voice_id`
+`extra_dict={"sailor_widget": "voice_picker"}` to the `voice_id`
 `IO.Combo.Input`. The combo continues to serialize the plain string, so existing
 workflows and the backend execute path are unchanged.
 
@@ -101,14 +101,14 @@ interface VoiceMeta { id: string; label: string; category: 'Female' | 'Male' | '
 **4. Launcher — `frontend/app/components/vue-canvas/widgets/WidgetVoicePicker.vue`.**
 Mirrors `WidgetVoicePicker` ≈ `WidgetLoraPicker`: a node-body button showing a mic
 icon + the current voice's humanized label (or "Choose a voice"). On click dispatches
-`window` CustomEvent `comfynext:openVoiceGallery` with
+`window` CustomEvent `sailor:openVoiceGallery` with
 `{ nodeId, widgetName, options }`. Owns its own label; `nopan nodrag` so it doesn't
 drag the canvas.
 
 **5. Render dispatch — `ComfyNodeWidget.vue`.**
 Add a branch alongside the other pickers (near line 429):
 ```html
-<template v-else-if="widgetDef.comfynext_widget === 'voice_picker'">
+<template v-else-if="widgetDef.sailor_widget === 'voice_picker'">
   <VueCanvasWidgetsWidgetVoicePicker
     :model-value="modelValue" :node-id="nodeId"
     :widget-name="widgetDef.name" :options="widgetDef.options || []"
@@ -132,8 +132,8 @@ filters, confirmLabel "Use voice"):
 **7. Modal mount + open handler — `VueNodeCanvas.vue`.**
 - Add `<VueCanvasVoiceGalleryModal … />` alongside the other gallery modals (~line 4482).
 - Add `handleOpenVoiceGallery(e)` that reads `{ nodeId, widgetName, options }` and
-  opens the modal; register/unregister the `comfynext:openVoiceGallery` listener next
-  to the existing `comfynext:openLoraGallery` wiring (lines ~2065 / ~2092).
+  opens the modal; register/unregister the `sailor:openVoiceGallery` listener next
+  to the existing `sailor:openLoraGallery` wiring (lines ~2065 / ~2092).
 
 ### Audio playback
 
@@ -179,7 +179,7 @@ playback and is the wrong tool here.
 
 | File | Change |
 | --- | --- |
-| `comfy_api_nodes/nodes_replicate.py` | mark `voice_id` combo `comfynext_widget:"voice_picker"` |
+| `comfy_api_nodes/nodes_replicate.py` | mark `voice_id` combo `sailor_widget:"voice_picker"` |
 | `scripts/bake_voice_samples.py` | new — one-time sample bake |
 | `frontend/public/voice-samples/*.mp3` | new — 17 committed sample clips |
 | `frontend/app/lib/voiceCatalog.ts` | new — voice metadata + helpers |

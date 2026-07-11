@@ -38,7 +38,7 @@ One prediction returns a batch of 4 images — cheap, fast, and **one queue wait
 ### Change 4 — Enhance as the main action, Promote secondary
 On a sketch-output card (`properties.sketchOutput`):
 - **Primary — "Enhance":** super-resolve *this exact image* into a detailed high-res version via the existing `EnhanceDetailNode` (Clarity engine, `philz1337x/clarity-upscaler`). Spawn it fed by this card's image (reuse the escalator/`spawnEnhanceDetail` pattern already on `ArtifactImageNode`, `branch: true`). Keeps the picked image; makes it real.
-- **Secondary — "Promote":** re-generate at full quality from the *source sketch's* prompt/seed (look up `sketchSourceId`), model left at the finisher default. For when the *idea* was right and a fresh full render is wanted. Reuse `sketchPromoteOverridesFor` + `comfynext:spawnBeside`.
+- **Secondary — "Promote":** re-generate at full quality from the *source sketch's* prompt/seed (look up `sketchSourceId`), model left at the finisher default. For when the *idea* was right and a fresh full render is wanted. Reuse `sketchPromoteOverridesFor` + `sailor:spawnBeside`.
 
 Both spawn focused, never auto-run (standing rule). Copy honest: Enhance = "make this exact image real," Promote = "re-render the idea fresh."
 

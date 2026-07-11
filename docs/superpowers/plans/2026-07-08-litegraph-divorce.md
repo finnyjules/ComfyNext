@@ -133,7 +133,7 @@ Rules:
 **Interfaces:**
 - Produces `mapWsEvent(msg: { type: string, data: any }, myClientId: string): BridgeShapedEvent | null` in `wsEventMap.ts` — pure, maps ComfyUI WS messages to the event object shapes `default.vue` already consumes (from the bridge inventory): `executing → { event: 'executing', node_id }`, `progress → { event: 'progress', percent }` (compute percent from `data.value/data.max*100`), `executed → { event: 'executed', node_id, output }`, `execution_error → { event: 'execution_error', node_id, exception_message, exception_type, traceback }`, `execution_success/execution_complete → { event: 'execution_complete', prompt_id }`, `execution_start → { event: 'execution_start', prompt_id }`, `gate_paused → { event: 'gate_paused', node_id, prompt_id }`, `status → null` (ignored v1); drop messages for other client ids where the payload carries one.
 - Produces `useDirectExecution()` returning `{ connect(): void, queue(prompt: ApiPrompt, workflow: LiteGraphWorkflow): Promise<{ prompt_id?: string, node_errors?: any }>, onEvent(cb: (e: BridgeShapedEvent) => void): void, clientId: string }`:
-  - clientId: `sessionStorage['comfynext:clientId'] ||= crypto.randomUUID()`
+  - clientId: `sessionStorage['sailor:clientId'] ||= crypto.randomUUID()`
   - WS URL: `\`\${location.protocol === 'https:' ? 'wss' : 'ws'}://\${location.host}/ws?clientId=\${clientId}\`` (nuxt.config.ts upgrade hook pipes to ComfyUI). Auto-reconnect with 1s→5s backoff while enabled; re-use same clientId.
   - queue: `$fetch('/prompt', { method: 'POST', body: { prompt, client_id: clientId, extra_data: { extra_pnginfo: { workflow } } } })`; on 400 catch → return `{ node_errors }` extracted from the error response body.
 
@@ -143,7 +143,7 @@ Rules:
 ### Task 8: Settings flag + run-path wiring in default.vue
 
 **Files:**
-- Create: `frontend/app/composables/useDirectExecutionEnabled.ts` (clone the `useVueNodesEnabled.ts` pattern EXACTLY; key `comfynext:Comfy.DirectExecution.Enabled`; **default OFF**: `stored === 'true'`)
+- Create: `frontend/app/composables/useDirectExecutionEnabled.ts` (clone the `useVueNodesEnabled.ts` pattern EXACTLY; key `sailor:Comfy.DirectExecution.Enabled`; **default OFF**: `stored === 'true'`)
 - Modify: `frontend/app/components/SettingsModal.vue` (add after the VueNodes entry: `{ id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', description: 'Queue prompts directly from the app, bypassing the bridge iframe', local: true }`)
 - Modify: `frontend/app/layouts/default.vue` — surgical, two touch points:
   1. In the run path (`runVueWorkflow`, after the filtered LiteGraph workflow is finalized and would be posted via `loadWorkflow`): branch — if `directExecutionEnabled`: `const prompt = graphToPrompt(filtered, objectInfo); await direct.queue(prompt, filtered)`; surface thrown `UnknownNodeTypeError`/builder errors via the existing toast + abort BEFORE dispatch; else: existing postMessage path unchanged. In dev (`import.meta.dev`), ALSO always compute the builder prompt and, when the bridge is available, request `getPrompt` and `useShadowParity().record(ours, theirs, label)` on the `prompt_data` reply (fire-and-forget; never blocks the run).

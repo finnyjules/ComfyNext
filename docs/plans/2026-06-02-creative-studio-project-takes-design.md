@@ -1,6 +1,6 @@
 # Creative production studio — projects, versions & takes — design
 
-The strategic goal: make ComfyNext feel like a creative *production studio* that
+The strategic goal: make Sailor feel like a creative *production studio* that
 happens to run on ComfyUI, not a node tool with a nicer skin. The single
 principle behind everything here: **the more a user thinks in projects, takes
 and scenes — and the less in nodes, wires and samplers — the stronger that
@@ -21,17 +21,17 @@ The plumbing is closer than it looks. What exists:
   page groups ComfyUI `/history` by that UUID
   ([useRecentProjects.ts](../../frontend/app/composables/useRecentProjects.ts:58)).
 - **Workflow persistence (session-only):** active graphs live in `sessionStorage`
-  under `comfynext:workflows`; tab metadata in `comfynext:tabs`
+  under `sailor:workflows`; tab metadata in `sailor:tabs`
   ([useTabs.ts](../../frontend/app/composables/useTabs.ts:25)); project names
-  in `localStorage` `comfynext:project-names`.
-- **Extension namespace:** `workflow.extra.comfynext` round-trips groups +
+  in `localStorage` `sailor:project-names`.
+- **Extension namespace:** `workflow.extra.sailor` round-trips groups +
   annotations ([useVueNodes.ts](../../frontend/app/composables/useVueNodes.ts:248)).
 - **Artifact state persists in node props:** Frame layers in
-  `properties.comfynext_localLayers`
+  `properties.sailor_localLayers`
   ([useCompositorLayers.ts](../../frontend/app/composables/useCompositorLayers.ts)),
   Timeline in the `edit_state` widget
   ([shared/timeline/types.ts](../../frontend/shared/timeline/types.ts:6)).
-- **Server-side `/comfynext/*` endpoints already exist** (assets), so we have a
+- **Server-side `/sailor/*` endpoints already exist** (assets), so we have a
   precedent for persisting our own data to the ComfyUI user dir.
 
 What's **missing** for a studio:
@@ -106,22 +106,22 @@ inside the version's `activeTakes` + the node data embedded in `workflow`.
 
 ## Persistence — promote Project to a server entity
 
-Follow the existing `/comfynext/*` precedent rather than inventing a new
+Follow the existing `/sailor/*` precedent rather than inventing a new
 transport. New ComfyUI endpoints, writing JSON under the user dir
-(`user/comfynext/projects/<uuid>/project.json`):
+(`user/sailor/projects/<uuid>/project.json`):
 
 | Endpoint | Verb | Purpose |
 |---|---|---|
-| `/comfynext/projects` | GET | list projects (id, name, cover, updatedAt) for Home |
-| `/comfynext/projects/{uuid}` | GET / PUT | load / save a full Project |
-| `/comfynext/projects/{uuid}` | DELETE | remove |
-| `/comfynext/projects/{uuid}/version` | POST | append a ProjectVersion (snapshot) |
+| `/sailor/projects` | GET | list projects (id, name, cover, updatedAt) for Home |
+| `/sailor/projects/{uuid}` | GET / PUT | load / save a full Project |
+| `/sailor/projects/{uuid}` | DELETE | remove |
+| `/sailor/projects/{uuid}/version` | POST | append a ProjectVersion (snapshot) |
 
 Migration is gentle because the UUID already exists: the first time a tab with a
 `projectUuid` is saved, we write a `Project` seeded from the current graph and
 the existing `/history` runs (back-fill versions from past promptIds). Home's
 `useRecentProjects` switches its source from "`/history` grouped by UUID" to
-"`/comfynext/projects`", falling back to history for un-migrated work.
+"`/sailor/projects`", falling back to history for un-migrated work.
 
 Output *files* still live in ComfyUI's `output/` and are addressable via
 `/view`; we persist their URLs + params in the take, not the bytes.
@@ -176,7 +176,7 @@ Timeline doc applied to `interpolateClipAt`).
 
 ## Versions — whole-project snapshots
 
-A **Version** = the graph + `activeTakes` per node + `workflow.extra.comfynext`
+A **Version** = the graph + `activeTakes` per node + `workflow.extra.sailor`
 (groups/annotations) + Frame/Timeline state (already in node props). Snapshot on
 demand ("Save version") and auto on meaningful checkpoints (first run of a
 session, before a destructive graph edit). Restore loads the workflow and
@@ -250,7 +250,7 @@ The flag-gated prototype stores takes on the deep-watched, serialized
 review and are accepted for the prototype:
 
 1. **Takes are session-only.** `convertToLiteGraph` stashes only the *active*
-   take's image into `comfynext_preview`, not the `takes` array — so a tab
+   take's image into `sailor_preview`, not the `takes` array — so a tab
    switch or reload keeps the last image but drops the take history. The
    settings copy says so. Real persistence arrives with Phase 0/2 (takes ride
    inside a `ProjectVersion.activeTakes`).
@@ -268,7 +268,7 @@ serialization side effect. Do this when takes graduate from the flag.
 
 ## Why this is the right direction (moat)
 
-Every step widens the gap only ComfyNext occupies. ComfyUI **won't** build a
+Every step widens the gap only Sailor occupies. ComfyUI **won't** build a
 project/takes/delivery studio — it's an engine and a community, not a creative
 app. The AI-canvas startups **can't** match the depth — they have no engine and
 lag the model frontier. Projects, takes and delivery are exactly the ground
@@ -282,12 +282,12 @@ a tagline and becomes the product.
 - `frontend/app/composables/useTakes.ts` — `buildTake`, `resolveActiveTake`, append/switch/pin/discard, variation queueing.
 - `frontend/app/components/vue-canvas/TakesStrip.vue` — node-body thumbnail strip + A/B compare.
 - `frontend/app/components/DeliveryPanel.vue` — export presets + render queue (Phase 4).
-- `custom_nodes/comfynext_bridge/.../projects endpoints` (or a Nitro `server/api/projects/*`) — `/comfynext/projects` persistence.
+- `custom_nodes/sailor_bridge/.../projects endpoints` (or a Nitro `server/api/projects/*`) — `/sailor/projects` persistence.
 
 **Modified**
 - `VueNodeCanvas.vue` — `executed` handler appends takes; output/edge resolution via `resolveActiveTake`.
 - `ComfyNode.vue` — render active take + mount `TakesStrip`.
-- `useRecentProjects.ts` — source from `/comfynext/projects`, fall back to history.
+- `useRecentProjects.ts` — source from `/sailor/projects`, fall back to history.
 - `useTabs.ts` / `default.vue` — bind tabs to durable Projects; snapshot hooks.
 - `useAssetLibrary.ts` + asset endpoints — provenance + tags + project scope.
 - `useCompositorLayers.ts`, `usePlaybackEngine.ts`, `nodes_timeline.py` — resolve wired sources via active take.
@@ -295,7 +295,7 @@ a tagline and becomes the product.
 ## Open decision
 
 **Where do project endpoints live** — a ComfyUI custom-node route under
-`/comfynext/*` (consistent with assets, shared by any frontend, survives a
+`/sailor/*` (consistent with assets, shared by any frontend, survives a
 frontend-only reload) vs a Nuxt Nitro `server/api/projects/*` (closer to the
 frontend, but split-brain from the assets endpoints). Leaning ComfyUI-side for
 consistency and durability, but Nitro is faster to prototype.

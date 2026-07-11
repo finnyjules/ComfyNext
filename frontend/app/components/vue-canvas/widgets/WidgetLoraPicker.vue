@@ -2,7 +2,7 @@
 /**
  * WidgetLoraPicker — node-body launcher button that opens the LoRA gallery.
  * Replaces the standard Combo dropdown for the `lora_name` input (marked
- * `extra_dict={"comfynext_widget": "lora_picker"}` on FluxLoRARemoteNode).
+ * `extra_dict={"sailor_widget": "lora_picker"}` on FluxLoRARemoteNode).
  * The combo still serializes a plain filename string, so workflows stay
  * portable; the gallery modal writes lora_name + aesthetic + prompt back
  * to the node.
@@ -53,7 +53,7 @@ const coverSrc = computed(() => {
 watch(() => props.modelValue, () => { coverError.value = false })
 
 function openGallery() {
-  window.dispatchEvent(new CustomEvent('comfynext:openLoraGallery', {
+  window.dispatchEvent(new CustomEvent('sailor:openLoraGallery', {
     detail: { nodeId: props.nodeId, widgetName: props.widgetName, kind: props.kind },
   }))
 }

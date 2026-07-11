@@ -2,7 +2,7 @@
  *  one of its takes (spec §Sketch Node, Task 3). Unlike draft-mode promote
  *  (`promote.ts`, which re-runs the SAME node in place), this never re-runs
  *  the sketch itself: it only computes the overrides for the NEW generator
- *  node that `comfynext:spawnBeside` creates next to it.
+ *  node that `sailor:spawnBeside` creates next to it.
  *
  *  Deliberately narrow: prompt/seed/aspect_ratio only. `model` is never
  *  copied — the spawned node uses the schema default (the finisher model),

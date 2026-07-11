@@ -15,7 +15,7 @@
 - Edges: `addEdges([{ source, sourceHandle: 'output-N', target, targetHandle: 'input-N', type: 'comfy', data: { dataType } }])`. Helpers `inputHandleFor(node, type)` / `outputHandleFor(node, type)` exist (lines 633–644). After pushing nodes, `await nextTick()` before `addEdges` or Vue Flow prunes the edges.
 - Undo: `useCanvasHistory` snapshots on a 350 ms debounced watch of `[nodes, edges]` — a synchronous multi-node insert is automatically one undo step. No extra work needed.
 - `useNodeSearch().nodeTypes` has `{ name, displayName, description, category, inputs[], outputs[] }` (inputs from `input.required` only — fine for candidate filtering; the AI catalog uses `objectInfo` directly for accuracy).
-- Anthropic key: `useLocalSettings().getLocalSetting('ComfyNext.AI.AnthropicApiKey')`, forwarded in the request body like `explain.post.ts` does.
+- Anthropic key: `useLocalSettings().getLocalSetting('Sailor.AI.AnthropicApiKey')`, forwarded in the request body like `explain.post.ts` does.
 - Components under `app/components/vue-canvas/` are auto-imported with the path prefix, e.g. `<VueCanvasPortIntentPopover>`.
 - `onConnectStart`/`onConnectEnd` are NOT currently wired in VueNodeCanvas; Vue Flow's `useVueFlow()` provides them.
 - Tests: Playwright in `frontend/tests/` (servers must already be running: `npm run dev` on port 3002 per `playwright.config.ts`, ComfyUI on 8188). No unit test runner yet — Task 1 adds vitest scoped to `app/lib/**`.
@@ -922,7 +922,7 @@ export function usePortIntent() {
   /** Resolve an intent into a validated suggestion. One repair retry on
    *  validation failure; throws with a user-readable message otherwise. */
   async function suggest(intent: string, anchor: PortAnchor, ctx: SuggestContext): Promise<ValidationResult> {
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
     if (!apiKey) throw new Error('No Anthropic API key set. Add your key in Settings → AI.')
 
     await fetchNodeTypes()

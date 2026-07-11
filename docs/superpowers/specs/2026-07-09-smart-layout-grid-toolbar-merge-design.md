@@ -51,8 +51,8 @@ The old "Dimensions" block folds into the Columns/Rows rows above.
 ### Behavior
 
 - **Rows becomes independently toggleable.** New persisted setting
-  `ComfyNext.SmartLayout.RowGuides`, default **on** (nothing disappears vs.
-  today). Wired through the same `comfynext:setting-changed` event path the
+  `Sailor.SmartLayout.RowGuides`, default **on** (nothing disappears vs.
+  today). Wired through the same `sailor:setting-changed` event path the
   other two toggles use, so shell toolbar and canvas stay in sync without prop
   plumbing.
 - In `GridEditorCanvas.vue`, gate `gridCells.rowLines` behind `rowGuidesOn` and

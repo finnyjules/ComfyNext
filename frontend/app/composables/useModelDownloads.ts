@@ -50,7 +50,7 @@ const bundleInfo = reactive<Record<string, BundleInfo>>({})
 
 async function probeModelStatus(key: ModelBundleKey) {
   try {
-    const status = await (await fetch(`/comfynext/models/status?key=${key}`)).json()
+    const status = await (await fetch(`/sailor/models/status?key=${key}`)).json()
     if (status.ready) modelsReady.add(key)
     else modelsReady.delete(key)
     bundleInfo[key] = {
@@ -75,7 +75,7 @@ async function ensureModels(key: ModelBundleKey): Promise<boolean> {
 
     let status: any
     try {
-      status = await (await fetch(`/comfynext/models/status?key=${key}`)).json()
+      status = await (await fetch(`/sailor/models/status?key=${key}`)).json()
       if (status.label) download.label = status.label
       if (status.ready) {
         download.active = false
@@ -88,9 +88,9 @@ async function ensureModels(key: ModelBundleKey): Promise<boolean> {
       return false
     }
 
-    // SSE stream of `data: {json}\n\n` lines from /comfynext/models/download.
+    // SSE stream of `data: {json}\n\n` lines from /sailor/models/download.
     return new Promise<boolean>((resolve) => {
-      const es = new EventSource(`/comfynext/models/download?key=${key}`)
+      const es = new EventSource(`/sailor/models/download?key=${key}`)
       eventSources.set(key, es)
       const finish = (result: boolean) => {
         es.close()

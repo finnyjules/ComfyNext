@@ -578,7 +578,7 @@ class FilmShotNode(IO.ComfyNode):
                     options=_SHOT_PRESET_IDS,
                     default=_SHOT_DEFAULT_PRESET_ID,
                     tooltip="Click to choose a shot from the preset gallery.",
-                    extra_dict={"comfynext_widget": "shot_preset_picker"},
+                    extra_dict={"sailor_widget": "shot_preset_picker"},
                 ),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="The subject of the shot — who/what and where. "
@@ -592,7 +592,7 @@ class FilmShotNode(IO.ComfyNode):
                     default=_FILM_SHOT_DEFAULT_MODEL_ID,
                     tooltip="Video model. Kling v2.5 Turbo Pro recommended for "
                             "camera-language adherence.",
-                    extra_dict={"comfynext_widget": "video_model_picker"},
+                    extra_dict={"sailor_widget": "video_model_picker"},
                 ),
                 IO.Combo.Input("aspect_ratio", options=_VIDEO_GEN_ASPECT_RATIOS, default="16:9",
                                tooltip="Auto-falls back to the model's nearest supported ratio."),
@@ -605,7 +605,7 @@ class FilmShotNode(IO.ComfyNode):
                     "model_options",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "internal"},
+                    extra_dict={"sailor_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
                 # ADVANCED per-dimension overrides. Option strings ARE the
@@ -1196,11 +1196,11 @@ import { SHOT_PRESETS_BY_ID } from '~/data/shot-presets'
 At the gallery-route template (~line 419), extend the condition and the kind mapping:
 
 ```vue
-    <template v-if="widgetDef.comfynext_widget === 'model_picker' || widgetDef.comfynext_widget === 'video_model_picker' || widgetDef.comfynext_widget === 'text_effect_picker' || widgetDef.comfynext_widget === 'shot_preset_picker'">
+    <template v-if="widgetDef.sailor_widget === 'model_picker' || widgetDef.sailor_widget === 'video_model_picker' || widgetDef.sailor_widget === 'text_effect_picker' || widgetDef.sailor_widget === 'shot_preset_picker'">
       <VueCanvasWidgetsWidgetModelPicker
         :model-value="modelValue"
         :node-id="nodeId"
-        :kind="widgetDef.comfynext_widget === 'video_model_picker' ? 'video' : widgetDef.comfynext_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.comfynext_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
+        :kind="widgetDef.sailor_widget === 'video_model_picker' ? 'video' : widgetDef.sailor_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.sailor_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>

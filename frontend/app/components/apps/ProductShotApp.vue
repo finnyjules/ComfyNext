@@ -88,7 +88,7 @@ function pickImage(
   return fallback
 }
 
-// ComfyNext's SaveImage requires the full export-param set (not just images +
+// Sailor's SaveImage requires the full export-param set (not just images +
 // filename_prefix like stock ComfyUI), so supply sane defaults every time.
 function saveImageInputs(images: [string, number], prefix: string) {
   return {
@@ -490,7 +490,7 @@ interface LookPreset {
   blendModel: 'Flux Kontext Pro' | 'Nano Banana'
 }
 
-const LOOKS_KEY = 'comfynext-packshot-looks'
+const LOOKS_KEY = 'sailor-packshot-looks'
 const presets = ref<LookPreset[]>([])
 const lookName = ref('')
 

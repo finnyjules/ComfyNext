@@ -73,7 +73,7 @@ WAIT before editing: `'change her shirt to red'` appears in PARAPHRASES already 
 
 - [ ] **Step 2: Run the routing spec — verify the new rows fail**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts`
 Expected: FAIL — the new paraphrase/collision rows can't route to node types that aren't in the registry yet.
 
 - [ ] **Step 3: Edit capabilities.ts**
@@ -103,7 +103,7 @@ Then ADD, directly after the EditImageNode entry:
 
 - [ ] **Step 4: Run the routing spec to green — iterate on VOCABULARY only**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts`
 
 Iterate until green. Expected friction and the sanctioned fixes:
 - Vocabulary self-test collision (an intent of cap A surfaces cap B in top-3): make the phrase more specific or move it to the capability it actually describes. Never assert-weaken.
@@ -113,13 +113,13 @@ Expected final: PASS, all suites in the file.
 
 - [ ] **Step 5: Run the adjacent agent suites (routing data feeds them)**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts tests/unit/agent-canvas-surface.unit.spec.ts tests/unit/agent-plan.unit.spec.ts tests/unit/agent-fastlane.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts tests/unit/agent-canvas-surface.unit.spec.ts tests/unit/agent-plan.unit.spec.ts tests/unit/agent-fastlane.unit.spec.ts`
 Expected: PASS (fastlane/plan specs may reference capability counts or specific types — if a count assertion breaks, update the count only).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/agent/capabilities.ts frontend/tests/unit/agent-capability-routing.unit.spec.ts
 git commit -m "feat(agent): route edit verbs to RemoveObject/TextEdit/RecolorObject — intents migrated from EditImageNode"
 ```
@@ -186,7 +186,7 @@ describe('agent coverage guard', () => {
 
 - [ ] **Step 2: Run it — collect the real failure list**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-coverage-guard.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-coverage-guard.unit.spec.ts`
 Expected: FAIL — first on the missing `AGENT_EXCLUDED` export, then (after Step 3's stub) on each uncovered node. Record the exact uncovered list in your report.
 
 - [ ] **Step 3: Add AGENT_EXCLUDED and triage every failure**
@@ -208,13 +208,13 @@ Then triage each guard failure, one line each. Decision rule per node:
 
 - [ ] **Step 4: Run the guard to green**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-coverage-guard.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-coverage-guard.unit.spec.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/agent/capabilities.ts frontend/tests/unit/agent-coverage-guard.unit.spec.ts
 git commit -m "test(agent): coverage guard — every edit/enhance panel node needs an agent story"
 ```
@@ -294,7 +294,7 @@ For every ⚙ mark: check whether the node is in `AGENT_CAPABILITIES` or `AGENT_
 - [ ] **Step 2: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add docs/agent/edit-verb-coverage.md
 git commit -m "docs(agent): edit-verb coverage matrix — verbs, nodes, gaps, next-slice candidates"
 ```
@@ -307,7 +307,7 @@ git commit -m "docs(agent): edit-verb coverage matrix — verbs, nodes, gaps, ne
 
 - [ ] **Step 1: Full unit sweep of the touched area**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts tests/unit/agent-coverage-guard.unit.spec.ts tests/unit/action-catalog.unit.spec.ts tests/unit/agent-plan.unit.spec.ts tests/unit/agent-canvas-surface.unit.spec.ts tests/unit/agent-fastlane.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/agent-capability-routing.unit.spec.ts tests/unit/agent-coverage-guard.unit.spec.ts tests/unit/action-catalog.unit.spec.ts tests/unit/agent-plan.unit.spec.ts tests/unit/agent-canvas-surface.unit.spec.ts tests/unit/agent-fastlane.unit.spec.ts`
 Expected: all PASS.
 
 - [ ] **Step 2: Live agent-plan smoke (one LLM call, cents not dollars)**

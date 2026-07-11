@@ -38,7 +38,7 @@ Reference behaviour (from the tool):
 
 Mirror the **Space Type** pattern exactly — a frontend-only node (no backend
 `class_type`, never executes), config persisted in
-`node.data.properties.comfynext_gradientStudio`, a live-preview card, and a
+`node.data.properties.sailor_gradientStudio`, a live-preview card, and a
 full-screen surface editor that bakes its own outputs.
 
 ```
@@ -63,7 +63,7 @@ Registration touch points (all mirror SpaceType):
 - `ARTIFACT_NODE_COMPONENTS` in `useVueNodes.ts`: `GradientStudio: 'gradient-studio'`
 - `node-types` map in `VueNodeCanvas.vue`: `'gradient-studio': markRaw(GradientStudioNode)`
 - `createNodeData` wildcard-output special case (frontend-only node)
-- open/output events: `comfynext:openGradientStudio` + `comfynext:gradientStudioOutput`
+- open/output events: `sailor:openGradientStudio` + `sailor:gradientStudioOutput`
   (handlers clone the SpaceType ones)
 - `default.vue` Load menu: a "Gradient" entry dispatching `addNode` `GradientStudio`
 
@@ -90,11 +90,11 @@ Animation = the same `render()` evaluated with motion-overridden params at time
 ## Output wiring
 
 - **Still:** surface renders at export resolution to an offscreen canvas →
-  `toBlob` PNG → `uploadFrameBatch` → `comfynext:gradientStudioOutput` creates a
+  `toBlob` PNG → `uploadFrameBatch` → `sailor:gradientStudioOutput` creates a
   downstream **Image** artifact wired from the node (provenance edge), exactly
   like Space Type's "Generate as image".
 - **Video:** `ensureSpaceTypeBake(cfg, …, { renderFrame })` bakes the PNG
-  sequence, POST `/comfynext/spacetype_encode` returns an MP4 → **Video**
+  sequence, POST `/sailor/spacetype_encode` returns an MP4 → **Video**
   artifact. (Reuses the existing encoder route; no new backend.)
 - **Export PNG/JPG (2K/4K/8K):** direct browser download from the offscreen render.
 

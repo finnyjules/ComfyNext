@@ -12,9 +12,9 @@ const props = defineProps<{
     // Backend-provided UI hint. When set, overrides the type-based renderer
     // pick below. Only "model_picker" is recognised today — opens the model
     // gallery modal instead of showing a plain combo dropdown. Backend ships
-    // this via IO.Combo.Input(..., extra_dict={"comfynext_widget": "model_picker"}).
-    comfynext_widget?: string
-    // For comfynext_widget === 'gradient_editor': 'duotone' | 'stops'.
+    // this via IO.Combo.Input(..., extra_dict={"sailor_widget": "model_picker"}).
+    sailor_widget?: string
+    // For sailor_widget === 'gradient_editor': 'duotone' | 'stops'.
     gradient_mode?: string
   }
   modelValue: any
@@ -421,18 +421,18 @@ function formatLabel(name: string): string {
     <!-- Backend-marked custom widget: skip the standard label + renderer chain
          and hand the whole slot to the model picker (it owns its own label).
          `video_model_picker` is the same widget pointed at the video catalog. -->
-    <template v-if="widgetDef.comfynext_widget === 'model_picker' || widgetDef.comfynext_widget === 'video_model_picker' || widgetDef.comfynext_widget === 'text_effect_picker' || widgetDef.comfynext_widget === 'shot_preset_picker'">
+    <template v-if="widgetDef.sailor_widget === 'model_picker' || widgetDef.sailor_widget === 'video_model_picker' || widgetDef.sailor_widget === 'text_effect_picker' || widgetDef.sailor_widget === 'shot_preset_picker'">
       <VueCanvasWidgetsWidgetModelPicker
         :model-value="modelValue"
         :node-id="nodeId"
-        :kind="widgetDef.comfynext_widget === 'video_model_picker' ? 'video' : widgetDef.comfynext_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.comfynext_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
+        :kind="widgetDef.sailor_widget === 'video_model_picker' ? 'video' : widgetDef.sailor_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.sailor_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
         :locked="modelPickerLocked"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
     <!-- LoRA gallery launcher: replaces the lora_name dropdown with a button
          that opens the visual LoRA gallery modal. -->
-    <template v-else-if="widgetDef.comfynext_widget === 'lora_picker'">
+    <template v-else-if="widgetDef.sailor_widget === 'lora_picker'">
       <VueCanvasWidgetsWidgetLoraPicker
         :model-value="modelValue"
         :node-id="nodeId"
@@ -449,7 +449,7 @@ function formatLabel(name: string): string {
     <!-- Voice gallery launcher: replaces the voice_id dropdown on the
          "Generate speech" node with a button that opens the voice gallery,
          where each voice can be auditioned before selecting. -->
-    <template v-else-if="widgetDef.comfynext_widget === 'voice_picker'">
+    <template v-else-if="widgetDef.sailor_widget === 'voice_picker'">
       <VueCanvasWidgetsWidgetVoicePicker
         :model-value="modelValue"
         :node-id="nodeId"
@@ -462,7 +462,7 @@ function formatLabel(name: string): string {
          own label and produces a JSON string {yaw,pitch,roll}. `nodeId` is
          forwarded so the widget can look up the connected image and render
          it inside the gimbal as a reference plane. -->
-    <template v-else-if="widgetDef.comfynext_widget === 'camera_gimbal'">
+    <template v-else-if="widgetDef.sailor_widget === 'camera_gimbal'">
       <VueCanvasWidgetsWidgetCameraGimbal
         :model-value="modelValue"
         :node-id="nodeId"
@@ -474,7 +474,7 @@ function formatLabel(name: string): string {
          camera gimbal, but aims a key light and adds an intensity slider. The
          widget owns its own label and produces a JSON string
          {azimuth,elevation,intensity}. -->
-    <template v-else-if="widgetDef.comfynext_widget === 'light_gimbal'">
+    <template v-else-if="widgetDef.sailor_widget === 'light_gimbal'">
       <VueCanvasWidgetsWidgetLightGimbal
         :model-value="modelValue"
         :node-id="nodeId"
@@ -484,7 +484,7 @@ function formatLabel(name: string): string {
     </template>
     <!-- Variable-font playground: drives RenderType. Owns its full UI and
          produces a JSON state blob (font, axes, colors, uploaded filename). -->
-    <template v-else-if="widgetDef.comfynext_widget === 'font_playground'">
+    <template v-else-if="widgetDef.sailor_widget === 'font_playground'">
       <VueCanvasWidgetsWidgetFontPlayground
         :model-value="modelValue"
         :label="formatLabel(widgetDef.name)"
@@ -493,7 +493,7 @@ function formatLabel(name: string): string {
     </template>
     <!-- Kinetic Typography: animated text with GSAP SplitText. Produces a
          JSON state blob (text, preset, font, animation params, frame filenames). -->
-    <template v-else-if="widgetDef.comfynext_widget === 'kinetic_type'">
+    <template v-else-if="widgetDef.sailor_widget === 'kinetic_type'">
       <VueCanvasWidgetsWidgetKineticType
         :model-value="modelValue"
         :node-id="nodeId"
@@ -503,7 +503,7 @@ function formatLabel(name: string): string {
     </template>
     <!-- Text Mask: renders text as a B&W clipping mask. Same font infra
          as Font Playground, always white-on-black (or inverted). -->
-    <template v-else-if="widgetDef.comfynext_widget === 'text_mask'">
+    <template v-else-if="widgetDef.sailor_widget === 'text_mask'">
       <VueCanvasWidgetsWidgetTextMask
         :model-value="modelValue"
         :label="formatLabel(widgetDef.name)"
@@ -511,7 +511,7 @@ function formatLabel(name: string): string {
       />
     </template>
     <!-- Text on Path: renders text along an arc/circle/wave/curve. -->
-    <template v-else-if="widgetDef.comfynext_widget === 'text_on_path'">
+    <template v-else-if="widgetDef.sailor_widget === 'text_on_path'">
       <VueCanvasWidgetsWidgetTextOnPath
         :model-value="modelValue"
         :label="formatLabel(widgetDef.name)"
@@ -520,7 +520,7 @@ function formatLabel(name: string): string {
     </template>
     <!-- Duotone / Gradient Map colour editor: stop strip + colour-theory palette
          picker. Owns a JSON blob ({shadow,highlight} or [{pos,color}]). -->
-    <template v-else-if="widgetDef.comfynext_widget === 'gradient_editor'">
+    <template v-else-if="widgetDef.sailor_widget === 'gradient_editor'">
       <VueCanvasWidgetsWidgetGradientEditor
         :model-value="modelValue"
         :label="formatLabel(widgetDef.name)"

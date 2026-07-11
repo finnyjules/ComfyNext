@@ -1,7 +1,7 @@
 const directExecutionEnabled = ref(false)
 let listenerRegistered = false
 
-const STORAGE_KEY = 'comfynext:Comfy.DirectExecution.Enabled'
+const STORAGE_KEY = 'sailor:Comfy.DirectExecution.Enabled'
 
 /** Default-OFF (beta): only an explicit 'true' (Settings toggle) enables
  * direct execution. Every other stored value stays off. */
@@ -21,7 +21,7 @@ export function useDirectExecutionEnabled() {
     window.addEventListener('storage', (e) => {
       if (e.key === STORAGE_KEY) load()
     })
-    window.addEventListener('comfynext:setting-changed', ((e: CustomEvent) => {
+    window.addEventListener('sailor:setting-changed', ((e: CustomEvent) => {
       if (e.detail?.key === STORAGE_KEY) load()
     }) as EventListener)
     load()

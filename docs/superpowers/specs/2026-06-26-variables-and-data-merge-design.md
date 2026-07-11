@@ -8,7 +8,7 @@
 
 ## 1. Summary
 
-Add a **variables + data-merge** system to ComfyNext so a user can drive a studio (and later
+Add a **variables + data-merge** system to Sailor so a user can drive a studio (and later
 any workflow node) from a **table of data** and **generate in batch**.
 
 North-star scenario: for the World Cup, build a Smart Layout poster template, connect a table of
@@ -93,7 +93,7 @@ is**. v1 registers exactly one implementation, `SmartLayoutBatchTarget`. Phases 
 ### Components
 
 1. **Dataset node** (new) — vue-flow type `dataset`, frontend-only artifact (no ComfyUI backend
-   class). Persisted at `node.data.properties.comfynext_dataset`. One `DATASET` output handle.
+   class). Persisted at `node.data.properties.sailor_dataset`. One `DATASET` output handle.
    - Editor modal: a spreadsheet-style grid — add/remove rows & columns, set per-column type,
      **paste tabular data** or **import .csv** with type inference (hex → color, numeric → number).
    - Inline shortcut: a target node can **spin up an attached dataset** (node created + auto-wired
@@ -104,7 +104,7 @@ is**. v1 registers exactly one implementation, `SmartLayoutBatchTarget`. Phases 
    `target.listVariables(node)`, then **auto-align** by name (exact → alias → fuzzy). A **Mapping
    panel** shows each variable with a column dropdown (pre-filled, correctable). **Type-compatible
    alignments only** (color column → color variable, image → image, etc.). Stored at
-   `node.data.properties.comfynext_dataBinding`. Unmapped variables fall back to `variable.default`.
+   `node.data.properties.sailor_dataBinding`. Unmapped variables fall back to `variable.default`.
 
 3. **Batch runner** — a "Generate batch" action.
    - **Confirm modal first:** "N rows × M template outputs → K renders · est. *free* (template
@@ -139,8 +139,8 @@ shows the multiplied total.
 
 ## 5. Persistence
 
-- Dataset → `node.data.properties.comfynext_dataset`.
-- Binding → `node.data.properties.comfynext_dataBinding`.
+- Dataset → `node.data.properties.sailor_dataset`.
+- Binding → `node.data.properties.sailor_dataBinding`.
 - Both serialize with the graph and survive reload. Edits to dataset columns after binding are
   reconciled in the Mapping panel: now-missing columns show as unmapped (fall back to default).
 

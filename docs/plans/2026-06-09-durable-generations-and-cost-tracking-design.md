@@ -26,12 +26,12 @@ Decisions made during brainstorming:
 
 ## 1. Storage & server
 
-Extends [comfy_extras/nodes_comfynext_projects.py](../../comfy_extras/nodes_comfynext_projects.py)
+Extends [comfy_extras/nodes_sailor_projects.py](../../comfy_extras/nodes_sailor_projects.py)
 (same pure-storage-functions + thin-aiohttp-routes pattern).
 
 ```
-user/comfynext/projects/<uuid>/generations.jsonl   # one line per completed run
-user/comfynext/spend.jsonl                          # global ledger, one line per paid run
+user/sailor/projects/<uuid>/generations.jsonl   # one line per completed run
+user/sailor/spend.jsonl                          # global ledger, one line per paid run
 ```
 
 Generation record (one JSONL line):
@@ -56,9 +56,9 @@ Routes:
 
 | Route | Verb | Behavior |
 |---|---|---|
-| `/comfynext/projects/{uuid}/generations` | POST | Validate + append to the project's JSONL; skip if `promptId` already recorded (dedup); auto-`ensure_project` like version saves; when `usd` or `credits` > 0 also append the spend line. Returns `{id}` (or `{id, deduped:true}`). |
-| `/comfynext/projects/{uuid}/generations` | GET | `{generations: [...]}` newest-first; corrupt lines skipped. |
-| `/comfynext/spend/summary` | GET | `{ month: {usd, credits}, total: {usd, credits}, byProject: [{uuid, usd, credits}] }` — current calendar month computed server-side from `spend.jsonl`. |
+| `/sailor/projects/{uuid}/generations` | POST | Validate + append to the project's JSONL; skip if `promptId` already recorded (dedup); auto-`ensure_project` like version saves; when `usd` or `credits` > 0 also append the spend line. Returns `{id}` (or `{id, deduped:true}`). |
+| `/sailor/projects/{uuid}/generations` | GET | `{generations: [...]}` newest-first; corrupt lines skipped. |
+| `/sailor/spend/summary` | GET | `{ month: {usd, credits}, total: {usd, credits}, byProject: [{uuid, usd, credits}] }` — current calendar month computed server-side from `spend.jsonl`. |
 
 Appends are small single-line writes (effectively atomic); reads tolerate a
 truncated final line. Deleting a project removes its `generations.jsonl` but
@@ -113,7 +113,7 @@ truncated final line. Deleting a project removes its `generations.jsonl` but
 
 - [ProjectMenu.vue](../../frontend/app/components/vue-canvas/ProjectMenu.vue)
   dropdown gets two quiet read-only lines: "This project · ~$14.20" and
-  "This month · ~$52" (from `/comfynext/spend/summary`, fetched on open).
+  "This month · ~$52" (from `/sailor/spend/summary`, fetched on open).
 - Asset detail overlay shows the generation's cost when the record has one.
 - CanvasStatusBar post-run behavior unchanged.
 

@@ -6,7 +6,7 @@
 
 ## Premise
 
-ComfyNext already runs a style factory: ~47 style LoRAs trained from Krea moodboard imports, each with a private Replicate model + stackable `.tar` weights + trigger (and, for newer ones, a taste profile). They live as local sidecars in `models/loras/` — visible only on the dev machine. This project turns them into a **public, house-owned style library organized by use case**: a browsable hub every user gets, seeded with all existing styles, with a repeatable publishing pipeline for the styles that keep arriving.
+Sailor already runs a style factory: ~47 style LoRAs trained from Krea moodboard imports, each with a private Replicate model + stackable `.tar` weights + trigger (and, for newer ones, a taste profile). They live as local sidecars in `models/loras/` — visible only on the dev machine. This project turns them into a **public, house-owned style library organized by use case**: a browsable hub every user gets, seeded with all existing styles, with a repeatable publishing pipeline for the styles that keep arriving.
 
 Strategy (from the brainstorm): house-owned collection + destination surface + richer browsing. Not in scope: use-case-aware auto-suggestions (a later layer on this substrate).
 

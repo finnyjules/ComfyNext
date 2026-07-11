@@ -103,7 +103,7 @@ def test_instructions_blank_not_appended():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_background_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_background_prompts_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._swap_background_prompts'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -195,13 +195,13 @@ def build_swap_background_instruction(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_background_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/swap_background_prompts_test.py -v`
 Expected: PASS — 9 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_swap_background_prompts.py tests-unit/comfy_extras_test/swap_background_prompts_test.py
 git commit -m "feat(swap-background): branching prompt builder + unit tests
 
@@ -349,20 +349,20 @@ In `nodes.py`, find `"nodes_swap_product.py",` in the `extras_files` list and ad
 
 - [ ] **Step 3: Syntax check + registration check**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_swap_background.py').read()); print('syntax ok')"`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_swap_background.py').read()); print('syntax ok')"`
 Expected: `syntax ok`
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && grep -n "nodes_swap_background.py" nodes.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && grep -n "nodes_swap_background.py" nodes.py`
 Expected: one match inside `extras_files`.
 
 - [ ] **Step 4: Restart ComfyUI and confirm the node loads**
 
 Kill the running ComfyUI and relaunch (a parallel session may relaunch it for you — a process whose start time is after your kill and that serves the node is fine):
-`cd /Users/julien/Documents/GitHub/ComfyNext && nohup .venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfyui-swapbg.log 2>&1 &`
+`cd /Users/julien/Documents/GitHub/Sailor && nohup .venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfyui-swapbg.log 2>&1 &`
 
 Then poll (Python avoids the shell choking on unicode tooltips):
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python - <<'PY'
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python - <<'PY'
 import json,urllib.request,time
 for _ in range(60):
     try:
@@ -380,7 +380,7 @@ Expected: `LOADED Swap Background | req: ['product', 'relight_to_scene', 'ground
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/nodes_swap_background.py nodes.py
 git commit -m "feat(swap-background): SwapBackgroundNode (nano-banana-2, ref-or-prompt)
 
@@ -426,7 +426,7 @@ describe('Swap Background node registration', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/swap-background-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/swap-background-catalog.unit.spec.ts`
 Expected: FAIL — `ACTION_CATALOG.SwapBackgroundNode` is undefined.
 
 - [ ] **Step 3a: Add the action-catalog entry**
@@ -461,13 +461,13 @@ In `NODE_MODEL_BRAND`, add directly after the `SwapProductNode: 'Gemini',` line:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/swap-background-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/swap-background-catalog.unit.spec.ts`
 Expected: PASS — 3 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/data/action-catalog.ts frontend/app/data/generator-icons.ts frontend/tests/unit/swap-background-catalog.unit.spec.ts
 git commit -m "feat(swap-background): register Swap Background in the frontend catalog
 
@@ -522,7 +522,7 @@ def test_blank_instructions_not_appended():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_prompts_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._turntable_prompts'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -560,13 +560,13 @@ def segment_instruction(degrees: int, direction: str, instructions: str = "") ->
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_prompts_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_prompts_test.py -v`
 Expected: PASS — 4 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_turntable_prompts.py tests-unit/comfy_extras_test/turntable_prompts_test.py
 git commit -m "feat(turntable): spin/segment prompt builders + unit tests
 
@@ -621,7 +621,7 @@ def test_degrees_always_sum_to_360():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_plan_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_plan_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._turntable_plan'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -662,13 +662,13 @@ def plan_segments(extra_views, direction: str) -> list[tuple[str, str, int]]:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_plan_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_plan_test.py -v`
 Expected: PASS — 5 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_turntable_plan.py tests-unit/comfy_extras_test/turntable_plan_test.py
 git commit -m "feat(turntable): segment planner (views + direction -> arcs) + tests
 
@@ -741,7 +741,7 @@ def test_empty_raises():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_stitch_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_stitch_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._turntable_stitch'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -802,13 +802,13 @@ def stitch_clips(sources: list) -> io.BytesIO:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_stitch_test.py -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/turntable_stitch_test.py -v`
 Expected: PASS — 3 passed. (If the H.264 encoder in this PyAV build drops/reorders and the exact count is off by a frame, switch the synthetic-clip codec to `"mpeg4"`; do NOT weaken the boundary-drop assertion.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/_turntable_stitch.py tests-unit/comfy_extras_test/turntable_stitch_test.py
 git commit -m "feat(turntable): PyAV clip stitcher w/ boundary-frame drop + tests
 
@@ -831,7 +831,7 @@ Dual-path video node: front-only → Luma loop (one call); extra views → Seeda
 
 - [ ] **Step 1: Confirm the exact `VideoFromFile` import used in the codebase**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && grep -rn "VideoFromFile" comfy_api_nodes/util/download_helpers.py comfy_api/latest/__init__.py | head`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && grep -rn "VideoFromFile" comfy_api_nodes/util/download_helpers.py comfy_api/latest/__init__.py | head`
 Expected: shows how `VideoFromFile` is imported/exposed (e.g. `from comfy_api.latest import InputImpl` then `InputImpl.VideoFromFile`, or a direct module path). Use that exact form in Step 2's `stitched` return. If `from comfy_api.latest import InputImpl` does not expose it, use the path `download_url_to_video_output` uses.
 
 - [ ] **Step 2: Create the node file**
@@ -957,20 +957,20 @@ In `nodes.py`, find `"nodes_swap_background.py",` and add immediately after it:
 
 - [ ] **Step 4: Syntax + registration checks**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_turntable.py').read()); print('syntax ok')"`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -c "import ast; ast.parse(open('comfy_extras/nodes_turntable.py').read()); print('syntax ok')"`
 Expected: `syntax ok`
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && grep -n "nodes_turntable.py" nodes.py`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && grep -n "nodes_turntable.py" nodes.py`
 Expected: one match in `extras_files`.
 
 - [ ] **Step 5: Restart ComfyUI and confirm the node loads**
 
 Relaunch (a parallel session may beat you to the port; a fresh process serving the node is fine):
-`cd /Users/julien/Documents/GitHub/ComfyNext && nohup .venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfyui-turntable.log 2>&1 &`
+`cd /Users/julien/Documents/GitHub/Sailor && nohup .venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfyui-turntable.log 2>&1 &`
 
 Poll:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python - <<'PY'
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python - <<'PY'
 import json,urllib.request,time
 for _ in range(60):
     try:
@@ -992,7 +992,7 @@ If NOT LOADED, read `/tmp/comfyui-turntable.log` for the import error (most like
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add comfy_extras/nodes_turntable.py nodes.py
 git commit -m "feat(turntable): TurntableNode (Luma loop / Seedance keyframe-stitch)
 
@@ -1037,7 +1037,7 @@ describe('Turntable node registration', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/turntable-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/turntable-catalog.unit.spec.ts`
 Expected: FAIL — `ACTION_CATALOG.TurntableNode` is undefined.
 
 - [ ] **Step 3a: Add the action-catalog entry**
@@ -1072,13 +1072,13 @@ In `NODE_MODEL_BRAND`, add near the video entries:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext/frontend && npx vitest run tests/unit/turntable-catalog.unit.spec.ts`
+Run: `cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vitest run tests/unit/turntable-catalog.unit.spec.ts`
 Expected: PASS — 3 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/data/action-catalog.ts frontend/app/data/generator-icons.ts frontend/tests/unit/turntable-catalog.unit.spec.ts
 git commit -m "feat(turntable): register Turntable node in the frontend catalog
 

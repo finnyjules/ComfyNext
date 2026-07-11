@@ -23,7 +23,7 @@ function isSeedWidgetDef(w: any): boolean {
   return !!w && w.type === 'INT' && (w.control_after_generate || /seed/i.test(String(w.name || '')))
 }
 function isInspectorWidget(w: any): boolean {
-  if (!w || w.hidden || w.comfynext_widget === 'internal' || w.comfynext_widget === 'lora_picker') return false
+  if (!w || w.hidden || w.sailor_widget === 'internal' || w.sailor_widget === 'lora_picker') return false
   if (w.advanced) return true
   if (isSeedWidgetDef(w)) return true
   if (w.name === 'aspect_ratio') return true

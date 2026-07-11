@@ -49,7 +49,7 @@ const isDropTarget = computed(() => dragEdgeId.value === props.id)
 const showInsert = computed(() => (hovering.value || isDropTarget.value) && !isRunning.value)
 
 function onInsert() {
-  window.dispatchEvent(new CustomEvent('comfynext:edgeInsert', { detail: { edgeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:edgeInsert', { detail: { edgeId: props.id } }))
   hovering.value = false
 }
 </script>

@@ -1,7 +1,7 @@
 // frontend/app/lib/shotdirector/types.ts
 // Data model for the Shot Director studio — a structured, editable "intent"
 // for a single video shot that compiles to a terse best-practice prompt +
-// reference wiring. Persisted at node.data.properties.comfynext_shotDirector.
+// reference wiring. Persisted at node.data.properties.sailor_shotDirector.
 // Pure data + vocabulary; no Vue/DOM/network here.
 
 export type ShotMode = 'reference' | 'firstLastFrame'

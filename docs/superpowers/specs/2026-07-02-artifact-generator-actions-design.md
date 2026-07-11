@@ -19,7 +19,7 @@ The existing dropdown ([ArtifactImageNode.vue:500](../../../frontend/app/compone
 | **Retouch** | Remove BG | existing (splice `BackgroundRemove`) | — |
 | | Inpaint | existing (modal) | — |
 | | Edit (Nano Banana) | existing (splice `EditImageNode`) | ~12cr |
-| | Fix | existing (`comfynext:critiqueNode`) | — |
+| | Fix | existing (`sailor:critiqueNode`) | — |
 | **Enhance** | Enhance Detail | splice `EnhanceDetailNode`, focus, **don't run** | 14–28cr |
 | | Upscale | splice `UpscaleImageNode` with defaults, **auto-run it** | ~14cr |
 | | Relight | splice `RelightNode`, focus, **don't run** | ~12cr |
@@ -31,9 +31,9 @@ The existing dropdown ([ArtifactImageNode.vue:500](../../../frontend/app/compone
 
 ### Mechanics
 
-- All splice actions reuse the existing `comfynext:applyEffect` → `spliceAfterNode(nodeId, nodeType, outType, widgetOverrides)` path (VueNodeCanvas.vue:1508). New need: a `run: false | true` flag on the event detail so Enhance/Relight/Lens splice without running while Upscale splices then dispatches `comfynext:runFiltered` at the new node. Also a `focus` behavior: select + pan the new node into view.
-- **Animate** is the one non-splice spawn: `shot-director` is a frontend-only Vue node, so it needs its own event (`comfynext:animateArtifact`) handled in VueNodeCanvas — create the node at +360px, wire artifact → its reference input, hydrate the image as primary ref (`@Image1`), open the preset gallery modal.
-- **Variations** dispatches 4 sequential `comfynext:runFiltered` events targeting this artifact. Requirement: each run must randomize the *upstream producing generator's* seed (otherwise 4 identical outputs). If the existing `'self'` reroll scope doesn't reach upstream seeds, add an `'upstream-seed'` scope to `runFiltered` rather than bending `'self'`. ComfyUI's queue serializes the runs; each `executed` event appends a Take.
+- All splice actions reuse the existing `sailor:applyEffect` → `spliceAfterNode(nodeId, nodeType, outType, widgetOverrides)` path (VueNodeCanvas.vue:1508). New need: a `run: false | true` flag on the event detail so Enhance/Relight/Lens splice without running while Upscale splices then dispatches `sailor:runFiltered` at the new node. Also a `focus` behavior: select + pan the new node into view.
+- **Animate** is the one non-splice spawn: `shot-director` is a frontend-only Vue node, so it needs its own event (`sailor:animateArtifact`) handled in VueNodeCanvas — create the node at +360px, wire artifact → its reference input, hydrate the image as primary ref (`@Image1`), open the preset gallery modal.
+- **Variations** dispatches 4 sequential `sailor:runFiltered` events targeting this artifact. Requirement: each run must randomize the *upstream producing generator's* seed (otherwise 4 identical outputs). If the existing `'self'` reroll scope doesn't reach upstream seeds, add an `'upstream-seed'` scope to `runFiltered` rather than bending `'self'`. ComfyUI's queue serializes the runs; each `executed` event appends a Take.
 - **Credit hints** live in one constants file `frontend/app/lib/artifact/actionPricing.ts` (static map, comment pointing at the pricing doc; 1cr = $0.01). Right-aligned, `text-white/35`, tabular-nums. This is the "finals cost money" mental-model seed — no billing dependency.
 
 ### Edge cases

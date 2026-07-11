@@ -1,7 +1,7 @@
 /**
  * Local "design" layers for the Compositor — text and shapes authored directly
  * in the editor, with no upstream graph node. They live on the compositor node
- * (`node.data.properties.comfynext_localLayers`) and are baked client-side into
+ * (`node.data.properties.sailor_localLayers`) and are baked client-side into
  * a single RGBA overlay at submit time, then fed to the backend as an alpha
  * overlay (see `nodes_compositor.py`).
  *

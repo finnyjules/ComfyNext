@@ -29,7 +29,7 @@ two genuinely new pieces: (1) a **plan-then-materialize** proposal lifecycle
 
 | Capability | Live function | File | How the agent reaches it |
 |---|---|---|---|
-| Add node (with widget overrides) | `useNodeSearch().addNode(type, {widgetOverrides})` → `comfynext:addNode` → `createNodeData` | `useNodeSearch.ts:121`, `VueNodeCanvas.vue:615,1329` | dispatch event |
+| Add node (with widget overrides) | `useNodeSearch().addNode(type, {widgetOverrides})` → `sailor:addNode` → `createNodeData` | `useNodeSearch.ts:121`, `VueNodeCanvas.vue:615,1329` | dispatch event |
 | Delete node(s) | `deleteNodes(ids)` | `VueNodeCanvas.vue:3481` | call |
 | Connect (edge) | `addEdges([edge])` / `onConnect` | `VueNodeCanvas.vue:184` | push validated edge |
 | Disconnect (edge) | `deleteEdges(ids)` | `VueNodeCanvas.vue:3485` | call |

@@ -21,7 +21,7 @@ export interface ImageSearchResult {
 export async function probeImageDimensions(url: string, timeoutMs = 4000): Promise<{ width: number; height: number } | null> {
   try {
     const res = await fetch(url, {
-      headers: { 'Range': 'bytes=0-131071', 'User-Agent': 'Mozilla/5.0 (compatible; ComfyNext image import)', 'Accept': 'image/*' },
+      headers: { 'Range': 'bytes=0-131071', 'User-Agent': 'Mozilla/5.0 (compatible; Sailor image import)', 'Accept': 'image/*' },
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),
     })

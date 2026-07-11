@@ -40,7 +40,7 @@ function deriveProjectName(classTypes: string[]): string {
 
 function getSavedNames(): Record<string, string> {
   if (import.meta.server) return {}
-  try { return JSON.parse(localStorage.getItem('comfynext:project-names') || '{}') }
+  try { return JSON.parse(localStorage.getItem('sailor:project-names') || '{}') }
   catch { return {} }
 }
 

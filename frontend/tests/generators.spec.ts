@@ -9,7 +9,7 @@ import { openBlankWorkflow, waitForBackend } from './_helpers'
  * within the rendered DOM and find Vue Flow's react state via the canvas.
  *
  * The simplest path that actually works: use the canvas's existing
- * `comfynext:addNode` event to drop a node, find its data-id, then set the
+ * `sailor:addNode` event to drop a node, find its data-id, then set the
  * widget value by triggering input events on the rendered <select>.
  */
 async function setComboValue(page: Page, nodeDataId: string, widgetLabel: RegExp, value: string) {
@@ -26,7 +26,7 @@ async function addUseCaseNode(page: Page, nodeType: string): Promise<string> {
   // Capture node id by counting before/after.
   const before = await page.locator('.vue-flow__node').count()
   await page.evaluate((t) => {
-    window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: t } }))
+    window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType: t } }))
   }, nodeType)
   await expect.poll(async () => page.locator('.vue-flow__node').count()).toBeGreaterThan(before)
   // Last node is the new one.
@@ -193,14 +193,14 @@ test.describe('Generators panel + use-case nodes', () => {
     }
 
     async function findInputImage(request: any): Promise<string | null> {
-      const list = await request.get('/comfynext/input_listing').then((r: any) => r.json())
+      const list = await request.get('/sailor/input_listing').then((r: any) => r.json())
       const img = (list.items as Array<{ filename: string }> | undefined)
         ?.find(i => /\.(jpe?g|png|webp)$/i.test(i.filename))
       return img?.filename ?? null
     }
 
     async function findInputAudio(request: any): Promise<string | null> {
-      const list = await request.get('/comfynext/input_listing').then((r: any) => r.json())
+      const list = await request.get('/sailor/input_listing').then((r: any) => r.json())
       const a = (list.items as Array<{ filename: string }> | undefined)
         ?.find(i => /\.(mp3|wav|m4a|ogg|flac)$/i.test(i.filename))
       return a?.filename ?? null

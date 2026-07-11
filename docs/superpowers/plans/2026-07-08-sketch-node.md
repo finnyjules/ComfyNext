@@ -85,7 +85,7 @@ export const SYNTHETIC_NODE_ENTRIES: SyntheticNodeEntry[] = [
 Then wire it into the search results and the add path:
 1. In `fetchNodeTypes()`, after `types.sort(...)`, prepend synthetic entries as `NodeType`-shaped items (`{ name: e.name, displayName: e.displayName, description: e.description, category: 'presets', source: 'essentials', inputs: [], outputs: [] }`).
 2. Register their keywords so ranking finds them: merge `{ [e.name]: e.keywords }` into the keyword map passed to `searchNodes` (pass a merged object instead of the bare `NODE_KEYWORDS` import at the `filteredNodes` computed).
-3. In `addNode(nodeType, opts)`, FIRST check `SYNTHETIC_NODE_ENTRIES.find(e => e.name === nodeType)`; when hit, dispatch `comfynext:addNode` with the entry's `addAs` fields merged with any caller opts (caller opts win), then `closeNodeSearch()` and return. (The Vue-canvas event handler already supports widget/property/dataOverrides — Task 8 of the previous epic added dataOverrides.)
+3. In `addNode(nodeType, opts)`, FIRST check `SYNTHETIC_NODE_ENTRIES.find(e => e.name === nodeType)`; when hit, dispatch `sailor:addNode` with the entry's `addAs` fields merged with any caller opts (caller opts win), then `closeNodeSearch()` and return. (The Vue-canvas event handler already supports widget/property/dataOverrides — Task 8 of the previous epic added dataOverrides.)
 
 Check how `addNode` currently builds the event detail and keep its LiteGraph fallback branch untouched (synthetic entries are Vue-canvas-only; in LiteGraph mode, fall back to adding the raw `GenerateImageNode` with widgetOverrides only).
 
@@ -129,7 +129,7 @@ No pastel, no purple. Keep both hunks minimal — this file is shared.
 
 **Interfaces:**
 - Produces: `sketchPromoteOverridesFor(take: Take): { widgetOverrides: Record<string, unknown>; propertyOverrides: Record<string, unknown> } | null` — from `take.params`: `prompt`, `seed`, `aspect_ratio` when present (NO `model` — schema default is the finisher); `propertyOverrides = { seedLocks: { seed: true } }` when a seed exists, `{}` otherwise. Null when params carry none of the three.
-- Produces: window event `comfynext:spawnBeside` handled in VueNodeCanvas: `detail = { sourceNodeId: string; nodeType: string; widgetOverrides?; propertyOverrides?; dataOverrides? }` — creates the node at `source.position.x + width + 80` (copy the placement math from `handleSpaceTypeOutput`, VueNodeCanvas.vue ~2846–2852), pushes it, focuses it (reuse however addNode/fast-lane focuses — e.g. the frameNodes/fitView helper used elsewhere), NO edge, NO run.
+- Produces: window event `sailor:spawnBeside` handled in VueNodeCanvas: `detail = { sourceNodeId: string; nodeType: string; widgetOverrides?; propertyOverrides?; dataOverrides? }` — creates the node at `source.position.x + width + 80` (copy the placement math from `handleSpaceTypeOutput`, VueNodeCanvas.vue ~2846–2852), pushes it, focuses it (reuse however addNode/fast-lane focuses — e.g. the frameNodes/fitView helper used elsewhere), NO edge, NO run.
 
 - [ ] **Step 1: DISCOVERY (do this before writing code, record findings in your report)**
 
@@ -161,7 +161,7 @@ describe('sketchPromoteOverridesFor', () => {
 })
 ```
 
-- [ ] **Step 3: Implement** builder + `comfynext:spawnBeside` handler (placement math copied from handleSpaceTypeOutput; register/unregister with the other listeners at ~3650/3708) + the sketch branch in the promote handler per discovery:
+- [ ] **Step 3: Implement** builder + `sailor:spawnBeside` handler (placement math copied from handleSpaceTypeOutput; register/unregister with the other listeners at ~3650/3708) + the sketch branch in the promote handler per discovery:
 
 ```ts
 function promoteTake(takeId: string) {
@@ -171,7 +171,7 @@ function promoteTake(takeId: string) {
   if (sketchSource) {
     const built = sketchPromoteOverridesFor(take)
     if (!built) return
-    window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
+    window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
       detail: { sourceNodeId: sketchSource, nodeType: 'GenerateImageNode', ...built, dataOverrides: { title: undefined } },
     }))
     return
@@ -194,4 +194,4 @@ function promoteTake(takeId: string) {
 
 - Spec coverage: search entry (T1), card skin (T2), promote-beside + mode-toggle-untouched + never-auto-run (T3). Out-of-scope items respected.
 - The discovery step in T3 is deliberate: take-bearing-node identity was never proven under a real generator run (paid-render verification deferred in the previous epic), and the answer changes both this task's wiring and possibly a latent keying bug from the mode work (contingency (c)).
-- Type consistency: `SyntheticNodeEntry.addAs` mirrors the addNode event detail exactly; `sketchPromoteOverridesFor` returns the two override bags `comfynext:spawnBeside` forwards verbatim.
+- Type consistency: `SyntheticNodeEntry.addAs` mirrors the addNode event detail exactly; `sketchPromoteOverridesFor` returns the two override bags `sailor:spawnBeside` forwards verbatim.

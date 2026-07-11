@@ -48,7 +48,7 @@
         { "name": "INT", "type": "INT", "links": [3] }
       ],
       "properties": {
-        "comfynext_preview": {
+        "sailor_preview": {
           "text": "stale cached text"
         }
       }
@@ -82,7 +82,7 @@
   ],
   "config": {},
   "extra": {
-    "comfynext": {
+    "sailor": {
       "annotations": []
     }
   },

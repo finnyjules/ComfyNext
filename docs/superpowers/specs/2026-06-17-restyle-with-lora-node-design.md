@@ -156,7 +156,7 @@ The text-to-image path and the IP-Adapter path of those nodes are left as-is.
 - Add discoverability entries: `frontend/app/lib/nodeKeywords.ts` (keywords:
   restyle, style, lora, nano banana, transfer) and
   `frontend/app/lib/nodeDescriptions.ts` (one-line description).
-- The `lora_picker` widget is already wired via `extra_dict={"comfynext_widget":
+- The `lora_picker` widget is already wired via `extra_dict={"sailor_widget":
   "lora_picker"}`; reuse it on `lora_name`.
 
 ## Registration & rollout

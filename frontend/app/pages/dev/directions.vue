@@ -47,7 +47,7 @@ function onPaste(e: ClipboardEvent) {
 
 async function propose() {
   if (!image.value || !brief.value.trim() || busy.value) return
-  const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+  const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
   if (!apiKey) { error.value = 'Add your Anthropic key in Settings → AI.'; return }
   busy.value = true; error.value = ''; directions.value = []; ran.value = false
   try {

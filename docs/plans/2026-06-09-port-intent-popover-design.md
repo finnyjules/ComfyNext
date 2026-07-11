@@ -76,7 +76,7 @@ One text input, two engines:
   nodes.
 - Errors (validation failure after retry, network, missing API key) render inline in
   the popover; fuzzy results remain usable throughout. Missing API key links to the
-  existing settings field (`ComfyNext.AI.AnthropicApiKey`).
+  existing settings field (`Sailor.AI.AnthropicApiKey`).
 
 ## 3. AI endpoint
 

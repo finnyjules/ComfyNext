@@ -40,11 +40,11 @@ const BAKE_SS = 2
 
 // Live view of the node's saved config (falls back to defaults for a fresh node).
 const state = computed<SpaceTypeState>(
-  () => (props.data?.properties?.comfynext_spaceType as SpaceTypeState) ?? defaultSpaceTypeState(),
+  () => (props.data?.properties?.sailor_spaceType as SpaceTypeState) ?? defaultSpaceTypeState(),
 )
 
 // True if the node already had a saved config at mount time; false = fresh node → apply default scene.
-const hadSavedConfig = !!props.data?.properties?.comfynext_spaceType
+const hadSavedConfig = !!props.data?.properties?.sailor_spaceType
 
 function previewHeight(s: SpaceTypeState): number {
   const [cw, ch] = dimsFromKey(s.dimsKey)
@@ -120,7 +120,7 @@ onMounted(async () => {
     if (scene) {
       const merged = applySceneToState(base, scene)
       const n = props.data
-      if (n) { (n.properties ||= {}).comfynext_spaceType = merged }
+      if (n) { (n.properties ||= {}).sailor_spaceType = merged }
     }
   }
 
@@ -141,8 +141,8 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', onVisibility)
   onOpen = (e: Event) => { if ((e as CustomEvent).detail?.nodeId === props.id) { gate.editing = true; applyGate() } }
   onClose = () => { gate.editing = false; applyGate() }
-  window.addEventListener('comfynext:openSpaceType', onOpen as EventListener)
-  window.addEventListener('comfynext:closeSpaceType', onClose as EventListener)
+  window.addEventListener('sailor:openSpaceType', onOpen as EventListener)
+  window.addEventListener('sailor:closeSpaceType', onClose as EventListener)
   applyGate()
 })
 
@@ -174,8 +174,8 @@ onBeforeUnmount(() => {
   stopPreview()
   io?.disconnect(); io = null
   if (onVisibility) document.removeEventListener('visibilitychange', onVisibility)
-  if (onOpen) window.removeEventListener('comfynext:openSpaceType', onOpen as EventListener)
-  if (onClose) window.removeEventListener('comfynext:closeSpaceType', onClose as EventListener)
+  if (onOpen) window.removeEventListener('sailor:openSpaceType', onOpen as EventListener)
+  if (onClose) window.removeEventListener('sailor:closeSpaceType', onClose as EventListener)
   unregisterStudioBaker(props.id)
   engine?.dispose()
   engine = null
@@ -204,7 +204,7 @@ const varsInputIndex = computed(() =>
   ((props.data?.inputs as { name?: string }[] | undefined) ?? []).findIndex(i => i?.name === 'vars'))
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openSpaceType', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openSpaceType', { detail: { nodeId: props.id } }))
 }
 </script>
 

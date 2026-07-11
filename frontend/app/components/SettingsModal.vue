@@ -114,7 +114,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.Queue.MaxHistoryItems', label: 'Queue history size', type: 'number', min: 10, max: 10000 },
     { id: 'Comfy.NodeReplacement.Enabled', label: 'Automatic node replacement', type: 'toggle' },
     { id: 'Comfy.Validation.Workflows', label: 'Validate workflows', type: 'toggle' },
-    { id: 'ComfyNext.Cost.ConfirmThresholdUsd', label: 'Confirm runs above (USD)', type: 'text', local: true, description: 'Ask before queueing runs whose estimated cost meets this amount. Default 1. Set 0 to ask for every paid run.' },
+    { id: 'Sailor.Cost.ConfirmThresholdUsd', label: 'Confirm runs above (USD)', type: 'text', local: true, description: 'Ask before queueing runs whose estimated cost meets this amount. Default 1. Set 0 to ask for every paid run.' },
   ],
   workflow: [
     { id: 'Comfy.Workflow.AutoSave', label: 'Auto save', type: 'select', options: [
@@ -130,8 +130,8 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.PromptFilename', label: 'Prompt for filename when saving', type: 'toggle' },
   ],
   ai: [
-    { id: 'ComfyNext.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Optional — AI assist uses the app’s built-in key. Paste your own to override; it stays in this browser and is sent only with your requests.' },
-    { id: 'ComfyNext.AI.BraveApiKey', label: 'Brave Search API key', type: 'text', local: true, description: 'Powers the agent’s web image search (“find me a picture of…”). Free tier at brave.com/search/api. Stored in this browser and sent directly to Brave — never kept on a server.' },
+    { id: 'Sailor.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Optional — AI assist uses the app’s built-in key. Paste your own to override; it stays in this browser and is sent only with your requests.' },
+    { id: 'Sailor.AI.BraveApiKey', label: 'Brave Search API key', type: 'text', local: true, description: 'Powers the agent’s web image search (“find me a picture of…”). Free tier at brave.com/search/api. Stored in this browser and sent directly to Brave — never kept on a server.' },
     { id: 'replicateToken', label: 'Replicate API token', type: 'secret', description: 'Powers cloud LoRA training, vectorize, background removal and other Replicate features. Stored on this machine (frontend/.data); paste a new value to replace, clear the field to remove.' },
   ],
 }

@@ -8,7 +8,7 @@
 
 ## 1. Summary
 
-Add **first-class variables** to ComfyNext: named, typed values that live in **collection nodes**
+Add **first-class variables** to Sailor: named, typed values that live in **collection nodes**
 on the canvas, bind to controls across studios and Smart Layout via **chips**, and take multiple
 values to power **modes, sweeps, and data-merge batch generation** — all through one primitive.
 
@@ -64,8 +64,8 @@ layout, not binding. Multi-output (`OutputSpec[]`) is first-class. Rendering is 
 Decision after gaming node-only / panel-only / hybrid models:
 
 - **The collection node is the single source of truth.** It stores its table in
-  `node.data.properties.comfynext_collection` — inheriting serialization, persistence, copy/paste,
-  and graph undo from existing node machinery (the `comfynext_localGroups` pattern). No parallel
+  `node.data.properties.sailor_collection` — inheriting serialization, persistence, copy/paste,
+  and graph undo from existing node machinery (the `sailor_localGroups` pattern). No parallel
   panel store, no second undo stack, no "two homes" ambiguity.
 - **One wire per target.** The collection node has one output; a target node gets one `VARS` input.
   The wire grants scope ("this target can see these variables") and, for batch, *is* the target
@@ -122,7 +122,7 @@ columns from wired collections.
 Binding storage, on the **target** node:
 
 ```ts
-// node.data.properties.comfynext_varBindings
+// node.data.properties.sailor_varBindings
 Record<string /* controlPath, e.g. "props.text_layer_1" or "brand.primary" or a studio param path */,
   { collectionId: string; columnKey: string; lastLiteral: string | number }>
 ```
@@ -218,7 +218,7 @@ Rules and touchpoints:
 ```
 ┌────────────────────┐   VARS    ┌──────────────────────┐  generate   ┌──────────────────┐
 │ Collection node     │──────────▶│ Target node           │────────────▶│ per row×output:   │
-│ comfynext_collection│  (1 wire) │ comfynext_varBindings │             │ resolve bindings  │
+│ sailor_collection│  (1 wire) │ sailor_varBindings │             │ resolve bindings  │
 │ table + previewRow  │           │ chips on controls     │             │ → render → Assets │
 │ drawer + inspector  │           │ "N vars" badge        │             │ → results grid    │
 └────────────────────┘           └──────────────────────┘             └──────────────────┘

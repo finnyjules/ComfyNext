@@ -22,11 +22,11 @@ function persist(s: any) {
   if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  n.data.properties.comfynext_lipSync = s
+  n.data.properties.sailor_lipSync = s
 }
 
 const { sheet, result, setFace, setVoice, update } = useLipSync(
-  node.value?.data?.properties?.comfynext_lipSync,
+  node.value?.data?.properties?.sailor_lipSync,
   persist,
 )
 
@@ -43,7 +43,7 @@ const runtimeError = computed(() => node.value?.data?.lipSyncError as string | n
 function onGenerate() {
   if (hasError.value) return
   if (node.value?.data) node.value.data.lipSyncError = null
-  window.dispatchEvent(new CustomEvent('comfynext:lipSyncGenerate', { detail: { sourceNodeId: props.nodeId } }))
+  window.dispatchEvent(new CustomEvent('sailor:lipSyncGenerate', { detail: { sourceNodeId: props.nodeId } }))
 }
 
 // ── Face panel ───────────────────────────────────────────────────────────────

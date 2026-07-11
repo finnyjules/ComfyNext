@@ -149,7 +149,7 @@ function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
   syncWidgetToActive()
   window.dispatchEvent(
-    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
+    new CustomEvent('sailor:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
   )
 }
 
@@ -160,7 +160,7 @@ function runAllEntries() {
   const list = entries.value.map(s => (s ?? '').trim()).filter(s => s.length > 0)
   if (list.length === 0) return
   window.dispatchEvent(
-    new CustomEvent('comfynext:runTextIterator', {
+    new CustomEvent('sailor:runTextIterator', {
       detail: { nodeId: props.id, entries: list },
     }),
   )

@@ -11,7 +11,7 @@ export function useVibeControl() {
     phrase: string,
     guidance?: string,
   ): Promise<{ patch: Record<string, ParamValue>; rationale: string }> {
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
 
     const described = describeControls(controls, params)
     if (!described.length) throw new Error('This effect has no AI-adjustable controls.')

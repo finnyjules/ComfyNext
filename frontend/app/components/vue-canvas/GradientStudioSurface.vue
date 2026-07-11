@@ -63,7 +63,7 @@ const activeAgentControls = computed(() => gradientAgentControls(config.value))
 // The shell renders the prompt + results from this object (see StudioModalShell).
 const gradientAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio',
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   guidance: () => GRADIENT_GUIDANCE,
   render: () => renderGradientForReview(),
 })
@@ -129,8 +129,8 @@ function applySweep(values: (string | number)[]) {
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('comfynext:runSweepRows', {
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
     detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
   }))
 }
@@ -150,7 +150,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
         label: 'Bind to',
         children: compatCols.map(col => ({
           label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('comfynext:bindControl', {
+          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
             detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
           })),
         })),
@@ -162,7 +162,7 @@ function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
       action: () => {
         const edgeList = props.edges ?? []
         const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(edge.source) } }))
+        if (edge) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(edge.source) } }))
       },
     })
     items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
@@ -476,14 +476,14 @@ function downloadExport() {
 
 // ── config persistence ────────────────────────────────────────────────────────
 function loadConfig() {
-  const c = currentNode()?.data?.properties?.comfynext_gradientStudio
+  const c = currentNode()?.data?.properties?.sailor_gradientStudio
   if (c && typeof c === 'object') config.value = ensureConfigDefaults(cloneConfig(c))
 }
 function saveConfig() {
   const n = currentNode(); if (!n) return
   if (!n.data) n.data = {}
   if (!n.data.properties) n.data.properties = {}
-  n.data.properties.comfynext_gradientStudio = cloneConfig(config.value)
+  n.data.properties.sailor_gradientStudio = cloneConfig(config.value)
 }
 
 // Copy the current config JSON to the clipboard — for teaching the agent: build
@@ -516,7 +516,7 @@ async function generateImage() {
       const n = currentNode()
       if (n) { n.data ||= {}; n.data.properties ||= {}; saveConfig() }
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:gradientStudioOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
       closeEditor()
@@ -585,14 +585,14 @@ async function generateVideo() {
       },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/comfynext/spacetype_encode', {
+    const res = await fetch('/sailor/spacetype_encode', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }),
     })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-      window.dispatchEvent(new CustomEvent('comfynext:gradientStudioOutput', {
+      window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
       }))
       closeEditor()

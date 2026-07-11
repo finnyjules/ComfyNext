@@ -89,12 +89,12 @@ const summary = computed<string>(() => {
 const DEFAULT_W = 320, MIN_W = 240, MAX_W = 920
 const shellRef = ref<HTMLElement | null>(null)
 const nodeW = computed<number>(() => {
-  const v = Number(props.data.properties?.comfynext_nodeW)
+  const v = Number(props.data.properties?.sailor_nodeW)
   return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
 })
 function setNodeW(v: number) {
   if (!props.data.properties) (props.data as any).properties = {}
-  ;(props.data.properties as any).comfynext_nodeW = Math.round(clamp(v, MIN_W, MAX_W))
+  ;(props.data.properties as any).sailor_nodeW = Math.round(clamp(v, MIN_W, MAX_W))
 }
 let resize: { startW: number; sx: number; zoom: number } | null = null
 function onResizeDown(e: PointerEvent) {
@@ -114,11 +114,11 @@ onUnmounted(() => window.removeEventListener('pointermove', onResizeMove))
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openTimeline', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openTimeline', { detail: { nodeId: props.id } }))
 }
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }))
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }))
 }
 </script>
 

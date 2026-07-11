@@ -24,7 +24,7 @@ export interface SmartLayoutBindingContext {
   nodeId: string
   nodesAccessor: () => any[]
   edgesAccessor: () => any[]
-  /** Live `comfynext_varBindings` on the SmartLayout node (`props.<socket>` keyed). */
+  /** Live `sailor_varBindings` on the SmartLayout node (`props.<socket>` keyed). */
   bindings: ComputedRef<VarBindings>
   /** The Collection node wired into this SmartLayout via a VARS edge, if any. */
   collectionNode: ComputedRef<any | undefined>

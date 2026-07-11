@@ -4,7 +4,7 @@
 toolbox wired, playback engine extended.
 
 Six new features that bring animated typography, GSAP-driven motion, and
-smooth-scroll polish to ComfyNext. Ordered by build priority — each
+smooth-scroll polish to Sailor. Ordered by build priority — each
 builds on primitives from the one before.
 
 **Shared philosophy**: local-first, no AI cost. Every node below renders
@@ -36,7 +36,7 @@ The real work is client-side.
 
 ### Frontend widget
 
-`WidgetKineticType.vue` — activated by `comfynext_widget: "kinetic_type"`.
+`WidgetKineticType.vue` — activated by `sailor_widget: "kinetic_type"`.
 
 **Structure:**
 
@@ -150,7 +150,7 @@ timeline dimension.
 ### Node shape
 
 Same as Kinetic Typography but with a different widget
-(`comfynext_widget: "font_animator"`). Could also be a mode toggle
+(`sailor_widget: "font_animator"`). Could also be a mode toggle
 on the same node — "Static / Animated".
 
 ### Key addition: axis keyframes

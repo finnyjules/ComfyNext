@@ -6,7 +6,7 @@
 
 ## Background
 
-- A scene authored in the editor is held as `{ effectId, params, gradientStops, post, projection, panX, panY, bgColor, fps, loopDuration, dimsKey, W, H, transparent }` and persisted per-node at `node.data.properties.comfynext_spaceType` (`saveConfig`).
+- A scene authored in the editor is held as `{ effectId, params, gradientStops, post, projection, panX, panY, bgColor, fps, loopDuration, dimsKey, W, H, transparent }` and persisted per-node at `node.data.properties.sailor_spaceType` (`saveConfig`).
 - An effect's defaults today are only its per-control `default:` values (the `params`); the studio settings (post-FX, projection, background, gradient) are global (`defaultSpaceTypeState`), not per-effect.
 - The **node card** preview ([SpaceTypeNode.vue](app/components/vue-canvas/SpaceTypeNode.vue)) builds its engine from `SpaceTypeState` and currently applies only effect + bg — **not** post-FX or projection/pan. `SpaceTypeState` (state.ts) lacks `post`/`projection`/`panX`/`panY`.
 
@@ -22,7 +22,7 @@
 
 ### Scene file shape
 
-`custom_nodes/comfynext_bridge/scene_defaults/<effectId>.json` (committable):
+`custom_nodes/sailor_bridge/scene_defaults/<effectId>.json` (committable):
 
 ```json
 {
@@ -38,10 +38,10 @@
 
 `effectId` is the filename, not in the body. `effectId` is validated server-side (`^[a-z0-9]+$`) to prevent path traversal.
 
-### Backend routes (`comfy_extras/`, next to the existing `/comfynext/spacetype_encode`)
+### Backend routes (`comfy_extras/`, next to the existing `/sailor/spacetype_encode`)
 
-- `POST /comfynext/space_default/{effect_id}` — validate `effect_id`; `json.dump` the request body to `scene_defaults/<effect_id>.json` (create dir if missing). Return `{ ok: true }`. Reject invalid ids (400).
-- `GET /comfynext/space_defaults` — read every `*.json` in `scene_defaults/`, return `{ "<effectId>": <scene>, ... }` (empty `{}` if none). One call; the frontend caches it.
+- `POST /sailor/space_default/{effect_id}` — validate `effect_id`; `json.dump` the request body to `scene_defaults/<effect_id>.json` (create dir if missing). Return `{ ok: true }`. Reject invalid ids (400).
+- `GET /sailor/space_defaults` — read every `*.json` in `scene_defaults/`, return `{ "<effectId>": <scene>, ... }` (empty `{}` if none). One call; the frontend caches it.
 
 (`SCENE_DEFAULTS_DIR` resolved relative to the bridge module so it's stable regardless of CWD.)
 
@@ -71,7 +71,7 @@ Add optional `post?: PostSettings`, `projection?: 'perspective'|'isometric'`, `p
 ### Node card apply (SpaceTypeNode.vue)
 
 1. **Render post/projection/pan in the card** (new): build the engine with `projection`, and call `engine.setPost(state.post ?? DEFAULT_POST)`, `engine.setPan(state.panX ?? 0, state.panY ?? 0)` in mount + rebuild. (Makes the card faithful to the scene generally — also fixes saved nodes not showing post/projection.)
-2. **Apply default scene for fresh nodes:** the `state` becomes a ref initialized from saved config if present, else `defaultSpaceTypeState()`. On mount, if there was **no** saved config, `await loadSpaceDefaults()`; if `spaceDefaultFor(state.effectId)` exists, set `state = applySceneToState(defaultSpaceTypeState(), scene)`, rebuild the preview, and stamp it onto `node.data.properties.comfynext_spaceType` so it persists. If none, unchanged.
+2. **Apply default scene for fresh nodes:** the `state` becomes a ref initialized from saved config if present, else `defaultSpaceTypeState()`. On mount, if there was **no** saved config, `await loadSpaceDefaults()`; if `spaceDefaultFor(state.effectId)` exists, set `state = applySceneToState(defaultSpaceTypeState(), scene)`, rebuild the preview, and stamp it onto `node.data.properties.sailor_spaceType` so it persists. If none, unchanged.
 
 ### Editor apply (SpaceTypeSurface.vue)
 

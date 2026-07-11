@@ -147,7 +147,7 @@ export function expandClones(cloner: Cloner | undefined | null, aspect: number):
 
 /**
  * Build the per-slot cloner widget assignments to stamp onto a Compositor node
- * at submit. `map` is the editor's `comfynext_wiredCloners` property (slot →
+ * at submit. `map` is the editor's `sailor_wiredCloners` property (slot →
  * Cloner, slot 1-based, matching `layer{i}_cloner`). Only ENABLED cloners are
  * emitted — a disabled/absent cloner leaves the widget at its "" default (a
  * single instance), so unrelated layers submit byte-identically.

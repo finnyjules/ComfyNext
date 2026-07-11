@@ -62,31 +62,31 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   const { node, dims, getRect } = opts
 
   const localLayers = computed<LocalLayer[]>(() =>
-    (node()?.data?.properties?.comfynext_localLayers as LocalLayer[]) ?? [])
+    (node()?.data?.properties?.sailor_localLayers as LocalLayer[]) ?? [])
 
   function commit(next: LocalLayer[]) {
     const n = node(); if (!n) return
     if (!n.data.properties) n.data.properties = {}
-    n.data.properties.comfynext_localLayers = next
+    n.data.properties.sailor_localLayers = next
   }
   // The unified z-order (wired + local StackKeys) lives alongside the layers;
   // history captures it too so reorders/grouping undo cleanly.
-  function readOrder(): string[] { return ((node()?.data?.properties as any)?.comfynext_stackOrder as string[]) ?? [] }
+  function readOrder(): string[] { return ((node()?.data?.properties as any)?.sailor_stackOrder as string[]) ?? [] }
   function writeOrder(order: string[]) {
     const n = node(); if (!n) return
     if (!n.data.properties) n.data.properties = {}
-    ;(n.data.properties as any).comfynext_stackOrder = order
+    ;(n.data.properties as any).sailor_stackOrder = order
   }
 
   // Nested-group registry: LayerGroup { id, name?, parentId? } describing the
   // group tree. Layers keep their flat `groupId` (immediate group); this only
   // adds parent links + names. Absent ⇒ every group is a flat root (old frames).
   const localGroups = computed<LayerGroup[]>(() =>
-    ((node()?.data?.properties as any)?.comfynext_localGroups as LayerGroup[]) ?? [])
+    ((node()?.data?.properties as any)?.sailor_localGroups as LayerGroup[]) ?? [])
   function writeGroups(next: LayerGroup[]) {
     const n = node(); if (!n) return
     if (!n.data.properties) n.data.properties = {}
-    ;(n.data.properties as any).comfynext_localGroups = next
+    ;(n.data.properties as any).sailor_localGroups = next
   }
   /** Commit layers + registry together (registry pruned of empty groups). */
   function commitBoth(nextLayers: LocalLayer[], nextGroups: LayerGroup[]) {
@@ -95,12 +95,12 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   }
 
   // Doc-level background fill (behind every layer; baked into output).
-  const background = computed<Paint | undefined>(() => (node()?.data?.properties as any)?.comfynext_localBg as Paint | undefined)
+  const background = computed<Paint | undefined>(() => (node()?.data?.properties as any)?.sailor_localBg as Paint | undefined)
   function writeBg(p: Paint | undefined) {
     const n = node(); if (!n) return
     if (!n.data.properties) n.data.properties = {}
-    if (p === undefined || p === 'none' || p === '') delete (n.data.properties as any).comfynext_localBg
-    else (n.data.properties as any).comfynext_localBg = p
+    if (p === undefined || p === 'none' || p === '') delete (n.data.properties as any).sailor_localBg
+    else (n.data.properties as any).sailor_localBg = p
   }
   function setBackground(p: Paint | undefined) { recordHistory(); writeBg(p) }
 

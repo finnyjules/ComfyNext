@@ -17,7 +17,7 @@
 - Speech is uniform MiniMax: `minimax/speech-02-turbo` with `{text, voice_id}`. Built-in voices = `_MINIMAX_VOICES`; cloned = `/api/voices-local` ids. Both are valid `voice_id`s.
 - Local refs (`/view?filename=…&type=input`) resolve to data URLs at execute via `_parse_view_ref` + `_local_ref_to_data_url` (module fns in `nodes_replicate.py`). Audio dicts encode via `_audio_dict_to_wav_data_url`.
 - New API routes MUST be allowlisted in `frontend/server/middleware/comfyui-proxy.ts`.
-- Studio state lives at `node.data.properties.comfynext_lipSync`. Registration mirrors ShotDirector (`ARTIFACT_NODE_COMPONENTS` in `useVueNodes.ts`; component map + node synthesis + open/generate handlers in `VueNodeCanvas.vue`).
+- Studio state lives at `node.data.properties.sailor_lipSync`. Registration mirrors ShotDirector (`ARTIFACT_NODE_COMPONENTS` in `useVueNodes.ts`; component map + node synthesis + open/generate handlers in `VueNodeCanvas.vue`).
 - Known baselines (must not regress): frontend typecheck 396; vitest 3 known-unrelated failures (spacetype-palette ×2, gradientfx-mesh ×1); Python `tests-unit/comfy_api_test/` green.
 - Backend changes require a ComfyUI restart to load (kill + relaunch).
 - Run: pytest `.venv/bin/python -m pytest <path> -v`; frontend typecheck `cd frontend && npx nuxi typecheck`; frontend tests `cd frontend && npx vitest run <path>`.
@@ -552,7 +552,7 @@ git commit -m "feat(lipsync): useLipSync composable"
 
 **Interfaces:**
 - Consumes: `useLipSync` (Task 4), `useCharacters` (existing, for the character face picker), `uploadRefFile`/`viewRefUrl` from `~/lib/shotdirector/refUpload` (existing), the voice gallery (`VoiceGalleryModal`/`voiceCatalog`, existing).
-- Produces: a working editing surface writing `node.data.properties.comfynext_lipSync`. (Generate wiring is Task 6.)
+- Produces: a working editing surface writing `node.data.properties.sailor_lipSync`. (Generate wiring is Task 6.)
 
 Follow `ShotDirectorNode.vue` / `ShotDirectorSurface.vue` as the exact structural template (node card with an Open button + the modal shell, sections, the `StudioSection` primitive). Build:
 
@@ -570,7 +570,7 @@ Follow `ShotDirectorNode.vue` / `ShotDirectorSurface.vue` as the exact structura
 
 - [ ] **Step 4: Engine + format row** — engine select (auto/fabric/sync) bound to `sheet.engine`; resolution select; `sync_mode` select shown only when the resolved engine is `sync`. Show the compile `issues` (errors red, warnings amber — no purple) and the resolved engine label.
 
-- [ ] **Step 5: Register** — `ARTIFACT_NODE_COMPONENTS.LipSyncStudio = 'lip-sync'`; import `LipSyncStudioNode.vue` + `LipSyncSurface.vue` and map keyed `'lip-sync'` in `VueNodeCanvas.vue`; add `'LipSyncStudio'` to the studio-output-synthesis condition (~line 1398, so a canvas-created `LipSyncStudio` node gets a wildcard output); add the add-node menu entry and a `handleOpenLipSync(e)` that opens the surface for the node id (mirror `handleOpenShotDirector`). State key `comfynext_lipSync`.
+- [ ] **Step 5: Register** — `ARTIFACT_NODE_COMPONENTS.LipSyncStudio = 'lip-sync'`; import `LipSyncStudioNode.vue` + `LipSyncSurface.vue` and map keyed `'lip-sync'` in `VueNodeCanvas.vue`; add `'LipSyncStudio'` to the studio-output-synthesis condition (~line 1398, so a canvas-created `LipSyncStudio` node gets a wildcard output); add the add-node menu entry and a `handleOpenLipSync(e)` that opens the surface for the node id (mirror `handleOpenShotDirector`). State key `sailor_lipSync`.
 
 - [ ] **Step 6: Verify (browser, controller)** — via the running dev server (127.0.0.1:3000, NOT localhost): add a Lip-Sync node, open it, switch face tabs (character list loads, image upload thumbnails), switch voice tabs (voice picker lists built-in + cloned), engine auto-label flips image→Fabric / video→sync, issues show for empty state. No Generate yet.
 
@@ -596,7 +596,7 @@ git commit -m "feat(lipsync): studio surface (face + voice panels) + node card +
 - [ ] **Step 1: Generate handler** `handleLipSyncGenerate` in `VueNodeCanvas.vue`, mirroring `handleShotDirectorGenerate`:
   1. Read the sheet; if `voice.kind === 'tts'`, POST `{ text: voice.text, voiceId: voice.voiceId }` to `/api/lipsync/speech`; set the returned `viewUrl` as the effective audio. If `voice.kind === 'audio'`, use `voice.src`.
   2. Recompile with the resolved audio (or pass the audio into the compiled `model_options.audio`).
-  3. Find-or-spawn a `LipSyncNode` (remember its id in `node.data.properties.comfynext_lipSyncTargetId`, like Shot Director's target), patch its widgets (`engine`, `resolution`, `sync_mode`, `model_options` = JSON of the compiled options incl. `audio`), then `runFiltered` on it. Use `mintNodeId()` for any spawned node id (collision-safe).
+  3. Find-or-spawn a `LipSyncNode` (remember its id in `node.data.properties.sailor_lipSyncTargetId`, like Shot Director's target), patch its widgets (`engine`, `resolution`, `sync_mode`, `model_options` = JSON of the compiled options incl. `audio`), then `runFiltered` on it. Use `mintNodeId()` for any spawned node id (collision-safe).
   4. Guard: if compile `issues` has an error, do not dispatch (button disabled).
 
 - [ ] **Step 2: Footer** in `LipSyncSurface.vue` — a cost estimate (`estimateLipSyncCost`; audio length unknown pre-gen → show "~$1 / 30s" or estimate from a known clip length if available), an emerald **Generate** button (disabled when errors present), and a **New take** button (re-dispatch). Wire Generate/New take to emit events handled by `handleLipSyncGenerate`.
@@ -635,7 +635,7 @@ git commit -m "feat(lipsync): Generate wiring — voice TTS resolve, compile →
 
 ```bash
 pkill -f "main.py --listen" ; sleep 3
-.venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfynext-comfyui.out.log 2>&1 &
+.venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/sailor-comfyui.out.log 2>&1 &
 ```
 Wait for `curl -s http://127.0.0.1:8188/system_stats` to return JSON.
 

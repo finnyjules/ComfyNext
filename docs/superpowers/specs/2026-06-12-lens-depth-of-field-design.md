@@ -102,7 +102,7 @@ Pure torch, no model/network/I/O, so it is unit-testable. Exposes:
   - `image` (IMAGE).
   - `depth` (IMAGE, optional) — override auto-estimation.
   - `focus_point` (String, default `'{"x":0.5,"y":0.5}'`) — a UI-managed String
-    exactly like MaskExtractor's `points` widget (no custom `comfynext_widget`;
+    exactly like MaskExtractor's `points` widget (no custom `sailor_widget`;
     the frontend writes it on preview-click and the node parses it). Backend
     reads depth at this point as the focus plane.
   - `focus_offset` (Float, default 0.0, min −1.0, max 1.0) — rack-focus pull

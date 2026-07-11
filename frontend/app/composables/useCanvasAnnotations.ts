@@ -9,7 +9,7 @@ import type { Node } from '@vue-flow/core'
  * experiments to try, attaching reference imagery — so the canvas can carry
  * the *story* of a workflow, not just its wiring.
  *
- * Persistence: stored under `workflow.extra.comfynext.annotations`. The
+ * Persistence: stored under `workflow.extra.sailor.annotations`. The
  * `extra` field round-trips through ComfyUI untouched, so annotations
  * survive save / load without bridge changes.
  *
@@ -322,8 +322,8 @@ export function useCanvasAnnotations(_nodesRef: Ref<VueFlowNode[]>) {
 
   // ---- Persistence ----------------------------------------------------------
   //
-  // We store the live array verbatim under workflow.extra.comfynext.annotations.
-  // No schema translation — annotations are entirely a ComfyNext concept, so
+  // We store the live array verbatim under workflow.extra.sailor.annotations.
+  // No schema translation — annotations are entirely a Sailor concept, so
   // the round-trip is just JSON in / JSON out with a defensive parse.
 
   function exportToExtra(): { annotations: Annotation[] } {

@@ -437,7 +437,7 @@ async function doSamSelect(nx: number, ny: number) {
 }
 
 // ── Recolor intent: brand-kit swatches + free picker ─────────────────────────
-const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandKit: (id: string | null) => void } | null>('comfynext:brand', null)
+const projectBrand = inject<{ activeKitId: ComputedRef<string | null>; setBrandKit: (id: string | null) => void } | null>('sailor:brand', null)
 const brandLib = useBrandLibrary(projectBrand?.activeKitId)
 /** Active-kit colors first (deduped), else a small neutral default set. */
 const recolorSwatches = computed<{ label: string; hex: string }[]>(() => {

@@ -6,7 +6,7 @@ supports a `subfolder` field), then posts captions here so they land as the
 
 Also registers a curated set of base-checkpoint bundles so the surface can
 offer one-click downloads when models/checkpoints/ is empty. The bundles are
-registered against the same /comfynext/models/{status,download} routes the
+registered against the same /sailor/models/{status,download} routes the
 toolbox uses.
 """
 from __future__ import annotations
@@ -114,7 +114,7 @@ try:
             return
         _routes_registered = True
 
-        @PromptServer.instance.routes.post("/comfynext/lora/save_captions")
+        @PromptServer.instance.routes.post("/sailor/lora/save_captions")
         async def _save_captions(request):
             """Body: {folder: str, captions: {image_filename: text}}.
 
@@ -151,7 +151,7 @@ try:
                 written += 1
             return web.json_response({"written": written})
 
-        @PromptServer.instance.routes.post("/comfynext/lora/clear_dataset")
+        @PromptServer.instance.routes.post("/sailor/lora/clear_dataset")
         async def _clear_dataset(request):
             try:
                 body = await request.json()

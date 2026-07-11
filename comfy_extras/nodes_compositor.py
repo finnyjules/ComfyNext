@@ -566,7 +566,7 @@ try:
 
     _SLATE_FRAME_RE = _re.compile(r"^slate_\d+_\d{4}\.png$")
 
-    @PromptServer.instance.routes.post("/comfynext/motion/cleanup_frames")
+    @PromptServer.instance.routes.post("/sailor/motion/cleanup_frames")
     async def _cleanup_motion_frames(request):
         """Body: {delete: string[], keep?: string[]} → {deleted, skipped}."""
         try:

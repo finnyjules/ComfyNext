@@ -1,7 +1,7 @@
 // frontend/app/lib/shaderstudio/types.ts
 // Config for the Shader Studio node — a frontend-only, input-driven studio that
 // stacks shader passes over an input image. Persisted at
-// node.data.properties.comfynext_shaderStudio.
+// node.data.properties.sailor_shaderStudio.
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 

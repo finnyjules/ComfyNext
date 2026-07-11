@@ -153,7 +153,7 @@ Expected: PASS (all 7). If any rotated/aspect case fails, the expectation is han
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/resizeBox.ts frontend/tests/unit/resize-box.unit.spec.ts
 git commit -m "feat(frame): resizeBox pure geometry (edge/corner, anchor, aspect, alt, rotation)"
 ```
@@ -221,7 +221,7 @@ Expected: PASS
 Run: `cd frontend && npx vitest run tests/unit`
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useLocalLayerEditor.ts frontend/tests/unit/resize-handles.unit.spec.ts
 git commit -m "feat(frame): edge-handle geometry + resizableKind helper"
 ```
@@ -298,7 +298,7 @@ Add `startResize` to the returned object (next to `startScale, startRotate`).
 Run: `cd frontend && npx vitest run tests/unit` (no unit change here beyond earlier tasks; confirms nothing broke — the resize drag is browser-verified). Also `npx vitest run tests/unit/resize-box.unit.spec.ts tests/unit/layer-edits.unit.spec.ts` stay green.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): resize drag mode wiring (box layers) + HUD W×H"
 ```
@@ -353,7 +353,7 @@ Run: `cd frontend && npx vitest run tests/unit` (confirms nothing broke).
 Note in the report: rendering + routing are browser-verification-owed.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): render + route edge/corner resize handles in the modal"
 ```

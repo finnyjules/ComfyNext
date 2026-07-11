@@ -65,7 +65,7 @@ One section, one card per person:
 ## Cast & canvas integration
 
 - Cast picker: characters with >1 variant show a variant selector on pick; `CastMember.variantId` persists; chips render "Vera · Raincoat"; the cast-photos row (the [ImageN] strip) shows the variant's sheet.
-- Character canvas node: variant dropdown when >1 (stores `comfynext_characterVariantId`); edge-sync (`wireCastFor`) carries variantId through.
+- Character canvas node: variant dropdown when >1 (stores `sailor_characterVariantId`); edge-sync (`wireCastFor`) carries variantId through.
 - Generate-path resolution reads the variant's `refImages`. Everything downstream (materializeCast → castClause → compile → dispatch → Python) unchanged.
 - Zero-refs error message becomes variant-aware ("Vera's Raincoat sheet has no photos yet").
 

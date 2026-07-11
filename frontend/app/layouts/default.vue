@@ -163,7 +163,7 @@ type SubmenuName = 'load' | 'studios' | 'generate' | 'more'
 const openSubmenu = ref<SubmenuName | null>(null)
 
 function addLoadNode(nodeType: string) {
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType } }))
+  window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType } }))
   openSubmenu.value = null
 }
 
@@ -175,7 +175,7 @@ function onLoadOption(opt: { nodeType?: string; special?: string }) {
   if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
   // Space Type is a persistent, re-editable canvas node now — drop the node and
   // let VueNodeCanvas auto-open its editor (config persists in node properties).
-  if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: 'SpaceType' } })); return }
+  if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType: 'SpaceType' } })); return }
   if (opt.nodeType) addLoadNode(opt.nodeType)
 }
 
@@ -202,23 +202,23 @@ watch(openSubmenu, (v) => { if (v !== 'generate') generateAudioExpanded.value = 
 // handleAddNode already applies `propertyOverrides`, so we just dispatch.
 function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
   slateGalleryOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Compositor',
       propertyOverrides: {
-        comfynext_localLayers: payload.layers,
-        comfynext_motion: payload.motion,
+        sailor_localLayers: payload.layers,
+        sailor_motion: payload.motion,
       },
     },
   }))
 }
 
 // Space Type surface → outputs. The surface bakes its own frames and dispatches
-// `comfynext:addNode` directly (Image or Video node), so the layout only needs
+// `sailor:addNode` directly (Image or Video node), so the layout only needs
 // to own the open/close state of the modal.
 
 // Annotate submenu — FigJam-style overlays on the canvas. Each option fires
-// `comfynext:addAnnotation`; VueNodeCanvas owns the spawn position and
+// `sailor:addAnnotation`; VueNodeCanvas owns the spawn position and
 // per-kind logic (file picker for image, two-click flow for arrow).
 const annotateOptions = [
   { label: 'Sticky note', icon: StickyNote, kind: 'sticky',    hint: 'S' },
@@ -235,7 +235,7 @@ const moreOptions = [
 ]
 
 function addAnnotation(kind: string) {
-  window.dispatchEvent(new CustomEvent('comfynext:addAnnotation', { detail: { kind } }))
+  window.dispatchEvent(new CustomEvent('sailor:addAnnotation', { detail: { kind } }))
   openSubmenu.value = null
 }
 
@@ -349,7 +349,7 @@ const vueRightPanelOpen = ref(false) // tracks whether Vue right panel (Workflow
 // Mutually exclusive with the Workflow Overview (both dock right, same slot).
 const nodeInspectorOpen = ref(false)
 const inspectorNode = computed(() => vueCanvasRef.value?.selectedNode ?? null)
-// Opened from a per-node "settings" button (comfynext:openInspector). Select the
+// Opened from a per-node "settings" button (sailor:openInspector). Select the
 // node so the inspector binds to it, open the panel, and close the overview
 // (they share the right dock).
 function handleOpenInspector(e: Event) {
@@ -370,7 +370,7 @@ const blockLibraryPanelOpen = ref(false) // tracks whether the Block Library pan
 const assetsPanelOpen = ref(false) // tracks whether the Assets panel is visible
 
 // Canvas → Actions panel deep-link: anything on the canvas can dispatch
-// `comfynext:openActions` with an optional domain to open the panel on that
+// `sailor:openActions` with an optional domain to open the panel on that
 // tab (selection chips' "All actions…" uses this). ts forces the watcher to
 // re-fire on repeated same-domain opens.
 const actionsFocusDomain = ref<{ domain: ActionDomain; ts: number } | null>(null)
@@ -495,7 +495,7 @@ function toggleMinimap() {
 function sendToActiveProjectIframe(action: string, payload?: any) {
   const iframe = getSharedIframe()
   if (iframe?.contentWindow) {
-    iframe.contentWindow.postMessage({ type: 'comfynext', action, ...payload }, '*')
+    iframe.contentWindow.postMessage({ type: 'sailor', action, ...payload }, '*')
   }
 }
 
@@ -537,7 +537,7 @@ function requestShadowParity(workflow: any, label: string) {
   let done = false
   const handler = (event: MessageEvent) => {
     if (done) return
-    if (event.data?.type !== 'comfynext-bridge' || event.data?.event !== 'prompt_data') return
+    if (event.data?.type !== 'sailor-bridge' || event.data?.event !== 'prompt_data') return
     done = true
     window.removeEventListener('message', handler)
     try {
@@ -551,7 +551,7 @@ function requestShadowParity(workflow: any, label: string) {
     }
   }
   window.addEventListener('message', handler)
-  iframe.contentWindow.postMessage({ type: 'comfynext', action: 'getPrompt' }, '*')
+  iframe.contentWindow.postMessage({ type: 'sailor', action: 'getPrompt' }, '*')
   // Give up quietly if the reply never comes — a missing prompt_data is fine.
   setTimeout(() => {
     if (!done) {
@@ -947,7 +947,7 @@ async function runVueWorkflow(
     if (!useDirect) {
       await new Promise(r => setTimeout(r, 800))
       console.log('[Run] sending queuePrompt to worker', workerIdx)
-      iframe.contentWindow?.postMessage({ type: 'comfynext', action: 'queuePrompt' }, '*')
+      iframe.contentWindow?.postMessage({ type: 'sailor', action: 'queuePrompt' }, '*')
       // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
       // continuously and silently by design, so they're exempt from the toast.
       // Armed inside the lock so queued-behind runs measure from their own
@@ -1089,7 +1089,7 @@ function awaitExecutionComplete(timeoutMs = 120_000): Promise<void> {
       reject(new Error('execution_complete timeout'))
     }, timeoutMs)
     function handler(event: MessageEvent) {
-      if (event.data?.type !== 'comfynext-bridge') return
+      if (event.data?.type !== 'sailor-bridge') return
       if (event.data.event !== 'execution_complete' && event.data.event !== 'execution_error') return
       clearTimeout(timer)
       window.removeEventListener('message', handler)
@@ -1327,14 +1327,14 @@ function onCreateRef(e: Event) {
 }
 
 onMounted(() => {
-  window.addEventListener('comfynext:runFiltered', handleRunFiltered)
-  window.addEventListener('comfynext:runAll', handleRunAll)
-  window.addEventListener('comfynext:openInspector', handleOpenInspector)
-  window.addEventListener('comfynext:runTextIterator', handleRunTextIterator)
-  window.addEventListener('comfynext:runVariations', handleRunVariations)
-  window.addEventListener('comfynext:reloadCanvas', forceReloadCanvas)
-  window.addEventListener('comfynext:openActions', handleOpenActions)
-  window.addEventListener('comfynext:createRef', onCreateRef)
+  window.addEventListener('sailor:runFiltered', handleRunFiltered)
+  window.addEventListener('sailor:runAll', handleRunAll)
+  window.addEventListener('sailor:openInspector', handleOpenInspector)
+  window.addEventListener('sailor:runTextIterator', handleRunTextIterator)
+  window.addEventListener('sailor:runVariations', handleRunVariations)
+  window.addEventListener('sailor:reloadCanvas', forceReloadCanvas)
+  window.addEventListener('sailor:openActions', handleOpenActions)
+  window.addEventListener('sailor:createRef', onCreateRef)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
@@ -1342,14 +1342,14 @@ onMounted(() => {
   startHealthPoll()
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('comfynext:runFiltered', handleRunFiltered)
-  window.removeEventListener('comfynext:runAll', handleRunAll)
-  window.removeEventListener('comfynext:openInspector', handleOpenInspector)
-  window.removeEventListener('comfynext:runTextIterator', handleRunTextIterator)
-  window.removeEventListener('comfynext:runVariations', handleRunVariations)
-  window.removeEventListener('comfynext:reloadCanvas', forceReloadCanvas)
-  window.removeEventListener('comfynext:openActions', handleOpenActions)
-  window.removeEventListener('comfynext:createRef', onCreateRef)
+  window.removeEventListener('sailor:runFiltered', handleRunFiltered)
+  window.removeEventListener('sailor:runAll', handleRunAll)
+  window.removeEventListener('sailor:openInspector', handleOpenInspector)
+  window.removeEventListener('sailor:runTextIterator', handleRunTextIterator)
+  window.removeEventListener('sailor:runVariations', handleRunVariations)
+  window.removeEventListener('sailor:reloadCanvas', forceReloadCanvas)
+  window.removeEventListener('sailor:openActions', handleOpenActions)
+  window.removeEventListener('sailor:createRef', onCreateRef)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
 })
@@ -1368,7 +1368,7 @@ async function stopVueWorkflow() {
 }
 
 // Single shared ComfyUI iframe — all project tabs share one iframe
-const WORKFLOWS_STORAGE_KEY = 'comfynext:workflows'
+const WORKFLOWS_STORAGE_KEY = 'sailor:workflows'
 
 // Restore persisted workflows from sessionStorage. Older sessions stored a
 // bare workflow per tab — wrap those into one-canvas docs on the way in.
@@ -1577,7 +1577,7 @@ function setBrandKit(id: string | null) {
 
 // Descendants (e.g. the Smart Layout editor modal in the canvas) read the
 // project's active kit through this — same merge inputs everywhere.
-provide('comfynext:brand', {
+provide('sailor:brand', {
   activeKit: brandLib.activeKit,
   activeKitId: computed(() => activeProjectDoc.value?.brandKitId ?? null),
   setBrandKit,
@@ -1724,12 +1724,12 @@ function handleLiveRun() {
 
 onMounted(() => {
   window.addEventListener('beforeunload', autosaveCurrentWorkflow)
-  window.addEventListener('comfynext:liveRun', handleLiveRun)
+  window.addEventListener('sailor:liveRun', handleLiveRun)
 })
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', autosaveCurrentWorkflow)
-  window.removeEventListener('comfynext:liveRun', handleLiveRun)
+  window.removeEventListener('sailor:liveRun', handleLiveRun)
 })
 let sharedIframeReady = false
 // True while a workflow is being pushed into the canvas (incl. waiting for the
@@ -1848,15 +1848,15 @@ if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
 // ───────────────────────────────────────────────────────────────────────────
 // Parallel-run worker pool (prototype). OFF by default → a single worker,
 // identical to today's behavior. Enable in the browser console with:
-//   localStorage['comfynext:pool'] = 'on'   // uses :8188 + :8189
-//   localStorage['comfynext:pool'] = 'http://127.0.0.1:8188,http://127.0.0.1:8189'
+//   localStorage['sailor:pool'] = 'on'   // uses :8188 + :8189
+//   localStorage['sailor:pool'] = 'http://127.0.0.1:8188,http://127.0.0.1:8189'
 // then reload. Each project tab is round-robin assigned to a worker; runs on
 // different tabs hit different ComfyUI servers and execute concurrently.
 // ───────────────────────────────────────────────────────────────────────────
 const comfyWorkers = ref<string[]>([comfyOrigin])
 if (import.meta.client) {
   try {
-    const raw = localStorage.getItem('comfynext:pool')
+    const raw = localStorage.getItem('sailor:pool')
     let desired: string[] | null = null
     if (raw === 'on') desired = [comfyOrigin, comfyOrigin.replace(/:\d+/, ':8189')]
     else if (raw) {
@@ -1941,7 +1941,7 @@ function waitForWorkerReady(idx: number, timeoutMs = 120000): Promise<void> {
     let done = false
     const finish = () => { if (done) return; done = true; clearInterval(poll); clearTimeout(to); resolve() }
     ;(workerReadyResolvers[idx] ||= []).push(finish)
-    const nudge = () => getWorkerIframe(idx)?.contentWindow?.postMessage({ type: 'comfynext', action: 'requestStatus' }, '*')
+    const nudge = () => getWorkerIframe(idx)?.contentWindow?.postMessage({ type: 'sailor', action: 'requestStatus' }, '*')
     nudge()
     const poll = setInterval(() => { if (workerReady[idx]) finish(); else nudge() }, 500)
     const to = setTimeout(finish, timeoutMs)
@@ -1971,7 +1971,7 @@ function waitForBridgeReady(timeoutMs = 120000): Promise<void> {
     }
     bridgeReadyPromise.then(finish)
     const nudge = () => {
-      getSharedIframe()?.contentWindow?.postMessage({ type: 'comfynext', action: 'requestStatus' }, '*')
+      getSharedIframe()?.contentWindow?.postMessage({ type: 'sailor', action: 'requestStatus' }, '*')
     }
     nudge()
     const poll = setInterval(() => { if (bridgeIsReady) finish(); else nudge() }, 500)
@@ -2004,7 +2004,7 @@ async function sendLoadWorkflow(workflow: any, workerIdx = 0) {
   // recurring source can be traced.
   const healed = healDanglingLinks(workflow)
   if (healed.length) {
-    console.warn('[ComfyNext] healed dangling input link(s) before load:', healed,
+    console.warn('[Sailor] healed dangling input link(s) before load:', healed,
       '| has definitions:', !!workflow?.definitions,
       '| nodes:', workflow?.nodes?.length, '| links:', workflow?.links?.length)
   }
@@ -2012,7 +2012,7 @@ async function sendLoadWorkflow(workflow: any, workerIdx = 0) {
   await waitForWorkerReady(workerIdx)
   const iframe = getWorkerIframe(workerIdx)
   if (iframe?.contentWindow) {
-    iframe.contentWindow.postMessage({ type: 'comfynext', action: 'loadWorkflow', workflow }, '*')
+    iframe.contentWindow.postMessage({ type: 'sailor', action: 'loadWorkflow', workflow }, '*')
   }
   else {
     endWorkflowLoading()
@@ -2028,14 +2028,14 @@ function getWorkflowFromIframe(): Promise<any> {
     let resolved = false
     const handler = (event: MessageEvent) => {
       if (resolved) return
-      if (event.data?.type === 'comfynext-bridge' && event.data?.event === 'workflow_data') {
+      if (event.data?.type === 'sailor-bridge' && event.data?.event === 'workflow_data') {
         resolved = true
         window.removeEventListener('message', handler)
         resolve(event.data.workflow)
       }
     }
     window.addEventListener('message', handler)
-    iframe.contentWindow.postMessage({ type: 'comfynext', action: 'getWorkflow' }, '*')
+    iframe.contentWindow.postMessage({ type: 'sailor', action: 'getWorkflow' }, '*')
     // Timeout fallback
     setTimeout(() => {
       if (!resolved) {
@@ -2259,7 +2259,7 @@ async function fetchTrainingJobs() {
           toast.success(`Training finished: ${j.displayName}`, {
             description: j.kind === 'voice' ? 'Voice ready in Generate speech.' : 'Style ready in your library.',
           })
-          window.dispatchEvent(new CustomEvent(j.kind === 'voice' ? 'comfynext:voicesUpdated' : 'comfynext:lorasUpdated'))
+          window.dispatchEvent(new CustomEvent(j.kind === 'voice' ? 'sailor:voicesUpdated' : 'sailor:lorasUpdated'))
         } else if (j.status === 'failed') {
           toast.error(`Training failed: ${j.displayName}`, { description: j.error || undefined })
         }
@@ -2462,7 +2462,7 @@ function flushPendingCredit(promptId: string | null | undefined, creditsDelta?: 
     // Tell any open Assets panel a new generation just landed so it re-reads the
     // server list. Without this the panel only refreshes on open, so newly
     // generated images never show up until it's closed/reopened or reloaded.
-    window.dispatchEvent(new CustomEvent('comfynext:generationSaved'))
+    window.dispatchEvent(new CustomEvent('sailor:generationSaved'))
   }
   delete pendingCredits[pcKey(promptId)]
 }
@@ -2525,7 +2525,7 @@ function resolveCostConfirm(ok: boolean) {
   costConfirmQueue.resolveHead(ok)
 }
 function costConfirmThresholdUsd(): number {
-  const raw = useLocalSettings().getLocalSetting('ComfyNext.Cost.ConfirmThresholdUsd')
+  const raw = useLocalSettings().getLocalSetting('Sailor.Cost.ConfirmThresholdUsd')
   const n = parseFloat(raw ?? '')
   return Number.isFinite(n) && n >= 0 ? n : 1
 }
@@ -2563,9 +2563,9 @@ function openAddCredits() {
 }
 
 function sendToBridgeIframe(action: string, payload?: any) {
-  const bridgeIframe = document.getElementById('comfynext-bridge-iframe') as HTMLIFrameElement
+  const bridgeIframe = document.getElementById('sailor-bridge-iframe') as HTMLIFrameElement
   if (bridgeIframe?.contentWindow) {
-    bridgeIframe.contentWindow.postMessage({ type: 'comfynext', action, ...payload }, '*')
+    bridgeIframe.contentWindow.postMessage({ type: 'sailor', action, ...payload }, '*')
   }
 }
 
@@ -2700,19 +2700,19 @@ onMounted(async () => {
 
   // Debug: log ALL postMessages to find bridge issues
   window.addEventListener('message', (e) => {
-    if (e.data?.type === 'comfynext-bridge') {
-      console.log('[ComfyNext] Bridge message received:', e.data.event || e.data.status, e.data)
+    if (e.data?.type === 'sailor-bridge') {
+      console.log('[Sailor] Bridge message received:', e.data.event || e.data.status, e.data)
     }
   })
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('keydown', handleGlobalKeydown)
-  window.addEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
+  window.addEventListener('sailor:loadTabWorkflow', handleLoadTabWorkflow)
 
   // Direct-execution WS events must flow through the SAME window postMessage
   // pipe the bridge iframe uses (mapWsEvent already shapes them identically),
   // so BOTH this layout's own `handleBridgeMessage` listener AND
   // VueNodeCanvas's separate `window.addEventListener('message', ...)` (which
-  // filters on the 'comfynext-bridge' envelope) receive them. Re-dispatching as
+  // filters on the 'sailor-bridge' envelope) receive them. Re-dispatching as
   // a self-posted message — rather than calling handleBridgeEvent directly —
   // means node glow, take/output landing, red rings and gate_paused all light
   // up in direct mode, and the event flows exactly ONCE (no double-handling).
@@ -2722,7 +2722,7 @@ onMounted(async () => {
   if (!directEventListenerRegistered) {
     directEventListenerRegistered = true
     direct.onEvent((e) => {
-      window.postMessage({ type: 'comfynext-bridge', v: 2, direct: true, ...e }, window.location.origin)
+      window.postMessage({ type: 'sailor-bridge', v: 2, direct: true, ...e }, window.location.origin)
     })
   }
   if (directExecutionEnabled.value) direct.connect()
@@ -2736,12 +2736,12 @@ onMounted(async () => {
   // enqueued from the Train tab.
   fetchTrainingJobs()
   trainingPollTimer = setInterval(fetchTrainingJobs, 5000)
-  window.addEventListener('comfynext:trainingQueueUpdated', fetchTrainingJobs)
+  window.addEventListener('sailor:trainingQueueUpdated', fetchTrainingJobs)
 
   // Also check bridge iframe loaded after delay and request client ID
   setTimeout(() => {
-    const bridge = document.getElementById('comfynext-bridge-iframe') as HTMLIFrameElement
-    console.log('[ComfyNext] Bridge iframe check:', {
+    const bridge = document.getElementById('sailor-bridge-iframe') as HTMLIFrameElement
+    console.log('[Sailor] Bridge iframe check:', {
       exists: !!bridge,
       src: bridge?.src,
       display: bridge ? getComputedStyle(bridge).display : 'N/A',
@@ -2752,8 +2752,8 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('keydown', handleGlobalKeydown)
-  window.removeEventListener('comfynext:loadTabWorkflow', handleLoadTabWorkflow)
-  window.removeEventListener('comfynext:trainingQueueUpdated', fetchTrainingJobs)
+  window.removeEventListener('sailor:loadTabWorkflow', handleLoadTabWorkflow)
+  window.removeEventListener('sailor:trainingQueueUpdated', fetchTrainingJobs)
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null }
   if (trainingPollTimer) { clearInterval(trainingPollTimer); trainingPollTimer = null }
   direct.disconnect()
@@ -2793,7 +2793,7 @@ function handleOpenBilling() {
 // through the SAME handleBridgeEvent (via direct.onEvent) so both channels share
 // one code path — see the onEvent registration in onMounted.
 function handleBridgeMessage(event: MessageEvent) {
-  if (!event.data || event.data.type !== 'comfynext-bridge') return
+  if (!event.data || event.data.type !== 'sailor-bridge') return
   handleBridgeEvent(event.data, event.source as Window | null)
 }
 
@@ -2909,7 +2909,7 @@ function handleBridgeEvent(data: any, source?: Window | null) {
 
   // Debug messages from bridge
   if (data.event === 'debug') {
-    console.log('[ComfyNext Debug]', data.msg)
+    console.log('[Sailor Debug]', data.msg)
     return
   }
 
@@ -3301,7 +3301,7 @@ function dismissRunResult() {
   <div class="flex h-screen bg-sidebar">
     <!-- Hidden bridge iframe: always mounted so credits/auth work on all pages -->
     <iframe
-      id="comfynext-bridge-iframe"
+      id="sailor-bridge-iframe"
       :src="`${comfyOrigin}/`"
       class="fixed w-[10px] h-[10px] -left-[100px] -top-[100px] opacity-0 pointer-events-none"
       aria-hidden="true"

@@ -4,7 +4,7 @@
 
 **Goal:** Restructure the canvas toolbar into three "doors" per §2 of `docs/superpowers/specs/2026-07-03-studios-actions-ia-design.md`: **Add** (starting points, with labeled Surfaces/Sources groups), **Studios** (craft places, split out of Add, with truthful icons + pastel markers on the AI-billed ones), and **Generate** (curated zero-input AI verbs, pastel-treated).
 
-**Architecture:** All changes live in `frontend/app/layouts/default.vue` (the floating bottom toolbar + its popup menus). The two existing mutually-exclusive submenu booleans (`loadMenuOpen`, `moreMenuOpen`) become one `openSubmenu` ref since we're growing to four submenus. Each new door copies the existing load-popup markup pattern; section headers copy the More-menu's "Annotate" sub-header pattern. Node placement continues through the existing `comfynext:addNode` event — no canvas changes.
+**Architecture:** All changes live in `frontend/app/layouts/default.vue` (the floating bottom toolbar + its popup menus). The two existing mutually-exclusive submenu booleans (`loadMenuOpen`, `moreMenuOpen`) become one `openSubmenu` ref since we're growing to four submenus. Each new door copies the existing load-popup markup pattern; section headers copy the More-menu's "Annotate" sub-header pattern. Node placement continues through the existing `sailor:addNode` event — no canvas changes.
 
 **Tech Stack:** Nuxt 4 / Vue 3 / TypeScript, lucide-vue-next icons, existing `.gen-pastel` CSS convention (`app/assets/css/main.css:297`).
 
@@ -15,8 +15,8 @@
 - No purple/violet accents. Pastel (`gen-pastel`) is the AI/billing marker — never amber or other accents for AI (user rules).
 - User-visible strings exactly as specified: toolbar labels `Add`, `Studios`, `Generate`; group headers `Surfaces`, `Sources`.
 - `SPACE_TYPE_ENABLED` and `KINETIC_ENABLED` flag-gating must be preserved for Type/Slate entries.
-- Verification scope: this repo's Playwright suites place nodes via `comfynext:addNode` (not menu clicks), so no e2e updates expected; run `npx vitest run tests/unit/action-catalog.unit.spec.ts` as a canary only if you touched anything imported by it (you shouldn't). Visual verification happens in the final task.
-- All commands run from `/Users/julien/Documents/GitHub/ComfyNext/frontend`.
+- Verification scope: this repo's Playwright suites place nodes via `sailor:addNode` (not menu clicks), so no e2e updates expected; run `npx vitest run tests/unit/action-catalog.unit.spec.ts` as a canary only if you touched anything imported by it (you shouldn't). Visual verification happens in the final task.
+- All commands run from `/Users/julien/Documents/GitHub/Sailor/frontend`.
 
 Shared snippet — the **pastel dot** marker (AI-billed indicator on menu rows and the Generate toolbar icon). The gradient literal matches `NextStepsStrip.vue`'s established usage:
 
@@ -329,7 +329,7 @@ Sibling to the Studios popup:
               </div>
 ```
 
-`ChevronDown` — check the existing lucide import; add if absent. `addLoadNode(nodeType)` already dispatches `comfynext:addNode` and closes the submenu (post-Task-1 rename).
+`ChevronDown` — check the existing lucide import; add if absent. `addLoadNode(nodeType)` already dispatches `sailor:addNode` and closes the submenu (post-Task-1 rename).
 
 - [ ] **Step 4: Verify and commit**
 

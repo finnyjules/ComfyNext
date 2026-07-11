@@ -16,7 +16,7 @@ incompatible kinds live underneath:
   (`comfy_extras/nodes_compositor.py`). Inspector shows only transform + opacity +
   blend.
 - **Local layers** — text / shapes / paths / images authored *inside* the
-  Compositor. Stored in `node.data.properties.comfynext_localLayers`, composited
+  Compositor. Stored in `node.data.properties.sailor_localLayers`, composited
   **client-side** on Canvas-2D (`paintLayerStack` in
   `frontend/app/composables/useCompositorLayers.ts`). Full feature set: effects,
   crop, Figma-style silhouette masking (`maskedById`), AI actions.
@@ -38,7 +38,7 @@ Behavior is robust: what the editor shows is what the output is.
 ## Non-Goals
 
 - **Collapsing the two storage backends into one list.** Locals stay in
-  `comfynext_localLayers`; wired transforms stay in `widgetsValues`. Unification is
+  `sailor_localLayers`; wired transforms stay in `widgetsValues`. Unification is
   at the *model + inspector + mask system* layer, transparent to users. Merging
   storage is a possible future step, not required for parity, and high-risk for
   little gain (YAGNI).
@@ -86,7 +86,7 @@ interface EditorLayer {
 }
 ```
 
-- `key` is the **existing** `StackKey` already used by `comfynext_stackOrder`,
+- `key` is the **existing** `StackKey` already used by `sailor_stackOrder`,
   `wiredKey()`, `localKey()`. We are not inventing an id space — we promote the
   z-order's key into the layer model and mask system.
 - The inspector binds to `EditorLayer`, so **one property panel renders for both
@@ -153,10 +153,10 @@ touches only shadow/blur on wired layers.
 
 - **Local layers:** add `maskedByKey`. Keep reading legacy `maskedById` as
   `l:<id>` (interpreted on load — no data migration).
-- **Wired treatments:** new node property `comfynext_wiredTreatments: { [slot]:
-  { maskedByKey?, crop?, effects? } }`, mirroring how `comfynext_stackOrder` already
+- **Wired treatments:** new node property `sailor_wiredTreatments: { [slot]:
+  { maskedByKey?, crop?, effects? } }`, mirroring how `sailor_stackOrder` already
   lives in `node.data.properties`. Absent = none. (New — no migration.)
-- `comfynext_stackOrder` unchanged.
+- `sailor_stackOrder` unchanged.
 
 ### 6. Render button (this frame)
 
@@ -202,7 +202,7 @@ Shippable in slices; both land for "zero difference":
 1. Two composite engines exist; they agree on size, blend enum, affine transform
    math, and z-order. They diverge on effects, `maskedById`, and motion (frontend
    only).
-2. The unified z-order already exists as `comfynext_stackOrder` (StackKey strings).
+2. The unified z-order already exists as `sailor_stackOrder` (StackKey strings).
 3. Motion frames already bake wired + local together; the Python node just loads
    them. No change there.
 4. The Python node already supports per-slot per-pixel `layer{i}_mask` — the rail

@@ -26,7 +26,7 @@
 | `shader_effects/*.frag` | 14 effect shaders, GLSL ES 3.00 |
 | `shader_effects/assets/` | `glyph_atlas.png` + `glyph_atlas.json` + generator script |
 | `comfy_extras/_shader_effects.py` | Catalog loader, param resolution, `frame_plan()`, `render_effect()` |
-| `comfy_extras/nodes_shader_effects.py` | `ShaderEffect` node + `/comfynext/shader_effects` routes |
+| `comfy_extras/nodes_shader_effects.py` | `ShaderEffect` node + `/sailor/shader_effects` routes |
 | `nodes.py` | MODIFY: register `nodes_shader_effects.py` |
 | `tests-unit/comfy_extras_test/glsl_context_test.py` | GL context + passthrough render test |
 | `tests-unit/comfy_extras_test/shader_effects_test.py` | Loader/params/frame_plan/node/golden tests |
@@ -398,7 +398,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'comfy_extras._shader_e
 """Shader-effects catalog: loading, validation, param resolution, frame planning.
 
 The catalog (shader_effects/ at repo root) is the single source of truth for both
-the browser preview (served via /comfynext/shader_effects) and server rendering.
+the browser preview (served via /sailor/shader_effects) and server rendering.
 Rendering lives in render_effect() (added alongside; reuses nodes_glsl machinery).
 """
 from __future__ import annotations
@@ -994,7 +994,7 @@ Expected: FAIL — `ImportError: cannot import name 'catalog_payload'`
 
 - [ ] **Step 3: Implement payload + routes (append to nodes_shader_effects.py)**
 
-Mirror the guarded registration pattern from `comfy_extras/nodes_comfynext_projects.py` (lines ~284-407):
+Mirror the guarded registration pattern from `comfy_extras/nodes_sailor_projects.py` (lines ~284-407):
 
 ```python
 def catalog_payload() -> dict:
@@ -1025,14 +1025,14 @@ try:
 
     from server import PromptServer
 
-    @PromptServer.instance.routes.get("/comfynext/shader_effects")
+    @PromptServer.instance.routes.get("/sailor/shader_effects")
     async def _get_shader_effects(request):
         try:
             return web.json_response(catalog_payload())
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    @PromptServer.instance.routes.get("/comfynext/shader_effects/assets/{name}")
+    @PromptServer.instance.routes.get("/sailor/shader_effects/assets/{name}")
     async def _get_shader_asset(request):
         name = os.path.basename(request.match_info["name"])  # no traversal
         path = os.path.join(ASSETS_DIR, name)
@@ -1041,7 +1041,7 @@ try:
         return web.FileResponse(path)
 
 except Exception as e:  # imported headless (tests) — pure functions still work
-    print(f"[ComfyNext] shader_effects routes not registered: {e}")
+    print(f"[Sailor] shader_effects routes not registered: {e}")
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -1053,7 +1053,7 @@ Expected: all pass (13 total).
 
 Kill the ComfyUI process (supervisor restarts it; per project convention do NOT try to hot-reload), wait for it to come back, then:
 
-Run: `curl -s http://127.0.0.1:8188/comfynext/shader_effects | head -c 300`
+Run: `curl -s http://127.0.0.1:8188/sailor/shader_effects | head -c 300`
 Expected: JSON starting `{"version": 1, "effects": [{"id": "noise_distortion"...`
 
 Also verify the node registered: `curl -s http://127.0.0.1:8188/object_info/ShaderEffect | head -c 300` → JSON schema with `effect` combo listing both ids.
@@ -1062,7 +1062,7 @@ Also verify the node registered: `curl -s http://127.0.0.1:8188/object_info/Shad
 
 ```bash
 git add comfy_extras/nodes_shader_effects.py tests-unit/comfy_extras_test/shader_effects_test.py
-git commit -m "Shader effects: /comfynext/shader_effects catalog + asset routes"
+git commit -m "Shader effects: /sailor/shader_effects catalog + asset routes"
 ```
 
 ---
@@ -1338,10 +1338,10 @@ import type { EffectDef, ShaderFxCatalog } from './types'
 
 let promise: Promise<ShaderFxCatalog> | null = null
 
-/** Fetch the catalog from the backend (proxied /comfynext route). Cached per page load. */
+/** Fetch the catalog from the backend (proxied /sailor route). Cached per page load. */
 export function fetchShaderFxCatalog(force = false): Promise<ShaderFxCatalog> {
   if (!promise || force) {
-    promise = $fetch<ShaderFxCatalog>('/comfynext/shader_effects').catch((err) => {
+    promise = $fetch<ShaderFxCatalog>('/sailor/shader_effects').catch((err) => {
       promise = null
       throw err
     })
@@ -1355,7 +1355,7 @@ export async function getEffect(id: string): Promise<EffectDef | null> {
 }
 
 export function assetUrl(file: string): string {
-  return `/comfynext/shader_effects/assets/${encodeURIComponent(file)}`
+  return `/sailor/shader_effects/assets/${encodeURIComponent(file)}`
 }
 ```
 
@@ -1823,7 +1823,7 @@ function setParam(uniform: string, value: number) {
   if (!effectDef.value) return
   const next = { ...uniforms.value, [uniform]: value }
   setWidget('params', serializeParams(effectDef.value, next))
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 
@@ -1883,7 +1883,7 @@ function textureSources(def: EffectDef): Record<string, TexImageSource> {
     else if (!img) {
       const el = new Image()
       el.onload = () => { if (!animating.value) renderOnce() }
-      el.src = `/comfynext/shader_effects/assets/${encodeURIComponent(t.file)}`
+      el.src = `/sailor/shader_effects/assets/${encodeURIComponent(t.file)}`
       textureImages.set(t.file, el)
     }
   }
@@ -1937,12 +1937,12 @@ onMounted(async () => {
   catalog.value = await fetchShaderFxCatalog().catch(() => null)
   lastChainIds = chain.value.nodeIds
   watch(() => chain.value.nodeIds, ids => { lastChainIds = ids; if (!animating.value) renderOnce() })
-  window.addEventListener('comfynext:shaderfx-changed', onUpstreamChange)
+  window.addEventListener('sailor:shaderfx-changed', onUpstreamChange)
   renderOnce()
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
-  window.removeEventListener('comfynext:shaderfx-changed', onUpstreamChange)
+  window.removeEventListener('sailor:shaderfx-changed', onUpstreamChange)
 })
 </script>
 ```
@@ -2129,7 +2129,7 @@ Expected: 4 passed.
 
 - [ ] **Step 5: Manual verification of stacking**
 
-In the app: LoadImage → ShaderEffect(noise_distortion) → ShaderEffect(halftone). Select the halftone node — its preview must show BOTH effects animating. Drag a noise_distortion slider — the halftone node's frozen/live preview must update (single-frame refresh via the `comfynext:shaderfx-changed` event). Run the graph and confirm the saved output shows the same stack.
+In the app: LoadImage → ShaderEffect(noise_distortion) → ShaderEffect(halftone). Select the halftone node — its preview must show BOTH effects animating. Drag a noise_distortion slider — the halftone node's frozen/live preview must update (single-frame refresh via the `sailor:shaderfx-changed` event). Run the graph and confirm the saved output shows the same stack.
 
 - [ ] **Step 6: Commit**
 
@@ -2184,7 +2184,7 @@ function pickEffect(id: string) {
   setWidget('effect', id)
   setWidget('params', '{}') // params are per-effect; reset on switch
   pickerOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 ```
@@ -2268,7 +2268,7 @@ function onCenterMove(ev: PointerEvent) {
   if (!effectDef.value) return
   const next = { ...uniforms.value, [cx!]: x, [cy!]: y }
   setWidget('params', serializeParams(effectDef.value, next))
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 function onCenterUp() { draggingCenter = false }

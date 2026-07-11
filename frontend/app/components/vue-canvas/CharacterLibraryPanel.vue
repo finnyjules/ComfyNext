@@ -61,7 +61,7 @@ const { openTab } = useTabs()
 onMounted(() => { setPolling(true); void runAbsorbOnce() })
 onUnmounted(() => setPolling(false))
 
-function changed() { window.dispatchEvent(new CustomEvent('comfynext:charactersChanged')) }
+function changed() { window.dispatchEvent(new CustomEvent('sailor:charactersChanged')) }
 
 // ── Absorb-on-load + one-time sheet auto-gen ───────────────────────────────
 // This is the one place auto-spend is sanctioned: newly absorbed LoRA
@@ -234,7 +234,7 @@ function loraChip(c: CharacterClient): string {
 
 // ── Actions row ─────────────────────────────────────────────────────────
 function useInImage(c: CharacterClient) {
-  window.dispatchEvent(new CustomEvent('comfynext:addCharacterImageGen', { detail: { slug: c.slug } }))
+  window.dispatchEvent(new CustomEvent('sailor:addCharacterImageGen', { detail: { slug: c.slug } }))
 }
 function castInShot(c: CharacterClient) {
   // Normalize the sentinel 'default' selection away before dispatching — the
@@ -247,7 +247,7 @@ function castInShot(c: CharacterClient) {
   // hydrated one, forcing a permanent cast-sync rewrite every tick.
   const raw = selectedVariantId.value[c.slug]
   const variantId = raw === 'default' ? undefined : raw
-  window.dispatchEvent(new CustomEvent('comfynext:addCharacterCastNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addCharacterCastNode', {
     detail: { slug: c.slug, name: c.name, variantId },
   }))
 }

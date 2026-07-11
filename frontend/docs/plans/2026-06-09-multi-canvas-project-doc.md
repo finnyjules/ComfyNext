@@ -20,7 +20,7 @@ interface ProjectDoc { canvases: ProjectCanvas[]; activeCanvasId: string }
 
 ## Why frontend-only
 
-The projects backend (`comfy_extras/nodes_comfynext_projects.py`) stores
+The projects backend (`comfy_extras/nodes_sailor_projects.py`) stores
 version bodies as opaque JSON — it never inspects the `workflow` field. So the
 doc is simply what we now put in that field: the rolling `current` autosave,
 named versions, and sessionStorage all persist the **whole doc**, which is

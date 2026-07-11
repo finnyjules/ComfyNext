@@ -9,14 +9,14 @@ const props = defineProps<{ id: string; data: { properties?: Record<string, any>
 // Read-only registry provided by the layout (Task 7 Step 3).
 const activeRegistry = inject<ComputedRef<RefRegistry>>('assetRegistry', computed(() => ({})))
 
-const refName = computed<string | null>(() => props.data?.properties?.comfynext_refName ?? null)
+const refName = computed<string | null>(() => props.data?.properties?.sailor_refName ?? null)
 const entry = computed(() => refName.value ? resolveRef(activeRegistry.value, refName.value) : undefined)
 const thumbUrl = computed(() => entry.value ? `/view?filename=${encodeURIComponent(entry.value.filename)}&type=input` : null)
 const names = computed(() => listRefNames(activeRegistry.value))
 const picking = ref(false)
 
 function pick(name: string) {
-  ;(props.data.properties ??= {}).comfynext_refName = name
+  ;(props.data.properties ??= {}).sailor_refName = name
   picking.value = false
 }
 </script>

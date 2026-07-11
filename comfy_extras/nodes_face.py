@@ -43,7 +43,7 @@ _INSWAPPER_SIZE = 554_253_681  # bytes, official file size
 
 
 # Register with the shared download infra. Touching this module is enough — the
-# toolbox can then query /comfynext/models/status?key=faceswap.
+# toolbox can then query /sailor/models/status?key=faceswap.
 register_bundle(ModelBundle(
     key="faceswap",
     label="Face Swap",

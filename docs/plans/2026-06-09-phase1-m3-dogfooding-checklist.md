@@ -3,7 +3,7 @@
 **Enable** (browser console, then REOPEN the timeline editor — the flag is read when the editor mounts):
 
 ~~~js
-localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
+localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
 ~~~
 
 **Disable:** set to 'false' or remove the key, reopen the editor. The Canvas2D engine remains the default; WebGL2-less browsers fall back automatically (one console warning).
@@ -16,7 +16,7 @@ localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
 - [ ] Long video assets (the >96MB WebCodecs cap routes them to the element source — look for the console note)
 - [ ] Odd codecs / screen recordings / WebM (should warn + fall back per clip, never blank the preview)
 - [ ] Long sessions: memory stays flat-ish while scrubbing (decoded-frame LRU is bounded at 24 frames/clip)
-- [ ] Compare a render (`/comfynext/render_timeline`) against what the preview showed — WYSIWYG spot checks, esp. rotated/scaled clips
+- [ ] Compare a render (`/sailor/render_timeline`) against what the preview showed — WYSIWYG spot checks, esp. rotated/scaled clips
 
 ## Known accepted differences vs the old preview
 - Titles/lower-thirds now honor transforms/keyframes/fades (matches exports; the old preview ignored them on live titles).

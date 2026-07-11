@@ -77,7 +77,7 @@ export function resolveClipSource(src: any, opts: ResolveClipSourceOpts = {}): C
     if (fname) return { url: viewUrl(fname), kind: 'image' }
   }
 
-  // ComfyNext universal artifact nodes (Video / Image): a published preview in
+  // Sailor universal artifact nodes (Video / Image): a published preview in
   // data.images[0], else the upload widget ('file' for Video, 'image' for
   // Image). Resolved the same way the artifact cards resolve their own source.
   if (type === 'Video' || type === 'Image') {

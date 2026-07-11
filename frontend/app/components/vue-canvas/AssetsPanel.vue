@@ -97,8 +97,8 @@ onMounted(async () => {
 // refetch when default.vue signals a generation was just recorded. Without
 // this, new generations never appear until the panel is reopened/reloaded.
 function onGenerationSaved() { refreshGenerations() }
-onMounted(() => window.addEventListener('comfynext:generationSaved', onGenerationSaved))
-onBeforeUnmount(() => window.removeEventListener('comfynext:generationSaved', onGenerationSaved))
+onMounted(() => window.addEventListener('sailor:generationSaved', onGenerationSaved))
+onBeforeUnmount(() => window.removeEventListener('sailor:generationSaved', onGenerationSaved))
 
 // ── Resolve scope → asset list ─────────────────────────────────────────────
 const allGenerations = computed<GenAsset[]>(() =>
@@ -160,8 +160,8 @@ async function confirmDelete() {
     const params = new URLSearchParams({ filename: a.filename })
     if (a.subfolder) params.set('subfolder', a.subfolder)
     const url = a.type === 'input'
-      ? `/comfynext/input_file?${params}`
-      : `/comfynext/output_file?${params}`
+      ? `/sailor/input_file?${params}`
+      : `/sailor/output_file?${params}`
     const res = await fetch(url, { method: 'DELETE' })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -210,11 +210,11 @@ function payload(a: GenAsset) {
 }
 function onCardDragStart(e: DragEvent, a: GenAsset) {
   if (!e.dataTransfer) return
-  e.dataTransfer.setData('application/x-comfynext-asset', JSON.stringify(payload(a)))
+  e.dataTransfer.setData('application/x-sailor-asset', JSON.stringify(payload(a)))
   e.dataTransfer.effectAllowed = 'copy'
 }
 function addToCanvas(a: GenAsset) {
-  window.dispatchEvent(new CustomEvent('comfynext:addAssetNode', { detail: payload(a) }))
+  window.dispatchEvent(new CustomEvent('sailor:addAssetNode', { detail: payload(a) }))
 }
 </script>
 

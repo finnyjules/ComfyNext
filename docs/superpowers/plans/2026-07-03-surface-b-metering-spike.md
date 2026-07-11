@@ -11,7 +11,7 @@
 ## Why these decisions (findings that shaped the plan)
 
 - **`execution_success` is NOT broadcast.** It is sent to the submitting client's `client_id` only (`execution.py:793` calls `add_message(..., broadcast=False)`, which at `execution.py:680` targets `self.server.client_id`). A server-side websocket listener with its own `clientId` would never see it. → **The spike correlates success via `GET /history/{prompt_id}` polling**, whose entry carries `status: {status_str: 'success'|'error', completed: bool}` (`execution.py:1216`). This needs no websocket proxy.
-- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt(0)` straight to `:8188` (`custom_nodes/comfynext_bridge/js/bridge.js:1126`), bypassing Nitro. That is exactly the spec §6 isolation hole. → **The spike does NOT try to re-route the iframe.** It proves the mechanism through a new authenticated route driven directly (curl/tests/live smoke). Re-hosting the iframe + websocket behind the authed proxy and binding `:8188` private is the remaining production-isolation task; the spike's job is to make that the *only* unknown left, and to record an effort estimate for it (Task 7).
+- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt(0)` straight to `:8188` (`custom_nodes/sailor_bridge/js/bridge.js:1126`), bypassing Nitro. That is exactly the spec §6 isolation hole. → **The spike does NOT try to re-route the iframe.** It proves the mechanism through a new authenticated route driven directly (curl/tests/live smoke). Re-hosting the iframe + websocket behind the authed proxy and binding `:8188` private is the remaining production-isolation task; the spike's job is to make that the *only* unknown left, and to record an effort estimate for it (Task 7).
 - **No Postgres/Clerk/Stripe deps are added.** The ledger, auth, and pending-charge store are in-memory mocks with production-shaped interfaces.
 
 ## Global Constraints
@@ -900,7 +900,7 @@ All money logic is in-memory mocks whose signatures mirror the real `ledger.ts` 
 
 ## Key engine facts discovered
 - **`execution_success` is client-targeted, not broadcast** (`execution.py:793` → `add_message(..., broadcast=False)` → `execution.py:680` targets `self.server.client_id`). A server-side ws listener with its own clientId would not see it. → the spike settles by polling `GET /history/{prompt_id}`, whose entry carries `status: {status_str: 'success'|'error', completed: bool}` (`execution.py:1216`).
-- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt` straight to `:8188` (`custom_nodes/comfynext_bridge/js/bridge.js:1126`) — bypassing Nitro. This is the §6 hole.
+- **The canvas submits prompts inside the iframe** via `window.app.queuePrompt` straight to `:8188` (`custom_nodes/sailor_bridge/js/bridge.js:1126`) — bypassing Nitro. This is the §6 hole.
 
 ## Mock → real swap points (for Phases 1–5)
 | Spike module | Replaced by | Phase |

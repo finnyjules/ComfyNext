@@ -16,7 +16,7 @@
 - Pastel dot ONLY on Shot Director + Lip-Sync tiles (gen-pastel snippet, gradient literal as in `SelectionActionChips.vue`); no purple.
 - Modal must fit `max-h-[85vh]` without internal scrolling in the normal case (8 + 6 tiles).
 - e2e verification is MANDATORY before claiming done (static review missed a broken render in Phase 4).
-- Commands run from `/Users/julien/Documents/GitHub/ComfyNext/frontend`.
+- Commands run from `/Users/julien/Documents/GitHub/Sailor/frontend`.
 
 ---
 
@@ -388,7 +388,7 @@ import { waitForBackend } from './_helpers'
 /** Open a fresh blank project and STOP at the Get Started modal. */
 async function openToModal(page: Page) {
   await page.addInitScript(() => {
-    try { localStorage.setItem('comfynext:Comfy.VueNodes.Enabled', 'true') } catch {}
+    try { localStorage.setItem('sailor:Comfy.VueNodes.Enabled', 'true') } catch {}
   })
   await page.goto('/')
   await page.waitForLoadState('networkidle')

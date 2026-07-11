@@ -43,7 +43,7 @@ Dev-only composable `useShadowParity()`: on each run, after the existing iframe 
 
 - `useDirectExecution()` composable: owns a `client_id` (uuid, sessionStorage), opens `WS /ws?clientId=` via the existing Nuxt proxy (`comfyui-proxy.ts` — add `/ws` + `/prompt` to allow-list if absent), maps WS events (`status`, `executing`, `progress`, `executed`, `execution_error`, `execution_cached`, `gate_paused`) to the SAME event shapes `default.vue` already consumes from the bridge (`onBridgeMessage` contract), so downstream handling is unchanged.
 - Queue: POST `/prompt` `{ prompt, client_id, extra_data: { extra_pnginfo: { workflow } } }`; surface HTTP 400 `node_errors` through the existing error path (red-ring + toast).
-- **Runtime switch**: `comfynext:Comfy.DirectExecution.Enabled` localStorage flag (Settings toggle, default OFF tonight). OFF = today's iframe path. ON = direct path, with shadow parity comparing against the iframe in dev. Flip to default ON only after harness soak.
+- **Runtime switch**: `sailor:Comfy.DirectExecution.Enabled` localStorage flag (Settings toggle, default OFF tonight). OFF = today's iframe path. ON = direct path, with shadow parity comparing against the iframe in dev. Flip to default ON only after harness soak.
 
 ### Error handling
 

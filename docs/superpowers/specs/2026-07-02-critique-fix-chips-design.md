@@ -12,7 +12,7 @@
 
 ## Data flow
 
-1. `ArtifactImageNode`'s existing fresh-take watcher additionally dispatches `comfynext:autoReview { nodeId, takeId }` (fires alongside `announceFreshTake`).
+1. `ArtifactImageNode`'s existing fresh-take watcher additionally dispatches `sailor:autoReview { nodeId, takeId }` (fires alongside `announceFreshTake`).
 2. `CanvasPromptBar` (owner of `useCanvasAgent`) listens and gates: skip when the artifact's producer isn't paid, when `reviewing`/`busy`, or when this take was already reviewed; 3s debounce per node so a Variations ×4 burst reviews only the settled state. Then calls `runReview([nodeId], intent, { auto: true })` with the same intent source the Fix action uses (`vueCanvas.agentNodeIntent?.(nodeId)`).
 3. `runReview` in auto mode: on completion, instead of populating `changes` (bar cards), publishes to the strip: `useNextStepsStrip().announceFixes(nodeId, chips)` where each chip is `{ id, label, hint, change }`. Zero issues → publish nothing, silently.
 4. `NextStepsStrip` renders fix chips styled with the translucent pastel gradient (the `gen-pastel` idiom the Edit… button uses — pastel = AI-powered in this app's design language) ahead of the standard dark suggestion chips. Fix chips are **sticky**: exempt from the 12s auto-dismiss (reviews arrive ~10s after render by nature); cleared on click, explicit dismiss, or a newer take on that node.
@@ -25,8 +25,8 @@
 - **`lib/artifact/nextSteps.ts`** — pure `paidProducerFor(nodeId, nodes, edges): boolean` — walks the artifact's direct image-input edge to its source node and checks `data.priceBadge`. Unit-tested.
 - **`composables/useNextStepsStrip.ts`** — second channel: `fixes: Ref<{ nodeId, chips } | null>` with `announceFixes` / `clearFixes`; `announceFreshTake(nodeId)` clears stale fixes for that node. Strip visibility for a node = generic-active OR has-fixes.
 - **`components/vue-canvas/NextStepsStrip.vue`** — renders fix chips before the standard chips: translucent `gen-pastel` gradient background with dark text (mirroring the Edit… button's treatment at chip scale), Sparkles-style lucide icon; fix chips ignore the auto-dismiss timer (timer only clears the generic chips).
-- **`components/agent/CanvasPromptBar.vue`** — the `comfynext:autoReview` listener with the gating described above; needs edges for `paidProducerFor` (expose `getEdges()` from VueNodeCanvas if not already exposed).
-- **`components/vue-canvas/ArtifactImageNode.vue`** — dispatch `comfynext:autoReview` in the takes watcher; strip render condition includes the fixes channel.
+- **`components/agent/CanvasPromptBar.vue`** — the `sailor:autoReview` listener with the gating described above; needs edges for `paidProducerFor` (expose `getEdges()` from VueNodeCanvas if not already exposed).
+- **`components/vue-canvas/ArtifactImageNode.vue`** — dispatch `sailor:autoReview` in the takes watcher; strip render condition includes the fixes channel.
 
 ## Edge cases & errors
 

@@ -102,7 +102,7 @@ export function useExplain() {
     error.value = null
     explanation.value = null
 
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
 
     const graphDescription = formatGraphForClaude(data)
 

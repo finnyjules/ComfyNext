@@ -11,7 +11,7 @@ your head on every prompt: subject, action, environment, one (and only one) came
 move, lighting, style, negative constraints, per-role reference tagging, and optional
 timed beats — all within a ~60–100 word budget. Miss a piece or over-specify and you
 get documented failure modes (jitter, blended events, character drift). Remembering
-all of it per shot is unreasonable, and the current ComfyNext video node exposes almost
+all of it per shot is unreasonable, and the current Sailor video node exposes almost
 none of Seedance's real control surface — it sends only `prompt` + a single `image`.
 
 ## Goal
@@ -65,7 +65,7 @@ A standalone **`ShotDirector` studio node**, following the existing studio patte
 node, a "Render" action that compiles + dispatches a Seedance generation.
 
 ```
-node.data.properties.comfynext_shotDirector : ShotSheet   (persisted state)
+node.data.properties.sailor_shotDirector : ShotSheet   (persisted state)
 
 ShotDirectorNode.vue      card: reference thumbnails + shot summary + Edit button
 ShotDirectorSurface.vue   full editor modal (StudioModalShell)

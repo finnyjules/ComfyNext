@@ -149,7 +149,7 @@ const layers = computed<Layer[]>(() => {
       // Wired cloner is editor state on a node property (works without a backend
       // restart, like hidden/locked); it's stamped into the layer{i}_cloner
       // widget at submit by injectCompositorCloners.
-      cloner: ((node.data.properties as any)?.comfynext_wiredCloners ?? {})[i] as Cloner | undefined,
+      cloner: ((node.data.properties as any)?.sailor_wiredCloners ?? {})[i] as Cloner | undefined,
     })
   }
   return out
@@ -172,7 +172,7 @@ function setWiredCloner(slot: number, cloner: Cloner) {
   const node = compositor.value
   if (!node) return
   const p = (node.data.properties ||= {})
-  p.comfynext_wiredCloners = { ...((p as any).comfynext_wiredCloners ?? {}), [slot]: cloner }
+  p.sailor_wiredCloners = { ...((p as any).sailor_wiredCloners ?? {}), [slot]: cloner }
 }
 
 // ── Canvas sizing — match the artboard/base aspect so positions are exact ───
@@ -341,7 +341,7 @@ const {
 } = useCompositorAgent({
   getState: () => ({ layers: localLayers.value, background: background.value }),
   setState: (s) => { commit(s.layers); if (s.background !== background.value) setBackground(s.background) },
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
 })
 // The agent's progress / proposed changes take over the right inspector while active.
@@ -683,7 +683,7 @@ watch(selectedSlot, (s) => { if (s != null) selectLocal(null) })
 
 // ── Unified z-order stack (mirrors ArtifactFrameNode's model) ───────────────
 // Keys: `w:<slot>` for a wired image, `l:<id>` for a local layer. Persisted on
-// the node as `comfynext_stackOrder`; array order is bottom→top. This is the
+// the node as `sailor_stackOrder`; array order is bottom→top. This is the
 // single source of truth for depth — any layer can sit above or below any other.
 type StackKey = string
 function wiredKey(slot: number): StackKey { return `w:${slot}` }
@@ -694,7 +694,7 @@ const presentKeys = computed<StackKey[]>(() => [
   ...localLayers.value.map(l => localKey(l.id)),
 ])
 const stackKeys = computed<StackKey[]>(() => {
-  const saved = ((compositor.value?.data?.properties as any)?.comfynext_stackOrder as StackKey[]) ?? []
+  const saved = ((compositor.value?.data?.properties as any)?.sailor_stackOrder as StackKey[]) ?? []
   const present = new Set(presentKeys.value)
   const kept = saved.filter((k: string) => present.has(k))
   const keptSet = new Set(kept)
@@ -709,7 +709,7 @@ function moveStackZ(key: StackKey, dir: -1 | 1) {
   const node = compositor.value
   if (!node) return
   if (!node.data.properties) node.data.properties = {}
-  ;(node.data.properties as any).comfynext_stackOrder = arr
+  ;(node.data.properties as any).sailor_stackOrder = arr
 }
 function resolveStackKey(key: StackKey): { type: 'wired'; layer: Layer } | { type: 'local'; layer: any } | null {
   if (key.startsWith('w:')) {
@@ -851,7 +851,7 @@ function rowLabel(row: any) {
 function setStackOrder(topFirstKeys: StackKey[]) {
   const node = compositor.value; if (!node) return
   if (!node.data.properties) node.data.properties = {}
-  ;(node.data.properties as any).comfynext_stackOrder = [...topFirstKeys].reverse() // stored bottom→top
+  ;(node.data.properties as any).sailor_stackOrder = [...topFirstKeys].reverse() // stored bottom→top
 }
 const dragRk = ref<string | null>(null)
 const dropIndex = ref<number | null>(null)   // flat insertion index 0..flatRows.length
@@ -1215,9 +1215,9 @@ function writeSlotArr(propKey: string, arr: number[]) {
   if (!node.data.properties) node.data.properties = {}
   ;(node.data.properties as any)[propKey] = arr
 }
-const hiddenWired = computed(() => new Set(readSlotArr('comfynext_hiddenWired')))
-const lockedWired = computed(() => new Set(readSlotArr('comfynext_lockedWired')))
-function toggleWiredFlag(propKey: 'comfynext_hiddenWired' | 'comfynext_lockedWired', slot: number) {
+const hiddenWired = computed(() => new Set(readSlotArr('sailor_hiddenWired')))
+const lockedWired = computed(() => new Set(readSlotArr('sailor_lockedWired')))
+function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', slot: number) {
   const cur = readSlotArr(propKey)
   writeSlotArr(propKey, cur.includes(slot) ? cur.filter(s => s !== slot) : [...cur, slot])
 }
@@ -1230,11 +1230,11 @@ function rowLocked(row: any): boolean {
   return row.layer ? !!row.layer.locked : false
 }
 function toggleRowHidden(row: any) {
-  if (row.kind === 'wired') toggleWiredFlag('comfynext_hiddenWired', row.slot)
+  if (row.kind === 'wired') toggleWiredFlag('sailor_hiddenWired', row.slot)
   else if (row.layer) setLocal(row.layer.id, { visible: row.layer.visible === false ? undefined : false } as any)
 }
 function toggleRowLocked(row: any) {
-  if (row.kind === 'wired') toggleWiredFlag('comfynext_lockedWired', row.slot)
+  if (row.kind === 'wired') toggleWiredFlag('sailor_lockedWired', row.slot)
   else if (row.layer) setLocal(row.layer.id, { locked: !row.layer.locked } as any)
 }
 // ── Group-row hide/lock/opacity (Task 4: mirrors the layer-row toggles above,
@@ -1255,13 +1255,13 @@ function groupRowOpacity(gid: string): number {
 // the workflow save serializes (see useLocalLayerEditor.commit).
 const motionDoc = computed<FrameMotion>(() => {
   const p = compositor.value?.data?.properties as Record<string, any> | undefined
-  return { ...DEFAULT_FRAME_MOTION, ...(p?.comfynext_motion ?? {}) }
+  return { ...DEFAULT_FRAME_MOTION, ...(p?.sailor_motion ?? {}) }
 })
 function setMotion(patch: Partial<FrameMotion>) {
   const node = compositor.value
   if (!node) return
   const p = (node.data.properties ||= {})
-  p.comfynext_motion = { ...motionDoc.value, ...patch }
+  p.sailor_motion = { ...motionDoc.value, ...patch }
   if (previewT.value != null) {
     // Read the new duration from the patch — the computed may lag the in-place
     // properties mutation depending on the node object's reactivity depth.
@@ -1322,7 +1322,7 @@ function loadSlateFixture() {
 const projectBrand = inject<{
   activeKitId: ComputedRef<string | null>
   setBrandKit: (id: string | null) => void
-} | null>('comfynext:brand', null)
+} | null>('sailor:brand', null)
 const brandOpen = ref(false)
 
 // ── Motion bake (PNG sequence → motion_params) ──────────────────────────────
@@ -1330,7 +1330,7 @@ const brandOpen = ref(false)
 // path as the preview, uploads PNGs to /upload/image, and persists the result
 // on node properties.
 //
-// Params are stored at node.data.properties.comfynext_motionParams and stamped
+// Params are stored at node.data.properties.sailor_motionParams and stamped
 // into the backend's `motion_params` widget at submit time by
 // injectCompositorMotionParams (VueNodeCanvas.vue, called from the Run path in
 // layouts/default.vue — same pattern as the Timeline's edit_state injection).
@@ -1379,7 +1379,7 @@ function renderSceneForHarmonize(): { canvas: HTMLCanvasElement; W: number; H: n
 
 const storedMotionParams = computed<MotionParams | null>(() => {
   const p = compositor.value?.data?.properties as Record<string, any> | undefined
-  return (p?.comfynext_motionParams as MotionParams | undefined) ?? null
+  return (p?.sailor_motionParams as MotionParams | undefined) ?? null
 })
 const motionStale = computed(() => {
   const stored = storedMotionParams.value
@@ -1404,12 +1404,12 @@ async function bakeMotion() {
       (done, total) => { bakeProgress.value = done / total },
     )
     const p = (node.data.properties ||= {})
-    p.comfynext_motionParams = params
+    p.sailor_motionParams = params
     // The new bake supersedes the old PNG sequence — delete it server-side.
     // Best-effort: stale frames are harmless, so failures are swallowed.
     const superseded = previousFrames.filter(f => !params.rendered.includes(f))
     if (superseded.length) {
-      fetch('/comfynext/motion/cleanup_frames', {
+      fetch('/sailor/motion/cleanup_frames', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delete: superseded, keep: params.rendered }),
@@ -1435,7 +1435,7 @@ function staticSourceKey(): string {
   return (h >>> 0).toString(36)
 }
 const lastRenderKey = computed<string | null>(() =>
-  (compositor.value?.data?.properties as any)?.comfynext_renderKey ?? null)
+  (compositor.value?.data?.properties as any)?.sailor_renderKey ?? null)
 const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
 const rendering = ref(false)
 const renderError = ref('')
@@ -1462,13 +1462,13 @@ async function renderFrame() {
     const { W, H } = bakeSize()
     const blob = await renderStaticComposite(W, H)
     if (!blob) return
-    const file = new File([blob], `comfynext_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
+    const file = new File([blob], `sailor_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
     const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
     const res = await fetch('/upload/image', { method: 'POST', body: fd })
     if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
     const name = (await res.json())?.name || file.name
     const p = (node.data.properties ||= {})
-    p.comfynext_renderKey = staticSourceKey()
+    p.sailor_renderKey = staticSourceKey()
     node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
   } catch (err: any) {
     console.error('[compositor render]', err)
@@ -1518,7 +1518,7 @@ watch(
     JSON.stringify(layers.value), JSON.stringify(stackKeys.value),
     Object.keys(wiredImageEls.value).length,
     nodeEdit.active.value, nodeEdit.layerId.value,
-    JSON.stringify(readSlotArr('comfynext_hiddenWired')),
+    JSON.stringify(readSlotArr('sailor_hiddenWired')),
     JSON.stringify(wiredTreatments.value),
     JSON.stringify(background.value),
     JSON.stringify(localGroups.value),

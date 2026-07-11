@@ -172,7 +172,7 @@ def test_ease_presets_match_ts():
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/timeline_state_test.py::test_ease_presets_match_ts -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/timeline_state_test.py::test_ease_presets_match_ts -v`
 Expected: FAIL — `power2.in` returns `0.5` (linear fallback), not `0.25`.
 
 - [ ] **Step 3: Implement**

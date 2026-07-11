@@ -126,7 +126,7 @@ def _download_file(file: ModelFile, progress_cb: Callable[[int, int], None]) -> 
         host = url.split("/")[2]
         for attempt in range(_DL_ATTEMPTS):
             have = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
-            headers = {"User-Agent": "ComfyNext/1.0"}
+            headers = {"User-Agent": "Sailor/1.0"}
             if have:
                 headers["Range"] = f"bytes={have}-"
             try:
@@ -201,12 +201,12 @@ try:
             return
         _routes_registered = True
 
-        @PromptServer.instance.routes.get("/comfynext/models/status")
+        @PromptServer.instance.routes.get("/sailor/models/status")
         async def _status_route(request):
             key = request.query.get("key", "")
             return web.json_response(bundle_status(key))
 
-        @PromptServer.instance.routes.get("/comfynext/models/download")
+        @PromptServer.instance.routes.get("/sailor/models/download")
         async def _download_route(request):
             """SSE stream of `data: {phase, file, downloaded, total}` lines."""
             key = request.query.get("key", "")

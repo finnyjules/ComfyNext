@@ -20,7 +20,7 @@ The output serves four jobs (all confirmed in scope): backgrounds & surfaces, pa
 ## Non-goals (v1)
 
 - **Aperiodic tilings** (Penrose / "hat" einstein tile) — deferred to a future flavor; they break the single-tile export model and need a different math core.
-- Rebuilding generation infrastructure — in-studio generation and imported assets both reuse existing ComfyNext generation/asset rails.
+- Rebuilding generation infrastructure — in-studio generation and imported assets both reuse existing Sailor generation/asset rails.
 - No new studio infrastructure: modal shell, control primitives, node card, bake/upload, persistence are all reused.
 
 ## Architecture
@@ -64,7 +64,7 @@ Mode picker; controls reveal contextually per mode.
 
 **Procedural motifs:** shapes, dots/lines, noise fields — parametric, seamless by construction.
 
-**Raster:** imported asset (incl. anything generated elsewhere in ComfyNext) *or* in-studio prompt generation; placed/scattered in cells, edge-wrapped (see seamless tiers).
+**Raster:** imported asset (incl. anything generated elsewhere in Sailor) *or* in-studio prompt generation; placed/scattered in cells, edge-wrapped (see seamless tiers).
 
 ### Stage 3 — Stylize
 
@@ -92,7 +92,7 @@ Reuses `StudioModalShell`, `StudioSection`, and control primitives (`StudioSlide
 
 ## Components & files (new)
 
-- `frontend/app/components/vue-canvas/TextureStudioNode.vue` — node card + live preview; dispatches `comfynext:openTextureStudio`.
+- `frontend/app/components/vue-canvas/TextureStudioNode.vue` — node card + live preview; dispatches `sailor:openTextureStudio`.
 - `frontend/app/components/vue-canvas/TextureStudioSurface.vue` — modal editor.
 - `frontend/app/lib/texturefx/renderer.ts` — WebGL2 renderer for Stages 1–2 (lattice + cell content), exposes a `render(config, w, h, t)` → canvas and `renderToBlob`.
 - `frontend/app/lib/texturefx/lattice.ts` — symmetry-group tiling core + presets.
@@ -101,13 +101,13 @@ Reuses `StudioModalShell`, `StudioSection`, and control primitives (`StudioSlide
 - `frontend/app/lib/texturefx/svg.ts` — vector export for procedural/Truchet/lattice families.
 - `frontend/app/lib/texturefx/controls.ts` + `sections.ts` — `ControlSpec[]` + section allow-list.
 
-Stage 3 composes through the existing `frontend/app/lib/shaderfx` passes. Bake/encode reuse `frontend/app/lib/motion/bake.ts` / the `spacetype` bake + `/comfynext/spacetype_encode` rail.
+Stage 3 composes through the existing `frontend/app/lib/shaderfx` passes. Bake/encode reuse `frontend/app/lib/motion/bake.ts` / the `spacetype` bake + `/sailor/spacetype_encode` rail.
 
 ## Data flow & integration
 
-- Config persists to `node.data.properties.comfynext_textureStudio`; loaded on open, saved on close (mirrors Gradient Studio).
-- Launch: node dispatches `comfynext:openTextureStudio` → `VueNodeCanvas` opens the surface via Teleport.
-- Output: **Send to canvas** dispatches `comfynext:textureStudioOutput` with `{ sourceNodeId, nodeType: 'Image'|'Video', widgetOverrides }`, creating the artifact node; result recorded to the Assets panel.
+- Config persists to `node.data.properties.sailor_textureStudio`; loaded on open, saved on close (mirrors Gradient Studio).
+- Launch: node dispatches `sailor:openTextureStudio` → `VueNodeCanvas` opens the surface via Teleport.
+- Output: **Send to canvas** dispatches `sailor:textureStudioOutput` with `{ sourceNodeId, nodeType: 'Image'|'Video', widgetOverrides }`, creating the artifact node; result recorded to the Assets panel.
 - PNG via `uploadFrameBatch`; video via the frame-bake + `spacetype_encode` backend encode; **SVG** written for the vector/SVG editor (geometric families only).
 
 ## Export

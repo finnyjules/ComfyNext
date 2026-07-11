@@ -1,4 +1,4 @@
-# ComfyNext Agent Request Corpus
+# Sailor Agent Request Corpus
 
 Realistic natural-language requests a user would type into the in-product agent,
 mapped to the single most-appropriate target. Used to harden routing + the surfaces

@@ -28,7 +28,7 @@ async function uploadAndRegister(blob: Blob, fname: string): Promise<{ rel: stri
   const meta = await up.json() as { name?: string; subfolder?: string }
   const rel = meta.subfolder ? `${meta.subfolder}/${meta.name}` : (meta.name ?? fname)
 
-  const importRes = await fetch('/comfynext/asset_import', {
+  const importRes = await fetch('/sailor/asset_import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: rel }),

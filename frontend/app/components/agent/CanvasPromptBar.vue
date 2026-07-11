@@ -30,7 +30,7 @@ const {
   commit: () => props.vueCanvas.agentCommit(),
   frameNodes: (ids: string[]) => props.vueCanvas.agentFrameNodes(ids),
   discard: () => props.vueCanvas.agentDiscard(),
-  tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? ''),
+  tune: (cmds) => props.vueCanvas.agentTune(cmds, getLocalSetting('Sailor.AI.AnthropicApiKey') ?? ''),
   tuneRevert: () => props.vueCanvas.agentTuneRevert(),
   // (anatomy repairs now go through an EditImageNode the review proposes, not a route)
   // Keep & Run: run the agent's result AND anything it feeds into (direction:
@@ -38,10 +38,10 @@ const {
   // but only that affected branch, never unrelated nodes (the top Run does the
   // whole canvas). New nodes execute (uncached) and edited nodes cache-miss;
   // truly-unchanged upstream stays cached.
-  run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('comfynext:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
+  run: (targetIds: string[]) => window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds, direction: 'downstream' } })),
   runOutputImage: (targetIds: string[]) => props.vueCanvas.agentRunOutputImage(targetIds),
   resolveResultNode: (targetIds: string[]) => props.vueCanvas.agentResolveResultNode?.(targetIds) ?? null,
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   // "find me a picture of X" → the model emits searchImages and the picker
   // takes over (search → select → import as Image nodes).
   searchImages: (query: string) => { searchQuery.value = query; searchOpen.value = true },
@@ -87,14 +87,14 @@ function onAutoReview(e: Event) {
   }, 3000))
 }
 onMounted(() => {
-  window.addEventListener('comfynext:agentRunComplete', onRunComplete)
-  window.addEventListener('comfynext:critiqueNode', onCritiqueNode)
-  window.addEventListener('comfynext:autoReview', onAutoReview)
+  window.addEventListener('sailor:agentRunComplete', onRunComplete)
+  window.addEventListener('sailor:critiqueNode', onCritiqueNode)
+  window.addEventListener('sailor:autoReview', onAutoReview)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('comfynext:agentRunComplete', onRunComplete)
-  window.removeEventListener('comfynext:critiqueNode', onCritiqueNode)
-  window.removeEventListener('comfynext:autoReview', onAutoReview)
+  window.removeEventListener('sailor:agentRunComplete', onRunComplete)
+  window.removeEventListener('sailor:critiqueNode', onCritiqueNode)
+  window.removeEventListener('sailor:autoReview', onAutoReview)
   for (const t of autoReviewTimers.values()) clearTimeout(t)
 })
 

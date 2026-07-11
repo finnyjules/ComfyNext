@@ -74,7 +74,7 @@ async function addBlueprint(bp: BlueprintEntry) {
     if (full?.data) {
       const workflow = typeof full.data === 'string' ? JSON.parse(full.data) : full.data
       // Dispatch as addNode with subgraph data
-      window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+      window.dispatchEvent(new CustomEvent('sailor:addNode', {
         detail: { nodeType: bp.name, subgraph: workflow },
       }))
     }

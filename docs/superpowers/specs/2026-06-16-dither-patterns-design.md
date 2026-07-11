@@ -62,7 +62,7 @@ textures (declared in the manifest) on units 2+. Keep the renderer-contract head
   `shader_effects/assets/blue_noise.png` (8-bit). Deterministic seed so re-runs are stable.
 - Declared in the manifest: `"textures": [{ "uniform": "u_blueNoise", "file": "blue_noise.png" }]`.
   This auto-loads server-side via `_load_effect_textures` (`PILImage.open(...).convert("RGBA")`)
-  and browser-side via `assetUrl('blue_noise.png')` → `/comfynext/shader_effects/assets/...`,
+  and browser-side via `assetUrl('blue_noise.png')` → `/sailor/shader_effects/assets/...`,
   exactly like `ascii_dither`'s glyph atlas.
 - The texture is bound for **every** `bayer_dither` render (NEAREST, units 2+) regardless of
   pattern; non-blue patterns simply don't sample it, so output stays deterministic.

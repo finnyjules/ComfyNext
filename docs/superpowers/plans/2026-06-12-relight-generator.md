@@ -304,7 +304,7 @@ class RelightNode(IO.ComfyNode):
                     "light",
                     default='{"azimuth":-30,"elevation":20,"intensity":0.6}',
                     multiline=False,
-                    extra_dict={"comfynext_widget": "light_gimbal"},
+                    extra_dict={"sailor_widget": "light_gimbal"},
                     tooltip="Light direction + intensity. Edited via the gimbal widget.",
                 ),
                 IO.Boolean.Input("keep_background", default=True, optional=True,
@@ -555,7 +555,7 @@ Replace the top doc comment block to describe the light gimbal (azimuth/elevatio
 In `frontend/app/components/vue-canvas/ComfyNodeWidget.vue`, after the `camera_gimbal` branch (lines 442–449) add:
 
 ```html
-    <template v-else-if="widgetDef.comfynext_widget === 'light_gimbal'">
+    <template v-else-if="widgetDef.sailor_widget === 'light_gimbal'">
       <VueCanvasWidgetsWidgetLightGimbal
         :model-value="modelValue"
         :node-id="nodeId"

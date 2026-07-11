@@ -11,7 +11,7 @@
 **Spec:** `docs/superpowers/specs/2026-06-13-kinetic-export-and-keyframe-lanes-design.md`
 
 **Deviations from spec (discovered during planning, against real code):**
-1. **No "sequence asset".** The asset-import route (`/comfynext/asset_import`) probes a *single* media file; a PNG sequence doesn't fit that model. Baked frames are a render cache, not user assets, so they live on the clip in a new `motion_bake` field, not in the asset library. (This also sidesteps the spec's open question about sequence-asset GC — the cache is replaced in place on re-bake.)
+1. **No "sequence asset".** The asset-import route (`/sailor/asset_import`) probes a *single* media file; a PNG sequence doesn't fit that model. Baked frames are a render cache, not user assets, so they live on the clip in a new `motion_bake` field, not in the asset library. (This also sidesteps the spec's open question about sequence-asset GC — the cache is replaced in place on re-bake.)
 2. **`_transform_and_alpha` gains a `preserve_alpha` flag.** It currently does `src_pil.convert("RGB")` (drops alpha). Without this, a baked overlay's transparent background composites as a black box over the whole canvas.
 
 ---
@@ -268,7 +268,7 @@ def test_transform_preserve_alpha_keeps_transparency(tmp_path):
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/timeline_render_frame_test.py::test_transform_preserve_alpha_keeps_transparency -v`
+Run: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/timeline_render_frame_test.py::test_transform_preserve_alpha_keeps_transparency -v`
 Expected: FAIL — `TypeError: _transform_and_alpha() got an unexpected keyword argument 'preserve_alpha'`.
 
 - [ ] **Step 3: Add the `preserve_alpha` parameter**
@@ -567,7 +567,7 @@ git commit -m "feat(kinetic): bake Motion clips on export, attach motion_frames"
 
 - [ ] **Step 1: Start the stack**
 
-Backend: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
+Backend: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
 Frontend: `cd frontend && npm run dev`
 
 - [ ] **Step 2: Author + export**
@@ -577,7 +577,7 @@ In the timeline editor: add a Kinetic Text clip, give it an animated axis (e.g. 
 - [ ] **Step 3: Verify the bake fired and frames uploaded**
 
 Confirm `input/motionclip_*.png` files were created:
-Run: `ls -t /Users/julien/Documents/GitHub/ComfyNext/input/motionclip_*.png 2>/dev/null | head`
+Run: `ls -t /Users/julien/Documents/GitHub/Sailor/input/motionclip_*.png 2>/dev/null | head`
 Expected: one PNG per clip frame, newest first.
 
 - [ ] **Step 4: Verify the exported video contains the text over alpha**

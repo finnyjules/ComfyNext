@@ -128,7 +128,7 @@ Run: `cd frontend && npx vitest run tests/unit`
 Expected: PASS (minus the known pre-existing unrelated failures).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): nudgeLayers + editor nudgeSelection"
 ```
@@ -279,7 +279,7 @@ Run: `cd frontend && npx vitest run tests/unit`
 Expected: PASS (minus known pre-existing failures).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): duplicateLayers + editor duplicateSelection"
 ```
@@ -374,7 +374,7 @@ Run: `cd frontend && npx vitest run tests/unit`
 Expected: PASS (minus known pre-existing failures).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): snapAngle + shift-to-15deg rotate"
 ```
@@ -499,7 +499,7 @@ Run: `cd frontend && npx vitest run tests/unit`
 Expected: PASS (minus known pre-existing failures). Existing compositor specs must stay green.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): snap to canvas edges via computeSnapAdjust"
 ```
@@ -629,7 +629,7 @@ Expected: PASS (minus known pre-existing failures).
 Note in the report: the CompositorModal keydown wiring has NO unit coverage (Vue SFC handler) — its correctness is asserted via `mapKeyToEdit`/`handleEditorKey` tests plus the typing-guard reasoning; browser verification is owed in the morning.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerEdits.ts frontend/tests/unit/layer-edits.unit.spec.ts frontend/app/composables/useLocalLayerEditor.ts frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): keyboard nudge + duplicate in the compositor modal"
 ```

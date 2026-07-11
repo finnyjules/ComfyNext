@@ -65,7 +65,7 @@ test.beforeEach(async ({ page }) => {
   })
   await openBlankWorkflow(page)
   await waitForBackend(page)
-  await page.evaluate(() => localStorage.removeItem('comfynext:blocks'))
+  await page.evaluate(() => localStorage.removeItem('sailor:blocks'))
 })
 
 test.describe('block library', () => {

@@ -19,26 +19,26 @@ const props = defineProps<{
 const { characters, coverUrl } = useCharacters()
 const pickerOpen = ref(false)
 
-const slug = computed<string | null>(() => props.data?.properties?.comfynext_characterSlug ?? null)
+const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
-const variantId = computed<string | null>(() => props.data?.properties?.comfynext_characterVariantId ?? null)
+const variantId = computed<string | null>(() => props.data?.properties?.sailor_characterVariantId ?? null)
 const refCount = computed(() => character.value?.variants.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
 
 function pick(s: string, name: string, pickedVariantId?: string) {
   if (!props.data.properties) props.data.properties = {}
-  props.data.properties.comfynext_characterSlug = s
-  props.data.properties.comfynext_characterName = name
-  props.data.properties.comfynext_characterVariantId = pickedVariantId ?? null
+  props.data.properties.sailor_characterSlug = s
+  props.data.properties.sailor_characterName = name
+  props.data.properties.sailor_characterVariantId = pickedVariantId ?? null
   pickerOpen.value = false
   // Nudge any wired Shot Directors to re-sync their cast (Task 11 listens).
-  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
 }
 
 function onVariantChange(e: Event) {
   if (!props.data.properties) props.data.properties = {}
   const v = (e.target as HTMLSelectElement).value
-  props.data.properties.comfynext_characterVariantId = (v && v !== 'default') ? v : null
-  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+  props.data.properties.sailor_characterVariantId = (v && v !== 'default') ? v : null
+  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
 }
 </script>
 
@@ -87,7 +87,7 @@ function onVariantChange(e: Event) {
         </p>
       </template>
       <p v-else-if="slug" class="text-[11px] leading-tight text-red-400/80">
-        Character "{{ data?.properties?.comfynext_characterName || slug }}" was deleted.
+        Character "{{ data?.properties?.sailor_characterName || slug }}" was deleted.
       </p>
       <p v-else class="text-[11px] text-white/40">No character picked.</p>
 

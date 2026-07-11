@@ -195,14 +195,14 @@ try:
 
     from server import PromptServer
 
-    @PromptServer.instance.routes.get("/comfynext/shader_effects")
+    @PromptServer.instance.routes.get("/sailor/shader_effects")
     async def _get_shader_effects(request):
         try:
             return web.json_response(catalog_payload())
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    @PromptServer.instance.routes.get("/comfynext/shader_effects/assets/{name}")
+    @PromptServer.instance.routes.get("/sailor/shader_effects/assets/{name}")
     async def _get_shader_asset(request):
         name = os.path.basename(request.match_info["name"])  # no traversal
         path = os.path.join(ASSETS_DIR, name)
@@ -215,4 +215,4 @@ try:
         return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
 except Exception as e:  # imported headless (tests) — pure functions still work
-    print(f"[ComfyNext] shader_effects routes not registered: {e}")
+    print(f"[Sailor] shader_effects routes not registered: {e}")

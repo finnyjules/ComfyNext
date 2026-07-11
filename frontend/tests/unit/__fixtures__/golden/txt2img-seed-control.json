@@ -55,7 +55,7 @@
         { "name": "IMAGE", "type": "IMAGE", "links": [4] }
       ],
       "properties": {
-        "comfynext_preview": {
+        "sailor_preview": {
           "images": [{ "filename": "stale-preview.png", "type": "temp", "subfolder": "" }]
         }
       }
@@ -90,7 +90,7 @@
   ],
   "config": {},
   "extra": {
-    "comfynext": {
+    "sailor": {
       "annotations": []
     }
   },

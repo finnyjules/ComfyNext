@@ -2,11 +2,11 @@
 
 **Date:** 2026-07-01
 **Status:** Draft for review
-**Scope:** Identity, wallet/ledger, payments, and metering for ComfyNext as a hosted multi-tenant SaaS. Fully independent from ComfyUI's native comfy.org account/credit system.
+**Scope:** Identity, wallet/ledger, payments, and metering for Sailor as a hosted multi-tenant SaaS. Fully independent from ComfyUI's native comfy.org account/credit system.
 
 ## 1. Goal & context
 
-ComfyNext becomes a hosted product: users sign up, buy prepaid credits, and every action they take (generation, training, cloud model calls) draws down their wallet. ComfyUI is the hidden execution engine on our GPUs — users never see it, and there is no "local free tier"; the free tier is a signup credit grant.
+Sailor becomes a hosted product: users sign up, buy prepaid credits, and every action they take (generation, training, cloud model calls) draws down their wallet. ComfyUI is the hidden execution engine on our GPUs — users never see it, and there is no "local free tier"; the free tier is a signup credit grant.
 
 Monetization strategy (already decided, 2026-06-09): prepaid wallet, Stripe Checkout top-ups, no subscription at launch. One aggregate Replicate/Anthropic account operator-side; user credits are an internal ledger. Internal credit unit abstracts provider pricing; ~1.5–2× blended markup absorbs fraud, failed runs, Stripe fees, and GPU-cost variance.
 
@@ -100,7 +100,7 @@ ComfyUI is single-user by construction and **must never be shared raw between te
 - `/interrupt` is global (any user can kill any job)
 - one shared `input/` directory (upload collisions), global model/RAM state
 
-The industry-standard remedy (RunPod `worker-comfyui`, ComfyDeploy, Replicate, comfy.icu all converge on it): demote ComfyUI from "the server" to **a job runtime** — our layer owns users, queueing, and storage; ComfyUI processes are interchangeable workers. ComfyNext is already most of the way there (frontend owns UX; the Phase-0 meter route owns submission/pricing/outcome keyed by `prompt_id`; the training queue is ours and durable). Design:
+The industry-standard remedy (RunPod `worker-comfyui`, ComfyDeploy, Replicate, comfy.icu all converge on it): demote ComfyUI from "the server" to **a job runtime** — our layer owns users, queueing, and storage; ComfyUI processes are interchangeable workers. Sailor is already most of the way there (frontend owns UX; the Phase-0 meter route owns submission/pricing/outcome keyed by `prompt_id`; the training queue is ours and durable). Design:
 
 1. **Worker pool.** N ComfyUI processes on the host (`:8189`, `:8190`, …, all private per §6). The meter route (`/api/meter/prompt`) routes each priced job to an idle worker and records `prompt_id → {userId, worker}`. Workers are cheap on the CPU topology (mostly awaiting provider APIs; no local model weights), so N=4–8 fits one mid-size box; N and box size are the two scaling dials, in that order. ComfyUI's serial per-process queue is respected — concurrency comes from the pool, never from sharing a process.
 2. **Ownership filtering at the proxy.** The submission registry (Phase-0 `meterStore`, Postgres-backed from Phase 2/5) is the ownership map. The authed proxy answers `/history/{id}` and `/view` only for the requesting user's own `prompt_id`s/outputs, and scopes `/interrupt` the same way. Unowned id → 404, indistinguishable from nonexistent.
@@ -115,7 +115,7 @@ The two systems are independent **by construction**: comfy.org credentials trave
 **Policy for legacy API nodes (decided: pass-through):**
 - Users MAY run legacy comfy.org API nodes using **their own** comfy.org API key.
 - The key is supplied by the user, attached to their prompt submissions, and **passed through — never stored server-side**. The proxy strips any such credential it did not receive from that user's own session.
-- Provider cost for those nodes bills the user's comfy.org account, **zero ComfyNext credits** for the API-node portion; the GPU execution of the surrounding graph is still priced normally per §5.4.
+- Provider cost for those nodes bills the user's comfy.org account, **zero Sailor credits** for the API-node portion; the GPU execution of the surrounding graph is still priced normally per §5.4.
 - UI labels these nodes "legacy"; they are not promoted anywhere.
 - **Hard rule:** no operator comfy.org credential ever exists in the hosted deployment — otherwise every tenant could spend it.
 

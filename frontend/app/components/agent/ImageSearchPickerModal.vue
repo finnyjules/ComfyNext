@@ -4,7 +4,7 @@
  * search. The agent's `searchImages` command opens it with a query; it runs
  * the search (/api/image-search, Brave), shows a thumbnail grid, and imports
  * the user's picks: each becomes a ComfyUI input file via /api/image-fetch,
- * then an Image node on the canvas through the same `comfynext:addAssetNode`
+ * then an Image node on the canvas through the same `sailor:addAssetNode`
  * path the Assets panel uses.
  *
  * The search box stays editable so the user can refine + re-search without
@@ -33,7 +33,7 @@ const error = ref('')
 
 watch(() => props.open, (isOpen) => {
   if (!isOpen) return
-  braveKey.value = getLocalSetting('ComfyNext.AI.BraveApiKey') ?? ''
+  braveKey.value = getLocalSetting('Sailor.AI.BraveApiKey') ?? ''
   q.value = props.query
   results.value = []
   selected.value = new Set()
@@ -65,7 +65,7 @@ async function search() {
 function saveKey() {
   const k = keyDraft.value.trim()
   if (!k) return
-  setLocalSetting('ComfyNext.AI.BraveApiKey', k)
+  setLocalSetting('Sailor.AI.BraveApiKey', k)
   braveKey.value = k
   keyDraft.value = ''
   search()
@@ -81,7 +81,7 @@ function toggle(id: string) {
 const picks = computed(() => results.value.filter(r => selected.value.has(r.id)))
 
 /** Import every pick: url → input-folder file → Image node on the canvas.
- *  Sequential so ComfyNext.addAssetNode cascade offsets land in order; failures
+ *  Sequential so Sailor.addAssetNode cascade offsets land in order; failures
  *  skip that pick rather than aborting the batch. */
 async function importPicks() {
   if (!picks.value.length || importing.value) return
@@ -94,7 +94,7 @@ async function importPicks() {
         body: { url: r.imageUrl },
         timeout: 45_000,
       })
-      window.dispatchEvent(new CustomEvent('comfynext:addAssetNode', {
+      window.dispatchEvent(new CustomEvent('sailor:addAssetNode', {
         detail: { kind: 'image', filename: name, type: 'input', offsetX: i * 48, offsetY: i * 48 },
       }))
       importedCount.value++

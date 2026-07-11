@@ -891,14 +891,14 @@ class TextureFxRenderer {
 // One WebGL renderer per page. Cached on `globalThis` rather than a plain module
 // const so that Vite HMR re-evaluating this module during dev cannot spin up a
 // second GL context — mirrors the same pattern as gradientfx/renderer.ts.
-interface Scope { __comfynextTextureFx?: TextureFxRenderer }
+interface Scope { __sailorTextureFx?: TextureFxRenderer }
 
 // Factory for creating an independent renderer instance (used by patternfill.ts
 // to sub-render pattern fills on a separate GL context without re-entering the singleton).
 export function createTextureFx(): TextureFxRenderer { return new TextureFxRenderer() }
 
 export function resolveTextureFx(scope: Scope): TextureFxRenderer {
-  return scope.__comfynextTextureFx ?? (scope.__comfynextTextureFx = new TextureFxRenderer())
+  return scope.__sailorTextureFx ?? (scope.__sailorTextureFx = new TextureFxRenderer())
 }
 
 export const textureFx = resolveTextureFx(globalThis as unknown as Scope)

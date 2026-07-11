@@ -338,10 +338,10 @@ function xmur(str: string): number {
 // production the module evaluates once, so this is behaviour-identical. Note: editing
 // the engine during dev may need a manual page reload to take visual effect, but there
 // is always exactly one live context.
-interface GradientFxScope { __comfynextGradientFx?: GradientFxRenderer }
+interface GradientFxScope { __sailorGradientFx?: GradientFxRenderer }
 
 export function resolveGradientFx(scope: GradientFxScope): GradientFxRenderer {
-  return scope.__comfynextGradientFx ?? (scope.__comfynextGradientFx = new GradientFxRenderer())
+  return scope.__sailorGradientFx ?? (scope.__sailorGradientFx = new GradientFxRenderer())
 }
 
 export const gradientFx = resolveGradientFx(globalThis as unknown as GradientFxScope)

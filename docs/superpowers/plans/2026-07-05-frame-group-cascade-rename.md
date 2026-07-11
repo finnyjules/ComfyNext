@@ -134,7 +134,7 @@ Expected: PASS
 Run: `cd frontend && npx vitest run tests/unit` (layerGroups is widely imported — confirm agent-compositor-surface + compositor specs stay green).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/compositor/layerGroups.ts frontend/tests/unit/group-cascade.unit.spec.ts
 git commit -m "feat(frame): group cascade resolver + upsertGroup (opacity/hidden/locked)"
 ```
@@ -180,7 +180,7 @@ Add `setGroupHidden, setGroupLocked, setGroupOpacity, groupCascade` to the retur
 Run: `cd frontend && npx vitest run tests/unit` (no unit change here; the hitTest cascade is browser-verified). Confirm nothing broke.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useLocalLayerEditor.ts
 git commit -m "feat(frame): group hidden/locked/opacity setters + selection cascade"
 ```
@@ -229,14 +229,14 @@ Add `groups?: LayerGroup[]` as the LAST param of `paintLayerStack` (import `reso
 
 - [ ] **Step 4: Pass groups at the call sites**
 
-Run `grep -rn "paintLayerStack(" frontend/app`. For each caller that has the local group registry available (the modal preview render and the bake/output path — the group registry is `node.data.properties.comfynext_localGroups`), pass it as the new final arg. Callers WITHOUT the registry: leave unchanged (safe — no cascade). Document in the report which callers you updated and which you left.
+Run `grep -rn "paintLayerStack(" frontend/app`. For each caller that has the local group registry available (the modal preview render and the bake/output path — the group registry is `node.data.properties.sailor_localGroups`), pass it as the new final arg. Callers WITHOUT the registry: leave unchanged (safe — no cascade). Document in the report which callers you updated and which you left.
 
 - [ ] **Step 5: Verify + commit**
 
 Run: `cd frontend && npx vitest run tests/unit` (existing compositor render specs MUST stay green — the optional param keeps no-groups behavior byte-identical).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useCompositorLayers.ts <the updated caller file(s)>
 git commit -m "feat(frame): group opacity/visibility cascade in the render path"
 ```
@@ -278,7 +278,7 @@ On the group row, add a small opacity input (mirror how a layer opacity input lo
 Run: `cd frontend && npx vitest run tests/unit` (confirms nothing broke).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): group eye/lock/opacity controls in the layers panel"
 ```
@@ -334,7 +334,7 @@ Destructure the new rename API. On the LAYER row label span (the `v-else` at ~li
 Run: `cd frontend && npx vitest run tests/unit` (confirm compositor specs green; the new optional `name` field must not break any snapshot).
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useCompositorLayers.ts frontend/app/composables/useLocalLayerEditor.ts frontend/app/components/vue-canvas/CompositorModal.vue
 git commit -m "feat(frame): per-layer rename (double-click the layer row)"
 ```

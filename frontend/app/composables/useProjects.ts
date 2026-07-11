@@ -1,9 +1,9 @@
 /**
  * useProjects — client API for durable server-side Projects (Phase 0).
  *
- * Thin typed wrapper over the /comfynext/projects endpoints implemented in
- * comfy_extras/nodes_comfynext_projects.py (proxied to ComfyUI like the rest of
- * /comfynext/*). Every call degrades gracefully — a missing endpoint (older
+ * Thin typed wrapper over the /sailor/projects endpoints implemented in
+ * comfy_extras/nodes_sailor_projects.py (proxied to ComfyUI like the rest of
+ * /sailor/*). Every call degrades gracefully — a missing endpoint (older
  * ComfyUI without the module) or a network error resolves to an empty/falsy
  * result rather than throwing, so callers can treat durable projects as an
  * enrichment layer over the existing /history flow.
@@ -55,7 +55,7 @@ export interface SpendSummary {
 export function useProjects() {
   async function listProjects(): Promise<ProjectMeta[]> {
     try {
-      const res = await $fetch<{ projects: ProjectMeta[] }>('/comfynext/projects')
+      const res = await $fetch<{ projects: ProjectMeta[] }>('/sailor/projects')
       return res.projects ?? []
     } catch (e) {
       console.warn('[useProjects] list failed:', e)
@@ -67,7 +67,7 @@ export function useProjects() {
     uuid: string,
   ): Promise<{ project: Project; currentVersion: ProjectVersion | null } | null> {
     try {
-      return await $fetch(`/comfynext/projects/${encodeURIComponent(uuid)}`)
+      return await $fetch(`/sailor/projects/${encodeURIComponent(uuid)}`)
     } catch (e) {
       console.warn('[useProjects] load failed:', e)
       return null
@@ -82,7 +82,7 @@ export function useProjects() {
   ): Promise<string | null> {
     try {
       const res = await $fetch<{ id: string }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/versions`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/versions`,
         { method: 'POST', body: { projectName, version } },
       )
       return res.id ?? null
@@ -95,7 +95,7 @@ export function useProjects() {
   async function loadVersion(uuid: string, vid: string): Promise<ProjectVersion | null> {
     try {
       const res = await $fetch<{ version: ProjectVersion }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/versions/${encodeURIComponent(vid)}`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/versions/${encodeURIComponent(vid)}`,
       )
       return res.version ?? null
     } catch (e) {
@@ -106,7 +106,7 @@ export function useProjects() {
 
   async function renameProject(uuid: string, name: string): Promise<void> {
     try {
-      await $fetch(`/comfynext/projects/${encodeURIComponent(uuid)}`, { method: 'PUT', body: { name } })
+      await $fetch(`/sailor/projects/${encodeURIComponent(uuid)}`, { method: 'PUT', body: { name } })
     } catch (e) {
       console.warn('[useProjects] rename failed:', e)
     }
@@ -114,7 +114,7 @@ export function useProjects() {
 
   async function deleteProject(uuid: string): Promise<void> {
     try {
-      await $fetch(`/comfynext/projects/${encodeURIComponent(uuid)}`, { method: 'DELETE' })
+      await $fetch(`/sailor/projects/${encodeURIComponent(uuid)}`, { method: 'DELETE' })
     } catch (e) {
       console.warn('[useProjects] delete failed:', e)
     }
@@ -129,7 +129,7 @@ export function useProjects() {
   ): Promise<string | null> {
     try {
       const res = await $fetch<{ id: string }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/generations`,
         { method: 'POST', body: { projectName, generation } },
       )
       return res.id ?? null
@@ -142,7 +142,7 @@ export function useProjects() {
   async function listGenerations(uuid: string): Promise<GenerationRecord[]> {
     try {
       const res = await $fetch<{ generations: GenerationRecord[] }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/generations`,
       )
       return res.generations ?? []
     } catch (e) {
@@ -153,7 +153,7 @@ export function useProjects() {
 
   async function fetchSpendSummary(): Promise<SpendSummary | null> {
     try {
-      return await $fetch<SpendSummary>('/comfynext/spend/summary')
+      return await $fetch<SpendSummary>('/sailor/spend/summary')
     } catch (e) {
       console.warn('[useProjects] spend summary failed:', e)
       return null

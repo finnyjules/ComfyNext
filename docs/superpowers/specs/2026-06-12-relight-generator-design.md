@@ -25,7 +25,7 @@ lighting director's note sent to the model.
   standard API node rendered by the normal `ComfyNode` path (header ▶ run
   control, automatic downstream routing for free). It is **NOT** registered in
   `ARTIFACT_NODE_COMPONENTS` / VueFlow `node-types`. The gimbal rides in as an
-  inline `comfynext_widget` (exactly how `camera_gimbal` works on
+  inline `sailor_widget` (exactly how `camera_gimbal` works on
   `RotateCameraNode`), not as a custom VueFlow component. This mirrors the
   Person Swap decision.
 - **Gimbal carries intensity.** "Position the light + set intensity" is one
@@ -89,7 +89,7 @@ declare themselves (category `api node/image/Replicate`, output node +
   - `image` (IMAGE, required) — the subject/scene to relight.
   - `preset` (Combo, default `Custom`) — the preset list above.
   - `light` (String, JSON, default `{"azimuth":-30,"elevation":20,
-    "intensity":0.6}`, `extra_dict={"comfynext_widget": "light_gimbal"}`) —
+    "intensity":0.6}`, `extra_dict={"sailor_widget": "light_gimbal"}`) —
     driven by the gimbal widget.
   - `keep_background` (Boolean, default `True`, optional).
   - `reference` (IMAGE, optional) — lighting to match.
@@ -134,7 +134,7 @@ pseudo-3D gimbal — no Three.js, inline 3×3 rotation matrices). Changes:
   elevation) for orientation legibility.
 
 Register in `frontend/app/components/vue-canvas/ComfyNodeWidget.vue` with a
-branch `v-else-if="widgetDef.comfynext_widget === 'light_gimbal'"` rendering the
+branch `v-else-if="widgetDef.sailor_widget === 'light_gimbal'"` rendering the
 new widget, parallel to the existing `camera_gimbal` branch.
 
 ### Registration / discovery (auto, like Person Swap)

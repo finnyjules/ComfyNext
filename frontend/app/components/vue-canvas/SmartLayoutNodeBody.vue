@@ -44,7 +44,7 @@ const outputCount = computed<number>(() => {
 // --- Collection-driven live preview ---------------------------------------
 // When a Collection is wired into this node's `vars` input with bindings set,
 // CollectionDrawer/CollectionNode stamp the resolved row onto
-// data.properties.comfynext_varPreview. We watch that and render a rendered
+// data.properties.sailor_varPreview. We watch that and render a rendered
 // thumbnail (via the same /api/render-template pipeline the layout editor
 // uses) so scrubbing rows updates the node face live.
 const previewUrl = ref<string | null>(null)

@@ -57,13 +57,13 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     expect((fetchMock.mock.calls[0]![0] as string)).toBe('/api/vibe')
     expect(res.ok).toBe(true)
     expect(res.rows).toHaveLength(1)
-    const saved = n.data.properties.comfynext_gradientStudio
+    const saved = n.data.properties.sailor_gradientStudio
     expect(saved).toBeDefined()
     const readBack = makeConfigParams(() => saved, () => 0)[slider.path]
     expect(readBack).toBe(expected)
 
     res.restore()
-    const reverted = makeConfigParams(() => n.data.properties.comfynext_gradientStudio, () => 0)[slider.path]
+    const reverted = makeConfigParams(() => n.data.properties.sailor_gradientStudio, () => 0)[slider.path]
     expect(reverted).toBe(cur) // back to the default's original value
   })
 
@@ -88,7 +88,7 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     const n = node('GradientStudio')
     const res = await tuneGradientNode(n, 'blue, pink and orange', KEY)
     expect(res.ok).toBe(true)
-    const stops = n.data.properties.comfynext_gradientStudio.layers[0].color.stops
+    const stops = n.data.properties.sailor_gradientStudio.layers[0].color.stops
     expect(stops[0].color).toBe('#2b6bff')
     expect(stops[1].color).toBe('#ff6ec7')
     expect(stops[2].color).toBe('#ff8c42')
@@ -101,7 +101,7 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     expect(res.ok).toBe(false)
     expect(res.rows).toHaveLength(0)
     expect(res.notice).toBeTruthy()
-    expect(n.data.properties.comfynext_gradientStudio).toBeUndefined() // nothing written
+    expect(n.data.properties.sailor_gradientStudio).toBeUndefined() // nothing written
   })
 
   it('preset macro: swaps to the preset base config, THEN applies overrides', async () => {
@@ -112,7 +112,7 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     const n = node('GradientStudio')
     const res = await tuneGradientNode(n, 'blurry blue marble', KEY)
     expect(res.ok).toBe(true)
-    const saved = n.data.properties.comfynext_gradientStudio
+    const saved = n.data.properties.sailor_gradientStudio
     expect(saved.canvas.layout).toBe('liquid')   // marble preset applied as the base
     expect(saved.focus.blur).toBe(40)            // override applied on top of the preset
     expect(res.rows.some(r => r.after === 'marble')).toBe(true)
@@ -127,7 +127,7 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     const n = node('GradientStudio')
     const res = await tuneGradientNode(n, 'x', KEY)
     expect(res.ok).toBe(false)   // 'bogus' not an option → dropped → no change
-    expect(n.data.properties.comfynext_gradientStudio).toBeUndefined()
+    expect(n.data.properties.sailor_gradientStudio).toBeUndefined()
   })
 })
 
@@ -143,11 +143,11 @@ describe('tuneTextureNode (command-surface)', () => {
     expect((fetchMock.mock.calls[0]![0] as string)).toBe('/api/agent-plan')
     expect(res.ok).toBe(true)
     expect(res.rows.length).toBeGreaterThanOrEqual(1)
-    const saved = n.data.properties.comfynext_textureStudio
+    const saved = n.data.properties.sailor_textureStudio
     expect(JSON.stringify(saved)).toContain('#ff8800')
 
     res.restore()
-    expect(JSON.stringify(n.data.properties.comfynext_textureStudio)).not.toContain('#ff8800')
+    expect(JSON.stringify(n.data.properties.sailor_textureStudio)).not.toContain('#ff8800')
   })
 })
 
@@ -158,6 +158,6 @@ describe('tuneShaderNode (param-patch)', () => {
     const n = node('ShaderStudio')
     const res = await tuneShaderNode(n, 'noop', KEY)
     expect(res.ok).toBe(false)
-    expect(n.data.properties.comfynext_shaderStudio).toBeUndefined()
+    expect(n.data.properties.sailor_shaderStudio).toBeUndefined()
   })
 })

@@ -143,7 +143,7 @@ Replace the whole `<!-- Results -->` block (currently ~lines 381–397) with:
 
 - [ ] **Step 7: Verify in the dev app**
 
-Run ComfyUI (`cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`) and the frontend (`cd frontend && npm run dev`). Open a project, add/select an Image artifact node with an image, open the Inpaint modal. Paint a region, Generate. Confirm: results appear in a 4-col strip labeled "History"; generate again and the new batch prepends (newest first, old batch still present); hovering a thumb previews it on the stage with an emerald ring; clicking applies and closes. No console errors.
+Run ComfyUI (`cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`) and the frontend (`cd frontend && npm run dev`). Open a project, add/select an Image artifact node with an image, open the Inpaint modal. Paint a region, Generate. Confirm: results appear in a 4-col strip labeled "History"; generate again and the new batch prepends (newest first, old batch still present); hovering a thumb previews it on the stage with an emerald ring; clicking applies and closes. No console errors.
 
 - [ ] **Step 8: Commit**
 

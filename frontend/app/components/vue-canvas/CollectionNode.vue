@@ -37,11 +37,11 @@ function step(delta: number) {
   // This component only receives its own `data`, not the full nodes/edges
   // graph — hand off to VueNodeCanvas (which owns both) to push the scrubbed
   // row onto any wired Smart Layout targets' live preview.
-  window.dispatchEvent(new CustomEvent('comfynext:collectionScrub', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:collectionScrub', { detail: { nodeId: props.id } }))
 }
 
 function openTable() {
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: props.id } }))
 }
 </script>
 

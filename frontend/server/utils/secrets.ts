@@ -6,15 +6,15 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-export interface ComfyNextSecrets {
+export interface SailorSecrets {
   replicateToken?: string
 }
 
 export function secretsFilePath(): string {
-  return join(process.cwd(), '.data', 'comfynext-secrets.json')
+  return join(process.cwd(), '.data', 'sailor-secrets.json')
 }
 
-export function readSecretsFile(path = secretsFilePath()): ComfyNextSecrets {
+export function readSecretsFile(path = secretsFilePath()): SailorSecrets {
   try {
     return JSON.parse(readFileSync(path, 'utf8'))
   }
@@ -23,10 +23,10 @@ export function readSecretsFile(path = secretsFilePath()): ComfyNextSecrets {
   }
 }
 
-export function writeSecretsFile(patch: Partial<ComfyNextSecrets>, path = secretsFilePath()): ComfyNextSecrets {
-  const next: ComfyNextSecrets = { ...readSecretsFile(path), ...patch }
+export function writeSecretsFile(patch: Partial<SailorSecrets>, path = secretsFilePath()): SailorSecrets {
+  const next: SailorSecrets = { ...readSecretsFile(path), ...patch }
   // Drop cleared values so env-var fallbacks apply again.
-  for (const k of Object.keys(next) as (keyof ComfyNextSecrets)[]) {
+  for (const k of Object.keys(next) as (keyof SailorSecrets)[]) {
     if (!next[k]) delete next[k]
   }
   mkdirSync(dirname(path), { recursive: true })

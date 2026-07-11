@@ -21,7 +21,7 @@
 - **Upload:** `POST /upload/image` (FormData `image` + `overwrite='true'`) → `{ name, subfolder }`; filename = `subfolder ? subfolder/name : name`. File-picker idiom: `KitPanel.vue:14-26`.
 - **Load:** `/view?${new URLSearchParams({ filename, type: 'input' })}` → `new Image()` + onload (`useCompositorLayers.ts:379-395`, image-cache precedent).
 - **Texture upload (shaderfx `renderer.ts:133-145`):** `gl.pixelStorei(UNPACK_FLIP_Y_WEBGL, true); gl.texImage2D(TEXTURE_2D, 0, RGBA8, RGBA, UNSIGNED_BYTE, src); pixelStorei(…, false)`; LINEAR; CLAMP_TO_EDGE.
-- **Persist filename only:** store in `node.data.properties.comfynext_textureStudio` (Gradient Studio baseImage precedent). `recordAsset(projectUuid, 'image', filename)` to surface it in Assets.
+- **Persist filename only:** store in `node.data.properties.sailor_textureStudio` (Gradient Studio baseImage precedent). `recordAsset(projectUuid, 'image', filename)` to surface it in Assets.
 - Current `MODES = ['procedural','truchet']`; renderer already manages `u_stateTex` on unit 0 + a fullscreen-triangle program.
 
 **Seamless invariant for raster:** the sampled texture coord must match at opposite tile edges → `rasterSampleUV(m,0,v)≈rasterSampleUV(m,1,v)` and `(m,u,0)≈(m,u,1)`. Mirror: `tri(x)=abs(2*fract(x)-1)` (tri(0)=tri(1)=1). Feather: `fract(x+0.5)` (0.5 at both 0 and 1) + a position-symmetric heal blend.

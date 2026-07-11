@@ -15,7 +15,7 @@ export function useClipPreview() {
     if (thumbCache.has(key)) return thumbCache.get(key)!
     if (inFlight.has(key)) return null
     inFlight.add(key)
-    fetch(`/comfynext/asset_thumbnails?asset_id=${encodeURIComponent(assetId)}&count=${count}`)
+    fetch(`/sailor/asset_thumbnails?asset_id=${encodeURIComponent(assetId)}&count=${count}`)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.thumbnails)) {
@@ -34,7 +34,7 @@ export function useClipPreview() {
     if (waveformCache.has(key)) return waveformCache.get(key)!
     if (inFlight.has(key)) return null
     inFlight.add(key)
-    fetch(`/comfynext/asset_waveform?asset_id=${encodeURIComponent(assetId)}&buckets=${buckets}`)
+    fetch(`/sailor/asset_waveform?asset_id=${encodeURIComponent(assetId)}&buckets=${buckets}`)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.peaks)) {

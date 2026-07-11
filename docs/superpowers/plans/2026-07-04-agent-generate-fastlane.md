@@ -14,7 +14,7 @@
 - **Never auto-run a billable node.** The fast lane places and focuses; it must not call `opts.run`.
 - Freeform/agent behavior for any non-eligible plan stays byte-identical — no changes to the planner prompt, `/api/agent-plan`, the proposal card UI, or `CanvasPromptBar.vue`.
 - Predicate is PURE (commands in, boolean out) — no Vue, no I/O, no snapshot access.
-- Commands run from `/Users/julien/Documents/GitHub/ComfyNext/frontend`.
+- Commands run from `/Users/julien/Documents/GitHub/Sailor/frontend`.
 
 Key facts verified in the current code (do not re-derive):
 - `Command` = `{ op: string; target?: string; args?: Record<string, unknown> }` (`app/lib/agent/commandSurface.ts:44`).
@@ -213,7 +213,7 @@ async function seedAgentKey(page: Page) {
   // TODO(implementer): replace KEY with the exact localStorage key from
   // SettingsModal.vue (grep 'Anthropic'). A non-empty value satisfies the gate.
   await page.addInitScript(() => {
-    try { localStorage.setItem('comfynext:Comfy.VueNodes.Enabled', 'true') } catch {}
+    try { localStorage.setItem('sailor:Comfy.VueNodes.Enabled', 'true') } catch {}
     try { localStorage.setItem('<ANTHROPIC_KEY_STORAGE_KEY>', 'sk-ant-test') } catch {}
   })
 }

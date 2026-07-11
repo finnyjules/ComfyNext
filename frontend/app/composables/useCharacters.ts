@@ -1,7 +1,7 @@
 /**
  * Cached client for the character registry. Module-level shared state: one
  * fetch feeds every consumer (surface, picker, panel, canvas nodes). Any code
- * that mutates the registry must dispatch `comfynext:charactersChanged` so
+ * that mutates the registry must dispatch `sailor:charactersChanged` so
  * every view refreshes.
  */
 import { ref } from 'vue'
@@ -88,7 +88,7 @@ export function missingVariantIssues(
 export function useCharacters() {
   if (!listenerBound && typeof window !== 'undefined') {
     listenerBound = true
-    window.addEventListener('comfynext:charactersChanged', () => { void refresh() })
+    window.addEventListener('sailor:charactersChanged', () => { void refresh() })
   }
   if (!fetchedOnce && typeof window !== 'undefined') void refresh()
 

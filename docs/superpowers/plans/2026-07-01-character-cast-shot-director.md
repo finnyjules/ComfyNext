@@ -16,7 +16,7 @@
 - Ref images are ComfyUI-input-dir files; a ref URL is exactly `viewRefUrl(name)` = `/view?filename=<enc>&type=input` (from `~/lib/shotdirector/refUpload`). Never store data URLs in the registry.
 - Cast cap: 3 members/shot; per-member ref cap 3; Seedance total image-ref budget = `profile.maxRefImages` (9).
 - Money moves ONLY behind explicit buttons with a visible $ label (expansion 4 × $0.08 = `~$0.32`). Live testing stops at inspecting patched widgets — NO real generation and NO paid expansion without explicit user go-ahead.
-- Event naming: `comfynext:<name>` CustomEvents on `window`.
+- Event naming: `sailor:<name>` CustomEvents on `window`.
 - Registry dir: `path.resolve(process.cwd(), '..', 'models', 'characters')`; ComfyUI input dir: `path.resolve(process.cwd(), '..', 'input')` (Nuxt server cwd is `frontend/`, mirroring loras-local).
 
 ---
@@ -672,7 +672,7 @@ git commit -m "feat(character-cast): compiled prompt opens with the cast declara
 - Produces (Tasks 6/7/9/10/12 rely on these):
   - `useCharacters()` → `{ characters: Ref<CharacterClient[]>, loading: Ref<boolean>, refresh(): Promise<void>, resolveRefs(slugs: string[]): Record<string, string[]>, coverUrl(c: CharacterClient): string | null }`
   - `CharacterClient = { name: string; slug: string; refImages: string[]; coverIndex: number; loraName: string | null; trigger: string | null; notes: string }`
-  - Refreshes on window event **`comfynext:charactersChanged`** — every mutating path (panel, save-as-character, sheet node) MUST dispatch it after a successful write.
+  - Refreshes on window event **`sailor:charactersChanged`** — every mutating path (panel, save-as-character, sheet node) MUST dispatch it after a successful write.
   - Module-level shared state (one fetch per app, all consumers share the same refs) — same pattern as other `useX` singletons.
 
 - [ ] **Step 1: Write the failing test**
@@ -724,7 +724,7 @@ Create `frontend/app/composables/useCharacters.ts`:
 /**
  * Cached client for the character registry. Module-level shared state: one
  * fetch feeds every consumer (surface, picker, panel, canvas nodes). Any code
- * that mutates the registry must dispatch `comfynext:charactersChanged` so
+ * that mutates the registry must dispatch `sailor:charactersChanged` so
  * every view refreshes.
  */
 import { ref } from 'vue'
@@ -760,7 +760,7 @@ async function refresh(): Promise<void> {
 export function useCharacters() {
   if (!listenerBound && typeof window !== 'undefined') {
     listenerBound = true
-    window.addEventListener('comfynext:charactersChanged', () => { void refresh() })
+    window.addEventListener('sailor:charactersChanged', () => { void refresh() })
   }
   if (!fetchedOnce && typeof window !== 'undefined') void refresh()
 
@@ -1061,7 +1061,7 @@ function onRemoveCast(m: CastMember) {
     // One gesture, both representations: ask the canvas to drop the edge;
     // the edge-sync (Slice B Task 11) removes the cast entry. Until Task 11
     // lands, fall through to direct removal.
-    window.dispatchEvent(new CustomEvent('comfynext:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
+    window.dispatchEvent(new CustomEvent('sailor:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
   }
   removeCastMember(m.slug)
 }
@@ -1090,7 +1090,7 @@ git commit -m "feat(character-cast): cast section + picker + live resolution on 
 
 **Interfaces:**
 - Consumes: `uploadRefFile` from `~/lib/shotdirector/refUpload`; Task 2's POST/PATCH; the node's `data.images[0]` URL (existing).
-- Produces: an action that creates a registry character with the image as `refImages[0]`, then dispatches `comfynext:charactersChanged`.
+- Produces: an action that creates a registry character with the image as `refImages[0]`, then dispatches `sailor:charactersChanged`.
 
 - [ ] **Step 1: Implement the action**
 
@@ -1117,7 +1117,7 @@ async function saveAsCharacter() {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug, refImages: [filename] }),
     })
-    window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
+    window.dispatchEvent(new CustomEvent('sailor:charactersChanged'))
   } catch (e) {
     console.warn('[saveAsCharacter]', e)
   }
@@ -1146,7 +1146,7 @@ git commit -m "feat(character-cast): save-as-character action on image artifacts
 
 **Interfaces:**
 - Consumes: `useCharacters` (Task 5), Task 2 API, `uploadRefFile`.
-- Produces: panel section listing registry characters with an inline sheet editor (ref grid: add via file input → `uploadRefFile` → PATCH; remove; set cover; delete character; "New character"); a "make castable" button on LoRA characters lacking a registry record (creates one with `loraName`/`trigger` linked). All mutations dispatch `comfynext:charactersChanged`.
+- Produces: panel section listing registry characters with an inline sheet editor (ref grid: add via file input → `uploadRefFile` → PATCH; remove; set cover; delete character; "New character"); a "make castable" button on LoRA characters lacking a registry record (creates one with `loraName`/`trigger` linked). All mutations dispatch `sailor:charactersChanged`.
 
 - [ ] **Step 1: Implement**
 
@@ -1160,7 +1160,7 @@ const { characters: castChars, coverUrl, refresh: refreshChars } = useCharacters
 const expandedSlug = ref<string | null>(null)
 const refFileInput = ref<HTMLInputElement | null>(null)
 
-function changed() { window.dispatchEvent(new CustomEvent('comfynext:charactersChanged')) }
+function changed() { window.dispatchEvent(new CustomEvent('sailor:charactersChanged')) }
 
 async function createCharacter() {
   const name = window.prompt('Character name')?.trim()
@@ -1287,7 +1287,7 @@ git commit -m "feat(character-cast): panel — castable characters section + min
 **Interfaces:**
 - Consumes: `useCharacters` (Task 5); node registration idioms (`useVueNodes.ts` `ShotDirector: 'shot-director'` line; `nodeTypes` map at VueNodeCanvas.vue ~:169; synthesis block ~:1380).
 - Produces (Task 11/12 rely on these):
-  - nodeType `'Character'` ↔ vueFlowType `'character'`; node data `properties.comfynext_characterSlug: string` + `comfynext_characterName: string`
+  - nodeType `'Character'` ↔ vueFlowType `'character'`; node data `properties.sailor_characterSlug: string` + `sailor_characterName: string`
   - Character node outputs: `[{ name: 'character', type: 'CHARACTER', links: null }]`
   - ShotDirector inputs: `[{ name: 'cast_1', type: 'CHARACTER', link: null, optional: true }, … cast_2, cast_3]`
   - Both cards render handles via the `Handle` idiom used by studio nodes (`ComfyNodePort` / direct `Handle` with `id="output-0"` / `id="input-<i>"`).
@@ -1325,16 +1325,16 @@ const props = defineProps<{ id: string, data: any }>()
 const { characters, coverUrl } = useCharacters()
 const pickerOpen = ref(false)
 
-const slug = computed<string | null>(() => props.data?.properties?.comfynext_characterSlug ?? null)
+const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
 
 function pick(s: string, name: string) {
   if (!props.data.properties) props.data.properties = {}
-  props.data.properties.comfynext_characterSlug = s
-  props.data.properties.comfynext_characterName = name
+  props.data.properties.sailor_characterSlug = s
+  props.data.properties.sailor_characterName = name
   pickerOpen.value = false
   // Nudge any wired Shot Directors to re-sync their cast (Task 11 listens).
-  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
 }
 </script>
 
@@ -1356,7 +1356,7 @@ function pick(s: string, name: string) {
           No reference photos — add some in the Characters panel.
         </div>
       </template>
-      <div v-else-if="slug" class="text-[11px] text-red-400/80">Character “{{ data?.properties?.comfynext_characterName || slug }}” was deleted.</div>
+      <div v-else-if="slug" class="text-[11px] text-red-400/80">Character “{{ data?.properties?.sailor_characterName || slug }}” was deleted.</div>
       <p v-else class="text-[11px] text-white/40">No character picked.</p>
       <button class="mt-2 w-full rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/70 hover:bg-white/10" @click.stop="pickerOpen = true">
         {{ character ? 'Change' : 'Pick character' }}
@@ -1399,7 +1399,7 @@ git commit -m "feat(character-cast): CHARACTER port + Character node + ShotDirec
 - Produces:
   - `wireCastFor(studioId: string, nodes: { id: string; nodeType?: string; characterSlug?: string | null; characterName?: string | null }[], edges: { source: string; target: string; targetHandle?: string | null }[]): CastMember[]` — wire-members for one Shot Director, in cast-input order.
   - `syncCast(existing: CastMember[], wire: CastMember[]): CastMember[] | null` — merges: keeps all `via:'picker'` entries, replaces `via:'wire'` entries with `wire` (dedupe by slug, picker wins); returns `null` when nothing changed (caller skips persist).
-  - Canvas watcher applying `syncCast` to every shot-director node's persisted sheet on edge/property changes; `comfynext:uncastCharacter` handler (from Task 7) removing the edge for a wired member.
+  - Canvas watcher applying `syncCast` to every shot-director node's persisted sheet on edge/property changes; `sailor:uncastCharacter` handler (from Task 7) removing the edge for a wired member.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1492,26 +1492,26 @@ import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 function syncAllShotDirectorCasts() {
   const liteNodes = (nodes.value as any[]).map(n => ({
     id: String(n.id), nodeType: n.data?.nodeType as string | undefined,
-    characterSlug: n.data?.properties?.comfynext_characterSlug ?? null,
-    characterName: n.data?.properties?.comfynext_characterName ?? null,
+    characterSlug: n.data?.properties?.sailor_characterSlug ?? null,
+    characterName: n.data?.properties?.sailor_characterName ?? null,
   }))
   const liteEdges = (edges.value as any[]).map(e => ({
     source: String(e.source), target: String(e.target), targetHandle: e.targetHandle ?? null,
   }))
   for (const n of nodes.value as any[]) {
     if (n.data?.nodeType !== 'ShotDirector') continue
-    const raw = n.data?.properties?.comfynext_shotDirector
+    const raw = n.data?.properties?.sailor_shotDirector
     const sheet = hydrateShotSheet(raw)
     const next = syncCast(sheet.cast, wireCastFor(String(n.id), liteNodes, liteEdges))
     if (next) {
       if (!n.data.properties) n.data.properties = {}
-      n.data.properties.comfynext_shotDirector = { ...sheet, cast: next }
+      n.data.properties.sailor_shotDirector = { ...sheet, cast: next }
     }
   }
 }
 
 watch(edges, () => syncAllShotDirectorCasts(), { deep: true })
-window.addEventListener('comfynext:castEdgesChanged', syncAllShotDirectorCasts)
+window.addEventListener('sailor:castEdgesChanged', syncAllShotDirectorCasts)
 
 function handleUncastCharacter(e: Event) {
   const { nodeId, slug } = (e as CustomEvent<{ nodeId: string, slug: string }>).detail ?? {}
@@ -1519,11 +1519,11 @@ function handleUncastCharacter(e: Event) {
   const drop = (edges.value as any[]).filter((ed) => {
     if (String(ed.target) !== String(nodeId)) return false
     const src = (nodes.value as any[]).find(n => String(n.id) === String(ed.source))
-    return src?.data?.properties?.comfynext_characterSlug === slug
+    return src?.data?.properties?.sailor_characterSlug === slug
   })
   if (drop.length) removeEdges(drop.map((d: any) => d.id))
 }
-window.addEventListener('comfynext:uncastCharacter', handleUncastCharacter)
+window.addEventListener('sailor:uncastCharacter', handleUncastCharacter)
 ```
 
 Add both `removeEventListener` calls in the teardown block (mirror the existing shot-director pairs).
@@ -1553,7 +1553,7 @@ git commit -m "feat(character-cast): edge <-> cast sync — wires are an editor 
 - Consumes: `POST /api/cloud-train/character-shot` `{ referenceImageDataUrl, prompt, aspectRatio }` → `{ imageDataUrl }` (existing, ~$0.08/shot); `uploadRefFile`; Task 2 API; Task 10 registration idioms; upstream image via the wired node's `data.images[0]` (same read as other consumers).
 - Produces:
   - `character-shot-scenes.ts`: `export const CHARACTER_SHEET_CANONICAL: CharacterShotScene[]` — exactly 4: `{ prompt: 'close-up portrait, facing camera directly, neutral expression, soft even light, plain background', framing: 'closeup' }`, `{ prompt: 'three-quarter view medium shot, natural relaxed pose, soft daylight, plain background', framing: 'medium' }`, `{ prompt: 'profile view close-up, looking to the side, soft even light, plain background', framing: 'closeup' }`, `{ prompt: 'full-body shot, standing naturally, arms relaxed, soft daylight, plain seamless background', framing: 'full' }`
-  - nodeType `'CharacterSheet'` ↔ `'character-sheet'`; synthesis: inputs `[{ name: 'image', type: 'IMAGE', link: null, optional: true }]`, outputs `[{ name: 'character', type: 'CHARACTER', links: null }]`; after Save the node stores `properties.comfynext_characterSlug/Name` (so Task 11's sync treats it like a Character node — extend `wireCastFor`'s nodeType check to `n.nodeType === 'Character' || n.nodeType === 'CharacterSheet'` and update its unit test accordingly).
+  - nodeType `'CharacterSheet'` ↔ `'character-sheet'`; synthesis: inputs `[{ name: 'image', type: 'IMAGE', link: null, optional: true }]`, outputs `[{ name: 'character', type: 'CHARACTER', links: null }]`; after Save the node stores `properties.sailor_characterSlug/Name` (so Task 11's sync treats it like a Character node — extend `wireCastFor`'s nodeType check to `n.nodeType === 'Character' || n.nodeType === 'CharacterSheet'` and update its unit test accordingly).
 
 - [ ] **Step 1: Add the canonical prompts + registrations** (exact values above; registration mirrors Task 10 steps).
 
@@ -1563,9 +1563,9 @@ Structure (model on the card idiom of `ShotDirectorNode.vue` + the dataset-build
 - **Source row:** upstream image thumbnail if a wired source exists (find via injected `vueFlowNodes`/`vueFlowEdges` — the provide at VueNodeCanvas:875 — first edge targeting this node's `input-0`, read source node `data.images[0]`), else a file-input upload (data URL held locally).
 - **Name field** (`v-model="charName"`, `text-[12px]` input idiom).
 - **Expand button:** label `Expand sheet · ~$0.32`; disabled without source+name. On click: for each of `CHARACTER_SHEET_CANONICAL` (sequential, concurrency 1 is fine for 4 shots): POST `/api/cloud-train/character-shot` with `{ referenceImageDataUrl: sourceDataUrl, prompt: scene.prompt, aspectRatio: scene.framing === 'full' ? '3:4' : '1:1' }`; push `{ dataUrl, scene }` into `shots` as they land; per-tile re-roll button re-posts that scene. Failures render a per-tile retry (dataset-builder pattern).
-- **Save button** (emerald, since it writes durable state but spends nothing): uploads source + each shot via `uploadRefFile` (convert data URL → File with `dataUrlToFile`-style helper inline), POSTs the character, PATCHes `refImages` (source first), sets `properties.comfynext_characterSlug/Name`, dispatches `comfynext:charactersChanged` + `comfynext:castEdgesChanged`, and flips the card into the "saved" state (cover + name + ref count, like CharacterNode).
+- **Save button** (emerald, since it writes durable state but spends nothing): uploads source + each shot via `uploadRefFile` (convert data URL → File with `dataUrlToFile`-style helper inline), POSTs the character, PATCHes `refImages` (source first), sets `properties.sailor_characterSlug/Name`, dispatches `sailor:charactersChanged` + `sailor:castEdgesChanged`, and flips the card into the "saved" state (cover + name + ref count, like CharacterNode).
 - Handles: target `input-0` (left), source `output-0` (right), mirroring Task 10.
-- If the node already has `comfynext_characterSlug`, render the saved state with a "New sheet" reset button.
+- If the node already has `sailor_characterSlug`, render the saved state with a "New sheet" reset button.
 
 (Write the full component; it will be ~200 lines. Reuse `useCharacters` for the saved-state display. Wired-source read: `const upstream = computed(() => { const e = (edgesInj?.value ?? []).find((e: any) => String(e.target) === props.id && e.targetHandle === 'input-0'); const n = e && (nodesInj?.value ?? []).find((n: any) => String(n.id) === String(e.source)); return n?.data?.images?.[0] ?? null })` with `const nodesInj = inject<any>('vueFlowNodes', null); const edgesInj = inject<any>('vueFlowEdges', null)`.)
 

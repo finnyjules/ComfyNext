@@ -152,7 +152,7 @@ const showRunButton = computed(() => {
 // --- Per-node run control (footer split button) ---------------------------
 // One primary action — run THIS node, upstream cached — that reads as "Play"
 // before the first run and "Re-roll" after. A caret opens the two scope
-// variants. All three dispatch the same `comfynext:runFiltered` event the old
+// variants. All three dispatch the same `sailor:runFiltered` event the old
 // two buttons did; only the `detail` differs.
 const runMenuOpen = ref(false)
 const runMenuRoot = ref<HTMLElement | null>(null)
@@ -170,7 +170,7 @@ function dispatchRun(detail: Record<string, any>) {
   if (isMuted.value || isBypassed.value || props.data.running) return
   playedOnce.value = true
   runMenuOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { targetIds: [props.id], ...detail },
   }))
 }
@@ -190,7 +190,7 @@ function runDownstream() { dispatchRun({ direction: 'downstream' }) }
 // Ask the agent to LOOK at this result and suggest fixes (run→look→fix, on-demand).
 function critiqueResult() {
   runMenuOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:critiqueNode', { detail: { nodeId: props.id } }))
 }
 // The agent is reviewing THIS node → show the white scanning overlay.
 const { analyzingNodeIds } = useAgentActivity()
@@ -239,7 +239,7 @@ function promoteTake(takeId: string) {
   if (!take) return
   const built = sketchPromoteOverridesFor(take)
   if (!built) return
-  window.dispatchEvent(new CustomEvent('comfynext:spawnBeside', {
+  window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
     detail: { sourceNodeId: props.id, nodeType: 'GenerateImageNode', ...built },
   }))
 }
@@ -271,7 +271,7 @@ function branchFromTake(takeId: string) {
   const url = take?.images?.[0]
   if (!take || !url) return
   const imageWidgetValue = annotatedImageValueFromViewUrl(url)
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Image',
       dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },
@@ -716,7 +716,7 @@ const advancedOpen = ref(false)
 // kept as a filter (not a hard `[]`) so the predicate stays the single source.
 const advancedWidgets = computed(() =>
   (props.data.widgetDefs || []).filter((w: any) =>
-    w.advanced && !w.hidden && w.comfynext_widget !== 'internal'
+    w.advanced && !w.hidden && w.sailor_widget !== 'internal'
     && isWidgetVisible(w) && !groupedWidgetNames.value.has(w.name)
     && !isInspectorWidgetDef(w)))
 
@@ -731,7 +731,7 @@ const loraScaleByPicker = computed(() => {
   const defs = (props.data.widgetDefs || []) as any[]
   const map = new Map<string, { name: string; index: number; def: any }>()
   for (const w of defs) {
-    if (w?.comfynext_widget !== 'lora_picker') continue
+    if (w?.sailor_widget !== 'lora_picker') continue
     const sn = scaleNameForPicker(w.name)
     const idx = defs.findIndex((d: any) => d?.name === sn)
     if (idx >= 0) map.set(w.name, { name: sn, index: idx, def: defs[idx] })
@@ -756,7 +756,7 @@ function setLoraScale(pickerName: string, val: number) {
 // advanced). The title-bar settings button shows only when the node has some,
 // and opens the inspector for this node. Mirror NodeInspector.isInspectorWidget.
 function isInspectorWidgetDef(w: any): boolean {
-  if (!w || w.hidden || w.comfynext_widget === 'internal' || w.comfynext_widget === 'lora_picker') return false
+  if (!w || w.hidden || w.sailor_widget === 'internal' || w.sailor_widget === 'lora_picker') return false
   if (w.advanced) return true
   if (w.type === 'INT' && (w.control_after_generate || /seed/i.test(String(w.name || '')))) return true
   if (w.name === 'aspect_ratio') return true
@@ -765,7 +765,7 @@ function isInspectorWidgetDef(w: any): boolean {
 const hasInspectorSettings = computed(() =>
   isLoraStyleNode.value || ((props.data.widgetDefs || []) as any[]).some(isInspectorWidgetDef))
 function openInspector() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInspector', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInspector', { detail: { nodeId: props.id } }))
 }
 
 const isLivePreview = computed(() => LIVE_PREVIEW_NODES.has(props.data.nodeType))
@@ -810,7 +810,7 @@ function scheduleLiveRun() {
 
   if (liveRunTimer) clearTimeout(liveRunTimer)
   liveRunTimer = setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('comfynext:liveRun'))
+    window.dispatchEvent(new CustomEvent('sailor:liveRun'))
   }, 150)
 }
 // JSON-stringifying the watch source so Vue compares with `===` instead of
@@ -823,19 +823,19 @@ watch(() => JSON.stringify(props.data.widgetsValues ?? []), scheduleLiveRun)
 watch(connectionFingerprint, scheduleLiveRun)
 
 function openCompositorEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openCompositor', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openCompositor', { detail: { nodeId: props.id } }))
 }
 
 function openAsciiOptions() {
-  window.dispatchEvent(new CustomEvent('comfynext:openAsciiOptions', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openAsciiOptions', { detail: { nodeId: props.id } }))
 }
 
 function openCrossfadeEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openCrossfade', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openCrossfade', { detail: { nodeId: props.id } }))
 }
 
 function openSmartLayoutEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openSmartLayout', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openSmartLayout', { detail: { nodeId: props.id } }))
 }
 
 // MaskExtractor: clicking on the preview updates the `points` JSON widget so
@@ -1143,7 +1143,7 @@ const editAsFrameReady = computed(() => {
   return true
 })
 function editAsFrame() {
-  window.dispatchEvent(new CustomEvent('comfynext:editAsFrame', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:editAsFrame', { detail: { nodeId: props.id } }))
 }
 
 // Compute preview images: from execution output or LoadImage widget value
@@ -1470,7 +1470,7 @@ watch(previewImages, (urls) => {
            custom nodes) get the same toggle. -->
       <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
         <VueCanvasComfyNodeWidget
-          v-if="!widget.hidden && !widget.advanced && widget.comfynext_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name) && !foldedScaleNames.has(widget.name) && !isInspectorWidgetDef(widget)"
+          v-if="!widget.hidden && !widget.advanced && widget.sailor_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name) && !foldedScaleNames.has(widget.name) && !isInspectorWidgetDef(widget)"
           :widget-def="effectiveWidgetDef(widget)"
           :node-type="data.nodeType"
           :node-id="id"

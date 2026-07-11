@@ -36,7 +36,7 @@ z-ordered array — rendering never consults groups — so nesting is purely an 
 concern (panel + selection + move). No renderer changes.
 
 **Model (additive, no migration):** layers keep their flat immediate `groupId`;
-nesting comes from a new registry `comfynext_localGroups: { id, name?, parentId? }[]`.
+nesting comes from a new registry `sailor_localGroups: { id, name?, parentId? }[]`.
 A group gets nested by changing only its *parent link* — member layers are never
 rewritten. Old frames (layers with `groupId`, no registry) read as flat root groups
 and look identical.

@@ -264,7 +264,7 @@ A floating toolbar for a selected element, modeled on `CompositorInlineToolbar.v
   defineProps<{ element: any; bound: string | null }>()   // element = ElementV2; bound = column label or null
   defineEmits<{
     style: [patch: Record<string, any>]   // → ctx.patchStyle
-    promote: []                            // → dispatch comfynext:promoteLayoutElement
+    promote: []                            // → dispatch sailor:promoteLayoutElement
     remove: []                             // → ctx.removeElement
   }>()
   ```
@@ -351,7 +351,7 @@ const selectedBound = computed(() => {
 })
 ```
 
-- [ ] **Step 3: Add the promote dispatch.** Mirror the existing context-menu "Turn into variable" path (the canvas already dispatches `comfynext:promoteLayoutElement`). Factor a `promoteSelected()` that reuses the same socket/label derivation the context menu uses (`nextFreeSocket`/`tokenizeElementContent`/`columnLabelForElement` if in scope, else the existing menu handler) and dispatches the event. If a `promoteElement(r)` already exists for the context menu, call it directly.
+- [ ] **Step 3: Add the promote dispatch.** Mirror the existing context-menu "Turn into variable" path (the canvas already dispatches `sailor:promoteLayoutElement`). Factor a `promoteSelected()` that reuses the same socket/label derivation the context menu uses (`nextFreeSocket`/`tokenizeElementContent`/`columnLabelForElement` if in scope, else the existing menu handler) and dispatches the event. If a `promoteElement(r)` already exists for the context menu, call it directly.
 
 - [ ] **Step 4: Render it.** Add near the top of the canvas root (after the elements loop):
 

@@ -25,7 +25,7 @@ export interface UseShotDirectorReturn {
 
 /**
  * Creates a reactive Shot Director sheet with compilation and persistence.
- * @param initial - Raw data to hydrate (e.g., node.data.properties.comfynext_shotDirector)
+ * @param initial - Raw data to hydrate (e.g., node.data.properties.sailor_shotDirector)
  * @param persist - Callback to persist the sheet after mutations
  * @param resolveCast - Optional callback to resolve cast member { slug, variantId? } picks to reference URLs, keyed by slug
  * @param castWarnings - Optional callback producing extra warning issues for the cast (e.g. a deleted variant that silently fell back to Default)

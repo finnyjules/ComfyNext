@@ -25,7 +25,7 @@
 - Test: `tests-unit/comfy_extras_test/spacetype_thumbnails_test.py` (create)
 
 **Interfaces:**
-- Produces: `_scene_thumbnails_dir()`; `POST /comfynext/space_thumbnail/{effect_id}` (save bytes), `GET /comfynext/space_thumbnails` (`{id: url}` map), `GET /comfynext/space_thumbnail/{effect_id}` (serve PNG).
+- Produces: `_scene_thumbnails_dir()`; `POST /sailor/space_thumbnail/{effect_id}` (save bytes), `GET /sailor/space_thumbnails` (`{id: url}` map), `GET /sailor/space_thumbnail/{effect_id}` (serve PNG).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -38,7 +38,7 @@ nt = importlib.import_module("comfy_extras.nodes_timeline")
 def test_scene_thumbnails_dir_under_bridge():
     d = nt._scene_thumbnails_dir()
     assert d.endswith("scene_thumbnails")
-    assert "comfynext_bridge" in d
+    assert "sailor_bridge" in d
 
 def test_thumbnails_reuse_effect_id_validator():
     assert nt._valid_effect_id("ribbon")
@@ -56,12 +56,12 @@ Add the helper next to `_scene_defaults_dir`:
 ```python
 def _scene_thumbnails_dir() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_thumbnails"))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "sailor_bridge", "scene_thumbnails"))
 ```
 
 Inside the `try: from server import PromptServer` block (next to the `space_default` routes), add:
 ```python
-    @PromptServer.instance.routes.get("/comfynext/space_thumbnails")
+    @PromptServer.instance.routes.get("/sailor/space_thumbnails")
     async def _space_thumbnails_list(request):
         out = {}
         d = _scene_thumbnails_dir()
@@ -70,10 +70,10 @@ Inside the `try: from server import PromptServer` block (next to the `space_defa
                 if fn.endswith(".png") and _valid_effect_id(fn[:-4]):
                     eid = fn[:-4]
                     mtime = int(os.path.getmtime(os.path.join(d, fn)))
-                    out[eid] = f"/comfynext/space_thumbnail/{eid}?v={mtime}"
+                    out[eid] = f"/sailor/space_thumbnail/{eid}?v={mtime}"
         return web.json_response(out)
 
-    @PromptServer.instance.routes.post("/comfynext/space_thumbnail/{effect_id}")
+    @PromptServer.instance.routes.post("/sailor/space_thumbnail/{effect_id}")
     async def _space_thumbnail_save(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -87,7 +87,7 @@ Inside the `try: from server import PromptServer` block (next to the `space_defa
             f.write(data)
         return web.json_response({"ok": True})
 
-    @PromptServer.instance.routes.get("/comfynext/space_thumbnail/{effect_id}")
+    @PromptServer.instance.routes.get("/sailor/space_thumbnail/{effect_id}")
     async def _space_thumbnail_get(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -110,7 +110,7 @@ Expected: PASS (2).
 git add comfy_extras/nodes_timeline.py tests-unit/comfy_extras_test/spacetype_thumbnails_test.py
 git commit -m "feat(space-type): backend routes for captured effect thumbnails
 
-POST /comfynext/space_thumbnail/{id} saves a PNG; GET .../space_thumbnails
+POST /sailor/space_thumbnail/{id} saves a PNG; GET .../space_thumbnails
 returns the {id: url} map; GET .../space_thumbnail/{id} serves the PNG.
 Mirrors scene-defaults; effect_id validated.
 
@@ -140,11 +140,11 @@ beforeEach(() => { __resetEffectThumbnailsCache(); vi.restoreAllMocks() })
 
 describe('useEffectThumbnails', () => {
   it('fetches the map once and caches it', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ribbon: '/comfynext/space_thumbnail/ribbon?v=1' }) })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ribbon: '/sailor/space_thumbnail/ribbon?v=1' }) })
     vi.stubGlobal('fetch', fetchMock)
     await loadEffectThumbnails(); await loadEffectThumbnails()
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(effectThumbUrl('ribbon')).toContain('/comfynext/space_thumbnail/ribbon')
+    expect(effectThumbUrl('ribbon')).toContain('/sailor/space_thumbnail/ribbon')
     expect(effectThumbUrl('field')).toBeNull()
   })
   it('resolves {} on failure', async () => {
@@ -159,7 +159,7 @@ describe('useEffectThumbnails', () => {
     await loadEffectThumbnails()
     const ok = await saveEffectThumbnail('coil', new Blob([new Uint8Array([1])], { type: 'image/png' }))
     expect(ok).toBe(true)
-    expect(effectThumbUrl('coil')).toContain('/comfynext/space_thumbnail/coil')
+    expect(effectThumbUrl('coil')).toContain('/sailor/space_thumbnail/coil')
   })
 })
 ```
@@ -180,7 +180,7 @@ let _resolved: Record<string, string> = {}
 /** Fetch the {effectId: imageUrl} map of captured thumbnails once; memoized. Failure → {}. */
 export function loadEffectThumbnails(): Promise<Record<string, string>> {
   if (!_cache) {
-    _cache = fetch('/comfynext/space_thumbnails')
+    _cache = fetch('/sailor/space_thumbnails')
       .then(r => (r.ok ? r.json() : {}))
       .catch(() => ({}))
       .then((m: Record<string, string>) => { _resolved = m || {}; return _resolved })
@@ -194,9 +194,9 @@ export function effectThumbUrl(id: string): string | null { return _resolved[id]
 /** POST a captured PNG as effect `id`'s thumbnail; updates the cached URL (cache-busted) on success. */
 export async function saveEffectThumbnail(id: string, blob: Blob): Promise<boolean> {
   try {
-    const r = await fetch(`/comfynext/space_thumbnail/${id}`, { method: 'POST', body: blob })
+    const r = await fetch(`/sailor/space_thumbnail/${id}`, { method: 'POST', body: blob })
     if (!r.ok) return false
-    _resolved = { ..._resolved, [id]: `/comfynext/space_thumbnail/${id}?v=${Date.now()}` }
+    _resolved = { ..._resolved, [id]: `/sailor/space_thumbnail/${id}?v=${Date.now()}` }
     return true
   } catch { return false }
 }

@@ -708,7 +708,7 @@ First confirm how this node reaches the project registry:
 Run: `grep -n 'activeProjectDoc\|useRefRegistry\|provide(\|inject(' frontend/app/components/vue-canvas/ArtifactImageNode.vue frontend/app/layouts/default.vue`
 
 - If `activeProjectDoc` is `provide()`d, `inject()` it and use `useRefRegistry` directly.
-- Otherwise (simplest, decoupled): emit a window event the layout already listens to the same way it handles `comfynext:addNode`, and have the layout write the registry. Use this fallback:
+- Otherwise (simplest, decoupled): emit a window event the layout already listens to the same way it handles `sailor:addNode`, and have the layout write the registry. Use this fallback:
 
 In `ArtifactImageNode.vue` `<script setup>`:
 ```typescript
@@ -728,7 +728,7 @@ function openRefDialog() { if (currentFilename()) refDialogOpen.value = true }
 function onRefConfirm(name: string, text: string) {
   refDialogOpen.value = false
   const filename = currentFilename(); if (!filename) return
-  window.dispatchEvent(new CustomEvent('comfynext:createRef', { detail: { name, entry: { filename, text: text || undefined } } }))
+  window.dispatchEvent(new CustomEvent('sailor:createRef', { detail: { name, entry: { filename, text: text || undefined } } }))
 }
 ```
 
@@ -744,7 +744,7 @@ Add the button to the footer row (after the "Save as Character" button ~line 739
 <RefNameDialog :open="refDialogOpen" :suggested="''" @confirm="onRefConfirm" @cancel="refDialogOpen = false" />
 ```
 
-- [ ] **Step 3: Handle `comfynext:createRef` in the layout**
+- [ ] **Step 3: Handle `sailor:createRef` in the layout**
 
 In `frontend/app/layouts/default.vue`, import `setRef` and `provide` a read-only registry for child node components, then handle the create event. Near the top of `<script setup>`:
 ```typescript
@@ -754,7 +754,7 @@ import { setRef, type RefRegistry } from '~/lib/refs/registry'
 // Read-only registry for descendant node components (Tasks 8 & 9 inject this).
 provide('assetRegistry', computed<RefRegistry>(() => activeProjectDoc.value?.assetRegistry ?? {}))
 ```
-Near where `comfynext:addNode` / other window listeners are registered (grep `addEventListener('comfynext`), add:
+Near where `sailor:addNode` / other window listeners are registered (grep `addEventListener('sailor`), add:
 ```typescript
 function onCreateRef(e: Event) {
   const { name, entry } = (e as CustomEvent).detail || {}
@@ -762,10 +762,10 @@ function onCreateRef(e: Event) {
   activeProjectDoc.value.assetRegistry = setRef(activeProjectDoc.value.assetRegistry ?? {}, name, entry)
   toast.success(`Reference @${name} created`)
 }
-// register in onMounted: window.addEventListener('comfynext:createRef', onCreateRef)
-// remove in onBeforeUnmount: window.removeEventListener('comfynext:createRef', onCreateRef)
+// register in onMounted: window.addEventListener('sailor:createRef', onCreateRef)
+// remove in onBeforeUnmount: window.removeEventListener('sailor:createRef', onCreateRef)
 ```
-(Writes go straight onto `activeProjectDoc.value.assetRegistry` so they ride the existing autosave. Register/unregister the listener beside the existing `comfynext:addNode` handler.)
+(Writes go straight onto `activeProjectDoc.value.assetRegistry` so they ride the existing autosave. Register/unregister the listener beside the existing `sailor:addNode` handler.)
 
 - [ ] **Step 4: Browser verification**
 
@@ -874,7 +874,7 @@ git commit -m "feat(refs): bind image widgets to @name via pink glyph picker"
 
 **Interfaces:**
 - Consumes: `listRefNames`, `resolveRefFilename` (Task 1), the active registry, Vue Flow `Handle`.
-- Produces: a frontend-only node of type `Reference` with one `IMAGE` output and a `properties.comfynext_refName`.
+- Produces: a frontend-only node of type `Reference` with one `IMAGE` output and a `properties.sailor_refName`.
 
 - [ ] **Step 1: Register the type**
 
@@ -911,14 +911,14 @@ const props = defineProps<{ id: string; data: { properties?: Record<string, any>
 // Read-only registry provided by the layout (Task 7 Step 3).
 const activeRegistry = inject<ComputedRef<RefRegistry>>('assetRegistry', computed(() => ({})))
 
-const refName = computed<string | null>(() => props.data?.properties?.comfynext_refName ?? null)
+const refName = computed<string | null>(() => props.data?.properties?.sailor_refName ?? null)
 const entry = computed(() => refName.value ? resolveRef(activeRegistry.value, refName.value) : undefined)
 const thumbUrl = computed(() => entry.value ? `/view?filename=${encodeURIComponent(entry.value.filename)}&type=input` : null)
 const names = computed(() => listRefNames(activeRegistry.value))
 const picking = ref(false)
 
 function pick(name: string) {
-  ;(props.data.properties ??= {}).comfynext_refName = name
+  ;(props.data.properties ??= {}).sailor_refName = name
   picking.value = false
 }
 </script>
@@ -948,7 +948,7 @@ function pick(name: string) {
 
 - [ ] **Step 3: Browser verification**
 
-1. Add a `Reference` node (via the add-node menu, or `window.dispatchEvent(new CustomEvent('comfynext:addNode', { detail: { nodeType: 'Reference' } }))` in the console).
+1. Add a `Reference` node (via the add-node menu, or `window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType: 'Reference' } }))` in the console).
 2. Confirm it renders with the pink `@` header and an IMAGE output handle on the right.
 3. Pick `@tracksuit` → confirm the thumbnail appears and the label shows `@tracksuit`.
 4. Wire the output into a downstream node's IMAGE input → confirm the wire connects.
@@ -974,7 +974,7 @@ git commit -m "feat(refs): Reference shorthand node (register + component)"
 
 **Interfaces:**
 - Consumes: `resolveRefFilename` (Task 1), the Task 6 method.
-- Produces: at submit, every `Reference` node is converted into the same image-source form an `Image` node uses (its `comfynext_refName` resolved to a filename), so downstream IMAGE inputs receive the image; no `Reference` type reaches ComfyUI.
+- Produces: at submit, every `Reference` node is converted into the same image-source form an `Image` node uses (its `sailor_refName` resolved to a filename), so downstream IMAGE inputs receive the image; no `Reference` type reaches ComfyUI.
 
 - [ ] **Step 1: Investigate the Image-artifact submit path**
 
@@ -999,14 +999,14 @@ const reg = setRef({}, 'tracksuit', { filename: 'suit.png' })
 
 describe('materializeReferenceNodes', () => {
   it('rewrites a Reference node into the image-loader shape with the resolved filename', () => {
-    const wf = { nodes: [{ id: 7, type: 'Reference', properties: { comfynext_refName: 'tracksuit' }, widgets_values: [] }] }
+    const wf = { nodes: [{ id: 7, type: 'Reference', properties: { sailor_refName: 'tracksuit' }, widgets_values: [] }] }
     materializeReferenceNodes(wf, reg)
     const n = wf.nodes[0] as any
     expect(n.type).toBe('IMAGE_LOADER_TYPE')        // ← replace with real class_type
     expect(n.widgets_values[0]).toBe('suit.png')    // ← index of the real IMAGE_WIDGET
   })
   it('leaves a Reference node with an unknown ref as-is (so it gets stripped, not mis-wired)', () => {
-    const wf = { nodes: [{ id: 8, type: 'Reference', properties: { comfynext_refName: 'ghost' }, widgets_values: [] }] }
+    const wf = { nodes: [{ id: 8, type: 'Reference', properties: { sailor_refName: 'ghost' }, widgets_values: [] }] }
     materializeReferenceNodes(wf, reg)
     expect((wf.nodes[0] as any).type).toBe('Reference')
   })
@@ -1039,7 +1039,7 @@ export function materializeReferenceNodes(workflow: any, reg: RefRegistry): void
   if (!Array.isArray(nodes)) return
   for (const node of nodes) {
     if (node?.type !== 'Reference') continue
-    const filename = resolveRefFilename(reg, node.properties?.comfynext_refName ?? '')
+    const filename = resolveRefFilename(reg, node.properties?.sailor_refName ?? '')
     if (!filename) continue
     node.type = IMAGE_LOADER_TYPE
     if (!Array.isArray(node.widgets_values)) node.widgets_values = []

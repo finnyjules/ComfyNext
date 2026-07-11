@@ -2,7 +2,7 @@
 /**
  * WidgetVoicePicker — node-body launcher button that opens the voice gallery.
  * Replaces the standard Combo dropdown for the `voice_id` input on the
- * "Generate speech" node (marked extra_dict={"comfynext_widget":"voice_picker"}).
+ * "Generate speech" node (marked extra_dict={"sailor_widget":"voice_picker"}).
  * The combo still serializes a plain voice-id string, so workflows stay portable;
  * the gallery lets the user audition each voice before committing.
  */
@@ -24,7 +24,7 @@ const meta = computed(() => {
 })
 
 function openGallery() {
-  window.dispatchEvent(new CustomEvent('comfynext:openVoiceGallery', {
+  window.dispatchEvent(new CustomEvent('sailor:openVoiceGallery', {
     detail: {
       nodeId: props.nodeId,
       widgetName: props.widgetName,

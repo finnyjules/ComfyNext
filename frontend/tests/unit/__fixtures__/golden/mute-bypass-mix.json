@@ -88,7 +88,7 @@
         { "name": "IMAGE", "type": "IMAGE", "links": [6] }
       ],
       "properties": {
-        "comfynext_preview": {
+        "sailor_preview": {
           "images": [{ "filename": "stale.png", "type": "temp", "subfolder": "" }]
         }
       }
@@ -130,7 +130,7 @@
   ],
   "config": {},
   "extra": {
-    "comfynext": {
+    "sailor": {
       "annotations": [
         { "id": "note-1", "text": "sanity check", "targetNodeId": 3 }
       ]

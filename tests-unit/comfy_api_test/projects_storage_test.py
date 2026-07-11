@@ -1,6 +1,6 @@
 """Unit tests for the durable Project storage layer (Phase 0).
 
-Covers the pure functions in comfy_extras/nodes_comfynext_projects.py against a
+Covers the pure functions in comfy_extras/nodes_sailor_projects.py against a
 temp root — no ComfyUI server, no network. See
 docs/plans/2026-06-02-phase0-project-persistence-spec.md.
 """
@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from comfy_extras import nodes_comfynext_projects as P
+from comfy_extras import nodes_sailor_projects as P
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def root(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_projects_root_layout(tmp_path):
-    assert P.projects_root(str(tmp_path)).endswith(os.path.join("comfynext", "projects"))
+    assert P.projects_root(str(tmp_path)).endswith(os.path.join("sailor", "projects"))
 
 
 def test_ensure_creates_then_returns_existing(root):
@@ -222,7 +222,7 @@ def ledger(tmp_path):
 
 
 def test_spend_file_layout(tmp_path):
-    assert P.spend_file(str(tmp_path)).endswith(os.path.join("comfynext", "spend.jsonl"))
+    assert P.spend_file(str(tmp_path)).endswith(os.path.join("sailor", "spend.jsonl"))
 
 
 def test_append_spend_skips_free_runs(ledger):

@@ -2,7 +2,7 @@
  * studioTune — let the CANVAS agent drive a STUDIO node's OWN surface, headlessly.
  *
  * Slice 1: the Frame (Compositor). A Frame's whole state lives on the node as
- * `data.properties.comfynext_localLayers` + `comfynext_localBg`, and the Frame node
+ * `data.properties.sailor_localLayers` + `sailor_localBg`, and the Frame node
  * re-bakes its thumbnail reactively from those — so we can read the CompositorState
  * off the node, plan against the Compositor surface (the same one the in-modal agent
  * uses), apply the result back onto the node, and the frame updates in place. No
@@ -50,28 +50,28 @@ export interface TuneResult { ok: boolean; rows: TuneRow[]; restore: () => void;
 function readState(node: any): CompositorState {
   const props = node?.data?.properties ?? {}
   return {
-    layers: JSON.parse(JSON.stringify(props.comfynext_localLayers ?? [])),
-    background: props.comfynext_localBg,
+    layers: JSON.parse(JSON.stringify(props.sailor_localLayers ?? [])),
+    background: props.sailor_localBg,
   }
 }
 /** Write a CompositorState back onto the node — mirrors useLocalLayerEditor's
  *  commit/writeBg so the Frame re-bakes (and persists) exactly as a hand-edit would. */
 function writeState(node: any, s: CompositorState) {
   if (!node.data.properties) node.data.properties = {}
-  node.data.properties.comfynext_localLayers = s.layers
+  node.data.properties.sailor_localLayers = s.layers
   const bg = s.background
-  if (bg === undefined || bg === 'none' || bg === '') delete node.data.properties.comfynext_localBg
-  else node.data.properties.comfynext_localBg = bg
+  if (bg === undefined || bg === 'none' || bg === '') delete node.data.properties.sailor_localBg
+  else node.data.properties.sailor_localBg = bg
 }
 
-/** The unified wired+local z-order (`comfynext_stackOrder`, bottom→top, keys
+/** The unified wired+local z-order (`sailor_stackOrder`, bottom→top, keys
  *  `l:<id>` / `w:<slot>`). Needed so "send to back" sits a local layer behind the
  *  CONNECTED image — which lives outside CompositorState. */
-function readStackOrder(node: any): string[] { return [...((node?.data?.properties?.comfynext_stackOrder as string[]) ?? [])] }
+function readStackOrder(node: any): string[] { return [...((node?.data?.properties?.sailor_stackOrder as string[]) ?? [])] }
 function writeStackOrder(node: any, order: string[]) {
   if (!node.data.properties) node.data.properties = {}
-  if (order.length) node.data.properties.comfynext_stackOrder = order
-  else delete node.data.properties.comfynext_stackOrder
+  if (order.length) node.data.properties.sailor_stackOrder = order
+  else delete node.data.properties.sailor_stackOrder
 }
 
 /** Plan + apply a natural-language tweak to a Frame (Compositor) node in place. */
@@ -194,16 +194,16 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
   return { ok: rows.length > 0, rows, restore, notice: parts.length ? parts.join(' ') : undefined }
 }
 
-/** Texture Studio: state is a single `Params` bag under comfynext_textureStudio
+/** Texture Studio: state is a single `Params` bag under sailor_textureStudio
  *  (merged over defaults so pre-newer-key nodes still describe cleanly). No media
  *  ops. */
 export async function tuneTextureNode(node: any, request: string, apiKey: string, tier = 'plan'): Promise<TuneResult> {
   return runCommandSurface<TextureState>(node, request, apiKey, tier, {
     read: (n) => {
-      const saved = n?.data?.properties?.comfynext_textureStudio as Params | undefined
+      const saved = n?.data?.properties?.sailor_textureStudio as Params | undefined
       return { params: saved ? { ...textureDefaults(), ...cloneParams(saved) } : textureDefaults() }
     },
-    write: (n, s) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.comfynext_textureStudio = cloneParams(s.params) },
+    write: (n, s) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.sailor_textureStudio = cloneParams(s.params) },
     describe: describeTexture,
     apply: applyTextureCommand,
     summarize: summarizeTextureChange,
@@ -314,19 +314,19 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
   return { ok: rows.length > 0, rows, restore, notice: rows.length ? undefined : (rationale || 'No adjustable change for that — try naming a colour, style or amount.') }
 }
 
-/** Gradient Studio: config under comfynext_gradientStudio; controls depend on the
+/** Gradient Studio: config under sailor_gradientStudio; controls depend on the
  *  current layout. Fresh node → a default gradient to tune from. Layer 0 is the
  *  headless active layer (the `layer.` control prefix resolves against it). */
 export async function tuneGradientNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
   return runParamPatch(node, request, apiKey, {
     read: (n) => {
-      const saved = n?.data?.properties?.comfynext_gradientStudio as GradientConfig | undefined
+      const saved = n?.data?.properties?.sailor_gradientStudio as GradientConfig | undefined
       const config = saved ? cloneGradientConfig(saved) : defaultGradientConfig()
       // includePreset: the canvas tuner can swap the whole base config (buildGradientPreset).
       return { config, controls: gradientAgentControls(config, { includePreset: true }) }
     },
     params: (config) => makeConfigParams(() => config, () => 0),
-    write: (n, config) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.comfynext_gradientStudio = cloneGradientConfig(config) },
+    write: (n, config) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.sailor_gradientStudio = cloneGradientConfig(config) },
     clone: cloneGradientConfig,
     label: 'Gradient studio',
     guidance: GRADIENT_GUIDANCE,
@@ -334,18 +334,18 @@ export async function tuneGradientNode(node: any, request: string, apiKey: strin
   })
 }
 
-/** Shader Studio: config under comfynext_shaderStudio; controls also surface the
+/** Shader Studio: config under sailor_shaderStudio; controls also surface the
  *  active effect's float uniforms, so we resolve the effect def from the catalog. */
 export async function tuneShaderNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
   return runParamPatch(node, request, apiKey, {
     read: async (n) => {
-      const saved = n?.data?.properties?.comfynext_shaderStudio
+      const saved = n?.data?.properties?.sailor_shaderStudio
       const config: ShaderStudioConfig = saved && typeof saved === 'object' ? hydrateShaderConfig(saved) : defaultShaderConfig()
       const effectDef = config.effect?.id ? await getEffect(config.effect.id) : null
       return { config, controls: shaderAgentControls(config, effectDef) }
     },
     params: (config) => makeConfigParams(() => config),
-    write: (n, config) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.comfynext_shaderStudio = cloneShaderConfig(config) },
+    write: (n, config) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.sailor_shaderStudio = cloneShaderConfig(config) },
     clone: cloneShaderConfig,
     label: 'Shader studio',
   })

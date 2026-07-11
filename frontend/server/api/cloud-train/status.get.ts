@@ -47,7 +47,7 @@ async function downloadAndPlace(
     }
 
     // Extract .tar into a temp dir, find the .safetensors, copy it to destPath.
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'comfynext-lora-'))
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sailor-lora-'))
     const tarPath = path.join(tmpDir, 'out.tar')
     try {
       await fs.writeFile(tarPath, buf)

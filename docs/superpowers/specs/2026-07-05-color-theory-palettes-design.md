@@ -54,7 +54,7 @@ components/.../PalettePicker.vue  ── curated rows + seed mode
 Node widgets already render in the **Vue frontend**
 (`vue-canvas/ComfyNodeWidget.vue`), not the ComfyUI iframe, so the picker is pure
 Vue and shares code with `StudioColor.vue`. Custom node widgets are wired through
-the existing `comfynext_widget` hint mechanism (same seam as `lora_picker`,
+the existing `sailor_widget` hint mechanism (same seam as `lora_picker`,
 `camera_gimbal`, etc.).
 
 ---
@@ -179,7 +179,7 @@ inputs may reset to defaults — accepted.
   `GradientMap` in `nodes_glsl_unicorn.py`; consolidate to one gradient-map node
   if the second is redundant (decide during planning — see Open questions).
 - Both mark their color input with
-  `extra_dict={"comfynext_widget": "gradient_editor"}` so the frontend renders the
+  `extra_dict={"sailor_widget": "gradient_editor"}` so the frontend renders the
   new widget instead of a text box.
 
 ### Multi-stop interpolation (`execute`)
@@ -194,7 +194,7 @@ param edit → one re-run.
 ### `WidgetGradientEditor.vue` (`vue-canvas/widgets/`)
 
 New custom widget, selected in `ComfyNodeWidget.vue` when
-`widgetDef.comfynext_widget === 'gradient_editor'`:
+`widgetDef.sailor_widget === 'gradient_editor'`:
 
 - Renders a stop strip (add/remove/drag stop, per-stop `StudioColor`) for gradient
   map, or a two-swatch row for duotone.
@@ -268,7 +268,7 @@ math so the Studio preview matches:
    sign-off.
 4. **Backend schema migration** — `Duotone` + gradient-map node hex/JSON inputs,
    multi-stop `execute`, Python tests.
-5. **Node widget** — `WidgetGradientEditor.vue` + `comfynext_widget` wiring;
+5. **Node widget** — `WidgetGradientEditor.vue` + `sailor_widget` wiring;
    verify live-preview on canvas.
 
 ## Open questions / risks

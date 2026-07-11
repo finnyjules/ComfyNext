@@ -5,7 +5,7 @@
  * Pure: every function takes a CompositorState and returns data or a fresh state.
  *
  * State = the local layers + the document background. The composable bridges this
- * to `node.data.properties.comfynext_localLayers` + the background, and runs the
+ * to `node.data.properties.sailor_localLayers` + the background, and runs the
  * media ops (generate/edit/remove-bg) which need async backend calls.
  */
 import type { LocalLayer, LocalLayerKind, Paint, TextLayer } from '~/composables/useCompositorLayers'

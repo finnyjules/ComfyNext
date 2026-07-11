@@ -15,7 +15,7 @@ A dedicated **Lip-Sync Studio** — a guardrailed studio surface that makes a ch
   - `sync/lipsync-2-pro` — video (or image) + audio → resynced lips, "best-in-class". Wired as `LipsyncRemoteNode` (`{video, audio, sync_mode}`; `sync_mode ∈ loop/bounce/cut_off/silence/remap` for length mismatch).
 - **Voice / speech, already wired:** ElevenLabs TTS + instant voice clone (`nodes_elevenlabs.py`), MiniMax speech; a **voice library** (`/api/voices-local`, cloned voices with preview clips, `VoiceGalleryModal`, `WidgetVoicePicker`, `voiceCatalog.ts`), and the voice-clone flow (`/api/voice-clone/*`).
 - **Character library:** `useCharacters` (cover/reference images per character + variant), `CharacterLibraryPanel`.
-- **Studio pattern to mirror:** Shot Director — `ARTIFACT_NODE_COMPONENTS` registration in `useVueNodes.ts`, a Node card + Surface modal, state at `node.data.properties.comfynext_*`, a pure `lib/shotdirector/` compile core + `useShotDirector` composable, and a Generate that compiles → patches a target node → `runFiltered` (studio bakes nothing; remembers a target node id).
+- **Studio pattern to mirror:** Shot Director — `ARTIFACT_NODE_COMPONENTS` registration in `useVueNodes.ts`, a Node card + Surface modal, state at `node.data.properties.sailor_*`, a pure `lib/shotdirector/` compile core + `useShotDirector` composable, and a Generate that compiles → patches a target node → `runFiltered` (studio bakes nothing; remembers a target node id).
 
 **Key finding from this session:** Seedance *native* dialogue lip-syncs to its own generated voice, but supplying your own audio to Seedance does NOT lip-sync to it. Hence a dedicated lip-sync path is the right tool for "drive a character with a specific voice clip."
 
@@ -47,7 +47,7 @@ Rationale for a new node over reusing two: the studio pattern dispatches to ONE 
 
 ### Frontend
 
-- **`LipSyncNode.vue`** (node card) + **`LipSyncSurface.vue`** (the studio modal) + registration in `ARTIFACT_NODE_COMPONENTS` (`useVueNodes.ts`) and the `VueNodeCanvas.vue` component map + node-type synthesis (wildcard output + no inputs, like ShotDirector). State at `node.data.properties.comfynext_lipSync`.
+- **`LipSyncNode.vue`** (node card) + **`LipSyncSurface.vue`** (the studio modal) + registration in `ARTIFACT_NODE_COMPONENTS` (`useVueNodes.ts`) and the `VueNodeCanvas.vue` component map + node-type synthesis (wildcard output + no inputs, like ShotDirector). State at `node.data.properties.sailor_lipSync`.
 - **`lib/lipsync/`** — pure core: types (`LipSyncSheet`), `hydrate`, `compile` (sheet → node-input patch + validation issues), `engine` resolution (face kind → engine), `price` (~$1/30s estimate from audio length). Unit-tested like `lib/shotdirector/`.
 - **`useLipSync`** composable — reactive sheet + result + Generate/reroll, mirroring `useShotDirector`.
 - **Face panel** (3 tabs): Character (pick from `useCharacters` → cover image URL), Image (upload → `/view` URL via the existing ref-upload path), Video (upload/URL).

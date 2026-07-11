@@ -75,7 +75,7 @@ export function usePortIntent() {
     const direct = canonicalSuggestion(intent, anchor, ctx.objectInfo)
     if (direct) return direct
 
-    const apiKey = getLocalSetting('ComfyNext.AI.AnthropicApiKey')
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
 
     const catalog = buildCatalog(nodeTypes.value, ctx.objectInfo, anchor, { intent, keywords: NODE_KEYWORDS, boosts: NODE_BOOST })
     if (!catalog.length) throw new Error('No installed nodes are compatible with this port.')

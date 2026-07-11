@@ -85,15 +85,15 @@ describe('config builders include the new fields', () => {
 
 describe('resolveGradientFx (HMR-safe singleton)', () => {
   it('returns the same instance across re-evaluations of the same scope', () => {
-    const scope: { __comfynextGradientFx?: any } = {}
+    const scope: { __sailorGradientFx?: any } = {}
     const a = resolveGradientFx(scope)
     const b = resolveGradientFx(scope) // simulates the module re-running under HMR
     expect(a).toBe(b)
-    expect(scope.__comfynextGradientFx).toBe(a)
+    expect(scope.__sailorGradientFx).toBe(a)
   })
   it('does not create a new instance when the scope already holds one', () => {
     const existing = resolveGradientFx({})
-    const scope = { __comfynextGradientFx: existing }
+    const scope = { __sailorGradientFx: existing }
     expect(resolveGradientFx(scope)).toBe(existing)
   })
 })

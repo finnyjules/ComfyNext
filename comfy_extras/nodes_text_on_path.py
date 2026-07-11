@@ -56,7 +56,7 @@ class TextOnPathNode(IO.ComfyNode):
                     "params",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "text_on_path"},
+                    extra_dict={"sailor_widget": "text_on_path"},
                     tooltip="Text-on-path state (managed by the widget).",
                 ),
             ],

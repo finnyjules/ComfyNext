@@ -26,7 +26,7 @@
 - Test: `tests-unit/comfy_extras_test/spacetype_defaults_test.py` (create)
 
 **Interfaces:**
-- Produces: `POST /comfynext/space_default/{effect_id}` (writes a scene file), `GET /comfynext/space_defaults` (returns `{effectId: scene}` map). A pure helper `_scene_defaults_dir()` and `_valid_effect_id(s)` for testability.
+- Produces: `POST /sailor/space_default/{effect_id}` (writes a scene file), `GET /sailor/space_defaults` (returns `{effectId: scene}` map). A pure helper `_scene_defaults_dir()` and `_valid_effect_id(s)` for testability.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -49,7 +49,7 @@ def test_valid_effect_id_rejects_traversal_and_caps():
 def test_scene_defaults_dir_is_under_bridge(tmp_path, monkeypatch):
     d = nt._scene_defaults_dir()
     assert d.endswith("scene_defaults")
-    assert "comfynext_bridge" in d
+    assert "sailor_bridge" in d
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -66,15 +66,15 @@ def _valid_effect_id(s: str) -> bool:
     return isinstance(s, str) and re.fullmatch(r"[a-z0-9]+", s) is not None
 
 def _scene_defaults_dir() -> str:
-    # comfy_extras/ -> repo root -> custom_nodes/comfynext_bridge/scene_defaults
+    # comfy_extras/ -> repo root -> custom_nodes/sailor_bridge/scene_defaults
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "comfynext_bridge", "scene_defaults"))
+    return os.path.abspath(os.path.join(here, "..", "custom_nodes", "sailor_bridge", "scene_defaults"))
 ```
 
 Inside the `try: from server import PromptServer` block (after `_spacetype_encode_route`), add:
 
 ```python
-    @PromptServer.instance.routes.get("/comfynext/space_defaults")
+    @PromptServer.instance.routes.get("/sailor/space_defaults")
     async def _space_defaults_list(request):
         out = {}
         d = _scene_defaults_dir()
@@ -88,7 +88,7 @@ Inside the `try: from server import PromptServer` block (after `_spacetype_encod
                         pass
         return web.json_response(out)
 
-    @PromptServer.instance.routes.post("/comfynext/space_default/{effect_id}")
+    @PromptServer.instance.routes.post("/sailor/space_default/{effect_id}")
     async def _space_default_save(request):
         effect_id = request.match_info.get("effect_id", "")
         if not _valid_effect_id(effect_id):
@@ -115,8 +115,8 @@ Expected: PASS (3 tests). If `re`/`json` import errors, add the missing `import`
 git add comfy_extras/nodes_timeline.py tests-unit/comfy_extras_test/spacetype_defaults_test.py
 git commit -m "feat(space-type): backend routes for per-effect default scenes
 
-GET /comfynext/space_defaults returns the {effectId: scene} map; POST
-/comfynext/space_default/{id} writes a committable scene_defaults/<id>.json.
+GET /sailor/space_defaults returns the {effectId: scene} map; POST
+/sailor/space_default/{id} writes a committable scene_defaults/<id>.json.
 effect_id validated (^[a-z0-9]+$) against path traversal.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -318,7 +318,7 @@ let _resolved: Record<string, Scene> = {}
 /** Fetch the {effectId: scene} default map once; memoized. Network failure → {} (today's behavior). */
 export function loadSpaceDefaults(): Promise<Record<string, Scene>> {
   if (!_cache) {
-    _cache = fetch('/comfynext/space_defaults')
+    _cache = fetch('/sailor/space_defaults')
       .then(r => (r.ok ? r.json() : {}))
       .catch(() => ({}))
       .then((m: Record<string, Scene>) => { _resolved = m || {}; return _resolved })
@@ -334,7 +334,7 @@ export function spaceDefaultFor(id: string): Scene | null {
 /** Persist a scene as effect `id`'s default; updates the in-memory cache on success. */
 export async function saveSpaceDefault(id: string, scene: Scene): Promise<boolean> {
   try {
-    const r = await fetch(`/comfynext/space_default/${id}`, {
+    const r = await fetch(`/sailor/space_default/${id}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene),
     })
     if (!r.ok) return false
@@ -427,7 +427,7 @@ In `SpaceTypeNode.vue`, the preview currently reads `state` as a computed from p
 import { loadSpaceDefaults, spaceDefaultFor } from '~/composables/useSpaceDefaults'
 import { applySceneToState } from '~/lib/spacetype/scene'
 // ...
-const hadSavedConfig = !!props.data?.properties?.comfynext_spaceType
+const hadSavedConfig = !!props.data?.properties?.sailor_spaceType
 ```
 
 In `onMounted` (before building the engine), if there was no saved config, hydrate from a default scene:
@@ -439,12 +439,12 @@ In `onMounted` (before building the engine), if there was no saved config, hydra
     if (scene) {
       const merged = applySceneToState(defaultSpaceTypeState(), scene)
       const n = props.data
-      if (n) { (n.properties ||= {}).comfynext_spaceType = merged }
+      if (n) { (n.properties ||= {}).sailor_spaceType = merged }
     }
   }
 ```
 
-(Stamping onto `props.data.properties.comfynext_spaceType` makes the existing `state` computed pick it up and persists it on the node. The engine is then built from `state.value` as before.)
+(Stamping onto `props.data.properties.sailor_spaceType` makes the existing `state` computed pick it up and persists it on the node. The engine is then built from `state.value` as before.)
 
 - [ ] **Step 4: Typecheck**
 
@@ -501,7 +501,7 @@ function applyDefaultScene(scene: Scene) {
 In `onMounted`, after `loadConfig()` and `pullTextLines()/pullFills()`, when there is no saved config, apply the default scene:
 
 ```ts
-  const hadConfig = !!currentNode()?.data?.properties?.comfynext_spaceType
+  const hadConfig = !!currentNode()?.data?.properties?.sailor_spaceType
   await loadSpaceDefaults()
   if (!hadConfig) { const sc = spaceDefaultFor(effectId.value); if (sc) applyDefaultScene(sc) }
 ```

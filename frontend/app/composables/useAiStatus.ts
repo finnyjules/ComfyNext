@@ -5,7 +5,7 @@
 const serverKeyConfigured = ref<boolean | null>(null)
 let fetched = false
 
-const LOCAL_KEY = 'comfynext:ComfyNext.AI.AnthropicApiKey'
+const LOCAL_KEY = 'sailor:Sailor.AI.AnthropicApiKey'
 const localApiKey = ref<string | null>(null)
 let listenerRegistered = false
 
@@ -29,14 +29,14 @@ export function useAiStatus() {
     window.addEventListener('storage', (e) => {
       if (e.key === LOCAL_KEY) loadLocalApiKey()
     })
-    window.addEventListener('comfynext:setting-changed', ((e: CustomEvent) => {
+    window.addEventListener('sailor:setting-changed', ((e: CustomEvent) => {
       if (e.detail?.key === LOCAL_KEY) loadLocalApiKey()
     }) as EventListener)
     loadLocalApiKey()
   }
 
   const aiAvailable = computed(() => {
-    if (localApiKey.value ?? getLocalSetting('ComfyNext.AI.AnthropicApiKey')) return true
+    if (localApiKey.value ?? getLocalSetting('Sailor.AI.AnthropicApiKey')) return true
     return serverKeyConfigured.value !== false
   })
   return { serverKeyConfigured, aiAvailable }

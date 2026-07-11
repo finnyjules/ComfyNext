@@ -9,7 +9,7 @@ import { waitForBackend } from './_helpers'
  */
 async function openToModal(page: Page) {
   await page.addInitScript(() => {
-    try { localStorage.setItem('comfynext:Comfy.VueNodes.Enabled', 'true') } catch {}
+    try { localStorage.setItem('sailor:Comfy.VueNodes.Enabled', 'true') } catch {}
   })
   await page.goto('/')
   await page.waitForLoadState('networkidle')

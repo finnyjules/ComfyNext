@@ -836,7 +836,7 @@ Kill the running ComfyUI process and relaunch:
 
 ```bash
 pkill -f "main.py --listen" ; sleep 2
-.venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/comfynext-comfyui.out.log 2>&1 &
+.venv/bin/python main.py --listen 127.0.0.1 --port 8188 > /tmp/sailor-comfyui.out.log 2>&1 &
 ```
 
 Wait for `curl -s http://127.0.0.1:8188/system_stats` to return JSON.
@@ -847,7 +847,7 @@ In the running app (or `/dev/shot-director-harness`): cast a ready character wit
 
 - [ ] **Step 3: Confirm success**
 
-Verify in the ComfyUI log (`/tmp/comfynext-comfyui.out.log`) a line `[FilmShot] provider=fal app='bytedance/seedance-2.0' fn='reference-to-video' …`, that `/history` shows the FilmShotNode succeeded (no E005), and that a video file was written to `output/video/`. Extract a frame and confirm the character's identity holds.
+Verify in the ComfyUI log (`/tmp/sailor-comfyui.out.log`) a line `[FilmShot] provider=fal app='bytedance/seedance-2.0' fn='reference-to-video' …`, that `/history` shows the FilmShotNode succeeded (no E005), and that a video file was written to `output/video/`. Extract a frame and confirm the character's identity holds.
 
 Expected: a clip returns with the cast identity — no moderation rejection. If it fails with a fal moderation error, that is a content issue (not a wiring bug); retry with more benign wording.
 

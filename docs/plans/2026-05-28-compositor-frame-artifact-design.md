@@ -10,7 +10,7 @@ missing **artboard** primitive.
 
 ## Why this is low-risk
 
-A Frame is the fusion of three patterns ComfyNext already ships:
+A Frame is the fusion of three patterns Sailor already ships:
 
 | Pattern | Source | What it gives the Frame |
 |---|---|---|
@@ -49,17 +49,17 @@ an artifact by routing the `Compositor` type to a new Vue component:
 - canvas `node-types` map: add `'artifact-frame': markRaw(ArtifactFrameNode)`
   ([VueNodeCanvas.vue:2672](../../frontend/app/components/vue-canvas/VueNodeCanvas.vue#L2672))
 
-State on `data.properties` (round-trips like `textEntries` / `comfynext_localLayers`):
+State on `data.properties` (round-trips like `textEntries` / `sailor_localLayers`):
 
 | Key | Type | Notes |
 |---|---|---|
-| `comfynext_frame` | `{ width, height, preset }` | artboard dimensions + chosen preset |
-| `comfynext_localLayers` | `LocalLayer[]` | text/shape layers (already implemented) |
-| `comfynext_imageLayers` | `{ id, filename, x,y,rotation,scale,opacity,blend }[]` | **owned** dropped images (new) |
+| `sailor_frame` | `{ width, height, preset }` | artboard dimensions + chosen preset |
+| `sailor_localLayers` | `LocalLayer[]` | text/shape layers (already implemented) |
+| `sailor_imageLayers` | `{ id, filename, x,y,rotation,scale,opacity,blend }[]` | **owned** dropped images (new) |
 | `locked` | bool | pin, mirrors `ArtifactImageNode` |
 
 Output: IMAGE (wireable), plus Export + Download + Lock, identical to the Image
-artifact. Editing opens the existing modal (`comfynext:openCompositor`).
+artifact. Editing opens the existing modal (`sailor:openCompositor`).
 
 ## Backend change (small)
 
@@ -72,7 +72,7 @@ to know the size" constraint.
 ## Layers in: drop AND wire
 
 - **Drop / paste** an image onto the frame → an *owned* image layer
-  (`comfynext_imageLayers`). At Run, each owned image is uploaded and injected as
+  (`sailor_imageLayers`). At Run, each owned image is uploaded and injected as
   a `LoadImage → Compositor.layerN` (extending the overlay-injection already in
   `injectCompositorOverlays`), so it composites at full quality with the backend's
   transforms — not re-rastered.
@@ -141,7 +141,7 @@ Frame"** button on each that builds a wired Frame:
 - **`OutpaintImageNode`** (Flux Fill / Bria Expand) — with a live zone-preview
   on the node. Not frame-specific. *Not yet run live.*
 
-**Stack-key alignment (latent bug fixed):** persisted `comfynext_stackOrder`
+**Stack-key alignment (latent bug fixed):** persisted `sailor_stackOrder`
 wired keys are **1-based** (`w:1` = the backend's layer1) everywhere. Before,
 ArtifactFrameNode and the submit/bake interleaver used 0-based keys while
 CompositorModal used 1-based — so wired-layer z-orders saved in one surface
@@ -151,8 +151,8 @@ agree; pre-fix frame-saved orders fall back to the default stacking.
 ## Layer parity batch (2026-06-09, second pass)
 
 - **Per-layer visibility + lock.** Locals carry `visible`/`locked` on the layer;
-  wired layers persist 1-based slot arrays (`comfynext_hiddenWired` /
-  `comfynext_lockedWired`) on node properties. Hidden layers drop out of
+  wired layers persist 1-based slot arrays (`sailor_hiddenWired` /
+  `sailor_lockedWired`) on node properties. Hidden layers drop out of
   render, bake, export; at submit a hidden wired slot gets opacity 0 stamped on
   the outgoing copy only. Locked layers ignore canvas hits everywhere (the
   shared `useLocalLayerEditor.hitTest` + both wired hit-tests) but stay

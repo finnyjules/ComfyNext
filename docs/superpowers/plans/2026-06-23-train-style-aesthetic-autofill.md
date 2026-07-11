@@ -490,7 +490,7 @@ The montage build (WebGL/canvas) and the paid Qwen vision call can't run in unit
 cd frontend && npm run dev
 ```
 
-(Backend, if needed: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`.)
+(Backend, if needed: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`.)
 
 - [ ] **Step 2: Verify the field appears for own uploads**
 

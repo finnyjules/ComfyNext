@@ -6,7 +6,7 @@ import { readSecretsFile, writeSecretsFile, maskToken } from '../../server/utils
 
 let path: string
 beforeEach(() => {
-  path = join(mkdtempSync(join(tmpdir(), 'comfynext-secrets-')), 'secrets.json')
+  path = join(mkdtempSync(join(tmpdir(), 'sailor-secrets-')), 'secrets.json')
 })
 
 describe('secrets file store', () => {

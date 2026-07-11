@@ -5,7 +5,7 @@ import { openBlankWorkflow, dropNode, waitForBackend } from './_helpers'
  * End-to-end coverage for:
  *   1. Right-click context menu (pane / node / selection / group)
  *   2. Group primitive (create from selection, drag-moves-contents, rename, color, delete)
- *   3. Filtered run (group + selection both dispatch `comfynext:runFiltered`)
+ *   3. Filtered run (group + selection both dispatch `sailor:runFiltered`)
  *   4. Bypass / Mute toggle node.mode and apply the visual treatment
  *
  * Strategy: drive selections through the existing canvas affordances (the
@@ -214,7 +214,7 @@ test.describe('groups', () => {
 })
 
 test.describe('filtered run', () => {
-  test('Run Group dispatches comfynext:runFiltered with the group\'s node ids', async ({ page }) => {
+  test('Run Group dispatches sailor:runFiltered with the group\'s node ids', async ({ page }) => {
     await addNode(page, 'PreviewImage')
     await addNode(page, 'EmptyImage')
     await selectAllNodes(page)
@@ -224,7 +224,7 @@ test.describe('filtered run', () => {
 
     // Install a listener BEFORE triggering Run Group.
     const detailPromise = page.evaluate<{ targetIds: string[] }>(() => new Promise((resolve) => {
-      window.addEventListener('comfynext:runFiltered', (e) => {
+      window.addEventListener('sailor:runFiltered', (e) => {
         resolve((e as CustomEvent).detail)
       }, { once: true })
     }))
@@ -277,7 +277,7 @@ test.describe('filtered run', () => {
     await expect(muteBtn).toHaveClass(/canvas-group__action--mute-on/)
   })
 
-  test('Group title bar Run icon dispatches comfynext:runFiltered', async ({ page }) => {
+  test('Group title bar Run icon dispatches sailor:runFiltered', async ({ page }) => {
     await addNode(page, 'PreviewImage')
     await addNode(page, 'EmptyImage')
     await selectAllNodes(page)
@@ -287,7 +287,7 @@ test.describe('filtered run', () => {
     await expect(page.locator('.canvas-group')).toHaveCount(1)
 
     const detailPromise = page.evaluate<{ targetIds: string[] }>(() => new Promise((resolve) => {
-      window.addEventListener('comfynext:runFiltered', (e) => {
+      window.addEventListener('sailor:runFiltered', (e) => {
         resolve((e as CustomEvent).detail)
       }, { once: true })
     }))
@@ -297,13 +297,13 @@ test.describe('filtered run', () => {
     expect(detail.targetIds.length).toBe(2)
   })
 
-  test('Run Selection dispatches comfynext:runFiltered with the selected ids', async ({ page }) => {
+  test('Run Selection dispatches sailor:runFiltered with the selected ids', async ({ page }) => {
     await addNode(page, 'PreviewImage')
     await addNode(page, 'EmptyImage')
     await selectAllNodes(page)
 
     const detailPromise = page.evaluate<{ targetIds: string[] }>(() => new Promise((resolve) => {
-      window.addEventListener('comfynext:runFiltered', (e) => {
+      window.addEventListener('sailor:runFiltered', (e) => {
         resolve((e as CustomEvent).detail)
       }, { once: true })
     }))

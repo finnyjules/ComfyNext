@@ -152,7 +152,7 @@ function linkedCellText(rowIndex: number, colIndex: number): string {
 }
 function openForeign(sourceCollectionId: string) {
   const n = props.nodes.find((x: any) => x?.data?.properties?.[COLLECTION_PROP]?.id === sourceCollectionId)
-  if (n) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(n.id) } }))
+  if (n) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(n.id) } }))
 }
 ```
 - [ ] **Step 3:** In the table header row, after the real column headers, render one read-only header per linked column: a pink link glyph + `{{ col.label }}` + a small "edit in table" button calling `openForeign(col.sourceCollectionId)`. Style the linked header cell with a faint pink tint (`background: rgba(244,114,182,0.06)`) and `title="Linked from another collection — read-only"`.

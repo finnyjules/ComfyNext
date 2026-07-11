@@ -4,7 +4,7 @@
 
 **Goal:** Collection node (data table) on the canvas that binds to a Smart Layout node via one `VARS` wire and drives it: live preview-row scrub, drawer table editor with CSV import, and a batch generate that renders every row via `/api/render-template`, saves results to Assets, and shows a results grid.
 
-**Architecture:** Pure logic lives in `frontend/app/lib/collection/` (types, CSV parse, binding resolution, batch runner) — all unit-tested. The Collection node is a frontend-only vue-flow node (`comfynext_collection` in `node.data.properties`, like `comfynext_localGroups`); bindings live on the *target* node (`comfynext_varBindings`). The drawer is a bottom panel teleported from `VueNodeCanvas.vue`. Live preview uses a resolve-on-write pattern: whenever the collection's preview row / cells / bindings change, resolved `{props, brand}` are written to the target node's `properties.comfynext_varPreview`; `SmartLayoutNodeBody` watches that and renders a debounced on-node preview.
+**Architecture:** Pure logic lives in `frontend/app/lib/collection/` (types, CSV parse, binding resolution, batch runner) — all unit-tested. The Collection node is a frontend-only vue-flow node (`sailor_collection` in `node.data.properties`, like `sailor_localGroups`); bindings live on the *target* node (`sailor_varBindings`). The drawer is a bottom panel teleported from `VueNodeCanvas.vue`. Live preview uses a resolve-on-write pattern: whenever the collection's preview row / cells / bindings change, resolved `{props, brand}` are written to the target node's `properties.sailor_varPreview`; `SmartLayoutNodeBody` watches that and renders a debounced on-node preview.
 
 **Tech Stack:** Nuxt 4 / Vue 3 / TypeScript / vue-flow / Tailwind / Vitest / JSZip (already installed).
 
@@ -30,7 +30,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `CollectionData`, `CollectionColumn`, `CollectionRow`, `VariableType`, `VarBinding`, `VarBindings`, constants `COLLECTION_PROP = 'comfynext_collection'`, `BINDINGS_PROP = 'comfynext_varBindings'`, `VAR_PREVIEW_PROP = 'comfynext_varPreview'`, `VARS_TYPE = 'VARS'`; functions `createCollection(name?)`, `keyFromLabel(label, existing)`, `addColumn(col, label, type)`, `addRow(col)`, `removeRow(col, rowId)`, `removeColumn(col, key)`, `setCell(col, rowId, key, value)`, `clampPreviewRow(col)`, `rowLabel(col, index)`.
+- Produces: `CollectionData`, `CollectionColumn`, `CollectionRow`, `VariableType`, `VarBinding`, `VarBindings`, constants `COLLECTION_PROP = 'sailor_collection'`, `BINDINGS_PROP = 'sailor_varBindings'`, `VAR_PREVIEW_PROP = 'sailor_varPreview'`, `VARS_TYPE = 'VARS'`; functions `createCollection(name?)`, `keyFromLabel(label, existing)`, `addColumn(col, label, type)`, `addRow(col)`, `removeRow(col, rowId)`, `removeColumn(col, key)`, `setCell(col, rowId, key, value)`, `clampPreviewRow(col)`, `rowLabel(col, index)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -149,9 +149,9 @@ export interface VarBinding {
 /** Keyed by bindable path, e.g. 'props.text_layer_1' or 'brand.primary'. */
 export type VarBindings = Record<string, VarBinding>
 
-export const COLLECTION_PROP = 'comfynext_collection'
-export const BINDINGS_PROP = 'comfynext_varBindings'
-export const VAR_PREVIEW_PROP = 'comfynext_varPreview'
+export const COLLECTION_PROP = 'sailor_collection'
+export const BINDINGS_PROP = 'sailor_varBindings'
+export const VAR_PREVIEW_PROP = 'sailor_varPreview'
 export const VARS_TYPE = 'VARS'
 ```
 
@@ -231,7 +231,7 @@ Expected: PASS (all tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/types.ts frontend/app/lib/collection/model.ts frontend/tests/unit/collection-model.unit.spec.ts
 git commit -m "feat(collections): core types + model helpers"
 ```
@@ -387,7 +387,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/parse.ts frontend/tests/unit/collection-parse.unit.spec.ts
 git commit -m "feat(collections): CSV/paste parsing with type inference"
 ```
@@ -562,7 +562,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/resolve.ts frontend/tests/unit/collection-resolve.unit.spec.ts
 git commit -m "feat(collections): binding resolution with literal fallback + pre-run validation"
 ```
@@ -767,7 +767,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/bindables.ts frontend/tests/unit/collection-bindables.unit.spec.ts
 git commit -m "feat(collections): Smart Layout bindables scan + type-safe auto-align"
 ```
@@ -928,7 +928,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/batch.ts frontend/tests/unit/collection-batch.unit.spec.ts
 git commit -m "feat(collections): batch runner — worker pool, row isolation, cancel"
 ```
@@ -945,7 +945,7 @@ git commit -m "feat(collections): batch runner — worker pool, row isolation, c
 
 **Interfaces:**
 - Consumes: `COLLECTION_PROP`, `CollectionData`, `VARS_TYPE` from `~/lib/collection/types`; `createCollection`, `rowLabel`, `clampPreviewRow` from `~/lib/collection/model`.
-- Produces: vue-flow node type `'collection'` (backend name `'Collection'`), with a single source handle `output-0` of dataType `VARS`. Dispatches `comfynext:openCollection` `{ nodeId }` on "Open table". Later tasks rely on `node.data.properties.comfynext_collection` and the node's `outputs: [{ name: 'vars', type: 'VARS' }]`.
+- Produces: vue-flow node type `'collection'` (backend name `'Collection'`), with a single source handle `output-0` of dataType `VARS`. Dispatches `sailor:openCollection` `{ nodeId }` on "Open table". Later tasks rely on `node.data.properties.sailor_collection` and the node's `outputs: [{ name: 'vars', type: 'VARS' }]`.
 
 **Before coding:** grep how `SpaceType` appears in `NodeSearchDialog.vue` / `useNodeSearch.ts` (frontend-only nodes appear in the add-node search; mirror whatever list feeds them — likely the capabilities registry). Follow SpaceTypeNode.vue as the closest structural template.
 
@@ -991,7 +991,7 @@ function step(delta: number) {
 }
 
 function openTable() {
-  window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: props.id } }))
 }
 </script>
 
@@ -1057,7 +1057,7 @@ Start dev server (preview_start). Add a Collection node via the node search ("co
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CollectionNode.vue frontend/app/components/vue-canvas/VueNodeCanvas.vue frontend/app/composables/useVueNodes.ts frontend/app/lib/agent/capabilities.ts
 git commit -m "feat(collections): Collection node — frontend-only vue-flow node with VARS output"
 ```
@@ -1138,7 +1138,7 @@ Read the surrounding code first; place the guard so a wired Collection → Smart
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/varsInput.ts frontend/tests/unit/collection-vars-input.unit.spec.ts frontend/app/components/vue-canvas/VueNodeCanvas.vue frontend/app/composables/useFilteredPrompt.ts
 git commit -m "feat(collections): VARS input on Smart Layout + prompt-build guard"
 ```
@@ -1149,11 +1149,11 @@ git commit -m "feat(collections): VARS input on Smart Layout + prompt-build guar
 
 **Files:**
 - Create: `frontend/app/components/vue-canvas/CollectionDrawer.vue`
-- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (mount + `comfynext:openCollection` listener)
+- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue` (mount + `sailor:openCollection` listener)
 
 **Interfaces:**
 - Consumes: everything from Tasks 1-2; node lookup by id from the `nodes` prop.
-- Produces: a bottom drawer (Teleport to body, `fixed left-0 right-0 bottom-0`, height 320px, `z-[9000]`) with: editable header name; table grid (editable cells, per-column type dropdown, color cells get a swatch + native color input, image cells show a thumbnail if the value looks like a URL); add/remove row/column; "Paste data" (textarea modal-less popover that calls `importTable`); "Import CSV" (file input, `.csv`, read as text → `importTable`); row click sets `previewRow` (active row highlighted). All mutations write directly into `node.data.properties.comfynext_collection` (deep watch → undo + persistence for free).
+- Produces: a bottom drawer (Teleport to body, `fixed left-0 right-0 bottom-0`, height 320px, `z-[9000]`) with: editable header name; table grid (editable cells, per-column type dropdown, color cells get a swatch + native color input, image cells show a thumbnail if the value looks like a URL); add/remove row/column; "Paste data" (textarea modal-less popover that calls `importTable`); "Import CSV" (file input, `.csv`, read as text → `importTable`); row click sets `previewRow` (active row highlighted). All mutations write directly into `node.data.properties.sailor_collection` (deep watch → undo + persistence for free).
 
 - [ ] **Step 1: Build the drawer component**
 
@@ -1342,15 +1342,15 @@ Next to the TimelineEditor teleport (~line 6120):
 </Teleport>
 ```
 
-State + listener (mirror the `comfynext:openSpaceType` listener registration around line 3350):
+State + listener (mirror the `sailor:openSpaceType` listener registration around line 3350):
 
 ```typescript
 const collectionDrawerForId = ref<string | null>(null)
 function handleOpenCollection(e: Event) {
   collectionDrawerForId.value = String((e as CustomEvent).detail?.nodeId ?? '') || null
 }
-// register/unregister with the other comfynext:* listeners:
-window.addEventListener('comfynext:openCollection', handleOpenCollection)
+// register/unregister with the other sailor:* listeners:
+window.addEventListener('sailor:openCollection', handleOpenCollection)
 ```
 
 Note Nuxt auto-import naming: a component at `app/components/vue-canvas/CollectionDrawer.vue` is `<VueCanvasCollectionDrawer>` (match how `VueCanvasTimelineEditor` is referenced).
@@ -1362,7 +1362,7 @@ Add Collection node → "Open table" → drawer opens. Add columns/rows, edit ce
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CollectionDrawer.vue frontend/app/components/vue-canvas/VueNodeCanvas.vue
 git commit -m "feat(collections): bottom drawer table editor with CSV import + preview-row select"
 ```
@@ -1381,9 +1381,9 @@ git commit -m "feat(collections): bottom drawer table editor with CSV import + p
 - Consumes: Tasks 1, 3, 4 exports.
 - Produces:
   - `wiredTargets(collectionNodeId: string, nodes: any[], edges: any[]): any[]` — target nodes connected from the collection's `output-0` (in `preview.ts`).
-  - `pushVarPreview(collectionNode: any, targets: any[]): void` — for each target with bindings: resolve the preview row, `splitRenderOverrides`, write `{ props, brand, ts: Date.now() }` to `target.data.properties.comfynext_varPreview` (in `preview.ts`).
-  - Drawer: a "Bindings" strip listing each Smart Layout bindable with a column `<select>` (auto-align pre-fill on first wire; stores to `target.data.properties.comfynext_varBindings`; records `lastLiteral` from current binding value when set).
-  - SmartLayoutNodeBody: watches `props.data.properties?.comfynext_varPreview` (deep) → debounced (400ms) POST `/api/render-template` `{ template, aspect: template.master, props, brand }` → object URL shown as an `<img>` preview (~160px) above the existing summary; badge `N vars` in its header area when bindings exist.
+  - `pushVarPreview(collectionNode: any, targets: any[]): void` — for each target with bindings: resolve the preview row, `splitRenderOverrides`, write `{ props, brand, ts: Date.now() }` to `target.data.properties.sailor_varPreview` (in `preview.ts`).
+  - Drawer: a "Bindings" strip listing each Smart Layout bindable with a column `<select>` (auto-align pre-fill on first wire; stores to `target.data.properties.sailor_varBindings`; records `lastLiteral` from current binding value when set).
+  - SmartLayoutNodeBody: watches `props.data.properties?.sailor_varPreview` (deep) → debounced (400ms) POST `/api/render-template` `{ template, aspect: template.master, props, brand }` → object URL shown as an `<img>` preview (~160px) above the existing summary; badge `N vars` in its header area when bindings exist.
 
 - [ ] **Step 1: Write the failing test for the pure parts**
 
@@ -1465,7 +1465,7 @@ Run: `cd frontend && npm run test:unit -- tests/unit/collection-preview.unit.spe
 
 Add to `CollectionDrawer.vue`, between header and table — computed `targets = wiredTargets(props.nodeId, props.nodes, props.edges)` filtered to `data.nodeType === 'SmartLayout'`. For the first target: `bindables = listSmartLayoutBindables(readTemplateFromNode(target))`. Render a horizontal strip: per bindable, label + `<select>` of type-compatible columns (`typeCompatible`) + a "—" unbound option. On change, write `target.data.properties[BINDINGS_PROP][path] = { collectionId, columnKey, lastLiteral: <current resolved value or previous literal> }` (delete the entry when "—" chosen). When the target has NO bindings object yet and a wire exists, initialize with `autoAlign(bindables, collection.columns, collection.id)`. Empty state (no wire): "Wire this collection to a Smart Layout node to bind columns".
 
-Add a deep watcher in the drawer: `watch([collection, targetsBindings], () => pushVarPreview(node.value, targets.value), { deep: true })` so cell edits, preview-row changes, and binding edits all propagate. Also call `pushVarPreview` from `CollectionNode.vue`'s `step()` (import `wiredTargets`/`pushVarPreview`; the node component receives no `nodes`/`edges` props — instead dispatch a `comfynext:collectionScrub` CustomEvent `{ nodeId }` and handle it in `VueNodeCanvas.vue` by calling `pushVarPreview(node, wiredTargets(id, nodes.value, edges.value))`).
+Add a deep watcher in the drawer: `watch([collection, targetsBindings], () => pushVarPreview(node.value, targets.value), { deep: true })` so cell edits, preview-row changes, and binding edits all propagate. Also call `pushVarPreview` from `CollectionNode.vue`'s `step()` (import `wiredTargets`/`pushVarPreview`; the node component receives no `nodes`/`edges` props — instead dispatch a `sailor:collectionScrub` CustomEvent `{ nodeId }` and handle it in `VueNodeCanvas.vue` by calling `pushVarPreview(node, wiredTargets(id, nodes.value, edges.value))`).
 
 - [ ] **Step 4: Smart Layout on-node preview**
 
@@ -1484,7 +1484,7 @@ if (res.ok) {
 }
 ```
 
-Template: `<img v-if="previewUrl" :src="previewUrl" class="w-full rounded-md border border-white/10 mb-1" />` above the existing summary; badge `<span v-if="varCount" class="...">{{ varCount }} vars</span>` where `varCount = Object.keys(data.properties?.comfynext_varBindings ?? {}).length`. Follow the file's existing markup conventions.
+Template: `<img v-if="previewUrl" :src="previewUrl" class="w-full rounded-md border border-white/10 mb-1" />` above the existing summary; badge `<span v-if="varCount" class="...">{{ varCount }} vars</span>` where `varCount = Object.keys(data.properties?.sailor_varBindings ?? {}).length`. Follow the file's existing markup conventions.
 
 - [ ] **Step 5: Verify in the app**
 
@@ -1493,7 +1493,7 @@ Build a Smart Layout with `{{ props.text_layer_1 }}` + a brand color; add Collec
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/preview.ts frontend/tests/unit/collection-preview.unit.spec.ts frontend/app/components/vue-canvas/CollectionDrawer.vue frontend/app/components/vue-canvas/CollectionNode.vue frontend/app/components/vue-canvas/VueNodeCanvas.vue frontend/app/components/vue-canvas/SmartLayoutNodeBody.vue
 git commit -m "feat(collections): bindings panel + live preview-row scrub on Smart Layout"
 ```
@@ -1520,7 +1520,7 @@ const up = await fetch('/upload/image', { method: 'POST', body: fd })
 if (!up.ok) throw new Error('upload failed')
 const meta = await up.json() as { name?: string; subfolder?: string }
 const rel = meta.subfolder ? `${meta.subfolder}/${meta.name}` : (meta.name ?? fname)
-await fetch('/comfynext/asset_import', {
+await fetch('/sailor/asset_import', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ path: rel }),
 })
@@ -1538,12 +1538,12 @@ item.url = `/view?${new URLSearchParams({ filename: meta.name ?? fname, type: 'i
 
 - [ ] **Step 3: Verify in the app**
 
-2-row collection bound to a 1-output Smart Layout → Generate 2 → confirm → both rows go done → files exist (`/view` URLs load) → assets appear in the Assets panel (`/comfynext/assets` returns them). Break one row (bad image URL in a bound image column → render still succeeds server-side, so instead test failure by stopping ComfyUI? No — simplest failure test: temporarily bind a column, delete the collection mid-run is overkill; rely on unit-tested isolation and verify the happy path + cancel manually).
+2-row collection bound to a 1-output Smart Layout → Generate 2 → confirm → both rows go done → files exist (`/view` URLs load) → assets appear in the Assets panel (`/sailor/assets` returns them). Break one row (bad image URL in a bound image column → render still succeeds server-side, so instead test failure by stopping ComfyUI? No — simplest failure test: temporarily bind a column, delete the collection mid-run is overkill; rely on unit-tested isolation and verify the happy path + cancel manually).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/collection/generate.ts frontend/app/components/vue-canvas/CollectionDrawer.vue
 git commit -m "feat(collections): batch generate — confirm, worker pool, drawer progress, assets"
 ```
@@ -1579,7 +1579,7 @@ setTimeout(() => URL.revokeObjectURL(url), 2000)
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/CollectionDrawer.vue
 git commit -m "feat(collections): drawer results grid + zip export"
 ```

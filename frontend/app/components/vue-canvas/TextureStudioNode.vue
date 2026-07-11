@@ -13,7 +13,7 @@ import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 // Texture Studio — a frontend-only config node (no backend class_type, never
 // executes). The card shows a live seamless-tile preview from the saved params;
 // "Edit" opens the full TextureStudioSurface bound to this node, which writes
-// its params back to node.data.properties.comfynext_textureStudio.
+// its params back to node.data.properties.sailor_textureStudio.
 const props = defineProps<{
   id: string
   data: {
@@ -32,7 +32,7 @@ const PREVIEW_H = 148 // ~3:2
 const params = computed<Params>(() => {
   // Merge over defaults so nodes saved before newer keys existed (e.g. mode/
   // tileFamily) still render — symmetric with the surface's loadParams().
-  const saved = props.data?.properties?.comfynext_textureStudio as Params | undefined
+  const saved = props.data?.properties?.sailor_textureStudio as Params | undefined
   return saved ? { ...textureDefaults(), ...saved } : textureDefaults()
 })
 
@@ -97,7 +97,7 @@ onMounted(() => {
 onBeforeUnmount(() => { if (timer) clearTimeout(timer); unregisterStudioBaker(props.id) })
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openTextureStudio', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openTextureStudio', { detail: { nodeId: props.id } }))
 }
 
 // Index of the optional `vars` input a Collection's VARS output wires into.

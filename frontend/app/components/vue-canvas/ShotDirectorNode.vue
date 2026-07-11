@@ -22,7 +22,7 @@ const props = defineProps<{
 
 const profile = getProfile('seedance-2.0')
 
-const config = computed(() => hydrateShotSheet(props.data?.properties?.comfynext_shotDirector))
+const config = computed(() => hydrateShotSheet(props.data?.properties?.sailor_shotDirector))
 
 const compiled = computed(() => compileShot(config.value, profile))
 
@@ -56,11 +56,11 @@ onBeforeUnmount(() => {
 })
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openShotDirector', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openShotDirector', { detail: { nodeId: props.id } }))
 }
 
 function generate() {
-  window.dispatchEvent(new CustomEvent('comfynext:shotDirectorGenerate', { detail: { sourceNodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shotDirectorGenerate', { detail: { sourceNodeId: props.id } }))
 }
 </script>
 

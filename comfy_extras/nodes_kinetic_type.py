@@ -67,7 +67,7 @@ class KineticTypeNode(IO.ComfyNode):
                     "params",
                     default="{}",
                     multiline=False,
-                    extra_dict={"comfynext_widget": "kinetic_type"},
+                    extra_dict={"sailor_widget": "kinetic_type"},
                     tooltip="Kinetic typography state (managed by the widget).",
                 ),
             ],

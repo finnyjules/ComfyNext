@@ -35,7 +35,7 @@ the only genuinely new rendering work is four GLSL fragments and the studio shel
 Mirrors Gradient Studio ([[project_gradient_studio]]) exactly:
 
 - A **frontend-only node** — no backend `class_type`, never executes. Config persisted
-  at `node.data.properties.comfynext_shaderStudio`.
+  at `node.data.properties.sailor_shaderStudio`.
 - A **live-preview card** (`ShaderStudioNode.vue`) + a **full-screen surface editor**
   (`ShaderStudioSurface.vue`) that bakes its own outputs.
 - The **one structural difference** from the other two studios: the node has an
@@ -116,7 +116,7 @@ Parallels `app/lib/gradientfx/`:
 
 - **Node card** — mirrors `GradientStudioNode.vue`: header (Sparkles + "Shader Studio"),
   live preview canvas (input composed through the saved config; animates only when the
-  config has motion tracks), an "Edit" button (dispatches `comfynext:openShaderStudio`),
+  config has motion tracks), an "Edit" button (dispatches `sailor:openShaderStudio`),
   an **input handle** (target, left) and an output handle (source, right, emerald).
 - **Surface** — `StudioModalShell`: preview canvas + a draggable focus-point pad overlay on
   the left, actions footer ("Add as image" / "Add as video"), and a controls column of
@@ -137,7 +137,7 @@ Parallels `app/lib/gradientfx/`:
 
 - `ARTIFACT_NODE_COMPONENTS`: `ShaderStudio: 'shader-studio'`
 - VueNodeCanvas node-types map + wildcard-output case
-- Events `comfynext:openShaderStudio` / `comfynext:shaderStudioOutput` (output reuses
+- Events `sailor:openShaderStudio` / `sailor:shaderStudioOutput` (output reuses
   `handleSpaceTypeOutput`)
 - `default.vue` Add menu: a "Shader" entry (`special: 'shader-studio'`)
 
@@ -146,7 +146,7 @@ Parallels `app/lib/gradientfx/`:
 Reuse the Space Type rails, as Gradient Studio does:
 - **Still:** `uploadFrameBatch` → recorded as a project asset (asset recording for these
   studios is already wired, commit `1e88e005f`).
-- **Video:** `ensureSpaceTypeBake` → `/comfynext/spacetype_encode`
+- **Video:** `ensureSpaceTypeBake` → `/sailor/spacetype_encode`
   (`comfy_extras/nodes_timeline.py`).
 - Bake iterates `frame = 0..frameCount-1`, computes `t01`, `evalConfig(config,t01)`,
   `composePasses(...)`, `shaderFx.render(passes, base, w, h)`, reads the canvas PNG.

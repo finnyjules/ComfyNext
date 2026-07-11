@@ -2,7 +2,7 @@
 /**
  * WidgetModelPicker — node-body launcher button that opens a model gallery.
  * Replaces the standard Combo dropdown for inputs the backend marks with
- * `extra_dict={"comfynext_widget": "model_picker"}` (default kind 'image')
+ * `extra_dict={"sailor_widget": "model_picker"}` (default kind 'image')
  * or `"video_model_picker"` for video models.
  *
  * Reads the matching catalog so the button can show the model's brand
@@ -81,7 +81,7 @@ const cachedCoverUrl = computed<string | null>(() => {
 function openGallery() {
   // Single event name, kind in the payload — VueNodeCanvas decides which
   // modal to mount based on `detail.kind`.
-  window.dispatchEvent(new CustomEvent('comfynext:openModelGallery', {
+  window.dispatchEvent(new CustomEvent('sailor:openModelGallery', {
     detail: { nodeId: props.nodeId, kind: kind.value },
   }))
 }

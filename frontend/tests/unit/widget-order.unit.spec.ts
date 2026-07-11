@@ -94,11 +94,11 @@ describe('V3-style string COMBO inputs (GenerateImageNode regression)', () => {
     GenerateImageNode: {
       input: {
         required: {
-          model: ['COMBO', { default: 'flux-schnell', comfynext_widget: 'model_picker' }],
+          model: ['COMBO', { default: 'flux-schnell', sailor_widget: 'model_picker' }],
           prompt: ['STRING', { multiline: true, default: '' }],
           aspect_ratio: ['COMBO', { default: '1:1' }],
           seed: ['INT', { default: 0, min: 0, control_after_generate: true }],
-          model_options: ['STRING', { comfynext_widget: 'json' }],
+          model_options: ['STRING', { sailor_widget: 'json' }],
         },
       },
     },

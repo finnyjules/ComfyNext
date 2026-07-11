@@ -20,7 +20,7 @@ Extend the existing **Pose Mannequin** node rather than adding a new one.
   not automatic precedence.
 - **Generation path (Approach A):** Image and Prompt modes generate through the
   normal graph-run path, scoped to just this node via the existing
-  `comfynext:runFiltered { targetIds, live: true }` event (added 2026-06-11 for
+  `sailor:runFiltered { targetIds, live: true }` event (added 2026-06-11 for
   Smart Layout). No new API route; the Python `execute()` does the call. The
   in-editor instant path (`/api/inpaint/pose`) stays mannequin-only.
 
@@ -76,7 +76,7 @@ Body adapts to the selected mode:
 - **prompt**: a small `nodrag nopan` textarea bound to `pose_prompt`. Footer
   button = **Generate**.
 
-**Generate** dispatches `comfynext:runFiltered { targetIds: [props.id], live:
+**Generate** dispatches `sailor:runFiltered { targetIds: [props.id], live:
 true }`. The result flows out the existing IMAGE output into the downstream
 artifact-image node via the existing result-routing (unchanged).
 
@@ -89,7 +89,7 @@ not, always render it but visually de-emphasize outside image mode).
 
 - `PoseEditorModal.vue`, `usePoseRig.ts`, multi-view + Hunyuan3D pipeline.
 - `/api/inpaint/pose.post.ts` (mannequin instant path only).
-- Result-routing events (`comfynext:poseResult`).
+- Result-routing events (`sailor:poseResult`).
 
 ## Testing
 

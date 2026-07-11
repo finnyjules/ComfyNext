@@ -77,7 +77,7 @@ Structural params (count, layout, padding, fills, look endpoints) trigger `rebui
 
 - **Text rasterization:** existing `textTexture.ts`.
 - **Fills:** existing `fills.ts` / `fillList` control for textured fills on the ramp endpoints.
-- **Export:** existing image path (`engine.renderFrame` → `frameToBlob` → `uploadFrameBatch`) and video path (`bake.ts` → `/comfynext/spacetype_encode`).
+- **Export:** existing image path (`engine.renderFrame` → `frameToBlob` → `uploadFrameBatch`) and video path (`bake.ts` → `/sailor/spacetype_encode`).
 - New code is confined to `echo.ts` plus a single registry line.
 
 ## Error / Edge Handling

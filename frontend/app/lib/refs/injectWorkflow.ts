@@ -38,7 +38,7 @@ export function materializeReferenceNodes(workflow: any, reg: RefRegistry): void
   if (!Array.isArray(nodes)) return
   for (const node of nodes) {
     if (node?.type !== 'Reference') continue
-    const filename = resolveRefFilename(reg, node.properties?.comfynext_refName ?? '')
+    const filename = resolveRefFilename(reg, node.properties?.sailor_refName ?? '')
     if (!filename) continue
     node.type = 'Image'
     // Full default widgets_values for the Image node's 11 required widgets:

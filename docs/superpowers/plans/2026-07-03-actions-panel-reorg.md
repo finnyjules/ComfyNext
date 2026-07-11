@@ -15,7 +15,7 @@
 - No purple/violet accents anywhere (user rule).
 - Internal identifiers stay unchanged: panel key `'generators'`, localStorage keys `generators.collapsedSections` and `generators.showLegacy`, component filename `GeneratorsPanel.vue`. Only user-visible copy changes. (Stale provider-based entries in `generators.collapsedSections` are inert under the new `domain:intent` keys — no migration needed.)
 - User-visible copy: panel header **Actions**, sidebar button **Actions**, search placeholder **"Search actions…"**, loading/empty/error copy says "actions" not "partner nodes".
-- All frontend commands run from `/Users/julien/Documents/GitHub/ComfyNext/frontend`.
+- All frontend commands run from `/Users/julien/Documents/GitHub/Sailor/frontend`.
 
 ---
 

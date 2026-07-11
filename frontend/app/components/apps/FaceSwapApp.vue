@@ -82,7 +82,7 @@ function buildPrompt(srcFilename: string, tgtFilename: string) {
     },
     '4': {
       class_type: 'SaveImage',
-      // ComfyNext's SaveImage requires the full export-param set, not just
+      // Sailor's SaveImage requires the full export-param set, not just
       // images + filename_prefix like stock ComfyUI.
       inputs: {
         images: ['3', 0],

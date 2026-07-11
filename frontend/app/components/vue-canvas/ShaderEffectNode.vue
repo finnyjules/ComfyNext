@@ -82,7 +82,7 @@ function aspectRatio(a: string): number {
 }
 function setSize(name: 'resolution' | 'aspect', value: number | string) {
   setWidget(name, value)
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 
@@ -90,7 +90,7 @@ function setParam(uniform: string, value: number) {
   if (!effectDef.value) return
   const next = { ...uniforms.value, [uniform]: value }
   setWidget('params', serializeParams(effectDef.value, next))
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 
@@ -246,7 +246,7 @@ function pickEffect(id: string) {
   setWidget('effect', id)
   setWidget('params', '{}') // params are per-effect; reset on switch
   pickerOpen.value = false
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 
@@ -275,7 +275,7 @@ function onCenterMove(ev: PointerEvent) {
   if (!effectDef.value) return
   const next = { ...uniforms.value, [cx!]: x, [cy!]: y }
   setWidget('params', serializeParams(effectDef.value, next))
-  window.dispatchEvent(new CustomEvent('comfynext:shaderfx-changed', { detail: { id: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:shaderfx-changed', { detail: { id: props.id } }))
   if (!animating.value) renderOnce()
 }
 function onCenterUp() { draggingCenter = false }
@@ -310,13 +310,13 @@ watch(effectDef, def => ensureThumb(def))
 onMounted(async () => {
   catalog.value = await fetchShaderFxCatalog().catch(() => null)
   lastChainIds = chain.value.nodeIds
-  window.addEventListener('comfynext:shaderfx-changed', onUpstreamChange)
+  window.addEventListener('sailor:shaderfx-changed', onUpstreamChange)
   ensureThumb(effectDef.value)
   renderOnce()
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
-  window.removeEventListener('comfynext:shaderfx-changed', onUpstreamChange)
+  window.removeEventListener('sailor:shaderfx-changed', onUpstreamChange)
 })
 </script>
 

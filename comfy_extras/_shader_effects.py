@@ -1,7 +1,7 @@
 """Shader-effects catalog: loading, validation, param resolution, frame planning.
 
 The catalog (shader_effects/ at repo root) is the single source of truth for both
-the browser preview (served via /comfynext/shader_effects) and server rendering.
+the browser preview (served via /sailor/shader_effects) and server rendering.
 Rendering lives in render_effect() (added alongside; reuses nodes_glsl machinery).
 """
 from __future__ import annotations

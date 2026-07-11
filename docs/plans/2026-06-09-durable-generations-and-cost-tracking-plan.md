@@ -4,7 +4,7 @@
 
 **Goal:** Persist every completed run as a server-side generation record (so assets/names/thumbnails survive ComfyUI restarts and browser wipes), and add a pre-run USD estimate with confirm-above-threshold plus a spend ledger.
 
-**Architecture:** Frontend-driven recording — the Vue layout already orchestrates every run; at `execution_complete` it POSTs one record to a new `/comfynext/projects/{uuid}/generations` endpoint, which appends to a per-project `generations.jsonl` AND a global `spend.jsonl` in the same handler. Read paths (Assets panel, Home) flip to durable-first with `/history` as merge/fallback. Cost estimation is extracted into a pure lib reused pre-run (Run button + confirm modal) and post-run (status bar).
+**Architecture:** Frontend-driven recording — the Vue layout already orchestrates every run; at `execution_complete` it POSTs one record to a new `/sailor/projects/{uuid}/generations` endpoint, which appends to a per-project `generations.jsonl` AND a global `spend.jsonl` in the same handler. Read paths (Assets panel, Home) flip to durable-first with `/history` as merge/fallback. Cost estimation is extracted into a pure lib reused pre-run (Run button + confirm modal) and post-run (status bar).
 
 **Tech Stack:** Python (ComfyUI comfy_extras module, aiohttp, pytest), Nuxt 4 / Vue 3 / TypeScript frontend.
 
@@ -20,7 +20,7 @@
 ### Task 1: Python storage — generation records (append/list with dedup)
 
 **Files:**
-- Modify: `comfy_extras/nodes_comfynext_projects.py` (pure storage section, after `read_version` ~line 175)
+- Modify: `comfy_extras/nodes_sailor_projects.py` (pure storage section, after `read_version` ~line 175)
 - Test: `tests-unit/comfy_api_test/projects_storage_test.py` (append new section at end)
 
 - [ ] **Step 1: Write the failing tests**
@@ -84,7 +84,7 @@ Expected: 6 FAILED with `AttributeError: ... has no attribute 'append_generation
 
 - [ ] **Step 3: Implement the storage functions**
 
-In `comfy_extras/nodes_comfynext_projects.py`, extend the top-level imports to:
+In `comfy_extras/nodes_sailor_projects.py`, extend the top-level imports to:
 
 ```python
 import json
@@ -153,7 +153,7 @@ Expected: all PASS (existing 20 + new 6)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add comfy_extras/nodes_comfynext_projects.py tests-unit/comfy_api_test/projects_storage_test.py
+git add comfy_extras/nodes_sailor_projects.py tests-unit/comfy_api_test/projects_storage_test.py
 git commit -m "Projects: durable per-run generation records (storage layer)"
 ```
 
@@ -162,7 +162,7 @@ git commit -m "Projects: durable per-run generation records (storage layer)"
 ### Task 2: Python storage — spend ledger + monthly summary
 
 **Files:**
-- Modify: `comfy_extras/nodes_comfynext_projects.py` (pure storage section)
+- Modify: `comfy_extras/nodes_sailor_projects.py` (pure storage section)
 - Test: `tests-unit/comfy_api_test/projects_storage_test.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -186,7 +186,7 @@ def ledger(tmp_path):
 
 
 def test_spend_file_layout(tmp_path):
-    assert P.spend_file(str(tmp_path)).endswith(os.path.join("comfynext", "spend.jsonl"))
+    assert P.spend_file(str(tmp_path)).endswith(os.path.join("sailor", "spend.jsonl"))
 
 
 def test_append_spend_skips_free_runs(ledger):
@@ -232,7 +232,7 @@ Add `import datetime` to the top-level imports. After `append_generation`, add:
 def spend_file(user_dir: str) -> str:
     """Global spend ledger — NOT under projects/, so deleting a project keeps
     its historical spend (the ledger stays accurate)."""
-    return os.path.join(user_dir, "comfynext", "spend.jsonl")
+    return os.path.join(user_dir, "sailor", "spend.jsonl")
 
 
 def append_spend(path: str, entry: dict) -> None:
@@ -295,7 +295,7 @@ Expected: all PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add comfy_extras/nodes_comfynext_projects.py tests-unit/comfy_api_test/projects_storage_test.py
+git add comfy_extras/nodes_sailor_projects.py tests-unit/comfy_api_test/projects_storage_test.py
 git commit -m "Projects: global spend ledger + monthly summary (storage layer)"
 ```
 
@@ -304,14 +304,14 @@ git commit -m "Projects: global spend ledger + monthly summary (storage layer)"
 ### Task 3: aiohttp routes for generations + spend summary
 
 **Files:**
-- Modify: `comfy_extras/nodes_comfynext_projects.py` (route shell, inside the existing `try:` block, after `_versions_get_route`)
+- Modify: `comfy_extras/nodes_sailor_projects.py` (route shell, inside the existing `try:` block, after `_versions_get_route`)
 
 - [ ] **Step 1: Add the routes**
 
 Inside the existing `try:` block, after `_versions_get_route` (~line 256), add:
 
 ```python
-    @PromptServer.instance.routes.post("/comfynext/projects/{uuid}/generations")
+    @PromptServer.instance.routes.post("/sailor/projects/{uuid}/generations")
     async def _generations_post_route(request):
         uid = request.match_info["uuid"]
         try:
@@ -342,11 +342,11 @@ Inside the existing `try:` block, after `_versions_get_route` (~line 256), add:
             write_project(_root(), project)
         return web.json_response({"id": stored["id"]})
 
-    @PromptServer.instance.routes.get("/comfynext/projects/{uuid}/generations")
+    @PromptServer.instance.routes.get("/sailor/projects/{uuid}/generations")
     async def _generations_list_route(request):
         return web.json_response({"generations": list_generations(_root(), request.match_info["uuid"])})
 
-    @PromptServer.instance.routes.get("/comfynext/spend/summary")
+    @PromptServer.instance.routes.get("/sailor/spend/summary")
     async def _spend_summary_route(_request):
         path = spend_file(folder_paths.get_user_directory())
         return web.json_response(spend_summary(path, now_ms=_now_ms()))
@@ -354,28 +354,28 @@ Inside the existing `try:` block, after `_versions_get_route` (~line 256), add:
 
 - [ ] **Step 2: Restart ComfyUI and verify with curl**
 
-ComfyUI must be restarted to pick up the module (`cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`, or ask the user to restart their running instance).
+ComfyUI must be restarted to pick up the module (`cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`, or ask the user to restart their running instance).
 
 ```bash
-curl -s -X POST http://127.0.0.1:8188/comfynext/projects/curltest-uuid/generations \
+curl -s -X POST http://127.0.0.1:8188/sailor/projects/curltest-uuid/generations \
   -H 'Content-Type: application/json' \
   -d '{"projectName":"Curl Test","generation":{"promptId":"pr_x","outputs":[{"kind":"image","filename":"a.png","subfolder":"","type":"output"}],"usd":0.04,"nodes":["FluxProRemoteNode"]}}'
 # Expected: {"id": "g_..."}
-curl -s -X POST http://127.0.0.1:8188/comfynext/projects/curltest-uuid/generations \
+curl -s -X POST http://127.0.0.1:8188/sailor/projects/curltest-uuid/generations \
   -H 'Content-Type: application/json' -d '{"generation":{"promptId":"pr_x"}}'
 # Expected: {"id": "...", "deduped": true}
-curl -s http://127.0.0.1:8188/comfynext/projects/curltest-uuid/generations
+curl -s http://127.0.0.1:8188/sailor/projects/curltest-uuid/generations
 # Expected: {"generations": [{...one record...}]}
-curl -s http://127.0.0.1:8188/comfynext/spend/summary
+curl -s http://127.0.0.1:8188/sailor/spend/summary
 # Expected: {"month": {"usd": 0.04, ...}, "total": {...}, "byProject": [{"uuid": "curltest-uuid", ...}]}
 ```
 
-Clean up the test project: `curl -s -X DELETE http://127.0.0.1:8188/comfynext/projects/curltest-uuid` (spend line intentionally remains).
+Clean up the test project: `curl -s -X DELETE http://127.0.0.1:8188/sailor/projects/curltest-uuid` (spend line intentionally remains).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add comfy_extras/nodes_comfynext_projects.py
+git add comfy_extras/nodes_sailor_projects.py
 git commit -m "Projects: generations + spend summary routes"
 ```
 
@@ -629,7 +629,7 @@ Add before the closing `return`:
   ): Promise<string | null> {
     try {
       const res = await $fetch<{ id: string }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/generations`,
         { method: 'POST', body: { projectName, generation } },
       )
       return res.id ?? null
@@ -642,7 +642,7 @@ Add before the closing `return`:
   async function listGenerations(uuid: string): Promise<GenerationRecord[]> {
     try {
       const res = await $fetch<{ generations: GenerationRecord[] }>(
-        `/comfynext/projects/${encodeURIComponent(uuid)}/generations`,
+        `/sailor/projects/${encodeURIComponent(uuid)}/generations`,
       )
       return res.generations ?? []
     } catch (e) {
@@ -653,7 +653,7 @@ Add before the closing `return`:
 
   async function fetchSpendSummary(): Promise<SpendSummary | null> {
     try {
-      return await $fetch<SpendSummary>('/comfynext/spend/summary')
+      return await $fetch<SpendSummary>('/sailor/spend/summary')
     } catch (e) {
       console.warn('[useProjects] spend summary failed:', e)
       return null
@@ -800,10 +800,10 @@ In the credits watcher (line 1438-1449), after `lastRunResult.value = { ...resul
 Dev server + ComfyUI running. Run a priced Replicate workflow in a project tab. Then:
 
 ```bash
-curl -s "http://127.0.0.1:8188/comfynext/projects/<the project uuid>/generations" | python3 -m json.tool
+curl -s "http://127.0.0.1:8188/sailor/projects/<the project uuid>/generations" | python3 -m json.tool
 ```
 
-Expected: one record with the run's `promptId`, the output image(s), `usd` ≈ the badge price, `nodes` listing the Replicate class. Run it again → two records. `curl -s http://127.0.0.1:8188/comfynext/spend/summary` shows the accumulated USD. (Find the uuid via `curl -s http://127.0.0.1:8188/comfynext/projects`.)
+Expected: one record with the run's `promptId`, the output image(s), `usd` ≈ the badge price, `nodes` listing the Replicate class. Run it again → two records. `curl -s http://127.0.0.1:8188/sailor/spend/summary` shows the accumulated USD. (Find the uuid via `curl -s http://127.0.0.1:8188/sailor/projects`.)
 
 - [ ] **Step 6: Commit**
 
@@ -825,7 +825,7 @@ git commit -m "Runs: record every completed run as a durable generation + spend 
 In `SettingsModal.vue`, append to the `execution` array (line 113, after `Comfy.Validation.Workflows`):
 
 ```typescript
-    { id: 'ComfyNext.Cost.ConfirmThresholdUsd', label: 'Confirm runs above (USD)', type: 'text', local: true, description: 'Ask before queueing runs whose estimated cost meets this amount. Default 1. Set 0 to ask for every paid run.' },
+    { id: 'Sailor.Cost.ConfirmThresholdUsd', label: 'Confirm runs above (USD)', type: 'text', local: true, description: 'Ask before queueing runs whose estimated cost meets this amount. Default 1. Set 0 to ask for every paid run.' },
 ```
 
 (`type: 'text'` + `local: true` is the proven combo — the Anthropic API key setting uses it; number inputs don't have a local-save branch.)
@@ -834,7 +834,7 @@ In `default.vue`, add near `flushPendingGen` from Task 7:
 
 ```typescript
 function costConfirmThresholdUsd(): number {
-  const raw = useLocalSettings().getLocalSetting('ComfyNext.Cost.ConfirmThresholdUsd')
+  const raw = useLocalSettings().getLocalSetting('Sailor.Cost.ConfirmThresholdUsd')
   const n = parseFloat(raw ?? '')
   return Number.isFinite(n) && n >= 0 ? n : 1
 }
@@ -1056,7 +1056,7 @@ Replace `setProjectName` with:
 
 - [ ] **Step 2: Verify**
 
-Rename a project on Home → `curl -s http://127.0.0.1:8188/comfynext/projects` shows the new name. Clear the browser's localStorage for the site, reload Home → the name survives.
+Rename a project on Home → `curl -s http://127.0.0.1:8188/sailor/projects` shows the new name. Clear the browser's localStorage for the site, reload Home → the name survives.
 
 - [ ] **Step 3: Commit**
 
@@ -1351,7 +1351,7 @@ Match the wrapper classes of the sibling metadata rows when inserting (read the 
 
 - [ ] **Step 3: Verify**
 
-- ProjectMenu chip → dropdown shows "This project · ~$X" / "This month · ~$Y" matching `curl -s http://127.0.0.1:8188/comfynext/spend/summary`.
+- ProjectMenu chip → dropdown shows "This project · ~$X" / "This month · ~$Y" matching `curl -s http://127.0.0.1:8188/sailor/spend/summary`.
 - Open a generated image from the Assets history page → detail overlay shows the Cost line for a Replicate run.
 
 - [ ] **Step 4: Commit**

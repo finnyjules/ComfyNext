@@ -30,7 +30,7 @@ function clearSearch() {
 // dataTransfer in its existing @drop handler.
 function onCardDragStart(event: DragEvent, block: Block) {
   if (!event.dataTransfer) return
-  event.dataTransfer.setData('application/x-comfynext-block', block.id)
+  event.dataTransfer.setData('application/x-sailor-block', block.id)
   // Provide a text fallback so the drag still produces a sensible payload
   // even if a third-party drop target intercepts the event.
   event.dataTransfer.setData('text/plain', `block:${block.id}`)
@@ -40,7 +40,7 @@ function onCardDragStart(event: DragEvent, block: Block) {
 // Click → insert at viewport center. The canvas listens for the custom
 // event and handles placement + ID assignment + group recreation.
 function onCardClick(block: Block) {
-  window.dispatchEvent(new CustomEvent('comfynext:insertBlock', {
+  window.dispatchEvent(new CustomEvent('sailor:insertBlock', {
     detail: { blockId: block.id, atViewportCenter: true },
   }))
 }

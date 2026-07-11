@@ -55,8 +55,8 @@ All confirmed present in the repo:
 - **Layer model** (`frontend/app/composables/useCompositorLayers.ts`):
   `createImageLayer(filename, aspect, partial?)`, `imageLayerUrl(filename)`,
   `ensureLayerImages`. Local layers persist on
-  `node.data.properties.comfynext_localLayers` and the unified z-order at
-  `comfynext_stackOrder`.
+  `node.data.properties.sailor_localLayers` and the unified z-order at
+  `sailor_stackOrder`.
 - **Asset recording** (`frontend/app/composables/useProjectGenerations.ts`):
   `recordAsset(projectUuid, 'image', filename)`.
 - **Composite rasterization**: the modal already renders/bakes the composite for
@@ -128,7 +128,7 @@ useInpaint.uploadDataUrl(dataUrl)         // → ComfyUI input dir, returns file
    ▼
 createImageLayer(filename, aspect, { x, y, w, h from box })   // placed + scaled
    ▼
-push to comfynext_localLayers + comfynext_stackOrder (top), select it
+push to sailor_localLayers + sailor_stackOrder (top), select it
    ▼
 recordAsset(projectUuid, 'image', filename)
 ```

@@ -23,7 +23,7 @@ interface Bakeoff {
   contenders: Contender[]
 }
 
-const KEY = 'comfynext:model-bakeoff'
+const KEY = 'sailor:model-bakeoff'
 
 const seed = (): Bakeoff => ({
   prompt: 'Characters: Vera. A woman in a red coat walks slowly toward camera, in a rainy neon street. Medium shot, smooth orbit counterclockwise around the subject. Neon; cinematic, 35mm film grain.',

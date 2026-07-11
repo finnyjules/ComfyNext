@@ -1,19 +1,19 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 
-console.log("[ComfyNext Bridge] Module loaded");
+console.log("[Sailor Bridge] Module loaded");
 
 app.registerExtension({
-  name: "ComfyNext.Bridge",
+  name: "Sailor.Bridge",
   async setup() {
-    console.log("[ComfyNext Bridge] setup() called, isEmbedded:", window.parent !== window);
+    console.log("[Sailor Bridge] setup() called, isEmbedded:", window.parent !== window);
     const isEmbedded = window.parent !== window;
 
     // --- Protocol versioning -------------------------------------------------
     // Bumped whenever the postMessage contract changes. Stamped onto every
     // outbound message so the parent can detect a stale/mismatched bridge after
     // an upstream ComfyUI update instead of silently misbehaving.
-    const COMFYNEXT_BRIDGE_PROTOCOL = 2;
+    const SAILOR_BRIDGE_PROTOCOL = 2;
 
     // --- Diagnostics ---------------------------------------------------------
     // The bridge patches ComfyUI's DOM and reaches into its Pinia stores *by
@@ -27,11 +27,11 @@ app.registerExtension({
     function warnOnce(key, ...args) {
       if (_warnedKeys.has(key)) return;
       _warnedKeys.add(key);
-      console.warn("[ComfyNext Bridge] ⚠️", ...args);
+      console.warn("[Sailor Bridge] ⚠️", ...args);
       try {
         if (window.parent !== window) {
           window.parent.postMessage(
-            { type: "comfynext-bridge", v: COMFYNEXT_BRIDGE_PROTOCOL, event: "bridge_degraded", reason: key },
+            { type: "sailor-bridge", v: SAILOR_BRIDGE_PROTOCOL, event: "bridge_degraded", reason: key },
             "*",
           );
         }
@@ -57,7 +57,7 @@ app.registerExtension({
     // nothing" — the signature of an upstream markup change.
     let _chromeHidEver = false;
 
-    // When embedded in ComfyNext, hide ComfyUI's own chrome
+    // When embedded in Sailor, hide ComfyUI's own chrome
     if (isEmbedded) {
       const style = document.createElement("style");
       style.textContent = `
@@ -100,12 +100,12 @@ app.registerExtension({
         [class*="canvas-controls"] { display: none !important; }
 
         /* Slide-in animation for sidebar panel */
-        @keyframes comfynext-slide-in {
+        @keyframes sailor-slide-in {
           from { transform: translateX(-100%); }
           to { transform: translateX(0); }
         }
         .side-bar-panel {
-          animation: comfynext-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+          animation: sailor-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both !important;
           will-change: transform !important;
           border-right: 1px solid rgb(34, 34, 34) !important;
           border-left: 1px solid rgb(34, 34, 34) !important;
@@ -389,7 +389,7 @@ app.registerExtension({
         if (!_chromeHidEver) {
           warnOnce(
             "chrome-unmatched",
-            "ComfyUI loaded but the bridge hid 0 chrome elements — upstream markup likely changed. Retune BRIDGE_SELECTORS in custom_nodes/comfynext_bridge/js/bridge.js.",
+            "ComfyUI loaded but the bridge hid 0 chrome elements — upstream markup likely changed. Retune BRIDGE_SELECTORS in custom_nodes/sailor_bridge/js/bridge.js.",
           );
         }
         if (!window.LGraphCanvas) {
@@ -432,8 +432,8 @@ app.registerExtension({
       // Override grid rendering to draw dots instead of lines
       function patchGridToDots() {
         const LGCanvas = window.LGraphCanvas;
-        if (!LGCanvas || LGCanvas._comfynextGridPatched) return;
-        LGCanvas._comfynextGridPatched = true;
+        if (!LGCanvas || LGCanvas._sailorGridPatched) return;
+        LGCanvas._sailorGridPatched = true;
 
         const origDrawBack = LGCanvas.prototype.drawBackCanvas;
         LGCanvas.prototype.drawBackCanvas = function () {
@@ -484,8 +484,8 @@ app.registerExtension({
       // Fix context menu submenu positioning: align to originating entry, not top
       function patchContextMenuPosition() {
         const LG = window.LiteGraph;
-        if (!LG?.ContextMenu || LG.ContextMenu._comfynextPatched) return;
-        LG.ContextMenu._comfynextPatched = true;
+        if (!LG?.ContextMenu || LG.ContextMenu._sailorPatched) return;
+        LG.ContextMenu._sailorPatched = true;
 
         // Use MutationObserver to reposition submenus when they appear
         const menuObserver = new MutationObserver((mutations) => {
@@ -579,7 +579,7 @@ app.registerExtension({
           else if (cmd?.function) cmd.function();
         }
       } catch (e) {
-        console.warn("[ComfyNext Bridge] tryExecuteCommand error:", cmdId, e);
+        console.warn("[Sailor Bridge] tryExecuteCommand error:", cmdId, e);
       }
     }
 
@@ -592,11 +592,11 @@ app.registerExtension({
     function loadGraphIntoComfy(workflow) {
       try {
         window.app.loadGraphData(workflow);
-        console.log("[ComfyNext Bridge] Loaded workflow");
+        console.log("[Sailor Bridge] Loaded workflow");
         warnIfEditStateDropped(workflow);
         postToParent({ event: "workflow_loaded" });
       } catch (e) {
-        console.error("[ComfyNext Bridge] Failed to load workflow:", e);
+        console.error("[Sailor Bridge] Failed to load workflow:", e);
         postToParent({ event: "workflow_loaded" }); // still signal so overlay clears
       }
     }
@@ -619,7 +619,7 @@ app.registerExtension({
           if (!live) continue;
           const hasWidget = Array.isArray(live.widgets) && live.widgets.some((w) => w?.name === "edit_state");
           if (!hasWidget) {
-            console.warn("[ComfyNext Bridge] node", wfNode.id, "(", wfNode.type, ") lost edit_state — stale node definitions in this iframe");
+            console.warn("[Sailor Bridge] node", wfNode.id, "(", wfNode.type, ") lost edit_state — stale node definitions in this iframe");
             postToParent({
               event: "bridge_warning",
               message: "ComfyUI canvas schema is out of date — reload the page to run timelines.",
@@ -628,7 +628,7 @@ app.registerExtension({
           }
         }
       } catch (e) {
-        console.warn("[ComfyNext Bridge] warnIfEditStateDropped error:", e);
+        console.warn("[Sailor Bridge] warnIfEditStateDropped error:", e);
       }
     }
 
@@ -640,12 +640,12 @@ app.registerExtension({
       }
     }
 
-    // Listen for postMessage commands from the parent ComfyNext wrapper
+    // Listen for postMessage commands from the parent Sailor wrapper
     window.addEventListener("message", async (event) => {
-      if (!event.data || event.data.type !== "comfynext") return;
+      if (!event.data || event.data.type !== "sailor") return;
 
       const { action } = event.data;
-      console.log("[ComfyNext Bridge] received action:", action, "payload:", JSON.stringify(event.data));
+      console.log("[Sailor Bridge] received action:", action, "payload:", JSON.stringify(event.data));
 
       if (action === "loadWorkflow") {
         const { workflow } = event.data;
@@ -655,7 +655,7 @@ app.registerExtension({
           // Arrived before ComfyUI finished initializing — keep the latest and
           // flush it the moment we're ready, rather than dropping it silently.
           pendingWorkflow = workflow;
-          console.log("[ComfyNext Bridge] Queued workflow until ready");
+          console.log("[Sailor Bridge] Queued workflow until ready");
         }
       }
 
@@ -674,7 +674,7 @@ app.registerExtension({
             }
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] getWorkflow error:", e);
+          console.warn("[Sailor Bridge] getWorkflow error:", e);
         }
       }
 
@@ -703,7 +703,7 @@ app.registerExtension({
               await authStore.fetchBalance();
             }
           } catch (e) {
-            console.warn("[ComfyNext Bridge] refreshCredits error:", e);
+            console.warn("[Sailor Bridge] refreshCredits error:", e);
           }
           fetchCredits();
         })();
@@ -761,7 +761,7 @@ app.registerExtension({
               postToParent({ event: "purchase_error", msg: "No purchase method found" });
             }
           } catch (e) {
-            console.error("[ComfyNext Bridge] purchaseCredits error:", e);
+            console.error("[Sailor Bridge] purchaseCredits error:", e);
             postToParent({ event: "purchase_error", msg: e.message });
           }
         })();
@@ -797,10 +797,10 @@ app.registerExtension({
               commandStore.execute(cmdId);
               return;
             }
-            console.warn("[ComfyNext Bridge] toggleSidebarTab: command not found:", cmdId);
+            console.warn("[Sailor Bridge] toggleSidebarTab: command not found:", cmdId);
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] toggleSidebarTab error:", e);
+          console.warn("[Sailor Bridge] toggleSidebarTab error:", e);
         }
       }
 
@@ -828,7 +828,7 @@ app.registerExtension({
               if (cmd) {
                 if (typeof cmd.execute === "function") cmd.execute();
                 else if (typeof cmd.function === "function") cmd.function();
-                console.log("[ComfyNext Bridge] toggleRightPanel: executed", cmdId);
+                console.log("[Sailor Bridge] toggleRightPanel: executed", cmdId);
                 return;
               }
             }
@@ -838,11 +838,11 @@ app.registerExtension({
                 ? [...commandStore.commands.keys()]
                 : commandStore.commands.map?.((c) => c.id) || [];
               const matching = allCmds.filter((id) => /panel|overview|right|bottom|splitter/i.test(id));
-              console.log("[ComfyNext Bridge] toggleRightPanel: no match. Candidates:", matching);
+              console.log("[Sailor Bridge] toggleRightPanel: no match. Candidates:", matching);
             }
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] toggleRightPanel error:", e);
+          console.warn("[Sailor Bridge] toggleRightPanel error:", e);
         }
       }
 
@@ -867,7 +867,7 @@ app.registerExtension({
             }
           }
         } catch (e) {
-          console.error("[ComfyNext Bridge] addNodeAtCenter error:", e);
+          console.error("[Sailor Bridge] addNodeAtCenter error:", e);
         }
       }
 
@@ -897,7 +897,7 @@ app.registerExtension({
             tryExecuteCommand(cmdId);
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] setCanvasTool error:", e);
+          console.warn("[Sailor Bridge] setCanvasTool error:", e);
         }
       }
 
@@ -923,7 +923,7 @@ app.registerExtension({
             tryExecuteCommand(cmdMap[event.data.direction] || "");
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] canvasZoom error:", e);
+          console.warn("[Sailor Bridge] canvasZoom error:", e);
         }
       }
 
@@ -937,7 +937,7 @@ app.registerExtension({
             tryExecuteCommand("Comfy.Canvas.ToggleMinimap");
           }
         } catch (e) {
-          console.warn("[ComfyNext Bridge] toggleMinimap error:", e);
+          console.warn("[Sailor Bridge] toggleMinimap error:", e);
         }
       }
 
@@ -952,7 +952,7 @@ app.registerExtension({
               postToParent({ event: "signed_out" });
             }
           } catch (e) {
-            console.error("[ComfyNext Bridge] signOut error:", e);
+            console.error("[Sailor Bridge] signOut error:", e);
           }
         })();
       }
@@ -967,7 +967,7 @@ app.registerExtension({
               await authStore.accessBillingPortal();
             }
           } catch (e) {
-            console.error("[ComfyNext Bridge] openBillingPortal error:", e);
+            console.error("[Sailor Bridge] openBillingPortal error:", e);
           }
         })();
       }
@@ -1050,7 +1050,7 @@ app.registerExtension({
 
           postToParent({ event: "graph_region_extracted", nodes, links });
         } catch (e) {
-          console.error("[ComfyNext Bridge] extractGraphRegion error:", e);
+          console.error("[Sailor Bridge] extractGraphRegion error:", e);
           postToParent({ event: "graph_extract_failed", error: e.message });
         }
       }
@@ -1064,19 +1064,19 @@ app.registerExtension({
           if (!node) return;
 
           // Store original colors to restore later
-          if (!window._comfynextHighlight) {
-            window._comfynextHighlight = {};
+          if (!window._sailorHighlight) {
+            window._sailorHighlight = {};
           }
           // Clear any previous highlight first
-          if (window._comfynextHighlight.nodeId != null && window._comfynextHighlight.nodeId !== nodeId) {
-            const prevNode = canvas.graph.getNodeById(window._comfynextHighlight.nodeId);
+          if (window._sailorHighlight.nodeId != null && window._sailorHighlight.nodeId !== nodeId) {
+            const prevNode = canvas.graph.getNodeById(window._sailorHighlight.nodeId);
             if (prevNode) {
-              prevNode.color = window._comfynextHighlight.originalColor;
-              prevNode.boxcolor = window._comfynextHighlight.originalBoxColor;
+              prevNode.color = window._sailorHighlight.originalColor;
+              prevNode.boxcolor = window._sailorHighlight.originalBoxColor;
             }
           }
 
-          window._comfynextHighlight = {
+          window._sailorHighlight = {
             nodeId,
             originalColor: node.color,
             originalBoxColor: node.boxcolor,
@@ -1087,23 +1087,23 @@ app.registerExtension({
           node.boxcolor = "#4a9eff";
           canvas.setDirty(true, true);
         } catch (e) {
-          console.warn("[ComfyNext Bridge] highlightNode error:", e);
+          console.warn("[Sailor Bridge] highlightNode error:", e);
         }
       }
 
       if (action === "clearHighlight") {
         try {
           const canvas = getCanvas();
-          if (!canvas || !canvas.graph || !window._comfynextHighlight?.nodeId) return;
-          const node = canvas.graph.getNodeById(window._comfynextHighlight.nodeId);
+          if (!canvas || !canvas.graph || !window._sailorHighlight?.nodeId) return;
+          const node = canvas.graph.getNodeById(window._sailorHighlight.nodeId);
           if (node) {
-            node.color = window._comfynextHighlight.originalColor;
-            node.boxcolor = window._comfynextHighlight.originalBoxColor;
+            node.color = window._sailorHighlight.originalColor;
+            node.boxcolor = window._sailorHighlight.originalBoxColor;
             canvas.setDirty(true, true);
           }
-          window._comfynextHighlight = {};
+          window._sailorHighlight = {};
         } catch (e) {
-          console.warn("[ComfyNext Bridge] clearHighlight error:", e);
+          console.warn("[Sailor Bridge] clearHighlight error:", e);
         }
       }
 
@@ -1118,7 +1118,7 @@ app.registerExtension({
             postToParent({ event: "workflow_data", workflow: null });
           }
         } catch (e) {
-          console.error("[ComfyNext Bridge] getWorkflow error:", e);
+          console.error("[Sailor Bridge] getWorkflow error:", e);
           postToParent({ event: "workflow_data", workflow: null });
         }
       }
@@ -1143,10 +1143,10 @@ app.registerExtension({
         try {
           if (window.app?.queuePrompt) {
             ensurePromptErrorCapture();
-            window._comfynextLastPromptError = null;
-            window._comfynextLastPromptOk = null;
+            window._sailorLastPromptError = null;
+            window._sailorLastPromptOk = null;
             await window.app.queuePrompt(0); // 0 = front of queue
-            const resp = window._comfynextLastPromptError; // parsed 400 body, if any
+            const resp = window._sailorLastPromptError; // parsed 400 body, if any
             const lastErrs = window.app?.lastNodeErrors;
             const hasNodeErrors = !!(lastErrs && typeof lastErrs === "object" && Object.keys(lastErrs).length);
             if (resp || hasNodeErrors) {
@@ -1159,30 +1159,30 @@ app.registerExtension({
               const message =
                 (resp?.error && (resp.error.message || String(resp.error))) ||
                 "The workflow failed validation.";
-              console.error("[ComfyNext Bridge] prompt validation failed:", message, nodeErrors);
+              console.error("[Sailor Bridge] prompt validation failed:", message, nodeErrors);
               postToParent({ event: "queue_error", message, node_errors: nodeErrors });
-            } else if (!window._comfynextLastPromptOk) {
+            } else if (!window._sailorLastPromptOk) {
               // No error evidence AND no success evidence: the /prompt request
               // never reached the server (network failure, ComfyUI restarting).
               // Without this, the bridge would post nothing and the run would
               // silently never queue.
-              console.error("[ComfyNext Bridge] prompt never reached the server (no success, no error)");
+              console.error("[Sailor Bridge] prompt never reached the server (no success, no error)");
               postToParent({
                 event: "queue_error",
                 message: "Run did not reach the ComfyUI server (network or server restart?) — try again.",
               });
             } else {
-              console.log("[ComfyNext Bridge] Queued prompt via app.queuePrompt");
+              console.log("[Sailor Bridge] Queued prompt via app.queuePrompt");
               // Terminal success ack: lets the parent's no-response watchdog
               // distinguish "queued fine" from "message never reached me".
-              postToParent({ event: "queued", prompt_id: window._comfynextLastPromptOk?.prompt_id || null });
+              postToParent({ event: "queued", prompt_id: window._sailorLastPromptOk?.prompt_id || null });
             }
           } else {
             // Fallback: try the command system
             tryExecuteCommand("Comfy.QueuePrompt");
           }
         } catch (e) {
-          console.error("[ComfyNext Bridge] queuePrompt error:", e);
+          console.error("[Sailor Bridge] queuePrompt error:", e);
           postToParent({
             event: "queue_error",
             message: (e && (e.message || String(e))) || "Failed to queue the prompt.",
@@ -1202,7 +1202,7 @@ app.registerExtension({
             postToParent({ event: "prompt_data", prompt: null });
           }
         } catch (e) {
-          console.error("[ComfyNext Bridge] getPrompt error:", e);
+          console.error("[Sailor Bridge] getPrompt error:", e);
           postToParent({ event: "prompt_data", prompt: null });
         }
       }
@@ -1215,7 +1215,7 @@ app.registerExtension({
           const clientId = api?.clientId || api?.initialClientId || null;
           postToParent({ event: "client_id", clientId });
         } catch (e) {
-          console.error("[ComfyNext Bridge] getClientId error:", e);
+          console.error("[Sailor Bridge] getClientId error:", e);
           postToParent({ event: "client_id", clientId: null });
         }
       }
@@ -1249,7 +1249,7 @@ app.registerExtension({
         e.preventDefault();
         e.stopPropagation();
         if (window.parent !== window) {
-          window.parent.postMessage({ type: "comfynext-bridge", event: "open_node_search" }, "*");
+          window.parent.postMessage({ type: "sailor-bridge", event: "open_node_search" }, "*");
         }
       }
     }, true); // capture phase to beat LiteGraph's handler
@@ -1275,28 +1275,28 @@ app.registerExtension({
     // error stashes empty).
     function ensurePromptErrorCapture() {
       const api = window.comfyAPI?.api?.api || window.app?.api;
-      if (!api || typeof api.queuePrompt !== "function" || api._comfynextWrapped) return;
+      if (!api || typeof api.queuePrompt !== "function" || api._sailorWrapped) return;
       const original = api.queuePrompt.bind(api);
       api.queuePrompt = async function (...args) {
         try {
           const res = await original(...args);
-          window._comfynextLastPromptOk = { prompt_id: (res && res.prompt_id) || null };
+          window._sailorLastPromptOk = { prompt_id: (res && res.prompt_id) || null };
           return res;
         } catch (e) {
           // PromptExecutionError carries the parsed response body on .response
           // (older builds used .body). Stash it for the action handler.
-          window._comfynextLastPromptError = (e && (e.response || e.body)) || null;
+          window._sailorLastPromptError = (e && (e.response || e.body)) || null;
           throw e;
         }
       };
-      api._comfynextWrapped = true;
+      api._sailorWrapped = true;
     }
 
     function postToParent(data) {
-      console.log("[ComfyNext Bridge] postToParent:", data.event || data.status || "unknown");
+      console.log("[Sailor Bridge] postToParent:", data.event || data.status || "unknown");
       if (window.parent !== window) {
         // `v` lets the parent detect a protocol mismatch after an upstream bump.
-        window.parent.postMessage({ type: "comfynext-bridge", v: COMFYNEXT_BRIDGE_PROTOCOL, ...data }, "*");
+        window.parent.postMessage({ type: "sailor-bridge", v: SAILOR_BRIDGE_PROTOCOL, ...data }, "*");
       }
     }
 
@@ -1392,21 +1392,21 @@ app.registerExtension({
 
         const authStore = pinia._s.get("firebaseAuth");
         if (!authStore) {
-          console.log("[ComfyNext Bridge] fetchCredits: no authStore");
+          console.log("[Sailor Bridge] fetchCredits: no authStore");
           return;
         }
 
-        console.log("[ComfyNext Bridge] fetchCredits: authenticated=", authStore.isAuthenticated, "hasBalance=", !!authStore.balance, "hasUser=", !!authStore.currentUser);
+        console.log("[Sailor Bridge] fetchCredits: authenticated=", authStore.isAuthenticated, "hasBalance=", !!authStore.balance, "hasUser=", !!authStore.currentUser);
 
         if (!authStore.isAuthenticated && !authStore.currentUser) {
-          console.log("[ComfyNext Bridge] fetchCredits: user not authenticated yet");
+          console.log("[Sailor Bridge] fetchCredits: user not authenticated yet");
           return;
         }
 
         if (!authStore.balance && authStore.fetchBalance) {
-          console.log("[ComfyNext Bridge] fetchCredits: calling fetchBalance()...");
+          console.log("[Sailor Bridge] fetchCredits: calling fetchBalance()...");
           await authStore.fetchBalance();
-          console.log("[ComfyNext Bridge] fetchCredits: after fetchBalance, balance=", authStore.balance);
+          console.log("[Sailor Bridge] fetchCredits: after fetchBalance, balance=", authStore.balance);
         }
 
         if (authStore.balance) {
@@ -1415,13 +1415,13 @@ app.registerExtension({
             authStore.balance.amount_micros ??
             0;
           const credits = Math.round(cents * 2.11);
-          console.log("[ComfyNext Bridge] fetchCredits: cents=", cents, "credits=", credits);
+          console.log("[Sailor Bridge] fetchCredits: cents=", cents, "credits=", credits);
           postToParent({ event: "credits_update", credits });
         } else {
-          console.log("[ComfyNext Bridge] fetchCredits: no balance available");
+          console.log("[Sailor Bridge] fetchCredits: no balance available");
         }
       } catch (e) {
-        console.error("[ComfyNext Bridge] fetchCredits error:", e);
+        console.error("[Sailor Bridge] fetchCredits error:", e);
       }
     }
 

@@ -7,7 +7,7 @@
 ## Background
 
 - The gallery currently calls `effectThumbnails()` ([thumbnails.ts](app/lib/spacetype/thumbnails.ts)) which renders each effect's default look via one shared offscreen engine. The user finds these "clunky" and not worth perfecting — manual capture is more reliable.
-- The scene-defaults feature already establishes the backend pattern: per-effect committable files under `custom_nodes/comfynext_bridge/scene_defaults/` via `POST/GET /comfynext/space_default*` routes ([nodes_timeline.py](../../../comfy_extras/nodes_timeline.py), `_valid_effect_id`, `_scene_defaults_dir`). The app also already serves PNGs (`web.Response(body=…, content_type="image/png")`).
+- The scene-defaults feature already establishes the backend pattern: per-effect committable files under `custom_nodes/sailor_bridge/scene_defaults/` via `POST/GET /sailor/space_default*` routes ([nodes_timeline.py](../../../comfy_extras/nodes_timeline.py), `_valid_effect_id`, `_scene_defaults_dir`). The app also already serves PNGs (`web.Response(body=…, content_type="image/png")`).
 
 ## Decisions (from brainstorming)
 
@@ -19,10 +19,10 @@
 
 ### Backend routes (`comfy_extras/nodes_timeline.py`, beside the scene-default routes)
 
-- `_scene_thumbnails_dir()` → `custom_nodes/comfynext_bridge/scene_thumbnails/` (mirror `_scene_defaults_dir`).
-- `POST /comfynext/space_thumbnail/{effect_id}` — validate `effect_id` (`_valid_effect_id`); `data = await request.read()` (raw PNG bytes); write `<dir>/<effect_id>.png` (mkdir if needed). Return `{ok: true}`.
-- `GET /comfynext/space_thumbnails` — for each `<id>.png` in the dir (id passing `_valid_effect_id`), return `{ id: f"/comfynext/space_thumbnail/{id}?v={int(mtime)}" }` (the `?v=mtime` busts browser cache on re-capture). Empty `{}` if none.
-- `GET /comfynext/space_thumbnail/{effect_id}` — validate; read `<id>.png`, return `web.Response(body=data, content_type="image/png")`; 404 if missing. (The `?v=` query is ignored server-side, only for cache-busting.)
+- `_scene_thumbnails_dir()` → `custom_nodes/sailor_bridge/scene_thumbnails/` (mirror `_scene_defaults_dir`).
+- `POST /sailor/space_thumbnail/{effect_id}` — validate `effect_id` (`_valid_effect_id`); `data = await request.read()` (raw PNG bytes); write `<dir>/<effect_id>.png` (mkdir if needed). Return `{ok: true}`.
+- `GET /sailor/space_thumbnails` — for each `<id>.png` in the dir (id passing `_valid_effect_id`), return `{ id: f"/sailor/space_thumbnail/{id}?v={int(mtime)}" }` (the `?v=mtime` busts browser cache on re-capture). Empty `{}` if none.
+- `GET /sailor/space_thumbnail/{effect_id}` — validate; read `<id>.png`, return `web.Response(body=data, content_type="image/png")`; 404 if missing. (The `?v=` query is ignored server-side, only for cache-busting.)
 
 ### Frontend composable — `app/composables/useEffectThumbnails.ts` (new)
 
@@ -33,7 +33,7 @@ export function effectThumbUrl(id: string): string | null                  // sy
 export async function saveEffectThumbnail(id: string, blob: Blob): Promise<boolean>  // POST bytes + update cache
 export function __resetEffectThumbnailsCache(): void                        // test-only
 ```
-- `saveEffectThumbnail` POSTs the blob (`method:'POST', body: blob`) and, on success, sets `_resolved[id] = `/comfynext/space_thumbnail/${id}?v=${Date.now()}`` so already-mounted galleries refresh.
+- `saveEffectThumbnail` POSTs the blob (`method:'POST', body: blob`) and, on success, sets `_resolved[id] = `/sailor/space_thumbnail/${id}?v=${Date.now()}`` so already-mounted galleries refresh.
 
 ### Editor — Capture button (`SpaceTypeSurface.vue`)
 

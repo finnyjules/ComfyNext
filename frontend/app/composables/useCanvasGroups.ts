@@ -296,7 +296,7 @@ export function useCanvasGroups(nodesRef: Ref<VueFlowNode[]>) {
       bounding: [g.x, g.y, g.width, g.height],
       color: g.color,
       font_size: 24,
-      // ComfyNext-specific extensions. LiteGraph/ComfyUI ignore unknown fields,
+      // Sailor-specific extensions. LiteGraph/ComfyUI ignore unknown fields,
       // so storing them directly on the group object is safe and keeps the
       // group as the single source of truth (no sidecar to keep in sync).
       // The `id` field is critical: it lets annotations reference groups by a

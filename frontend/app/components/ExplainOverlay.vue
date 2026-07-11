@@ -138,7 +138,7 @@ function extractFromIframe(x: number, y: number, w: number, h: number, e: MouseE
   if (iframe?.contentWindow) {
     iframe.contentWindow.postMessage(
       {
-        type: 'comfynext',
+        type: 'sailor',
         action: 'extractGraphRegion',
         region: { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) },
       },
@@ -158,7 +158,7 @@ function extractFromIframe(x: number, y: number, w: number, h: number, e: MouseE
   }, 5000)
 
   function handler(event: MessageEvent) {
-    if (event.data?.type !== 'comfynext-bridge' || resolved) return
+    if (event.data?.type !== 'sailor-bridge' || resolved) return
     if (event.data.event === 'graph_region_extracted') {
       resolved = true
       clearTimeout(timeout)

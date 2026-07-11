@@ -1,4 +1,4 @@
-# Costs & Pricing Model — ComfyNext Hosted
+# Costs & Pricing Model — Sailor Hosted
 
 **Date:** 2026-07-01 (all prices web-verified this date)
 **Status:** Draft for review. Companion to `2026-07-01-accounts-credits-billing-design.md` — answers its open question #3 (credit↔dollar rate, per-action costs) and informs Phase −1 (compute topology).

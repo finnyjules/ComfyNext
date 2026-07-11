@@ -74,13 +74,13 @@ A cast ref is therefore a `'/view?filename=…&type=input'` URL — the exact co
 
 ### Dispatch-time resolution (the live link)
 
-`useCharacters()` caches `GET /api/characters-local` (invalidated on a `comfynext:charactersChanged` window event fired by all mutating paths). Both the surface preview and `handleShotDirectorGenerate` resolve `sheet.cast → refImages` through it, then `materializeCast → compileShot → buildFilmShotPatch` — the injected refs ride the existing `/view` → data-URL chain. A deleted character surfaces as the zero-refs compile error, never a silent skip. `buildFilmShotPatch` and everything downstream are unchanged.
+`useCharacters()` caches `GET /api/characters-local` (invalidated on a `sailor:charactersChanged` window event fired by all mutating paths). Both the surface preview and `handleShotDirectorGenerate` resolve `sheet.cast → refImages` through it, then `materializeCast → compileShot → buildFilmShotPatch` — the injected refs ride the existing `/view` → data-URL chain. A deleted character surfaces as the zero-refs compile error, never a silent skip. `buildFilmShotPatch` and everything downstream are unchanged.
 
 ### Canvas nodes (frontend-only, like ShotDirector itself)
 
 New `CHARACTER` port type (frontend data type; these nodes never reach the backend graph — same convention as ShotDirector's config-only status).
 
-- **`CharacterNode.vue`** (`nodeType: 'Character'`): a canvas instance of a registry entry. Card = cover, name, ref count, picker button (gallery-modal pattern, mirroring the LoRA picker: node stores `properties.comfynext_characterSlug`). Output: `CHARACTER`.
+- **`CharacterNode.vue`** (`nodeType: 'Character'`): a canvas instance of a registry entry. Card = cover, name, ref count, picker button (gallery-modal pattern, mirroring the LoRA picker: node stores `properties.sailor_characterSlug`). Output: `CHARACTER`.
 - **`CharacterSheetNode.vue`** (`nodeType: 'CharacterSheet'`): the builder. Optional `IMAGE` input (wire any artifact) or built-in upload. Card shows the sheet grid with per-shot re-roll (reuses the `character-shot.post.ts` rail + the dataset-builder re-roll pattern). "Expand sheet" runs a new **4-prompt canonical preset** (front / three-quarter / profile / full-body — new small list in `character-shot-scenes.ts`, distinct from the 24 training scenes; ~$0.32 at $0.08/shot, cost shown on the button). For `loraName`-linked characters, a source toggle renders the 4 prompts through the character's private Replicate model instead (trigger word included). Name field + Save writes the registry. Output: `CHARACTER` — castable directly without an intermediate Character node.
 - **ShotDirector node**: gains 3 optional `CHARACTER` inputs (fixes the Phase-2 finding that it synthesizes no input ports). An edge-sync handler in `VueNodeCanvas.vue` maps connect/disconnect events to `sheet.cast` entries tagged `via: 'wire'` (resolving the wired node's slug; a Character node with no slug picked yet contributes nothing + card hint).
 

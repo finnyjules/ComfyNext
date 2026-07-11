@@ -25,7 +25,7 @@ const props = defineProps<{
 const { characters, coverUrl } = useCharacters()
 
 // ── Saved state ──────────────────────────────────────────────────────────
-const slug = computed<string | null>(() => props.data?.properties?.comfynext_characterSlug ?? null)
+const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
 const savedCharacter = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
 // This node only ever populates the character's default variant (see save()
 // below), so the reference count for the saved-state summary comes from
@@ -269,10 +269,10 @@ async function save() {
 
     if (!props.data.properties) (props.data as any).properties = {}
     const properties = props.data.properties as Record<string, any>
-    properties.comfynext_characterSlug = targetSlug
-    properties.comfynext_characterName = targetName
-    window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
-    window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+    properties.sailor_characterSlug = targetSlug
+    properties.sailor_characterName = targetName
+    window.dispatchEvent(new CustomEvent('sailor:charactersChanged'))
+    window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
     toast.success(
       createdSlug ? `Saved ${targetName} to characters` : `Updated ${targetName}'s reference sheet`,
       { description: 'Castable in the Shot Director' },
@@ -287,14 +287,14 @@ async function save() {
 
 function resetToNewSheet() {
   if (!props.data.properties) return
-  delete props.data.properties.comfynext_characterSlug
-  delete props.data.properties.comfynext_characterName
+  delete props.data.properties.sailor_characterSlug
+  delete props.data.properties.sailor_characterName
   charName.value = ''
   uploadedDataUrl.value = null
   usingWiredSource.value = false
   resetShots()
   saveError.value = null
-  window.dispatchEvent(new CustomEvent('comfynext:castEdgesChanged'))
+  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
 }
 </script>
 
@@ -338,7 +338,7 @@ function resetToNewSheet() {
         </div>
       </template>
       <p v-else class="text-[11px] leading-tight text-red-400/80">
-        Character "{{ data?.properties?.comfynext_characterName || slug }}" was deleted.
+        Character "{{ data?.properties?.sailor_characterName || slug }}" was deleted.
       </p>
       <button
         class="mt-2 w-full rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"

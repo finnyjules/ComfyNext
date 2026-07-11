@@ -4,7 +4,7 @@
 
 **Goal:** Make wired (graph-slot) and local layers behave identically in the Compositor — one inspector, and silhouette masking that works for any layer masking any other — verified in the editor and the frame's own client-side Render output.
 
-**Architecture:** Promote the existing `StackKey` (`w:<slot>` / `l:<id>`) into the layer model and the mask system. The frontend Canvas-2D renderer (`paintLayerStack`) gains a general "mask any item by any other item's silhouette" path. Wired-layer treatments (mask reference) persist on the node as `comfynext_wiredTreatments`. The inspector binds to a normalized `EditorLayer` façade so both kinds render the same panel. A per-frame **Render** button composites the static stack client-side and tracks a fresh/stale state.
+**Architecture:** Promote the existing `StackKey` (`w:<slot>` / `l:<id>`) into the layer model and the mask system. The frontend Canvas-2D renderer (`paintLayerStack`) gains a general "mask any item by any other item's silhouette" path. Wired-layer treatments (mask reference) persist on the node as `sailor_wiredTreatments`. The inspector binds to a normalized `EditorLayer` façade so both kinds render the same panel. A per-frame **Render** button composites the static stack client-side and tracks a fresh/stale state.
 
 **Tech Stack:** Nuxt 4 / Vue 3 / TypeScript, Vitest unit tests, Canvas-2D rendering. Frontend only — no Python changes in Phase 1.
 
@@ -19,9 +19,9 @@
 - `frontend/app/composables/useCompositorLayers.ts` — add `maskedByKey` to `LayerCommon`; export `layerMaskRef()`; add `key` to `StackItem`; generalize `paintLayerStack` mask resolution across sources; export `drawLayerSilhouette()` helper.
 - `frontend/tests/unit/layer-mask-ref.unit.spec.ts` — **new** — unit tests for `layerMaskRef()`.
 - `frontend/tests/unit/cross-source-mask.unit.spec.ts` — **new** — unit tests for cross-source mask resolution in `paintLayerStack`.
-- `frontend/app/components/vue-canvas/CompositorModal.vue` — `buildStackItems()` adds `key` + applies wired masks; `maskCandidates`/`setLayerMaskedBy`/`layerLabel` go cross-source; new `comfynext_wiredTreatments` read/write; unified inspector (move the Mask block to a shared section visible for wired too); Render button + static stale state.
+- `frontend/app/components/vue-canvas/CompositorModal.vue` — `buildStackItems()` adds `key` + applies wired masks; `maskCandidates`/`setLayerMaskedBy`/`layerLabel` go cross-source; new `sailor_wiredTreatments` read/write; unified inspector (move the Mask block to a shared section visible for wired too); Render button + static stale state.
 - `frontend/tests/unit/wired-treatments.unit.spec.ts` — **new** — unit tests for the treatments read/write + cross-source candidate helpers (extracted to a testable module — see Task 4).
-- `frontend/app/composables/useWiredTreatments.ts` — **new** — pure helpers for reading/writing `comfynext_wiredTreatments` and building cross-source mask candidates, so the logic is unit-testable outside the `.vue` SFC.
+- `frontend/app/composables/useWiredTreatments.ts` — **new** — pure helpers for reading/writing `sailor_wiredTreatments` and building cross-source mask candidates, so the logic is unit-testable outside the `.vue` SFC.
 
 ---
 
@@ -421,21 +421,21 @@ Expected: FAIL — module does not exist.
 // frontend/app/composables/useWiredTreatments.ts
 /**
  * Per-wired-layer treatments (Phase 1: mask reference) persisted on the node as
- * `comfynext_wiredTreatments`, keyed by the unified StackKey ('w:<slot>'). This
- * mirrors how comfynext_stackOrder lives in node.data.properties. Pure helpers so
+ * `sailor_wiredTreatments`, keyed by the unified StackKey ('w:<slot>'). This
+ * mirrors how sailor_stackOrder lives in node.data.properties. Pure helpers so
  * the logic is unit-testable outside the SFC.
  */
 export interface WiredTreatment { maskedByKey?: string }
 export type WiredTreatments = Record<string, WiredTreatment>
 
 export function readWiredTreatments(node: any): WiredTreatments {
-  return (node?.data?.properties?.comfynext_wiredTreatments as WiredTreatments | undefined) ?? {}
+  return (node?.data?.properties?.sailor_wiredTreatments as WiredTreatments | undefined) ?? {}
 }
 
 function writeWiredTreatments(node: any, next: WiredTreatments) {
   if (!node?.data) return
   if (!node.data.properties) node.data.properties = {}
-  node.data.properties.comfynext_wiredTreatments = next
+  node.data.properties.sailor_wiredTreatments = next
 }
 
 /** Set/clear the mask reference for a wired slot (1-based). Empty key clears. */
@@ -524,10 +524,10 @@ const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
 
 - [ ] **Step 3: Re-render when treatments change**
 
-Add `JSON.stringify(wiredTreatments.value)` to the `renderStack` watch source array (~line 1006-1014), alongside the existing `comfynext_hiddenWired` entry:
+Add `JSON.stringify(wiredTreatments.value)` to the `renderStack` watch source array (~line 1006-1014), alongside the existing `sailor_hiddenWired` entry:
 
 ```ts
-    JSON.stringify(readSlotArr('comfynext_hiddenWired')),
+    JSON.stringify(readSlotArr('sailor_hiddenWired')),
     JSON.stringify(wiredTreatments.value),
 ```
 
@@ -663,7 +663,7 @@ function staticSourceKey(): string {
   return (h >>> 0).toString(36)
 }
 const lastRenderKey = computed<string | null>(() =>
-  (compositor.value?.data?.properties as any)?.comfynext_renderKey ?? null)
+  (compositor.value?.data?.properties as any)?.sailor_renderKey ?? null)
 const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
 
 async function renderFrame() {
@@ -674,14 +674,14 @@ async function renderFrame() {
   const { W, H } = bakeSize()
   const blob = await renderStaticComposite(W, H) // see Step 4
   if (!blob) return
-  const file = new File([blob], `comfynext_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
+  const file = new File([blob], `sailor_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
   const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
   try {
     const res = await fetch('/upload/image', { method: 'POST', body: fd })
     if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
     const name = (await res.json())?.name || file.name
     const p = (node.data.properties ||= {})
-    p.comfynext_renderKey = staticSourceKey()
+    p.sailor_renderKey = staticSourceKey()
     node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
   } catch (err) { console.error('[compositor render]', err) }
 }
@@ -743,7 +743,7 @@ git commit -m "feat(compositor): unified Mask control for wired layers + per-fra
 - [ ] **Step 1: Start the dev server and ComfyUI backend**
 
 Run (background): `cd frontend && npm run dev`
-Run (background): `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
+Run (background): `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
 
 - [ ] **Step 2: Reproduce the original scenario**
 
@@ -765,8 +765,8 @@ Share both screenshots (masked preview + rendered output) with the user and conf
 
 ## Self-Review
 
-- **Spec coverage:** Section 1 (unified identity/inspector) → Tasks 5, 7. Section 2 (cross-source masking renderer) → Tasks 2, 3. Section 5 (persistence/migration: `maskedByKey` + legacy fallback + `comfynext_wiredTreatments`) → Tasks 1, 4. Section 6 (Render button + static stale) → Task 7. Sections 3 & 4 (backend compile + effects bake) are explicitly Phase 2 (separate plan). Visual rule → Task 8.
-- **Naming consistency:** `layerMaskRef`, `drawLayerSilhouette`, `drawItemMasked`, `readWiredTreatments`/`setWiredMask`/`maskCandidateKeys`, `currentMaskRef`/`setMaskRef`/`maskCandidates`(key-based)/`layerLabelByKey`, `wiredTreatments` computed, `staticSourceKey`/`renderStale`/`renderFrame`/`renderStaticComposite`, property keys `comfynext_wiredTreatments`/`comfynext_renderKey`. Consistent across tasks.
+- **Spec coverage:** Section 1 (unified identity/inspector) → Tasks 5, 7. Section 2 (cross-source masking renderer) → Tasks 2, 3. Section 5 (persistence/migration: `maskedByKey` + legacy fallback + `sailor_wiredTreatments`) → Tasks 1, 4. Section 6 (Render button + static stale) → Task 7. Sections 3 & 4 (backend compile + effects bake) are explicitly Phase 2 (separate plan). Visual rule → Task 8.
+- **Naming consistency:** `layerMaskRef`, `drawLayerSilhouette`, `drawItemMasked`, `readWiredTreatments`/`setWiredMask`/`maskCandidateKeys`, `currentMaskRef`/`setMaskRef`/`maskCandidates`(key-based)/`layerLabelByKey`, `wiredTreatments` computed, `staticSourceKey`/`renderStale`/`renderFrame`/`renderStaticComposite`, property keys `sailor_wiredTreatments`/`sailor_renderKey`. Consistent across tasks.
 - **Placeholder scan:** none — every code step is concrete.
 - **Risk note:** Task 3 rewrites a hot render function; Task 3 Step 5 explicitly re-runs the existing `layer-mask-composite` invariants to catch regressions, and Task 8 verifies visually.
 ```

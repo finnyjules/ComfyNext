@@ -40,7 +40,7 @@ always visible** — they're state, not an affordance. This answers "hidden" wit
 
 ### 2.4 Behavior
 - **One click on an outline hexagon promotes immediately** — dispatches the *existing* promote
-  path (`comfynext:promoteControl` for studios, `comfynext:promoteLayoutElement` for Smart
+  path (`sailor:promoteControl` for studios, `sailor:promoteLayoutElement` for Smart
   Layout). Zero new binding logic; this is a discoverability skin over the finished system.
 - **Right-click** (kept everywhere) opens the existing menu: bind to an existing column / manage.
 - **Bound state:** the hexagon fills; **the control's value readout shows the column name** (see

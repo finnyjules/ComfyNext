@@ -204,7 +204,7 @@ function inputFilenameFromUrl(url: string): string | null {
 }
 
 // WebGL preview engine (Phase 1 M3): opt-in via
-//   localStorage.setItem('comfynext:Engine.WebGLPreview', 'true')
+//   localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
 // Falls back to the Canvas2D engine when WebGL2 is unavailable.
 const { getLocalSetting } = useLocalSettings()
 const wantGl = getLocalSetting('Engine.WebGLPreview') === 'true'
@@ -739,7 +739,7 @@ function r(n: number, d = 2): number {
 
 // -- HTML5 drag-and-drop from asset panel ----------------------------------
 //
-// MIME: application/x-comfynext-asset (we can't rely on text/plain since other
+// MIME: application/x-sailor-asset (we can't rely on text/plain since other
 // drops may set it). Payload schema:
 //   { kind: 'input-file', path, filename }     — needs import before use
 //   { kind: 'library',    asset_id }           — already in library
@@ -760,12 +760,12 @@ const dragTargetTrackId = ref<string | null>(null)
 function onAssetDragStart(payload: DragPayload, e: DragEvent) {
   if (!e.dataTransfer) return
   e.dataTransfer.effectAllowed = 'copy'
-  e.dataTransfer.setData('application/x-comfynext-asset', JSON.stringify(payload))
+  e.dataTransfer.setData('application/x-sailor-asset', JSON.stringify(payload))
 }
 
 function readDragPayload(e: DragEvent): DragPayload | null {
   if (!e.dataTransfer) return null
-  const raw = e.dataTransfer.getData('application/x-comfynext-asset')
+  const raw = e.dataTransfer.getData('application/x-sailor-asset')
   if (!raw) return null
   try { return JSON.parse(raw) as DragPayload } catch { return null }
 }
@@ -773,7 +773,7 @@ function readDragPayload(e: DragEvent): DragPayload | null {
 function onTrackDragOver(trackId: string, e: DragEvent) {
   if (!e.dataTransfer) return
   const types = Array.from(e.dataTransfer.types)
-  if (!types.includes('application/x-comfynext-asset')) return
+  if (!types.includes('application/x-sailor-asset')) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'copy'
   const rect = stripRef.value!.getBoundingClientRect()
@@ -933,7 +933,7 @@ async function renderViaFFmpeg() {
   }
 
   try {
-    const res = await fetch('/comfynext/render_timeline_stream', {
+    const res = await fetch('/sailor/render_timeline_stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),

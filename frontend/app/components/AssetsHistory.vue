@@ -100,7 +100,7 @@ async function fetchHistory() {
     // 2) Disk listing — files not referenced by any prompt become single-image
     //    items so they still surface in the gallery after a Comfy restart.
     try {
-      const listRes = await fetch('/comfynext/output_listing')
+      const listRes = await fetch('/sailor/output_listing')
       if (listRes.ok) {
         const { items: diskItems = [] } = await listRes.json() as { items: any[] }
         for (const f of diskItems) {
@@ -175,7 +175,7 @@ function toggleLikeInGrid(filename: string) {
     }, 400)
   }
   likedIds.value = next
-  localStorage.setItem(`comfynext-liked-${filename}`, isLiked ? '0' : '1')
+  localStorage.setItem(`sailor-liked-${filename}`, isLiked ? '0' : '1')
 }
 
 function loadAssetMeta() {
@@ -184,12 +184,12 @@ function loadAssetMeta() {
   for (const item of items.value) {
     // Check likes per image (keyed by filename)
     for (const img of item.images) {
-      if (localStorage.getItem(`comfynext-liked-${img.filename}`) === '1')
+      if (localStorage.getItem(`sailor-liked-${img.filename}`) === '1')
         liked.add(img.filename)
     }
     // Check comments per prompt
     try {
-      const raw = localStorage.getItem(`comfynext-comments-${item.promptId}`)
+      const raw = localStorage.getItem(`sailor-comments-${item.promptId}`)
       if (raw) {
         const arr = JSON.parse(raw)
         if (Array.isArray(arr) && arr.length > 0) comments.set(item.promptId, arr.length)

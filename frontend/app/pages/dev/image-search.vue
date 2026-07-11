@@ -17,8 +17,8 @@ function onAsset(e: Event) {
   const d = (e as CustomEvent).detail
   log.value.push(`addAssetNode → ${JSON.stringify(d)}`)
 }
-onMounted(() => window.addEventListener('comfynext:addAssetNode', onAsset))
-onBeforeUnmount(() => window.removeEventListener('comfynext:addAssetNode', onAsset))
+onMounted(() => window.addEventListener('sailor:addAssetNode', onAsset))
+onBeforeUnmount(() => window.removeEventListener('sailor:addAssetNode', onAsset))
 
 function onDone(imported: number, failed: number) {
   open.value = false

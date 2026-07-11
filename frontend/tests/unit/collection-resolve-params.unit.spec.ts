@@ -23,7 +23,7 @@ describe('splitResolvedValues', () => {
 })
 
 describe('pushVarPreview with params bindings', () => {
-  it('writes params into comfynext_varPreview on a studio target', () => {
+  it('writes params into sailor_varPreview on a studio target', () => {
     const c = createCollection('Sweeps')
     addColumn(c, 'intensity', 'number')
     const r = addRow(c)

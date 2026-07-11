@@ -4,9 +4,9 @@
 
 **Goal:** Build a frontend-only "Shader Studio" node that takes an input image and applies a stacked shader pipeline (stylized effect → duotone → adjustments → lens blur → chromatic), with a live preview, a full-screen editor, and still/video export.
 
-**Architecture:** Mirrors Gradient Studio exactly — a frontend-only config node (no backend `class_type`, never executes), config persisted at `node.data.properties.comfynext_shaderStudio`, a preview card + a full-screen surface that bakes outputs via the Space Type rails. The whole pipeline composes into one `ShaderPass[]` fed to the **existing** `shaderFx` singleton renderer (`app/lib/shaderfx/renderer.ts`), which already supports an arbitrary pass list over a base image. The only new rendering code is four GLSL fragments.
+**Architecture:** Mirrors Gradient Studio exactly — a frontend-only config node (no backend `class_type`, never executes), config persisted at `node.data.properties.sailor_shaderStudio`, a preview card + a full-screen surface that bakes outputs via the Space Type rails. The whole pipeline composes into one `ShaderPass[]` fed to the **existing** `shaderFx` singleton renderer (`app/lib/shaderfx/renderer.ts`), which already supports an arbitrary pass list over a base image. The only new rendering code is four GLSL fragments.
 
-**Tech Stack:** Nuxt 4 (Vue 3 + TypeScript + Tailwind), WebGL2 (existing `shaderFx` renderer), Vitest (`npm run test:unit`), the existing `shaderfx` catalog/params and Space Type bake rails (`uploadFrameBatch`, `ensureSpaceTypeBake`, `/comfynext/spacetype_encode`).
+**Tech Stack:** Nuxt 4 (Vue 3 + TypeScript + Tailwind), WebGL2 (existing `shaderFx` renderer), Vitest (`npm run test:unit`), the existing `shaderfx` catalog/params and Space Type bake rails (`uploadFrameBatch`, `ensureSpaceTypeBake`, `/sailor/spacetype_encode`).
 
 **Reference files to read before starting:**
 - Spec: `docs/superpowers/specs/2026-06-16-shader-studio-design.md`
@@ -16,7 +16,7 @@
 - Wiring sites in `frontend/app/components/vue-canvas/VueNodeCanvas.vue` and `frontend/app/composables/useVueNodes.ts` and `frontend/app/layouts/default.vue`
 
 **Conventions:**
-- All paths are relative to repo root `/Users/julien/Documents/GitHub/ComfyNext`. Frontend code is under `frontend/`.
+- All paths are relative to repo root `/Users/julien/Documents/GitHub/Sailor`. Frontend code is under `frontend/`.
 - Run unit tests from `frontend/`: `npm run test:unit -- <file>`.
 - Per the user's standing preference: **no purple/violet accents** — use neutral white-opacity + emerald-for-run only.
 - Commit after each task.
@@ -109,7 +109,7 @@ Expected: FAIL — cannot resolve `~/lib/shaderstudio/types`.
 // frontend/app/lib/shaderstudio/types.ts
 // Config for the Shader Studio node — a frontend-only, input-driven studio that
 // stacks shader passes over an input image. Persisted at
-// node.data.properties.comfynext_shaderStudio.
+// node.data.properties.sailor_shaderStudio.
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 
@@ -924,7 +924,7 @@ const injectedEdges = inject<any>('vueFlowEdges', null)
 const injectedNodes = inject<any>('vueFlowNodes', null)
 
 const config = computed<ShaderStudioConfig>(
-  () => (props.data?.properties?.comfynext_shaderStudio as ShaderStudioConfig) ?? defaultConfig(),
+  () => (props.data?.properties?.sailor_shaderStudio as ShaderStudioConfig) ?? defaultConfig(),
 )
 const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
 
@@ -987,7 +987,7 @@ watch(config, () => { if (timer) clearTimeout(timer); timer = setTimeout(startLo
 watch(animated, startLoop)
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openShaderStudio', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openShaderStudio', { detail: { nodeId: props.id } }))
 }
 </script>
 
@@ -1212,8 +1212,8 @@ function addTrack() {
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
 
 // ── persistence ────────────────────────────────────────────────────────────────
-function loadConfig() { const c = currentNode()?.data?.properties?.comfynext_shaderStudio; if (c && typeof c === 'object') config.value = cloneConfig(c) }
-function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.comfynext_shaderStudio = cloneConfig(config.value) }
+function loadConfig() { const c = currentNode()?.data?.properties?.sailor_shaderStudio; if (c && typeof c === 'object') config.value = cloneConfig(c) }
+function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.sailor_shaderStudio = cloneConfig(config.value) }
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
@@ -1240,7 +1240,7 @@ async function generateImage() {
     if (filename) {
       saveConfig()
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
-      window.dispatchEvent(new CustomEvent('comfynext:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
+      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
       closeEditor()
     }
   } catch (e) { console.error('[shader-studio] image failed', e); bakeMsg.value = 'Failed — see console.' }
@@ -1260,11 +1260,11 @@ async function generateVideo() {
       renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / m.fps) },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/comfynext/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }) })
+    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }) })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-      window.dispatchEvent(new CustomEvent('comfynext:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } } }))
+      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } } }))
       closeEditor()
     } else { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[shader-studio] encode failed', data) }
   } catch (e) { console.error('[shader-studio] video failed', e); bakeMsg.value = 'Failed — see console.' }
@@ -1528,18 +1528,18 @@ and use it directly in the handler (drop the `require` line).
 
 - [ ] **Step 5: Register/unregister the listeners**
 
-Find the block that does `window.addEventListener('comfynext:openGradientStudio', handleOpenGradientStudio)` and `window.addEventListener('comfynext:gradientStudioOutput', handleSpaceTypeOutput)` and add beside them:
+Find the block that does `window.addEventListener('sailor:openGradientStudio', handleOpenGradientStudio)` and `window.addEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)` and add beside them:
 
 ```ts
-  window.addEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
-  window.addEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
+  window.addEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
 ```
 
 Find the matching `removeEventListener` block and add:
 
 ```ts
-  window.removeEventListener('comfynext:openShaderStudio', handleOpenShaderStudio)
-  window.removeEventListener('comfynext:shaderStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
+  window.removeEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
 ```
 
 - [ ] **Step 6: Mount the surface**
@@ -1613,7 +1613,7 @@ git add -A && git commit -m "test(shader-studio): full unit suite green"
 
 This step is manual (the WebGL preview is GPU-gated, like the sibling studios). Start both servers per `CLAUDE.md`:
 - Frontend: `cd frontend && npm run dev`
-- ComfyUI: `cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
+- ComfyUI: `cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188`
 
 - [ ] **Step 1: Add the node** — Add menu → "Shader". Confirm the card mounts with an input handle (left) and output handle (right), showing "Connect or add an image".
 - [ ] **Step 2: In-studio source** — Edit → Source → Upload an image. Confirm the preview shows it.
@@ -1643,7 +1643,7 @@ This step is manual (the WebGL preview is GPU-gated, like the sibling studios). 
 - Time-driven loop motion → Tasks 3 + 8 (tracks, bake). ✓
 - Frontend-only node mirroring Gradient Studio → Tasks 7/8/9. ✓
 - Output via Space Type rails (still + video + asset) → Task 8. ✓
-- No backend changes → confirmed (only `/comfynext/spacetype_encode`, reused). ✓
+- No backend changes → confirmed (only `/sailor/spacetype_encode`, reused). ✓
 - No-purple preference → emerald/white-opacity only in components. ✓
 - Generative effects hidden from picker → Task 8 (`!e.generative` filter). ✓
 

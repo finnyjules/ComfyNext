@@ -1,6 +1,6 @@
-# ComfyNext → Agentic: The North Star
+# Sailor → Agentic: The North Star
 
-*An AI agent that lives inside ComfyNext the way Cursor lives in code — a collaborator working in your file, not a chatbot beside it. It edits the recipe (params + structure), never pixels, so its moves compose and undo for free. You supply taste; it supplies leverage. The win is a tight propose→accept loop, not autonomy.*
+*An AI agent that lives inside Sailor the way Cursor lives in code — a collaborator working in your file, not a chatbot beside it. It edits the recipe (params + structure), never pixels, so its moves compose and undo for free. You supply taste; it supplies leverage. The win is a tight propose→accept loop, not autonomy.*
 
 Status: direction agreed, not yet building (as of 2026-06-27). This is the map; the foundations are tracked as tasks F1–F4 + Tier-1.
 

@@ -100,7 +100,7 @@ Mirrors `pipeline-suggest.post.ts`:
 
 ### 3. `frontend/app/composables/useFontSuggest.ts` (new)
 
-- Reads the Anthropic key via `useLocalSettings().getLocalSetting('ComfyNext.AI.AnthropicApiKey')`.
+- Reads the Anthropic key via `useLocalSettings().getLocalSetting('Sailor.AI.AnthropicApiKey')`.
 - Exposes `{ suggest(query), suggestions, loading, error, clear() }`.
 - `suggest`:
   - If no key → set `error` to the standard "No Anthropic API key set. Add your key

@@ -4,7 +4,7 @@
 
 **Goal:** Add six generator-backed escalator actions (Enhance Detail, Upscale, Relight, Lens · Reframe, Variations ×4, Animate) to the image artifact's Edit… menu, restructured into three sections with credit hints, plus a transient post-render chip strip.
 
-**Architecture:** All splice actions reuse the existing `comfynext:applyEffect` → `spliceAfterNode()` rail in `VueNodeCanvas.vue`, extended with `run`/`focus` flags. Variations gets a new `'variation'` reroll scope (randomize upstream seeds, freeze upstream artifacts) plus a sequential-loop handler in `layouts/default.vue` mirroring the existing text-iterator. Animate creates a frontend-only `ShotDirector` node with a pre-seeded shot sheet and opens its editor. The chip strip is a per-artifact component coordinated by a tiny singleton composable so only the latest-rendered artifact shows it.
+**Architecture:** All splice actions reuse the existing `sailor:applyEffect` → `spliceAfterNode()` rail in `VueNodeCanvas.vue`, extended with `run`/`focus` flags. Variations gets a new `'variation'` reroll scope (randomize upstream seeds, freeze upstream artifacts) plus a sequential-loop handler in `layouts/default.vue` mirroring the existing text-iterator. Animate creates a frontend-only `ShotDirector` node with a pre-seeded shot sheet and opens its editor. The chip strip is a per-artifact component coordinated by a tiny singleton composable so only the latest-rendered artifact shows it.
 
 **Tech Stack:** Nuxt 4 / Vue 3 / TypeScript / Tailwind, vitest (`cd frontend && npm run test:unit`), lucide-vue-next icons.
 
@@ -169,7 +169,7 @@ Expected: PASS (5 tests). Also run the full suite once: `npm run test:unit` — 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/artifact/nextSteps.ts frontend/tests/unit/artifact-next-steps.unit.spec.ts
 git commit -m "feat(artifact-actions): action credit hints + variation seed-scope helper"
 ```
@@ -184,7 +184,7 @@ git commit -m "feat(artifact-actions): action credit hints + variation seed-scop
 
 **Interfaces:**
 - Consumes: `upstreamSeedScope` from Task 1.
-- Produces: window event contract `comfynext:runVariations` with detail `{ nodeId: string, count?: number }` (Task 4's menu item and Task 6's chip dispatch this). `getFilteredWorkflow` opts widen to `{ rerollScope?: 'self' | 'variation', direction?: 'downstream' }`.
+- Produces: window event contract `sailor:runVariations` with detail `{ nodeId: string, count?: number }` (Task 4's menu item and Task 6's chip dispatch this). `getFilteredWorkflow` opts widen to `{ rerollScope?: 'self' | 'variation', direction?: 'downstream' }`.
 
 - [ ] **Step 1: Widen the reroll scope in `getFilteredWorkflow`**
 
@@ -274,10 +274,10 @@ async function handleRunVariations(e: Event) {
 Register/unregister next to the other listeners (lines ~864 and ~876):
 
 ```ts
-  window.addEventListener('comfynext:runVariations', handleRunVariations)
+  window.addEventListener('sailor:runVariations', handleRunVariations)
 ```
 ```ts
-  window.removeEventListener('comfynext:runVariations', handleRunVariations)
+  window.removeEventListener('sailor:runVariations', handleRunVariations)
 ```
 
 - [ ] **Step 4: Verify nothing regressed**
@@ -288,7 +288,7 @@ Expected: all suites pass (this step has no unit coverage of its own — the sco
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/VueNodeCanvas.vue frontend/app/layouts/default.vue
 git commit -m "feat(artifact-actions): 'variation' reroll scope + sequential runVariations handler"
 ```
@@ -298,11 +298,11 @@ git commit -m "feat(artifact-actions): 'variation' reroll scope + sequential run
 ### Task 3: `applyEffect` gains `run` + `focus`; Animate spawn handler
 
 **Files:**
-- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue:1508-1536` (`spliceAfterNode`), `:1622-1626` (`handleApplyEffect`), imports ~line 54-60, listener registration (search `comfynext:applyEffect` — add the new listener beside it)
+- Modify: `frontend/app/components/vue-canvas/VueNodeCanvas.vue:1508-1536` (`spliceAfterNode`), `:1622-1626` (`handleApplyEffect`), imports ~line 54-60, listener registration (search `sailor:applyEffect` — add the new listener beside it)
 
 **Interfaces:**
 - Consumes: `createNodeData` (VueNodeCanvas:1343), `hydrateShotSheet` (already imported line 55), `shotDirectorOpenForId` (line 2477), `fitView` (line 888).
-- Produces: `comfynext:applyEffect` detail widens to `{ nodeId, nodeType, output?, widgetOverrides?, run?: boolean, focus?: boolean }`; new window event `comfynext:animateArtifact` with detail `{ nodeId: string }`. Task 4's menu items dispatch both.
+- Produces: `sailor:applyEffect` detail widens to `{ nodeId, nodeType, output?, widgetOverrides?, run?: boolean, focus?: boolean }`; new window event `sailor:animateArtifact` with detail `{ nodeId: string }`. Task 4's menu items dispatch both.
 
 - [ ] **Step 1: Make `spliceAfterNode` return the new node id and toast on unknown type**
 
@@ -352,7 +352,7 @@ async function handleApplyEffect(e: Event) {
     // One-tap actions (Upscale): run the new node immediately; 'self' scope
     // freezes the upstream artifact so it feeds its image instead of re-running
     // (and re-billing) the chain that produced it.
-    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
       detail: { targetIds: [newId], rerollScope: 'self' },
     }))
   }
@@ -382,7 +382,7 @@ async function handleAnimateArtifact(e: Event) {
     // (firstFrame mode exists on the sheet but has no compile/dispatch wiring yet.)
     const sheet = addRef(hydrateShotSheet(undefined), 'image', refUrl, 'composition-lock')
     const pos = { x: (src.position?.x ?? 0) + 360, y: (src.position?.y ?? 0) }
-    const node = createNodeData('ShotDirector', pos, undefined, { comfynext_shotDirector: sheet })
+    const node = createNodeData('ShotDirector', pos, undefined, { sailor_shotDirector: sheet })
     nodes.value.push(node)
     await nextTick()
     fitView({ nodes: [node.id], padding: 0.5, duration: 250 })
@@ -394,13 +394,13 @@ async function handleAnimateArtifact(e: Event) {
 }
 ```
 
-Register it wherever `comfynext:applyEffect`'s listener is added/removed (grep `addEventListener('comfynext:applyEffect'` in VueNodeCanvas.vue and mirror both lines):
+Register it wherever `sailor:applyEffect`'s listener is added/removed (grep `addEventListener('sailor:applyEffect'` in VueNodeCanvas.vue and mirror both lines):
 
 ```ts
-  window.addEventListener('comfynext:animateArtifact', handleAnimateArtifact)
+  window.addEventListener('sailor:animateArtifact', handleAnimateArtifact)
 ```
 ```ts
-  window.removeEventListener('comfynext:animateArtifact', handleAnimateArtifact)
+  window.removeEventListener('sailor:animateArtifact', handleAnimateArtifact)
 ```
 
 - [ ] **Step 4: Verify**
@@ -411,7 +411,7 @@ Expected: all pass. (Behavioral verification is Task 7's manual pass — these a
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/VueNodeCanvas.vue
 git commit -m "feat(artifact-actions): applyEffect run/focus flags + animateArtifact spawn handler"
 ```
@@ -440,7 +440,7 @@ Add below `editWithNanoBanana()` (~line 290):
 // (the user aims first, then pays). Upscale is a true one-tap: spawn + run,
 // upstream artifact frozen so only the upscaler bills.
 function spliceEffect(nodeType: string, opts: { run?: boolean; focus?: boolean } = {}, widgetOverrides?: Record<string, unknown>) {
-  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
     detail: { nodeId: props.id, nodeType, output: 'IMAGE', widgetOverrides, ...opts },
   }))
 }
@@ -453,12 +453,12 @@ function spawnLensReframe() { spliceEffect('LensReframe', { focus: true }) }
 // seeds; results accumulate in the Takes strip. Needs something upstream to
 // re-run, hence the hasUpstream gate (mirrored as a disabled menu row).
 function runVariations() {
-  window.dispatchEvent(new CustomEvent('comfynext:runVariations', { detail: { nodeId: props.id, count: 4 } }))
+  window.dispatchEvent(new CustomEvent('sailor:runVariations', { detail: { nodeId: props.id, count: 4 } }))
 }
 
 // Animate: spawn a Shot Director seeded with this image as reference.
 function animateArtifact() {
-  window.dispatchEvent(new CustomEvent('comfynext:animateArtifact', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:animateArtifact', { detail: { nodeId: props.id } }))
 }
 ```
 
@@ -556,7 +556,7 @@ Expected: all pass. Then a quick render sanity check in the dev preview (menu op
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/ArtifactImageNode.vue
 git commit -m "feat(artifact-actions): regrouped Edit menu — Retouch/Enhance/Create + credit hints"
 ```
@@ -631,7 +631,7 @@ Expected: PASS (7 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useNextStepsStrip.ts frontend/tests/unit/artifact-next-steps.unit.spec.ts
 git commit -m "feat(artifact-actions): singleton next-steps strip coordination composable"
 ```
@@ -787,7 +787,7 @@ Expected: all pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/NextStepsStrip.vue frontend/app/components/vue-canvas/ArtifactImageNode.vue
 git commit -m "feat(artifact-actions): post-render next-steps chip strip on image artifacts"
 ```

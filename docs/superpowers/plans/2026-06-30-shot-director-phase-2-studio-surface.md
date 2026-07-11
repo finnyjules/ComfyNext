@@ -4,7 +4,7 @@
 
 **Goal:** A working, on-canvas **Shot Director studio surface** — a structured editor that binds a `ShotSheet` (Phase 1) to a live-compiled Seedance prompt + input preview, persists to the node, and lets the user **copy the compiled prompt/input** to use with the existing Generate-a-video node. No backend dispatch yet (that's Phase 3).
 
-**Architecture:** Follows the existing frontend-only studio pattern (Shader/Texture Studio): a canvas **node card** (`ShotDirectorNode.vue`) with an Edit button that opens a **full-screen editor surface** (`ShotDirectorSurface.vue`) via a `window` CustomEvent + a Teleport in `VueNodeCanvas.vue`. State lives at `node.data.properties.comfynext_shotDirector` as a `ShotSheet`. A `useShotDirector` composable owns the reactive sheet, persistence, mutation helpers, and the live `compileShot` result. The surface is references-first (Phase 1 research), always shows the compiled prompt + word-budget meter, and never dispatches — it produces a copy-able artifact.
+**Architecture:** Follows the existing frontend-only studio pattern (Shader/Texture Studio): a canvas **node card** (`ShotDirectorNode.vue`) with an Edit button that opens a **full-screen editor surface** (`ShotDirectorSurface.vue`) via a `window` CustomEvent + a Teleport in `VueNodeCanvas.vue`. State lives at `node.data.properties.sailor_shotDirector` as a `ShotSheet`. A `useShotDirector` composable owns the reactive sheet, persistence, mutation helpers, and the live `compileShot` result. The surface is references-first (Phase 1 research), always shows the compiled prompt + word-budget meter, and never dispatches — it produces a copy-able artifact.
 
 **Tech Stack:** Vue 3 `<script setup>` + TypeScript, Tailwind, Vue Flow canvas, Vitest (logic units), Nuxt dev server + browser preview (visual).
 
@@ -16,7 +16,7 @@
 - **No photography jargon in the UI** — no fps/lens/ISO controls. Pacing is the four words `slow | smooth | gradual | gentle`.
 - **Live word-budget meter** — green ≤ 100 words, amber > 100, red at the > 600 hard cap (mirrors `word-budget-warning` / `word-budget-exceeded` issue codes). Always visible.
 - **No purple/violet accents** — neutral white-opacity + type-color; emerald reserved for run/confirm actions (project rule).
-- **Persistence** — every edit writes through to `node.data.properties.comfynext_shotDirector`; reopening the surface restores exactly.
+- **Persistence** — every edit writes through to `node.data.properties.sailor_shotDirector`; reopening the surface restores exactly.
 - **Studio config-node semantics** — `ShotDirector` is frontend-only (no `/object_info`); its `bakeOutput()` returns `null`. Register it exactly like Texture Studio in `ARTIFACT_NODE_COMPONENTS`, `VueNodeCanvas` node-types, `createNodeData` output-synthesis, `cascade.ts` STUDIO node set, and `capabilities.ts` STUDIOS.
 - **Seedance option sets in the format bar** — durations `[3,5,10,15]` (+ an "Auto (-1)" choice), resolutions `['720p','1080p']`, aspect ratios `['16:9','9:16','1:1','4:3','3:4','21:9','adaptive']`.
 
@@ -118,7 +118,7 @@ describe('reference helpers', () => {
 
 ```ts
 // frontend/app/lib/shotdirector/hydrate.ts
-// Defensive hydration of a persisted ShotSheet (node.data.properties.comfynext_shotDirector)
+// Defensive hydration of a persisted ShotSheet (node.data.properties.sailor_shotDirector)
 // and pure reference-list helpers. Mirrors the shaderstudio hydrateConfig pattern.
 
 import { createDefaultShotSheet, type Ref, type RefKind, type ShotSheet } from './types'
@@ -203,7 +203,7 @@ export function removeRef(sheet: ShotSheet, kind: RefKind, slot: number): ShotSh
   - `useShotDirector(initial: unknown, persist: (sheet: ShotSheet) => void)` returning `{ sheet: Ref<ShotSheet>, result: ComputedRef<CompileResult>, profile, update(mutator: (s: ShotSheet) => ShotSheet): void, addReference(kind, src, role): void, removeReference(kind, slot): void }`.
   - `update` replaces `sheet.value` with `mutator(sheet.value)` and calls `persist(sheet.value)`; the composable also `watch`es `sheet` deep and persists.
 
-Notes for the implementer: keep it thin. `initial` is `node.data.properties.comfynext_shotDirector`. `persist` is a callback the surface supplies that writes back to the node. The profile is fixed to `getProfile('seedance-2.0')` for Phase 2. `result` is `computed(() => compileShot(sheet.value, profile))`. Unit test can import the composable directly (it only needs `vue`, which the repo's Vitest environment already provides — see existing composable tests) and assert that `addReference` grows `result.value.input.reference_images` and that `persist` is called. If the repo has no precedent for unit-testing a composable outside a component, implement the testable parts as plain functions in `hydrate.ts`/here and note it; do not add heavy test scaffolding.
+Notes for the implementer: keep it thin. `initial` is `node.data.properties.sailor_shotDirector`. `persist` is a callback the surface supplies that writes back to the node. The profile is fixed to `getProfile('seedance-2.0')` for Phase 2. `result` is `computed(() => compileShot(sheet.value, profile))`. Unit test can import the composable directly (it only needs `vue`, which the repo's Vitest environment already provides — see existing composable tests) and assert that `addReference` grows `result.value.input.reference_images` and that `persist` is called. If the repo has no precedent for unit-testing a composable outside a component, implement the testable parts as plain functions in `hydrate.ts`/here and note it; do not add heavy test scaffolding.
 
 - [ ] **Step 1–5:** Follow TDD: test that `addReference('image', 'x', 'identity-lock')` makes `result.value.prompt` contain `[Image1]` and `result.value.input.reference_images` equal `['x']`, and that `persist` was invoked; test that `update` toggling `mode` to `'firstLastFrame'` clears the reference tags from `result.value.prompt`. Implement the composable. Commit: `git commit -m "feat(shot-director): useShotDirector reactive composable"`.
 
@@ -213,7 +213,7 @@ Notes for the implementer: keep it thin. `initial` is `node.data.properties.comf
 
 **Files (all Modify):**
 - `frontend/app/composables/useVueNodes.ts` — add `ShotDirector: 'shot-director'` to `ARTIFACT_NODE_COMPONENTS`.
-- `frontend/app/components/vue-canvas/VueNodeCanvas.vue` — (a) import `ShotDirectorNode`; (b) add `'shot-director': markRaw(ShotDirectorNode)` to the node-types object; (c) add `'ShotDirector'` to the `createNodeData` output-synthesis condition (~line 1371); (d) add the open-handler state + `window` listener for `'comfynext:openShotDirector'` mirroring `shaderStudioOpenForId`; (e) add the `<Teleport to="body">` block rendering `ShotDirectorSurface` when open.
+- `frontend/app/components/vue-canvas/VueNodeCanvas.vue` — (a) import `ShotDirectorNode`; (b) add `'shot-director': markRaw(ShotDirectorNode)` to the node-types object; (c) add `'ShotDirector'` to the `createNodeData` output-synthesis condition (~line 1371); (d) add the open-handler state + `window` listener for `'sailor:openShotDirector'` mirroring `shaderStudioOpenForId`; (e) add the `<Teleport to="body">` block rendering `ShotDirectorSurface` when open.
 - `frontend/app/lib/studio/cascade.ts` — add `'ShotDirector'` to the STUDIO node-type set used by `planStudioCascade` (so its baker is recognized).
 - `frontend/app/lib/agent/capabilities.ts` — add the `ShotDirector` entry to `STUDIOS` (frontendOnly, title "Shot Director", optional `reference` IMAGE input, wildcard output, intents incl. "seedance", "direct a video", "shot director").
 - Test: `frontend/tests/unit/shotdirector-registration.unit.spec.ts`
@@ -237,7 +237,7 @@ describe('ShotDirector registration', () => {
 ```
 
 - [ ] **Step 2: Run → FAIL** (`ShotDirector` not yet in the map).
-- [ ] **Step 3: Apply the wiring edits** listed above. For the `VueNodeCanvas.vue` open-handler + Teleport, copy the exact `shaderStudioOpenForId` pattern (state ref, `addEventListener('comfynext:openShotDirector', ...)` in the mount hook + matching `removeEventListener` in cleanup, and the `<Teleport to="body"><VueCanvasShotDirectorSurface v-if="shotDirectorOpenForId" :node-id="shotDirectorOpenForId" :nodes="nodes as any[]" @close="shotDirectorOpenForId = null" /></Teleport>`). The Surface component is created in Task 5 — until then, import it and accept that the canvas won't compile the Teleport branch at runtime unless the file exists; create an empty stub `ShotDirectorSurface.vue` (root `<div/>`) first so the import resolves, then flesh it out in Task 5.
+- [ ] **Step 3: Apply the wiring edits** listed above. For the `VueNodeCanvas.vue` open-handler + Teleport, copy the exact `shaderStudioOpenForId` pattern (state ref, `addEventListener('sailor:openShotDirector', ...)` in the mount hook + matching `removeEventListener` in cleanup, and the `<Teleport to="body"><VueCanvasShotDirectorSurface v-if="shotDirectorOpenForId" :node-id="shotDirectorOpenForId" :nodes="nodes as any[]" @close="shotDirectorOpenForId = null" /></Teleport>`). The Surface component is created in Task 5 — until then, import it and accept that the canvas won't compile the Teleport branch at runtime unless the file exists; create an empty stub `ShotDirectorSurface.vue` (root `<div/>`) first so the import resolves, then flesh it out in Task 5.
 - [ ] **Step 4: Run → PASS.** Also run the whole shot-director suite to confirm no regressions.
 - [ ] **Step 5: Commit** — stage the five wiring files + the test: `git commit -m "feat(shot-director): register ShotDirector studio node type"`.
 
@@ -249,10 +249,10 @@ describe('ShotDirector registration', () => {
 
 Mirror `TextureStudioNode.vue`:
 - Props `{ id: string; data: { nodeType; title?; properties?; studioBusy? } }`.
-- `const config = computed(() => hydrateShotSheet(props.data?.properties?.comfynext_shotDirector))`.
+- `const config = computed(() => hydrateShotSheet(props.data?.properties?.sailor_shotDirector))`.
 - Card body: title "Shot Director", a compact summary — model chip ("Seedance 2.0"), the subject line (or "Untitled shot"), reference-count chips (e.g. "3 img · 1 vid"), and the live word count from `compileShot(config, getProfile('seedance-2.0')).wordCount` with the green/amber/red dot. Keep it small (the card is ~220px).
 - `onMounted(() => registerStudioBaker(props.id, bakeOutput))`, `onBeforeUnmount(() => unregisterStudioBaker(props.id))`, with `async function bakeOutput() { return null }`.
-- Edit button → `window.dispatchEvent(new CustomEvent('comfynext:openShotDirector', { detail: { nodeId: props.id } }))`.
+- Edit button → `window.dispatchEvent(new CustomEvent('sailor:openShotDirector', { detail: { nodeId: props.id } }))`.
 - Respect the no-purple rule; emerald only if you add a run affordance (none in Phase 2).
 
 **Acceptance (visual):** node renders on the canvas, summary reflects persisted config, Edit opens the surface. Verified via the harness/canvas in Task 6.
@@ -265,7 +265,7 @@ Mirror `TextureStudioNode.vue`:
 
 **Files:** Create/replace `frontend/app/components/vue-canvas/ShotDirectorSurface.vue`
 
-Props `{ nodeId: string; nodes: any[] }`, emit `close`. On setup: find the node in `nodes`, build `const { sheet, result, addReference, removeReference, update } = useShotDirector(node?.data?.properties?.comfynext_shotDirector, persist)` where `persist(s)` writes `node.data.properties.comfynext_shotDirector = s`.
+Props `{ nodeId: string; nodes: any[] }`, emit `close`. On setup: find the node in `nodes`, build `const { sheet, result, addReference, removeReference, update } = useShotDirector(node?.data?.properties?.sailor_shotDirector, persist)` where `persist(s)` writes `node.data.properties.sailor_shotDirector = s`.
 
 Wrap in `StudioModalShell` (title "Shot Director", esc/close → emit `close`). Two-column layout:
 
@@ -291,7 +291,7 @@ All edits go through `update`/`addReference`/`removeReference` so persistence + 
 
 ### Task 6 🖼️: Dev harness + visual verification + look sign-off
 
-**Files:** Create `frontend/app/pages/dev/shot-director-harness.vue` (`definePageMeta({ layout: false })`) mounting `ShotDirectorSurface` with a mock node (id + `data.properties.comfynext_shotDirector = {}`) and a mock `nodes` array, per the studio-map harness pattern.
+**Files:** Create `frontend/app/pages/dev/shot-director-harness.vue` (`definePageMeta({ layout: false })`) mounting `ShotDirectorSurface` with a mock node (id + `data.properties.sailor_shotDirector = {}`) and a mock `nodes` array, per the studio-map harness pattern.
 
 - [ ] Start the dev server (`npm run dev`), open `http://127.0.0.1:3000/dev/shot-director-harness`.
 - [ ] Verify the acceptance criteria from Tasks 4–5 in the browser: live recompile, word meter colors, mode switch dropping tags, issues surfacing, Copy actions, persistence round-trip (also test on a real canvas node: add a "Shot Director" node, edit, reload).

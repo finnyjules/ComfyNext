@@ -11,7 +11,7 @@ import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 // Gradient Studio — a frontend-only config node (no backend class_type, never
 // executes). The card shows a live preview from the saved config; "Edit" opens
 // the full GradientStudioSurface bound to this node, which writes its config
-// back to node.data.properties.comfynext_gradientStudio.
+// back to node.data.properties.sailor_gradientStudio.
 const props = defineProps<{
   id: string
   data: {
@@ -27,7 +27,7 @@ const props = defineProps<{
 const PREVIEW_W = 220
 
 const config = computed<GradientConfig>(
-  () => (props.data?.properties?.comfynext_gradientStudio as GradientConfig) ?? defaultConfig('#default0'),
+  () => (props.data?.properties?.sailor_gradientStudio as GradientConfig) ?? defaultConfig('#default0'),
 )
 
 const previewH = computed(() => Math.round(PREVIEW_W / aspectRatio(config.value.canvas.aspect)))
@@ -92,7 +92,7 @@ watch(config, () => {
 watch(animated, startLoop)
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openGradientStudio', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openGradientStudio', { detail: { nodeId: props.id } }))
 }
 
 // Index of the optional `vars` input a Collection's VARS output wires into.

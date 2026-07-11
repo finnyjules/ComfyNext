@@ -267,7 +267,7 @@ export function useAiStatus() {
       .catch(() => { serverKeyConfigured.value = null })
   }
   const aiAvailable = computed(() => {
-    if (getLocalSetting('ComfyNext.AI.AnthropicApiKey')) return true
+    if (getLocalSetting('Sailor.AI.AnthropicApiKey')) return true
     return serverKeyConfigured.value !== false
   })
   return { serverKeyConfigured, aiAvailable }
@@ -345,7 +345,7 @@ export function vueNodesDefault(stored: string | null): boolean {
 }
 ```
 
-and change line 7 to `vueNodesEnabled.value = vueNodesDefault(localStorage.getItem('comfynext:Comfy.VueNodes.Enabled'))`. Also change the initial ref: `const vueNodesEnabled = ref(true)` (SSR/first-paint should assume the default, not flash the legacy canvas).
+and change line 7 to `vueNodesEnabled.value = vueNodesDefault(localStorage.getItem('sailor:Comfy.VueNodes.Enabled'))`. Also change the initial ref: `const vueNodesEnabled = ref(true)` (SSR/first-paint should assume the default, not flash the legacy canvas).
 
 - [ ] **Step 4: Settings toggle shows the real default**
 

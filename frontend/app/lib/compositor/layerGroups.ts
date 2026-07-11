@@ -5,7 +5,7 @@
  * working with no migration:
  *   - A layer's IMMEDIATE group is still `layer.groupId` (unchanged, one id).
  *   - Nesting is described by a separate registry of `LayerGroup { id, name?,
- *     parentId? }`, persisted on the node as `comfynext_localGroups`. A group's
+ *     parentId? }`, persisted on the node as `sailor_localGroups`. A group's
  *     place in the tree comes from `parentId`; a group with no `parentId` (or no
  *     registry entry at all) is a root.
  *   - So when a group gets nested, only the PARENT link changes — member layers

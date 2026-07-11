@@ -28,7 +28,7 @@ export interface Block {
   createdAt: number
 }
 
-const STORAGE_KEY = 'comfynext:blocks'
+const STORAGE_KEY = 'sailor:blocks'
 
 function readStorage(): Block[] {
   if (typeof window === 'undefined') return []

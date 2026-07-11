@@ -1182,7 +1182,7 @@ cd frontend && npm run dev
 ```
 In another shell, start ComfyUI per CLAUDE.md:
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python main.py --listen 127.0.0.1 --port 8188
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python main.py --listen 127.0.0.1 --port 8188
 ```
 Open the app, click Add → Space Type. Verify:
 - The ribbon preview animates: stacked rows, twist, wave, scroll.
@@ -1207,7 +1207,7 @@ Set `SPACE_TYPE_ENABLED` back to `false` (merge hidden, per the spec default), u
 
 - [ ] **Step 7: Update the memory index**
 
-Append a one-line pointer to `/Users/julien/.claude/projects/-Users-julien-Documents-GitHub-ComfyNext/memory/MEMORY.md` and write a `project_space_type_ribbon.md` memory capturing: the suite architecture (pluggable `SpaceTypeEffect`), ribbon as slice 1, gated behind `SPACE_TYPE_ENABLED`, output via the `motion_frames` pipeline, and that cylinder/field/stripes are future slices.
+Append a one-line pointer to `/Users/julien/.claude/projects/-Users-julien-Documents-GitHub-Sailor/memory/MEMORY.md` and write a `project_space_type_ribbon.md` memory capturing: the suite architecture (pluggable `SpaceTypeEffect`), ribbon as slice 1, gated behind `SPACE_TYPE_ENABLED`, output via the `motion_frames` pipeline, and that cylinder/field/stripes are future slices.
 
 - [ ] **Step 8: Final commit (if memory or docs changed in-repo)**
 

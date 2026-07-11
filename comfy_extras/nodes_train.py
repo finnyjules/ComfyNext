@@ -23,7 +23,7 @@ from comfy.weight_adapter import adapters, adapter_maps
 from comfy.weight_adapter.bypass import BypassInjectionManager
 from comfy_api.latest import ComfyExtension, io, ui
 from comfy.utils import ProgressBar
-from comfy_extras import _lora_training  # noqa: F401 — registers /comfynext/lora/* routes
+from comfy_extras import _lora_training  # noqa: F401 — registers /sailor/lora/* routes
 
 
 class TrainGuider(comfy_extras.nodes_custom_sampler.Guider_Basic):

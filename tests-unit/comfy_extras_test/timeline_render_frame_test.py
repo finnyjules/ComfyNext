@@ -1,5 +1,5 @@
 """Unit tests for render_frame_np — the single-frame composite the FFmpeg
-export, the golden harness, and /comfynext/timeline/render_frame all share."""
+export, the golden harness, and /sailor/timeline/render_frame all share."""
 import importlib.util
 import os
 import sys

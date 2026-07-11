@@ -1,6 +1,6 @@
 // Maps ComfyUI WebSocket messages ({ type, data }) to the bridge-shaped event
 // objects `default.vue`'s `handleBridgeEvent`-style switch already consumes
-// (see custom_nodes/comfynext_bridge/js/bridge.js, api.addEventListener
+// (see custom_nodes/sailor_bridge/js/bridge.js, api.addEventListener
 // blocks around lines 1316-1383). Task 8 will pipe useDirectExecution's
 // events straight into that same handler, so field names here must match the
 // bridge verbatim — NOT the Task 7 brief where the two disagree.

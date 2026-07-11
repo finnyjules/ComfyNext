@@ -118,7 +118,7 @@ test.describe('Timeline editor', () => {
       // handler honors cursor position.
       const path = src.title.split(' — ')[0]
       const filename = (src.textContent ?? '').trim()
-      dt.setData('application/x-comfynext-asset', JSON.stringify({ kind: 'input-file', path, filename }))
+      dt.setData('application/x-sailor-asset', JSON.stringify({ kind: 'input-file', path, filename }))
       src.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }))
       trackEl.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, clientX: tx, clientY: ty, cancelable: true }))
       trackEl.dispatchEvent(new DragEvent('dragover',  { dataTransfer: dt, bubbles: true, clientX: tx, clientY: ty, cancelable: true }))
@@ -186,7 +186,7 @@ test.describe('Timeline editor', () => {
   test('export streaming: progress events arrive and final result has a filename', async ({ page }) => {
     // Talk to the endpoint directly — exercises the SSE/NDJSON path including
     // the bug-fix where the result envelope is `type: "result"` (not `type: "output"`).
-    const assets = await page.request.get('/comfynext/assets').then((r) => r.json())
+    const assets = await page.request.get('/sailor/assets').then((r) => r.json())
     const a = assets.assets?.[0]
     test.skip(!a, 'need at least one imported asset')
     const payload = {
@@ -203,7 +203,7 @@ test.describe('Timeline editor', () => {
         }],
       }],
     }
-    const res = await page.request.post('/comfynext/render_timeline_stream', {
+    const res = await page.request.post('/sailor/render_timeline_stream', {
       data: payload,
       headers: { 'content-type': 'application/json' },
     })

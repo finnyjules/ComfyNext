@@ -44,7 +44,7 @@ function linkedCellText(rowIndex: number, colIndex: number): string {
 }
 function openForeign(sourceCollectionId: string) {
   const n = props.nodes.find((x: any) => x?.data?.properties?.[COLLECTION_PROP]?.id === sourceCollectionId)
-  if (n) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(n.id) } }))
+  if (n) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(n.id) } }))
 }
 
 // --- Wired targets --------------------------------------------------------
@@ -70,7 +70,7 @@ function targetBindings(): Record<string, VarBinding> {
 // bindings themselves re-pushes the resolved preview row onto the target.
 // Must never deep-watch the whole target properties object — VAR_PREVIEW_PROP
 // and BINDINGS_PROP have to stay disjoint watched keys, or writes to
-// comfynext_varPreview below would retrigger this watcher (infinite loop).
+// sailor_varPreview below would retrigger this watcher (infinite loop).
 watch(
   [collection, () => target.value?.data?.properties?.[BINDINGS_PROP]],
   () => { if (node.value) pushVarPreview(node.value, targets.value, props.nodes) },
@@ -280,8 +280,8 @@ async function retryFailed() {
 
 // --- Sweep auto-run (Slice 2a Task 8b) ------------------------------------
 // A studio surface's Sweep popover appends rows then dispatches
-// `comfynext:openCollection` (opens this drawer) immediately followed by
-// `comfynext:runSweepRows`. VueNodeCanvas is the only listener guaranteed to
+// `sailor:openCollection` (opens this drawer) immediately followed by
+// `sailor:runSweepRows`. VueNodeCanvas is the only listener guaranteed to
 // already be mounted when runSweepRows fires, so it stashes the detail and
 // passes it down as `pendingSweep`; this drawer consumes it once mounted
 // (its own key-based remount means onMounted always sees a fresh instance)

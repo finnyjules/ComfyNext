@@ -2,7 +2,7 @@ import type { EditState } from '~~/shared/timeline/types'
 import type { PreviewRenderer } from '~~/shared/timeline/previewRenderer'
 
 // PreviewRenderer that asks the Python exporter for each frame
-// (/comfynext/timeline/render_frame → render_frame_np). Slow by design — it
+// (/sailor/timeline/render_frame → render_frame_np). Slow by design — it
 // exists as ground truth: it validates the harness pipeline in Phase 0 and is
 // the reference the WebGL engine gets diffed against during Phase-1 bring-up.
 export class ServerFrameRenderer implements PreviewRenderer {
@@ -14,7 +14,7 @@ export class ServerFrameRenderer implements PreviewRenderer {
 
   async renderFrame(frame: number, target: HTMLCanvasElement): Promise<void> {
     if (!this.state) throw new Error('ServerFrameRenderer: load() first')
-    const res = await fetch('/comfynext/timeline/render_frame', {
+    const res = await fetch('/sailor/timeline/render_frame', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: this.state, frame }),

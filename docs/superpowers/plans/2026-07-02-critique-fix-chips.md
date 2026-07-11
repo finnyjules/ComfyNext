@@ -139,7 +139,7 @@ Expected: PASS (6 tests). Then `npm run test:unit` — only the 3 baseline failu
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/artifact/nextSteps.ts frontend/app/lib/agent/protocol.ts frontend/tests/unit/critique-fix-chips.unit.spec.ts
 git commit -m "feat(critique-chips): paidProducerFor gate + per-fix chip labels in review schema"
 ```
@@ -240,7 +240,7 @@ Expected: PASS — both files (the artifact-next-steps suite proves `active`/`di
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useNextStepsStrip.ts frontend/tests/unit/critique-fix-chips.unit.spec.ts
 git commit -m "feat(critique-chips): sticky fixes channel on the next-steps strip composable"
 ```
@@ -390,7 +390,7 @@ Expected: only the 3 baseline failures. (This task's behavior is exercised live 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useCanvasAgent.ts
 git commit -m "feat(critique-chips): auto review mode publishes fix chips; applyReviewFix single-change commit"
 ```
@@ -406,7 +406,7 @@ git commit -m "feat(critique-chips): auto review mode publishes fix chips; apply
 
 **Interfaces:**
 - Consumes: `FixChip`, strip channels (Task 2), `autoReviewNode` (Task 3), `paidProducerFor` (Task 1), `props.vueCanvas.getNodes()/getEdges()/agentNodeIntent()` (already exposed by VueNodeCanvas).
-- Produces: window event `comfynext:autoReview { nodeId: string, takeId: string }`.
+- Produces: window event `sailor:autoReview { nodeId: string, takeId: string }`.
 
 - [ ] **Step 1: NextStepsStrip renders fix chips; timer no longer kills them**
 
@@ -485,7 +485,7 @@ watch(() => props.data.takes?.length ?? 0, (now, before) => {
     // Paid renders get a quiet critique pass; the gate lives in CanvasPromptBar.
     const takeId = props.data.takes?.[props.data.takes.length - 1]?.id
     if (takeId) {
-      window.dispatchEvent(new CustomEvent('comfynext:autoReview', {
+      window.dispatchEvent(new CustomEvent('sailor:autoReview', {
         detail: { nodeId: props.id, takeId: String(takeId) },
       }))
     }
@@ -559,10 +559,10 @@ function onAutoReview(e: Event) {
 Register in the existing `onMounted`/`onBeforeUnmount` pairs:
 
 ```ts
-  window.addEventListener('comfynext:autoReview', onAutoReview)
+  window.addEventListener('sailor:autoReview', onAutoReview)
 ```
 ```ts
-  window.removeEventListener('comfynext:autoReview', onAutoReview)
+  window.removeEventListener('sailor:autoReview', onAutoReview)
   for (const t of autoReviewTimers.values()) clearTimeout(t)
 ```
 
@@ -574,7 +574,7 @@ Expected: only the 3 baseline failures.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/NextStepsStrip.vue frontend/app/components/vue-canvas/ArtifactImageNode.vue frontend/app/components/agent/CanvasPromptBar.vue
 git commit -m "feat(critique-chips): pastel fix chips in the strip + gated auto-review trigger"
 ```

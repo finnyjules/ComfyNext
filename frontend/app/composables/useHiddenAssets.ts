@@ -7,7 +7,7 @@ import { ref, computed } from 'vue'
 // intentionally NOT in the key so a deleted file's repeat history entries
 // stay hidden too.
 
-const STORAGE_KEY = 'comfynext:hidden-assets'
+const STORAGE_KEY = 'sailor:hidden-assets'
 
 function loadHidden(): Set<string> {
   if (import.meta.server) return new Set()

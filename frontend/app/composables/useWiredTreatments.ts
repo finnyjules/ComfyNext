@@ -1,20 +1,20 @@
 /**
  * Per-wired-layer treatments (Phase 1: mask reference) persisted on the node as
- * `comfynext_wiredTreatments`, keyed by the unified StackKey ('w:<slot>'). This
- * mirrors how comfynext_stackOrder lives in node.data.properties. Pure helpers so
+ * `sailor_wiredTreatments`, keyed by the unified StackKey ('w:<slot>'). This
+ * mirrors how sailor_stackOrder lives in node.data.properties. Pure helpers so
  * the logic is unit-testable outside the SFC.
  */
 export interface WiredTreatment { maskedByKey?: string; showSource?: boolean }
 export type WiredTreatments = Record<string, WiredTreatment>
 
 export function readWiredTreatments(node: any): WiredTreatments {
-  return (node?.data?.properties?.comfynext_wiredTreatments as WiredTreatments | undefined) ?? {}
+  return (node?.data?.properties?.sailor_wiredTreatments as WiredTreatments | undefined) ?? {}
 }
 
 function writeWiredTreatments(node: any, next: WiredTreatments) {
   if (!node?.data) return
   if (!node.data.properties) node.data.properties = {}
-  node.data.properties.comfynext_wiredTreatments = next
+  node.data.properties.sailor_wiredTreatments = next
 }
 
 /** Set/clear the mask reference for a wired slot (1-based). Empty key clears. */

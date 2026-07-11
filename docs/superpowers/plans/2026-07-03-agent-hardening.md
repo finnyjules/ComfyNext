@@ -170,7 +170,7 @@ Expected: PASS (all tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/server/lib/agentRequest.ts frontend/tests/unit/agent-request.unit.spec.ts
 git commit -m "feat(agent): shared request guards for agent routes"
 ```
@@ -273,7 +273,7 @@ Expected: tests PASS; typecheck reports no NEW errors in the three modified rout
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/server/api/agent-plan.post.ts frontend/server/api/agent-review.post.ts frontend/server/api/vibe.post.ts
 git commit -m "feat(agent): request guards on agent-plan/agent-review/vibe routes"
 ```
@@ -391,7 +391,7 @@ Expected: PASS, no regressions in the full unit suite.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/server/lib/modelText.ts frontend/tests/unit/model-text.unit.spec.ts frontend/server/api/agent-plan.post.ts frontend/server/api/agent-review.post.ts frontend/server/api/font-suggest.post.ts
 git commit -m "fix(agent): 502 on empty model responses; font-suggest shape guard"
 ```
@@ -506,7 +506,7 @@ Expected: PASS (agent-plan.unit.spec covers buildCommandSchema and must not regr
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/agent/protocol.ts frontend/tests/unit/agent-protocol.unit.spec.ts
 git commit -m "feat(agent): parseFailed flag + sentinel-delimited user request in protocol"
 ```
@@ -545,7 +545,7 @@ Expected: unit suite PASS; no new type errors in the four composables.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/composables/useCanvasAgent.ts frontend/app/composables/useLayoutAgent.ts frontend/app/composables/useCompositorAgent.ts frontend/app/composables/useTextureAgent.ts
 git commit -m "feat(agent): distinguish unreadable model replies from empty plans"
 ```
@@ -627,7 +627,7 @@ Expected: PASS — all pre-existing tests plus the three new ones.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/agent/surfaces/canvas.ts frontend/tests/unit/agent-canvas-surface.unit.spec.ts
 git commit -m "feat(agent): reject non-finite/absurd numeric widget writes"
 ```
@@ -733,7 +733,7 @@ Run: `cd frontend && npx vitest run tests/unit`
 Expected: PASS.
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/server/lib/rateLimit.ts frontend/tests/unit/rate-limit.unit.spec.ts frontend/server/api/agent-plan.post.ts frontend/server/api/agent-review.post.ts frontend/server/api/vibe.post.ts
 git commit -m "feat(agent): per-IP rate limiting on agent routes"
 ```
@@ -750,7 +750,7 @@ git commit -m "feat(agent): per-IP rate limiting on agent routes"
 
 - [ ] **Step 1: Check the pinned pnpm version**
 
-Run: `grep '"packageManager"' /Users/julien/Documents/GitHub/ComfyNext/frontend/package.json || echo "not pinned"`
+Run: `grep '"packageManager"' /Users/julien/Documents/GitHub/Sailor/frontend/package.json || echo "not pinned"`
 If pinned (e.g. `pnpm@9.x`), use that major in the workflow below; otherwise keep `version: 9`.
 
 - [ ] **Step 2: Create the workflow**
@@ -794,7 +794,7 @@ Expected: full unit suite PASS (this is what CI will run).
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add .github/workflows/frontend-unit.yml
 git commit -m "ci: run frontend unit suite on push/PR touching frontend/"
 ```

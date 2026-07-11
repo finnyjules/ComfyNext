@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-10-brand-library-design.md`
 
-**Conventions:** all paths relative to repo root `/Users/julien/Documents/GitHub/ComfyNext`. Run tests from `frontend/`. Commit after every task. A parallel session may have uncommitted files — stage only your own files explicitly.
+**Conventions:** all paths relative to repo root `/Users/julien/Documents/GitHub/Sailor`. Run tests from `frontend/`. Commit after every task. A parallel session may have uncommitted files — stage only your own files explicitly.
 
 ---
 
@@ -740,7 +740,7 @@ git commit -m "Smart Layout: resolve brand through shared effectiveBrand with pr
 
 - [ ] **Step 1: Mount the popover in the Compositor modal**
 
-Add a "Brand" toolbar button next to the Motion button (Task 6 of the kinetic plan added Motion — grep `Motion preview` / `loadSlateFixture` for the toolbar block; copy neighbor classes). It toggles a floating `BrandLibraryPopover` anchored near the toolbar. Active-kit binding: the modal needs the project doc's `brandKitId` — read how the modal receives app-level context; if nothing suitable exists, the layout already computes `brandLib`/doc (Task 6): lift via `provide('comfynext:brandKit', { activeKitId, setActive })` in the layout and `inject` in the modal (typed key in `frontend/app/lib/` if the project has an injection-keys convention — grep `InjectionKey` first and follow it).
+Add a "Brand" toolbar button next to the Motion button (Task 6 of the kinetic plan added Motion — grep `Motion preview` / `loadSlateFixture` for the toolbar block; copy neighbor classes). It toggles a floating `BrandLibraryPopover` anchored near the toolbar. Active-kit binding: the modal needs the project doc's `brandKitId` — read how the modal receives app-level context; if nothing suitable exists, the layout already computes `brandLib`/doc (Task 6): lift via `provide('sailor:brandKit', { activeKitId, setActive })` in the layout and `inject` in the modal (typed key in `frontend/app/lib/` if the project has an injection-keys convention — grep `InjectionKey` first and follow it).
 
 ```vue
 <BrandLibraryPopover

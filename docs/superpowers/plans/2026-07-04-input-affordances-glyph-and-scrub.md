@@ -104,7 +104,7 @@ export function scrubValue(a: ScrubArgs): number {
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/lib/studio/scrub.ts frontend/tests/unit/studio-scrub.unit.spec.ts
 git commit -m "feat(studio): scrubValue helper — px-drag to value with snap, fine, clamp"
 ```
@@ -165,7 +165,7 @@ function onClick(e: MouseEvent) {
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/studio/VariableGlyph.vue
 git commit -m "feat(studio): VariableGlyph — outline/filled hexagon, promote or menu"
 ```
@@ -280,7 +280,7 @@ function onScrubDown(e: PointerEvent) {
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/studio/StudioSlider.vue frontend/app/components/vue-canvas/SpaceTypeSurface.vue frontend/app/components/vue-canvas/TextureStudioSurface.vue
 git commit -m "feat(studio): slider readout scrubs + carries the variable glyph"
 ```
@@ -346,7 +346,7 @@ Add to `<script setup>`: `import VariableGlyph from '~/components/vue-canvas/stu
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/components/vue-canvas/SpaceTypeSurface.vue frontend/app/components/vue-canvas/TextureStudioSurface.vue frontend/app/components/vue-canvas/GradientStudioSurface.vue frontend/app/components/vue-canvas/ShaderStudioSurface.vue frontend/app/components/vue-canvas/studio/BindableRow.vue frontend/app/components/vue-canvas/studio/BindableControlChip.vue
 git commit -m "feat(studio): variable glyph replaces the bind chip across all studios"
 ```
@@ -429,7 +429,7 @@ Apply the same to `colSpan` (max `metrics.cols`), `row`/`rowSpan` (max `metrics.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/julien/Documents/GitHub/ComfyNext
+cd /Users/julien/Documents/GitHub/Sailor
 git add frontend/app/plugins/scrub.client.ts frontend/app/components/templates/GridPropertyPanel.vue
 git commit -m "feat(smart-layout): v-scrub directive; drag region-field labels to scrub"
 ```

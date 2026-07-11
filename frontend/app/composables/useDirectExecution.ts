@@ -119,10 +119,10 @@ export function shouldGiveUpWorker(worker: number, consecutiveFailures: number):
 
 function getClientId(): string {
   if (!import.meta.client) return ''
-  let id = sessionStorage.getItem('comfynext:clientId')
+  let id = sessionStorage.getItem('sailor:clientId')
   if (!id) {
     id = crypto.randomUUID()
-    sessionStorage.setItem('comfynext:clientId', id)
+    sessionStorage.setItem('sailor:clientId', id)
   }
   return id
 }

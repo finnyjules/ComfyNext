@@ -409,7 +409,7 @@ async function bakeAndUpload() {
 function applyCtxFont(ctx: CanvasRenderingContext2D, px: number) {
   const wght = state.value.axes.wght ?? state.value.weight ?? 700
   ctx.font = `${wght} ${px}px "${activeFont.value.family}", sans-serif`
-  // Variable axes — supported in Chromium (ComfyNext's runtime). Harmless
+  // Variable axes — supported in Chromium (Sailor's runtime). Harmless
   // no-op where unsupported (weight still applies via ctx.font above).
   if ('fontVariationSettings' in ctx) {
     ;(ctx as any).fontVariationSettings = variationSettings.value

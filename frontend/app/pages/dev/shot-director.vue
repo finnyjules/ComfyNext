@@ -48,7 +48,7 @@ const seededSheet = {
 }
 
 const nodes = reactive([
-  { id: 'harness-1', data: { nodeType: 'ShotDirector', properties: { comfynext_shotDirector: seededSheet } } },
+  { id: 'harness-1', data: { nodeType: 'ShotDirector', properties: { sailor_shotDirector: seededSheet } } },
 ])
 const open = ref(true)
 </script>

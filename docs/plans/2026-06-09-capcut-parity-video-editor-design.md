@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-09
 **Status:** Approved design, pre-implementation
-**Goal:** Bring ComfyNext's video editing to working parity with CapCut's core editing loop for web video, while replacing several CapCut features with AI-driven equivalents that play to ComfyNext's generation strengths.
+**Goal:** Bring Sailor's video editing to working parity with CapCut's core editing loop for web video, while replacing several CapCut features with AI-driven equivalents that play to Sailor's generation strengths.
 
 ## Scope decisions (made with Julien)
 
@@ -19,7 +19,7 @@
 
 - Multi-track timeline: `frontend/app/components/vue-canvas/TimelineEditor.vue`, `frontend/app/composables/useTimelineStore.ts`, data model in `frontend/shared/timeline/types.ts`. Video/audio/image/text clips, drag/resize, mute/lock, per-clip transform keyframes (x, y, rotation, scale, opacity) with easing, 10 blend modes, fade in/out.
 - GSAP kinetic titles/lower-thirds with frame baking (`useKineticRenderer.ts`).
-- Server renderer mirroring editor math: `comfy_extras/nodes_timeline.py` (`TimelineNode`, `render_timeline_to_file()`, `/comfynext/timeline/render` endpoints).
+- Server renderer mirroring editor math: `comfy_extras/nodes_timeline.py` (`TimelineNode`, `render_timeline_to_file()`, `/sailor/timeline/render` endpoints).
 - Generation: Seedance 2, Veo 3 (synced audio), Kling, lipsync, Whisper, MusicGen, MiniMax TTS via `comfy_api_nodes/nodes_replicate.py`; Topaz enhancement.
 - Asset library with video/audio/image import, metadata, playback.
 - Preview today: DOM/HTML5-video compositing (`TimelineNodePreview.vue`, `usePlaybackEngine`) — good for transforms/fades, weak for transitions, filters, frame accuracy.

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the LiteGraph canvas with a fully interactive Vue-based node editor when the `Comfy.VueNodes.Enabled` ("Modern node design") setting is on. The editor must match ComfyNext's existing dark design system and support all interactions: drag, connect, edit widgets, run workflows.
+Replace the LiteGraph canvas with a fully interactive Vue-based node editor when the `Comfy.VueNodes.Enabled` ("Modern node design") setting is on. The editor must match Sailor's existing dark design system and support all interactions: drag, connect, edit widgets, run workflows.
 
 ## Technology
 

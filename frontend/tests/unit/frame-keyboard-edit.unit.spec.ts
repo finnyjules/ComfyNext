@@ -8,7 +8,7 @@ import { useLocalLayerEditor } from '../../app/composables/useLocalLayerEditor'
 // Verified live in the browser 2026-07-05: arrow-nudge + Cmd/Ctrl+D duplicate
 // fire correctly in CompositorModal at /dev/frame-lab.
 function makeEditor(layers: any[]) {
-  const node = reactive({ data: { properties: { comfynext_localLayers: layers } } })
+  const node = reactive({ data: { properties: { sailor_localLayers: layers } } })
   const ed = useLocalLayerEditor({
     node: () => node,
     dims: () => ({ w: 680, h: 680 }),
@@ -30,13 +30,13 @@ describe('Frame nudge reproduction', () => {
     ed.selectLocal('a')
     const consumed = ed.handleEditorKey(key('ArrowRight') as any)
     expect(consumed).toBe(true)
-    expect((node.data.properties.comfynext_localLayers[0] as any).x).toBeGreaterThan(0.5)
+    expect((node.data.properties.sailor_localLayers[0] as any).x).toBeGreaterThan(0.5)
   })
 
   it('ArrowUp nudges up (y decreases)', () => {
     const { node, ed } = makeEditor([{ id: 'a', kind: 'rect', x: 0.5, y: 0.5, rotation: 0, opacity: 1, w: 0.1, h: 0.1 }])
     ed.selectLocal('a')
     ed.handleEditorKey(key('ArrowUp') as any)
-    expect((node.data.properties.comfynext_localLayers[0] as any).y).toBeLessThan(0.5)
+    expect((node.data.properties.sailor_localLayers[0] as any).y).toBeLessThan(0.5)
   })
 })

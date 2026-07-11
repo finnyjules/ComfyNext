@@ -56,7 +56,7 @@ test.describe('stale /object_info schema', () => {
     // (default) edit_state JSON into node.data.properties.edit_state — exactly
     // what injectTimelineEditState reads at submit. Then close it.
     await page.evaluate((id) =>
-      window.dispatchEvent(new CustomEvent('comfynext:openTimeline', { detail: { nodeId: id } })),
+      window.dispatchEvent(new CustomEvent('sailor:openTimeline', { detail: { nodeId: id } })),
       nodeId,
     )
     const editor = timelineEditorOverlay(page)

@@ -6,7 +6,7 @@ let _resolved: Record<string, Scene> = {}
 /** Fetch the {effectId: scene} default map once; memoized. Network failure → {} (today's behavior). */
 export function loadSpaceDefaults(): Promise<Record<string, Scene>> {
   if (!_cache) {
-    _cache = fetch('/comfynext/space_defaults')
+    _cache = fetch('/sailor/space_defaults')
       .then(r => (r.ok ? r.json() : {}))
       .catch(() => ({}))
       .then((m: Record<string, Scene>) => { _resolved = m || {}; return _resolved })
@@ -22,7 +22,7 @@ export function spaceDefaultFor(id: string): Scene | null {
 /** Persist a scene as effect `id`'s default; updates the in-memory cache on success. */
 export async function saveSpaceDefault(id: string, scene: Scene): Promise<boolean> {
   try {
-    const r = await fetch(`/comfynext/space_default/${id}`, {
+    const r = await fetch(`/sailor/space_default/${id}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene),
     })
     if (!r.ok) return false

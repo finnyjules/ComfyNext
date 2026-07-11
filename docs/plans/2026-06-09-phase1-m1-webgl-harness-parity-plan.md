@@ -1104,7 +1104,7 @@ import * as path from 'node:path'
 import { PNG } from 'pngjs'
 
 // Golden-frame parity, both renderers:
-//  - server: Python ground truth via /comfynext/timeline/render_frame.
+//  - server: Python ground truth via /sailor/timeline/render_frame.
 //    Bit-near-exact (same math, PNG quantization only) → tight tolerance.
 //  - webgl: the Phase-1 engine. GPU linear sampling ≠ PIL BILINEAR and GL quads
 //    are center-anchored vs PIL's integer top-left paste, so edges of
@@ -1257,7 +1257,7 @@ git commit -m "Engine: golden gate runs both renderers — calibrated mean+pctOv
 
 ```bash
 cd frontend && pnpm run test:unit                                   # all green
-cd /Users/julien/Documents/GitHub/ComfyNext && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ | tail -2   # all green (untouched)
+cd /Users/julien/Documents/GitHub/Sailor && .venv/bin/python -m pytest tests-unit/comfy_extras_test/ | tail -2   # all green (untouched)
 cd frontend && npx playwright test tests/timeline.spec.ts tests/timeline-golden.spec.ts tests/gl-blend-conformance.spec.ts --reporter=line
 ```
 Expected: everything passes (timeline e2e unaffected; golden 6/6; conformance 1/1).

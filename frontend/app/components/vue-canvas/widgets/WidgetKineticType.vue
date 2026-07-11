@@ -207,7 +207,7 @@ function setText(v: string) { commit({ text: v }) }
 // ── Open modal ──────────────────────────────────────────────────────────────
 
 function openModal() {
-  window.dispatchEvent(new CustomEvent('comfynext:openKineticType', {
+  window.dispatchEvent(new CustomEvent('sailor:openKineticType', {
     detail: { nodeId: props.nodeId },
   }))
 }

@@ -23,7 +23,7 @@ const injectedEdges = inject<any>('vueFlowEdges', null)
 const injectedNodes = inject<any>('vueFlowNodes', null)
 
 const config = computed<ShaderStudioConfig>(
-  () => hydrateConfig(props.data?.properties?.comfynext_shaderStudio),
+  () => hydrateConfig(props.data?.properties?.sailor_shaderStudio),
 )
 const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
 
@@ -109,7 +109,7 @@ watch(config, () => { if (timer) clearTimeout(timer); timer = setTimeout(startLo
 watch(animated, startLoop)
 
 function openEditor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openShaderStudio', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openShaderStudio', { detail: { nodeId: props.id } }))
 }
 
 // Index of the optional `vars` input a Collection's VARS output wires into.

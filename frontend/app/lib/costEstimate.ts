@@ -41,7 +41,7 @@ export interface CostEstimate { usd: number; approximate: boolean; breakdown: Co
 
 /** A node bills the user in USD (Replicate BYOK) rather than Comfy credits.
  *  Most are class-named `*RemoteNode` (comfy_api_nodes/nodes_replicate.py), but
- *  the ComfyNext wrappers that call Replicate from comfy_extras (Person Swap,
+ *  the Sailor wrappers that call Replicate from comfy_extras (Person Swap,
  *  Pose Mannequin) aren't — they're caught by their `…/Replicate` category.
  *  Stock Comfy API nodes (OpenAI, Kling, …) are credit-billed and excluded. */
 export function isReplicateBilled(n: EstimateInputNode): boolean {

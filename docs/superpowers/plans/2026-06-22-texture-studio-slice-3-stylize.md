@@ -6,7 +6,7 @@
 
 **Architecture:** A new `texturefx/stylize.ts` preloads the three shaderFx `EffectDef`s + their textures (blue-noise for dither) once, then `stylizeTile(base, params, w, h)` builds a single-effect `ShaderPass[]` (via `resolveUniforms`+`expandPasses`) and calls `shaderFx.render(passes, base, w, h)`, returning the stylized canvas (no-op when stylize='none' or not-yet-loaded). The surface and node card render the base tile with `textureFx` then pipe it through `stylizeTile`. Seamlessness: render dims are multiples of 64 (preview 256, export 1024); dither u_scale is snapped so cells-across (=1/u_scale) is a multiple of the chosen pattern's period; only tileable dither patterns are exposed.
 
-**Tech Stack:** Nuxt 4 / Vue 3 / TS, WebGL2, Vitest. Reuses `~/lib/shaderfx/{renderer,params,catalog}` and the texture catalog endpoint `/comfynext/shader_effects`.
+**Tech Stack:** Nuxt 4 / Vue 3 / TS, WebGL2, Vitest. Reuses `~/lib/shaderfx/{renderer,params,catalog}` and the texture catalog endpoint `/sailor/shader_effects`.
 
 ---
 

@@ -574,7 +574,7 @@ Because `driftSpeed` is an integer (slots per loop) and `frac = (t01 * drift) % 
 
 - [ ] **Step 4: Verify export (image + video) works**
 
-Trigger **Generate image** and **Generate video** from the Type Studio surface. Confirm: the image is a clean still of the stack, and the baked video drifts and loops seamlessly (the existing `bake.ts` → `/comfynext/spacetype_encode` rails need no changes). Check `preview_network`/`preview_logs` for a successful encode.
+Trigger **Generate image** and **Generate video** from the Type Studio surface. Confirm: the image is a clean still of the stack, and the baked video drifts and loops seamlessly (the existing `bake.ts` → `/sailor/spacetype_encode` rails need no changes). Check `preview_network`/`preview_logs` for a successful encode.
 
 - [ ] **Step 5: Commit**
 
