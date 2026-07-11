@@ -359,8 +359,13 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
           params: s.expressive, justifyX, justifyY,
         })
         const vOff = expressiveVOffset(r.rect.h, lay.height, justifyY ? 'top' : valign)
+        // The engine already distributes word `top`s across the box (incl.
+        // vertical justify), so the words keep the element's own line-height —
+        // fontStyle's justify-stretched value is for the plain-text path only,
+        // and inheriting it here inflates every word's line box (glyphs drift
+        // down, last line crops — editor mismatch).
         return el('div', {
-          style: { ...base, ...fontStyle, ...panelStyle, overflow: 'hidden' },
+          style: { ...base, ...fontStyle, lineHeight: s.lineHeight ?? 1.1, ...panelStyle, overflow: 'hidden' },
           children: lay.words.map((w) => el('div', {
             style: { position: 'absolute', left: `${w.x}px`, top: `${w.y + vOff}px`, whiteSpace: 'nowrap' },
             children: w.text,
