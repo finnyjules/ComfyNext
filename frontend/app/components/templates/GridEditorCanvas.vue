@@ -409,10 +409,10 @@ function imageSrc(r: ResolvedElement): string {
   return r.el.type === 'image' ? resolve(r.el.content) : ''
 }
 
-// -- Turn into variable: badges + context menu -------------------------------
+// -- Turn into variable: context menu -----------------------------------------
 // "Mega unintuitive and hidden" is the problem this fixes — right-click a
-// text/image element to bind it to a Collection column, see it live-badged
-// once bound. Shapes get no menu (nothing to bind them to yet).
+// text/image element to bind it to a Collection column. Shapes get no menu
+// (nothing to bind them to yet).
 
 /** Socket name (e.g. `text_layer_1`) when the element's content is a bound
  *  `{{ props.x }}` token AND that binding actually exists on the node — a
@@ -422,14 +422,6 @@ function boundSocket(el: ResolvedElement['el']): string | null {
   const socket = isBoundToken((el as any).content)
   if (!socket || !binding) return null
   return binding.bindings.value[`props.${socket}`] ? socket : null
-}
-
-/** Column key shown on the badge — falls back to the socket name if the
- *  wired collection is momentarily unreachable (still indicates "bound"). */
-function boundColumnLabel(el: ResolvedElement['el']): string {
-  const socket = boundSocket(el)
-  if (!socket || !binding) return ''
-  return binding.bindings.value[`props.${socket}`]?.columnKey ?? socket
 }
 
 const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
@@ -967,13 +959,6 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <template v-else-if="r.el.type === 'shape'">
           <div :style="shapeStyle(r)" />
         </template>
-
-        <!-- Variable-bound badge — bound text/image elements only. -->
-        <div
-          v-if="boundSocket(r.el)"
-          class="absolute top-1 right-1 bg-white/15 rounded-full text-[9px] px-1 text-white/80 pointer-events-none truncate max-w-[80%]"
-          :title="`Bound to column · ${boundColumnLabel(r.el)}`"
-        >{{ boundColumnLabel(r.el) }}</div>
 
         <!-- Reposition hints (images only) -->
         <div
