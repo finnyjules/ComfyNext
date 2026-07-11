@@ -22,7 +22,7 @@ const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
-  sampleProps, effectiveBrand, setRegion, patchElement,
+  sampleProps, effectiveBrand, setRegion, patchElement, patchStyle,
   isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
   moveChildIntoStack, moveChildOutOfStack,
   scale, zoomBy, setContainerSize, containerSize,
@@ -352,9 +352,16 @@ function expressiveWords(r: ResolvedElement): Array<{ text: string; x: number; y
   const lineHeight = el.style.lineHeight ?? 1.1
   const justifyX = el.style.align === 'justify'
   const justifyY = el.style.valign === 'justify'
+  // Mid-drag, overlay the in-flight nudge so the word tracks the pointer
+  // without writing the template until pointerup.
+  const exParams = { ...el.style.expressive }
+  const live = liveWordDrag.value
+  if (live && live.elId === el.id) {
+    exParams.nudges = { ...(exParams.nudges ?? {}), [live.index]: { dx: live.dx, dy: live.dy } }
+  }
   const lay = gridExpressiveLayout({
     content: r.text?.content ?? '', fontSize, boxWidth: r.rect.w, boxHeight: r.rect.h,
-    lineHeight, params: el.style.expressive, justifyX, justifyY,
+    lineHeight, params: exParams, justifyX, justifyY,
   })
   // justifyY fills the height (lay.height === rect.h) → vOff 0; otherwise honour valign.
   const valign = el.style.valign === 'justify' ? 'top' : (el.style.valign ?? (formatClass.value === 'strip' ? 'middle' : 'top'))
@@ -511,7 +518,9 @@ let panState: {
 } | null = null
 
 function enterReposition(r: ResolvedElement) {
-  if (previewMode.value || r.el.type !== 'image' || r.el.locked) return
+  const canReposition = r.el.type === 'image'
+    || (r.el.type === 'text' && !!(r.el as any).style?.expressive)
+  if (previewMode.value || !canReposition || r.el.locked) return
   selectedId.value = r.el.id
   repositionId.value = r.el.id
 }
@@ -540,6 +549,9 @@ function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
     return
   }
+  // Word mode (expressive text): the word spans own the drag — pressing the
+  // element body must neither move the element nor start a region drag.
+  if (repositionId.value === r.el.id && r.el.type === 'text') return
   if (r.el.locked || !r.region) return
   dragState = {
     id: r.el.id,
@@ -628,6 +640,63 @@ function onElementPointerUp(e: PointerEvent) {
       }
     }
   }
+}
+
+// -- Word-nudge drag: in reposition mode on an expressive text element each
+// word drags individually. Deltas are stored as fractions of the element box
+// (style.expressive.nudges, applied by gridExpressiveLayout on both surfaces).
+// Live feedback goes through `liveWordDrag` (merged into expressiveWords);
+// the template write happens once on pointerup — one undo step per drag.
+let wordDragState: {
+  elId: string; index: number
+  startClientX: number; startClientY: number
+  startNudge: { dx: number; dy: number }
+  boxW: number; boxH: number
+} | null = null
+const liveWordDrag = ref<{ elId: string; index: number; dx: number; dy: number } | null>(null)
+
+function onWordPointerDown(e: PointerEvent, r: ResolvedElement, index: number) {
+  if (repositionId.value !== r.el.id || previewMode.value) return
+  e.stopPropagation()
+  const cur = (r.el as any).style?.expressive?.nudges?.[index]
+  const startNudge = {
+    dx: Number.isFinite(cur?.dx) ? cur.dx : 0,
+    dy: Number.isFinite(cur?.dy) ? cur.dy : 0,
+  }
+  wordDragState = {
+    elId: r.el.id, index,
+    startClientX: e.clientX, startClientY: e.clientY,
+    startNudge, boxW: r.rect.w, boxH: r.rect.h,
+  }
+  liveWordDrag.value = { elId: r.el.id, index, ...startNudge }
+  ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function onWordPointerMove(e: PointerEvent) {
+  if (!wordDragState) return
+  const s = scale.value || 1
+  liveWordDrag.value = {
+    elId: wordDragState.elId,
+    index: wordDragState.index,
+    dx: wordDragState.startNudge.dx + (e.clientX - wordDragState.startClientX) / s / wordDragState.boxW,
+    dy: wordDragState.startNudge.dy + (e.clientY - wordDragState.startClientY) / s / wordDragState.boxH,
+  }
+}
+
+function onWordPointerUp(e: PointerEvent) {
+  if (!wordDragState) return
+  const drag = wordDragState
+  wordDragState = null
+  ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+  const live = liveWordDrag.value
+  liveWordDrag.value = null
+  if (!live || (live.dx === drag.startNudge.dx && live.dy === drag.startNudge.dy)) return
+  const el = resolved.value.elements.find(x => x.el.id === drag.elId)?.el as any
+  const cur = el?.style?.expressive
+  if (!cur) return
+  patchStyle(drag.elId, {
+    expressive: { ...cur, nudges: { ...(cur.nudges ?? {}), [drag.index]: { dx: live.dx, dy: live.dy } } },
+  })
 }
 
 // -- Resize handles (snap spans to cells) ------------------------------------
@@ -924,14 +993,18 @@ function onSectionHandlePointerUp(e: PointerEvent) {
             ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
             : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
-        @dblclick="(e) => { if (r.el.type === 'image') { e.stopPropagation(); enterReposition(r) } else if (r.el.type === 'text') { e.stopPropagation(); startTextEdit(r) } }"
+        @dblclick="(e) => { if (r.el.type === 'image' || (r.el.type === 'text' && r.el.style?.expressive)) { e.stopPropagation(); enterReposition(r) } else if (r.el.type === 'text') { e.stopPropagation(); startTextEdit(r) } }"
         @contextmenu.prevent.stop="(e) => onElementContextMenu(e, r)"
       >
         <template v-if="r.el.type === 'text'">
           <template v-if="editingId !== r.el.id">
             <div v-if="r.el.style?.expressive" :style="expressiveContainerStyle(r)">
               <span v-for="(w, i) in expressiveWords(r)" :key="i"
-                :style="{ position: 'absolute', left: `${w.x}px`, top: `${w.y}px`, whiteSpace: 'nowrap' }">{{ w.text }}</span>
+                :style="{ position: 'absolute', left: `${w.x}px`, top: `${w.y}px`, whiteSpace: 'nowrap',
+                          cursor: repositionId === r.el.id ? 'grab' : undefined }"
+                @pointerdown="(e) => onWordPointerDown(e, r, i)"
+                @pointermove="onWordPointerMove"
+                @pointerup="onWordPointerUp">{{ w.text }}</span>
             </div>
             <div v-else :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
           </template>
@@ -964,7 +1037,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <div
           v-if="repositionId === r.el.id"
           class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#96b4ff]/90 text-black text-[10px] font-medium pointer-events-none whitespace-nowrap"
-        >Drag to reposition · Esc to finish</div>
+        >{{ r.el.type === 'text' ? 'Drag words · Esc to finish' : 'Drag to reposition · Esc to finish' }}</div>
         <div
           v-else-if="selectedId === r.el.id && r.el.type === 'image' && !r.el.locked"
           class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white/80 text-[10px] pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
