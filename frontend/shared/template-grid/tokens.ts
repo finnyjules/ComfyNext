@@ -8,10 +8,19 @@ const TOKEN_RE = /\{\{\s*([\w.]+)\s*\}\}/g
 export function resolveTokens<T>(value: T, props: TokenScope = {}, brand: TokenScope = {}): T {
   if (typeof value !== 'string') return value
   const lookup = (path: string): unknown => {
-    const [scope, key] = path.split('.')
-    if (scope === 'props') return props[key]
-    if (scope === 'brand') return brand[key]
-    return undefined
+    const [scope, ...rest] = path.split('.')
+    const root = scope === 'props' ? props : scope === 'brand' ? brand : undefined
+    if (!root || !rest.length) return undefined
+    // Flat-first: backend KV parsing produces flat dotted keys ('logos.mark').
+    const flat = rest.join('.')
+    if (flat in root) return root[flat]
+    // Nested walk: editor-side scopes are real objects.
+    let cur: unknown = root
+    for (const seg of rest) {
+      if (cur == null || typeof cur !== 'object') return undefined
+      cur = (cur as Record<string, unknown>)[seg]
+    }
+    return cur
   }
   const whole = value.match(/^\{\{\s*([\w.]+)\s*\}\}$/)
   if (whole) {

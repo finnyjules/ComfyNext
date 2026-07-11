@@ -16,4 +16,16 @@ describe('resolveTokens', () => {
   it('returns non-strings untouched', () => {
     expect(resolveTokens(7, {})).toBe(7)
   })
+  it('resolves deep paths on nested scopes (editor-side effectiveBrand)', () => {
+    const brand = { logos: { mark: '/view?filename=m.png&type=input' } }
+    expect(resolveTokens('{{ brand.logos.mark }}', {}, brand)).toBe('/view?filename=m.png&type=input')
+  })
+  it('resolves flat dotted keys first (backend KV-parsed dicts)', () => {
+    const brand = { 'logos.mark': '/flat.png', logos: { mark: '/nested.png' } }
+    expect(resolveTokens('{{ brand.logos.mark }}', {}, brand)).toBe('/flat.png')
+  })
+  it('missing deep paths blank in mixed strings and pass through whole tokens', () => {
+    expect(resolveTokens('x {{ brand.logos.mark }} y', {}, {})).toBe('x  y')
+    expect(resolveTokens('{{ brand.logos.mark }}', {}, {})).toBe('{{ brand.logos.mark }}')
+  })
 })
