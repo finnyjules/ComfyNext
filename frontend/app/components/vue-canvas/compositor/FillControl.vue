@@ -7,13 +7,15 @@
  *   solid → plain hex string · gradient → a compositor Gradient · else → a Fill object
  * so it drops straight into resolvePaint without new render code.
  */
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, inject, watch, onMounted } from 'vue'
+import type { ComputedRef } from 'vue'
 import { ChevronDown, Dices } from 'lucide-vue-next'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import GradientEditor from '~/components/vue-canvas/compositor/GradientEditor.vue'
 import { type Fill, type FillType, FILL_TYPES, DEFAULT_FILL, fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { rollPaintItem, gradientFromPaint } from '~/lib/compositor/fillPalette'
 import { type Paint, type Gradient, isFill, isGradient } from '~/composables/useCompositorLayers'
+import { BRAND_COLOR_KEYS, type BrandKit } from '~~/shared/brand/types'
 
 const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean }>(), { allowNone: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
@@ -89,6 +91,19 @@ function toggleNone() {
   else emit('update:modelValue', 'none')
 }
 
+// Active project brand kit → one-click swatches. Null-safe: FillControl also
+// renders in contexts without a project (dev labs), where the inject is absent.
+const projectBrand = inject<{ activeKit: ComputedRef<BrandKit | undefined> } | null>('sailor:brand', null)
+const brandSwatches = computed(() => {
+  const k = projectBrand?.activeKit.value
+  if (!k) return []
+  return BRAND_COLOR_KEYS.map(key => k[key]).filter((v): v is string => !!v)
+})
+function applyBrandColor(hex: string) {
+  if (fill.type === 'gradient') fill.type = 'solid'
+  setColor('a', hex)
+}
+
 // Gradient gets its own editor; patterns keep the A/B + angle + density controls.
 const needsB = computed(() => fill.type !== 'solid' && fill.type !== 'gradient')
 const needsAngle = computed(() => fill.type === 'ombre' || fill.type === 'stripes')
@@ -142,6 +157,15 @@ watch(grad, drawPreview, { deep: true })
     </div>
 
     <div v-if="open && !isNone" class="mt-2 rounded-lg border border-white/10 bg-[#141414] p-2.5 space-y-2.5">
+      <div v-if="brandSwatches.length" class="flex items-center gap-1.5">
+        <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">Brand</span>
+        <button
+          v-for="(c, i) in brandSwatches" :key="i" type="button"
+          class="size-5 rounded border border-white/15 cursor-pointer hover:scale-110 transition-transform"
+          :style="{ background: c }" :title="c" @click="applyBrandColor(c)"
+        />
+      </div>
+
       <select :value="fill.type" class="w-full rounded bg-white/10 px-2 py-1.5 text-xs text-white/90 outline-none capitalize cursor-pointer"
         @change="setType(($event.target as HTMLSelectElement).value as FillType)">
         <option v-for="t in FILL_TYPES" :key="t" :value="t">{{ t }}</option>
