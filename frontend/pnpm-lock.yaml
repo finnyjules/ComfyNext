@@ -61,19 +61,22 @@ importers:
         version: 2.1.1
       glimm:
         specifier: ^0.1.4
-        version: 0.1.4
+        version: 0.1.4(react@19.2.7)
       gsap:
         specifier: ^3.14.2
         version: 3.14.2
       iconoir-vue:
         specifier: ^7.11.0
         version: 7.11.0(vue@3.5.30(typescript@5.9.3))
+      img-fx:
+        specifier: ^0.5.0
+        version: 0.5.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.171.0)
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
       lenis:
         specifier: ^1.3.19
-        version: 1.3.19(@nuxt/kit@4.4.2(magicast@0.5.2))(vue@3.5.30(typescript@5.9.3))
+        version: 1.3.19(@nuxt/kit@4.4.2(magicast@0.5.2))(react@19.2.7)(vue@3.5.30(typescript@5.9.3))
       lucide-vue-next:
         specifier: ^0.576.0
         version: 0.576.0(vue@3.5.30(typescript@5.9.3))
@@ -2746,6 +2749,13 @@ packages:
   image-meta@0.2.2:
     resolution: {integrity: sha512-3MOLanc3sb3LNGWQl1RlQlNWURE5g32aUphrDyFeCsxBTk08iE3VNe4CwsUZ0Qs1X+EfX0+r29Sxdpza4B+yRA==}
 
+  img-fx@0.5.0:
+    resolution: {integrity: sha512-PTgIRlRmkyMlJo5iwSrSFcxQA0zvCUDWtbJe8P8S2JjrzRsPxkZwGL3BIX49Fq79kI42v4BrZW2TfunioI6vug==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+      three: '>=0.149.0'
+
   immediate@3.0.6:
     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
 
@@ -3620,6 +3630,15 @@ packages:
   rc9@3.0.0:
     resolution: {integrity: sha512-MGOue0VqscKWQ104udASX/3GYDcKyPI4j4F8gu/jHHzglpmy9a/anZK3PNe8ug6aZFl+9GxLtdhe3kVZuMaQbA==}
 
+  react-dom@19.2.7:
+    resolution: {integrity: sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==}
+    peerDependencies:
+      react: ^19.2.7
+
+  react@19.2.7:
+    resolution: {integrity: sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ==}
+    engines: {node: '>=0.10.0'}
+
   readable-stream@2.3.8:
     resolution: {integrity: sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==}
 
@@ -3718,6 +3737,9 @@ packages:
   sax@1.6.0:
     resolution: {integrity: sha512-6R3J5M4AcbtLUdZmRv2SygeVaM7IhrLXu9BmnOGmmACak8fiUtOsYNWUS4uK7upbmHIBbLBeFeI//477BKLBzA==}
     engines: {node: '>=11.0.0'}
+
+  scheduler@0.27.0:
+    resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
   scule@1.3.0:
     resolution: {integrity: sha512-6FtHJEvt+pVMIB9IBY+IcCJ6Z5f1iQnytgyfKMhDKgmzYG+TeH/wx1y3l27rshSbLiSanrR9ffZDrEsmjlQF2g==}
@@ -6845,7 +6867,9 @@ snapshots:
 
   giget@3.1.2: {}
 
-  glimm@0.1.4: {}
+  glimm@0.1.4(react@19.2.7):
+    optionalDependencies:
+      react: 19.2.7
 
   glob-parent@5.1.2:
     dependencies:
@@ -6952,6 +6976,12 @@ snapshots:
   ignore@7.0.5: {}
 
   image-meta@0.2.2: {}
+
+  img-fx@0.5.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.171.0):
+    dependencies:
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      three: 0.171.0
 
   immediate@3.0.6: {}
 
@@ -7080,9 +7110,10 @@ snapshots:
     dependencies:
       readable-stream: 2.3.8
 
-  lenis@1.3.19(@nuxt/kit@4.4.2(magicast@0.5.2))(vue@3.5.30(typescript@5.9.3)):
+  lenis@1.3.19(@nuxt/kit@4.4.2(magicast@0.5.2))(react@19.2.7)(vue@3.5.30(typescript@5.9.3)):
     optionalDependencies:
       '@nuxt/kit': 4.4.2(magicast@0.5.2)
+      react: 19.2.7
       vue: 3.5.30(typescript@5.9.3)
 
   lie@3.3.0:
@@ -7975,6 +8006,13 @@ snapshots:
       defu: 6.1.4
       destr: 2.0.5
 
+  react-dom@19.2.7(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+      scheduler: 0.27.0
+
+  react@19.2.7: {}
+
   readable-stream@2.3.8:
     dependencies:
       core-util-is: 1.0.3
@@ -8112,6 +8150,8 @@ snapshots:
       yoga-layout: 3.2.1
 
   sax@1.6.0: {}
+
+  scheduler@0.27.0: {}
 
   scule@1.3.0: {}
 

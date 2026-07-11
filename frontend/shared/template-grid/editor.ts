@@ -16,8 +16,8 @@ export function sectionBoundsOf(section: SectionV3, m: GridMetrics): Rect {
 
 /** Template-space point → 1-based cell coordinates (clamped). */
 export function pointToCell(x: number, y: number, m: GridMetrics): { col: number; row: number } {
-  const col = Math.floor((x - m.originX) / (m.cellW + m.gutter)) + 1
-  const row = Math.floor((y - m.originY) / (m.cellH + m.gutter)) + 1
+  const col = Math.floor((x - m.originX) / (m.cellW + m.gutterX)) + 1
+  const row = Math.floor((y - m.originY) / (m.cellH + m.gutterY)) + 1
   return {
     col: Math.min(m.cols, Math.max(1, col)),
     row: Math.min(m.rows, Math.max(1, row)),
@@ -26,8 +26,8 @@ export function pointToCell(x: number, y: number, m: GridMetrics): { col: number
 
 /** Move a region by a template-px delta, snapped to whole cells. Span preserved. */
 export function dragRegion(start: Region, dxPx: number, dyPx: number, m: GridMetrics): Region {
-  const dCols = Math.round(dxPx / (m.cellW + m.gutter))
-  const dRows = Math.round(dyPx / (m.cellH + m.gutter))
+  const dCols = Math.round(dxPx / (m.cellW + m.gutterX))
+  const dRows = Math.round(dyPx / (m.cellH + m.gutterY))
   const col = Math.min(m.cols - start.colSpan + 1, Math.max(1, start.col + dCols))
   const row = Math.min(m.rows - start.rowSpan + 1, Math.max(1, start.row + dRows))
   return { ...start, col, row }
@@ -42,8 +42,8 @@ export function resizeRegion(
   start: Region, dir: 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w',
   dxPx: number, dyPx: number, m: GridMetrics,
 ): Region {
-  const dCols = Math.round(dxPx / (m.cellW + m.gutter))
-  const dRows = Math.round(dyPx / (m.cellH + m.gutter))
+  const dCols = Math.round(dxPx / (m.cellW + m.gutterX))
+  const dRows = Math.round(dyPx / (m.cellH + m.gutterY))
   let { col, colSpan, row, rowSpan } = start
   if (dir.includes('e')) {
     colSpan = Math.max(1, Math.min(m.cols - col + 1, start.colSpan + dCols))

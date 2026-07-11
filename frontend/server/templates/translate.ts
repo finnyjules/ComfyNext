@@ -9,6 +9,7 @@
 import { colorToRgba } from '../../shared/template-grid/color'
 import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
+import { gridExpressiveLayout, expressiveVOffset } from '../../shared/template-grid/expressive'
 import { resolveTokens } from '../../shared/template-grid/tokens'
 import type {
   AnyGridTemplate, ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
@@ -318,6 +319,8 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
     left: `${r.rect.x}px`, top: `${r.rect.y}px`,
     width: `${r.rect.w}px`, height: `${r.rect.h}px`,
     display: 'flex',
+    // Expressive section children carry a derived tilt (Satori honours transform).
+    ...(r.rotation ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center' } : {}),
   }
   switch (r.el.type) {
     case 'text': {
@@ -327,27 +330,53 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       // Strips are a single short row — centre text vertically by default so a
       // headline doesn't float at the top of a 90px banner.
       const valign = s.valign ?? (formatClass === 'strip' ? 'middle' : 'top')
+      const justifyX = align === 'justify'
+      const justifyY = valign === 'justify'
       const panel = s.panel
+      const panelStyle = panel?.fill
+        ? {
+            background: colorToRgba(String(resolveTokens(panel.fill, props, brand)), panel.opacity ?? 1),
+            borderRadius: panel.radius ?? 0,
+          }
+        : {}
+      // Vertical justify: stretch line-height to fill the box height (CSS can't
+      // distribute a single text node's lines). Estimate-based, matches editor.
+      const numLines = Math.max(1, r.text!.lines?.length ?? 1)
+      const fontStyle = {
+        color: resolveTokens(s.color ?? '#fff', props, brand),
+        fontSize: r.text!.fontSize,
+        fontWeight: s.fontWeight ?? 400,
+        fontFamily: String(resolveTokens(s.fontFamily ?? 'Inter', props, brand)),
+        lineHeight: justifyY ? (r.rect.h / numLines) / r.text!.fontSize : (s.lineHeight ?? 1.1),
+        letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
+      }
+      // Expressive: place each word absolutely from the shared engine. Uses the
+      // same CHAR_W estimate as the editor, so export matches the editor.
+      if (s.expressive) {
+        const lay = gridExpressiveLayout({
+          content: r.text!.content, fontSize: r.text!.fontSize,
+          boxWidth: r.rect.w, boxHeight: r.rect.h, lineHeight: s.lineHeight ?? 1.1,
+          params: s.expressive, justifyX, justifyY,
+        })
+        const vOff = expressiveVOffset(r.rect.h, lay.height, justifyY ? 'top' : valign)
+        return el('div', {
+          style: { ...base, ...fontStyle, ...panelStyle, overflow: 'hidden' },
+          children: lay.words.map((w) => el('div', {
+            style: { position: 'absolute', left: `${w.x}px`, top: `${w.y + vOff}px`, whiteSpace: 'nowrap' },
+            children: w.text,
+          })),
+        })
+      }
       return el('div', {
         style: {
           ...base,
-          color: resolveTokens(s.color ?? '#fff', props, brand),
-          fontSize: r.text!.fontSize,
-          fontWeight: s.fontWeight ?? 400,
-          fontFamily: String(resolveTokens(s.fontFamily ?? 'Inter', props, brand)),
+          ...fontStyle,
           textAlign: align,
-          lineHeight: s.lineHeight ?? 1.1,
-          letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
           flexDirection: 'column',
           justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
-          alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+          alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : align === 'justify' ? 'stretch' : 'flex-start',
           overflow: 'hidden',
-          ...(panel?.fill
-            ? {
-                background: colorToRgba(String(resolveTokens(panel.fill, props, brand)), panel.opacity ?? 1),
-                borderRadius: panel.radius ?? 0,
-              }
-            : {}),
+          ...panelStyle,
         },
         children: r.text!.content,
       })
@@ -425,8 +454,32 @@ function templateV2ToSatori(
   const children: SatoriNode[] = []
   const bg = backgroundNode(tpl.background, { w, h }, props, brandMerged)
   if (bg) children.push(bg)
-  for (const r of resolved.elements) {
-    if (r.culled) continue
+  const visible = resolved.elements.filter(r => !r.culled)
+  for (let i = 0; i < visible.length; i++) {
+    const r = visible[i]
+    // A clipping frame becomes an overflow-hidden container holding its
+    // (contiguous) children, positioned relative to the frame origin — so
+    // children are clipped to the frame bounds like a Figma frame.
+    if (r.sectionFrame && r.clipsChildren) {
+      const frameNode = v2ElementNode(r, props, brandMerged, resolved.formatClass)
+      if (frameNode) {
+        const sectionId = r.el.id.replace(/__frame$/, '')
+        const kids: SatoriNode[] = []
+        let j = i + 1
+        while (j < visible.length && visible[j].clippedBy === sectionId) {
+          const c = visible[j]
+          const rel = { ...c, rect: { x: c.rect.x - r.rect.x, y: c.rect.y - r.rect.y, w: c.rect.w, h: c.rect.h } }
+          const kn = v2ElementNode(rel, props, brandMerged, resolved.formatClass)
+          if (kn) kids.push(kn)
+          j++
+        }
+        ;(frameNode.props.style as Record<string, unknown>).overflow = 'hidden'
+        frameNode.props.children = kids
+        children.push(frameNode)
+        i = j - 1
+        continue
+      }
+    }
     const node = v2ElementNode(r, props, brandMerged, resolved.formatClass)
     if (node) children.push(node)
   }

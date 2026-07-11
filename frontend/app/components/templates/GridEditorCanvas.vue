@@ -7,9 +7,10 @@
  */
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import { colorToRgba } from '~~/shared/template-grid/color'
-import { dragRegion, resizeRegion } from '~~/shared/template-grid/editor'
+import { dragRegion, pointToCell, resizeRegion } from '~~/shared/template-grid/editor'
+import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
-import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
+import { isV3 } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
@@ -24,7 +25,8 @@ const {
   sampleProps, effectiveBrand, setRegion, patchElement,
   isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
   moveChildIntoStack, moveChildOutOfStack,
-  scale, zoomBy, setContainerSize,
+  scale, zoomBy, setContainerSize, containerSize,
+  frameDrawArmed, addSectionAt,
 } = ctx
 
 // -- Inline (double-click) text editing --------------------------------------
@@ -129,6 +131,67 @@ function onWheel(e: WheelEvent) {
   zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1)
 }
 
+// -- Draw a frame (Section tool armed) ---------------------------------------
+// When the Section tool is armed, dragging on the artboard draws a frame at
+// that grid region (Figma's frame-draw gesture).
+const artboardRef = ref<HTMLDivElement | null>(null)
+let drawStart: { x: number; y: number } | null = null
+const drawRect = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+let suppressClick = false
+
+function toTemplateXY(e: PointerEvent): { x: number; y: number } {
+  const el = artboardRef.value
+  if (!el) return { x: 0, y: 0 }
+  const rect = el.getBoundingClientRect()
+  const s = scale.value || 1
+  return { x: (e.clientX - rect.left) / s, y: (e.clientY - rect.top) / s }
+}
+
+function onArtboardPointerDown(e: PointerEvent) {
+  if (!frameDrawArmed.value || previewMode.value) return
+  e.stopPropagation()
+  drawStart = toTemplateXY(e)
+  drawRect.value = { x: drawStart.x, y: drawStart.y, w: 0, h: 0 }
+  ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function onDrawPointerMove(e: PointerEvent) {
+  if (!drawStart) return
+  const p = toTemplateXY(e)
+  drawRect.value = {
+    x: Math.min(drawStart.x, p.x), y: Math.min(drawStart.y, p.y),
+    w: Math.abs(p.x - drawStart.x), h: Math.abs(p.y - drawStart.y),
+  }
+}
+
+function onDrawPointerUp(e: PointerEvent) {
+  if (!drawStart) return
+  const start = drawStart
+  drawStart = null
+  const p = toTemplateXY(e)
+  drawRect.value = null
+  ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+  suppressClick = true
+  // A stray click with no real drag cancels rather than dropping a 1-cell frame.
+  if (Math.abs(p.x - start.x) < 4 && Math.abs(p.y - start.y) < 4) {
+    frameDrawArmed.value = false
+    return
+  }
+  const m = metrics.value
+  const a = pointToCell(Math.min(start.x, p.x), Math.min(start.y, p.y), m)
+  const b = pointToCell(Math.max(start.x, p.x), Math.max(start.y, p.y), m)
+  addSectionAt({
+    col: a.col, row: a.row,
+    colSpan: Math.max(1, b.col - a.col + 1), rowSpan: Math.max(1, b.row - a.row + 1),
+  })
+}
+
+function onFrameDrawKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && frameDrawArmed.value) { e.stopPropagation(); frameDrawArmed.value = false }
+}
+onMounted(() => window.addEventListener('keydown', onFrameDrawKey, true))
+onUnmounted(() => window.removeEventListener('keydown', onFrameDrawKey, true))
+
 // -- Token resolution for sample preview ------------------------------------
 
 function resolve(s: unknown): string {
@@ -154,59 +217,33 @@ const backgroundStyle = computed(() => {
 // on) — both write-through to localStorage via the shared settings helper so
 // the shell's toolbar buttons and this canvas agree on state without prop
 // plumbing.
-const { getLocalSetting, setLocalSetting } = useLocalSettings()
-const FINE_GRID_KEY = 'ComfyNext.SmartLayout.FineGrid'
-const COLUMN_GUIDES_KEY = 'ComfyNext.SmartLayout.ColumnGuides'
-const fineGridOn = ref(getLocalSetting(FINE_GRID_KEY) !== 'false')
+const { getLocalSetting } = useLocalSettings()
+const COLUMN_GUIDES_KEY = 'Sailor.SmartLayout.ColumnGuides'
+const ROW_GUIDES_KEY = 'Sailor.SmartLayout.RowGuides'
 const columnGuidesOn = ref(getLocalSetting(COLUMN_GUIDES_KEY) !== 'false')
+const rowGuidesOn = ref(getLocalSetting(ROW_GUIDES_KEY) !== 'false')
 
 function onSettingChanged(e: Event) {
   const { key, value } = (e as CustomEvent<{ key: string; value: string }>).detail ?? {}
-  if (key === `comfynext:${FINE_GRID_KEY}`) fineGridOn.value = value !== 'false'
-  else if (key === `comfynext:${COLUMN_GUIDES_KEY}`) columnGuidesOn.value = value !== 'false'
+  if (key === `sailor:${COLUMN_GUIDES_KEY}`) columnGuidesOn.value = value !== 'false'
+  else if (key === `sailor:${ROW_GUIDES_KEY}`) rowGuidesOn.value = value !== 'false'
 }
-onMounted(() => window.addEventListener('comfynext:setting-changed', onSettingChanged))
-onUnmounted(() => window.removeEventListener('comfynext:setting-changed', onSettingChanged))
-
-// Fine placement lattice — two repeating-linear-gradient backgrounds (not an
-// SVG line-per-cell, which would mean hundreds of DOM nodes on a dense v3
-// baseline grid) sized to the metrics' cell dimensions, offset by the grid
-// origin so lines land exactly on cell boundaries. A second, larger-period
-// pair draws an emphasis line every 4th cell for rhythm.
-const fineGridStyle = computed(() => {
-  const m = metrics.value
-  const cw = Math.max(1, m.cellW + m.gutter)
-  const ch = Math.max(1, m.cellH + m.gutter)
-  const hair = 'rgba(255,255,255,0.06)'
-  const emph = 'rgba(255,255,255,0.12)'
-  return {
-    position: 'absolute' as const,
-    inset: '0',
-    pointerEvents: 'none' as const,
-    backgroundImage: [
-      `repeating-linear-gradient(to right, ${emph} 0, ${emph} 1px, transparent 1px, transparent ${cw * 4}px)`,
-      `repeating-linear-gradient(to bottom, ${emph} 0, ${emph} 1px, transparent 1px, transparent ${ch * 4}px)`,
-      `repeating-linear-gradient(to right, ${hair} 0, ${hair} 1px, transparent 1px, transparent ${cw}px)`,
-      `repeating-linear-gradient(to bottom, ${hair} 0, ${hair} 1px, transparent 1px, transparent ${ch}px)`,
-    ].join(', '),
-    backgroundPosition: `${m.originX}px ${m.originY}px`,
-    backgroundRepeat: 'repeat',
-  }
-})
+onMounted(() => window.addEventListener('sailor:setting-changed', onSettingChanged))
+onUnmounted(() => window.removeEventListener('sailor:setting-changed', onSettingChanged))
 
 const gridCells = computed(() => {
   const m = metrics.value
-  const innerH = m.rows * m.cellH + (m.rows - 1) * m.gutter
+  const innerH = m.rows * m.cellH + (m.rows - 1) * m.gutterY
   const cols = Array.from({ length: m.cols }, (_, i) => ({
-    left: m.originX + i * (m.cellW + m.gutter),
+    left: m.originX + i * (m.cellW + m.gutterX),
     top: m.originY,
     width: m.cellW,
     height: innerH,
   }))
   const rowLines = Array.from({ length: Math.max(0, m.rows - 1) }, (_, i) => ({
     left: m.originX,
-    top: m.originY + (i + 1) * (m.cellH + m.gutter) - m.gutter / 2,
-    width: m.cols * m.cellW + (m.cols - 1) * m.gutter,
+    top: m.originY + (i + 1) * (m.cellH + m.gutterY) - m.gutterY / 2,
+    width: m.cols * m.cellW + (m.cols - 1) * m.gutterX,
   }))
   return { cols, rowLines }
 })
@@ -237,7 +274,22 @@ function rectStyle(r: ResolvedElement): Record<string, string> {
     top: `${r.rect.y}px`,
     width: `${r.rect.w}px`,
     height: `${r.rect.h}px`,
+    // Expressive section children carry a derived tilt.
+    ...(r.rotation ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center center' } : {}),
   }
+}
+
+/** Clip a child to its frame bounds (Figma frame clipping). Skipped while the
+ * child is selected so its resize handles stay reachable outside the frame. */
+function clipStyle(r: ResolvedElement): Record<string, string> {
+  const cr = r.clipRect
+  if (!cr || selectedId.value === r.el.id) return {}
+  const top = Math.max(0, cr.y - r.rect.y)
+  const left = Math.max(0, cr.x - r.rect.x)
+  const right = Math.max(0, (r.rect.x + r.rect.w) - (cr.x + cr.w))
+  const bottom = Math.max(0, (r.rect.y + r.rect.h) - (cr.y + cr.h))
+  if (!top && !left && !right && !bottom) return {}
+  return { clipPath: `inset(${top}px ${right}px ${bottom}px ${left}px)` }
 }
 
 function textStyle(r: ResolvedElement): Record<string, string | number> {
@@ -247,21 +299,81 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
   const align = s.align ?? 'left'
   const valign = s.valign ?? (formatClass.value === 'strip' ? 'middle' : 'top')
   const panel = s.panel
+  // Vertical justify: CSS can't distribute a single text node's lines, so stretch
+  // the line-height to fill the box height from the resolver's line estimate
+  // (identical in editor + Satori export).
+  const numLines = Math.max(1, r.text?.lines?.length ?? 1)
+  const fontSize = r.text?.fontSize ?? 16
+  const lineHeight = valign === 'justify' ? (r.rect.h / numLines) / fontSize : (s.lineHeight ?? 1.1)
   return {
     color: resolve(s.color ?? '#fff'),
-    fontSize: `${r.text?.fontSize ?? 16}px`,
+    fontSize: `${fontSize}px`,
     fontWeight: s.fontWeight ?? 400,
     fontFamily: s.fontFamily ?? 'Inter, system-ui, sans-serif',
     textAlign: align,
-    lineHeight: s.lineHeight ?? 1.1,
+    lineHeight,
     letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : 'normal',
     width: '100%', height: '100%',
     display: 'flex', flexDirection: 'column',
     justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
-    alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+    alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : align === 'justify' ? 'stretch' : 'flex-start',
     overflow: 'hidden',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
+    ...(panel?.fill
+      ? { background: colorToRgba(resolve(panel.fill), panel.opacity ?? 1), borderRadius: `${panel.radius ?? 0}px` }
+      : {}),
+  }
+}
+
+/** Font styling for the inline-edit textarea — matches the displayed text's
+ * FITTED size/weight/family so the text doesn't jump size when editing starts. */
+function editTextStyle(r: ResolvedElement): Record<string, string | number> {
+  const el = r.el
+  if (el.type !== 'text') return {}
+  const s = el.style ?? {}
+  return {
+    fontSize: `${r.text?.fontSize ?? 16}px`,
+    fontWeight: s.fontWeight ?? 400,
+    fontFamily: s.fontFamily ?? 'Inter, system-ui, sans-serif',
+    lineHeight: s.lineHeight ?? 1.1,
+    letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : 'normal',
+    color: resolve(s.color ?? '#fff'),
+    textAlign: s.align ?? 'left',
+  }
+}
+
+// Expressive text: per-word placement from the shared engine (same CHAR_W
+// estimate the Satori export uses, so the editor matches the render).
+function expressiveWords(r: ResolvedElement): Array<{ text: string; x: number; y: number }> {
+  const el = r.el
+  if (el.type !== 'text' || !el.style?.expressive) return []
+  const fontSize = r.text?.fontSize ?? 16
+  const lineHeight = el.style.lineHeight ?? 1.1
+  const justifyX = el.style.align === 'justify'
+  const justifyY = el.style.valign === 'justify'
+  const lay = gridExpressiveLayout({
+    content: r.text?.content ?? '', fontSize, boxWidth: r.rect.w, boxHeight: r.rect.h,
+    lineHeight, params: el.style.expressive, justifyX, justifyY,
+  })
+  // justifyY fills the height (lay.height === rect.h) → vOff 0; otherwise honour valign.
+  const valign = el.style.valign === 'justify' ? 'top' : (el.style.valign ?? (formatClass.value === 'strip' ? 'middle' : 'top'))
+  const vOff = expressiveVOffset(r.rect.h, lay.height, valign as any)
+  return lay.words.map(w => ({ text: w.text, x: w.x, y: w.y + vOff }))
+}
+
+function expressiveContainerStyle(r: ResolvedElement): Record<string, string | number> {
+  const el = r.el
+  const s = (el.type === 'text' && el.style) || {}
+  const panel = s.panel
+  return {
+    position: 'relative', width: '100%', height: '100%', overflow: 'hidden',
+    color: resolve(s.color ?? '#fff'),
+    fontSize: `${r.text?.fontSize ?? 16}px`,
+    fontWeight: s.fontWeight ?? 400,
+    fontFamily: s.fontFamily ?? 'Inter, system-ui, sans-serif',
+    lineHeight: s.lineHeight ?? 1.1,
+    letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : 'normal',
     ...(panel?.fill
       ? { background: colorToRgba(resolve(panel.fill), panel.opacity ?? 1), borderRadius: `${panel.radius ?? 0}px` }
       : {}),
@@ -325,14 +437,14 @@ const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
 function goToCollection() {
   if (!binding) return
   const colNode = binding.collectionNode.value
-  if (colNode) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  if (colNode) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
 }
 
 /** Unbind: freeze the element's content back to the resolved live value (so
  *  it doesn't silently revert to some stale literal), then delete the
  *  binding. The canvas has no direct node-mutation access (only `ctx`'s
  *  template-scoped ops), so the binding delete goes through the same
- *  `comfynext:unbindControl` fallback event VueNodeCanvas already handles
+ *  `sailor:unbindControl` fallback event VueNodeCanvas already handles
  *  for surfaces without composable access (Slice 2a). */
 function unbindElement(r: ResolvedElement) {
   const socket = boundSocket(r.el)
@@ -344,7 +456,7 @@ function unbindElement(r: ResolvedElement) {
   // clipped string as the literal instead of the true value.
   const resolvedValue = resolve((r.el as any).content)
   patchElement(r.el.id, { content: resolvedValue } as any)
-  window.dispatchEvent(new CustomEvent('comfynext:unbindControl', {
+  window.dispatchEvent(new CustomEvent('sailor:unbindControl', {
     detail: { nodeId: binding.nodeId, path: `props.${socket}` },
   }))
 }
@@ -358,7 +470,7 @@ function turnIntoVariable(r: ResolvedElement) {
   const { priorContent } = tokenizeElementContent(el as any, socketName)
   const label = columnLabelForElement(el as any, priorContent, socketName)
   patchElement(el.id, { content: `{{ props.${socketName} }}` } as any)
-  window.dispatchEvent(new CustomEvent('comfynext:promoteLayoutElement', {
+  window.dispatchEvent(new CustomEvent('sailor:promoteLayoutElement', {
     detail: {
       nodeId: binding.nodeId,
       socketName,
@@ -424,6 +536,8 @@ function onElementPointerDown(e: PointerEvent, r: ResolvedElement) {
   if (editingId.value === r.el.id) return   // let the textarea handle its own clicks
   if (previewMode.value) return        // read-only while previewing the render
   selectedId.value = r.el.id
+  selectedSectionId.value = null       // selecting a layer clears any frame selection
+
   // In reposition mode, body-drag pans the image instead of moving the element.
   if (repositionId.value === r.el.id && r.el.type === 'image') {
     const focal = (r.el as any).focal ?? { x: 0.5, y: 0.5 }
@@ -495,22 +609,22 @@ function onElementPointerUp(e: PointerEvent) {
     if (el) {
       const centre = { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 }
 
-      // Determine which stack (if any) this element already belongs to.
+      // Determine which frame (if any) this element already belongs to.
       const tpl = template.value
       let currentStackId: string | null = null
       if (isV3(tpl)) {
         for (const sec of tpl.sections) {
-          if (isLayoutStack(sec) && sec.children.some(c => c.id === elementId)) {
+          if (sec.children.some(c => c.id === elementId)) {
             currentStackId = sec.id
             break
           }
         }
       }
 
-      // Find the target stack under the drop point.
+      // Find the target frame under the drop point (any section, not just stacks).
       let targetStackId: string | null = null
       for (const rs of resolvedSections.value) {
-        if (rs.section.layout != null && pointInRect(centre, rs.rect)) {
+        if (pointInRect(centre, rs.rect)) {
           targetStackId = rs.section.id
           break
         }
@@ -597,6 +711,7 @@ function onHandlePointerUp(e: PointerEvent) {
 }
 
 function onCanvasClick(e: MouseEvent) {
+  if (suppressClick) { suppressClick = false; return }   // just finished drawing a frame
   if (e.target === e.currentTarget) { selectedId.value = null; selectedSectionId.value = null }
 }
 
@@ -607,15 +722,36 @@ function onCanvasClick(e: MouseEvent) {
 // trick the resize handles use), no manual scale multiplication needed.
 const { selectedResolved } = ctx
 const showToolbar = computed(() => !!selectedResolved.value && !editingId.value)
+
+// The selected element's resize handles are drawn in a dedicated overlay ABOVE
+// every element (see template), NOT nested inside the element's own div —
+// otherwise an overlapping sibling that sits higher in z-order (e.g. a
+// full-canvas text layer over an image) intercepts the pointer and the handle
+// can't be grabbed. Null when nothing resizable is selected.
+const resizeHandleTarget = computed(() => {
+  const r = selectedResolved.value
+  if (!r || r.culled || r.el.locked) return null
+  if (repositionId.value === r.el.id || editingId.value === r.el.id) return null
+  return r
+})
+// Positioned in SCREEN (container) coordinates — not inside the scaled artboard
+// — so the toolbar stays a constant size regardless of zoom. A template point
+// (tx,ty) maps to container coords via the centred, scaled artboard:
+//   screen = containerCentre + (t − formatCentre) · scale.
 const toolbarStyle = computed(() => {
   const rect = selectedResolved.value?.rect
-  if (!rect) return { display: 'none' }
+  const f = format.value
+  const cs = containerSize.value
+  if (!rect || !f || !cs.w) return { display: 'none' }
+  const s = scale.value || 1
+  const x = cs.w / 2 + (rect.x + rect.w / 2 - f.w / 2) * s
+  const y = cs.h / 2 + (rect.y - f.h / 2) * s
   return {
     position: 'absolute',
-    left: `${rect.x + rect.w / 2}px`,
-    top: `${rect.y - 8}px`,
+    left: `${x}px`,
+    top: `${y - 10}px`,
     transform: 'translate(-50%, -100%)',
-    zIndex: '40',
+    zIndex: '50',
   } as Record<string, string>
 })
 
@@ -644,6 +780,13 @@ function onSectionPointerDown(e: PointerEvent, rs: ResolvedSection) {
   selectedId.value = null
   sectionDrag = { id: rs.section.id, startRegion: { ...rs.region }, startClientX: e.clientX, startClientY: e.clientY }
   ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+// Enter-to-edit: double-click a frame steps inside to its first child.
+function enterSection(e: MouseEvent, rs: ResolvedSection) {
+  e.stopPropagation()
+  const first = rs.section.children[0]
+  if (first) { selectedSectionId.value = null; selectedId.value = first.id }
 }
 
 function onSectionPointerMove(e: PointerEvent) {
@@ -699,27 +842,28 @@ function onSectionHandlePointerUp(e: PointerEvent) {
   <div
     ref="containerRef"
     class="absolute inset-0 flex items-center justify-center select-none"
-    @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e); onSectionPointerMove(e); onSectionHandlePointerMove(e) }"
-    @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e); onSectionPointerUp(e); onSectionHandlePointerUp(e) }"
+    @pointermove="(e) => { onElementPointerMove(e); onHandlePointerMove(e); onSectionPointerMove(e); onSectionHandlePointerMove(e); onDrawPointerMove(e) }"
+    @pointerup="(e) => { onElementPointerUp(e); onHandlePointerUp(e); onSectionPointerUp(e); onSectionHandlePointerUp(e); onDrawPointerUp(e) }"
+    @click="onCanvasClick"
     @wheel="onWheel"
   >
     <!-- Scaled wrapper; inner div is template coordinate space. -->
     <div
+      ref="artboardRef"
       class="relative shrink-0 shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
       :style="{
         width: format.w + 'px',
         height: format.h + 'px',
         transform: `scale(${scale})`,
         transformOrigin: 'center',
+        cursor: frameDrawArmed ? 'crosshair' : undefined,
         ...backgroundStyle,
       }"
+      @pointerdown="onArtboardPointerDown"
       @click="onCanvasClick"
     >
-      <!-- Fine placement lattice (always-on by default) — single element, two
-           repeating-gradient backgrounds; cheap even at hundreds of cells. -->
-      <div v-if="fineGridOn" :style="fineGridStyle" />
-
-      <!-- Grid overlay (under elements, non-interactive) -->
+      <!-- Grid overlay (under elements, non-interactive). Columns (vertical
+           bands) and Rows (horizontal lines) toggle independently. -->
       <div class="absolute inset-0 pointer-events-none">
         <template v-if="columnGuidesOn">
           <div
@@ -734,6 +878,8 @@ function onSectionHandlePointerUp(e: PointerEvent) {
               borderRight: '1px solid rgba(150,180,255,0.16)',
             }"
           />
+        </template>
+        <template v-if="rowGuidesOn">
           <div
             v-for="(l, i) in gridCells.rowLines"
             :key="`r${i}`"
@@ -759,11 +905,26 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         />
       </div>
 
-      <!-- Elements (resolver output; culled ones don't render) -->
+      <!-- Rubber-band while drawing a frame -->
       <div
-        v-for="r in visible"
-        :key="r.el.id"
-        :style="[rectStyle(r), { cursor: repositionId === r.el.id ? 'grab' : r.el.locked ? 'default' : 'move' }]"
+        v-if="drawRect"
+        class="absolute pointer-events-none border-2 border-dashed border-[#34D399] bg-[#34D399]/10"
+        :style="{ left: drawRect.x + 'px', top: drawRect.y + 'px', width: drawRect.w + 'px', height: drawRect.h + 'px' }"
+      />
+
+      <!-- Elements (resolver output; culled ones don't render) -->
+      <template v-for="r in visible" :key="r.el.id">
+      <!-- Section frame: a non-interactive box drawn behind its children
+           (edited via the section box, not as a standalone element). -->
+      <div
+        v-if="r.sectionFrame"
+        :style="[rectStyle(r), { pointerEvents: 'none' }]"
+      >
+        <div :style="shapeStyle(r)" />
+      </div>
+      <div
+        v-else
+        :style="[rectStyle(r), clipStyle(r), { cursor: repositionId === r.el.id ? 'grab' : r.el.locked ? 'default' : 'move' }]"
         class="group"
         :class="repositionId === r.el.id
           ? 'outline outline-2 outline-[#96b4ff] outline-dashed'
@@ -775,13 +936,19 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         @contextmenu.prevent.stop="(e) => onElementContextMenu(e, r)"
       >
         <template v-if="r.el.type === 'text'">
-          <div v-if="editingId !== r.el.id" :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
+          <template v-if="editingId !== r.el.id">
+            <div v-if="r.el.style?.expressive" :style="expressiveContainerStyle(r)">
+              <span v-for="(w, i) in expressiveWords(r)" :key="i"
+                :style="{ position: 'absolute', left: `${w.x}px`, top: `${w.y}px`, whiteSpace: 'nowrap' }">{{ w.text }}</span>
+            </div>
+            <div v-else :style="textStyle(r)">{{ r.text?.content ?? '' }}</div>
+          </template>
           <textarea
             v-else
             data-inline-text-edit
             v-model="editDraft"
             class="absolute inset-0 w-full h-full resize-none bg-transparent outline outline-1 outline-[var(--var-accent)] p-0 m-0"
-            :style="{ font: 'inherit', color: 'inherit', textAlign: (r.el.style?.align || 'left') }"
+            :style="editTextStyle(r)"
             @pointerdown.stop
             @dblclick.stop
             @keydown.enter.prevent="commitTextEdit"
@@ -808,17 +975,6 @@ function onSectionHandlePointerUp(e: PointerEvent) {
           :title="`Bound to column · ${boundColumnLabel(r.el)}`"
         >{{ boundColumnLabel(r.el) }}</div>
 
-        <!-- Resize handles — hidden while repositioning so they don't fight the pan drag. -->
-        <template v-if="selectedId === r.el.id && !r.el.locked && repositionId !== r.el.id">
-          <div
-            v-for="dir in HANDLE_DIRS"
-            :key="dir"
-            class="absolute size-3 bg-white border border-[#96b4ff] rounded-sm"
-            :style="handleStyle(dir)"
-            @pointerdown="(e) => onHandlePointerDown(e, r, dir)"
-          />
-        </template>
-
         <!-- Reposition hints (images only) -->
         <div
           v-if="repositionId === r.el.id"
@@ -829,20 +985,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
           class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white/80 text-[10px] pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
         >Double-click to reposition</div>
       </div>
-
-      <!-- Contextual toolbar — floats above the selection; `.group` so the
-           VariableGlyph's hover-reveal (opacity-0 group-hover:opacity-60) has
-           an ancestor to key off, same as the per-element wrappers above. -->
-      <TemplatesGridInlineToolbar
-        v-if="showToolbar && selectedResolved"
-        class="group"
-        :style="toolbarStyle"
-        :element="selectedResolved.el"
-        :bound="selectedBound"
-        @style="(patch) => ctx.patchStyle(selectedResolved!.el.id, patch)"
-        @promote="promoteSelected"
-        @remove="() => ctx.removeElement(selectedResolved!.el.id)"
-      />
+      </template>
 
       <!-- v3 section frames (drag/resize the box; children ride it) -->
       <template v-if="isV3Mode && !previewMode">
@@ -859,6 +1002,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
             background: selectedSectionId === rs.section.id ? 'rgba(52,211,153,0.06)' : 'transparent',
           }"
           @pointerdown="(e) => onSectionPointerDown(e, rs)"
+          @dblclick="(e) => enterSection(e, rs)"
         >
           <!-- Section label tab -->
           <div
@@ -888,6 +1032,31 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         </div>
       </template>
 
+      <!-- Selected element's resize handles — lifted ABOVE all elements so an
+           overlapping sibling (e.g. a full-canvas text layer sitting over an
+           image) can't steal the pointer. The box is click-through; only the
+           handles capture the pointer. Hidden during the render-true preview. -->
+      <div
+        v-if="resizeHandleTarget && !previewMode"
+        class="absolute pointer-events-none"
+        :style="{
+          left: resizeHandleTarget.rect.x + 'px',
+          top: resizeHandleTarget.rect.y + 'px',
+          width: resizeHandleTarget.rect.w + 'px',
+          height: resizeHandleTarget.rect.h + 'px',
+          zIndex: '40',
+          ...(resizeHandleTarget.rotation ? { transform: `rotate(${resizeHandleTarget.rotation}deg)`, transformOrigin: 'center center' } : {}),
+        }"
+      >
+        <div
+          v-for="dir in HANDLE_DIRS"
+          :key="dir"
+          class="absolute size-3 bg-white border border-[#96b4ff] rounded-sm pointer-events-auto"
+          :style="handleStyle(dir)"
+          @pointerdown="(e) => onHandlePointerDown(e, resizeHandleTarget!, dir)"
+        />
+      </div>
+
       <!-- Render-true preview overlay (actual server render) -->
       <img
         v-if="previewMode && previewUrl"
@@ -896,6 +1065,20 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         :alt="`Rendered ${currentFormat}`"
       >
     </div>
+
+    <!-- Contextual toolbar — rendered OUTSIDE the scaled artboard (container
+         coords) so it stays a constant size at any zoom. `.group` keeps the
+         VariableGlyph hover-reveal working. -->
+    <TemplatesGridInlineToolbar
+      v-if="showToolbar && selectedResolved"
+      class="group"
+      :style="toolbarStyle"
+      :element="selectedResolved.el"
+      :bound="selectedBound"
+      @style="(patch) => ctx.patchStyle(selectedResolved!.el.id, patch)"
+      @promote="promoteSelected"
+      @remove="() => ctx.removeElement(selectedResolved!.el.id)"
+    />
 
     <!-- Culled-here chips -->
     <div v-if="culled.length" class="absolute bottom-3 left-3 flex flex-wrap gap-1.5 max-w-[60%]">

@@ -8,7 +8,7 @@
  * touches template/selectedId/moveElement/moveElementTo, which the grid
  * context exposes with identical contracts).
  */
-import { BookmarkPlus, CaseSensitive, Columns3, Download, Grid2x2, Grid3x3, ImagePlus, Layers2, PaintBucket, Palette, Redo2, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
+import { BookmarkPlus, Columns3, Download, Eye, EyeOff, Frame, ImagePlus, Palette, Redo2, Rows3, Save, Square, Type as TypeIcon, Undo2 } from 'lucide-vue-next'
 
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useGridEditor } from '~/composables/useGridEditor'
@@ -30,6 +30,9 @@ const props = defineProps<{
   /** The project's active brand kit — slots between template defaults and
    *  the wired socket brand in the shared effectiveBrand merge. */
   activeKit?: BrandKit
+  /** Images available on the ComfyUI node graph — the "On canvas" source for
+   *  the image picker (the modal derives them from its nodes). */
+  canvasImages?: Array<{ url: string; label?: string }>
 }>()
 
 const emit = defineEmits<{ save: [layout: AnyGridTemplate] }>()
@@ -46,7 +49,7 @@ provide('layerControls', {
   isLocked: ctx.isLocked,
 })
 
-const { template, dirty, worstCase, selectedElement, selectedId, sampleProps, sampleBrand, selectedStack, wrapSelectionInStack } = ctx
+const { template, dirty, selectedElement, selectedId, sampleProps, sampleBrand, selectedSection, wrapSelectionInSection } = ctx
 
 // In-product agent (last-mile of F1): drives the template through the command
 // surface. Gated to v3 templates in the UI below.
@@ -57,7 +60,7 @@ const {
   keep: agentKeep, revert: agentRevert,
 } = useLayoutAgent({
   template: template as unknown as Ref<TemplateV3>,
-  apiKey: () => getLocalSetting('ComfyNext.AI.AnthropicApiKey') ?? '',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   sampleProps: () => sampleProps.value,
   sampleBrand: () => sampleBrand.value as BrandKit,
 })
@@ -65,7 +68,10 @@ function onAgentHover(i: number | null) { agentHovered.value = i }
 // The agent's progress / proposal take over the right panel while it's active.
 const agentPanelActive = computed(() => agentBusy.value || agentReviewing.value || agentHasProposal.value)
 // The right panel is shown when the agent is working or an element/stack is selected.
-const rightPanelOpen = computed(() => agentPanelActive.value || !!selectedElement.value || !!selectedStack.value)
+// The right panel is always present while designing: it hosts the element /
+// stack inspector, the agent, or — when nothing is selected — the canvas
+// (grid + background) properties.
+const rightPanelOpen = computed(() => true)
 
 // Opening step: a fresh, empty layout shows the format picker first (pick the
 // deliverables, then design on a blank canvas). An existing layout — any
@@ -86,6 +92,13 @@ const canvasArea = computed(() => ({
   // Right column (agent results and/or the element inspector) is w-80 = 320px.
   right: rightPanelOpen.value ? '344px' : '32px', // right-4 + w-80 + gap
   bottom: '88px',                                    // bottom toolbar + gap
+}))
+
+// Centre the bottom cluster (agent prompt + tool/zoom toolbars) on the SAME box
+// as the artboard, not the full modal — otherwise the asymmetric left/right
+// panel widths push the toolbar off the canvas's centre line.
+const bottomBarStyle = computed(() => ({
+  left: `calc((${canvasArea.value.left} + (100% - ${canvasArea.value.right})) / 2)`,
 }))
 
 if (props.initialProps && Object.keys(props.initialProps).length > 0) {
@@ -162,13 +175,50 @@ function onKeydown(e: KeyboardEvent) {
   // arrow keys (caret movement) — don't hijack them for the canvas.
   if (isTyping(e.target)) return
 
-  if (mod && (e.key === 'z' || e.key === 'Z')) {
-    e.preventDefault()
-    if (e.shiftKey) ctx.redo()
-    else ctx.undo()
+  // Escape — deselect first; only if nothing is selected does the modal close
+  // (this handler runs in the capture phase, ahead of the modal's Escape).
+  if (e.key === 'Escape') {
+    if (selectedId.value || ctx.selectedSectionId.value) {
+      e.stopPropagation()
+      selectedId.value = null
+      ctx.selectedSectionId.value = null
+    }
     return
   }
+
+  if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); e.shiftKey ? ctx.redo() : ctx.undo(); return }
   if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); ctx.redo(); return }
+
+  // Copy / paste.
+  if (mod && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); ctx.copySelected(); return }
+  if (mod && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); ctx.pasteClipboard(); return }
+
+  // Group / ungroup (⌘G / ⇧⌘G).
+  if (mod && (e.key === 'g' || e.key === 'G')) {
+    e.preventDefault()
+    if (e.shiftKey) ctx.ungroupSelectedSection()
+    else wrapSelectionInSection()
+    return
+  }
+
+  // Z-order (⌘] forward / ⌘[ back, ⇧ = to front/back).
+  if (mod && (e.key === ']' || e.key === '}')) { e.preventDefault(); e.shiftKey ? ctx.bringToFront() : ctx.bringForward(); return }
+  if (mod && (e.key === '[' || e.key === '{')) { e.preventDefault(); e.shiftKey ? ctx.sendToBack() : ctx.sendBackward(); return }
+
+  const nudges: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  }
+  const nudge = nudges[e.key]
+  const step = e.shiftKey ? 4 : 1
+
+  // A selected frame (section) — duplicate / delete / nudge, like an element.
+  const secId = ctx.selectedSectionId.value
+  if (secId && !selectedId.value) {
+    if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); ctx.duplicateSection(secId); return }
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); ctx.removeSection(secId); return }
+    if (nudge) { e.preventDefault(); ctx.nudgeSection(nudge[0] * step, nudge[1] * step); return }
+    return
+  }
 
   const id = selectedId.value
   if (mod && (e.key === 'd' || e.key === 'D')) {
@@ -178,54 +228,53 @@ function onKeydown(e: KeyboardEvent) {
   if ((e.key === 'Delete' || e.key === 'Backspace') && id && !ctx.isLocked(id)) {
     e.preventDefault(); ctx.removeElement(id); return
   }
-  const nudges: Record<string, [number, number]> = {
-    ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
-  }
-  const nudge = nudges[e.key]
   if (id && nudge && !ctx.isLocked(id)) {
     e.preventDefault()
-    const step = e.shiftKey ? 4 : 1
     ctx.nudgeSelected(nudge[0] * step, nudge[1] * step)
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onMounted(() => window.addEventListener('keydown', onKeydown, true))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 
-// -- Grid settings popover ----------------------------------------------------
+// -- Canvas properties (grid + background) ------------------------------------
+// These live in the right panel (shown when nothing is selected), not the
+// toolbar: the grid overlays, column/row counts, gutter/margin spacing, and
+// the canvas background.
 
-const gridPanelOpen = ref(false)
-const { currentFormat, format, formatClass, metrics } = ctx
+const { metrics, gridColumns, gridRows, margins, gutters } = ctx
 
-// Fine grid / column guide overlay toggles — persisted so the placement aid
-// stays how the designer left it across sessions. Default: fine grid ON
-// (the always-visible placement lattice the creator-flow ask calls for),
-// column guides ON (unchanged from today's always-on coarse guides).
-const FINE_GRID_KEY = 'ComfyNext.SmartLayout.FineGrid'
-const COLUMN_GUIDES_KEY = 'ComfyNext.SmartLayout.ColumnGuides'
-const fineGridOn = ref(getLocalSetting(FINE_GRID_KEY) !== 'false')
+// Overlay visibility toggles — persisted so the placement aids stay how the
+// designer left them across sessions. Both default ON. Columns = vertical grid
+// bands, Rows = horizontal grid lines. Each also carries its count.
+const COLUMN_GUIDES_KEY = 'Sailor.SmartLayout.ColumnGuides'
+const ROW_GUIDES_KEY = 'Sailor.SmartLayout.RowGuides'
 const columnGuidesOn = ref(getLocalSetting(COLUMN_GUIDES_KEY) !== 'false')
-function toggleFineGrid() {
-  fineGridOn.value = !fineGridOn.value
-  setLocalSetting(FINE_GRID_KEY, String(fineGridOn.value))
-}
+const rowGuidesOn = ref(getLocalSetting(ROW_GUIDES_KEY) !== 'false')
 function toggleColumnGuides() {
   columnGuidesOn.value = !columnGuidesOn.value
   setLocalSetting(COLUMN_GUIDES_KEY, String(columnGuidesOn.value))
 }
-
-/** Class default dims, shown as placeholders so "unset" reads as automatic. */
-const classDefaultDims = computed(() => {
-  const d = { square: [6, 6], portrait: [4, 8], landscape: [8, 4], strip: [12, 1], skyscraper: [3, 10] }[formatClass.value]
-  return { cols: d[0], rows: d[1] }
-})
-
-function onDims(field: 'cols' | 'rows', raw: string) {
-  ctx.setFormatDims(currentFormat.value, { [field]: raw === '' ? undefined : Number(raw) })
+function toggleRowGuides() {
+  rowGuidesOn.value = !rowGuidesOn.value
+  setLocalSetting(ROW_GUIDES_KEY, String(rowGuidesOn.value))
 }
-function onGrid(field: 'gutter' | 'margin', raw: string) {
+
+function onColumns(raw: string) {
   const v = Number(raw)
-  if (Number.isFinite(v)) ctx.setGridSpec({ [field]: v })
+  if (Number.isFinite(v)) ctx.setGridColumns(v)
+}
+function onRows(raw: string) {
+  const v = Number(raw)
+  if (Number.isFinite(v)) ctx.setGridRows(v)
+}
+function onGutter(axis: 'column' | 'row', raw: string) {
+  const v = Number(raw)
+  if (Number.isFinite(v)) ctx.setGutter(axis, v)
+}
+function onMargin(side: 'top' | 'right' | 'bottom' | 'left', raw: string) {
+  const v = Number(raw)
+  if (Number.isFinite(v)) ctx.setMargin(side, v)
 }
 
 // -- Brand kit popover --------------------------------------------------------
@@ -240,9 +289,8 @@ function brandVal(key: string): string {
   return (template.value.brand as any)?.[key] ?? ''
 }
 
-// -- Background popover --------------------------------------------------------
+// -- Background (canvas properties panel) -------------------------------------
 
-const bgPanelOpen = ref(false)
 const bgFill = computed(() => template.value.background?.fill ?? '')
 const hasBgImage = computed(() => !!template.value.background?.image)
 const bgColorHex = computed(() => (/^#[0-9a-f]{6}$/i.test(bgFill.value) ? bgFill.value : '#000000'))
@@ -254,6 +302,23 @@ const exportOpen = ref(false)
 function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
   ensureFont(family)
   ctx.setBrand({ [key]: family })
+}
+
+// -- Section tool -------------------------------------------------------------
+// With a selection, wrap it in a frame; otherwise arm draw-a-frame (the next
+// canvas drag draws the frame at that region).
+function onSectionTool() {
+  if (selectedId.value) wrapSelectionInSection()
+  else ctx.frameDrawArmed.value = true
+}
+
+// -- Image picker -------------------------------------------------------------
+// The Image tool opens a picker (canvas-graph images + asset library); selecting
+// a source adds an image element with that URL. Empty selection = placeholder.
+const imagePickerOpen = ref(false)
+function onPickImage(url: string) {
+  ctx.addImage(url)
+  imagePickerOpen.value = false
 }
 </script>
 
@@ -349,6 +414,12 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
       </div>
       <TemplatesFormatPicker v-if="!started" @confirm="onFormatsChosen" />
       <TemplatesExportPanel v-if="exportOpen" @close="exportOpen = false" />
+      <TemplatesImagePicker
+        v-if="imagePickerOpen"
+        :canvas-images="canvasImages ?? []"
+        @select="onPickImage"
+        @close="imagePickerOpen = false"
+      />
 
       <!-- Left floating panel: formats + elements (only once designing) -->
       <div
@@ -388,157 +459,138 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
             />
           </div>
         </template>
-        <div v-else class="min-h-0 flex-1 overflow-y-auto pt-2">
-          <TemplatesGridPropertyPanel v-if="selectedElement" />
-          <TemplatesStackInspector v-if="selectedStack" />
-        </div>
+        <template v-else-if="selectedElement || selectedSection">
+          <div class="min-h-0 flex-1 overflow-y-auto pt-2">
+            <TemplatesGridPropertyPanel v-if="selectedElement" />
+            <TemplatesSectionInspector v-if="selectedSection" />
+          </div>
+        </template>
+        <!-- Nothing selected: canvas-level properties (grid + background). -->
+        <template v-else>
+          <div class="shrink-0 border-b border-white/[0.06] px-4 py-3">
+            <p class="text-sm font-medium text-white/85">Canvas</p>
+            <p class="text-[11px] text-white/35 mt-0.5">Grid, spacing and background</p>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto">
+            <!-- Grid -->
+            <div class="px-4 py-3.5 flex flex-col gap-3 border-b border-white/[0.06]">
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Grid</p>
+              <div class="flex flex-col gap-0.5">
+                <div class="flex items-center gap-2.5 h-8 px-1.5 rounded-md" :class="columnGuidesOn ? 'bg-white/[0.06]' : ''">
+                  <button
+                    class="flex items-center gap-2.5 flex-1 min-w-0 h-full cursor-pointer"
+                    title="Show/hide the vertical column guides"
+                    @click="toggleColumnGuides"
+                  >
+                    <component :is="columnGuidesOn ? Eye : EyeOff" class="size-4" :class="columnGuidesOn ? 'text-white/85' : 'text-white/35'" />
+                    <Columns3 class="size-3.5" :class="columnGuidesOn ? 'text-white/55' : 'text-white/30'" />
+                    <span class="text-[12px]" :class="columnGuidesOn ? 'text-white/90' : 'text-white/45'">Columns</span>
+                  </button>
+                  <input
+                    type="number" min="1" max="240" :value="gridColumns"
+                    class="w-11 h-6 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-right text-white tabular-nums focus:outline-none focus:border-white/30"
+                    title="Number of columns — fixed across every format"
+                    @change="(e: any) => onColumns(e.target.value)"
+                  >
+                </div>
+                <div class="flex items-center gap-2.5 h-8 px-1.5 rounded-md" :class="rowGuidesOn ? 'bg-white/[0.06]' : ''">
+                  <button
+                    class="flex items-center gap-2.5 flex-1 min-w-0 h-full cursor-pointer"
+                    title="Show/hide the horizontal row guides"
+                    @click="toggleRowGuides"
+                  >
+                    <component :is="rowGuidesOn ? Eye : EyeOff" class="size-4" :class="rowGuidesOn ? 'text-white/85' : 'text-white/35'" />
+                    <Rows3 class="size-3.5" :class="rowGuidesOn ? 'text-white/55' : 'text-white/30'" />
+                    <span class="text-[12px]" :class="rowGuidesOn ? 'text-white/90' : 'text-white/45'">Rows</span>
+                  </button>
+                  <input
+                    type="number" min="1" max="240" :value="gridRows"
+                    class="w-11 h-6 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-right text-white tabular-nums focus:outline-none focus:border-white/30"
+                    title="Number of rows — fixed across every format"
+                    @change="(e: any) => onRows(e.target.value)"
+                  >
+                </div>
+              </div>
+              <div>
+                <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Gutter <span class="text-white/25 normal-case tracking-normal">· between cells, master px</span></p>
+                <div class="grid grid-cols-2 gap-1.5 mb-3">
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] text-white/40 text-center">Column</span>
+                    <input
+                      type="number" min="0" :value="gutters.column"
+                      class="w-full h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-center text-white tabular-nums focus:outline-none focus:border-white/30"
+                      title="Horizontal gap between columns (master px)"
+                      @change="(e: any) => onGutter('column', e.target.value)"
+                    >
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] text-white/40 text-center">Row</span>
+                    <input
+                      type="number" min="0" :value="gutters.row"
+                      class="w-full h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-center text-white tabular-nums focus:outline-none focus:border-white/30"
+                      title="Vertical gap between rows (master px)"
+                      @change="(e: any) => onGutter('row', e.target.value)"
+                    >
+                  </label>
+                </div>
+                <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Margin <span class="text-white/25 normal-case tracking-normal">· per side, master px</span></p>
+                <div class="grid grid-cols-4 gap-1.5">
+                  <label v-for="side in (['top', 'right', 'bottom', 'left'] as const)" :key="side" class="flex flex-col gap-1">
+                    <span class="text-[10px] text-white/40 text-center capitalize">{{ side }}</span>
+                    <input
+                      type="number" min="0" :value="margins[side]"
+                      class="w-full h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-center text-white tabular-nums focus:outline-none focus:border-white/30"
+                      @change="(e: any) => onMargin(side, e.target.value)"
+                    >
+                  </label>
+                </div>
+                <p class="mt-1.5 text-[10px] text-white/30 leading-snug tabular-nums">
+                  Here: gutter {{ Math.round(metrics.gutterX) }}×{{ Math.round(metrics.gutterY) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
+                </p>
+              </div>
+            </div>
+
+            <!-- Background -->
+            <div class="px-4 py-3.5 flex flex-col gap-2.5">
+              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Background</p>
+              <div class="flex items-center gap-2">
+                <input
+                  type="color" :value="bgColorHex" title="Background colour"
+                  class="h-8 w-9 shrink-0 cursor-pointer rounded border border-white/10 bg-transparent"
+                  @input="(e: any) => setBgFill(e.target.value)"
+                >
+                <input
+                  type="text" :value="bgFill" placeholder="#0a0a0a or linear-gradient(135deg,#FF6EB4,#FF8C42)"
+                  class="h-8 w-full rounded border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white focus:border-white/30 focus:outline-none"
+                  @change="(e: any) => setBgFill(e.target.value)"
+                >
+              </div>
+              <p v-if="hasBgImage" class="text-[11px] text-white/45">
+                An image background is set —
+                <button class="cursor-pointer text-white/70 underline underline-offset-2 hover:text-white" @click="setBgFill(bgFill || '#0a0a0a')">replace with colour</button>.
+              </p>
+              <div class="flex items-center justify-between">
+                <p class="text-[10px] leading-snug text-white/30">Solid colour or any CSS gradient.</p>
+                <button
+                  v-if="bgFill || hasBgImage"
+                  class="cursor-pointer text-[11px] text-white/55 underline underline-offset-2 hover:text-white"
+                  @click="clearBackground()"
+                >Clear</button>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- Bottom cluster: the agent prompt (v3) sits above the tools + zoom toolbars.
            The column shrink-wraps to the toolbar row, so the bare prompt matches its
            width — the same layout the Compositor uses. -->
-      <div v-if="started" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-stretch gap-2">
+      <div v-if="started" class="absolute bottom-4 -translate-x-1/2 z-30 flex flex-col items-stretch gap-2" :style="bottomBarStyle">
         <div v-if="isV3(template)">
           <AgentBar :busy="agentBusy" :error="agentError" :notice="agentNotice" :chips="[]" @submit="agentAsk" @chip="agentAsk" />
         </div>
         <div class="flex items-center gap-2">
         <div class="flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
-        <!-- Fine placement grid toggle -->
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="fineGridOn ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-          title="Toggle the fine placement grid"
-          @click="toggleFineGrid"
-        >
-          <Grid2x2 class="size-4" /> Grid
-        </button>
-        <!-- Column guides toggle -->
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="columnGuidesOn ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-          title="Toggle column/section guides"
-          @click="toggleColumnGuides"
-        >
-          <Columns3 class="size-4" /> Columns
-        </button>
-
-        <div class="w-px h-5 bg-white/10 mx-0.5" />
-
-        <!-- Grid settings -->
-        <div class="relative">
-          <button
-            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-            :class="gridPanelOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-            title="Grid settings — columns, rows, gutter, margin"
-            @click="gridPanelOpen = !gridPanelOpen"
-          >
-            <Grid3x3 class="size-4" /> Settings
-          </button>
-          <div
-            v-if="gridPanelOpen"
-            class="absolute bottom-full mb-2 left-0 z-30 w-64 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-3"
-          >
-            <div>
-              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
-                {{ currentFormat }} grid <span class="text-white/25 normal-case tracking-normal">· {{ formatClass }} default {{ classDefaultDims.cols }}×{{ classDefaultDims.rows }}</span>
-              </p>
-              <div class="grid grid-cols-2 gap-2">
-                <label class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-white/40 w-8">Cols</span>
-                  <input
-                    type="number" min="1" max="24" :value="format.cols ?? ''" :placeholder="String(classDefaultDims.cols)"
-                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
-                    @change="(e: any) => onDims('cols', e.target.value)"
-                  >
-                </label>
-                <label class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-white/40 w-8">Rows</span>
-                  <input
-                    type="number" min="1" max="24" :value="format.rows ?? ''" :placeholder="String(classDefaultDims.rows)"
-                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
-                    @change="(e: any) => onDims('rows', e.target.value)"
-                  >
-                </label>
-              </div>
-              <button
-                v-if="format.cols != null || format.rows != null"
-                class="mt-1.5 text-[11px] text-white/60 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
-                @click="ctx.setFormatDims(currentFormat, { cols: undefined, rows: undefined })"
-              >
-                Reset to class default
-              </button>
-              <p class="mt-1 text-[10px] text-white/30 leading-snug">
-                Applies to this format only. Clear a field to go back to automatic.
-              </p>
-            </div>
-            <div>
-              <p class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">Spacing <span class="text-white/25 normal-case tracking-normal">· master px, scales per format</span></p>
-              <div class="grid grid-cols-2 gap-2">
-                <label class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-white/40 w-11">Gutter</span>
-                  <input
-                    type="number" min="0" :value="template.grid.gutter"
-                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
-                    @change="(e: any) => onGrid('gutter', e.target.value)"
-                  >
-                </label>
-                <label class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-white/40 w-11">Margin</span>
-                  <input
-                    type="number" min="0" :value="template.grid.margin"
-                    class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-white/30"
-                    @change="(e: any) => onGrid('margin', e.target.value)"
-                  >
-                </label>
-              </div>
-              <p class="mt-1 text-[10px] text-white/30 leading-snug tabular-nums">
-                Here: gutter {{ Math.round(metrics.gutter) }}px · margin {{ Math.round(metrics.margin) }}px · cell {{ Math.round(metrics.cellW) }}×{{ Math.round(metrics.cellH) }}px
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Background -->
-        <div class="relative">
-          <button
-            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-            :class="bgPanelOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-            title="Canvas background — colour or gradient"
-            @click="bgPanelOpen = !bgPanelOpen"
-          >
-            <PaintBucket class="size-4" /> Background
-          </button>
-          <div
-            v-if="bgPanelOpen"
-            class="absolute bottom-full mb-2 left-0 z-30 w-72 rounded-lg bg-[#161616] border border-white/10 shadow-2xl p-3 flex flex-col gap-2.5"
-          >
-            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Canvas background</p>
-            <div class="flex items-center gap-2">
-              <input
-                type="color" :value="bgColorHex" title="Background colour"
-                class="h-8 w-9 shrink-0 cursor-pointer rounded border border-white/10 bg-transparent"
-                @input="(e: any) => setBgFill(e.target.value)"
-              >
-              <input
-                type="text" :value="bgFill" placeholder="#0a0a0a or linear-gradient(135deg,#FF6EB4,#FF8C42)"
-                class="h-8 w-full rounded border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white focus:border-white/30 focus:outline-none"
-                @change="(e: any) => setBgFill(e.target.value)"
-              >
-            </div>
-            <p v-if="hasBgImage" class="text-[11px] text-white/45">
-              An image background is set —
-              <button class="cursor-pointer text-white/70 underline underline-offset-2 hover:text-white" @click="setBgFill(bgFill || '#0a0a0a')">replace with colour</button>.
-            </p>
-            <div class="flex items-center justify-between">
-              <p class="text-[10px] leading-snug text-white/30">Solid colour or any CSS gradient.</p>
-              <button
-                v-if="bgFill || hasBgImage"
-                class="cursor-pointer text-[11px] text-white/55 underline underline-offset-2 hover:text-white"
-                @click="clearBackground()"
-              >Clear</button>
-            </div>
-          </div>
-        </div>
 
         <!-- Brand -->
         <div class="relative">
@@ -602,16 +654,6 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
           </div>
         </div>
 
-        <!-- Long copy -->
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="worstCase ? 'bg-amber-500/15 text-amber-200' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-          title="Preview with worst-case copy length — stress-test shrinking and truncation"
-          @click="worstCase = !worstCase"
-        >
-          <CaseSensitive class="size-4" /> Long copy
-        </button>
-
         <div class="w-px h-5 bg-white/10 mx-0.5" />
 
         <button
@@ -622,7 +664,8 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
         </button>
         <button
           class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-          @click="ctx.addImage()"
+          title="Add an image — pick from the canvas or your assets"
+          @click="imagePickerOpen = true"
         >
           <ImagePlus class="size-3.5" /> Image
         </button>
@@ -633,13 +676,12 @@ function setBrandFont(key: 'fontDisplay' | 'fontBody', family: string) {
           <Square class="size-3.5" /> Shape
         </button>
         <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-          :class="selectedId ? 'text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200' : 'text-white/70'"
-          :disabled="!selectedId"
-          title="Wrap selected element in a Stack (auto-layout group)"
-          @click="wrapSelectionInStack()"
+          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+          :class="ctx.frameDrawArmed.value ? 'bg-white/15 text-white' : selectedId ? 'text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+          :title="selectedId ? 'Wrap the selection in a Section frame' : 'Draw a frame — click, then drag on the canvas'"
+          @click="onSectionTool()"
         >
-          <Layers2 class="size-3.5" /> Stack
+          <Frame class="size-3.5" /> Section
         </button>
         </div>
 

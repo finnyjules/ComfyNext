@@ -30,6 +30,41 @@ export function allElements(t: AnyGridTemplate): ElementV2[] {
   return [...t.elements, ...t.sections.flatMap(s => s.children)]
 }
 
+/** The top-level z-order (back → front): ids of ungrouped elements AND sections.
+ * Honours `t.order` (filtered to ids that still exist), then appends any
+ * top-level layer not listed — ungrouped elements first, then sections, i.e.
+ * the implicit z-order used before `order` existed. So a template without
+ * `order` resolves exactly as before, and new/edited templates self-heal. */
+export function effectiveOrder(t: AnyGridTemplate): string[] {
+  const elementIds = t.elements.map(e => e.id)
+  const sectionIds = isV3(t) ? t.sections.map(s => s.id) : []
+  const known = new Set<string>([...elementIds, ...sectionIds])
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of t.order ?? []) {
+    if (known.has(id) && !seen.has(id)) { seen.add(id); out.push(id) }
+  }
+  for (const id of [...elementIds, ...sectionIds]) {
+    if (!seen.has(id)) { seen.add(id); out.push(id) }
+  }
+  return out
+}
+
+export type TopLayer =
+  | { kind: 'element'; el: ElementV2 }
+  | { kind: 'section'; section: SectionV3 }
+
+/** Resolve a top-level layer id to the element or section it names. */
+export function topLayer(t: AnyGridTemplate, id: string): TopLayer | undefined {
+  const el = t.elements.find(e => e.id === id)
+  if (el) return { kind: 'element', el }
+  if (isV3(t)) {
+    const section = t.sections.find(s => s.id === id)
+    if (section) return { kind: 'section', section }
+  }
+  return undefined
+}
+
 // JSON clone, not structuredClone — these templates are plain JSON and the
 // editor passes Vue reactive proxies (which structuredClone can't clone).
 function clone<T>(v: T): T {

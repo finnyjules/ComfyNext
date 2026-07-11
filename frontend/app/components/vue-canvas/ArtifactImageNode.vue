@@ -4,6 +4,7 @@ import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, Refresh
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { useImgFx } from '~/composables/useImgFx'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
@@ -145,6 +146,76 @@ onUnmounted(() => {
   destroySweepCtrl()
 })
 
+// ── img-fx "image generation" reveal (under the glimm sweep) ────────────────
+// While the upstream generator runs, the node shows img-fx's churning pixel-cell
+// field. Any existing image dissolves INTO the churn (boil); the new result
+// dissolves OUT of it (reveal). Lazy: the GL context is created on the first
+// generation and released once the reveal settles. Degrades to just the glimm
+// sweep if WebGL is unavailable. See useImgFx / image.jakubantalik.com.
+// The media "stage" — the image / placeholder region only, NOT the footer
+// toolbar below it. The fx canvases live inside this and size to it, so the
+// churn/reveal covers just the image (never the toolbar).
+const stageRef = ref<HTMLElement | null>(null)
+const shaderFxCanvas = ref<HTMLCanvasElement | null>(null)
+const revealFxCanvas = ref<HTMLCanvasElement | null>(null)
+const fxActive = ref(false)
+const fxCardBg = ref('#0f0f0f')   // solid surface behind the mosaic → full-opaque dither
+const fx = useImgFx()
+const FX_PRESET = 'pixels-organic' as const
+let fxFinishing = false   // generation stopped; settle as soon as a reveal lands
+let fxRevealing = false   // a result reveal is mid-flight
+let fxSettleTimer: ReturnType<typeof setTimeout> | undefined
+
+function clearSettle() {
+  if (fxSettleTimer) { clearTimeout(fxSettleTimer); fxSettleTimer = undefined }
+}
+
+function startFx() {
+  const stage = stageRef.value, sc = shaderFxCanvas.value, rc = revealFxCanvas.value
+  if (!stage || !sc || !rc) return
+  clearSettle()
+  fxFinishing = false
+  fxActive.value = true
+  if (!fx.isMounted()) fx.mount(sc, rc, stage, { preset: FX_PRESET, theme: 'dark' })
+  fxCardBg.value = fx.cardBg()
+  fx.churn()
+  // Dissolve the currently shown image into the churn, if there is one.
+  const prev = displayedUrl.value
+  if (prev) fx.boilFrom(prev)
+}
+
+function teardownFx() {
+  clearSettle()
+  fxFinishing = false
+  if (!fxActive.value) return
+  fxActive.value = false                       // opacity fade out (260ms)
+  window.setTimeout(() => fx.dispose(), 300)   // release the GL context after the fade
+}
+
+async function revealFxResult(url: string) {
+  if (!fx.isMounted()) return
+  fxRevealing = true
+  try { await fx.revealResult(url) } finally { fxRevealing = false }
+  if (fxFinishing) teardownFx()   // reveal done + generation over → settle now
+}
+
+// Same trigger as the glimm sweep. Crucially, when generation STOPS we always
+// schedule a bounded settle — the glimm sweep tears down unconditionally here,
+// and so must the churn. (Previously teardown was gated on the reveal promise;
+// a stalled/absent reveal left the dither running forever after generation.)
+watch(upstreamRunning, (on) => {
+  if (!import.meta.client) return
+  if (on) { startFx(); return }
+  if (!fxActive.value) return
+  fxFinishing = true
+  // Let an in-flight reveal finish its dissolve, but ALWAYS fade out within a
+  // bounded window. A landing reveal tears down early via revealFxResult().
+  clearSettle()
+  fxSettleTimer = setTimeout(teardownFx, fxRevealing ? 3500 : 500)
+})
+
+onUnmounted(() => { clearSettle(); fx.dispose() })
+
 // Image URL — execution output wins, falling back to the file widget. When
 // upstream is connected but the node hasn't run yet, this returns null (we
 // show a "render to see preview" state).
@@ -154,6 +225,15 @@ const imageUrl = computed<string | null>(() => {
     return `/view?${new URLSearchParams({ filename: widgetFilename.value, type: 'input' })}`
   }
   return null
+})
+
+// A fresh output landing mid-generation dissolves in over the churn.
+// (Registered after the imageUrl declaration above — watching it earlier is a
+// use-before-declare crash — and before the preload watcher below so the fx
+// reveal starts ahead of the displayedUrl commit.)
+watch(imageUrl, (url, prev) => {
+  if (!import.meta.client) return
+  if (url && url !== prev && fxActive.value) revealFxResult(url)
 })
 
 // Lag the rendered <img> by one preload so cache-busting URLs don't flash
@@ -249,26 +329,26 @@ function triggerUpload() {
 
 // Open the dedicated inpaint editor for this image (the canvas owns the modal).
 function openInpaint() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInpaint', { detail: { nodeId: props.id } }))
 }
 
 // One-click remove: open the inpaint editor pre-set to click-select, which
 // auto-runs a removal as soon as an object is picked.
 function openRemoveObject() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInpaint', { detail: { nodeId: props.id, intent: 'remove' } }))
 }
 
 // One-click recolor: open the inpaint editor pre-set to click-select; picking
 // an object reveals a swatch strip (brand colors first) that runs the recolor.
 function openRecolor() {
-  window.dispatchEvent(new CustomEvent('comfynext:openInpaint', { detail: { nodeId: props.id, intent: 'recolor' } }))
+  window.dispatchEvent(new CustomEvent('sailor:openInpaint', { detail: { nodeId: props.id, intent: 'recolor' } }))
 }
 
 // Knock out the background: splice a local BackgroundRemove node after this image
 // (default 'transparent' RGBA output) and re-point whatever the image fed. The
 // canvas owns the graph mutation, so we just announce intent.
 function removeBackground() {
-  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
     detail: {
       nodeId: props.id,
       nodeType: 'BackgroundRemove',
@@ -284,7 +364,7 @@ function removeBackground() {
 function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running) return
   window.dispatchEvent(
-    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
+    new CustomEvent('sailor:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
   )
 }
 
@@ -298,21 +378,21 @@ function promoteTake(takeId: string) {
   if (!take || !overrides) return
   setPendingPromote(String(props.id), { fromTakeId: take.id, overrides })
   window.dispatchEvent(
-    new CustomEvent('comfynext:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
+    new CustomEvent('sailor:runFiltered', { detail: { targetIds: [props.id], rerollScope: 'self' } }),
   )
 }
 
 // Critique: have the agent LOOK at this result and suggest fixes (run→look→fix).
 // Surfaced in the Edit menu as "Fix" (label only — the pipeline is unchanged).
 function critiqueResult() {
-  window.dispatchEvent(new CustomEvent('comfynext:critiqueNode', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:critiqueNode', { detail: { nodeId: props.id } }))
 }
 
 // Wire an "Edit an image" (Nano Banana) generator downstream of this image, so
 // the user can describe an edit in natural language. Same splice path Remove BG
 // uses; the model is forced to Nano Banana 2 (EditImageNode's strong editor).
 function editWithNanoBanana() {
-  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
     detail: {
       nodeId: props.id,
       nodeType: 'EditImageNode',
@@ -329,7 +409,7 @@ function editWithNanoBanana() {
 // image (unlike Retouch's true splices): they produce a new deliverable, so
 // they must never re-point the existing chain through a paid node.
 function spliceEffect(nodeType: string, opts: { run?: boolean; focus?: boolean; branch?: boolean } = {}, widgetOverrides?: Record<string, unknown>) {
-  window.dispatchEvent(new CustomEvent('comfynext:applyEffect', {
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
     detail: { nodeId: props.id, nodeType, output: 'IMAGE', widgetOverrides, ...opts },
   }))
 }
@@ -352,7 +432,7 @@ function spawnEnhanceClarity() {
   spliceEffect('EnhanceDetailNode', { focus: true, branch: true }, { model: 'Creative' })
 }
 function promoteSketchOutput() {
-  window.dispatchEvent(new CustomEvent('comfynext:promoteSketchOutput', {
+  window.dispatchEvent(new CustomEvent('sailor:promoteSketchOutput', {
     detail: { sketchSourceId: (props.data.properties as any)?.sketchSourceId },
   }))
 }
@@ -361,12 +441,12 @@ function promoteSketchOutput() {
 // seeds; results accumulate in the Takes strip. Needs something upstream to
 // re-run, hence the hasUpstream gate (mirrored as a disabled menu row).
 function runVariations() {
-  window.dispatchEvent(new CustomEvent('comfynext:runVariations', { detail: { nodeId: props.id, count: 4 } }))
+  window.dispatchEvent(new CustomEvent('sailor:runVariations', { detail: { nodeId: props.id, count: 4 } }))
 }
 
 // Animate: spawn a Shot Director seeded with this image as reference.
 function animateArtifact() {
-  window.dispatchEvent(new CustomEvent('comfynext:animateArtifact', { detail: { nodeId: props.id } }))
+  window.dispatchEvent(new CustomEvent('sailor:animateArtifact', { detail: { nodeId: props.id } }))
 }
 
 // Save the current image as a character in the registry (phase 1: image-only,
@@ -399,7 +479,7 @@ async function saveAsCharacter() {
       }).catch(() => {})
       throw new Error(`attach ref ${patched.status}`)
     }
-    window.dispatchEvent(new CustomEvent('comfynext:charactersChanged'))
+    window.dispatchEvent(new CustomEvent('sailor:charactersChanged'))
     toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
   } catch (e) {
     console.warn('[saveAsCharacter]', e)
@@ -599,7 +679,7 @@ function branchFromTake(takeId: string) {
   // image isn't a /view URL (e.g. a data: URL) has no recoverable filename —
   // in that case we leave it display-only rather than fake a widget value.
   const imageWidgetValue = annotatedImageValueFromViewUrl(url)
-  window.dispatchEvent(new CustomEvent('comfynext:addNode', {
+  window.dispatchEvent(new CustomEvent('sailor:addNode', {
     detail: {
       nodeType: 'Image',
       dataOverrides: { images: [url], takes: [{ ...take, pinned: true }], activeTakeId: take.id },
@@ -624,7 +704,7 @@ watch(() => props.data.takes?.length ?? 0, (now, before) => {
     nextSteps.clearFixes(props.id)
     const takeId = props.data.takes?.[props.data.takes.length - 1]?.id
     if (takeId) {
-      window.dispatchEvent(new CustomEvent('comfynext:autoReview', {
+      window.dispatchEvent(new CustomEvent('sailor:autoReview', {
         detail: { nodeId: props.id, takeId: String(takeId) },
       }))
     }
@@ -689,10 +769,31 @@ const promoteUsdLabel = computed(() => {
       class="artifact-frame relative rounded-lg overflow-hidden bg-black/40 border border-white/10"
       :class="{ 'ring-2 ring-red-500': data.error }"
     >
+      <!-- Media stage — the image/placeholder region only. The fx + sweep
+           overlays live in here and size to it, so the churn/reveal covers just
+           the image and never the footer toolbar below. -->
+      <div ref="stageRef" class="relative">
+      <!-- img-fx "image generation" effect — the churning pixel-cell field and
+           per-cell image reveal, layered UNDER the glimm sweep. Existing image
+           boils into the churn; the new result dissolves out of it. -->
+      <canvas
+        ref="shaderFxCanvas"
+        class="absolute inset-0 w-full h-full pointer-events-none z-10"
+        :style="{
+          opacity: fxActive ? 1 : 0,
+          transition: 'opacity 260ms ease',
+          background: fxActive ? fxCardBg : 'transparent',
+        }"
+      />
+      <canvas
+        ref="revealFxCanvas"
+        class="absolute inset-0 w-full h-full pointer-events-none z-[11]"
+        :style="{ opacity: fxActive ? 1 : 0, transition: 'opacity 260ms ease' }"
+      />
       <!-- Glimm prism sweep — runs while the upstream generator is active. -->
       <canvas
         ref="sweepCanvas"
-        class="absolute inset-0 w-full h-full pointer-events-none z-20 rounded-lg"
+        class="absolute inset-0 w-full h-full pointer-events-none z-20"
         :style="{ opacity: upstreamRunning ? 1 : 0, transition: 'opacity 240ms ease' }"
       />
       <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
@@ -867,6 +968,48 @@ const promoteUsdLabel = computed(() => {
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
         />
+      </template>
+
+      <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
+      <template v-else-if="showUpload">
+        <!-- Upload affordance — no nopan/nodrag so click-in-place opens
+             the file picker but click-and-drag moves the card. -->
+        <button
+          class="w-full aspect-square flex flex-col items-center justify-center gap-2 text-white/45 hover:text-white/85 hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
+          :disabled="uploading"
+          @click="triggerUpload"
+        >
+          <Loader2 v-if="uploading" class="size-7 animate-spin" />
+          <ImagePlus v-else class="size-7" :stroke-width="1.5" />
+          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an image' }}</span>
+        </button>
+      </template>
+
+      <!-- RENDER STATE — upstream wired, waiting on an execution -->
+      <template v-else-if="showRender">
+        <div class="aspect-square flex flex-col items-center justify-center gap-2 text-white/35 px-4">
+          <ImageIcon class="size-7" :stroke-width="1.5" />
+          <template v-if="data.running">
+            <Loader2 class="size-4 animate-spin text-white/55" />
+            <span class="text-[11px] text-white/55">Rendering…</span>
+          </template>
+          <template v-else>
+            <button
+              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded-md bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+              :disabled="isMuted || isBypassed"
+              @click.stop="runThisNode"
+            >
+              <Play class="size-2.5" fill="currentColor" />
+              Render
+            </button>
+          </template>
+        </div>
+      </template>
+      </div><!-- /media stage -->
+
+      <!-- Footer toolbar — OUTSIDE the media stage, so the churn/reveal effect
+           covers only the image and never these controls. -->
+      <template v-if="displayedUrl">
         <!-- Sketch-output card actions (spec 2026-07-08-sketch-node-refinement.md,
              Change 4): Enhance primary (make THIS image real), Promote secondary
              (re-render the idea fresh). Strictly gated on properties.sketchOutput
@@ -940,42 +1083,6 @@ const promoteUsdLabel = computed(() => {
             <Loader2 v-if="savingAsCharacter" class="size-3 animate-spin" />
             <Drama v-else class="size-3" />
           </button>
-        </div>
-      </template>
-
-      <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
-      <template v-else-if="showUpload">
-        <!-- Upload affordance — no nopan/nodrag so click-in-place opens
-             the file picker but click-and-drag moves the card. -->
-        <button
-          class="w-full aspect-square flex flex-col items-center justify-center gap-2 text-white/45 hover:text-white/85 hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
-          :disabled="uploading"
-          @click="triggerUpload"
-        >
-          <Loader2 v-if="uploading" class="size-7 animate-spin" />
-          <ImagePlus v-else class="size-7" :stroke-width="1.5" />
-          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an image' }}</span>
-        </button>
-      </template>
-
-      <!-- RENDER STATE — upstream wired, waiting on an execution -->
-      <template v-else-if="showRender">
-        <div class="aspect-square flex flex-col items-center justify-center gap-2 text-white/35 px-4">
-          <ImageIcon class="size-7" :stroke-width="1.5" />
-          <template v-if="data.running">
-            <Loader2 class="size-4 animate-spin text-white/55" />
-            <span class="text-[11px] text-white/55">Rendering…</span>
-          </template>
-          <template v-else>
-            <button
-              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded-md bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
-              :disabled="isMuted || isBypassed"
-              @click.stop="runThisNode"
-            >
-              <Play class="size-2.5" fill="currentColor" />
-              Render
-            </button>
-          </template>
         </div>
       </template>
     </div>

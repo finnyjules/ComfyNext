@@ -4,6 +4,11 @@
  * See docs/superpowers/specs/2026-06-10-smart-layout-swiss-grid-design.md.
  */
 
+import type { ExpressiveParams } from '../text-layout/expressive'
+export type { ExpressiveParams } from '../text-layout/expressive'
+import type { ExpressiveBoxParams } from '../text-layout/boxes'
+export type { ExpressiveBoxParams } from '../text-layout/boxes'
+
 export type FormatClass = 'square' | 'portrait' | 'landscape' | 'strip' | 'skyscraper'
 export type TextLevel = 'caption' | 'body' | 'subhead' | 'headline' | 'display'
 export type TextOverflow = 'shrink' | 'shrink-then-truncate' | 'grow'
@@ -38,19 +43,36 @@ export interface FormatSpec {
 // 1-based, inclusive spans: { col: 1, colSpan: 6 } fills columns 1..6.
 export interface Region { col: number; colSpan: number; row: number; rowSpan: number }
 
-export interface GridSpec { gutter: number; margin: number; baseline: number }  // master px
+export interface GridSpec {
+  gutter: number; margin: number; baseline: number  // master px
+  /** Per-axis gutters (master px). `column` = space between columns (horizontal),
+   * `row` = space between rows (vertical). Either falls back to the uniform
+   * `gutter`. */
+  gutters?: { column?: number; row?: number }
+  /** v3 grid dimensions — the number of columns / rows the canvas is divided
+   * into. FIXED across every format, so placement reflows by identity (an
+   * element at column 4/12 sits at the same fraction on every aspect). When
+   * absent, derived from `baseline` (canvas ÷ baseline) for back-compat. */
+  columns?: number
+  rows?: number
+  /** Per-side margins (master px). Any side left unset falls back to the
+   * uniform `margin`. Lets a layout inset differently on each edge. */
+  margins?: { top?: number; right?: number; bottom?: number; left?: number }
+}
 export interface TypeScaleSpec { base: number; ratio: number }                  // base = caption size, master px
 
 export interface ElementV2Base {
   id: string
+  name?: string                  // display name in the Layers panel (falls back to id)
   role?: string                  // HEADLINE, LOGO, CTA, IMAGE_LAYER_1, …
   priority: number               // 1 = most important; drives slot assignment + culling
   region: Region                 // placement on the master grid
   regionByClass?: Partial<Record<FormatClass, Region>>
   /** Per-output overrides, keyed by output id (falls back to format key for
    *  pre-outputs templates). Highest precedence — lets one output of a format
-   *  diverge into a variation. */
-  overrides?: Record<string, { region?: Region; hidden?: boolean }>
+   *  diverge into a variation. `content` swaps the element's content for just
+   *  this output (e.g. an outpainted image sized to that format). */
+  overrides?: Record<string, { region?: Region; hidden?: boolean; content?: string }>
   hidden?: boolean               // excluded from render + canvas (toggle in layers)
   locked?: boolean               // editor-only: blocks canvas selection/drag
   /** Extend to the canvas edge on every side that the element's region
@@ -67,8 +89,8 @@ export interface TextStyleV2 {
   fontFamily?: string
   fontWeight?: 400 | 700
   color?: string
-  align?: 'left' | 'center' | 'right'
-  valign?: 'top' | 'middle' | 'bottom'
+  align?: 'left' | 'center' | 'right' | 'justify'
+  valign?: 'top' | 'middle' | 'bottom' | 'justify'
   lineHeight?: number
   letterSpacing?: number               // px, kerning control
   /** Master-format px. Overrides the level-derived size but still scales per
@@ -78,6 +100,10 @@ export interface TextStyleV2 {
   /** Legibility panel/scrim drawn behind the text, filling its region. fill is
    *  brand-bindable; opacity 0–1 makes it a scrim over imagery. */
   panel?: { fill?: string; opacity?: number; radius?: number }
+  /** Expressive per-word layout (overrides flow `align`/`valign`). When present,
+   *  words are placed individually by the shared engine — identical in the
+   *  editor DOM and the Satori export. Absent ⇒ normal flow (unchanged). */
+  expressive?: ExpressiveParams
 }
 
 export interface TextElementV2 extends ElementV2Base {
@@ -134,6 +160,12 @@ export interface TemplateV2 {
    *  node's `aspects` (one output per format) for back-compat. */
   outputs?: OutputSpec[]
   elements: ElementV2[]
+  /** Top-level z-order (back → front): ids of ungrouped elements AND sections,
+   *  interleaved. The single source of truth for stacking + the Layers panel.
+   *  When absent, order is derived (elements first, then sections) so existing
+   *  templates render identically. Children inside a section keep their own
+   *  order via the section's `children` array. */
+  order?: string[]
 }
 
 /**
@@ -153,9 +185,20 @@ export interface SectionV3 {
   overrides?: Record<string, { region?: Region; hidden?: boolean }>
   hidden?: boolean                        // culls the whole section + its children
   children: ElementV2[]                   // child regions are in the master fine grid
-  /** Present → auto-layout Stack (engine computes child rects). Absent →
-   *  absolute-region section (unchanged). */
+  /** Frame appearance — a box drawn behind the section's children. Any field
+   *  set makes the section render (a synthetic shape at the section rect);
+   *  absent → the section is an invisible grouping box (unchanged). */
+  style?: { fill?: string; stroke?: string; strokeWidth?: number; radius?: number }
+  /** Clip children to the frame bounds (Figma frame behaviour). When absent,
+   *  children can overflow (a plain group). New frames default to clipping. */
+  clip?: boolean
+  /** Present → auto-layout (engine computes child rects). Absent →
+   *  absolute-region section (children keep their grid positions). */
   layout?: AutoLayout
+  /** Present → expressive placement: children keep their size but are scattered
+   *  within the section box by a seeded rule (+ derived rotation). Mutually
+   *  exclusive with `layout` — the resolver checks `expressive` first. */
+  expressive?: ExpressiveBoxParams
 }
 
 /** v3 is a superset of v2: same top-level shape plus `sections`. Ungrouped

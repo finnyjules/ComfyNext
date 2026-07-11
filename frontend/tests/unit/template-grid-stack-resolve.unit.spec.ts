@@ -83,9 +83,10 @@ describe('resolveFormat — auto-layout stacks', () => {
     const txt = r.elements.find(e => e.el.id === 'txt')!
     expect(txt.culled).toBe(false)
 
-    // Known inner cross width: section colSpan:10, cellW = (1080 - 2*4) / 27 ≈ 39.7037
-    // innerCrossPx = 10 * cellW ≈ 397.037 (no horizontal padding)
-    const cellW = (1080 - 2 * 4) / 27   // margin floors to 4 in gridMetrics
+    // Known inner cross width: section colSpan:10, cellW = 1080 / 27 = 40
+    // (margin:0 is now respected — no floor — so there's no horizontal inset).
+    // innerCrossPx = 10 * cellW = 400
+    const cellW = 1080 / 27
     const innerCrossPx = 10 * cellW
 
     // The solver stretches cross:'hug' when crossAlign==='stretch', so the resolved

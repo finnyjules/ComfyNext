@@ -1,5 +1,11 @@
 import tailwindcss from '@tailwindcss/vite'
 import http from 'node:http'
+import { fileURLToPath } from 'node:url'
+
+// img-fx bundles an optional React component alongside its framework-agnostic
+// core. We only use the core, so `react` + `react/jsx-runtime` are aliased to a
+// no-op stub — React never installs and never ships. See app/lib/imgfx/react-stub.ts.
+const imgfxReactStub = fileURLToPath(new URL('./app/lib/imgfx/react-stub.ts', import.meta.url))
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
@@ -27,7 +33,7 @@ export default defineNuxtConfig({
     public: {
       // Public origin the ComfyUI canvas iframe loads from. Empty in dev →
       // falls back to http://127.0.0.1:8188. In production set via
-      // NUXT_PUBLIC_COMFY_ORIGIN (e.g. https://comfynext.fly.dev:8188).
+      // NUXT_PUBLIC_COMFY_ORIGIN (e.g. https://sailor.fly.dev:8188).
       comfyOrigin: '',
     },
   },
@@ -184,6 +190,14 @@ export default defineNuxtConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    resolve: {
+      // Exact-match regex (array form) so the bare `react` alias doesn't also
+      // swallow `react/jsx-runtime` as a prefix (→ `<stub>/jsx-runtime`).
+      alias: [
+        { find: /^react$/, replacement: imgfxReactStub },
+        { find: /^react\/jsx-runtime$/, replacement: imgfxReactStub },
+      ],
+    },
     css: {
       preprocessorOptions: {
         scss: {
@@ -209,6 +223,7 @@ export default defineNuxtConfig({
         '@faker-js/faker',
         'clsx',
         'tailwind-merge',
+        'img-fx',
       ],
     },
     // Vite 7 defaults `allowedHosts` to localhost variants only — anything

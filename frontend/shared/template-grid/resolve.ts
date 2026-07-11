@@ -11,11 +11,12 @@ import { defaultClassRegion } from './layouts'
 import type { Slot } from './layouts'
 import { fitText, typeSize, wrapLines } from './text'
 import type { FitResult } from './text'
-import { sectionRegionFor } from './sections'
+import { layoutExpressiveBoxes } from '../text-layout/boxes'
+import { effectiveOrder, sectionRegionFor, topLayer } from './sections'
 import { resolveTokens } from './tokens'
 import type { TokenScope } from './tokens'
 import type {
-  AnyGridTemplate, ElementV2, FormatClass, FormatSpec, OutputSpec, Region, TemplateV2,
+  AnyGridTemplate, ElementV2, FormatClass, FormatSpec, OutputSpec, Region, SectionV3, TemplateV2,
 } from './types'
 import { isV3, isLayoutStack } from './types'
 import { solveStack } from './autolayout'
@@ -45,6 +46,11 @@ export interface ResolvedElement {
   cullReason?: CullReason
   text?: FitResult        // text elements only
   mark?: boolean          // image collapsed to a centered square mark
+  sectionFrame?: boolean  // synthetic box drawn behind a styled section's children
+  clipsChildren?: boolean // this frame clips its (immediately-following) children
+  clippedBy?: string      // child clipped to a frame — id of the clipping frame
+  clipRect?: Rect         // the frame rect a clipped child is clipped to
+  rotation?: number       // derived tilt (deg) for expressive section children
 }
 
 export interface ResolvedLayout {
@@ -67,12 +73,19 @@ function fitElementAtRect(
   el: ElementV2,
   region: Region,
   rect: Rect,
-  ctx: { template: AnyGridTemplate; formatKey: string; format: FormatSpec; m: GridMetrics },
+  ctx: { template: AnyGridTemplate; formatKey: string; format: FormatSpec; m: GridMetrics; oid: string },
   props: TokenScope,
   brand: TokenScope,
   allowBleed: boolean,
 ): ResolvedElement {
-  const { template, formatKey, format, m } = ctx
+  const { template, formatKey, format, m, oid } = ctx
+  // Per-output content override (e.g. an outpainted image sized to this format).
+  // Baked in here so the ONE resolved element flows to both the editor preview
+  // and the satori render — every surface reads the resolved `.el.content`.
+  const co = el.overrides?.[oid]?.content
+  // Spreading the ElementV2 union widens it; content is a string on every
+  // variant, so the cast back is sound.
+  if (co != null) el = { ...el, content: co } as ElementV2
   if (el.type === 'text') {
     const lineHeight = el.style?.lineHeight ?? 1.1
     const overflow = el.overflow ?? 'shrink-then-truncate'
@@ -160,10 +173,10 @@ export function resolveFormat(
   // Master grid dims for proportional remap — fine for v3, class cells for v2
   // (fineGridDims returns formatDims for v2, so the v2 path is unchanged).
   const masterDims = fineGridDims(template, template.formats[template.master])
-  const ctx = { template, formatKey, format, m }
   // Per-output overrides key. Falls back to the format key so single-output
   // (pre-outputs) templates keep resolving their overrides[formatKey].
   const oid = opts.outputId ?? formatKey
+  const ctx = { template, formatKey, format, m, oid }
 
   // Region assignment runs in priority order so high-priority elements win
   // contested default slots. Rendering below keeps template order (z-order).
@@ -181,7 +194,8 @@ export function resolveFormat(
     }
   }
 
-  const elements = template.elements.map((el): ResolvedElement => {
+  // Resolve one ungrouped element (region assigned above).
+  const resolveUngrouped = (el: ElementV2): ResolvedElement => {
     // Hidden globally or in this specific output — drop before geometry.
     if (el.hidden || el.overrides?.[oid]?.hidden) {
       return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' }
@@ -207,76 +221,153 @@ export function resolveFormat(
       }
     }
     return fitElementAtRect(el, region, regionToRect(region, m), ctx, props, brand, true)
-  })
+  }
 
-  // v3: resolve sections — the section box adapts per format/output, and each
-  // child's master-grid rect is projected proportionally into that box.
-  // Layout-bearing sections (isLayoutStack) use the auto-layout solver instead.
-  if (isV3(template)) {
-    for (const section of template.sections) {
-      const sectionHidden = section.hidden || section.overrides?.[oid]?.hidden
-      const sectionRegion = sectionRegionFor(template, section, formatKey, oid)
-      const sectionRectTarget = regionToRect(sectionRegion, m)
+  // Resolve one section — a frame box (when styled) drawn behind its children,
+  // then the children (auto-layout solver, or proportional projection into the
+  // section box). Frame first → it sits behind the children in z-order.
+  const resolveSectionLayers = (section: SectionV3): ResolvedElement[] => {
+    const out: ResolvedElement[] = []
+    const sectionHidden = section.hidden || section.overrides?.[oid]?.hidden
+    const sectionRegion = sectionRegionFor(template, section, formatKey, oid)
+    const sectionRectTarget = regionToRect(sectionRegion, m)
 
-      if (isLayoutStack(section) && section.layout) {
-        const lay = section.layout
-        const visible = section.children.filter(c => !(sectionHidden || c.hidden || c.overrides?.[oid]?.hidden))
-        // Push hidden children as culled (parity with the proportional path).
-        for (const c of section.children) {
-          if (sectionHidden || c.hidden || c.overrides?.[oid]?.hidden) {
-            elements.push({ el: c, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
-          }
+    const fst = section.style
+    const clips = !!section.clip
+    // A frame element is emitted when the section is styled OR clips — a
+    // clipping frame needs a container even with no visible fill/stroke.
+    if (!sectionHidden && (fst?.fill || fst?.stroke || clips)) {
+      out.push({
+        el: {
+          id: `${section.id}__frame`, type: 'shape', shape: 'rect', priority: 0,
+          region: section.region,
+          style: {
+            fill: fst?.fill ?? 'transparent',
+            ...(fst?.stroke ? { borderColor: fst.stroke, borderWidth: fst.strokeWidth ?? 1 } : {}),
+            borderRadius: fst?.radius ?? 0,
+          },
+        } as ElementV2,
+        region: null, rect: sectionRectTarget, culled: false, sectionFrame: true,
+        clipsChildren: clips,
+      })
+    }
+
+    // Tag children as clipped to the frame rect (applied before every return).
+    const finish = () => {
+      if (clips) {
+        for (const re of out) {
+          if (!re.sectionFrame) { re.clippedBy = section.id; re.clipRect = sectionRectTarget }
         }
-        const padPx = {
-          top: lay.padding.top * m.cellH,
-          bottom: lay.padding.bottom * m.cellH,
-          left: lay.padding.left * m.cellW,
-          right: lay.padding.right * m.cellW,
-        }
-        const innerCrossPx = lay.direction === 'vertical'
-          ? sectionRectTarget.w - padPx.left - padPx.right
-          : sectionRectTarget.h - padPx.top - padPx.bottom
-        const items = stackItemsFor(visible, m, innerCrossPx, lay.direction, lay.crossAlign,
-          { template, formatKey }, props, brand)
-        const box: StackBox = {
-          x: sectionRectTarget.x, y: sectionRectTarget.y,
-          w: sectionRectTarget.w, h: sectionRectTarget.h,
-          direction: lay.direction,
-          gap: lay.gap * (lay.direction === 'vertical' ? m.cellH : m.cellW),
-          padTop: padPx.top, padRight: padPx.right, padBottom: padPx.bottom, padLeft: padPx.left,
-          mainAlign: lay.mainAlign, crossAlign: lay.crossAlign,
-        }
-        const placed = solveStack(box, items)
-        const rectById = new Map(placed.map(p => [p.id, p.rect]))
-        for (const child of visible) {
-          const rect = rectById.get(child.id)!
-          elements.push(fitElementAtRect(child, child.region, rect, ctx, props, brand, false))
-        }
-        continue
       }
+      return out
+    }
 
-      // --- Proportional projection (unchanged) ---
+    // Expressive placement: children keep their projected size but the engine
+    // scatters them (new x/y + rotation) within the section box. Checked before
+    // auto-layout — the two are mutually exclusive.
+    if (section.expressive) {
       const masterMetrics = gridMetrics(template, template.master)
       const sectionRectMaster = regionToRect(section.region, masterMetrics)
-      for (const child of section.children) {
-        if (sectionHidden || child.hidden || child.overrides?.[oid]?.hidden) {
-          elements.push({ el: child, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
-          continue
-        }
-        const childMaster = regionToRect(child.region, masterMetrics)
-        const nx = sectionRectMaster.w ? (childMaster.x - sectionRectMaster.x) / sectionRectMaster.w : 0
-        const ny = sectionRectMaster.h ? (childMaster.y - sectionRectMaster.y) / sectionRectMaster.h : 0
-        const nw = sectionRectMaster.w ? childMaster.w / sectionRectMaster.w : 1
-        const nh = sectionRectMaster.h ? childMaster.h / sectionRectMaster.h : 1
-        const childRect: Rect = {
-          x: sectionRectTarget.x + nx * sectionRectTarget.w,
-          y: sectionRectTarget.y + ny * sectionRectTarget.h,
-          w: nw * sectionRectTarget.w,
-          h: nh * sectionRectTarget.h,
-        }
-        elements.push(fitElementAtRect(child, child.region, childRect, ctx, props, brand, false))
+      const visible: ElementV2[] = []
+      for (const c of section.children) {
+        if (sectionHidden || c.hidden || c.overrides?.[oid]?.hidden) {
+          out.push({ el: c, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
+        } else visible.push(c)
       }
+      // Each child's size is its region projected into the section box (same
+      // projection the proportional path uses); only x/y are engine-chosen.
+      const sized = visible.map((child) => {
+        const cm = regionToRect(child.region, masterMetrics)
+        const nw = sectionRectMaster.w ? cm.w / sectionRectMaster.w : 1
+        const nh = sectionRectMaster.h ? cm.h / sectionRectMaster.h : 1
+        return { child, w: nw * sectionRectTarget.w, h: nh * sectionRectTarget.h }
+      })
+      const placed = layoutExpressiveBoxes({
+        items: sized.map(s => ({ id: s.child.id, w: s.w, h: s.h })),
+        boxWidth: sectionRectTarget.w, boxHeight: sectionRectTarget.h,
+        params: section.expressive,
+      })
+      const posById = new Map(placed.map(p => [p.id, p]))
+      for (const { child, w, h } of sized) {
+        const p = posById.get(child.id)!
+        const childRect: Rect = { x: sectionRectTarget.x + p.x, y: sectionRectTarget.y + p.y, w, h }
+        const re = fitElementAtRect(child, child.region, childRect, ctx, props, brand, false)
+        if (p.rotation) re.rotation = p.rotation
+        out.push(re)
+      }
+      return finish()
     }
+
+    if (isLayoutStack(section) && section.layout) {
+      const lay = section.layout
+      const visible = section.children.filter(c => !(sectionHidden || c.hidden || c.overrides?.[oid]?.hidden))
+      // Push hidden children as culled (parity with the proportional path).
+      for (const c of section.children) {
+        if (sectionHidden || c.hidden || c.overrides?.[oid]?.hidden) {
+          out.push({ el: c, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
+        }
+      }
+      const padPx = {
+        top: lay.padding.top * m.cellH,
+        bottom: lay.padding.bottom * m.cellH,
+        left: lay.padding.left * m.cellW,
+        right: lay.padding.right * m.cellW,
+      }
+      const innerCrossPx = lay.direction === 'vertical'
+        ? sectionRectTarget.w - padPx.left - padPx.right
+        : sectionRectTarget.h - padPx.top - padPx.bottom
+      const items = stackItemsFor(visible, m, innerCrossPx, lay.direction, lay.crossAlign,
+        { template, formatKey }, props, brand)
+      const box: StackBox = {
+        x: sectionRectTarget.x, y: sectionRectTarget.y,
+        w: sectionRectTarget.w, h: sectionRectTarget.h,
+        direction: lay.direction,
+        gap: lay.gap * (lay.direction === 'vertical' ? m.cellH : m.cellW),
+        padTop: padPx.top, padRight: padPx.right, padBottom: padPx.bottom, padLeft: padPx.left,
+        mainAlign: lay.mainAlign, crossAlign: lay.crossAlign,
+      }
+      const placed = solveStack(box, items)
+      const rectById = new Map(placed.map(p => [p.id, p.rect]))
+      for (const child of visible) {
+        const rect = rectById.get(child.id)!
+        out.push(fitElementAtRect(child, child.region, rect, ctx, props, brand, false))
+      }
+      return finish()
+    }
+
+    // --- Proportional projection (unchanged) ---
+    const masterMetrics = gridMetrics(template, template.master)
+    const sectionRectMaster = regionToRect(section.region, masterMetrics)
+    for (const child of section.children) {
+      if (sectionHidden || child.hidden || child.overrides?.[oid]?.hidden) {
+        out.push({ el: child, region: null, rect: ZERO_RECT, culled: true, cullReason: 'hidden' })
+        continue
+      }
+      const childMaster = regionToRect(child.region, masterMetrics)
+      const nx = sectionRectMaster.w ? (childMaster.x - sectionRectMaster.x) / sectionRectMaster.w : 0
+      const ny = sectionRectMaster.h ? (childMaster.y - sectionRectMaster.y) / sectionRectMaster.h : 0
+      const nw = sectionRectMaster.w ? childMaster.w / sectionRectMaster.w : 1
+      const nh = sectionRectMaster.h ? childMaster.h / sectionRectMaster.h : 1
+      const childRect: Rect = {
+        x: sectionRectTarget.x + nx * sectionRectTarget.w,
+        y: sectionRectTarget.y + ny * sectionRectTarget.h,
+        w: nw * sectionRectTarget.w,
+        h: nh * sectionRectTarget.h,
+      }
+      out.push(fitElementAtRect(child, child.region, childRect, ctx, props, brand, false))
+    }
+    return finish()
+  }
+
+  // Render in one unified z-order: ungrouped elements and sections interleaved
+  // by `effectiveOrder` (back → front), so a frame can sit behind a loose
+  // element and any layer can be reordered.
+  const elements: ResolvedElement[] = []
+  for (const id of effectiveOrder(template)) {
+    const layer = topLayer(template, id)
+    if (!layer) continue
+    if (layer.kind === 'element') elements.push(resolveUngrouped(layer.el))
+    else elements.push(...resolveSectionLayers(layer.section))
   }
 
   return { formatKey, format, formatClass: cls, metrics: m, elements }

@@ -66,12 +66,12 @@ export function convertV1toV2(t: Template): TemplateV2 {
   const m = gridMetrics(t2, masterKey)
   const step = (cell: number, gutter: number) => cell + gutter
   const snapRegion = (box: { x: number; y: number; w: number; h: number }): Region => {
-    const col = Math.min(m.cols, Math.max(1, Math.round((box.x - m.originX) / step(m.cellW, m.gutter)) + 1))
-    const row = Math.min(m.rows, Math.max(1, Math.round((box.y - m.originY) / step(m.cellH, m.gutter)) + 1))
+    const col = Math.min(m.cols, Math.max(1, Math.round((box.x - m.originX) / step(m.cellW, m.gutterX)) + 1))
+    const row = Math.min(m.rows, Math.max(1, Math.round((box.y - m.originY) / step(m.cellH, m.gutterY)) + 1))
     return {
       col, row,
-      colSpan: Math.max(1, Math.min(m.cols - col + 1, Math.round(box.w / step(m.cellW, m.gutter)))),
-      rowSpan: Math.max(1, Math.min(m.rows - row + 1, Math.round(box.h / step(m.cellH, m.gutter)))),
+      colSpan: Math.max(1, Math.min(m.cols - col + 1, Math.round(box.w / step(m.cellW, m.gutterX)))),
+      rowSpan: Math.max(1, Math.min(m.rows - row + 1, Math.round(box.h / step(m.cellH, m.gutterY)))),
     }
   }
   const nearestLevel = (px: number): TextLevel => {

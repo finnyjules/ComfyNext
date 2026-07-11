@@ -13,19 +13,20 @@ import { computed, ref, watch, type Ref } from 'vue'
 
 import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
 import type { BrandKit } from '~~/shared/brand/types'
-import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridMetrics, regionToRect, resolveFormat } from '~~/shared/template-grid'
+import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gridMetrics, gutterBox, marginBox, regionToRect, remapRegion, resolveFormat } from '~~/shared/template-grid'
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
-  addChildToStack, groupIntoSection, removeChildFromStack, sectionRegionFor,
-  setChildSizing, setStackLayout, toV3, ungroupSection, wrapInStack,
+  addChildToStack, allElements, DEFAULT_AUTOLAYOUT, effectiveOrder, groupIntoSection, removeChildFromStack, sectionRegionFor,
+  setChildSizing, setStackLayout, toV3, topLayer, ungroupSection, wrapInStack,
 } from '~~/shared/template-grid/sections'
 import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
 import type {
   AnyGridTemplate, AutoLayout, ElementV2, ImageElementV2, OutputSpec, Region, SectionV3,
   ShapeElementV2, SizeMode, TemplateV2, TemplateV3, TextElementV2,
 } from '~~/shared/template-grid/types'
+import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 
 const WORST_CASE_COPY
   = 'A worst-case headline that runs far longer than anyone planned, stretching '
@@ -34,6 +35,8 @@ const WORST_CASE_COPY
 function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`
 }
+
+export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom'
 
 export function useGridEditor(
   initial: TemplateV2,
@@ -48,6 +51,8 @@ export function useGridEditor(
   const currentOutputId = ref<string>(initial.outputs[0]?.id ?? initial.master)
   const selectedId = ref<string | null>(null)
   const selectedSectionId = ref<string | null>(null)
+  // Armed by the Section tool → the next canvas drag draws a frame at that region.
+  const frameDrawArmed = ref(false)
   const dirty = ref(false)
   const sampleProps = ref<Record<string, unknown>>({})
   const sampleBrand = ref<Record<string, unknown>>({})
@@ -94,13 +99,15 @@ export function useGridEditor(
     })))
 
   const selectedElement = computed<ElementV2 | null>(() =>
-    template.value.elements.find(e => e.id === selectedId.value) ?? null)
+    allElements(template.value).find(e => e.id === selectedId.value) ?? null)
 
   const selectedResolved = computed(() =>
     resolved.value.elements.find(r => r.el.id === selectedId.value) ?? null)
 
+  // Any layer — a top-level element OR a child inside a frame — so every edit
+  // (style, region, hide/lock, nudge, duplicate) works on children too.
   function elById(id: string): ElementV2 | undefined {
-    return template.value.elements.find(e => e.id === id)
+    return allElements(template.value).find(e => e.id === id)
   }
 
   // -- Canvas zoom (shared: the canvas feeds container size + reads scale; the
@@ -210,6 +217,81 @@ export function useGridEditor(
         ;(template.value.grid as any)[k] = Math.max(0, Math.round(v))
       }
     }
+    dirty.value = true
+  }
+
+  // -- Grid columns / rows (v3) ----------------------------------------------
+  // How many columns and rows the canvas is divided into, fixed across every
+  // format. Editing a count rescales every stored region on that axis so
+  // nothing moves visually — only the placement granularity changes.
+
+  const gridColumns = computed<number>(() => gridDims(template.value).cols)
+  const gridRows = computed<number>(() => gridDims(template.value).rows)
+
+  function rescaleGrid(next: { cols: number; rows: number }) {
+    const cur = gridDims(template.value)
+    if (next.cols === cur.cols && next.rows === cur.rows) return
+    const from = cur
+    const to = next
+    const t = template.value as TemplateV3
+    const remapOverrides = (ovr?: Record<string, { region?: Region; hidden?: boolean }>) => {
+      if (!ovr) return
+      for (const o of Object.values(ovr)) if (o?.region) o.region = remapRegion(o.region, from, to)
+    }
+    const remapByClass = (byClass?: Partial<Record<string, Region>>) => {
+      if (!byClass) return
+      for (const k of Object.keys(byClass)) {
+        const r = byClass[k]
+        if (r) byClass[k] = remapRegion(r, from, to)
+      }
+    }
+    for (const el of allElements(t)) {
+      el.region = remapRegion(el.region, from, to)
+      remapByClass(el.regionByClass as any)
+      remapOverrides(el.overrides)
+    }
+    for (const s of t.sections) {
+      s.region = remapRegion(s.region, from, to)
+      remapByClass(s.regionByClass as any)
+      remapOverrides(s.overrides)
+    }
+    t.grid.columns = to.cols
+    t.grid.rows = to.rows
+    dirty.value = true
+  }
+
+  function setGridColumns(cols: number) {
+    if (!isV3(template.value) || !Number.isFinite(cols)) return
+    const cur = gridDims(template.value)
+    rescaleGrid({ cols: Math.min(240, Math.max(1, Math.round(cols))), rows: cur.rows })
+  }
+
+  function setGridRows(rows: number) {
+    if (!isV3(template.value) || !Number.isFinite(rows)) return
+    const cur = gridDims(template.value)
+    rescaleGrid({ cols: cur.cols, rows: Math.min(240, Math.max(1, Math.round(rows))) })
+  }
+
+  // -- Per-side margins ------------------------------------------------------
+  // Resolved margins for the current template (uniform `grid.margin` fills any
+  // side not explicitly set in `grid.margins`).
+  const margins = computed(() => marginBox(template.value))
+
+  function setMargin(side: 'top' | 'right' | 'bottom' | 'left', value: number) {
+    if (!Number.isFinite(value)) return
+    const g = template.value.grid
+    g.margins = { ...(g.margins ?? {}), [side]: Math.max(0, Math.round(value)) }
+    dirty.value = true
+  }
+
+  // -- Per-axis gutter -------------------------------------------------------
+  // Resolved gutters (uniform `grid.gutter` fills any axis not set in `grid.gutters`).
+  const gutters = computed(() => gutterBox(template.value))
+
+  function setGutter(axis: 'column' | 'row', value: number) {
+    if (!Number.isFinite(value)) return
+    const g = template.value.grid
+    g.gutters = { ...(g.gutters ?? {}), [axis]: Math.max(0, Math.round(value)) }
     dirty.value = true
   }
 
@@ -339,6 +421,28 @@ export function useGridEditor(
     dirty.value = true
   }
 
+  // Per-output content override: swap an element's content for just the current
+  // output (e.g. an outpainted image sized to this format). Same shape as
+  // setHiddenInOutput, so it rides the deep-watch undo as one step.
+  function hasContentOverride(id: string): boolean {
+    return elById(id)?.overrides?.[currentOutputId.value]?.content != null
+  }
+  function setImageContentOverride(id: string, content: string) {
+    const el = elById(id)
+    if (!el) return
+    el.overrides = { ...el.overrides, [currentOutputId.value]: { ...el.overrides?.[currentOutputId.value], content } }
+    dirty.value = true
+  }
+  function clearImageContentOverride(id: string) {
+    const el = elById(id)
+    const ov = el?.overrides?.[currentOutputId.value]
+    if (!ov || ov.content == null) return
+    delete ov.content
+    if (!Object.keys(ov).length) delete el!.overrides![currentOutputId.value]
+    if (!Object.keys(el!.overrides!).length) delete el!.overrides
+    dirty.value = true
+  }
+
   function patchElement(id: string, patch: Partial<ElementV2>) {
     const el = elById(id)
     if (!el) return
@@ -385,10 +489,11 @@ export function useGridEditor(
     } satisfies TextElementV2)
   }
 
-  function addImage() {
+  function addImage(content = '') {
     addElement({
       id: uid('image'), type: 'image', priority: nextPriority(),
-      content: '',
+      content,
+      focal: { x: 0.5, y: 0.5 },
       region: defaultRegion(0.5, 0.5),
       style: { fit: 'cover' },
     } satisfies ImageElementV2)
@@ -405,8 +510,15 @@ export function useGridEditor(
 
   function removeElement(id: string) {
     const idx = template.value.elements.findIndex(e => e.id === id)
-    if (idx < 0) return
-    template.value.elements.splice(idx, 1)
+    if (idx >= 0) {
+      template.value.elements.splice(idx, 1)
+    } else if (isV3(template.value)) {
+      // A child inside a frame — remove it from that frame's children.
+      for (const s of (template.value as TemplateV3).sections) {
+        const ci = s.children.findIndex(c => c.id === id)
+        if (ci >= 0) { s.children.splice(ci, 1); break }
+      }
+    }
     if (selectedId.value === id) selectedId.value = null
     dirty.value = true
   }
@@ -494,6 +606,94 @@ export function useGridEditor(
     moveElementTo(id, dir === 'up' ? idx + 1 : idx - 1)
   }
 
+  // -- Unified layer order (top-level z-order: elements AND sections) ----------
+  // Reorders any top-level layer — an ungrouped element or a whole frame — in
+  // the single `template.order` list (back → front). 'up' = toward the front.
+
+  function moveLayerTo(id: string, targetIdx: number) {
+    const cur = effectiveOrder(template.value)
+    const from = cur.indexOf(id)
+    if (from < 0) return
+    const clamped = Math.max(0, Math.min(cur.length - 1, targetIdx))
+    if (clamped === from) return
+    cur.splice(from, 1)
+    cur.splice(clamped, 0, id)
+    template.value.order = cur
+    dirty.value = true
+  }
+
+  function moveLayer(id: string, dir: 'up' | 'down') {
+    const cur = effectiveOrder(template.value)
+    const from = cur.indexOf(id)
+    if (from < 0) return
+    moveLayerTo(id, dir === 'up' ? from + 1 : from - 1)
+  }
+
+  // The selected TOP-LEVEL layer id (a frame or an ungrouped element) — z-order
+  // ops only apply at the top level (children stack within their frame).
+  function selectedTopLayerId(): string | null {
+    if (selectedSectionId.value) return selectedSectionId.value
+    const id = selectedId.value
+    return id && template.value.elements.some(e => e.id === id) ? id : null
+  }
+  function bringForward() { const id = selectedTopLayerId(); if (id) moveLayer(id, 'up') }
+  function sendBackward() { const id = selectedTopLayerId(); if (id) moveLayer(id, 'down') }
+  function bringToFront() { const id = selectedTopLayerId(); if (id) moveLayerTo(id, effectiveOrder(template.value).length - 1) }
+  function sendToBack() { const id = selectedTopLayerId(); if (id) moveLayerTo(id, 0) }
+
+  // -- Copy / paste ------------------------------------------------------------
+  const clipboard = ref<{ kind: 'element' | 'section'; data: any } | null>(null)
+
+  function copySelected() {
+    const secId = selectedSectionId.value
+    if (secId && !selectedId.value && isV3(template.value)) {
+      const s = (template.value as TemplateV3).sections.find(x => x.id === secId)
+      if (s) clipboard.value = { kind: 'section', data: JSON.parse(JSON.stringify(s)) }
+      return
+    }
+    const el = selectedElement.value
+    if (el) clipboard.value = { kind: 'element', data: JSON.parse(JSON.stringify(el)) }
+  }
+
+  function offsetRegion(region: Region, dims: { cols: number; rows: number }): Region {
+    return {
+      ...region,
+      col: Math.min(dims.cols - region.colSpan + 1, region.col + 1),
+      row: Math.min(dims.rows - region.rowSpan + 1, region.row + 1),
+    }
+  }
+
+  /** Paste the clipboard as a new layer (fresh ids, offset by a cell). A copied
+   *  child pastes as a top-level element. */
+  function pasteClipboard(): string | null {
+    const c = clipboard.value
+    if (!c) return null
+    const dims = gridDims(template.value)
+    if (c.kind === 'element') {
+      const el = JSON.parse(JSON.stringify(c.data)) as ElementV2
+      el.id = uid(el.type)
+      el.region = offsetRegion(el.region, dims)
+      delete (el as any).layoutSizing   // a pasted stack-child becomes free-floating
+      addElement(el)
+      return el.id
+    }
+    if (!isV3(template.value)) return null
+    const t = template.value as TemplateV3
+    const copy = JSON.parse(JSON.stringify(c.data)) as SectionV3
+    copy.id = uid('section')
+    copy.children = copy.children.map(ch => ({ ...ch, id: uid(ch.type) }))
+    const moved = offsetRegion(copy.region, dims)
+    const dCol = moved.col - copy.region.col
+    const dRow = moved.row - copy.region.row
+    copy.region = moved
+    copy.children.forEach((ch) => { ch.region = { ...ch.region, col: ch.region.col + dCol, row: ch.region.row + dRow } })
+    t.sections.push(copy)
+    selectedSectionId.value = copy.id
+    selectedId.value = null
+    dirty.value = true
+    return copy.id
+  }
+
   // -- v3 sections ------------------------------------------------------------
   // Sections are first-class draggable boxes in v3. Children ride their box
   // proportionally (resolved by the shared resolver), so section edits are the
@@ -522,6 +722,104 @@ export function useGridEditor(
       }
     }))
 
+  /** Nudge the selected section by whole grid cells (arrow keys). Uses the
+   *  section's resolved region for the current format + setSectionRegion, so it
+   *  writes to the right scope and carries children like a drag. */
+  function nudgeSection(dCol: number, dRow: number) {
+    const sid = selectedSectionId.value
+    if (!sid) return
+    const rs = resolvedSections.value.find(x => x.section.id === sid)
+    if (!rs) return
+    const m = metrics.value
+    const r = rs.region
+    const col = Math.min(m.cols - r.colSpan + 1, Math.max(1, r.col + dCol))
+    const row = Math.min(m.rows - r.rowSpan + 1, Math.max(1, r.row + dRow))
+    if (col === r.col && row === r.row) return
+    setSectionRegion(sid, { ...r, col, row })
+  }
+
+  /** Duplicate a section (frame) + its children with fresh ids, offset by one
+   *  cell. Selects the copy. */
+  function duplicateSection(id: string): string | null {
+    if (!isV3(template.value)) return null
+    const t = template.value as TemplateV3
+    const s = t.sections.find(x => x.id === id)
+    if (!s) return null
+    const dims = gridDims(t)
+    const copy = JSON.parse(JSON.stringify(s)) as SectionV3
+    copy.id = uid('section')
+    copy.children = copy.children.map(c => ({ ...c, id: uid(c.type) }))
+    const col = Math.min(dims.cols - copy.region.colSpan + 1, copy.region.col + 1)
+    const row = Math.min(dims.rows - copy.region.rowSpan + 1, copy.region.row + 1)
+    const dCol = col - s.region.col
+    const dRow = row - s.region.row
+    copy.region = { ...copy.region, col, row }
+    copy.children.forEach((c) => { c.region = { ...c.region, col: c.region.col + dCol, row: c.region.row + dRow } })
+    t.sections.push(copy)
+    selectedSectionId.value = copy.id
+    selectedId.value = null
+    dirty.value = true
+    return copy.id
+  }
+
+  /** Delete a section and its children. */
+  function removeSection(id: string) {
+    if (!isV3(template.value)) return
+    const t = template.value as TemplateV3
+    const idx = t.sections.findIndex(s => s.id === id)
+    if (idx < 0) return
+    t.sections.splice(idx, 1)
+    if (selectedSectionId.value === id) selectedSectionId.value = null
+    dirty.value = true
+  }
+
+  // -- Align (Figma) -----------------------------------------------------------
+
+  function alignRegionIn(region: Region, edge: AlignEdge, b: { cStart: number; cEnd: number; rStart: number; rEnd: number }): Region {
+    const r = { ...region }
+    const cCols = b.cEnd - b.cStart + 1
+    const cRows = b.rEnd - b.rStart + 1
+    switch (edge) {
+      case 'left':    r.col = b.cStart; break
+      case 'right':   r.col = b.cEnd - r.colSpan + 1; break
+      case 'hcenter': r.col = b.cStart + Math.round((cCols - r.colSpan) / 2); break
+      case 'top':     r.row = b.rStart; break
+      case 'bottom':  r.row = b.rEnd - r.rowSpan + 1; break
+      case 'vcenter': r.row = b.rStart + Math.round((cRows - r.rowSpan) / 2); break
+    }
+    r.col = Math.max(b.cStart, Math.min(b.cEnd - r.colSpan + 1, r.col))
+    r.row = Math.max(b.rStart, Math.min(b.rEnd - r.rowSpan + 1, r.row))
+    return r
+  }
+
+  /** Align the selected layer within its container — the canvas grid for a
+   *  top-level element/frame, or the parent frame for a child. */
+  function alignSelected(edge: AlignEdge) {
+    const dims = gridDims(template.value)
+    const canvas = { cStart: 1, cEnd: dims.cols, rStart: 1, rEnd: dims.rows }
+    const secId = selectedSectionId.value
+    if (secId && !selectedId.value) {
+      const rs = resolvedSections.value.find(x => x.section.id === secId)
+      if (rs) setSectionRegion(secId, alignRegionIn(rs.region, edge, canvas))
+      return
+    }
+    const id = selectedId.value
+    if (!id) return
+    const rr = selectedResolved.value
+    if (!rr?.region) return
+    let bounds = canvas
+    if (isV3(template.value)) {
+      const parent = resolvedSections.value.find(x => x.section.children.some(c => c.id === id))
+      if (parent) {
+        bounds = {
+          cStart: parent.region.col, cEnd: parent.region.col + parent.region.colSpan - 1,
+          rStart: parent.region.row, rEnd: parent.region.row + parent.region.rowSpan - 1,
+        }
+      }
+    }
+    setRegion(id, alignRegionIn(rr.region, edge, bounds))
+  }
+
   /** Move/resize a section box. Scope mirrors setRegion: 'output' writes
    * overrides[oid], else master writes section.region and a non-master format
    * writes regionByClass[class]. */
@@ -531,6 +829,21 @@ export function useGridEditor(
     if (regionScope.value === 'output') {
       s.overrides = { ...s.overrides, [currentOutputId.value]: { ...s.overrides?.[currentOutputId.value], region } }
     } else if (isMaster.value) {
+      // A plain section positions its children by absolute master region, so a
+      // MOVE (span unchanged) must carry them along — otherwise the box slides
+      // out from under them. Auto-layout sections reflow children from the box
+      // already, so they're left alone. Resize (span change) also leaves
+      // children put (they reproject proportionally).
+      if (!s.layout) {
+        const dCol = region.col - s.region.col
+        const dRow = region.row - s.region.row
+        const moved = region.colSpan === s.region.colSpan && region.rowSpan === s.region.rowSpan && (dCol || dRow)
+        if (moved) {
+          for (const c of s.children) {
+            c.region = { ...c.region, col: Math.max(1, c.region.col + dCol), row: Math.max(1, c.region.row + dRow) }
+          }
+        }
+      }
       s.region = region
     } else {
       s.regionByClass = { ...s.regionByClass, [formatClass.value]: region }
@@ -542,7 +855,16 @@ export function useGridEditor(
    * be created. No-op if already v3. */
   function convertToV3() {
     if (isV3(template.value)) return
-    template.value = toV3(template.value as TemplateV2)
+    const v2 = template.value as TemplateV2
+    // Fresh v3 defaults: a clean 16×16 grid with no gutter (a dense baseline
+    // lattice would make any gutter negligible). Margin keeps the template's
+    // uniform value (72 for the starter). Explicit counts are left alone.
+    if (v2.grid.columns == null && v2.grid.rows == null) {
+      v2.grid.columns = 16
+      v2.grid.rows = 16
+      v2.grid.gutter = 0
+    }
+    template.value = toV3(v2)
     dirty.value = true
   }
 
@@ -640,6 +962,100 @@ export function useGridEditor(
   const selectedStack = computed<SectionV3 | null>(() =>
     selectedSection.value && isLayoutStack(selectedSection.value) ? selectedSection.value : null)
 
+  /** Set the frame appearance (fill / stroke / radius) of a section. */
+  function setSectionStyle(sectionId: string, patch: Partial<NonNullable<SectionV3['style']>>) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    s.style = { ...(s.style ?? {}), ...patch }
+    dirty.value = true
+  }
+
+  /** Rename any layer — an element (incl. a child) sets its display `name`. */
+  function renameElement(id: string, name: string) {
+    const el = elById(id)
+    if (!el) return
+    const trimmed = name.trim()
+    if (trimmed) el.name = trimmed
+    else delete el.name
+    dirty.value = true
+  }
+
+  /** Rename a section (frame). */
+  function renameSection(sectionId: string, name: string) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    const trimmed = name.trim()
+    if (trimmed) s.name = trimmed
+    dirty.value = true
+  }
+
+  /** Clip a section's children to its frame bounds (Figma frame behaviour). */
+  function setSectionClip(sectionId: string, on: boolean) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    if (on) s.clip = true
+    else delete s.clip
+    dirty.value = true
+  }
+
+  /** Turn a section's auto-layout on (default vertical stack) or off. Turning
+   *  it on clears expressive placement (the two are mutually exclusive). */
+  function toggleSectionLayout(sectionId: string, on: boolean) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    if (on) { s.layout = JSON.parse(JSON.stringify(DEFAULT_AUTOLAYOUT)); delete s.expressive }
+    else delete s.layout
+    dirty.value = true
+  }
+
+  /** Turn a section's expressive placement on/off. On → default params and
+   *  clears auto-layout (mutually exclusive). */
+  function toggleSectionExpressive(sectionId: string, on: boolean) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    if (on) { s.expressive = defaultExpressiveBoxParams(); delete s.layout }
+    else delete s.expressive
+    dirty.value = true
+  }
+
+  /** Patch the expressive params of a section (merges onto current/default). */
+  function setSectionExpressive(sectionId: string, patch: Partial<ExpressiveBoxParams>) {
+    if (!isV3(template.value)) return
+    const s = (template.value as TemplateV3).sections.find(x => x.id === sectionId)
+    if (!s) return
+    s.expressive = { ...(s.expressive ?? defaultExpressiveBoxParams()), ...patch }
+    dirty.value = true
+  }
+
+  /** Create an empty frame at an explicit region (drawn on canvas). Does NOT
+   *  clip by default — clipping is opt-in via the inspector, so a child that
+   *  ends up outside the box (grouped/reparented) never silently vanishes.
+   *  Selects it. */
+  function addSectionAt(region: Region): string {
+    if (!isV3(template.value)) template.value = toV3(template.value as TemplateV2)
+    const t = template.value as TemplateV3
+    const id = uid('section')
+    t.sections.push({ id, name: 'Section', region: { ...region }, children: [] })
+    selectedSectionId.value = id
+    selectedId.value = null
+    frameDrawArmed.value = false
+    dirty.value = true
+    return id
+  }
+
+  /** Wrap the selection into a plain frame Section (no auto-layout); with
+   *  nothing selected, drop an empty frame. */
+  function wrapSelectionInSection() {
+    if (selectedId.value) groupSelectedInto('Section')
+    else addSection('Section')
+    // Clipping is opt-in (inspector toggle) so grouped children never vanish.
+  }
+
   // -- Undo / redo ------------------------------------------------------------
   // History holds JSON snapshots of `template`. `cursor` points at the entry
   // matching the last *committed* state; the live template may have drifted
@@ -710,18 +1126,22 @@ export function useGridEditor(
     outputs, currentOutput,
     selectedElement, selectedResolved,
     selectOutput, addOutput, duplicateOutput, removeOutput, renameOutput,
-    setFormatDims, setGridSpec, setBrand, setBackground, setRegion, setWorkingFormats,
+    setFormatDims, setGridSpec, gridColumns, gridRows, setGridColumns, setGridRows, margins, setMargin, gutters, setGutter, setBrand, setBackground, setRegion, setWorkingFormats,
     containerSize, setContainerSize, scale, fitScale, zoomOverride, isZoomFitted, zoomBy, zoomFit,
     regionScope, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
     isHiddenInOutput, setHiddenInOutput,
+    hasContentOverride, setImageContentOverride, clearImageContentOverride,
     loadTemplate, loadArchetype,
     patchElement, patchStyle,
-    addText, addImage, addShape, removeElement, moveElement, moveElementTo,
+    addText, addImage, addShape, removeElement, moveElement, moveElementTo, moveLayer, moveLayerTo,
+    bringForward, sendBackward, bringToFront, sendToBack, duplicateSection, copySelected, pasteClipboard,
     toggleHidden, toggleLocked, isHidden, isLocked,
     duplicateElement, nudgeSelected,
     isV3Mode, sections, selectedSectionId, selectedSection, resolvedSections,
-    setSectionRegion, convertToV3, addSection, groupSelectedInto, ungroupSelectedSection,
+    setSectionRegion, nudgeSection, removeSection, alignSelected, convertToV3, addSection, groupSelectedInto, ungroupSelectedSection,
     wrapSelectionInStack, updateStackLayout, updateChildSizing, moveChildIntoStack, moveChildOutOfStack, selectedStack,
+    setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
+    toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
   }
 }

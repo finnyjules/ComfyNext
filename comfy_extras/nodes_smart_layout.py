@@ -33,7 +33,7 @@ from comfy_extras._live_preview import save_live_preview_multi
 
 # The Comfy backend serves images via /view. Satori fetches images from URLs
 # at render time, so we need a *fully-qualified* URL it can reach.
-_COMFY_VIEW_ORIGIN = os.environ.get("COMFYNEXT_COMFY_ORIGIN", "http://127.0.0.1:8188")
+_COMFY_VIEW_ORIGIN = os.environ.get("SAILOR_COMFY_ORIGIN", "http://127.0.0.1:8188")
 
 
 # Cap on simultaneous text- and image-layer sockets. Each connected socket
@@ -67,7 +67,7 @@ def _image_layer_to_url(image: torch.Tensor, role: str) -> str:
 
 # The Nuxt server hosts the renderer. Default to the dev port; can be
 # overridden via env for production / hosted setups.
-_RENDER_ORIGIN = os.environ.get("COMFYNEXT_RENDER_ORIGIN", "http://127.0.0.1:3002")
+_RENDER_ORIGIN = os.environ.get("SAILOR_RENDER_ORIGIN", "http://127.0.0.1:3002")
 _RENDER_PATH = "/api/render-template"
 
 
@@ -142,7 +142,7 @@ def _render_one(
     req = urllib.request.Request(
         f"{_RENDER_ORIGIN}{_RENDER_PATH}",
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "ComfyNext/1.0"},
+        headers={"Content-Type": "application/json", "User-Agent": "Sailor/1.0"},
         method="POST",
     )
     try:
@@ -157,18 +157,38 @@ def _render_one(
     return torch.from_numpy(arr)  # [H, W, 3]
 
 
+def _template_elements(template: dict) -> list:
+    """Every element that can reference a layer socket — the ungrouped
+    top-level elements plus any section (frame) children (v3)."""
+    out = list(template.get("elements") or [])
+    for s in (template.get("sections") or []):
+        out.extend(s.get("children") or [])
+    return out
+
+
+def _refs_socket(template: dict, key: str) -> bool:
+    """True when some element already renders the `props.<key>` socket —
+    either by carrying the socket id or by referencing it in its content.
+    Used to seed a default element per connected socket exactly once, so a
+    layer wired *after* the layout already has elements still shows up."""
+    token = "props." + key
+    for e in _template_elements(template):
+        if e.get("id") == key or token in str(e.get("content", "")):
+            return True
+    return False
+
+
 def _autopopulate_elements(template: dict, props: dict) -> None:
-    """If the template ships with no elements but layers are connected,
-    inject default elements per connected layer so the first render shows
-    something instead of an empty canvas.
+    """Inject a default element for every connected layer socket that no
+    element references yet, so a wired layer always renders — whether the
+    layout was empty or already had other elements (e.g. an image wired into
+    a text-only layout). Sockets already placed by the user are left alone.
 
     Mirrors what the editor's onMounted does on its side — same positions
     so behaviour is consistent whether the user opens the editor first or
     runs straight away.
     """
-    if template.get("elements"):
-        return
-    existing_ids = {e.get("id") for e in template["elements"]}
+    template.setdefault("elements", [])
     image_keys = sorted([k for k in props if k.startswith("image_layer_")],
                        key=lambda s: int(s.split("_")[-1]))
     text_keys = sorted([k for k in props if k.startswith("text_layer_")],
@@ -178,7 +198,7 @@ def _autopopulate_elements(template: dict, props: dict) -> None:
     # smaller corner thumbnails. Mirrors the editor's auto-create defaults so
     # the server-side preview and editor-on-open agree.
     for i, key in enumerate(image_keys):
-        if key in existing_ids:
+        if _refs_socket(template, key):
             continue
         idx = i + 1
         if idx == 1:
@@ -206,7 +226,7 @@ def _autopopulate_elements(template: dict, props: dict) -> None:
 
     # Text stacks on the bottom half: y = 58% + (i * 12%)
     for i, key in enumerate(text_keys):
-        if key in existing_ids:
+        if _refs_socket(template, key):
             continue
         idx = i + 1
         template["elements"].append({
@@ -229,28 +249,43 @@ def _autopopulate_elements(template: dict, props: dict) -> None:
 
 
 def _autopopulate_elements_v2(template: dict, props: dict) -> None:
-    """v2 twin of _autopopulate_elements: grid regions instead of anchors.
+    """v2/v3 twin of _autopopulate_elements: grid regions instead of anchors.
     Strip/skyscraper placement comes from the resolver's default class
     layouts, so only master regions are needed here. Priorities follow the
     spec: headline 1, CTA 2, logo 3, hero 4, subhead 5.
+
+    Seeds a default element per connected socket that no element references
+    yet — so a layer wired after the layout already has content still renders.
     """
-    if template.get("elements"):
-        return
+    template.setdefault("elements", [])
     image_keys = sorted([k for k in props if k.startswith("image_layer_")],
                        key=lambda s: int(s.split("_")[-1]))
     text_keys = sorted([k for k in props if k.startswith("text_layer_")],
                       key=lambda s: int(s.split("_")[-1]))
 
     for i, key in enumerate(image_keys):
+        if _refs_socket(template, key):
+            continue
         idx = i + 1
         if idx == 1:
-            template["elements"].append({
+            # First image = full-bleed background: spans the whole grid, bleeds
+            # to the canvas edges, and sits at the BACK of the z-order (front of
+            # the list / order) so it reads as the backdrop behind the text.
+            g = template.get("grid") or {}
+            cols = g.get("columns") if isinstance(g.get("columns"), int) and g["columns"] > 0 else 9999
+            rows = g.get("rows") if isinstance(g.get("rows"), int) and g["rows"] > 0 else 9999
+            template["elements"].insert(0, {
                 "id": key, "type": "image", "role": f"IMAGE_LAYER_{idx}", "priority": 4,
-                "region": {"col": 1, "colSpan": 6, "row": 1, "rowSpan": 6},
+                "region": {"col": 1, "colSpan": cols, "row": 1, "rowSpan": rows},
+                "bleed": True,
                 "focal": {"x": 0.5, "y": 0.5},
                 "style": {"fit": "cover"},
                 "content": "{{ props." + key + " }}",
             })
+            # Keep it back-most in an explicit z-order too, if the layout uses one.
+            order = template.get("order")
+            if isinstance(order, list) and key not in order:
+                order.insert(0, key)
         else:
             template["elements"].append({
                 "id": key, "type": "image", "role": f"IMAGE_LAYER_{idx}", "priority": 5 + idx,
@@ -261,6 +296,8 @@ def _autopopulate_elements_v2(template: dict, props: dict) -> None:
             })
 
     for i, key in enumerate(text_keys):
+        if _refs_socket(template, key):
+            continue
         idx = i + 1
         if idx == 1:
             template["elements"].append({
@@ -279,6 +316,17 @@ def _autopopulate_elements_v2(template: dict, props: dict) -> None:
                 "style": {"color": "#ffffff"},
                 "content": "{{ props." + key + " }}",
             })
+
+
+def _autopopulate_for_template(template: dict, props: dict) -> None:
+    """Route to the right seeder by template version. v2 AND v3 use grid
+    regions (the v3 resolver has no anchor/offset path — seeding v1-style
+    elements into a v3 layout would not render); only the legacy v1 anchor
+    templates use the anchor seeder."""
+    if template.get("version") in (2, 3):
+        _autopopulate_elements_v2(template, props)
+    else:
+        _autopopulate_elements(template, props)
 
 
 def _parse_aspects(aspects_str: str, template: dict) -> list[str]:
@@ -497,13 +545,11 @@ class SmartLayoutNode(IO.ComfyNode):
                 kit_d[k.strip()] = v.strip()
         brand_d = {**kit_d, **_parse_kv(brand or "")}
 
-        # If the user hasn't opened the editor yet, the layout has no elements.
-        # Inject defaults for any connected layer sockets so the preview shows
-        # something meaningful instead of an empty canvas.
-        if template.get("version") == 2:
-            _autopopulate_elements_v2(template, props_d)
-        else:
-            _autopopulate_elements(template, props_d)
+        # Inject a default element for any connected layer socket that no
+        # element references yet — so a wired layer always renders, whether the
+        # layout is empty or already has content (e.g. an image wired into a
+        # text-only layout).
+        _autopopulate_for_template(template, props_d)
 
         # The chosen deliverables: the template's `outputs` (editor-picked,
         # repeatable per format for variations) or one per `aspects` key.

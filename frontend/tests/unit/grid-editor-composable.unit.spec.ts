@@ -397,6 +397,76 @@ describe('useGridEditor', () => {
     expect(rs[0].rect.h).toBeGreaterThan(0)
   })
 
+  it('gridColumns / gridRows report the fixed grid (baseline-derived default)', () => {
+    const ed = useGridEditor(v3Fixture())
+    // (1080 - 2*72) / 12 = 78 on each axis for the square master
+    expect(ed.gridColumns.value).toBe(78)
+    expect(ed.gridRows.value).toBe(78)
+  })
+
+  it('setGridColumns rescales the column axis so nothing moves visually', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    const secBefore = { ...t.sections[0].region }
+    const rowsBefore = ed.gridRows.value
+
+    ed.setGridColumns(156)   // lossless doubling 78 → 156
+
+    expect(ed.gridColumns.value).toBe(156)
+    expect(t.grid.columns).toBe(156)
+    expect(ed.gridRows.value).toBe(rowsBefore)   // rows axis untouched
+    // Same fractional column position → identical visual placement.
+    expect((t.sections[0].region.col - 1) / 156).toBeCloseTo((secBefore.col - 1) / 78, 5)
+    expect(t.sections[0].region.colSpan / 156).toBeCloseTo(secBefore.colSpan / 78, 5)
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('setGridRows rescales only the row axis', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    const colsBefore = ed.gridColumns.value
+    ed.setGridRows(6)
+    expect(ed.gridRows.value).toBe(6)
+    expect(t.grid.rows).toBe(6)
+    expect(ed.gridColumns.value).toBe(colsBefore)
+  })
+
+  it('setMargin writes a per-side margin, other sides keep the uniform value', () => {
+    const ed = useGridEditor(v3Fixture())   // grid.margin = 72
+    ed.setMargin('top', 10)
+    expect((ed.template.value.grid as any).margins).toEqual({ top: 10 })
+    expect(ed.margins.value.top).toBe(10)
+    expect(ed.margins.value.left).toBe(72)
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('setGutter writes a per-axis gutter, the other axis keeps the uniform value', () => {
+    const ed = useGridEditor(v3Fixture())   // grid.gutter = 24
+    ed.setGutter('column', 8)
+    expect((ed.template.value.grid as any).gutters).toEqual({ column: 8 })
+    expect(ed.gutters.value.column).toBe(8)
+    expect(ed.gutters.value.row).toBe(24)   // falls back to uniform grid.gutter
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('convertToV3 defaults to a clean 16×16 grid with no gutter', () => {
+    const ed = useGridEditor(fixture())   // v2
+    ed.convertToV3()
+    expect(ed.gridColumns.value).toBe(16)
+    expect(ed.gridRows.value).toBe(16)
+    expect(ed.template.value.grid.gutter).toBe(0)
+    expect(ed.margins.value).toEqual({ top: 72, right: 72, bottom: 72, left: 72 })
+  })
+
+  it('setGridColumns clamps and no-ops on v2', () => {
+    const v2 = useGridEditor(fixture())
+    v2.setGridColumns(12)
+    expect((v2.template.value.grid as any).columns).toBeUndefined()   // v2 untouched
+    const ed = useGridEditor(v3Fixture())
+    ed.setGridColumns(999999)
+    expect(ed.gridColumns.value).toBeLessThanOrEqual(240)   // MAX_GRID_LINES
+  })
+
   it('setSectionRegion writes the base region on the master', () => {
     const ed = useGridEditor(v3Fixture())
     ed.setSectionRegion('sec1', { col: 1, colSpan: 30, row: 1, rowSpan: 15 })
@@ -404,6 +474,247 @@ describe('useGridEditor', () => {
     expect(t.sections[0].region).toEqual({ col: 1, colSpan: 30, row: 1, rowSpan: 15 })
     expect(t.sections[0].regionByClass).toBeUndefined()
     expect(ed.dirty.value).toBe(true)
+  })
+
+  it('moving a plain section carries its children (they ride the frame)', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    const child0 = { ...t.sections[0].children[0].region }
+    const sec = t.sections[0].region
+    ed.setSectionRegion('sec1', { ...sec, col: sec.col + 6, row: sec.row + 4 })
+    expect(t.sections[0].children[0].region.col).toBe(child0.col + 6)
+    expect(t.sections[0].children[0].region.row).toBe(child0.row + 4)
+  })
+
+  it('resizing a section does NOT translate its children', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    const child0 = { ...t.sections[0].children[0].region }
+    const sec = t.sections[0].region
+    ed.setSectionRegion('sec1', { ...sec, colSpan: sec.colSpan + 10 })   // resize, not move
+    expect(t.sections[0].children[0].region.col).toBe(child0.col)
+    expect(t.sections[0].children[0].region.row).toBe(child0.row)
+  })
+
+  it('selects and edits a child inside a frame (any layer is editable)', () => {
+    const ed = useGridEditor(v3Fixture())   // sec1 has child 'h'
+    ed.selectedId.value = 'h'
+    expect(ed.selectedElement.value?.id).toBe('h')   // resolves the child, not just top-level
+    ed.patchStyle('h', { color: '#ff0000' })
+    const t = ed.template.value as TemplateV3
+    expect((t.sections[0].children[0].style as any).color).toBe('#ff0000')
+  })
+
+  it('removeElement removes a child from its frame', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    expect(t.sections[0].children.length).toBe(1)
+    ed.removeElement('h')
+    expect(t.sections[0].children.length).toBe(0)
+  })
+
+  it('copy + paste an element inserts a fresh-id copy offset by a cell', () => {
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [{ id: 'e1', type: 'shape', shape: 'rect', priority: 1, region: { col: 3, colSpan: 4, row: 3, rowSpan: 4 } }],
+      sections: [],
+    } as any)
+    ed.selectedId.value = 'e1'
+    ed.copySelected()
+    const newId = ed.pasteClipboard()!
+    const t = ed.template.value as TemplateV3
+    expect(t.elements.length).toBe(2)
+    expect(newId).not.toBe('e1')
+    const copy = t.elements.find(e => e.id === newId)!
+    expect(copy.region.col).toBe(4)   // 3 + 1
+    expect(copy.region.row).toBe(4)
+  })
+
+  it('bringToFront / sendToBack move the selected layer to the z-order extremes', () => {
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [
+        { id: 'e1', type: 'shape', shape: 'rect', priority: 1, region: { col: 1, colSpan: 4, row: 1, rowSpan: 4 } },
+        { id: 'e2', type: 'shape', shape: 'rect', priority: 2, region: { col: 1, colSpan: 4, row: 5, rowSpan: 4 } },
+      ],
+      sections: [{ id: 'f1', name: 'frame', region: { col: 1, colSpan: 10, row: 1, rowSpan: 10 }, children: [] }],
+    } as any)
+    ed.selectedId.value = 'e1'
+    ed.bringToFront()
+    const order1 = (ed.template.value as any).order as string[]
+    expect(order1[order1.length - 1]).toBe('e1')
+    ed.sendToBack()
+    expect(((ed.template.value as any).order as string[])[0]).toBe('e1')
+  })
+
+  it('duplicateSection clones a frame + children with fresh ids, offset by a cell', () => {
+    const ed = useGridEditor(v3Fixture())   // sec1 with child 'h'
+    const before = (ed.template.value as TemplateV3).sections.length
+    const newId = ed.duplicateSection('sec1')
+    const t = ed.template.value as TemplateV3
+    expect(t.sections.length).toBe(before + 1)
+    const copy = t.sections.find(s => s.id === newId)!
+    expect(copy.children[0].id).not.toBe('h')
+    expect(copy.region.col).toBe(t.sections[0].region.col + 1)
+    expect(ed.selectedSectionId.value).toBe(newId)
+  })
+
+  it('moveLayer reorders a frame relative to an ungrouped element (unified z-order)', () => {
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [{ id: 'e1', type: 'shape', shape: 'rect', priority: 1, region: { col: 1, colSpan: 4, row: 1, rowSpan: 4 } }],
+      sections: [{ id: 's1', name: 'frame', region: { col: 1, colSpan: 10, row: 1, rowSpan: 10 }, children: [] }],
+    } as any)
+    // Default z-order: ungrouped elements first (back), then sections (front).
+    ed.moveLayer('s1', 'down')   // send the frame toward the back → behind e1
+    expect((ed.template.value as any).order).toEqual(['s1', 'e1'])
+    ed.moveLayer('s1', 'up')     // bring it forward again
+    expect((ed.template.value as any).order).toEqual(['e1', 's1'])
+  })
+
+  it('addSectionAt creates a frame at the given region (clip off by default) and selects it', () => {
+    const ed = useGridEditor(v3Fixture())
+    const id = ed.addSectionAt({ col: 2, colSpan: 5, row: 3, rowSpan: 4 })
+    const s = (ed.template.value as TemplateV3).sections.find(x => x.id === id)!
+    expect(s.region).toEqual({ col: 2, colSpan: 5, row: 3, rowSpan: 4 })
+    expect(s.clip).toBeFalsy()          // clipping is opt-in, so children never vanish
+    expect(s.children).toEqual([])
+    expect(ed.selectedSectionId.value).toBe(id)
+  })
+
+  it('setSectionClip toggles clipping on and off', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.setSectionClip('sec1', true)
+    expect((ed.template.value as TemplateV3).sections[0].clip).toBe(true)
+    ed.setSectionClip('sec1', false)
+    expect((ed.template.value as TemplateV3).sections[0].clip).toBeFalsy()
+  })
+
+  it('alignSelected aligns a top-level element within the canvas grid', () => {
+    // 78-col/78-row grid (v3Fixture master 1x1, baseline 12). Element spanning 10 cols.
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [{ id: 'e1', type: 'shape', shape: 'rect', priority: 1, region: { col: 5, colSpan: 10, row: 5, rowSpan: 10 } }],
+      sections: [],
+    } as any)
+    const cols = ed.gridColumns.value
+    const rows = ed.gridRows.value
+    ed.selectedId.value = 'e1'
+    const el = () => (ed.template.value as TemplateV3).elements[0].region
+
+    ed.alignSelected('left');    expect(el().col).toBe(1)
+    ed.alignSelected('right');   expect(el().col).toBe(cols - 10 + 1)
+    ed.alignSelected('hcenter'); expect(el().col).toBe(Math.round((cols - 10) / 2) + 1)
+    ed.alignSelected('top');     expect(el().row).toBe(1)
+    ed.alignSelected('bottom');  expect(el().row).toBe(rows - 10 + 1)
+    ed.alignSelected('vcenter'); expect(el().row).toBe(Math.round((rows - 10) / 2) + 1)
+  })
+
+  it('alignSelected aligns a child within its parent frame', () => {
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [],
+      sections: [{ id: 'f1', name: 'frame', region: { col: 10, colSpan: 20, row: 10, rowSpan: 20 },
+        children: [{ id: 'c1', type: 'shape', shape: 'rect', priority: 1, region: { col: 12, colSpan: 4, row: 12, rowSpan: 4 } }] }],
+    } as any)
+    ed.selectedId.value = 'c1'
+    ed.alignSelected('left')
+    // Frame starts at col 10 → child's left aligns to the frame's left edge.
+    expect((ed.template.value as TemplateV3).sections[0].children[0].region.col).toBe(10)
+  })
+
+  it('nudgeSection moves the selected frame and its children ride it', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.selectedSectionId.value = 'sec1'
+    const t = ed.template.value as TemplateV3
+    const secBefore = { ...t.sections[0].region }
+    const childBefore = { ...t.sections[0].children[0].region }
+    ed.nudgeSection(2, 0)
+    expect(t.sections[0].region.col).toBe(secBefore.col + 2)
+    expect(t.sections[0].children[0].region.col).toBe(childBefore.col + 2)
+  })
+
+  it('removeSection deletes the frame and its children', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    expect(t.sections.length).toBe(1)
+    ed.removeSection('sec1')
+    expect(t.sections.length).toBe(0)
+  })
+
+  it('renameElement sets a child display name', () => {
+    const ed = useGridEditor(v3Fixture())   // child 'h'
+    ed.renameElement('h', '  Headline  ')
+    expect((ed.template.value as TemplateV3).sections[0].children[0].name).toBe('Headline')
+  })
+
+  it('renameSection trims and renames a frame', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.renameSection('sec1', '  Hero lockup  ')
+    expect((ed.template.value as TemplateV3).sections[0].name).toBe('Hero lockup')
+  })
+
+  it('reparents a top-level element into a plain frame and back out', () => {
+    const ed = useGridEditor({
+      version: 3, id: 't', name: 't', master: '1x1',
+      formats: { '1x1': { w: 1080, h: 1080 } },
+      grid: { gutter: 0, margin: 72, baseline: 12 },
+      typeScale: { base: 28, ratio: 1.414 },
+      elements: [{ id: 'e1', type: 'shape', shape: 'rect', priority: 1, region: { col: 1, colSpan: 4, row: 1, rowSpan: 4 } }],
+      sections: [{ id: 'f1', name: 'frame', region: { col: 1, colSpan: 10, row: 1, rowSpan: 10 }, children: [] }],
+    } as any)
+    ed.moveChildIntoStack('f1', 'e1')
+    let t = ed.template.value as TemplateV3
+    expect(t.elements.find(e => e.id === 'e1')).toBeUndefined()
+    expect(t.sections[0].children.some(c => c.id === 'e1')).toBe(true)
+    ed.moveChildOutOfStack('f1', 'e1')
+    t = ed.template.value as TemplateV3
+    expect(t.elements.some(e => e.id === 'e1')).toBe(true)
+    expect(t.sections[0].children.length).toBe(0)
+  })
+
+  it('setSectionStyle writes frame fill/stroke/radius onto the section', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.setSectionStyle('sec1', { fill: '#123456', stroke: '#ffffff', strokeWidth: 3, radius: 12 })
+    const t = ed.template.value as TemplateV3
+    expect(t.sections[0].style).toEqual({ fill: '#123456', stroke: '#ffffff', strokeWidth: 3, radius: 12 })
+    expect(ed.dirty.value).toBe(true)
+  })
+
+  it('toggleSectionLayout adds a default auto-layout, then removes it', () => {
+    const ed = useGridEditor(v3Fixture())
+    const t = ed.template.value as TemplateV3
+    expect(t.sections[0].layout).toBeUndefined()
+    ed.toggleSectionLayout('sec1', true)
+    expect(t.sections[0].layout?.direction).toBe('vertical')
+    ed.toggleSectionLayout('sec1', false)
+    expect(t.sections[0].layout).toBeUndefined()
+  })
+
+  it('wrapSelectionInSection with nothing selected adds an empty plain frame', () => {
+    const ed = useGridEditor(v3Fixture())
+    ed.selectedId.value = null
+    const before = (ed.template.value as TemplateV3).sections.length
+    ed.wrapSelectionInSection()
+    const t = ed.template.value as TemplateV3
+    expect(t.sections.length).toBe(before + 1)
+    const created = t.sections.find(s => s.id === ed.selectedSectionId.value)!
+    expect(created.layout).toBeUndefined()   // plain frame, not auto-layout
   })
 
   it('setSectionRegion on a non-master output writes regionByClass for its class', () => {

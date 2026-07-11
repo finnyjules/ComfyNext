@@ -199,6 +199,11 @@ const PARAPHRASES: { phrase: string; expect: string }[] = [
   { phrase: 'make the sofa emerald green', expect: 'RecolorObjectNode' },
   { phrase: 'give the car a different paint color', expect: 'RecolorObjectNode' },
   { phrase: 'recolour the logo to match our brand', expect: 'RecolorObjectNode' },
+  // Promoted nodes (RelightNode / SwapBackgroundNode) — paraphrases, not verbatim intents.
+  { phrase: 'light this like sunset from the left', expect: 'RelightNode' },
+  { phrase: 'this needs some dramatic side lighting', expect: 'RelightNode' },
+  { phrase: 'put my product on a marble countertop', expect: 'SwapBackgroundNode' },
+  { phrase: 'move this watch onto a rustic wood table', expect: 'SwapBackgroundNode' },
 ]
 
 describe('paraphrases route to the right capability (top-3)', () => {
@@ -387,6 +392,26 @@ describe('collisions disambiguate', () => {
     { phrase: 'change the color of the shirt', expect: 'RecolorObjectNode', notFirst: 'EditImageNode' },
     { phrase: 'restyle this in the look of that reference', expect: 'RestyleFromImageNode', notFirst: 'RecolorObjectNode' },
     { phrase: 'change her shirt to red', expect: 'EditImageNode' },
+    // background-color phrasings: a bare colour change on the backdrop is a
+    // recolor, NOT the product-locked scene-swap (which needs a whole new
+    // scene/setting, not just a hue) — but bare "change the background"
+    // (no colour) stays the broad EditImageNode edit per spec.
+    { phrase: 'change the background color', expect: 'RecolorObjectNode' },
+    { phrase: 'change the color of the background', expect: 'RecolorObjectNode' },
+    { phrase: 'change the background', expect: 'EditImageNode', notFirst: 'SwapBackgroundNode' },
+    // text/watermark REMOVAL is an erase-and-fill-the-hole op (RemoveObjectNode),
+    // not a find/replace op (TextEditNode expects a replacement string).
+    { phrase: 'remove the watermark from this image', expect: 'RemoveObjectNode' },
+    { phrase: 'remove the text', expect: 'RemoveObjectNode', notFirst: 'TextEditNode' },
+    { phrase: 'change the text', expect: 'TextEditNode', notFirst: 'RemoveObjectNode' },
+    // promoted-node collision guards: "nighttime" alone stays the broad edit —
+    // RelightNode is for an explicit lighting/gimbal request, not a time-of-day mood edit.
+    { phrase: 'make it look like nighttime', expect: 'EditImageNode', notFirst: 'RelightNode' },
+    { phrase: 'make it nighttime', expect: 'EditImageNode' },
+    // "photoshop out my ex" family — a person-removal phrasing that must reach
+    // RemoveObjectNode, and "erase the background" must not be stolen by it.
+    { phrase: 'photoshop out my ex', expect: 'RemoveObjectNode' },
+    { phrase: 'erase the background', expect: 'RemoveBackgroundNode', notFirst: 'RemoveObjectNode' },
   ]
   for (const c of cases) {
     it(`"${c.phrase}" → ${c.expect}`, () => {

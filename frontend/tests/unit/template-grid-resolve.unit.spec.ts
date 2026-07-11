@@ -217,4 +217,34 @@ describe('resolveFormat', () => {
       .elements.find(e => e.el.id === 'headline')!
     expect(r.text!.content).toBe('BREW BOLD')
   })
+
+  describe('per-output content override (outpaint)', () => {
+    it('swaps the image content for the overridden output only', () => {
+      const t = fixture()
+      ;(t.elements[0] as any).overrides = { '9x16': { content: '/view?filename=outpaint.png' } }
+      const wide = resolveFormat(t, '9x16', { image_layer_1: 'http://x/orig.png' })
+        .elements.find(e => e.el.id === 'hero')!
+      expect(wide.el.content).toBe('/view?filename=outpaint.png')
+      // A different format keeps the original source, unaffected.
+      const square = resolveFormat(t, '1x1', { image_layer_1: 'http://x/orig.png' })
+        .elements.find(e => e.el.id === 'hero')!
+      expect(square.el.content).toBe('{{ props.image_layer_1 }}')
+    })
+
+    it('leaves other props (id, style, region) intact on the override clone', () => {
+      const t = fixture()
+      ;(t.elements[0] as any).overrides = { '1x1': { content: '/view?filename=op.png' } }
+      const hero = resolveFormat(t, '1x1', { image_layer_1: 'http://x/orig.png' })
+        .elements.find(e => e.el.id === 'hero')!
+      expect(hero.el.id).toBe('hero')
+      expect(hero.el.type).toBe('image')
+      expect(hero.culled).toBe(false)
+    })
+
+    it('no override → resolved element is unchanged', () => {
+      const hero = resolveFormat(fixture(), '1x1', { image_layer_1: 'http://x/orig.png' })
+        .elements.find(e => e.el.id === 'hero')!
+      expect(hero.el.content).toBe('{{ props.image_layer_1 }}')
+    })
+  })
 })

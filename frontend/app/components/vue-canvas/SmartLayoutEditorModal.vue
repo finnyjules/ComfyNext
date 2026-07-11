@@ -13,6 +13,7 @@ import type { ComputedRef } from 'vue'
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
 import { allElements } from '~~/shared/template-grid/sections'
+import { fineGridDims } from '~~/shared/template-grid/grid'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2 } from '~~/shared/template-grid/types'
 import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE } from '~/lib/collection/types'
@@ -68,23 +69,41 @@ const isGrid = computed(() => {
   return v === 2 || v === 3
 })
 
+/** True when some element (top-level or section child) already renders the
+ * `props.<key>` socket — so we seed a default element per connected socket
+ * exactly once, and a layer wired *after* the layout has content still shows. */
+function refsSocket(layout: AnyTemplate, key: string): boolean {
+  const token = `props.${key}`
+  return allElements(layout as any).some((e: any) =>
+    e?.id === key || String(e?.content ?? '').includes(token))
+}
+
 /** v2 twin of the Python _autopopulate_elements_v2: one grid-region element
- * per connected layer socket, only when the template has none yet.
- * Strip/skyscraper placement comes from the resolver's default class layouts. */
+ * per connected layer socket that no element references yet — whether the
+ * layout is empty or already has content (e.g. an image wired into a
+ * text-only layout). Strip/skyscraper placement comes from the resolver's
+ * default class layouts. */
 function autopopulateV2(layout: TemplateV2, connected: Record<string, string>) {
-  if (layout.elements.length) return
   const keys = Object.keys(connected).sort()
   for (const key of keys) {
+    if (refsSocket(layout, key)) continue
     if (key.startsWith('image_layer_')) {
       const idx = Number(key.slice('image_layer_'.length))
       if (idx === 1) {
-        layout.elements.push({
+        // First image = full-bleed background: spans the whole grid, bleeds to
+        // the canvas edges, and sits at the BACK of the z-order (front of the
+        // list / order) so it reads as the backdrop behind the text.
+        const { cols, rows } = fineGridDims(layout as any, layout.formats[layout.master])
+        layout.elements.unshift({
           id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 4,
-          region: { col: 1, colSpan: 6, row: 1, rowSpan: 6 },
+          region: { col: 1, colSpan: cols, row: 1, rowSpan: rows },
+          bleed: true,
           focal: { x: 0.5, y: 0.5 },
           style: { fit: 'cover' },
           content: `{{ props.${key} }}`,
         })
+        const ord = (layout as any).order
+        if (Array.isArray(ord) && !ord.includes(key)) ord.unshift(key)
       } else {
         layout.elements.push({
           id: key, type: 'image', role: `IMAGE_LAYER_${idx}`, priority: 5 + idx,
@@ -125,9 +144,11 @@ onMounted(() => {
   const layout = readLayout()
   const version = (layout as any).version
   if (version === 2 || version === 3) {
-    // Only seed elements for a genuinely empty template — a v3 with content in
-    // sections (but no ungrouped elements) must not be re-populated.
-    if (!allElements(layout as any).length) autopopulateV2(layout as TemplateV2, initialProps.value)
+    // Seed a default element for each connected socket the layout doesn't yet
+    // reference (per-socket, so an image wired into an existing text layout
+    // still gets placed). autopopulateV2 skips sockets already referenced, so
+    // this is safe to run whether the layout is empty or full.
+    autopopulateV2(layout as TemplateV2, initialProps.value)
     initial.value = layout
     jsonDraft.value = JSON.stringify(layout, null, 2)
     return
@@ -344,7 +365,7 @@ const initialProps = computed<Record<string, string>>(() => ({
 // GridEditorShell's props — provide/inject pierces the shell without adding
 // SmartLayout-specific plumbing to the generic grid-editor composable). Gives
 // the editor everything Task 3's context menu / inspector Variable row need:
-// the layout node id (to dispatch comfynext:promoteLayoutElement), raw
+// the layout node id (to dispatch sailor:promoteLayoutElement), raw
 // nodes/edges accessors (for Go to collection / direct collection writes),
 // and the already-computed bindings + wired collection so canvas badges and
 // the inspector don't each re-derive the VARS-edge lookup.
@@ -416,7 +437,7 @@ const initialAspects = computed<string>(() => {
 // The project's active brand kit, provided by the layout (default.vue).
 // Slots between template defaults and the wired socket brand in the editor's
 // shared effectiveBrand merge.
-const projectBrand = inject<{ activeKit: ComputedRef<BrandKit | undefined> } | null>('comfynext:brand', null)
+const projectBrand = inject<{ activeKit: ComputedRef<BrandKit | undefined> } | null>('sailor:brand', null)
 const activeKit = computed(() => projectBrand?.activeKit.value)
 
 // Close on Escape.
@@ -436,7 +457,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 function commitLayout(layout: AnyTemplate) {
   writeLayout(layout)
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('comfynext:runFiltered', {
+    window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
       detail: { targetIds: [props.nodeId], live: true },
     }))
   }
@@ -514,6 +535,35 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
   }
   return out
 })
+
+// Images sitting on the ComfyUI node graph — the "On canvas" source for the
+// editor's image picker. Gathers executed outputs (node.data.images) and the
+// files picked on LoadImage / Image nodes (same sources readUpstreamImageUrl
+// recognises, but across every node, not just the wired one).
+const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
+  const out: Array<{ url: string; label?: string }> = []
+  const seen = new Set<string>()
+  const add = (url: unknown, label?: string) => {
+    const u = String(url ?? '').trim()
+    if (!u || seen.has(u)) return
+    seen.add(u)
+    out.push({ url: u, label })
+  }
+  for (const n of props.nodes) {
+    const d = (n as any)?.data
+    if (!d) continue
+    const label = d.title || d.nodeType || undefined
+    if (Array.isArray(d.images)) for (const img of d.images) add(img, label)
+    if (d.nodeType === 'LoadImage' || d.nodeType === 'Image') {
+      const defs = d.widgetDefs as any[] | undefined
+      const wv = d.widgetsValues as any[] | undefined
+      const wi = defs?.findIndex((x: any) => x.name === 'image') ?? -1
+      const filename = wi >= 0 ? wv?.[wi] : undefined
+      if (filename) add(`/view?${new URLSearchParams({ filename: String(filename), type: 'input' })}`, label)
+    }
+  }
+  return out
+})
 </script>
 
 <template>
@@ -559,6 +609,7 @@ const v2RenderProps = computed<Record<string, unknown>>(() => {
       :initial-brand="initialBrand"
       :aspects="initialAspects"
       :active-kit="activeKit"
+      :canvas-images="canvasImages"
       @save="onLayoutSaved"
     >
       <template #topbar-end>

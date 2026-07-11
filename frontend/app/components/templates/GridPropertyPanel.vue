@@ -4,7 +4,7 @@
  * setRegion so master vs format-class semantics live in one place; everything
  * else patches the element directly (v2 has no per-aspect style overrides).
  */
-import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2 } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Layers, Trash2, Type as TypeIcon, Image as ImageIcon, Square, Sparkles, Loader2, Expand } from 'lucide-vue-next'
 
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
@@ -13,6 +13,7 @@ import { useCopyAssist } from '~/composables/useCopyAssist'
 import type { CopyAssistMode } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
+import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { isBoundToken, nextFreeSocket, tokenizeElementContent, columnLabelForElement } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
 import { COLLECTION_PROP } from '~/lib/collection/types'
@@ -30,6 +31,7 @@ const {
   selectedElement, selectedResolved, sampleProps, effectiveBrand,
   setRegion, hasClassRegion, clearClassRegion, hasOutputOverride, clearOutputOverride,
   isHiddenInOutput, setHiddenInOutput,
+  hasContentOverride, setImageContentOverride, clearImageContentOverride,
   patchElement, patchStyle, removeElement,
 } = ctx
 
@@ -37,7 +39,7 @@ const el = selectedElement
 
 // -- Variable binding (Turn into variable write-through) ---------------------
 // Same "live binding" contract the canvas badges use: a bound socket is a
-// whole-match `{{ props.x }}` token AND an actual comfynext_varBindings entry
+// whole-match `{{ props.x }}` token AND an actual sailor_varBindings entry
 // on the node (a hand-typed token with no binding is just literal content).
 const boundSocket = computed<string | null>(() => {
   if (!el.value || !binding) return null
@@ -75,14 +77,14 @@ const resolvedBoundValue = computed<string>(() => {
 
 function goToCollection() {
   const colNode = binding?.collectionNode.value
-  if (colNode) window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  if (colNode) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
 }
 
 function unbindVariable() {
   if (!el.value || !binding || !boundSocket.value) return
   const resolved = resolvedBoundValue.value
   patchElement(el.value.id, { content: resolved || (el.value as any).content } as any)
-  window.dispatchEvent(new CustomEvent('comfynext:unbindControl', {
+  window.dispatchEvent(new CustomEvent('sailor:unbindControl', {
     detail: { nodeId: binding.nodeId, path: `props.${boundSocket.value}` },
   }))
 }
@@ -160,7 +162,7 @@ function addCopyOptionsAsRows() {
   const colNode = binding?.collectionNode.value
   if (colNode) {
     pushVarPreview(colNode, wiredTargets(String(colNode.id), binding!.nodesAccessor(), binding!.edgesAccessor()), binding!.nodesAccessor())
-    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+    window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
   }
 }
 
@@ -176,7 +178,7 @@ function promoteThenAddCopyOptionsAsRows() {
   const { priorContent } = tokenizeElementContent(el.value as any, socketName)
   const label = columnLabelForElement(el.value as any, priorContent, socketName)
   patchElement(el.value.id, { content: `{{ props.${socketName} }}` } as any)
-  window.dispatchEvent(new CustomEvent('comfynext:promoteLayoutElement', {
+  window.dispatchEvent(new CustomEvent('sailor:promoteLayoutElement', {
     detail: { nodeId: binding.nodeId, socketName, columnLabel: label, currentValue: priorContent, kind: 'text' },
   }))
 
@@ -187,7 +189,7 @@ function promoteThenAddCopyOptionsAsRows() {
   const colNode = binding.collectionNode.value
   if (colNode) {
     pushVarPreview(colNode, wiredTargets(String(colNode.id), binding.nodesAccessor(), binding.edgesAccessor()), binding.nodesAccessor())
-    window.dispatchEvent(new CustomEvent('comfynext:openCollection', { detail: { nodeId: String(colNode.id) } }))
+    window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
   }
 }
 
@@ -326,6 +328,20 @@ function bindPanelToBrand(slot: string) {
   setPanel({ fill: `{{ brand.${slot} }}` })
 }
 
+// -- Expressive text layout --------------------------------------------------
+const expressive = computed<ExpressiveParams | undefined>(() => styleOf().expressive)
+function setExpressive(patch: Partial<ExpressiveParams>) {
+  if (!el.value) return
+  patchStyle(el.value.id, { expressive: { ...(expressive.value ?? defaultExpressiveParams()), ...patch } })
+}
+function toggleExpressive(on: boolean) {
+  if (!el.value) return
+  patchStyle(el.value.id, { expressive: on ? defaultExpressiveParams() : undefined })
+}
+function rerollExpressive() {
+  if (expressive.value) setExpressive({ seed: (expressive.value.seed | 0) + 1 })
+}
+
 /** Placeholder for the size input: the level-derived size in master px. */
 const levelSizePlaceholder = computed(() => {
   if (!textEl.value) return ''
@@ -342,6 +358,22 @@ const focalSrc = computed(() => {
   })
   return resolved.startsWith('http') || resolved.startsWith('/') ? resolved : undefined
 })
+
+// -- Outpaint to fit ---------------------------------------------------------
+// Generatively extend the image to the current format's aspect and store it as
+// a per-output content override (this format only; others keep the original).
+const outpaint = useOutpaintFit()
+const outpaintAspect = computed(() => {
+  const f = ctx.template.value.formats[currentFormat.value]
+  return f && f.h ? f.w / f.h : 1
+})
+async function runOutpaint() {
+  if (!el.value || el.value.type !== 'image' || !focalSrc.value) return
+  try {
+    const url = await outpaint.run(focalSrc.value, outpaintAspect.value)
+    setImageContentOverride(el.value.id, url)
+  } catch { /* error surfaced via outpaint.error.value */ }
+}
 
 const inputCls = 'w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50'
 const labelCls = 'panel-label'
@@ -369,6 +401,8 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <Trash2 class="size-3.5" />
       </button>
     </div>
+
+    <TemplatesAlignControls />
 
     <!-- Variant cycler — visible when this element is wired to a multi-entry
          Text node. Picks which variant the canvas previews; run time still
@@ -745,16 +779,57 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       <div>
         <div class="flex gap-1 mb-2">
           <button
-            v-for="a in ['left', 'center', 'right']" :key="a" :class="[btnRowCls, (styleOf().align ?? 'left') === a ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
+            v-for="a in ['left', 'center', 'right', 'justify']" :key="a" :class="[btnRowCls, (styleOf().align ?? 'left') === a ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
             @click="patchStyle(el!.id, { align: a })"
           >{{ a }}</button>
         </div>
         <div class="flex gap-1">
           <button
-            v-for="v in ['top', 'middle', 'bottom']" :key="v" :class="[btnRowCls, (styleOf().valign ?? 'top') === v ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
+            v-for="v in ['top', 'middle', 'bottom', 'justify']" :key="v" :class="[btnRowCls, (styleOf().valign ?? 'top') === v ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
             @click="patchStyle(el!.id, { valign: v })"
           >{{ v }}</button>
         </div>
+      </div>
+      </StudioSection>
+      <StudioSection title="Expressive layout">
+      <div>
+        <label class="flex items-center gap-1.5 cursor-pointer mb-2">
+          <input type="checkbox" :checked="!!expressive" @change="(e: any) => toggleExpressive(e.target.checked)">
+          <span class="text-[11px] text-white/60">Place words individually (overrides align)</span>
+        </label>
+        <template v-if="expressive">
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <p :class="labelCls" class="mb-1">Words / line</p>
+              <input type="number" min="1" max="12" :value="expressive.wordsPerLine" :class="inputCls"
+                @input="(e: any) => setExpressive({ wordsPerLine: Math.max(1, Math.round(Number(e.target.value) || 1)) })">
+            </div>
+            <div>
+              <p :class="labelCls" class="mb-1">Placement</p>
+              <select :value="expressive.placement" :class="inputCls"
+                @change="(e: any) => setExpressive({ placement: e.target.value })">
+                <option value="random">Random</option>
+                <option value="edges">Edges</option>
+                <option value="staircase">Staircase</option>
+                <option value="alternate">Alternate</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <p :class="labelCls" class="mb-1">Jitter X · {{ Math.round(expressive.jitterX * 100) }}%</p>
+              <input type="range" min="0" max="1" step="0.05" :value="expressive.jitterX" class="w-full"
+                @input="(e: any) => setExpressive({ jitterX: Number(e.target.value) })">
+            </div>
+            <div>
+              <p :class="labelCls" class="mb-1">Jitter Y · {{ Math.round(expressive.jitterY * 100) }}%</p>
+              <input type="range" min="0" max="1" step="0.05" :value="expressive.jitterY" class="w-full"
+                @input="(e: any) => setExpressive({ jitterY: Number(e.target.value) })">
+            </div>
+          </div>
+          <button :class="[btnRowCls, 'w-full bg-white/[0.04] text-white/70 hover:bg-white/[0.08]']"
+            @click="rerollExpressive()">⟳ Reroll</button>
+        </template>
       </div>
       </StudioSection>
       <StudioSection title="Colour">
@@ -862,6 +937,24 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         >
           Use brand logo
         </button>
+      </div>
+      <!-- Outpaint to fit: generatively extend to this format's aspect -->
+      <div>
+        <button
+          :disabled="!focalSrc || outpaint.busy.value"
+          class="w-full h-8 rounded-md flex items-center justify-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer border border-[#96b4ff]/20 bg-[#96b4ff]/15 text-[#c9d6ff] hover:bg-[#96b4ff]/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          :title="focalSrc ? `Generatively extend this image to fill the ${outputLabel} format` : 'Set an image source first'"
+          @click="runOutpaint"
+        >
+          <Loader2 v-if="outpaint.busy.value" class="size-3.5 animate-spin" />
+          <Expand v-else class="size-3.5" />
+          {{ outpaint.busy.value ? 'Extending…' : `Outpaint to fit ${outputLabel}` }}
+        </button>
+        <p v-if="hasContentOverride(el.id) && !outpaint.busy.value" class="mt-1 text-[11px] text-white/45">
+          Fitted to {{ outputLabel }} ·
+          <button class="text-[#96b4ff] hover:underline cursor-pointer" @click="clearImageContentOverride(el!.id)">Revert to original</button>
+        </p>
+        <p v-if="outpaint.error.value" class="mt-1 text-[11px] text-rose-400/80">{{ outpaint.error.value }}</p>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>

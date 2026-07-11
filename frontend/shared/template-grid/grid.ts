@@ -34,20 +34,69 @@ export function formatDims(f: FormatSpec): { cols: number; rows: number } {
   return { cols: f.cols ?? d.cols, rows: f.rows ?? d.rows }
 }
 
+// Bounds for the grid column/row counts — coarse enough to read as a layout
+// grid, fine enough for precise placement.
+export const MIN_GRID_LINES = 1
+export const MAX_GRID_LINES = 240
+
+function clampLines(n: number): number {
+  return Math.min(MAX_GRID_LINES, Math.max(MIN_GRID_LINES, Math.round(n)))
+}
+
+/** The v3 grid's column and row counts. Explicit `grid.columns`/`grid.rows`
+ * win; otherwise each axis is derived from `baseline` against the MASTER format
+ * (canvas ÷ baseline) so existing templates keep their coordinate space. FIXED
+ * across every format, so `remapRegion` between formats is the identity. */
+export interface MarginBox { top: number; right: number; bottom: number; left: number }
+
+/** Resolve the master-px gutters per axis. `grid.gutters.column` (space between
+ * columns / horizontal) and `grid.gutters.row` (space between rows / vertical)
+ * win; otherwise the uniform `grid.gutter` applies to both. Back-compatible:
+ * templates without `gutters` behave exactly as before. */
+export function gutterBox(template: AnyGridTemplate): { column: number; row: number } {
+  const g = template.grid.gutters
+  const base = template.grid.gutter
+  return { column: g?.column ?? base, row: g?.row ?? base }
+}
+
+/** Resolve the master-px margins for each side. A per-side value in
+ * `grid.margins` wins; otherwise the uniform `grid.margin` applies to that side.
+ * Kept back-compatible: templates without `margins` behave exactly as before. */
+export function marginBox(template: AnyGridTemplate): MarginBox {
+  const m = template.grid.margins
+  const base = template.grid.margin
+  return {
+    top: m?.top ?? base,
+    right: m?.right ?? base,
+    bottom: m?.bottom ?? base,
+    left: m?.left ?? base,
+  }
+}
+
+export function gridDims(template: AnyGridTemplate): { cols: number; rows: number } {
+  const master = template.formats[template.master]
+  const baseline = Math.max(1, template.grid.baseline)
+  const mb = marginBox(template)
+  const derive = (explicit: number | undefined, extent: number, m0: number, m1: number) => {
+    if (typeof explicit === 'number' && Number.isFinite(explicit)) return clampLines(explicit)
+    return Math.max(1, Math.round(Math.max(baseline, extent - m0 - m1) / baseline))
+  }
+  return {
+    cols: derive(template.grid.columns, master.w, mb.left, mb.right),
+    rows: derive(template.grid.rows, master.h, mb.top, mb.bottom),
+  }
+}
+
 /** Grid dimensions for a format. v2 → coarse class cells (formatDims). v3 →
- * a baseline-derived FINE grid: one fine unit ≈ `grid.baseline` master px, so
- * snapping and vertical type rhythm share one source of truth. Explicit
- * `f.cols`/`f.rows` still win. The margin used is the unscaled master margin so
- * every format derives proportionally (remapRegion bridges differing dims). */
+ * the FIXED template grid (`gridDims`) on every format, so `remapRegion` between
+ * formats is the identity and placement carries across aspects without drift.
+ * Explicit `f.cols`/`f.rows` still win as a per-format opt-out. */
 export function fineGridDims(template: AnyGridTemplate, f: FormatSpec): { cols: number; rows: number } {
   if (!isV3(template)) return formatDims(f)
-  const baseline = Math.max(1, template.grid.baseline)
-  const margin = template.grid.margin
-  const innerW = Math.max(baseline, f.w - 2 * margin)
-  const innerH = Math.max(baseline, f.h - 2 * margin)
+  const g = gridDims(template)
   return {
-    cols: f.cols ?? Math.max(1, Math.round(innerW / baseline)),
-    rows: f.rows ?? Math.max(1, Math.round(innerH / baseline)),
+    cols: f.cols ?? g.cols,
+    rows: f.rows ?? g.rows,
   }
 }
 
@@ -57,7 +106,14 @@ export interface GridMetrics {
   cols: number; rows: number
   originX: number; originY: number
   cellW: number; cellH: number
-  gutter: number; margin: number; baseline: number
+  /** `gutter` stays as the column (horizontal) gutter for back-compat;
+   * `gutterX` is between columns, `gutterY` is between rows. */
+  gutter: number; gutterX: number; gutterY: number
+  baseline: number
+  /** `margin` stays as the top-side value for back-compat; per-side values
+   * live in the `margin{Top,Right,Bottom,Left}` fields. */
+  margin: number
+  marginTop: number; marginRight: number; marginBottom: number; marginLeft: number
   scale: number
 }
 
@@ -72,23 +128,44 @@ export function gridMetrics(template: AnyGridTemplate, formatKey: string): GridM
   const f = template.formats[formatKey]
   if (!f) throw new Error(`Unknown format '${formatKey}' on template '${template.id}'`)
   const s = metricScale(template, f)
-  // v3 fine grid is a positioning lattice (cell ≈ baseline), so it carries no
-  // inter-cell gutter; v2 keeps its coarse gutter'd columns.
-  const gutter = isV3(template) ? 0 : Math.max(MIN_GUTTER, template.grid.gutter * s)
-  const margin = Math.max(MIN_MARGIN, template.grid.margin * s)
   const baseline = Math.max(1, template.grid.baseline * s)
   const safe = { top: 0, right: 0, bottom: 0, left: 0, ...(f.safeArea ?? {}) }
+  // Per-side margins (master px, scaled per format). Uniform `grid.margin` is
+  // the fallback for any side not set in `grid.margins`.
+  const mb = marginBox(template)
+  const mTop = Math.max(0, mb.top * s)
+  const mRight = Math.max(0, mb.right * s)
+  const mBottom = Math.max(0, mb.bottom * s)
+  const mLeft = Math.max(0, mb.left * s)
   const { cols, rows } = fineGridDims(template, f)
   // Clamp so degenerate safe areas/margins can't push cells non-positive.
-  const innerW = Math.max(cols, f.w - safe.left - safe.right - 2 * margin)
-  const innerH = Math.max(rows, f.h - safe.top - safe.bottom - 2 * margin)
+  const innerW = Math.max(cols, f.w - safe.left - safe.right - mLeft - mRight)
+  const innerH = Math.max(rows, f.h - safe.top - safe.bottom - mTop - mBottom)
+  // Gutter. v2 always gutters its coarse columns. v3 used to force gutter to 0
+  // (its fine lattice was gutterless); it now honours the gutter, but ONLY on an
+  // explicit grid (grid.columns/rows set — i.e. authored on the coarse grid).
+  // Legacy v3 templates on the derived ~78-cell lattice stay gutterless so their
+  // rendering is byte-identical. The cap stops a large gutter from driving cells
+  // negative on a dense grid.
+  const v3Explicit = isV3(template) && (template.grid.columns != null || template.grid.rows != null)
+  const gutterActive = !isV3(template) || v3Explicit
+  const gb = gutterBox(template)
+  const capW = cols > 1 ? (innerW * 0.5) / (cols - 1) : Infinity
+  const capH = rows > 1 ? (innerH * 0.5) / (rows - 1) : Infinity
+  const gutterFloor = isV3(template) ? 0 : MIN_GUTTER
+  // Column gutter (horizontal, between columns) is capped by the width; row
+  // gutter (vertical, between rows) by the height.
+  const gutterX = Math.max(gutterFloor, Math.min(gutterActive ? Math.max(0, gb.column * s) : 0, capW))
+  const gutterY = Math.max(gutterFloor, Math.min(gutterActive ? Math.max(0, gb.row * s) : 0, capH))
   return {
     cols, rows,
-    originX: safe.left + margin,
-    originY: safe.top + margin,
-    cellW: (innerW - gutter * (cols - 1)) / cols,
-    cellH: (innerH - gutter * (rows - 1)) / rows,
-    gutter, margin, baseline, scale: s,
+    originX: safe.left + mLeft,
+    originY: safe.top + mTop,
+    cellW: (innerW - gutterX * (cols - 1)) / cols,
+    cellH: (innerH - gutterY * (rows - 1)) / rows,
+    gutter: gutterX, gutterX, gutterY,
+    margin: mTop, marginTop: mTop, marginRight: mRight, marginBottom: mBottom, marginLeft: mLeft,
+    baseline, scale: s,
   }
 }
 
@@ -98,10 +175,10 @@ export function regionToRect(region: Region, m: GridMetrics): Rect {
   const colSpan = Math.max(1, Math.min(m.cols - col + 1, Math.round(region.colSpan)))
   const rowSpan = Math.max(1, Math.min(m.rows - row + 1, Math.round(region.rowSpan)))
   return {
-    x: m.originX + (col - 1) * (m.cellW + m.gutter),
-    y: m.originY + (row - 1) * (m.cellH + m.gutter),
-    w: colSpan * m.cellW + (colSpan - 1) * m.gutter,
-    h: rowSpan * m.cellH + (rowSpan - 1) * m.gutter,
+    x: m.originX + (col - 1) * (m.cellW + m.gutterX),
+    y: m.originY + (row - 1) * (m.cellH + m.gutterY),
+    w: colSpan * m.cellW + (colSpan - 1) * m.gutterX,
+    h: rowSpan * m.cellH + (rowSpan - 1) * m.gutterY,
   }
 }
 
