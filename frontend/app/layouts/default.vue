@@ -14,7 +14,7 @@ import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
 import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
-import { brandKitToKv } from '~~/shared/brand/resolve'
+import { brandKitToKv, brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 import type { ActionDomain } from '~/data/action-catalog'
@@ -1561,10 +1561,8 @@ async function deleteProjectCanvas(canvasId: string) {
 // canvas edits (mutate the reactive doc, persistWorkflows, durable mirror).
 const brandLib = useBrandLibrary(computed(() => activeProjectDoc.value?.brandKitId))
 const brandKitName = computed(() => brandLib.activeEntry.value?.name ?? null)
-const brandSwatches = computed(() => {
-  const k = brandLib.activeEntry.value?.kit
-  return k ? [k.primary, k.accent, k.accent2].filter(Boolean) as string[] : []
-})
+const brandSwatches = computed(() =>
+  kitSwatches(brandLib.activeEntry.value?.kit).slice(0, 3).map(s => s.hex))
 function setBrandKit(id: string | null) {
   const tab = activeTab.value
   if (tab.type !== 'project') return
