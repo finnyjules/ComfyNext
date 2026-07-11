@@ -448,7 +448,7 @@ async function onImportFile(e: Event) {
         <StudioSlider v-model="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness" />
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Coloring</label>
-          <StudioSegmented v-model="coloringProxy" :options="['smooth', 'faceted', 'scatter']" />
+          <StudioSegmented v-model="coloringProxy" :options="['prismatic', 'smooth', 'faceted', 'scatter']" />
         </div>
         <div v-if="config.palette.coloring !== 'scatter'">
           <label class="mb-1 block text-[11px] text-white/55">Direction</label>

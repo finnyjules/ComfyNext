@@ -6,10 +6,12 @@ export type PrimitiveKind =
   | 'cube' | 'sphere' | 'cone' | 'cylinder' | 'prism' | 'torus' | 'icosahedron' | 'octahedron'
 export type FillMode = 'facets' | 'surface'
 /** How the harmony ramp is painted onto the shape:
- *   smooth  — per-vertex sample of the interpolated ramp (gradient sweeps the surface)
- *   faceted — one flat ramp-tone per facet, progressing smoothly facet-to-facet
- *   scatter — each facet a random discrete swatch + jitter (the low-poly confetti look) */
-export type ColoringMode = 'smooth' | 'faceted' | 'scatter'
+ *   prismatic — each facet gets its OWN gradient (anchored in the palette by position,
+ *               spread across the facet along a per-facet direction) → cut-gem shimmer
+ *   smooth    — per-vertex sample of the interpolated ramp (one gradient sweeps the surface)
+ *   faceted   — one flat ramp-tone per facet, progressing smoothly facet-to-facet
+ *   scatter   — each facet a random discrete swatch + jitter (the low-poly confetti look) */
+export type ColoringMode = 'prismatic' | 'smooth' | 'faceted' | 'scatter'
 /** Which spatial axis the smooth/faceted ramp follows. */
 export type ColorDirection = 'vertical' | 'depth' | 'radial' | 'angular'
 export type Projection = 'orthographic' | 'perspective'
@@ -66,7 +68,7 @@ export const DEFAULT_CONFIG: ShapeConfig = {
   seed: '#3a7f21c0',
   fillMode: 'facets',
   shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, projection: 'orthographic' },
-  palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'smooth', direction: 'vertical' },
+  palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'prismatic', direction: 'vertical' },
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
   style: { grain: 20, distortion: 0, background: '#000000' },
   locks: { shape: false, palette: false, style: false },
@@ -81,7 +83,7 @@ const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : 
 const MODES = ['primitive', 'gem'] as const
 const PRIMS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron'] as const
 const FILLMODES = ['facets', 'surface'] as const
-const COLORINGS = ['smooth', 'faceted', 'scatter'] as const
+const COLORINGS = ['prismatic', 'smooth', 'faceted', 'scatter'] as const
 const DIRECTIONS = ['vertical', 'depth', 'radial', 'angular'] as const
 const PROJ = ['orthographic', 'perspective'] as const
 

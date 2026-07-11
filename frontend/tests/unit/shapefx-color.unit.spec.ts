@@ -31,17 +31,32 @@ describe('shapefx color', () => {
     expect(col.itemSize).toBe(3)
   })
 
-  it('is deterministic for a given seed + palette (all three modes)', () => {
-    for (const m of ['smooth', 'faceted', 'scatter'] as const) {
+  it('is deterministic for a given seed + palette (all four modes)', () => {
+    for (const m of ['prismatic', 'smooth', 'faceted', 'scatter'] as const) {
       expect(colorsOf(cfg(m))).toEqual(colorsOf(cfg(m)))
     }
   })
 
-  it('the three coloring modes produce different colorings', () => {
-    const s = colorsOf(cfg('smooth')), f = colorsOf(cfg('faceted')), x = colorsOf(cfg('scatter'))
-    expect(s).not.toEqual(f)
-    expect(f).not.toEqual(x)
-    expect(s).not.toEqual(x)
+  it('the four coloring modes each produce different colorings', () => {
+    const modes = ['prismatic', 'smooth', 'faceted', 'scatter'] as const
+    const out = modes.map(m => JSON.stringify(colorsOf(cfg(m))))
+    expect(new Set(out).size).toBe(modes.length) // all distinct
+  })
+
+  it('prismatic gives each facet its OWN gradient; faceted keeps each facet flat', () => {
+    // gem = many triangles; check whether the 3 vertices of each facet share one color.
+    const facetVaries = (coloring: ColoringMode): boolean => {
+      const gem: ShapeConfig = { ...DEFAULT_CONFIG, seed: '#facegrad', shape: { ...DEFAULT_CONFIG.shape, mode: 'gem', vertices: 24 }, palette: { ...DEFAULT_CONFIG.palette, coloring } }
+      const arr = colorsOf(gem)
+      for (let tri = 0; tri < arr.length; tri += 9) {
+        const same = arr[tri] === arr[tri + 3] && arr[tri + 3] === arr[tri + 6]   // r of v0,v1,v2
+          && arr[tri + 1] === arr[tri + 4] && arr[tri + 4] === arr[tri + 7]       // g
+        if (!same) return true
+      }
+      return false
+    }
+    expect(facetVaries('prismatic')).toBe(true)  // within-facet gradient
+    expect(facetVaries('faceted')).toBe(false)   // flat per facet
   })
 
   it('smooth/faceted are position-based (seed-independent); scatter is seed-driven', () => {

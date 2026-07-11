@@ -87,7 +87,35 @@ export function applyVertexColors(geometry: THREE.BufferGeometry, config: ShapeC
   }
 
   const tmp = new THREE.Color()
-  if (config.palette.coloring === 'faceted') {
+  if (config.palette.coloring === 'prismatic') {
+    // Each facet gets its OWN gradient: its centroid anchors a base tone in the ramp
+    // (so the overall palette still flows along `direction`), then the 3 vertices spread
+    // ±AMP around that base along a per-facet random 3D axis — so every facet shimmers
+    // and neighbours (different anchor + different axis) contrast, like a cut gem.
+    const AMP = 0.3
+    const rng = makeRng(config.seed, 'prismatic')
+    const ox: number[] = [0, 0, 0], oy: number[] = [0, 0, 0], oz: number[] = [0, 0, 0], projs = [0, 0, 0]
+    for (let tri = 0; tri < n; tri += 3) {
+      let cx = 0, cy = 0, cz = 0
+      for (let k = 0; k < 3; k++) { cx += pos.getX(tri + k); cy += pos.getY(tri + k); cz += pos.getZ(tri + k) }
+      cx /= 3; cy /= 3; cz /= 3
+      const t0 = tOf(cx, cy, cz)
+      // random unit 3D axis for this facet's internal gradient
+      const a = rng.range(0, Math.PI * 2), u = rng.range(-1, 1), s = Math.sqrt(1 - u * u)
+      const ax = s * Math.cos(a), ay = s * Math.sin(a), az = u
+      let maxAbs = 1e-6
+      for (let k = 0; k < 3; k++) {
+        ox[k] = pos.getX(tri + k) - cx; oy[k] = pos.getY(tri + k) - cy; oz[k] = pos.getZ(tri + k) - cz
+        projs[k] = ox[k]! * ax + oy[k]! * ay + oz[k]! * az
+        if (Math.abs(projs[k]!) > maxAbs) maxAbs = Math.abs(projs[k]!)
+      }
+      for (let k = 0; k < 3; k++) {
+        sampleRamp(ramp, t0 + (projs[k]! / maxAbs) * AMP, tmp)
+        const idx = (tri + k) * 3
+        colors[idx] = tmp.r; colors[idx + 1] = tmp.g; colors[idx + 2] = tmp.b
+      }
+    }
+  } else if (config.palette.coloring === 'faceted') {
     for (let tri = 0; tri < n; tri += 3) {
       let cx = 0, cy = 0, cz = 0
       for (let k = 0; k < 3; k++) { cx += pos.getX(tri + k); cy += pos.getY(tri + k); cz += pos.getZ(tri + k) }
