@@ -81,8 +81,11 @@ const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border b
       </div>
     </div>
 
+    <p class="mt-2 text-[10px] text-white/40 text-center truncate">
+      {{ payload?.layoutName || 'Batch' }} · {{ count }} outputs
+    </p>
     <!-- Actions — expand (gallery modal) + download (ZIP of all outputs) -->
-    <div class="mt-2 flex items-center justify-center gap-1.5 nopan nodrag">
+    <div class="mt-1.5 flex flex-col items-center gap-1.5 nopan nodrag">
       <button :class="btnCls" title="Expand" @click.stop="openGallery">
         <Maximize2 class="size-3.5" />
       </button>
@@ -91,8 +94,5 @@ const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border b
         <Download v-else class="size-3.5" />
       </button>
     </div>
-    <p class="mt-1.5 text-[10px] text-white/40 text-center truncate">
-      {{ payload?.layoutName || 'Batch' }} · {{ count }} outputs
-    </p>
   </div>
 </template>
