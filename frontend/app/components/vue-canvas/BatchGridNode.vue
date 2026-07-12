@@ -75,24 +75,24 @@ const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border b
           no outputs
         </div>
         <!-- count badge — pinned to the pile itself -->
-        <span class="absolute -top-2 -right-2 min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
-          {{ count }}
-        </span>
+        <!-- top-right rail: count badge with the actions stacked under it -->
+        <div class="absolute -top-2 -right-2 flex flex-col items-center gap-1.5 nopan nodrag">
+          <span class="min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
+            {{ count }}
+          </span>
+          <button :class="btnCls" title="Expand" @click.stop="openGallery">
+            <Maximize2 class="size-3.5" />
+          </button>
+          <button :class="btnCls" title="Download all (ZIP)" :disabled="zipping" @click.stop="downloadZip">
+            <Loader2 v-if="zipping" class="size-3.5 animate-spin" />
+            <Download v-else class="size-3.5" />
+          </button>
+        </div>
       </div>
     </div>
 
     <p class="mt-2 text-[10px] text-white/40 text-center truncate">
       {{ payload?.layoutName || 'Batch' }} · {{ count }} outputs
     </p>
-    <!-- Actions — expand (gallery modal) + download (ZIP of all outputs) -->
-    <div class="mt-1.5 flex flex-col items-center gap-1.5 nopan nodrag">
-      <button :class="btnCls" title="Expand" @click.stop="openGallery">
-        <Maximize2 class="size-3.5" />
-      </button>
-      <button :class="btnCls" title="Download all (ZIP)" :disabled="zipping" @click.stop="downloadZip">
-        <Loader2 v-if="zipping" class="size-3.5 animate-spin" />
-        <Download v-else class="size-3.5" />
-      </button>
-    </div>
   </div>
 </template>
