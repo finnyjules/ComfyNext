@@ -17,6 +17,7 @@ import satori from 'satori'
 
 import type { RenderRequest } from '~~/server/templates/schema'
 import { readManifest, USER_FONTS_DIR } from '~~/server/templates/fonts-store'
+import { inlineTreeImages } from '~~/server/templates/inlineImages'
 import { templateToSatori } from '~~/server/templates/translate'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import { resolveTokens } from '~~/shared/template-grid/tokens'
@@ -165,6 +166,15 @@ export default defineEventHandler(async (event) => {
     body.width && body.height ? { width: body.width, height: body.height } : undefined,
     body.outputId,
   )
+
+  // Inline every remote image as a data URI BEFORE satori: its own remote
+  // loading fails silently (a 404 just skips the image → plausible-but-wrong
+  // output). A dead URL now rejects the render with a clear 502 instead.
+  try {
+    await inlineTreeImages(tree)
+  } catch (e) {
+    throw createError({ statusCode: 502, statusMessage: String((e as Error).message ?? e).slice(0, 200) })
+  }
 
   // Satori's first arg is "any" because it accepts ReactNode-shaped objects.
   // Our `tree` matches that shape (type/props/children) without pulling React.
