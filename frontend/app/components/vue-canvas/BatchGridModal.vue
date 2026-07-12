@@ -2,8 +2,8 @@
 // Gallery for a BatchGrid node: contact-sheet grid grouped by format,
 // per-image download + Download-all ZIP (same JSZip pattern as
 // CollectionDrawer.exportZip).
-import JSZip from 'jszip'
 import { Download, X, Loader2 } from 'lucide-vue-next'
+import { downloadBatchZip } from '~/lib/collection/batchZip'
 import type { BatchGridItem, BatchGridPayload } from '~/lib/collection/matrix'
 
 const props = defineProps<{ payload: BatchGridPayload }>()
@@ -35,18 +35,7 @@ async function downloadZip() {
   if (zipping.value) return
   zipping.value = true
   try {
-    const zip = new JSZip()
-    for (const item of props.payload.items) {
-      const blob = await fetch(item.url).then(r => r.blob())
-      zip.file(item.filename, blob)
-    }
-    const out = await zip.generateAsync({ type: 'blob' })
-    const url = URL.createObjectURL(out)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${props.payload.layoutName || 'batch'}_export.zip`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    await downloadBatchZip(props.payload)
   } finally {
     zipping.value = false
   }

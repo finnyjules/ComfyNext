@@ -1,11 +1,14 @@
 <script setup lang="ts">
 // Frontend-only results pile from a Smart Layout batch export — chromeless
 // like the artifact cards: a slightly disorderly stack of outputs with a
-// count badge. Clicking dispatches sailor:openBatchGallery; the gallery
-// modal is owned by VueNodeCanvas (codebase convention — node-local modal
-// state doesn't survive Vue Flow node re-renders). Data lives in
-// properties.sailor_batch and rehydrates with the workflow.
+// count badge. Clicking the pile selects the node (Vue Flow default);
+// explicit actions live in the toolbar below: expand (gallery) + ZIP.
+// The gallery modal is owned by VueNodeCanvas (codebase convention —
+// node-local modal state doesn't survive Vue Flow node re-renders). Data
+// lives in properties.sailor_batch and rehydrates with the workflow.
+import { Download, Loader2, Maximize2 } from 'lucide-vue-next'
 import { BATCH_PROP, type BatchGridPayload } from '~/lib/collection/matrix'
+import { downloadBatchZip } from '~/lib/collection/batchZip'
 
 const props = defineProps<{ id: string; data: any }>()
 
@@ -27,17 +30,28 @@ const peeks = computed(() => items.value.slice(1, 3))
 function openGallery() {
   window.dispatchEvent(new CustomEvent('sailor:openBatchGallery', { detail: { nodeId: props.id } }))
 }
+
+const zipping = ref(false)
+async function downloadZip() {
+  if (zipping.value || !payload.value) return
+  zipping.value = true
+  try {
+    await downloadBatchZip(payload.value)
+  } finally {
+    zipping.value = false
+  }
+}
+
+const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 '
+  + 'flex items-center justify-center text-white/60 hover:text-white transition-colors cursor-pointer disabled:opacity-50'
 </script>
 
 <template>
   <div class="w-[220px] select-none">
-    <!-- The cover scales down uncropped (ratio kept) within 220×190 max; the
-         shrink-wrap wrapper makes the peek cards track the cover's exact box. -->
-    <button
-      class="relative flex justify-center w-full cursor-pointer group nopan nodrag"
-      title="Browse outputs"
-      @click="openGallery"
-    >
+    <!-- The pile: clicking selects the node, dragging moves it (no handlers
+         here on purpose). Cover scales down uncropped within 220×190 max;
+         the shrink-wrap wrapper makes the peeks track the cover's box. -->
+    <div class="relative flex justify-center w-full">
       <div class="relative inline-block max-w-full">
         <!-- peek cards — real outputs poking out at odd angles (cropped to the
              cover's box; they're decorative backdrop) -->
@@ -53,21 +67,32 @@ function openGallery() {
         <img
           v-if="items[0]"
           :src="items[0].url"
-          class="relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border border-white/20 shadow-xl group-hover:border-white/40 transition-colors"
+          class="relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border border-white/20 shadow-xl"
           :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
           draggable="false"
         >
         <div v-else class="relative w-[190px] h-[150px] rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
           no outputs
         </div>
-        <!-- count badge — pinned to the pile itself, not the full-width button -->
+        <!-- count badge — pinned to the pile itself -->
         <span class="absolute -top-2 -right-2 min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
           {{ count }}
         </span>
       </div>
-    </button>
-    <p class="mt-2 text-[10px] text-white/40 text-center truncate">
-      {{ payload?.layoutName || 'Batch' }} · click to browse
+    </div>
+
+    <!-- Actions — expand (gallery modal) + download (ZIP of all outputs) -->
+    <div class="mt-2 flex items-center justify-center gap-1.5 nopan nodrag">
+      <button :class="btnCls" title="Expand" @click.stop="openGallery">
+        <Maximize2 class="size-3.5" />
+      </button>
+      <button :class="btnCls" title="Download all (ZIP)" :disabled="zipping" @click.stop="downloadZip">
+        <Loader2 v-if="zipping" class="size-3.5 animate-spin" />
+        <Download v-else class="size-3.5" />
+      </button>
+    </div>
+    <p class="mt-1.5 text-[10px] text-white/40 text-center truncate">
+      {{ payload?.layoutName || 'Batch' }} · {{ count }} outputs
     </p>
   </div>
 </template>
