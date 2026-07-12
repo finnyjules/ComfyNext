@@ -1252,7 +1252,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
           <!-- Export button + inline progress fill -->
           <button
             class="relative overflow-hidden flex items-center gap-1.5 px-3 h-7 rounded text-xs transition-colors border border-white/10 disabled:opacity-90 min-w-[110px]"
-            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-white/15 hover:bg-white/20 text-white/70'"
+            :class="renderResult ? 'bg-action/20 hover:bg-action/30 text-action' : 'bg-white/15 hover:bg-white/20 text-white/70'"
             :disabled="isRendering"
             @click="renderViaFFmpeg"
           >
@@ -1272,7 +1272,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             </span>
           </button>
           <a v-if="renderResult" :href="renderResult.url" target="_blank"
-            class="text-xs text-emerald-300 hover:text-emerald-200 underline underline-offset-2">
+            class="text-xs text-action hover:text-action/80 underline underline-offset-2">
             {{ renderResult.filename }}
           </a>
           <span v-if="renderError" class="text-xs text-amber-400 truncate max-w-[200px]">{{ renderError }}</span>

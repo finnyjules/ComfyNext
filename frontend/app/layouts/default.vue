@@ -2220,7 +2220,7 @@ const COMFY_TABBAR_H = 0
 // Status indicator colors
 const statusColor = (status?: string) => {
   if (status === 'idle') return '#4ade80'
-  if (status === 'running') return '#818cf8'
+  if (status === 'running') return 'var(--action)'
   if (status === 'done') return '#4ade80'
   return 'transparent'
 }
@@ -3527,7 +3527,7 @@ function dismissRunResult() {
                   <circle
                     cx="8" cy="8" r="6"
                     fill="none"
-                    stroke="#818cf8"
+                    stroke="var(--action)"
                     stroke-width="2"
                     stroke-linecap="round"
                     :stroke-dasharray="`${(tab.progress ?? 0) * 0.377} 37.7`"
@@ -4253,7 +4253,7 @@ function dismissRunResult() {
                   class="bg-[#252525] rounded-lg p-3 mb-2"
                 >
                   <div class="flex items-center gap-2 mb-1">
-                    <div class="size-2 rounded-full bg-[#818cf8] animate-pulse shrink-0" />
+                    <div class="size-2 rounded-full bg-action animate-pulse shrink-0" />
                     <span class="text-xs font-medium text-white/90 truncate">{{ runningWorkflowName(item[1]) }}</span>
                     <span class="text-xs text-white/40 ml-auto shrink-0">{{ queueItemProgress(item[1]) }}%</span>
                   </div>
@@ -4264,13 +4264,13 @@ function dismissRunResult() {
                   <div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
                     <div
                       v-if="queueItemProgress(item[1]) > 0"
-                      class="h-full bg-[#818cf8] rounded-full transition-all duration-300"
+                      class="h-full bg-action rounded-full transition-all duration-300"
                       :style="{ width: `${queueItemProgress(item[1])}%` }"
                     />
                     <div
                       v-else
                       class="h-full w-full rounded-full animate-queue-shimmer"
-                      style="background: linear-gradient(90deg, transparent 0%, #818cf8 50%, transparent 100%); background-size: 200% 100%;"
+                      style="background: linear-gradient(90deg, transparent 0%, var(--action) 50%, transparent 100%); background-size: 200% 100%;"
                     />
                   </div>
                 </div>

@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
     />
     <!-- Design / Edit layout (hero) -->
     <button
-      class="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-[#96b4ff]/15 hover:bg-[#96b4ff]/25 text-[#c9d6ff] hover:text-white text-xs transition-colors cursor-pointer border border-[#96b4ff]/20"
+      class="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-action/15 hover:bg-action/25 text-[#c9d6ff] hover:text-white text-xs transition-colors cursor-pointer border border-action/20"
       @click="emit('edit')"
     >
       <LayoutTemplate class="size-3.5" />

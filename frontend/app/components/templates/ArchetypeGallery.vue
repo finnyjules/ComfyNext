@@ -79,7 +79,7 @@ function blockColor(kind: string): string {
         <button
           v-for="c in cards"
           :key="c.arch.id"
-          class="text-left rounded-xl border border-white/[0.08] hover:border-[#96b4ff]/50 bg-[#0e0e10] overflow-hidden transition-colors cursor-pointer group"
+          class="text-left rounded-xl border border-white/[0.08] hover:border-action/50 bg-[#0e0e10] overflow-hidden transition-colors cursor-pointer group"
           @click="ctx.loadArchetype(c.arch)"
         >
           <div class="relative mx-auto my-4 rounded" :style="{ width: '168px', height: '168px', background: c.bg }">
@@ -103,7 +103,7 @@ function blockColor(kind: string): string {
           <button
             v-for="t in saved"
             :key="t.id"
-            class="text-left rounded-lg border border-white/[0.08] hover:border-[#96b4ff]/50 bg-[#0e0e10] p-3 transition-colors cursor-pointer"
+            class="text-left rounded-lg border border-white/[0.08] hover:border-action/50 bg-[#0e0e10] p-3 transition-colors cursor-pointer"
             @click="loadSaved(t.id)"
           >
             <div class="text-[12px] text-white/85 truncate">{{ t.name }}</div>

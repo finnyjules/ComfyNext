@@ -550,7 +550,7 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
               <img :src="item.url" class="w-full h-full object-cover" />
               <span
                 v-if="isSweepRow(item)"
-                class="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white/80 opacity-0 transition group-hover:opacity-100 hover:!bg-emerald-500/80 hover:text-white"
+                class="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white/80 opacity-0 transition group-hover:opacity-100 hover:!bg-action/80 hover:text-white"
                 @click.stop="keepItem(item)"
               >
                 <Check class="size-3" /> Keep
@@ -731,7 +731,7 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
 
         <button
           v-if="!running"
-          class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="!generateN"
           @click="openConfirm"
         >
@@ -752,7 +752,7 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
           <div class="flex justify-end gap-2 mt-3">
             <button class="drawer-btn" @click="confirmOpen = false">Cancel</button>
             <button
-              class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-300 transition hover:bg-emerald-500/25"
+              class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25"
               @click="confirmGenerate"
             >
               <Play class="size-3.5" /> Generate

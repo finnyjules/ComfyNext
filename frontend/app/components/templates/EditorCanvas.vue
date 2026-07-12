@@ -317,7 +317,7 @@ function onCanvasClick(e: MouseEvent) {
         :key="el.id"
         :style="elementPositionStyle(el)"
         class="relative group"
-        :class="selectedId === el.id ? 'outline outline-2 outline-[#96b4ff] outline-offset-0' : 'hover:outline hover:outline-1 hover:outline-white/30'"
+        :class="selectedId === el.id ? 'outline outline-2 outline-action outline-offset-0' : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, el)"
       >
         <!-- Visual -->
@@ -339,7 +339,7 @@ function onCanvasClick(e: MouseEvent) {
           <div
             v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
             :key="dir"
-            class="absolute size-3 bg-white border border-[#96b4ff] rounded-sm"
+            class="absolute size-3 bg-white border border-action rounded-sm"
             :style="{
               top:    dir.startsWith('n') ? '-6px' : 'auto',
               bottom: dir.startsWith('s') ? '-6px' : 'auto',

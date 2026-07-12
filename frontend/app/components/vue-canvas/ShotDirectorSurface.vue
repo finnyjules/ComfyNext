@@ -1069,7 +1069,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                 type="button"
                 class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
                 :class="copiedPrompt
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                  ? 'border-action/40 bg-action/10 text-action'
                   : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"
                 @click="copyPrompt"
               >
@@ -1081,7 +1081,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
                 type="button"
                 class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
                 :class="copiedJson
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                  ? 'border-action/40 bg-action/10 text-action'
                   : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"
                 @click="copyJson"
               >
@@ -1111,7 +1111,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
         </button>
         <button
           type="button"
-          class="rounded bg-emerald-500/15 px-3.5 py-1.5 text-[12px] font-medium text-emerald-300 tabular-nums transition hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="rounded bg-action/15 px-3.5 py-1.5 text-[12px] font-medium text-action tabular-nums transition hover:bg-action/25 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="hasErrors"
           :title="'Estimated provider cost for this shot'"
           @click="onGenerate"

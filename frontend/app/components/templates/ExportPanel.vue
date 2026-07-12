@@ -162,7 +162,7 @@ async function downloadContactSheet() {
 
 onMounted(run)
 onBeforeUnmount(() => urls.forEach(u => URL.revokeObjectURL(u)))
-const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50'
+const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50'
 </script>
 
 <template>
@@ -206,7 +206,7 @@ const selectCls = 'h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded t
           Contact sheet
         </button>
         <button
-          class="h-8 px-3 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer disabled:opacity-40"
+          class="h-8 px-3 rounded-md bg-action/20 hover:bg-action/30 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer disabled:opacity-40"
           :disabled="running"
           @click="downloadAll"
         >

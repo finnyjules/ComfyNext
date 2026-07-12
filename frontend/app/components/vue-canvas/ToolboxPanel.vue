@@ -301,7 +301,7 @@ function onCardLeave() {
                 <circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2.5" />
                 <circle
                   cx="18" cy="18" r="16" fill="none"
-                  stroke="#96b4ff" stroke-width="2.5" stroke-linecap="round"
+                  stroke="var(--action)" stroke-width="2.5" stroke-linecap="round"
                   :stroke-dasharray="2 * Math.PI * 16"
                   :stroke-dashoffset="2 * Math.PI * 16 * (1 - cardProgress())"
                   class="transition-[stroke-dashoffset] duration-200 ease-linear"
@@ -383,7 +383,7 @@ function onCardLeave() {
           </div>
           <div class="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
             <div
-              class="h-full bg-[#96b4ff] transition-[width] duration-200 ease-linear"
+              class="h-full bg-action transition-[width] duration-200 ease-linear"
               :style="{ width: download.total ? `${(download.downloaded / download.total * 100).toFixed(1)}%` : '5%' }"
             />
           </div>

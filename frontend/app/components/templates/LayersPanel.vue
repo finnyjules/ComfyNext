@@ -169,9 +169,9 @@ function onDragEnd() { dragging.value = null; dropTargetId.value = null }
           v-if="row.kind === 'element'"
           class="group relative flex items-center gap-1.5 pl-2 pr-2 py-2 text-left transition-colors border-b border-white/[0.04]"
           :class="[
-            selectedId === row.id ? 'bg-[#96b4ff]/10 text-white' : 'hover:bg-white/[0.04] text-white/65 hover:text-white/90',
+            selectedId === row.id ? 'bg-action/10 text-white' : 'hover:bg-white/[0.04] text-white/65 hover:text-white/90',
             dragging?.id === row.id ? 'opacity-40' : '',
-            dropTargetId === row.id && dragging?.id && dragging?.id !== row.id ? 'outline outline-1 outline-[#96b4ff]/60 -outline-offset-1' : '',
+            dropTargetId === row.id && dragging?.id && dragging?.id !== row.id ? 'outline outline-1 outline-action/60 -outline-offset-1' : '',
           ]"
           :draggable="true"
           @dragstart="onDragStart($event, row.id, null)"
@@ -294,7 +294,7 @@ function onDragEnd() { dragging.value = null; dropTargetId.value = null }
             :key="child.id"
             class="flex items-center gap-2 pl-9 pr-2 py-1.5 text-left border-b border-white/[0.04] transition-colors cursor-pointer w-full"
             :class="[
-              selectedId === child.id ? 'bg-[#96b4ff]/10 text-white' : 'hover:bg-white/[0.04] text-white/55 hover:text-white/85',
+              selectedId === child.id ? 'bg-action/10 text-white' : 'hover:bg-white/[0.04] text-white/55 hover:text-white/85',
               dragging?.id === child.id ? 'opacity-40' : '',
             ]"
             :draggable="true"

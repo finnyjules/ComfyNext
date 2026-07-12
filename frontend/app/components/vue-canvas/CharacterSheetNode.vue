@@ -453,7 +453,7 @@ function resetToNewSheet() {
 
       <!-- Save button -->
       <button
-        class="w-full rounded bg-emerald-500/15 px-2.5 py-1.5 text-[11px] font-medium text-emerald-300 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+        class="w-full rounded bg-action/15 px-2.5 py-1.5 text-[11px] font-medium text-action transition hover:bg-action/25 disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="saving || !charName.trim() || !hasSource"
         @click.stop="save"
       >

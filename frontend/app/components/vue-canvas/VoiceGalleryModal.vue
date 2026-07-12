@@ -179,7 +179,7 @@ const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Char
           :class="!isPlayable(item as VoiceMeta)
             ? 'border-white/[0.06] bg-white/[0.02] text-white/25 cursor-not-allowed'
             : playingId === (item as VoiceMeta).id
-              ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200 cursor-pointer'
+              ? 'border-action/40 bg-action/15 text-action cursor-pointer'
               : 'border-white/15 bg-white/[0.05] text-white/80 hover:bg-white/[0.1] hover:border-white/30 cursor-pointer'"
           :title="isPlayable(item as VoiceMeta)
             ? (playingId === (item as VoiceMeta).id ? 'Stop' : 'Preview voice')
@@ -202,7 +202,7 @@ const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Char
         </div>
         <!-- Animated equalizer while this voice is playing -->
         <div v-if="playingId === (item as VoiceMeta).id" class="flex items-end gap-0.5 h-4 pr-1">
-          <span v-for="b in 3" :key="b" class="w-0.5 bg-emerald-300/80 rounded-full voice-eq-bar" :style="{ animationDelay: `${b * 120}ms` }" />
+          <span v-for="b in 3" :key="b" class="w-0.5 bg-action/80 rounded-full voice-eq-bar" :style="{ animationDelay: `${b * 120}ms` }" />
         </div>
       </div>
     </template>
@@ -216,7 +216,7 @@ const CATEGORY_ICON: Record<VoiceCategory, any> = { Female: Mic, Male: Mic, Char
           :class="!isPlayable(item as VoiceMeta)
             ? 'border-white/[0.06] bg-white/[0.02] text-white/25 cursor-not-allowed'
             : playingId === (item as VoiceMeta).id
-              ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200 cursor-pointer'
+              ? 'border-action/40 bg-action/15 text-action cursor-pointer'
               : 'border-white/15 bg-white/[0.05] text-white/85 hover:bg-white/[0.1] hover:border-white/30 cursor-pointer'"
           :disabled="!isPlayable(item as VoiceMeta)"
           @click="togglePreview(item as VoiceMeta)"

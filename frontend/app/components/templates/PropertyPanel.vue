@@ -231,7 +231,7 @@ function lengthStr(v: any): string {
          output at run time still fans out one image per variant. -->
     <div
       v-if="variantsForSelected.length > 1"
-      class="px-4 py-3 border-b border-[#96b4ff]/15 bg-[#96b4ff]/[0.04] flex flex-col gap-2"
+      class="px-4 py-3 border-b border-action/15 bg-action/[0.04] flex flex-col gap-2"
     >
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-[#c9d6ff]/85 font-medium">
@@ -240,14 +240,14 @@ function lengthStr(v: any): string {
         </div>
         <div class="flex items-center gap-0.5">
           <button
-            class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
+            class="size-6 rounded hover:bg-action/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
             title="Previous variant"
             @click="prevVariant"
           >
             <ChevronLeft class="size-3.5" />
           </button>
           <button
-            class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
+            class="size-6 rounded hover:bg-action/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors"
             title="Next variant"
             @click="nextVariant"
           >
@@ -268,14 +268,14 @@ function lengthStr(v: any): string {
          current aspect's override delta, not on the base. -->
     <div
       v-if="editingOverride"
-      class="px-4 py-2.5 border-b border-[#96b4ff]/15 bg-[#96b4ff]/[0.06] flex items-center justify-between gap-3"
+      class="px-4 py-2.5 border-b border-action/15 bg-action/[0.06] flex items-center justify-between gap-3"
     >
       <div class="text-[11px] leading-snug text-[#c9d6ff]">
         Editing <span class="font-medium">{{ currentAspect }}</span> overrides.
         Default is <span class="font-medium">{{ defaultAspect }}</span>.
       </div>
       <button
-        class="text-[10px] text-[#c9d6ff]/70 hover:text-white px-1.5 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer whitespace-nowrap"
+        class="text-[10px] text-[#c9d6ff]/70 hover:text-white px-1.5 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer whitespace-nowrap"
         title="Remove every override on this element for the current aspect"
         @click="clearAllOverrides(selectedElement!.id)"
       >
@@ -291,7 +291,7 @@ function lengthStr(v: any): string {
           <label class="text-[11px] text-white/55">Anchor</label>
           <button
             v-if="hasOv('anchor')"
-            class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer inline-flex items-center gap-0.5"
+            class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer inline-flex items-center gap-0.5"
             title="Reset to default"
             @click="resetField('anchor')"
           ><XIcon class="size-2.5" />reset</button>
@@ -302,14 +302,14 @@ function lengthStr(v: any): string {
             :key="a"
             class="size-7 rounded transition-colors cursor-pointer"
             :class="eff.anchor === a
-              ? 'bg-[#96b4ff]/30 ring-1 ring-[#96b4ff]'
+              ? 'bg-action/30 ring-1 ring-action'
               : 'hover:bg-white/[0.06]'"
             :title="a"
             @click="update('anchor', a)"
           >
             <div
               class="size-1.5 rounded-full mx-auto"
-              :class="eff.anchor === a ? 'bg-[#96b4ff]' : 'bg-white/30'"
+              :class="eff.anchor === a ? 'bg-action' : 'bg-white/30'"
             />
           </button>
         </div>
@@ -318,11 +318,11 @@ function lengthStr(v: any): string {
         <label class="block">
           <div class="flex items-center gap-1.5 mb-1">
             <div class="text-[11px] text-white/55">Offset X</div>
-            <button v-if="hasOv('offset')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('offset')"><XIcon class="size-2.5 inline" /></button>
+            <button v-if="hasOv('offset')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('offset')"><XIcon class="size-2.5 inline" /></button>
           </div>
           <input
             :value="lengthStr(eff.offset.x)"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             placeholder="60 or 8%"
             @change="(e) => setOffset((e.target as HTMLInputElement).value)"
           />
@@ -331,7 +331,7 @@ function lengthStr(v: any): string {
           <div class="text-[11px] text-white/55 mb-1">Offset Y</div>
           <input
             :value="lengthStr(eff.offset.y)"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             placeholder="60 or 8%"
             @change="(e) => setOffset(undefined, (e.target as HTMLInputElement).value)"
           />
@@ -343,14 +343,14 @@ function lengthStr(v: any): string {
     <div class="px-4 py-3 border-b border-white/[0.06] flex flex-col gap-3">
       <div class="flex items-center gap-1.5">
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/35 font-medium">Size</div>
-        <button v-if="hasOv('size')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('size')"><XIcon class="size-2.5 inline" /></button>
+        <button v-if="hasOv('size')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('size')"><XIcon class="size-2.5 inline" /></button>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <label class="block">
           <div class="text-[11px] text-white/55 mb-1">Width</div>
           <input
             :value="lengthStr(eff.size.w)"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             placeholder="200, 60%, auto, fill"
             @change="(e) => setSize((e.target as HTMLInputElement).value)"
           />
@@ -359,7 +359,7 @@ function lengthStr(v: any): string {
           <div class="text-[11px] text-white/55 mb-1">Height</div>
           <input
             :value="lengthStr(eff.size.h)"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             placeholder="200, 60%, auto"
             @change="(e) => setSize(undefined, (e.target as HTMLInputElement).value)"
           />
@@ -373,19 +373,19 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Content</div>
-          <button v-if="hasOv('content' as any)" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('content' as any)"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasOv('content' as any)" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('content' as any)"><XIcon class="size-2.5 inline" /></button>
         </div>
         <textarea
           :value="(eff as any).content"
           rows="2"
-          class="w-full px-2 py-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full px-2 py-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-action/50"
           @change="(e) => update('content' as any, (e.target as HTMLTextAreaElement).value)"
         />
       </label>
       <div>
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Font</div>
-          <button v-if="hasStyleOv('fontFamily')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontFamily')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('fontFamily')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontFamily')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <TemplatesFontPicker
           :model-value="(eff as any).style?.fontFamily ?? 'Inter'"
@@ -396,23 +396,23 @@ function lengthStr(v: any): string {
         <label class="block">
           <div class="flex items-center gap-1.5 mb-1">
             <div class="text-[11px] text-white/55">Size (px)</div>
-            <button v-if="hasStyleOv('fontSize')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontSize')"><XIcon class="size-2.5 inline" /></button>
+            <button v-if="hasStyleOv('fontSize')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontSize')"><XIcon class="size-2.5 inline" /></button>
           </div>
           <input
             type="number"
             :value="(eff as any).style?.fontSize ?? 48"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('fontSize', Number((e.target as HTMLInputElement).value))"
           />
         </label>
         <label class="block">
           <div class="flex items-center gap-1.5 mb-1">
             <div class="text-[11px] text-white/55">Weight</div>
-            <button v-if="hasStyleOv('fontWeight')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontWeight')"><XIcon class="size-2.5 inline" /></button>
+            <button v-if="hasStyleOv('fontWeight')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fontWeight')"><XIcon class="size-2.5 inline" /></button>
           </div>
           <select
             :value="(eff as any).style?.fontWeight ?? 400"
-            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('fontWeight', Number((e.target as HTMLSelectElement).value))"
           >
             <option value="400">Regular</option>
@@ -428,11 +428,11 @@ function lengthStr(v: any): string {
           <input
             type="checkbox"
             :checked="!!(eff as any).style?.autoFit"
-            class="size-3.5 accent-[#96b4ff] cursor-pointer"
+            class="size-3.5 accent-action cursor-pointer"
             @change="(e) => updateStyle('autoFit', (e.target as HTMLInputElement).checked)"
           />
           <span class="text-[11px] text-white/70">Auto-fit to box</span>
-          <button v-if="hasStyleOv('autoFit')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click.stop.prevent="resetStyleField('autoFit')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('autoFit')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click.stop.prevent="resetStyleField('autoFit')"><XIcon class="size-2.5 inline" /></button>
         </label>
         <label v-if="(eff as any).style?.autoFit" class="flex items-center gap-1.5 shrink-0">
           <span class="text-[10px] text-white/45">Min</span>
@@ -441,7 +441,7 @@ function lengthStr(v: any): string {
             :value="(eff as any).style?.minSize ?? 12"
             min="6"
             max="200"
-            class="w-14 h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-14 h-7 px-1.5 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('minSize', Number((e.target as HTMLInputElement).value))"
           />
         </label>
@@ -450,7 +450,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Color</div>
-          <button v-if="hasStyleOv('color')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('color')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('color')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('color')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="flex items-center gap-2">
           <input
@@ -461,7 +461,7 @@ function lengthStr(v: any): string {
           />
           <input
             :value="(eff as any).style?.color ?? '#ffffff'"
-            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-action/50"
             placeholder="#ffffff or {{ brand.foreground }}"
             @change="(e) => updateStyle('color', (e.target as HTMLInputElement).value)"
           />
@@ -470,7 +470,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Glyph stroke</div>
-          <button v-if="hasStyleOv('strokeColor') || hasStyleOv('strokeWidth') || hasStyleOv('strokePlacement')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('strokeColor'); resetStyleField('strokeWidth'); resetStyleField('strokePlacement') }"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('strokeColor') || hasStyleOv('strokeWidth') || hasStyleOv('strokePlacement')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('strokeColor'); resetStyleField('strokeWidth'); resetStyleField('strokePlacement') }"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="flex items-center gap-2">
           <input
@@ -485,7 +485,7 @@ function lengthStr(v: any): string {
             step="0.5"
             :value="(eff as any).style?.strokeWidth ?? 0"
             placeholder="Width"
-            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('strokeWidth', Number((e.target as HTMLInputElement).value))"
           />
           <span class="text-[10px] text-white/35">px</span>
@@ -496,7 +496,7 @@ function lengthStr(v: any): string {
             :key="p"
             class="h-6 text-[10px] rounded transition-colors cursor-pointer capitalize"
             :class="(((eff as any).style?.strokePlacement ?? 'center') === p)
-              ? 'bg-[#96b4ff]/25 text-white'
+              ? 'bg-action/25 text-white'
               : 'text-white/55 hover:bg-white/[0.06]'"
             @click="updateStyle('strokePlacement', p)"
           >{{ p }}</button>
@@ -505,7 +505,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Align</div>
-          <button v-if="hasStyleOv('align')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('align')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('align')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('align')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="grid grid-cols-3 gap-0.5 rounded border border-white/[0.06] p-0.5 bg-white/[0.02]">
           <button
@@ -513,7 +513,7 @@ function lengthStr(v: any): string {
             :key="a"
             class="h-7 text-[11px] rounded transition-colors cursor-pointer"
             :class="(((eff as any).style?.align ?? 'left') === a)
-              ? 'bg-[#96b4ff]/25 text-white'
+              ? 'bg-action/25 text-white'
               : 'text-white/55 hover:bg-white/[0.06]'"
             @click="updateStyle('align', a)"
           >{{ a }}</button>
@@ -529,7 +529,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Background</div>
-          <button v-if="hasStyleOv('backgroundColor')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundColor')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('backgroundColor')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundColor')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="flex items-center gap-2">
           <input
@@ -540,7 +540,7 @@ function lengthStr(v: any): string {
           />
           <input
             :value="(eff as any).style?.backgroundColor ?? ''"
-            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-action/50"
             placeholder="transparent — type a color"
             @change="(e) => updateStyle('backgroundColor', (e.target as HTMLInputElement).value || undefined)"
           />
@@ -552,14 +552,14 @@ function lengthStr(v: any): string {
           <button class="text-[9px] text-white/45 hover:text-white px-1 py-0.5 rounded hover:bg-white/[0.06] transition-colors cursor-pointer" :title="paddingLinked ? 'Set per side' : 'Link all sides'" @click="togglePaddingLink">
             {{ paddingLinked ? '⛓' : '⌗' }}
           </button>
-          <button v-if="hasStyleOv('padding')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('padding')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('padding')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('padding')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <input
           v-if="paddingLinked"
           type="number"
           min="0"
           :value="paddingSides[0]"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
           @change="(e) => updateStyle('padding', Number((e.target as HTMLInputElement).value))"
         />
         <div v-else class="grid grid-cols-4 gap-1">
@@ -569,7 +569,7 @@ function lengthStr(v: any): string {
               min="0"
               :value="paddingSides[i]"
               :title="['Top','Right','Bottom','Left'][i]"
-              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-action/50"
               @change="(e) => setPaddingSide(i, Number((e.target as HTMLInputElement).value))"
             />
             <!-- Tiny 3x3 square with one edge highlighted to label the side. -->
@@ -577,10 +577,10 @@ function lengthStr(v: any): string {
               <div
                 class="size-3 border border-white/25"
                 :style="{
-                  borderTopColor:    side === 'top'    ? '#96b4ff' : undefined,
-                  borderRightColor:  side === 'right'  ? '#96b4ff' : undefined,
-                  borderBottomColor: side === 'bottom' ? '#96b4ff' : undefined,
-                  borderLeftColor:   side === 'left'   ? '#96b4ff' : undefined,
+                  borderTopColor:    side === 'top'    ? 'var(--action)' : undefined,
+                  borderRightColor:  side === 'right'  ? 'var(--action)' : undefined,
+                  borderBottomColor: side === 'bottom' ? 'var(--action)' : undefined,
+                  borderLeftColor:   side === 'left'   ? 'var(--action)' : undefined,
                   borderTopWidth:    side === 'top'    ? '2px' : undefined,
                   borderRightWidth:  side === 'right'  ? '2px' : undefined,
                   borderBottomWidth: side === 'bottom' ? '2px' : undefined,
@@ -597,14 +597,14 @@ function lengthStr(v: any): string {
           <button class="text-[9px] text-white/45 hover:text-white px-1 py-0.5 rounded hover:bg-white/[0.06] transition-colors cursor-pointer" :title="radiusLinked ? 'Set per corner' : 'Link all corners'" @click="toggleRadiusLink">
             {{ radiusLinked ? '⛓' : '⌗' }}
           </button>
-          <button v-if="hasStyleOv('backgroundRadius')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundRadius')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('backgroundRadius')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('backgroundRadius')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <input
           v-if="radiusLinked"
           type="number"
           min="0"
           :value="radiusCorners[0]"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
           @change="(e) => updateStyle('backgroundRadius', Number((e.target as HTMLInputElement).value))"
         />
         <div v-else class="grid grid-cols-4 gap-1">
@@ -614,7 +614,7 @@ function lengthStr(v: any): string {
               min="0"
               :value="radiusCorners[i]"
               :title="['Top-left','Top-right','Bottom-right','Bottom-left'][i]"
-              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50"
+              class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-action/50"
               @change="(e) => setRadiusCorner(i, Number((e.target as HTMLInputElement).value))"
             />
             <!-- Tiny 3x3 square with one corner rounded, indicating which one
@@ -636,7 +636,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Border</div>
-          <button v-if="hasStyleOv('borderColor') || hasStyleOv('borderWidth') || hasStyleOv('borderPlacement')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('borderColor'); resetStyleField('borderWidth'); resetStyleField('borderPlacement') }"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('borderColor') || hasStyleOv('borderWidth') || hasStyleOv('borderPlacement')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="() => { resetStyleField('borderColor'); resetStyleField('borderWidth'); resetStyleField('borderPlacement') }"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="flex items-center gap-2">
           <input
@@ -651,7 +651,7 @@ function lengthStr(v: any): string {
             step="0.5"
             :value="(eff as any).style?.borderWidth ?? 0"
             placeholder="Width"
-            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+            class="w-20 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('borderWidth', Number((e.target as HTMLInputElement).value))"
           />
           <span class="text-[10px] text-white/35">px</span>
@@ -662,7 +662,7 @@ function lengthStr(v: any): string {
             :key="p"
             class="h-6 text-[10px] rounded transition-colors cursor-pointer capitalize"
             :class="(((eff as any).style?.borderPlacement ?? 'center') === p)
-              ? 'bg-[#96b4ff]/25 text-white'
+              ? 'bg-action/25 text-white'
               : 'text-white/55 hover:bg-white/[0.06]'"
             @click="updateStyle('borderPlacement', p)"
           >{{ p }}</button>
@@ -675,11 +675,11 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Source (URL or token)</div>
-          <button v-if="hasOv('content' as any)" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('content' as any)"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasOv('content' as any)" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetField('content' as any)"><XIcon class="size-2.5 inline" /></button>
         </div>
         <input
           :value="(eff as any).content"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-action/50"
           placeholder="https://… or {{ props.hero }}"
           @change="(e) => update('content' as any, (e.target as HTMLInputElement).value)"
         />
@@ -687,11 +687,11 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Fit</div>
-          <button v-if="hasStyleOv('fit')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fit')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('fit')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fit')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <select
           :value="(eff as any).style?.fit ?? 'cover'"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
           @change="(e) => updateStyle('fit', (e.target as HTMLSelectElement).value)"
         >
           <option value="cover">Cover (fill, may crop)</option>
@@ -703,12 +703,12 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Border radius (px)</div>
-          <button v-if="hasStyleOv('borderRadius')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('borderRadius')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('borderRadius')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('borderRadius')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <input
           type="number"
           :value="(eff as any).style?.borderRadius ?? 0"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
           @change="(e) => updateStyle('borderRadius', Number((e.target as HTMLInputElement).value))"
         />
       </label>
@@ -724,7 +724,7 @@ function lengthStr(v: any): string {
             :key="s"
             class="h-7 text-[11px] rounded transition-colors cursor-pointer"
             :class="(selectedElement as ShapeElement).shape === s
-              ? 'bg-[#96b4ff]/25 text-white'
+              ? 'bg-action/25 text-white'
               : 'text-white/55 hover:bg-white/[0.06]'"
             @click="updateBase('shape' as any, s)"
           >{{ s }}</button>
@@ -733,7 +733,7 @@ function lengthStr(v: any): string {
       <label class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Fill</div>
-          <button v-if="hasStyleOv('fill')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fill')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('fill')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('fill')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <div class="flex items-center gap-2">
           <input
@@ -744,7 +744,7 @@ function lengthStr(v: any): string {
           />
           <input
             :value="(eff as any).style?.fill ?? '#000000'"
-            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-[#96b4ff]/50"
+            class="flex-1 h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white font-mono focus:outline-none focus:border-action/50"
             @change="(e) => updateStyle('fill', (e.target as HTMLInputElement).value)"
           />
         </div>
@@ -752,12 +752,12 @@ function lengthStr(v: any): string {
       <label v-if="(selectedElement as ShapeElement).shape === 'rect'" class="block">
         <div class="flex items-center gap-1.5 mb-1">
           <div class="text-[11px] text-white/55">Border radius (px)</div>
-          <button v-if="hasStyleOv('borderRadius')" class="text-[9px] text-[#96b4ff] hover:text-white px-1 py-0.5 rounded hover:bg-[#96b4ff]/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('borderRadius')"><XIcon class="size-2.5 inline" /></button>
+          <button v-if="hasStyleOv('borderRadius')" class="text-[9px] text-action hover:text-white px-1 py-0.5 rounded hover:bg-action/15 transition-colors cursor-pointer" title="Reset to default" @click="resetStyleField('borderRadius')"><XIcon class="size-2.5 inline" /></button>
         </div>
         <input
           type="number"
           :value="(eff as any).style?.borderRadius ?? 0"
-          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-8 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50"
           @change="(e) => updateStyle('borderRadius', Number((e.target as HTMLInputElement).value))"
         />
       </label>

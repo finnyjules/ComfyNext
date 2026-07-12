@@ -372,7 +372,7 @@ function download() {
               Start over
             </button>
             <button
-              class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-[#96b4ff] hover:bg-[#a8c2ff] text-[#0a0a0a] text-[12px] font-medium transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-action hover:bg-[#a8c2ff] text-[#0a0a0a] text-[12px] font-medium transition-colors cursor-pointer"
               @click="download"
             >
               <Download class="size-3.5" />

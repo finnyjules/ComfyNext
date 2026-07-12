@@ -52,7 +52,7 @@ function onUp(e: PointerEvent) {
         class="absolute size-4 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
         :style="{ left: `${props.focal.x * 100}%`, top: `${props.focal.y * 100}%` }"
       >
-        <div class="absolute inset-0 rounded-full border-2 border-[#96b4ff] bg-[#96b4ff]/20" />
+        <div class="absolute inset-0 rounded-full border-2 border-action bg-action/20" />
         <div class="absolute left-1/2 top-1/2 size-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
       </div>
     </div>

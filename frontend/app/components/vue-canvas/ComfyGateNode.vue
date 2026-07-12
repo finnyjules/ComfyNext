@@ -170,7 +170,7 @@ async function resumeGate(action: 'continue' | 'redo' | 'restart') {
           <span>Redo</span>
         </button>
         <button
-          class="gate-btn flex items-center justify-center gap-1.5 flex-1 h-9 rounded bg-emerald-500 text-white shadow-sm cursor-pointer hover:bg-emerald-600 transition-colors text-[11px] font-semibold"
+          class="gate-btn flex items-center justify-center gap-1.5 flex-1 h-9 rounded bg-action text-white shadow-sm cursor-pointer hover:bg-action/85 transition-colors text-[11px] font-semibold"
           data-tooltip="Continue downstream"
           @click="resumeGate('continue')"
         >

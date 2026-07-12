@@ -173,7 +173,7 @@ function startDrag(idx: number, e: MouseEvent) {
   transition: color 0.1s;
 }
 .ake__marker:hover { color: rgba(129,140,248,1); }
-.ake__marker--selected { color: #818cf8; filter: drop-shadow(0 0 3px rgba(129,140,248,0.5)); }
+.ake__marker--selected { color: var(--action); filter: drop-shadow(0 0 3px rgba(129,140,248,0.5)); }
 
 .ake__editor {
   display: flex; flex-direction: column; gap: 4px;

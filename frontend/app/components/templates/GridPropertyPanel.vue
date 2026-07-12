@@ -419,7 +419,7 @@ async function runOutpaint() {
   } catch { /* error surfaced via outpaint.error.value */ }
 }
 
-const inputCls = 'w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-[#96b4ff]/50'
+const inputCls = 'w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[12px] text-white focus:outline-none focus:border-action/50'
 const labelCls = 'panel-label'
 const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-pointer'
 </script>
@@ -451,17 +451,17 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
     <!-- Variant cycler — visible when this element is wired to a multi-entry
          Text node. Picks which variant the canvas previews; run time still
          fans out one image per variant. -->
-    <div v-if="variantsForSelected.length > 1" class="rounded-md bg-[#96b4ff]/[0.06] border border-[#96b4ff]/15 px-2.5 py-2 flex flex-col gap-1.5">
+    <div v-if="variantsForSelected.length > 1" class="rounded-md bg-action/[0.06] border border-action/15 px-2.5 py-2 flex flex-col gap-1.5">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-[#c9d6ff]/85 font-medium">
           <Layers class="size-3" />
           <span>Variant {{ activeVariantIdx + 1 }} of {{ variantsForSelected.length }}</span>
         </div>
         <div class="flex items-center gap-0.5">
-          <button class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Previous variant" @click="cycleVariant(-1)">
+          <button class="size-6 rounded hover:bg-action/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Previous variant" @click="cycleVariant(-1)">
             <ChevronLeft class="size-3.5" />
           </button>
-          <button class="size-6 rounded hover:bg-[#96b4ff]/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Next variant" @click="cycleVariant(1)">
+          <button class="size-6 rounded hover:bg-action/15 flex items-center justify-center text-white/65 hover:text-white cursor-pointer transition-colors" title="Next variant" @click="cycleVariant(1)">
             <ChevronRight class="size-3.5" />
           </button>
         </div>
@@ -476,12 +476,12 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
 
     <!-- Edit scope + per-output controls. Shown whenever there's more than one
          output to diverge between (variations or different formats). -->
-    <div v-if="outputs.length > 1" class="rounded-md bg-[#96b4ff]/[0.08] border border-[#96b4ff]/20 px-2.5 py-2 leading-snug">
+    <div v-if="outputs.length > 1" class="rounded-md bg-action/[0.08] border border-action/20 px-2.5 py-2 leading-snug">
       <div class="flex gap-1 mb-2">
         <button
           v-for="opt in (['class', 'output'] as const)" :key="opt"
           class="flex-1 h-6 rounded text-[10px] transition-colors cursor-pointer"
-          :class="regionScope === opt ? 'bg-[#96b4ff]/30 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
+          :class="regionScope === opt ? 'bg-action/30 text-white' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]'"
           @click="regionScope = opt"
         >{{ opt === 'class' ? (isMaster ? 'All formats' : `All ${formatClass}`) : 'Only this' }}</button>
       </div>
@@ -496,14 +496,14 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       </p>
       <button
         v-if="regionScope === 'class' && !isMaster && hasClassRegion(el.id)"
-        class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+        class="mt-1.5 block text-[11px] text-action hover:text-white transition-colors cursor-pointer underline underline-offset-2"
         @click="clearClassRegion(el.id)"
       >
         Reset {{ formatClass }} to automatic
       </button>
       <button
         v-if="regionScope === 'output' && hasOutputOverride(el.id)"
-        class="mt-1.5 block text-[11px] text-[#96b4ff] hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+        class="mt-1.5 block text-[11px] text-action hover:text-white transition-colors cursor-pointer underline underline-offset-2"
         @click="clearOutputOverride(el.id)"
       >
         Clear this output's override
@@ -782,7 +782,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             v-for="f in brandFontSlots"
             :key="f.slot"
             class="px-1.5 h-6 rounded text-[10px] transition-colors cursor-pointer"
-            :class="fontBoundLabel === f.label ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+            :class="fontBoundLabel === f.label ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
             :title="`Bind to ${f.label} (${f.family})`"
             @click="bindFontToBrand(f.slot)"
           >{{ f.label.replace('Brand ', '') }}</button>
@@ -851,13 +851,13 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       <div>
         <div class="flex gap-1 mb-2">
           <button
-            v-for="a in ['left', 'center', 'right', 'justify']" :key="a" :class="[btnRowCls, (styleOf().align ?? 'left') === a ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
+            v-for="a in ['left', 'center', 'right', 'justify']" :key="a" :class="[btnRowCls, (styleOf().align ?? 'left') === a ? 'bg-action/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
             @click="patchStyle(el!.id, { align: a })"
           >{{ a }}</button>
         </div>
         <div class="flex gap-1">
           <button
-            v-for="v in ['top', 'middle', 'bottom', 'justify']" :key="v" :class="[btnRowCls, (styleOf().valign ?? 'top') === v ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
+            v-for="v in ['top', 'middle', 'bottom', 'justify']" :key="v" :class="[btnRowCls, (styleOf().valign ?? 'top') === v ? 'bg-action/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
             @click="patchStyle(el!.id, { valign: v })"
           >{{ v }}</button>
         </div>
@@ -925,7 +925,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             v-for="slot in brandColorSlots"
             :key="slot"
             class="size-5 rounded-full border cursor-pointer transition"
-            :class="brandTokenKey(styleOf().color) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+            :class="brandTokenKey(styleOf().color) === slot ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
             :style="{ background: brandSwatch(slot) }"
             :title="`Bind to brand.${slot}`"
             @click="bindColorToBrand('color', slot)"
@@ -933,7 +933,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           <button
             v-for="e in brandPaletteEntries" :key="e.id"
             class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
-            :class="brandTokenKey(styleOf().color) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+            :class="brandTokenKey(styleOf().color) === 'palette.' + paletteSlug(e.name) ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
             :title="`Bind to ${e.name}`"
             @click="bindColorToken('color', paletteTokenFor(e.name))"
           >
@@ -971,7 +971,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
               v-for="slot in brandColorSlots"
               :key="slot"
               class="size-5 rounded-full border cursor-pointer transition"
-              :class="brandTokenKey(panel.fill) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+              :class="brandTokenKey(panel.fill) === slot ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
               :style="{ background: brandSwatch(slot) }"
               :title="`Bind panel to brand.${slot}`"
               @click="bindPanelToBrand(slot)"
@@ -979,7 +979,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             <button
               v-for="e in brandPaletteEntries" :key="e.id"
               class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
-              :class="brandTokenKey(panel.fill) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+              :class="brandTokenKey(panel.fill) === 'palette.' + paletteSlug(e.name) ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
               :title="`Bind panel to ${e.name}`"
               @click="bindPanelToToken(paletteTokenFor(e.name))"
             >
@@ -1024,7 +1024,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <button
           v-if="hasBrandLogo"
           class="mt-1.5 px-2 h-6 rounded text-[10px] transition-colors cursor-pointer"
-          :class="usingBrandLogo ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+          :class="usingBrandLogo ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
           @click="patchElement(el!.id, { content: '{{ brand.logo }}' })"
         >
           Use brand logo
@@ -1032,7 +1032,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <button
           v-for="slot in brandLogoSlots" :key="slot"
           class="mt-1.5 ml-1.5 px-2 h-6 rounded text-[10px] transition-colors cursor-pointer"
-          :class="usingSlot(slot) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+          :class="usingSlot(slot) ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
           @click="patchElement(el!.id, { content: `{{ brand.logos.${slot} }}` })"
         >
           {{ slot === 'onDark' ? 'On-dark logo' : slot[0].toUpperCase() + slot.slice(1) }}
@@ -1043,7 +1043,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             <button
               v-for="a in brandAssets" :key="a.id"
               class="flex items-center gap-1.5 px-1.5 h-7 rounded bg-white/[0.04] hover:bg-white/[0.08] transition-colors cursor-pointer"
-              :class="el!.content === a.path ? 'bg-[#96b4ff]/25' : ''"
+              :class="el!.content === a.path ? 'bg-action/25' : ''"
               :title="a.name" @click="patchElement(el!.id, { content: a.path })"
             >
               <span class="size-5 rounded-sm border border-white/10 bg-[#1a1a1a] bg-center bg-contain bg-no-repeat"
@@ -1057,7 +1057,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
       <div>
         <button
           :disabled="!focalSrc || outpaint.busy.value"
-          class="w-full h-8 rounded-md flex items-center justify-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer border border-[#96b4ff]/20 bg-[#96b4ff]/15 text-[#c9d6ff] hover:bg-[#96b4ff]/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full h-8 rounded-md flex items-center justify-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer border border-action/20 bg-action/15 text-[#c9d6ff] hover:bg-action/25 disabled:opacity-40 disabled:cursor-not-allowed"
           :title="focalSrc ? `Generatively extend this image to fill the ${outputLabel} format` : 'Set an image source first'"
           @click="runOutpaint"
         >
@@ -1067,7 +1067,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         </button>
         <p v-if="hasContentOverride(el.id) && !outpaint.busy.value" class="mt-1 text-[11px] text-white/45">
           Fitted to {{ outputLabel }} ·
-          <button class="text-[#96b4ff] hover:underline cursor-pointer" @click="clearImageContentOverride(el!.id)">Revert to original</button>
+          <button class="text-action hover:underline cursor-pointer" @click="clearImageContentOverride(el!.id)">Revert to original</button>
         </p>
         <p v-if="outpaint.error.value" class="mt-1 text-[11px] text-rose-400/80">{{ outpaint.error.value }}</p>
       </div>
@@ -1113,7 +1113,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
         <p :class="labelCls" class="mb-1.5">Shape</p>
         <div class="flex gap-1">
           <button
-            v-for="s in ['rect', 'circle']" :key="s" :class="[btnRowCls, el.shape === s ? 'bg-[#96b4ff]/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
+            v-for="s in ['rect', 'circle']" :key="s" :class="[btnRowCls, el.shape === s ? 'bg-action/20 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/50 hover:bg-white/[0.08]']"
             @click="patchElement(el!.id, { shape: s })"
           >{{ s }}</button>
         </div>
@@ -1138,7 +1138,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
             v-for="slot in brandColorSlots"
             :key="slot"
             class="size-5 rounded-full border cursor-pointer transition"
-            :class="brandTokenKey(styleOf().fill) === slot ? 'border-white ring-1 ring-[#96b4ff]' : 'border-white/20 hover:border-white/50'"
+            :class="brandTokenKey(styleOf().fill) === slot ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
             :style="{ background: brandSwatch(slot) }"
             :title="`Bind to brand.${slot}`"
             @click="bindColorToBrand('fill', slot)"
@@ -1146,7 +1146,7 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           <button
             v-for="e in brandPaletteEntries" :key="e.id"
             class="px-1.5 h-6 rounded text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
-            :class="brandTokenKey(styleOf().fill) === 'palette.' + paletteSlug(e.name) ? 'bg-[#96b4ff]/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
+            :class="brandTokenKey(styleOf().fill) === 'palette.' + paletteSlug(e.name) ? 'bg-action/25 text-[#c9d6ff]' : 'bg-white/[0.04] text-white/45 hover:bg-white/[0.08]'"
             :title="`Bind to ${e.name}`"
             @click="bindColorToken('fill', paletteTokenFor(e.name))"
           >

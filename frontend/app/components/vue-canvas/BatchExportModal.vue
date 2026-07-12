@@ -212,7 +212,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               :class="[
                 pool.kind === 'image' ? 'p-0.5' : 'px-2 py-1 text-xs',
                 selected[pool.key]?.has(v.value)
-                  ? 'border-[#96b4ff]/70 bg-[#96b4ff]/15 text-white'
+                  ? 'border-action/70 bg-action/15 text-white'
                   : 'border-white/10 bg-white/[0.04] text-white/60 hover:border-white/25',
               ]"
               @click="toggle(pool.key, v.value)"
@@ -226,13 +226,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <!-- Progress -->
         <section v-if="items.length">
           <div class="h-1.5 rounded-full bg-white/10 overflow-hidden">
-            <div class="h-full bg-[#96b4ff] transition-all" :style="{ width: `${(doneCount / items.length) * 100}%` }" />
+            <div class="h-full bg-action transition-all" :style="{ width: `${(doneCount / items.length) * 100}%` }" />
           </div>
           <p class="mt-1.5 text-[11px] text-white/50">
             {{ doneCount }}/{{ items.length }} rendered
             <template v-if="failedItems.length"> · <span class="text-red-400">{{ failedItems.length }} failed</span></template>
           </p>
-          <button v-if="failedItems.length && !running" class="mt-1 text-[11px] text-[#96b4ff] cursor-pointer hover:underline" @click="retryFailed">
+          <button v-if="failedItems.length && !running" class="mt-1 text-[11px] text-action cursor-pointer hover:underline" @click="retryFailed">
             Retry failed
           </button>
         </section>
@@ -243,7 +243,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <div class="ml-auto flex items-center gap-2">
           <button v-if="running" class="h-8 px-3 rounded-md bg-white/10 text-xs text-white/80 cursor-pointer" @click="cancel">Cancel</button>
           <button
-            class="h-8 px-4 rounded-md bg-[#96b4ff] text-neutral-900 text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
+            class="h-8 px-4 rounded-md bg-action text-neutral-900 text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
             :disabled="!canGenerate"
             @click="generate"
           >

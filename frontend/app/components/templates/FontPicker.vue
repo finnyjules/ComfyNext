@@ -186,7 +186,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
   <button
     ref="triggerRef"
     type="button"
-    class="w-full h-9 px-2.5 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded text-white focus:outline-none focus:border-[#96b4ff]/50 hover:border-white/[0.12] transition-colors cursor-pointer"
+    class="w-full h-9 px-2.5 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded text-white focus:outline-none focus:border-action/50 hover:border-white/[0.12] transition-colors cursor-pointer"
     @click="toggle"
   >
     <span
@@ -255,7 +255,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
             :key="'s' + s.family"
             type="button"
             class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
-            :class="s.family === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            :class="s.family === modelValue ? 'bg-action/[0.08]' : ''"
             @click="select(s.family)"
           >
             <span class="flex-1 min-w-0 text-left">
@@ -263,7 +263,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
               <span class="block text-[10px] text-white/35 leading-tight truncate">{{ s.reason }}</span>
             </span>
             <span class="text-[9px] text-white/20 uppercase tracking-wider shrink-0 select-none">{{ s.category }}</span>
-            <Check v-if="s.family === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+            <Check v-if="s.family === modelValue" class="size-3 text-action shrink-0" />
           </button>
           <div class="mx-3 my-1 border-t border-white/[0.05]" />
         </template>
@@ -278,21 +278,21 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
 
         <!-- Uploaded (brand) section -->
         <template v-if="filtered.some(f => f.uploaded)">
-          <div class="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-[0.14em] text-[#96b4ff]/50 font-medium select-none">Brand fonts</div>
+          <div class="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-[0.14em] text-action/50 font-medium select-none">Brand fonts</div>
           <button
             v-for="f in filtered.filter(x => x.uploaded)"
             :key="f.name"
             type="button"
             class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
-            :class="f.name === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            :class="f.name === modelValue ? 'bg-action/[0.08]' : ''"
             @click="select(f.name)"
           >
             <span
               class="flex-1 text-left text-[15px] text-white leading-tight truncate"
               :style="{ fontFamily: f.name }"
             >{{ f.name }}</span>
-            <span class="text-[9px] text-[#96b4ff]/40 uppercase tracking-wider shrink-0 select-none">brand</span>
-            <Check v-if="f.name === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+            <span class="text-[9px] text-action/40 uppercase tracking-wider shrink-0 select-none">brand</span>
+            <Check v-if="f.name === modelValue" class="size-3 text-action shrink-0" />
           </button>
         </template>
 
@@ -307,7 +307,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
             :key="f.name"
             type="button"
             class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
-            :class="f.name === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            :class="f.name === modelValue ? 'bg-action/[0.08]' : ''"
             @click="select(f.name)"
           >
             <span
@@ -315,7 +315,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
               :style="{ fontFamily: f.name }"
             >{{ f.name }}</span>
             <span class="text-[9px] text-white/20 uppercase tracking-wider shrink-0 select-none">{{ f.category }}</span>
-            <Check v-if="f.name === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+            <Check v-if="f.name === modelValue" class="size-3 text-action shrink-0" />
           </button>
         </template>
 
@@ -330,7 +330,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
             :key="f.name"
             type="button"
             class="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.05] transition-colors cursor-pointer"
-            :class="f.name === modelValue ? 'bg-[#96b4ff]/[0.08]' : ''"
+            :class="f.name === modelValue ? 'bg-action/[0.08]' : ''"
             @click="select(f.name)"
           >
             <span
@@ -338,7 +338,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
               :style="{ fontFamily: f.name }"
             >{{ f.name }}</span>
             <span class="text-[9px] text-white/20 uppercase tracking-wider shrink-0 select-none">{{ f.category }}</span>
-            <Check v-if="f.name === modelValue" class="size-3 text-[#96b4ff] shrink-0" />
+            <Check v-if="f.name === modelValue" class="size-3 text-action shrink-0" />
           </button>
         </template>
       </div>
@@ -351,7 +351,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside, true
         <span class="flex-1 text-[11px] text-white/40 truncate">Apply "{{ search }}"</span>
         <button
           type="button"
-          class="h-6 px-3 rounded-md bg-[#96b4ff]/15 text-[#96b4ff] text-[11px] font-medium hover:bg-[#96b4ff]/25 transition-colors cursor-pointer shrink-0"
+          class="h-6 px-3 rounded-md bg-action/15 text-action text-[11px] font-medium hover:bg-action/25 transition-colors cursor-pointer shrink-0"
           @click="select(search)"
         >Use</button>
       </div>

@@ -718,7 +718,7 @@ onBeforeUnmount(() => {
             <!-- Apply the result showing on the canvas back onto the node. Appears
                  once a result exists so the save action isn't buried in History. -->
             <button v-if="lastResult"
-              class="mt-1.5 w-full h-8 rounded-md bg-emerald-500/90 hover:bg-emerald-500 text-neutral-900 text-[12px] font-semibold cursor-pointer transition-colors"
+              class="mt-1.5 w-full h-8 rounded-md bg-action hover:bg-action/85 text-white text-[12px] font-semibold cursor-pointer transition-colors"
               title="Apply the result shown on the canvas to the node"
               @click="applyResult">
               Apply to canvas

@@ -423,7 +423,7 @@ function humanizeSyncMode(m: string): string {
         >New take</button>
         <button
           type="button"
-          class="rounded-md bg-emerald-500/90 px-3.5 py-1.5 text-[12px] font-medium text-black transition enabled:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded-md bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="hasError"
           @click="onGenerate"
         >Generate</button>

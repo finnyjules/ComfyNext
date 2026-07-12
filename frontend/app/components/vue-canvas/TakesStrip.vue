@@ -39,7 +39,7 @@ function thumb(t: Take): string | null {
         :key="t.id"
         class="group relative shrink-0 size-12 rounded-md overflow-hidden cursor-pointer ring-1 transition-shadow"
         :class="t.id === activeTakeId
-          ? 'ring-2 ring-[#96b4ff]'
+          ? 'ring-2 ring-action'
           : 'ring-white/10 hover:ring-white/30'"
         :title="t.label || new Date(t.createdAt).toLocaleTimeString()"
         @click.stop="emit('select', t.id)"
@@ -86,7 +86,7 @@ function thumb(t: Take): string | null {
         >
           <button
             v-if="t.draft || props.sketch"
-            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-emerald-300"
+            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-action"
             :title="props.sketch ? 'Promote — spawn the full generator beside this sketch' : 'Promote to full quality'"
             @click.stop="emit('promote', t.id)"
           >

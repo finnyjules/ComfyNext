@@ -198,7 +198,7 @@ function addShape() {
             {{ template.aspects[key].label || key }}
             <span
               v-if="aspectHasOverrideForSelection(key)"
-              class="size-1.5 rounded-full bg-[#96b4ff] shrink-0"
+              class="size-1.5 rounded-full bg-action shrink-0"
             />
           </button>
           <!-- Delete button — only on the active tab, only when 2+ aspects exist -->

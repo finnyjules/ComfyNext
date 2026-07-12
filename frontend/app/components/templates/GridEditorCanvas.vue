@@ -988,9 +988,9 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         :style="[rectStyle(r), clipStyle(r), { cursor: repositionId === r.el.id ? 'grab' : r.el.locked ? 'default' : 'move' }]"
         class="group"
         :class="repositionId === r.el.id
-          ? 'outline outline-2 outline-[#96b4ff] outline-dashed'
+          ? 'outline outline-2 outline-action outline-dashed'
           : selectedId === r.el.id
-            ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-[#96b4ff] outline-offset-0')
+            ? (r.el.locked ? 'outline outline-2 outline-white/30 outline-dashed' : 'outline outline-2 outline-action outline-offset-0')
             : 'hover:outline hover:outline-1 hover:outline-white/30'"
         @pointerdown="(e) => onElementPointerDown(e, r)"
         @dblclick="(e) => { if (r.el.type === 'image' || (r.el.type === 'text' && r.el.style?.expressive)) { e.stopPropagation(); enterReposition(r) } else if (r.el.type === 'text') { e.stopPropagation(); startTextEdit(r) } }"
@@ -1036,7 +1036,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <!-- Reposition hints (images only) -->
         <div
           v-if="repositionId === r.el.id"
-          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#96b4ff]/90 text-black text-[10px] font-medium pointer-events-none whitespace-nowrap"
+          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-action/90 text-black text-[10px] font-medium pointer-events-none whitespace-nowrap"
         >{{ r.el.type === 'text' ? 'Drag words · Esc to finish' : 'Drag to reposition · Esc to finish' }}</div>
         <div
           v-else-if="selectedId === r.el.id && r.el.type === 'image' && !r.el.locked"
@@ -1109,7 +1109,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <div
           v-for="dir in HANDLE_DIRS"
           :key="dir"
-          class="absolute size-3 bg-white border border-[#96b4ff] rounded-sm pointer-events-auto"
+          class="absolute size-3 bg-white border border-action rounded-sm pointer-events-auto"
           :style="handleStyle(dir)"
           @pointerdown="(e) => onHandlePointerDown(e, resizeHandleTarget!, dir)"
         />

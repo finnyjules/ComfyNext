@@ -138,7 +138,7 @@ function isAdded(p: Preset) {
           >
             <span class="flex-1 text-left text-[12px] text-white">{{ p.label }}</span>
             <span class="text-[10px] text-white/30 tabular-nums shrink-0">{{ p.w }}×{{ p.h }}</span>
-            <Check v-if="isAdded(p)" class="size-3 text-[#96b4ff] shrink-0" />
+            <Check v-if="isAdded(p)" class="size-3 text-action shrink-0" />
           </button>
         </template>
       </div>
@@ -149,7 +149,7 @@ function isAdded(p: Preset) {
         <input
           v-model="customLabel"
           placeholder="Label (optional)"
-          class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white placeholder-white/25 focus:outline-none focus:border-[#96b4ff]/50"
+          class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white placeholder-white/25 focus:outline-none focus:border-action/50"
         />
         <div class="flex items-center gap-2">
           <div class="flex items-center gap-1.5 flex-1">
@@ -158,7 +158,7 @@ function isAdded(p: Preset) {
               type="number"
               min="1"
               placeholder="W"
-              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50 tabular-nums"
+              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-action/50 tabular-nums"
             />
             <span class="text-[10px] text-white/30 shrink-0">×</span>
             <input
@@ -166,13 +166,13 @@ function isAdded(p: Preset) {
               type="number"
               min="1"
               placeholder="H"
-              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-[#96b4ff]/50 tabular-nums"
+              class="w-full h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-center focus:outline-none focus:border-action/50 tabular-nums"
             />
             <span class="text-[10px] text-white/30 shrink-0">px</span>
           </div>
           <button
             type="button"
-            class="h-7 px-3 rounded-md bg-[#96b4ff]/15 text-[#96b4ff] text-[11px] font-medium hover:bg-[#96b4ff]/25 transition-colors cursor-pointer shrink-0 flex items-center gap-1"
+            class="h-7 px-3 rounded-md bg-action/15 text-action text-[11px] font-medium hover:bg-action/25 transition-colors cursor-pointer shrink-0 flex items-center gap-1"
             @click="addCustom"
           >
             <Plus class="size-3" />

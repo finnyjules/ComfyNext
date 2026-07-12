@@ -537,7 +537,7 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
     <!-- v1 → v2 conversion affordance -->
     <button
       v-if="initial && !isGrid"
-      class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 h-8 px-3 rounded-full bg-[#96b4ff]/15 hover:bg-[#96b4ff]/25 border border-[#96b4ff]/25 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
+      class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 h-8 px-3 rounded-full bg-action/15 hover:bg-action/25 border border-action/25 text-[12px] text-[#c9d6ff] transition-colors cursor-pointer"
       title="One-way conversion to the Swiss grid system (auto-reflow to every ad format). Takes effect when you save."
       @click="convertToGrid"
     >
@@ -612,7 +612,7 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
             Apply to previews
           </button>
           <button
-            class="px-3 h-8 rounded-md bg-[#96b4ff]/20 hover:bg-[#96b4ff]/30 text-xs text-[#c9d6ff] transition-colors cursor-pointer"
+            class="px-3 h-8 rounded-md bg-action/20 hover:bg-action/30 text-xs text-[#c9d6ff] transition-colors cursor-pointer"
             @click="saveV2"
           >
             Save to node

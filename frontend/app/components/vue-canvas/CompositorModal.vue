@@ -2854,7 +2854,7 @@ onUnmounted(() => {
         <button
           v-if="KINETIC_ENABLED"
           class="flex items-center justify-center size-8 rounded-md cursor-pointer"
-          :class="previewT != null ? 'bg-emerald-400/90 text-black' : 'hover:bg-white/10 text-white/80'"
+          :class="previewT != null ? 'bg-action text-white' : 'hover:bg-white/10 text-white/80'"
           title="Motion — preview layer animations on the kinetic timeline"
           @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
         >

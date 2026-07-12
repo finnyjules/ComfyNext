@@ -136,7 +136,7 @@ function generate() {
         <Pencil class="h-3 w-3" /> Edit
       </button>
       <button
-        class="rounded bg-emerald-500/15 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25"
+        class="rounded bg-action/15 px-2 py-1 text-[11px] font-medium text-action hover:bg-action/25"
         title="Compile the shot and run Seedance"
         @click.stop="generate"
       >

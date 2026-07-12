@@ -172,10 +172,10 @@ function openEditor() {
         v-if="!isMuted && !isBypassed"
         class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
         :class="data.running
-          ? 'text-emerald-300 bg-emerald-400/15'
+          ? 'text-action bg-action/15'
           : !canGenerate
             ? 'text-white/25 cursor-not-allowed'
-            : 'text-white/55 hover:text-emerald-300 hover:bg-emerald-400/15'"
+            : 'text-white/55 hover:text-action hover:bg-action/15'"
         :disabled="data.running || !canGenerate"
         :title="data.running ? 'Running…'
           : !canGenerate ? 'Wire a pose image first'

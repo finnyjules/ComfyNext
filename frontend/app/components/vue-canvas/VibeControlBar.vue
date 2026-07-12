@@ -45,7 +45,7 @@ function go() {
         <span class="text-[12.5px] font-semibold text-white/90">{{ proposal.chips.length }} change{{ proposal.chips.length === 1 ? '' : 's' }}</span>
         <span class="ml-auto flex gap-1.5">
           <button class="rounded-[7px] border border-white/10 px-3 py-1 text-[11.5px] text-white/60" @click="emit('revert')">Revert</button>
-          <button class="rounded-[7px] bg-emerald-400 px-3 py-1 text-[11.5px] font-semibold text-emerald-950" @click="emit('keep')">Keep</button>
+          <button class="rounded-[7px] bg-action px-3 py-1 text-[11.5px] font-semibold text-white" @click="emit('keep')">Keep</button>
         </span>
       </div>
       <p v-if="proposal.rationale" class="mb-2 text-[11px] italic text-white/40">{{ proposal.rationale }}</p>

@@ -875,7 +875,7 @@ function colorFor(slot: number) {
 
           <button
             class="flex items-center gap-1.5 px-2.5 h-7 rounded text-xs transition-colors cursor-pointer border border-white/10 disabled:opacity-50 disabled:cursor-wait"
-            :class="renderResult ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200' : 'bg-white/15 hover:bg-white/20 text-white/70'"
+            :class="renderResult ? 'bg-action/20 hover:bg-action/30 text-action' : 'bg-white/15 hover:bg-white/20 text-white/70'"
             :disabled="isRendering"
             title="Render the timeline directly to a video file (FFmpeg/PyAV)"
             @click="renderViaFFmpeg"
@@ -887,7 +887,7 @@ function colorFor(slot: number) {
             v-if="renderResult"
             :href="renderResult.url"
             target="_blank"
-            class="text-xs text-emerald-300 hover:text-emerald-200 underline underline-offset-2"
+            class="text-xs text-action hover:text-action/80 underline underline-offset-2"
             :title="`Open ${renderResult.filename}`"
           >Open {{ renderResult.filename }}</a>
           <span v-if="renderError" class="text-xs text-amber-400 truncate max-w-[300px]">{{ renderError }}</span>

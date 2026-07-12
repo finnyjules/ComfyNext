@@ -242,7 +242,7 @@ const nodeTypes = {
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
-const connectionLineStyle = { stroke: '#818cf8', strokeWidth: 2 }
+const connectionLineStyle = { stroke: 'var(--action)', strokeWidth: 2 }
 const snapGrid: [number, number] = [16, 16]
 
 // NodeTypeLite[] = the cached /object_info nodes (incl. the backend generators +
@@ -6994,7 +6994,7 @@ defineExpose({
 }
 
 .vue-node-canvas .vue-flow__node.selected .comfy-node {
-  outline: 2px solid #818cf8;
+  outline: 2px solid var(--action);
   outline-offset: 1px;
 }
 
@@ -7007,7 +7007,7 @@ defineExpose({
 .vue-node-canvas .vue-flow__node.selected .artifact-text,
 .vue-node-canvas .vue-flow__node.selected .artifact-frame-node,
 .vue-node-canvas .vue-flow__node.selected .artifact-timeline {
-  outline: 2px solid #818cf8;
+  outline: 2px solid var(--action);
   outline-offset: 3px;
   border-radius: 12px;
 }
@@ -7036,7 +7036,7 @@ defineExpose({
 
 /* Connection line while dragging */
 .vue-node-canvas .vue-flow__connection-line path {
-  stroke: #818cf8;
+  stroke: var(--action);
   stroke-width: 2;
   stroke-dasharray: 5;
 }

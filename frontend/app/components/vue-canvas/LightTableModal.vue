@@ -149,8 +149,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
           :key="t.id"
           class="group relative rounded-lg overflow-hidden bg-white/[0.03] ring-1 cursor-pointer transition-shadow"
           :class="[
-            t.id === focusedId ? 'ring-2 ring-[#96b4ff]' : t.id === compareId ? 'ring-2 ring-amber-300/70' : 'ring-white/10 hover:ring-white/25',
-            t.id === activeTakeId ? 'outline outline-1 outline-offset-2 outline-emerald-400/50' : '',
+            t.id === focusedId ? 'ring-2 ring-action' : t.id === compareId ? 'ring-2 ring-amber-300/70' : 'ring-white/10 hover:ring-white/25',
+            t.id === activeTakeId ? 'outline outline-1 outline-offset-2 outline-action/60' : '',
           ]"
           @click="onCellClick(t, $event)"
           @dblclick="lightboxId = t.id"
@@ -161,7 +161,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
           <!-- chips -->
           <div class="absolute inset-x-0 top-0 flex items-center gap-1 p-1.5 text-[10px]">
             <span v-if="t.draft" class="flex items-center gap-1 rounded border border-dashed border-white/50 bg-black/60 px-1 py-0.5 text-white/80"><PencilLine class="size-2.5" /> draft</span>
-            <span v-if="t.promotedFrom" class="rounded bg-black/60 px-1 py-0.5 text-emerald-300/90 border border-emerald-400/30">promoted</span>
+            <span v-if="t.promotedFrom" class="rounded bg-black/60 px-1 py-0.5 text-action border border-action/30">promoted</span>
             <span v-if="t.params?.seed !== undefined" class="rounded bg-black/60 px-1 py-0.5 text-white/60">seed {{ t.params.seed }}</span>
             <Star v-if="t.pinned" class="size-3 text-amber-300 fill-amber-300 ml-auto" />
           </div>

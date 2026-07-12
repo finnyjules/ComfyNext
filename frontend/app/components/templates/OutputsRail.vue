@@ -146,7 +146,7 @@ function commitRename() {
       :key="c.id"
       class="group relative shrink-0 flex flex-col items-center gap-1 px-2 pt-1 pb-1 rounded-md border transition-colors cursor-pointer"
       :class="currentOutputId === c.id
-        ? 'border-[#96b4ff]/60 bg-[#96b4ff]/10'
+        ? 'border-action/60 bg-action/10'
         : 'border-transparent hover:border-white/10 hover:bg-white/[0.03]'"
       :title="`${c.label} · ${c.w}×${c.h}`"
       @click="selectOutput(c.id)"
@@ -154,7 +154,7 @@ function commitRename() {
       <!-- Hover actions: duplicate (variation) + remove -->
       <div class="absolute -top-1 -right-1 z-10 hidden group-hover:flex items-center gap-0.5">
         <button
-          class="size-4 rounded-full bg-[#1a1a1a] border border-white/15 text-white/60 hover:text-[#c9d6ff] hover:border-[#96b4ff]/50 flex items-center justify-center cursor-pointer"
+          class="size-4 rounded-full bg-[#1a1a1a] border border-white/15 text-white/60 hover:text-[#c9d6ff] hover:border-action/50 flex items-center justify-center cursor-pointer"
           title="Duplicate as a variation"
           @click.stop="duplicateOutput(c.id)"
         >
@@ -175,7 +175,7 @@ function commitRename() {
           v-for="b in c.blocks"
           :key="b.id"
           class="absolute rounded-[1px]"
-          :class="b.selected ? 'bg-[#96b4ff]/80' : 'bg-white/25'"
+          :class="b.selected ? 'bg-action/80' : 'bg-white/25'"
           :style="{ left: b.left, top: b.top, width: b.width, height: b.height }"
         />
         <span
@@ -189,7 +189,7 @@ function commitRename() {
         v-if="renamingId === c.id"
         v-model="renameDraft"
         data-output-rename
-        class="w-[72px] h-4 px-1 bg-black/60 border border-[#96b4ff]/50 rounded text-[9px] text-white text-center focus:outline-none"
+        class="w-[72px] h-4 px-1 bg-black/60 border border-action/50 rounded text-[9px] text-white text-center focus:outline-none"
         @click.stop
         @keydown.enter="commitRename"
         @keydown.esc="renamingId = null"
@@ -202,7 +202,7 @@ function commitRename() {
         title="Double-click to rename"
         @dblclick.stop="startRename(c)"
       >
-        {{ c.label }}<span v-if="c.isMaster" class="text-[#96b4ff]"> ·M</span>
+        {{ c.label }}<span v-if="c.isMaster" class="text-action"> ·M</span>
       </span>
     </div>
 
@@ -211,7 +211,7 @@ function commitRename() {
       <button
         ref="addBtnRef"
         class="my-auto h-[52px] w-9 rounded-md border border-dashed flex items-center justify-center transition-colors cursor-pointer"
-        :class="addOpen ? 'border-[#96b4ff]/60 bg-[#96b4ff]/10 text-[#c9d6ff]' : 'border-white/15 text-white/40 hover:text-white hover:border-white/30 hover:bg-white/[0.03]'"
+        :class="addOpen ? 'border-action/60 bg-action/10 text-[#c9d6ff]' : 'border-white/15 text-white/40 hover:text-white hover:border-white/30 hover:bg-white/[0.03]'"
         title="Add an output format"
         @click="toggleAdd"
       >
@@ -242,7 +242,7 @@ function commitRename() {
             <span class="block text-[12px] text-white/85 truncate">{{ f.spec.label ?? f.key }}</span>
             <span class="block text-[10px] text-white/35 tabular-nums">{{ f.spec.w }}×{{ f.spec.h }}</span>
           </span>
-          <span v-if="countFor(f.key)" class="shrink-0 text-[9px] text-[#96b4ff]/80">+ variation</span>
+          <span v-if="countFor(f.key)" class="shrink-0 text-[9px] text-action/80">+ variation</span>
         </button>
       </div>
     </Teleport>

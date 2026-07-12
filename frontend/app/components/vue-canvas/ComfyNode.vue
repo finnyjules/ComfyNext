@@ -1739,7 +1739,7 @@ watch(previewImages, (urls) => {
             :key="i"
             class="size-1.5 rounded-full transition-colors cursor-pointer"
             :class="i === Math.min(carouselIndex, displayedImages.length - 1)
-              ? 'bg-[#96b4ff]'
+              ? 'bg-action'
               : 'bg-white/25 hover:bg-white/45'"
             :title="carouselLabel(displayedImages[i]!, i)"
             @click.stop="carouselIndex = i"

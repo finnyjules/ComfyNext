@@ -74,7 +74,7 @@ function weightsLabel(weights: Partial<Record<'400' | '700', string>>): string {
       <input
         v-model="family"
         type="text" placeholder="Family name (e.g. Acme Grotesk)"
-        class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none focus:border-[#96b4ff]/40"
+        class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none focus:border-action/40"
       >
       <div class="flex items-center gap-1.5">
         <select

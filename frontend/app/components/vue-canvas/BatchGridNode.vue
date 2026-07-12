@@ -69,7 +69,7 @@ const btnCls = 'size-7 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm
           v-if="items[0]"
           :src="items[0].url"
           :class="['relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border shadow-xl',
-                     selected ? 'border-[#96b4ff] ring-2 ring-[#96b4ff]/40' : 'border-white/20']"
+                     selected ? 'border-action ring-2 ring-action/40' : 'border-white/20']"
           :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
           draggable="false"
         >
@@ -78,7 +78,7 @@ const btnCls = 'size-7 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm
         </div>
         <!-- top-right rail: count badge with the actions stacked under it -->
         <div class="absolute -top-2 -right-2 flex flex-col items-center gap-1.5 nopan nodrag">
-          <span class="min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
+          <span class="min-w-6 h-6 px-1.5 rounded-full bg-action text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
             {{ count }}
           </span>
           <button :class="btnCls" title="Expand" @click.stop="openGallery">
