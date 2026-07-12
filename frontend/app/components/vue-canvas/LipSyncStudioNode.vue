@@ -111,7 +111,7 @@ function generate() {
         <Pencil class="h-3 w-3" /> Open
       </button>
       <button
-        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-action px-2.5 py-1.5 text-[11px] font-medium text-black transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
+        class="flex flex-1 items-center justify-center gap-1.5 rounded bg-action px-2.5 py-1.5 text-[11px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="hasError"
         title="Generate the lip-synced clip"
         @click.stop="generate"

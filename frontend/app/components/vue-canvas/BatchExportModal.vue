@@ -243,7 +243,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <div class="ml-auto flex items-center gap-2">
           <button v-if="running" class="h-8 px-3 rounded-md bg-white/10 text-xs text-white/80 cursor-pointer" @click="cancel">Cancel</button>
           <button
-            class="h-8 px-4 rounded-md bg-action text-neutral-900 text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
+            class="h-8 px-4 rounded-md bg-action text-white text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
             :disabled="!canGenerate"
             @click="generate"
           >

@@ -1036,7 +1036,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <!-- Reposition hints (images only) -->
         <div
           v-if="repositionId === r.el.id"
-          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-action/90 text-black text-[10px] font-medium pointer-events-none whitespace-nowrap"
+          class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-action/90 text-white text-[10px] font-medium pointer-events-none whitespace-nowrap"
         >{{ r.el.type === 'text' ? 'Drag words · Esc to finish' : 'Drag to reposition · Esc to finish' }}</div>
         <div
           v-else-if="selectedId === r.el.id && r.el.type === 'image' && !r.el.locked"
