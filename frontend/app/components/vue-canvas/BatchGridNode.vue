@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // Frontend-only results pile from a Smart Layout batch export — chromeless
 // like the artifact cards: a slightly disorderly stack of outputs with a
-// count badge. Clicking the pile selects the node (Vue Flow default);
-// explicit actions live in the toolbar below: expand (gallery) + ZIP.
+// count badge. Clicking the pile selects the node (Vue Flow default,
+// mirrored by the selection ring on the cover); explicit actions live in
+// the top-right rail under the badge: expand (gallery) + ZIP.
 // The gallery modal is owned by VueNodeCanvas (codebase convention —
 // node-local modal state doesn't survive Vue Flow node re-renders). Data
 // lives in properties.sailor_batch and rehydrates with the workflow.
@@ -10,7 +11,7 @@ import { Download, Loader2, Maximize2 } from 'lucide-vue-next'
 import { BATCH_PROP, type BatchGridPayload } from '~/lib/collection/matrix'
 import { downloadBatchZip } from '~/lib/collection/batchZip'
 
-const props = defineProps<{ id: string; data: any }>()
+const props = defineProps<{ id: string; data: any; selected?: boolean }>()
 
 const payload = computed<BatchGridPayload | null>(
   () => props.data?.properties?.[BATCH_PROP] ?? null)
@@ -42,8 +43,8 @@ async function downloadZip() {
   }
 }
 
-const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 '
-  + 'flex items-center justify-center text-white/60 hover:text-white transition-colors cursor-pointer disabled:opacity-50'
+const btnCls = 'size-7 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm border border-white/15 '
+  + 'flex items-center justify-center text-white/75 hover:text-white transition-colors cursor-pointer disabled:opacity-50 shadow-md'
 </script>
 
 <template>
@@ -67,14 +68,14 @@ const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border b
         <img
           v-if="items[0]"
           :src="items[0].url"
-          class="relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border border-white/20 shadow-xl"
+          :class="['relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border shadow-xl',
+                     selected ? 'border-[#96b4ff] ring-2 ring-[#96b4ff]/40' : 'border-white/20']"
           :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"
           draggable="false"
         >
         <div v-else class="relative w-[190px] h-[150px] rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
           no outputs
         </div>
-        <!-- count badge — pinned to the pile itself -->
         <!-- top-right rail: count badge with the actions stacked under it -->
         <div class="absolute -top-2 -right-2 flex flex-col items-center gap-1.5 nopan nodrag">
           <span class="min-w-6 h-6 px-1.5 rounded-full bg-[#96b4ff] text-neutral-900 text-[11px] font-semibold flex items-center justify-center shadow-md">
@@ -91,8 +92,5 @@ const btnCls = 'size-7 rounded-md bg-white/[0.06] hover:bg-white/[0.14] border b
       </div>
     </div>
 
-    <p class="mt-2 text-[10px] text-white/40 text-center truncate">
-      {{ payload?.layoutName || 'Batch' }} · {{ count }} outputs
-    </p>
   </div>
 </template>
