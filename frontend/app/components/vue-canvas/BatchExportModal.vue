@@ -146,7 +146,7 @@ async function generate() {
   try {
     const runStamp = Date.now().toString(36)
     combos = planMatrix(selectedPools.value)
-      .map((c, i) => ({ ...c, filename: comboFilename(layoutName.value, c, i) }))
+      .map((c, i) => ({ ...c, filename: comboFilename(layoutName.value, c, i, runStamp) }))
     items.value = combos.map((c, i) => ({
       id: `m-${runStamp}-${i}`, rowIndex: i, rowId: '', outputId: c.format, status: 'queued' as const,
     }))

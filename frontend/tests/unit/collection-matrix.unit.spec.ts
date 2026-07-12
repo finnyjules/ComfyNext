@@ -107,6 +107,10 @@ describe('comboFilename', () => {
   it('sanitizes and joins label parts with the index suffix', () => {
     expect(comboFilename('Summer Launch', combo as any, 4)).toBe('summer-launch_9x16_fresh-skin_bottle-2_5.png')
   })
+  it('appends the run stamp so re-runs never reuse a filename (stale-cache guard)', () => {
+    expect(comboFilename('Summer Launch', combo as any, 4, 'kx3f9a'))
+      .toBe('summer-launch_9x16_fresh-skin_bottle-2_5_kx3f9a.png')
+  })
 })
 
 describe('buildBatchPayload', () => {

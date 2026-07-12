@@ -82,13 +82,16 @@ export function columnPool(c: CollectionData, columnKey: string): MatrixPoolValu
   return out
 }
 
-/** `summer-launch_9x16_fresh-skin_bottle-2_5.png` — sanitized label parts,
- *  1-based index suffix to disambiguate collisions. */
-export function comboFilename(layoutName: string, combo: MatrixCombo, index: number): string {
+/** `summer-launch_9x16_fresh-skin_bottle-2_5_kx3f9a.png` — sanitized label
+ *  parts, 1-based index, and the run stamp. The stamp makes every run's
+ *  filenames (and thus /view URLs) unique: without it, re-runs overwrite the
+ *  previous run's files and the browser serves stale cached bytes for the
+ *  unchanged URL — outputs LOOK broken while the disk copy is fine. */
+export function comboFilename(layoutName: string, combo: MatrixCombo, index: number, stamp?: string): string {
   const parts = [layoutName, ...Object.values(combo.labels)]
     .map(s => sanitize(s).replace(/^-+|-+$/g, ''))
     .filter(Boolean)
-  return `${parts.join('_')}_${index + 1}.png`
+  return `${parts.join('_')}_${index + 1}${stamp ? `_${stamp}` : ''}.png`
 }
 
 // -- BatchGrid node payload ---------------------------------------------------
