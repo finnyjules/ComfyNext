@@ -21,6 +21,14 @@ const { aiAvailable } = useAiStatus()
 
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
+// Misfire correction: auto-detect occasionally routes a phrase to the wrong
+// intent. `lastSketchPhrase` is set when the sketch pad fires (offers "edit
+// instead?"); `lastSubmitted` is the raw text of the last user submission
+// (offers "…or sketch it?" once a proposal shows up for it). Both reset at
+// the top of every new submission — see `go()`.
+const lastSketchPhrase = ref('')
+const lastSubmitted = ref('')
+
 const {
   busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
   ask, acceptChange, rejectChange, reroll, keep, keepAndRun, reviewLastRun, reviewNode, autoReviewNode, dismiss,
@@ -46,7 +54,9 @@ const {
   // takes over (search → select → import as Image nodes).
   searchImages: (query: string) => { searchQuery.value = query; searchOpen.value = true },
   // A typed image idea → the model emits `sketch` and the pad renders 4 options.
-  sketchIdea: (prompt: string) => { if (ready.value) props.vueCanvas.startSketch?.(prompt) },
+  // Remember the phrase so a misfire chip can offer "edit the canvas instead?"
+  // (the sketch response never sets `answer`, so this is the only trace of it).
+  sketchIdea: (prompt: string) => { if (ready.value) { props.vueCanvas.startSketch?.(prompt); lastSketchPhrase.value = prompt } },
 })
 
 // Web-image-search picker (opened by the agent's searchImages command).
@@ -122,8 +132,31 @@ const glimmActive = ref(false)
 watch(() => busy.value || reviewing.value, async (v) => { if (v) { await nextTick(); glimmActive.value = true } else { glimmActive.value = false } })
 
 const phrase = ref('')
-function go() { const p = phrase.value.trim(); if (p && !busy.value) { ask(p); phrase.value = '' } }
+function go() {
+  const p = phrase.value.trim()
+  if (!p || busy.value) return
+  lastSketchPhrase.value = '' // a fresh ask supersedes any pending sketch-misfire chip
+  lastSubmitted.value = p
+  ask(p)
+  phrase.value = ''
+}
 const hasResult = computed(() => busy.value || reviewing.value || hasProposal.value || !!answer.value || !!error.value)
+
+// Misfire correction handlers — one-tap flips between the two routes.
+// "Sketched this · edit the canvas instead?": re-run the same idea as a
+// forced EDIT so the classifier can't route it to `sketch` again.
+function forceEdit() {
+  const p = lastSketchPhrase.value
+  if (!p) return
+  lastSketchPhrase.value = ''
+  ask(`Treat this strictly as a canvas EDIT instruction, not an image idea to sketch. Do NOT emit a sketch command: ${p}`)
+}
+// "…or sketch it?": hand the last submitted text straight to the sketch pad
+// and drop the (mis-proposed) edit.
+function sketchInstead() {
+  if (ready.value && lastSubmitted.value) props.vueCanvas.startSketch?.(lastSubmitted.value)
+  dismiss()
+}
 </script>
 
 <template>
@@ -162,6 +195,24 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
           @keep="keep" @keep-run="keepAndRun" @revert="dismiss" @hover="(i: number | null) => hovered = i"
         />
       </template>
+    </div>
+
+    <!-- Misfire correction chips — auto-detect guessed the wrong intent.
+         Dashed NEUTRAL affordance (draft/sketch token; never pastel — pastel
+         reads as AI-generated here). Rendered outside the collapsible result
+         card because a sketch response never sets `answer`, so the card
+         itself can be fully collapsed while this chip still needs to show. -->
+    <div v-if="(lastSketchPhrase && !hasProposal) || (hasProposal && lastSubmitted)" class="flex flex-wrap gap-1.5 px-1">
+      <button
+        v-if="lastSketchPhrase && !hasProposal" type="button"
+        class="rounded-full border border-dashed border-white/20 px-2.5 py-1 text-[10.5px] text-white/50 transition hover:border-white/40 hover:text-white/75"
+        @click="forceEdit"
+      >Sketched this · edit the canvas instead?</button>
+      <button
+        v-if="hasProposal && lastSubmitted" type="button"
+        class="rounded-full border border-dashed border-white/20 px-2.5 py-1 text-[10.5px] text-white/50 transition hover:border-white/40 hover:text-white/75"
+        @click="sketchInstead"
+      >…or sketch it?</button>
     </div>
 
     <p v-if="!aiAvailable" class="px-1 text-[11px] leading-snug text-white/40">
