@@ -1081,13 +1081,16 @@ async function handleRunFiltered(e: Event) {
   // just these nodes (+ cached upstream), and skip the cost confirm / watchdog /
   // text-autofill dance that an explicit Run does.
   const live = detail?.live === true
+  // Scoped dispatches (e.g. the prompt-bar sketch pad) can opt out of the cost
+  // gate — the sketch tier is cheap and confirms would break the instant flow.
+  const skipCostConfirm = detail?.skipCostConfirm === true
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
   // Bake any frontend-only studio upstream of the targets first: the run strips
   // studios (no backend class_type), so without this the downstream image node
   // runs with a null input and renders nothing ("studio doesn't render").
   await vueCanvasRef.value?.bakeUpstreamStudios?.(expanded)
-  if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope, direction })) return
-  runVueWorkflow(expanded, { rerollScope, live, direction, takes })
+  if (!live && !skipCostConfirm && await maybeRunWithTextAutofill(expanded, { rerollScope, direction })) return
+  runVueWorkflow(expanded, { rerollScope, live, direction, takes, skipCostConfirm })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the

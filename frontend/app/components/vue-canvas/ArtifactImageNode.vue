@@ -818,6 +818,14 @@ const promoteUsdLabel = computed(() => {
       />
       <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
       <VueCanvasAgentScanOverlay :active="isAnalyzing" />
+      <!-- Prompt-bar sketch skeleton — dashed NEUTRAL shimmer on the pad's
+           optimistic cards until the real Schnell image lands. The reuse pass in
+           materializeSketchCardsAt clears sketchLoading. Never pastel/purple. -->
+      <div
+        v-if="(data.properties as any)?.sketchLoading"
+        class="sketch-skeleton absolute inset-0 z-30"
+        aria-label="Sketching…"
+      />
       <!-- File picker — always mounted so Replace works in any state. -->
       <input
         ref="fileInputRef"
@@ -1155,6 +1163,22 @@ const promoteUsdLabel = computed(() => {
 </template>
 
 <style scoped>
+/* Prompt-bar sketch skeleton — dashed NEUTRAL shimmer (house draft token; never
+   pastel/purple). A dark neutral base hides the underlying empty/upload state so
+   the optimistic card reads as "sketching", not "drop an image here". */
+.sketch-skeleton {
+  border: 1.5px dashed rgba(255, 255, 255, 0.45);
+  border-radius: inherit;
+  background:
+    linear-gradient(100deg, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.12) 50%, rgba(255, 255, 255, 0.04) 70%),
+    rgba(20, 20, 22, 0.88);
+  background-size: 200% 100%, 100% 100%;
+  animation: sketch-shimmer 1.1s linear infinite;
+}
+@keyframes sketch-shimmer {
+  from { background-position: 200% 0, 0 0; }
+  to { background-position: -200% 0, 0 0; }
+}
 .artifact-image[data-running] .artifact-frame {
   box-shadow:
     0 0 0 2px var(--port-color, #fff),

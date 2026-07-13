@@ -47,6 +47,8 @@ import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { planSketchCards } from '~/lib/sketch/planSketchCards'
+import { planSketchCardsAt, SKETCH_PAD_ID } from '~/lib/sketch/planSketchCardsAt'
+import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
@@ -975,6 +977,34 @@ const {
   project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
   onConnectStart, onConnectEnd,
 } = useVueFlow()
+
+// Sketch pad (prompt-bar sketching): one disposable 2×2 pad per canvas. Anchor
+// + card ids persist across re-sketches so refresh overwrites the same slots.
+const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: string[], seed: number, prompt: string, promptId: string | null }>(
+  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null },
+)
+
+/** Viewport center in graph coords, nudged to the nearest clear spot so the pad
+ *  never covers existing cards. Reuses the AABB-nudge from the agent apply path. */
+function sketchPadAnchor(): { x: number, y: number } {
+  const canvasEl = document.querySelector('.vue-flow') as HTMLElement | null
+  const rect = canvasEl?.getBoundingClientRect()
+  const centerScreen = rect
+    ? { x: rect.width / 2, y: rect.height / 2 }
+    : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  const c = project(centerScreen)
+  // 2×2 pad is ~424×424; offset so the grid is roughly centered on the viewport.
+  let p = { x: c.x - 212, y: c.y - 212 }
+  const PAD_W = 460, PAD_H = 460, NUDGE = 240
+  const occupied = (q: { x: number, y: number }) => (nodes.value as any[]).some((n: any) => {
+    if (n?.data?.properties?.sketchPad) return false
+    const nx = n.position?.x ?? 0, ny = n.position?.y ?? 0
+    return Math.abs(nx - q.x) < PAD_W && Math.abs(ny - q.y) < PAD_H
+  })
+  let guard = 0
+  while (occupied(p) && guard++ < 40) p = { x: p.x, y: p.y + NUDGE }
+  return p
+}
 
 // Re-track the screen-space agent overlays (blueprint rings + glimm) to their
 // cards whenever the canvas pans/zooms — otherwise they'd stay pinned to the
@@ -2578,6 +2608,14 @@ function handleBridgeMessage(event: MessageEvent) {
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
           const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
           target.data = appendTake({ ...target.data }, tagged)
+          // Prompt-bar sketch pad: the transient hidden pad's batch is spread to
+          // the 4 anchor cards (replacing the optimistic skeleton) via the
+          // source-node-decoupled materializer. Routed by pad id BEFORE the
+          // legacy sketch-node fan-out below (Task 8 retires that branch).
+          if (String(nodeId) === SKETCH_PAD_ID && tagged.images && tagged.images.length > 1 && sketchPad.anchor) {
+            materializeSketchCardsAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton
+            return
+          }
           // Sketch node (Change 3, spec 2026-07-08-sketch-node-refinement.md):
           // a batch of >1 images means one run's worth of options to spread as
           // cards, not a single wired sink — materializeSketchCards owns that.
@@ -3088,14 +3126,7 @@ function materializeSketchCards(source: { id: string, data?: any, position?: { x
       const existing = (nodes.value as any[]).find((n) => n.id === plan.id)
       if (existing) {
         existing.data = { ...existing.data, images: [plan.image] }
-        if (imageWidgetValue) {
-          const wi = existing.data.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
-          if (wi >= 0) {
-            const wv = Array.isArray(existing.data.widgetsValues) ? [...existing.data.widgetsValues] : []
-            wv[wi] = imageWidgetValue
-            existing.data.widgetsValues = wv
-          }
-        }
+        if (imageWidgetValue) patchImageWidget(existing, imageWidgetValue)
         continue
       }
       // Registry pointed at an id that no longer exists on the canvas (e.g.
@@ -3112,6 +3143,99 @@ function materializeSketchCards(source: { id: string, data?: any, position?: { x
   }
 
   source.data = { ...source.data, properties: { ...(source.data?.properties ?? {}), sketchOutputCardIds: cardIds } }
+}
+
+/** Write an image-widget value onto an Image card node in-place. Shared by the
+ *  node-spawned (`materializeSketchCards`) and prompt-bar (`materializeSketchCardsAt`)
+ *  materializers so the widget-patch logic stays in one place. */
+function patchImageWidget(node: any, value: unknown) {
+  const wi = node.data?.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
+  if (wi < 0) return
+  const wv = Array.isArray(node.data.widgetsValues) ? [...node.data.widgetsValues] : []
+  wv[wi] = value
+  node.data.widgetsValues = wv
+}
+
+/** Apply a name→value widget bundle onto an EXISTING node in-place (mirrors the
+ *  widget-def-index mapping createNodeData does at creation). Used to refresh the
+ *  transient sketch pad's prompt/seed on a re-sketch without minting a new node. */
+function applyWidgetOverridesTo(node: any, overrides: Record<string, unknown>) {
+  const defs = (node.data?.widgetDefs ?? []) as any[]
+  const wv = Array.isArray(node.data?.widgetsValues) ? [...node.data.widgetsValues] : []
+  for (const [name, value] of Object.entries(overrides)) {
+    const idx = defs.findIndex((w: any) => w.name === name)
+    if (idx >= 0) wv[idx] = value
+  }
+  node.data = { ...node.data, widgetsValues: wv }
+}
+
+/** Place/refresh the 4 pad cards at `anchor`. `images` may be [] for the skeleton
+ *  pass (loading shimmer). Reuses ids from sketchPad.cardIds so re-sketches
+ *  overwrite the same slots. Returns the card ids in slot order. */
+function materializeSketchCardsAt(
+  anchor: { x: number, y: number },
+  images: string[],
+  opts: { loading?: boolean } = {},
+): string[] {
+  const slotImages = images.length ? images : ['', '', '', '']
+  const plans = planSketchCardsAt(anchor, slotImages, sketchPad.cardIds)
+  const ids: string[] = []
+  for (const plan of plans) {
+    ids[plan.slot] = plan.id
+    const imageWidgetValue = plan.image ? annotatedImageValueFromViewUrl(plan.image) : null
+    const existing = (nodes.value as any[]).find((n: any) => n.id === plan.id)
+    if (existing) {
+      existing.data = {
+        ...existing.data,
+        images: plan.image ? [plan.image] : existing.data.images,
+        properties: { ...existing.data.properties, sketchLoading: !!opts.loading },
+      }
+      if (imageWidgetValue) patchImageWidget(existing, imageWidgetValue)
+      continue
+    }
+    const node = createNodeData('Image', plan.position, imageWidgetValue ? { image: imageWidgetValue } : undefined, {
+      sketchOutput: true,
+      sketchSourceId: SKETCH_PAD_ID,
+      sketchSlot: plan.slot,
+      sketchPrompt: sketchPad.prompt,
+      sketchSeed: sketchPad.seed,
+      sketchLoading: !!opts.loading,
+    })
+    node.id = plan.id
+    node.data = { ...node.data, images: plan.image ? [plan.image] : [] }
+    ;(nodes.value as any[]).push(node)
+  }
+  sketchPad.cardIds = ids
+  return ids
+}
+
+/** Prompt-bar entry: render 4 cheap Schnell options for `prompt` at the pad. */
+async function startSketch(prompt: string): Promise<void> {
+  const clean = prompt.trim()
+  if (!clean) return
+  sketchPad.prompt = clean
+  sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
+  if (!sketchPad.anchor) sketchPad.anchor = sketchPadAnchor()
+
+  // Lever 1 — optimistic skeleton: 4 shimmer cards appear immediately.
+  materializeSketchCardsAt(sketchPad.anchor, [], { loading: true })
+
+  // Transient hidden pad node drives the proven dispatch pipeline.
+  const { widgetOverrides, propertyOverrides } = sketchPadPromptOverrides(clean, sketchPad.seed)
+  let pad = (nodes.value as any[]).find((n: any) => n.id === SKETCH_PAD_ID) as any
+  if (!pad) {
+    pad = createNodeData('GenerateImageNode', sketchPad.anchor, widgetOverrides, propertyOverrides)
+    pad.id = SKETCH_PAD_ID
+    pad.hidden = true // VueFlow: kept out of the rendered graph
+    ;(nodes.value as any[]).push(pad)
+  } else {
+    applyWidgetOverridesTo(pad, widgetOverrides)
+    pad.position = sketchPad.anchor
+  }
+  await nextTick()
+  // Scoped run of just the pad node (never the whole graph). skipCostConfirm:
+  // sketches are the cheap tier; the meter still bills normally.
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [SKETCH_PAD_ID], direction: 'self', skipCostConfirm: true } }))
 }
 
 // Sketch-output card "Promote" (spec 2026-07-08-sketch-node-refinement.md,
@@ -6159,8 +6283,9 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     // Sketch node (Change 3): its batch result is spread into 4 reused cards
     // by materializeSketchCards at the executed handler, not a single wired
     // auto-sink — skip it here so a sketch run doesn't ALSO grow an extra
-    // Image sink wired to output-0.
-    if (src.data?.properties?.sketch) continue
+    // Image sink wired to output-0. The transient prompt-bar sketch pad
+    // (`sketchPad`) is materialized the same way — never give it an auto-sink.
+    if (src.data?.properties?.sketch || src.data?.properties?.sketchPad) continue
 
     const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
     const srcW = (src.data?.size?.[0] ?? 220) as number
@@ -6418,6 +6543,14 @@ defineExpose({
     captureActiveRunFromTargets([])
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf
+    // A hidden sketch pad must never run on a whole-canvas Run (only via its own
+    // scoped startSketch dispatch) and must stay out of persisted docs — it is
+    // disposable plumbing. The scoped runFiltered([SKETCH_PAD_ID]) path uses
+    // getFilteredWorkflow, so this full-graph-only filter never strips a targeted
+    // pad run. (Unwired, so removing it orphans no links.)
+    if (Array.isArray((wf as any).nodes)) {
+      ;(wf as any).nodes = ((wf as any).nodes as any[]).filter((n: any) => !n?.properties?.sketchPad)
+    }
     // VARS links (Collection → Smart Layout) are intentionally kept here —
     // getWorkflow output must be persistence-safe (snapshotActiveCanvasIntoDoc
     // saves it verbatim for autosave/durable docs). Stripping happens ONLY at
@@ -6462,6 +6595,7 @@ defineExpose({
   agentResolveResultNode,
   agentNodeIntent,
   isApplyingWorkflow: () => applyingWorkflow.value,
+  startSketch,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
   fitView: () => fitView({ padding: 0.2 }),
