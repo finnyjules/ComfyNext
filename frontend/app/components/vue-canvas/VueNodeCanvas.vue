@@ -50,6 +50,7 @@ import { planSketchCards } from '~/lib/sketch/planSketchCards'
 import { planSketchCardsAt, SKETCH_PAD_ID } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
+import { stripSketchProperties } from '~/lib/draft/keepSketchCard'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -3279,6 +3280,24 @@ function handlePromoteSketchOutput(e: Event) {
   }))
 }
 
+/** "Keep" a pad card: it becomes an ordinary Image card and drops out of the
+ *  pad's refresh set, freeing its slot for the next sketch. Pad cards are
+ *  unwired leaf nodes, so no edge fix-up is needed — just strip the sketch
+ *  identity and mint a fresh id (mintNodeId, the same minter every other node
+ *  creation path uses) so a later refresh's reused slot id can never collide
+ *  with the now-independent card. */
+function keepSketchCard(cardId: string): void {
+  const card = (nodes.value as any[]).find((n: any) => n.id === cardId) as any
+  if (!card) return
+  card.data = { ...card.data, properties: stripSketchProperties(card.data?.properties) }
+  card.id = mintNodeId()
+  sketchPad.cardIds = sketchPad.cardIds.filter((id) => id !== cardId)
+}
+function handleKeepSketchCard(e: Event) {
+  const cardId = (e as CustomEvent<{ cardId?: string }>).detail?.cardId
+  if (cardId) keepSketchCard(cardId)
+}
+
 // Character Library panel "Use in image": ready characters (linked LoRA) get a
 // prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
 // seeded from the default variant's cover photo. Always re-fetches the registry
@@ -4172,6 +4191,7 @@ onMounted(() => {
   window.addEventListener('sailor:animateArtifact', handleAnimateArtifact)
   window.addEventListener('sailor:spawnBeside', handleSpawnBeside)
   window.addEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
+  window.addEventListener('sailor:keepSketchCard', handleKeepSketchCard)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -4232,6 +4252,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:animateArtifact', handleAnimateArtifact)
   window.removeEventListener('sailor:spawnBeside', handleSpawnBeside)
   window.removeEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
+  window.removeEventListener('sailor:keepSketchCard', handleKeepSketchCard)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -6609,6 +6630,7 @@ defineExpose({
   agentNodeIntent,
   isApplyingWorkflow: () => applyingWorkflow.value,
   startSketch,
+  keepSketchCard,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
   fitView: () => fitView({ padding: 0.2 }),

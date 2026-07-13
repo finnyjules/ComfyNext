@@ -45,6 +45,8 @@ const {
   // "find me a picture of X" → the model emits searchImages and the picker
   // takes over (search → select → import as Image nodes).
   searchImages: (query: string) => { searchQuery.value = query; searchOpen.value = true },
+  // A typed image idea → the model emits `sketch` and the pad renders 4 options.
+  sketchIdea: (prompt: string) => { if (ready.value) props.vueCanvas.startSketch?.(prompt) },
 })
 
 // Web-image-search picker (opened by the agent's searchImages command).

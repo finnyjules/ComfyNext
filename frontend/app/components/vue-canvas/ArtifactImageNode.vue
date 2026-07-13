@@ -452,6 +452,11 @@ function promoteSketchOutput() {
     detail: { sketchSourceId: (props.data.properties as any)?.sketchSourceId },
   }))
 }
+// Keep: pin this option — VueNodeCanvas strips its sketch identity so it
+// becomes an ordinary Image card and its slot frees for the next sketch.
+function keepSketchCard() {
+  window.dispatchEvent(new CustomEvent('sailor:keepSketchCard', { detail: { cardId: props.id } }))
+}
 
 // Variations ×4: sequential re-runs of the producing generator with fresh
 // seeds; results accumulate in the Takes strip. Needs something upstream to
@@ -1044,7 +1049,14 @@ const promoteUsdLabel = computed(() => {
              so ordinary Image cards are byte-identical. -->
         <div v-if="isSketchOutput" class="nopan nodrag flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
           <button
-            class="flex-1 h-6 rounded-md text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
+            class="flex-1 h-6 rounded-md text-[10px] font-semibold text-white bg-action hover:bg-action/85 transition-colors cursor-pointer"
+            title="Keep this option — it becomes a regular Image card"
+            @click.stop="keepSketchCard"
+          >
+            Keep
+          </button>
+          <button
+            class="h-6 px-2 rounded-md text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
             title="Make this exact image real (high-res)"
             @click.stop="spawnEnhanceClarity"
           >
