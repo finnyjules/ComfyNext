@@ -31,7 +31,7 @@ The prompt bar's agent already classifies free text into commands via `app/lib/a
 
 **Interception.** In `useCanvasAgent.ts`, treat `sketch` like `searchImages`: it is never rendered as a proposal card (`cmd.op === 'sketch'` early-returns in the proposal loop, ~line 130), and in the dispatch block (~line 185) it calls a new `opts.sketchIdea?.(prompt)` callback. `CanvasPromptBar.vue` wires `sketchIdea: (prompt) => vueCanvas.startSketch(prompt)`.
 
-**Zero added latency.** The agent LLM call already fires on every prompt-bar submit. Auto-detect gives the model one more possible output; it does not add a round trip. (A heuristic fast-path — fire the render immediately for an obvious noun-phrase idea and classify in parallel — is a deferred optimization, not v1.)
+**Zero added latency in principle; fast-path in practice.** The agent LLM call already fires on every prompt-bar submit, so auto-detect adds no round trip *versus today's bar*. But for a from-cold sketch we don't want to wait for the classifier at all — the fast-path (§6, lever 2) fires the render immediately for a high-confidence idea and runs the classifier in parallel only to arm the correction chip. It is load-bearing, not deferred.
 
 **Misfire correction is the safety net.** Auto-detect occasionally guesses wrong, so every route is one tap from its opposite:
 - After a sketch fires, a quiet inline chip in the bar: *"Sketched this · edit the canvas instead?"* Tapping re-runs the same text through the agent with a directive prefix forcing edit interpretation (same re-ask mechanism `reroll` already uses).
@@ -77,11 +77,26 @@ The prompt bar replaces the node as the entry; keeping both reintroduces the "th
 
 Everything *downstream* of entry survives and is re-anchored: `planSketchCards`, `sketchOutput` cards, Enhance/Promote, `sketchPromote.ts`.
 
+### 6. Latency budget — making it feel instant
+
+Generation is **Replicate** (`black-forest-labs/flux-schnell`), i.e. ~95% HTTP wait, and `num_outputs: 4` is a **native batch input**: one prediction returns all 4 images in a single queue wait (~20s → what the sequential path would be ~80s). **The batch already wins raw speed and stays** — separate predictions would only change *reveal order* and would cost more (ComfyUI serializes API calls per instance, so real concurrency needs the worker pool + 4× queue exposure). So v1 buys "instant" through *perception and warmth*, not parallelism:
+
+1. **Optimistic skeleton (perceived-instant, ~free).** On submit, 4 shimmer placeholders appear at the resolved clear spot in <100ms and fill in as the batch lands. The UI always responds instantly even when pixels take seconds. This is the single biggest felt-latency win.
+
+2. **Fast-path — don't block on the classifier.** When the text is a high-confidence image idea (empty/near-empty graph, or descriptive phrase with no node-referencing imperative), `startSketch` fires *immediately* and the agent classifier runs in parallel, used only to arm the correction chip. Low-confidence/ambiguous text still waits for the classifier (so we don't fire a paid render on a probable edit). Shaves the ~0.5–1.5s LLM hop off the happy path. Schnell at 0.25MP ×4 is ~$0.01, so a rare fast-path misfire is cheap — but the confidence gate keeps misfires rare.
+
+3. **Speculative warm.** Cold-boot is the worst-case tail (+5–15s). On prompt-bar focus / first keystroke, fire a warm-up ping to the flux-schnell endpoint so the model is hot by submit. Debounced (one warm per idle bar, not per keystroke); cost is a negligible/near-free warm. Removes the cold tail without an always-on paid deployment.
+
+4. **WebP outputs for sketches.** The pad requests `output_format: "webp"` (vs the finisher default PNG) — smaller payload, faster download/decode. Enhance/Promote still produce PNG at full quality.
+
+**Realistic warm path with 1–3:** UI responds <100ms, 4 real images at ~3–5s — about as good as it gets short of a local model or a paid always-on deployment.
+
 ## Non-goals / deferred
 
 - **Contact-sheet history / stacking rows** — explicitly rejected in favor of replace-in-place. Comparison across rounds is not a v1 concern; the Light Table already exists for takes-level compare if needed.
 - **Floating-overlay pad** (options in a panel, not canvas cards) — considered and dropped; diverges too far from the built card machinery.
-- **Heuristic fast-path** for auto-detect latency — deferred; the classifier adds no round trip, so v1 doesn't need it.
+- **Progressive reveal via parallel predictions** — deferred. Only improves time-to-first-pixel, costs more, and needs the worker pool (§6). Revisit only if the batch's atomic reveal still feels slow after warming.
+- **Local / always-on sketch model** — out of scope; would beat Replicate's cold path but is a separate infra bet.
 - **Video / edit-node sketching** — unchanged from prior specs (out of scope).
 - **Remembering the preferred finisher model** for Promote — still deferred.
 - **Per-node/per-sketch model opt-out** — Schnell is the sketch tier, full stop, in v1.
@@ -94,13 +109,15 @@ No new take fields. `sketchOutput` cards already carry the fields Promote/Enhanc
 
 - **Unit:** `sketch` op present in the command surface with routing guidance; classifier routes a bare image idea → `sketch`, an imperative graph edit → not `sketch` (intent-corpus cases); `planSketchCards` anchored to a viewport spot (nearest-clear-spot finder avoids existing cards); keep re-ids a card off the slot registry and frees its slot; Promote/Enhance override builders from a pad card's provenance.
 - **Discovery (§2):** confirm the headless Schnell dispatch yields 4 `executed` images through the bridge and where they land, BEFORE building refresh/keep.
-- **Browser (visuals verified by screenshot before ship):** type an idea → 4 cards bloom at a clear spot; re-sketch → same 4 slots refresh in place; keep → one card lifts out (ring gone), next sketch refills only freed slots; misfire chip flips a sketch into an edit and vice-versa; no Sketch entry in node search; Promote spawns a full generator, Enhance spawns a Clarity node. (Paid-render steps owed to the user as before.)
+- **Unit (latency):** fast-path confidence gate (high-confidence idea → fire before classify; ambiguous → wait); warm-ping debounce (one per idle bar).
+- **Browser (visuals verified by screenshot before ship):** type an idea → skeleton appears immediately, then 4 cards bloom at a clear spot; re-sketch → same 4 slots refresh in place; keep → one card lifts out (ring gone), next sketch refills only freed slots; misfire chip flips a sketch into an edit and vice-versa; no Sketch entry in node search; Promote spawns a full generator, Enhance spawns a Clarity node. (Paid-render steps owed to the user as before.)
 
 ## Sequencing
 
 1. **`sketch` op + classifier routing** — command surface + `useCanvasAgent` interception + `sketchIdea` callback (unit-testable, no UI yet).
-2. **Headless dispatch DISCOVERY** + **`startSketch`** — 4 Schnell to the nearest clear spot, reusing `planSketchCards`.
-3. **Refresh-in-place + keep** — live-slot registry, re-id on keep, nudge-clear.
-4. **Misfire correction chips** — both directions in `CanvasPromptBar`.
-5. **Retire the Sketch node** — remove preset + dead rendering branch.
-6. **Promote/Enhance on pad cards** — verify the reused paths against viewport-anchored cards.
+2. **Headless dispatch DISCOVERY** + **`startSketch`** — 4 Schnell (WebP) to the nearest clear spot, reusing `planSketchCards`, behind an **optimistic skeleton** (lever 1) so the pad appears on submit and fills on completion.
+3. **Fast-path + speculative warm** (levers 2–3) — confidence gate that fires `startSketch` before the classifier resolves; debounced warm ping on bar focus.
+4. **Refresh-in-place + keep** — live-slot registry, re-id on keep, nudge-clear.
+5. **Misfire correction chips** — both directions in `CanvasPromptBar`.
+6. **Retire the Sketch node** — remove preset + dead rendering branch.
+7. **Promote/Enhance on pad cards** — verify the reused paths against viewport-anchored cards.
