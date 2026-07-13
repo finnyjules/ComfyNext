@@ -1074,6 +1074,11 @@ watch(
   () => {
     const hidden = hiddenNodeIdsByGroups()
     for (const n of nodes.value as any[]) {
+      // Sketch pad / hidden sink / speculative-warm nodes own their own `hidden`
+      // flag (they must stay hidden regardless of group membership). Skipping
+      // them here stops this watcher from clobbering `hidden` back to false.
+      const p = n?.data?.properties
+      if (p?.sketchPad || p?.sketchWarm || p?.sketchSink) continue
       const shouldHide = hidden.has(n.id)
       if (!!n.hidden !== shouldHide) n.hidden = shouldHide
     }
@@ -2618,6 +2623,10 @@ function handleBridgeMessage(event: MessageEvent) {
           // no take (and, in turn, never reaches the sketchPad/sketch routing
           // below) regardless of images.length.
           if (target?.data?.properties?.sketchWarm === true) return
+          // Hidden sketch SINK (auto-created just to satisfy ComfyUI's output
+          // requirement): its result is a duplicate of the pad's own executed
+          // batch — discard it so it never double-materializes the grid.
+          if (target?.data?.properties?.sketchSink === true) return
           // Provenance: remember HOW this result was made (prompt/seed/model/…) so
           // a later "breed from this take" can perturb around it. (Direction Loop.)
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
@@ -6361,14 +6370,17 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     const src = snapshot.find((n: any) => n.id === id)
     if (!src) continue
     if (artifactNodeTypes.has(src.data?.nodeType)) continue
-    // `sketch` (Task 8: retired user-facing node, kept here only so a legacy
-    // saved doc's old sketch node doesn't grow a stray auto-sink on load).
-    // The transient prompt-bar sketch pad (`sketchPad`) is materialized
-    // separately — never give it an auto-sink. The speculative-warm
-    // throwaway (`sketchWarm`, Task 7) is discarded outright — it must never
-    // grow a sink either, or a warm-on-focus would silently drop a visible
-    // card onto the canvas.
-    if (src.data?.properties?.sketch || src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm) continue
+    // `sketch` (Task 8: retired user-facing node) never auto-sinks — kept only
+    // so a legacy saved doc's old sketch node doesn't grow a stray sink on load.
+    if (src.data?.properties?.sketch) continue
+    // The prompt-bar sketch pad (`sketchPad`) and the speculative-warm throwaway
+    // (`sketchWarm`) ARE generators and DO need a terminal output node, or
+    // ComfyUI rejects the run ("Prompt has no outputs"). So they get an auto-sink
+    // like any generator — but a HIDDEN one (marked `sketchSink`) so no visible
+    // card lands. The pad's own executed event still carries the batch that
+    // materializeSketchCardsAt spreads into the grid; the sink just satisfies
+    // validation and saves the files.
+    const hiddenSketchSource = !!(src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm)
 
     const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
     const srcW = (src.data?.size?.[0] ?? 220) as number
@@ -6399,6 +6411,9 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
         id: newId,
         type: getVueFlowType(artifactNodeType),
         position,
+        // A sketch pad/warm generator's sink stays hidden (self-managed, exempt
+        // from the group-collapse watcher) so no visible card appears.
+        ...(hiddenSketchSource ? { hidden: true } : {}),
         data: {
           nodeType: artifactNodeType,
           title: schema.info?.display_name || artifactNodeType,
@@ -6414,7 +6429,7 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
             return wv
           })(),
           widgetDefs: schema.widgetDefs,
-          properties: {},
+          properties: hiddenSketchSource ? { sketchSink: true } : {},
           mode: 0,
           size: [240, 280],
           category: schema.info?.category || '',
@@ -6633,8 +6648,11 @@ defineExpose({
     // pad run. (Unwired, so removing it orphans no links.) The speculative-warm
     // node (`sketchWarm`, Task 7) is the same kind of disposable plumbing —
     // strip it too so it never persists into a saved doc or rides a full Run.
+    // Their hidden auto-created sinks (`sketchSink`) are the same disposable
+    // plumbing — strip them too (and their now-orphaned wiring edge is dropped
+    // by the link reassembly, which skips edges whose endpoints are absent).
     if (Array.isArray((wf as any).nodes)) {
-      ;(wf as any).nodes = ((wf as any).nodes as any[]).filter((n: any) => !n?.properties?.sketchPad && !n?.properties?.sketchWarm)
+      ;(wf as any).nodes = ((wf as any).nodes as any[]).filter((n: any) => !n?.properties?.sketchPad && !n?.properties?.sketchWarm && !n?.properties?.sketchSink)
     }
     // VARS links (Collection → Smart Layout) are intentionally kept here —
     // getWorkflow output must be persistence-safe (snapshotActiveCanvasIntoDoc
