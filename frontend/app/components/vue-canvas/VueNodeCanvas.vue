@@ -87,7 +87,7 @@ import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { coverFirstRefs } from '~/composables/useCharacters'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
-import { runStudioCascade } from '~/lib/studio/cascade'
+import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, type CascadeDeps } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -3221,11 +3221,11 @@ function handleAddCharacterCastNode(e: Event) {
 // Studio render cascade: a studio node's footer "Render" button re-bakes it and
 // (for the downstream scope) every chained studio, updating the image node between
 // each, then hands any real backend tail to the existing filtered run.
-async function handleStudioRender(e: Event) {
-  const detail = (e as CustomEvent<{ sourceNodeId: string; scope?: 'self' | 'upstream' | 'downstream' }>).detail
-  if (!detail?.sourceNodeId) return
+// Side-effect deps for the studio cascade — shared by the footer Render button
+// (handleStudioRender) and the pre-run bake (bakeUpstreamStudios).
+async function studioCascadeDeps(): Promise<CascadeDeps> {
   const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
-  await runStudioCascade(detail.sourceNodeId, detail.scope ?? 'self', {
+  return {
     getNodes: () => nodes.value as any[],
     getEdges: () => edges.value as any[],
     upload: async (blob, prefix) => { const [f] = await uploadFrameBatch([blob], prefix); return f ?? null },
@@ -3235,7 +3235,28 @@ async function handleStudioRender(e: Event) {
       const n = (nodes.value as any[]).find(x => String(x.id) === String(nodeId))
       if (n) { if (!n.data) n.data = {}; (n.data as any).studioBusy = busy }
     },
-  })
+  }
+}
+
+async function handleStudioRender(e: Event) {
+  const detail = (e as CustomEvent<{ sourceNodeId: string; scope?: 'self' | 'upstream' | 'downstream' }>).detail
+  if (!detail?.sourceNodeId) return
+  await runStudioCascade(detail.sourceNodeId, detail.scope ?? 'self', await studioCascadeDeps())
+}
+
+// Bake+publish every studio upstream of a run's targets BEFORE it submits.
+// Studios are frontend-only (no backend class_type), so a run strips them — an
+// image node fed by an un-baked studio would otherwise run with a null input and
+// render nothing (that's the "studio doesn't render the image" bug). Baking each
+// (scope 'self' → no backend tail) publishes its output onto the downstream image
+// node, which the run then serializes as a real uploaded input. `targetIds`
+// omitted = every studio (a global Run loads the whole graph).
+async function bakeUpstreamStudios(targetIds?: string[]): Promise<void> {
+  const ids = planStudiosToBakeForRun(targetIds, nodes.value as any[], edges.value as any[])
+    .filter(hasStudioBaker)   // skip unmounted/off-screen studios (can't bake)
+  if (!ids.length) return
+  const deps = await studioCascadeDeps()
+  for (const id of ids) await runStudioCascade(id, 'self', deps)
 }
 
 /** Write a studio's fresh output to its downstream image node(s) (create one if none).
@@ -6423,6 +6444,7 @@ defineExpose({
   injectSmartLayoutCollectionVars,
   injectAssetRegistry,
   materializeAutoImageSinks,
+  bakeUpstreamStudios,
   getNodes: () => nodes.value,
   selectedNode,
   selectNode,

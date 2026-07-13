@@ -32,6 +32,20 @@ export interface RunnerProvider {
 const ACTIVE: TrainingStatus[] = ['starting', 'processing']
 
 /**
+ * How long a 'starting' job may sit without a replicateId before it's presumed
+ * crash debris. Generous vs. a normal start (a few Replicate API calls, seconds)
+ * because several server processes can tick the same registry file (parallel
+ * dev servers): a job another process reserved moments ago is indistinguishable
+ * from a crashed start except by age. An unparseable updatedAt counts as stale
+ * so a mangled entry can't hold a concurrency slot forever.
+ */
+const STALE_START_MS = 3 * 60_000
+
+function isStale(job: TrainingJob, now: number): boolean {
+  return !(now - Date.parse(job.updatedAt) <= STALE_START_MS)
+}
+
+/**
  * One tick: poll everything in flight, then start as many queued jobs as the
  * concurrency cap allows. Errors on a single job never abort the tick — they're
  * recorded on that job (poll) or retried next tick (left as-is).
@@ -43,12 +57,15 @@ export async function tickQueue(
 ): Promise<void> {
   const jobs = await store.list()
 
-  // 0. Reap interrupted starts. A job left 'starting' with no replicateId means
-  //    the process crashed between reserving the slot (step 2) and persisting
-  //    the Replicate id. We can't re-start it (would risk a duplicate, billed
-  //    training) nor poll it (no id → stuck forever holding a slot), so fail it
-  //    and let the user resubmit.
-  const interrupted = jobs.filter(j => j.status === 'starting' && !j.replicateId)
+  // 0. Reap interrupted starts. A job left 'starting' with no replicateId for
+  //    longer than the grace window means the process crashed between reserving
+  //    the slot (step 2) and persisting the Replicate id. We can't re-start it
+  //    (would risk a duplicate, billed training) nor poll it (no id → stuck
+  //    forever holding a slot), so fail it and let the user resubmit. Fresh
+  //    ones are left alone: another process ticking the same registry may be
+  //    mid-start right now.
+  const now = Date.now()
+  const interrupted = jobs.filter(j => j.status === 'starting' && !j.replicateId && isStale(j, now))
   await Promise.all(interrupted.map(j => store.update(
     j.id,
     { status: 'failed', error: 'Training start was interrupted (server restart) before it was confirmed. Please resubmit.' },

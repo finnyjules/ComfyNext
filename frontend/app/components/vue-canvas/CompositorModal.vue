@@ -2910,7 +2910,7 @@ onUnmounted(() => {
         <div class="p-4 flex-1 min-h-0 overflow-y-auto">
           <AgentProgress v-if="caBusy" :active="caBusy" />
           <div v-else-if="caReviewing && !caHasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-            <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+            <span class="text-white/75">✦</span> Analyzing the result for imperfections<span class="animate-pulse">…</span>
           </div>
           <AgentProposal
             v-else-if="caHasProposal"

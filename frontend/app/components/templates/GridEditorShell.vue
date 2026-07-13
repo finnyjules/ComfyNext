@@ -449,7 +449,7 @@ function onPickImage(url: string) {
           <div class="min-h-0 flex-1 overflow-y-auto p-3">
             <AgentProgress v-if="agentBusy" :active="agentBusy" />
             <div v-else-if="agentReviewing && !agentHasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-              <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+              <span class="text-white/75">✦</span> Analyzing the result for imperfections<span class="animate-pulse">…</span>
             </div>
             <AgentProposal
               v-else-if="agentHasProposal"

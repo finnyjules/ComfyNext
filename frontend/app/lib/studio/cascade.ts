@@ -143,6 +143,34 @@ export function planStudioUpstream(startId: string, nodes: WalkNode[], edges: Wa
   return studios
 }
 
+/**
+ * Studios a run must bake+publish BEFORE it strips frontend-only nodes. Studios
+ * have no backend class_type, so a run drops them (`stripFrontendOnlyNodes`) —
+ * without baking first, the downstream image node executes with a null image
+ * input and renders nothing. This returns every studio upstream of (or equal to)
+ * a run target, upstream-first and deduped, so baking them in order leaves each
+ * downstream image node holding a real uploaded input.
+ *
+ * Pass no `targetIds` (a global Run loads the whole graph) to mean "every studio",
+ * still ordered upstream-first so a studio→studio chain bakes head-first.
+ */
+export function planStudiosToBakeForRun(
+  targetIds: string[] | undefined,
+  nodes: WalkNode[],
+  edges: WalkEdge[],
+): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (id: string) => { if (!seen.has(id)) { seen.add(id); out.push(id) } }
+  // planStudioUpstream returns a node's upstream studios first, then the node
+  // itself iff it is a studio — exactly the set+order each target needs.
+  const roots = (targetIds && targetIds.length)
+    ? targetIds.map(String)
+    : nodes.filter(isStudioNode).map(n => String(n.id))
+  for (const r of roots) for (const s of planStudioUpstream(r, nodes, edges)) push(String(s))
+  return out
+}
+
 export interface CascadeDeps {
   getNodes: () => WalkNode[]
   getEdges: () => WalkEdge[]

@@ -130,7 +130,7 @@ export function defaultConfig(): ShaderStudioConfig {
     post: {
       blur: { enabled: false, focusX: 0.5, focusY: 0.5, range: 0.2, aperture: 0.25, maxBlur: 8 },
       chromatic: { enabled: false, amount: 0.3 },
-      bloom: { enabled: false, threshold: 0.75, intensity: 0.8, radius: 64 },
+      bloom: { enabled: false, threshold: 0.5, intensity: 1.5, radius: 64 },
     },
     motion: { duration: 4, fps: 30, tracks: [] },
   }

@@ -85,7 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
             <AgentProgress v-if="agent.busy.value" :active="agent.busy.value" />
             <div v-else-if="agent.reviewing?.value && !agent.hasProposal.value" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-              <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+              <span class="text-white/75">✦</span> Analyzing the result for imperfections<span class="animate-pulse">…</span>
             </div>
             <AgentProposal
               v-else-if="agent.hasProposal.value"

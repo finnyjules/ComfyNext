@@ -26,18 +26,25 @@ export interface CharacterClient {
 
 const characters = ref<CharacterClient[]>([])
 const loading = ref(false)
+const error = ref('')
 let fetchedOnce = false
 let listenerBound = false
 
 async function refresh(): Promise<void> {
   loading.value = true
+  error.value = ''
   try {
     const res = await fetch('/api/characters-local')
     if (res.ok) {
       const data = await res.json() as { characters?: CharacterClient[] }
       characters.value = data.characters ?? []
+    } else {
+      error.value = `Could not load characters (HTTP ${res.status})`
     }
-  } catch { /* offline — keep last known list */ }
+  } catch (err: any) {
+    // Offline / server restarting — keep the last known list, surface the miss.
+    error.value = err?.message || 'Could not load characters'
+  }
   finally { fetchedOnce = true; loading.value = false }
 }
 
@@ -122,7 +129,7 @@ export function useCharacters() {
     return f ? viewRefUrl(f) : null
   }
 
-  return { characters, loading, refresh, resolveVariantRefs, resolveRefs, coverUrl }
+  return { characters, loading, error, refresh, resolveVariantRefs, resolveRefs, coverUrl }
 }
 
 // ---------------------------------------------------------------------------

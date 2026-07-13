@@ -24,6 +24,7 @@ import {
   type LoRALibraryEntry,
 } from '~/data/lora-library'
 import { useNodeSearch } from '~/composables/useNodeSearch'
+import { useLocalLoras, type LocalLora } from '~/composables/useLocalLoras'
 import StyleHubModal from '~/components/StyleHubModal.vue'
 
 defineEmits<{ close: [] }>()
@@ -180,29 +181,10 @@ onMounted(() => {
 })
 
 // ── Your trained LoRAs (local models/loras + sidecars) ────────────────────
-interface LocalLora {
-  filename: string
-  name: string
-  baseModel: string | null
-  provider: string
-  trigger: string | null
-  aesthetic: string | null
-  kind: 'character' | 'style' | null
-  url: string | null
-  coverUrl: string | null
-  trainedOn: string | null
-  sizeBytes: number | null
-}
-const localLoras = ref<LocalLora[]>([])
-async function fetchLocalLoras() {
-  try {
-    const res = await fetch('/api/loras-local')
-    if (!res.ok) return
-    const data = await res.json() as { loras: LocalLora[] }
-    localLoras.value = data.loras || []
-  } catch { /* offline — just show the curated library */ }
-}
-onMounted(fetchLocalLoras)
+// Shared cached client with loading/error state, so the tab can show a
+// spinner or a retry line instead of a false "No trained styles yet."
+const { loras: localLoras, loading: lorasLoading, error: lorasError, refresh: refreshLocalLoras } = useLocalLoras()
+onMounted(() => { void refreshLocalLoras() })
 
 const visibleLocal = computed<LocalLora[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -211,6 +193,13 @@ const visibleLocal = computed<LocalLora[]>(() => {
   return localStyleLoras.value.filter(l =>
     !q || l.name.toLowerCase().includes(q) || l.filename.toLowerCase().includes(q))
 })
+
+// Loading/error only gate the "Your Styles" tab — the Legacy library is a
+// static import and can't fail.
+const showLorasLoading = computed(() =>
+  activeTab.value === 'Your Styles' && lorasLoading.value && !visibleLocal.value.length)
+const showLorasError = computed(() =>
+  activeTab.value === 'Your Styles' && !lorasLoading.value && !!lorasError.value)
 
 function useLocalLora(l: LocalLora) {
   // The style block (aesthetic + trigger) goes in the node's collapsed
@@ -370,8 +359,25 @@ function clearSearch() {
           </button>
       </div>
 
+      <!-- Loading: the trained-styles fetch is pending — never show the
+           "No trained styles yet" empty state while we simply don't know. -->
+      <div v-if="showLorasLoading" class="py-12 text-center text-xs text-white/40">
+        Loading your styles…
+      </div>
+
+      <!-- Fetch failed: say so, offer a retry (stale list, if any, stays). -->
+      <div v-else-if="showLorasError" class="px-4 py-3 text-center text-xs text-amber-400/90">
+        {{ lorasError }}
+        <button
+          class="block mx-auto mt-2 text-white/70 hover:text-white underline underline-offset-2 cursor-pointer"
+          @click="refreshLocalLoras()"
+        >
+          Retry
+        </button>
+      </div>
+
       <div
-        v-if="visibleEntries.length === 0 && !visibleLocal.length"
+        v-else-if="visibleEntries.length === 0 && !visibleLocal.length"
         class="px-4 py-12 text-center text-xs text-white/40"
       >
         <template v-if="searchQuery.trim()">

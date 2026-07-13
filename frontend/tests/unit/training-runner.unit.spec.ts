@@ -158,6 +158,31 @@ describe('tickQueue polling + finalize', () => {
     expect((prov.start as any).mock.calls.some((c: any[]) => c[0].id === 'q1')).toBe(true)
   })
 
+  it('leaves a fresh starting-with-no-id job alone (a concurrent process may be mid-start)', async () => {
+    // Multiple dev servers tick the same registry file. A job another process
+    // reserved seconds ago looks identical to crash debris except for its age —
+    // so only stale entries may be reaped. Fresh ones keep their slot.
+    const fresh = job({ status: 'starting', id: 's1', replicateId: undefined, updatedAt: new Date().toISOString() })
+    const store = memStore([fresh, job({ id: 'q1' })])
+    const prov = provider()
+    await tickQueue(store, prov, 1)
+    const s1 = store.jobs.find(j => j.id === 's1')!
+    expect(s1.status).toBe('starting')
+    expect(s1.error).toBeFalsy()
+    // It still holds its concurrency slot, and it can't be polled (no id yet).
+    expect(prov.start).not.toHaveBeenCalled()
+    expect(prov.poll).not.toHaveBeenCalled()
+  })
+
+  it('reaps a starting-with-no-id job whose updatedAt is unparseable', async () => {
+    // A mangled timestamp must count as stale, not immortal — otherwise the
+    // job holds a concurrency slot forever.
+    const store = memStore([job({ status: 'starting', id: 's1', replicateId: undefined, updatedAt: 'not-a-date' })])
+    const prov = provider()
+    await tickQueue(store, prov, 1)
+    expect(store.jobs.find(j => j.id === 's1')!.status).toBe('failed')
+  })
+
   it('reserves a queued job as starting before calling provider.start (crash-safe ordering)', async () => {
     // If start() rejects, the job must end failed (reserved then failed), and
     // it must never be left as plain 'queued' which a restart would re-run.

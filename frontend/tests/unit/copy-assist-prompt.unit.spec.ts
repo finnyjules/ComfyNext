@@ -50,6 +50,28 @@ describe('buildCopyAssistPrompt', () => {
     expect(p).toContain('Announce a flash sale')
   })
 
+  it('variations mode: no instruction → byte-identical to the default (no direction line)', () => {
+    const p = buildCopyAssistPrompt(base)
+    expect(p).not.toContain('Direction')
+    expect(p).toContain("Preserve the original's intent and tone")
+  })
+
+  it('variations mode: an instruction is injected and marked as overriding length', () => {
+    const p = buildCopyAssistPrompt({ ...base, instruction: 'Make each option noticeably shorter and tighter.' })
+    expect(p).toContain('Make each option noticeably shorter and tighter.')
+    expect(p).toContain('Direction')
+    expect(p.toLowerCase()).toContain('take priority over the length')
+    // Still varies the hook, still an ad-copy register.
+    expect(p.toLowerCase()).toContain('hook')
+    expect(p).toContain('±20%')
+  })
+
+  it('brief mode: an instruction is ignored (variations-only)', () => {
+    const p = buildCopyAssistPrompt({ apiKey: 'x', mode: 'brief', text: '', brief: 'Announce a flash sale', instruction: 'make it shorter' })
+    expect(p).not.toContain('Direction')
+    expect(p).toContain('Announce a flash sale')
+  })
+
   it('translate mode: marketing localization, one option per language, tags language', () => {
     const req: CopyAssistRequest = {
       apiKey: 'x',

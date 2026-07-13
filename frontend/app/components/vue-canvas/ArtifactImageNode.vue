@@ -165,6 +165,7 @@ const FX_PRESET = 'pixels-organic' as const
 let fxFinishing = false   // generation stopped; settle as soon as a reveal lands
 let fxRevealing = false   // a result reveal is mid-flight
 let fxSettleTimer: ReturnType<typeof setTimeout> | undefined
+let fxDisposeTimer: ReturnType<typeof setTimeout> | undefined
 
 function clearSettle() {
   if (fxSettleTimer) { clearTimeout(fxSettleTimer); fxSettleTimer = undefined }
@@ -174,14 +175,25 @@ function startFx() {
   const stage = stageRef.value, sc = shaderFxCanvas.value, rc = revealFxCanvas.value
   if (!stage || !sc || !rc) return
   clearSettle()
+  // A new generation cancels any pending teardown from the last one (fast
+  // re-rolls) so we never dispose the fx mid-run.
+  if (fxDisposeTimer) { clearTimeout(fxDisposeTimer); fxDisposeTimer = undefined }
   fxFinishing = false
-  fxActive.value = true
   if (!fx.isMounted()) fx.mount(sc, rc, stage, { preset: FX_PRESET, theme: 'dark' })
+  else fx.reset()   // reused across re-rolls: drop the previous held image → clean idle churn
   fxCardBg.value = fx.cardBg()
   fx.churn()
-  // Dissolve the currently shown image into the churn, if there is one.
   const prev = displayedUrl.value
-  if (prev) fx.boilFrom(prev)
+  if (prev) {
+    // Dissolve the CURRENTLY shown image into the churn. Keep the fx hidden until
+    // the old image is HELD, so the node's <img> stays visible up to that moment
+    // and the churn never flashes before the image breaks apart.
+    fx.boilFrom(prev, () => { fxActive.value = true })
+    // Fallback: reveal the fx anyway if the boil seed stalls or the result races in.
+    window.setTimeout(() => { fxActive.value = true }, 300)
+  } else {
+    fxActive.value = true   // no prior image: just show the churn
+  }
 }
 
 function teardownFx() {
@@ -189,7 +201,11 @@ function teardownFx() {
   fxFinishing = false
   if (!fxActive.value) return
   fxActive.value = false                       // opacity fade out (260ms)
-  window.setTimeout(() => fx.dispose(), 300)   // release the GL context after the fade
+  if (fxDisposeTimer) clearTimeout(fxDisposeTimer)
+  // IDLE, don't dispose: img-fx tears down its shared WebGL renderer when the
+  // last instance is disposed, so disposing per generation kills the effect on
+  // the next re-roll. Keep the instance mounted+paused; dispose only on unmount.
+  fxDisposeTimer = setTimeout(() => { fx.idle(); fxDisposeTimer = undefined }, 300)
 }
 
 async function revealFxResult(url: string) {
@@ -214,7 +230,7 @@ watch(upstreamRunning, (on) => {
   fxSettleTimer = setTimeout(teardownFx, fxRevealing ? 3500 : 500)
 })
 
-onUnmounted(() => { clearSettle(); fx.dispose() })
+onUnmounted(() => { clearSettle(); if (fxDisposeTimer) clearTimeout(fxDisposeTimer); fx.dispose() })
 
 // Image URL — execution output wins, falling back to the file widget. When
 // upstream is connected but the node hasn't run yet, this returns null (we
@@ -775,21 +791,25 @@ const promoteUsdLabel = computed(() => {
       <div ref="stageRef" class="relative">
       <!-- img-fx "image generation" effect — the churning pixel-cell field and
            per-cell image reveal, layered UNDER the glimm sweep. Existing image
-           boils into the churn; the new result dissolves out of it. -->
-      <canvas
-        ref="shaderFxCanvas"
-        class="absolute inset-0 w-full h-full pointer-events-none z-10"
-        :style="{
-          opacity: fxActive ? 1 : 0,
-          transition: 'opacity 260ms ease',
-          background: fxActive ? fxCardBg : 'transparent',
-        }"
-      />
-      <canvas
-        ref="revealFxCanvas"
-        class="absolute inset-0 w-full h-full pointer-events-none z-[11]"
+           boils into the churn; the new result dissolves out of it.
+           The fade lives on THIS wrapper, not the canvases: img-fx drives each
+           canvas's own opacity for its reveal/boil cross-fade, so binding opacity
+           on them directly would fight it (the churn wouldn't persist through a
+           boil). -->
+      <div
+        class="absolute inset-0 z-10 pointer-events-none"
         :style="{ opacity: fxActive ? 1 : 0, transition: 'opacity 260ms ease' }"
-      />
+      >
+        <canvas
+          ref="shaderFxCanvas"
+          class="absolute inset-0 w-full h-full"
+          :style="{ background: fxActive ? fxCardBg : 'transparent' }"
+        />
+        <canvas
+          ref="revealFxCanvas"
+          class="absolute inset-0 w-full h-full"
+        />
+      </div>
       <!-- Glimm prism sweep — runs while the upstream generator is active. -->
       <canvas
         ref="sweepCanvas"

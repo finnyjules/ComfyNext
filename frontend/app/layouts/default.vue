@@ -1082,12 +1082,19 @@ async function handleRunFiltered(e: Event) {
   // text-autofill dance that an explicit Run does.
   const live = detail?.live === true
   const expanded = vueCanvasRef.value?.materializeAutoImageSinks?.(targetIds) ?? targetIds
+  // Bake any frontend-only studio upstream of the targets first: the run strips
+  // studios (no backend class_type), so without this the downstream image node
+  // runs with a null input and renders nothing ("studio doesn't render").
+  await vueCanvasRef.value?.bakeUpstreamStudios?.(expanded)
   if (!live && await maybeRunWithTextAutofill(expanded, { rerollScope, direction })) return
   runVueWorkflow(expanded, { rerollScope, live, direction, takes })
 }
 async function handleRunAll() {
   // Auto-sink materialization lives inside runVueWorkflow now (so the
   // top-right Run button, which calls it directly, also benefits).
+  // Bake every frontend-only studio first — a global Run strips them, so an
+  // un-baked studio's downstream image node would otherwise run null-input.
+  await vueCanvasRef.value?.bakeUpstreamStudios?.()
   if (await maybeRunWithTextAutofill(undefined)) return
   runVueWorkflow()
 }
@@ -1434,6 +1441,11 @@ function saveDurableVersion(tab: any, doc: any) {
 //     would re-trip live-run watchers);
 //   - refuses to write while the canvas is still applying a workflow prop —
 //     getWorkflow() would return the PREVIOUS canvas and clobber this slot;
+//   - refuses to write while this tab's workflow hasn't finished loading
+//     (currentProjectTabId lags until loadWorkflowForTab completes) — the
+//     canvas is still showing the PREVIOUS tab's graph, and serializing it
+//     here is exactly how a fresh "New Project" ended up with a duplicate
+//     of the old project's graph;
 //   - refuses empty snapshots (canvas mid-unmount), matching the old guard.
 // The workflow write goes through toRaw so saving the ACTIVE canvas doesn't
 // swap the :workflow prop reference and trigger a pointless graph rebuild.
@@ -1441,7 +1453,7 @@ function saveDurableVersion(tab: any, doc: any) {
 // save (so a not-yet-loaded tab keeps its durable-load path on revisit).
 function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
   const canvas = vueCanvasRef.value
-  const settled = canvas?.getWorkflow && !canvas.isApplyingWorkflow?.()
+  const settled = canvas?.getWorkflow && !canvas.isApplyingWorkflow?.() && currentProjectTabId === tabId
   const snapshot = settled ? canvas.getWorkflow({ reroll: false }) : null
   if (snapshot) snapshot.extra = { ...(snapshot.extra || {}) }
   const hasSnapshot = !!snapshot && (snapshot.nodes?.length ?? 0) > 0
@@ -1804,8 +1816,8 @@ watch(canvasReady, (v) => { if (v) hasBeenReady.value = true })
 // is loading; the label reflects which.
 const backendBusy = computed(() => !canvasReady.value || workflowLoading.value)
 const backendLabel = computed(() => {
-  if (!backendUp.value) return hasBeenReady.value ? 'Reconnecting to ComfyUI…' : 'Starting ComfyUI…'
-  if (!bridgeReady.value) return 'Loading ComfyUI…'
+  if (!backendUp.value) return hasBeenReady.value ? 'Reconnecting to engine…' : 'Starting engine…'
+  if (!bridgeReady.value) return 'Loading engine…'
   return 'Loading workflow…'
 })
 
@@ -2077,6 +2089,14 @@ async function loadWorkflowForTab(tab: any) {
     // Vue mode: store the doc directly (no iframe needed) — the canvas reads
     // its active canvas via the activeTabWorkflow computed.
     if (!saved) {
+      // Assign a blank doc SYNCHRONOUSLY, before any await. Until this tab has
+      // a doc, activeTabWorkflow is undefined and the canvas keeps rendering
+      // the PREVIOUS tab's graph — so a slow fetch below made a fresh "New
+      // Project" open as a visual duplicate of the old project (and any
+      // snapshot during that window persisted the duplicate durably).
+      const placeholder = toProjectDoc(makeBlankWorkflow())
+      savedWorkflows[tab.id] = placeholder
+
       // Phase 0 (3b): if this tab is tied to a durable Project, prefer its saved
       // version — it's the freshest cross-session state (written by 3a on
       // switch/unload), fresher than /history. Strictly a fallback: only runs
@@ -2084,29 +2104,31 @@ async function loadWorkflowForTab(tab: any) {
       // existing history/blank path if the project or its version is absent.
       // The durable body may be a whole ProjectDoc (new saves) or a bare
       // workflow (old ones) — toProjectDoc normalizes either.
-      let durableBody: any = null
+      let body: any = null
       if (tab.projectUuid) {
         const loaded = await useProjects().loadProject(tab.projectUuid)
-        durableBody = loaded?.currentVersion?.workflow || null
+        body = loaded?.currentVersion?.workflow || null
       }
-      if (docHasContent(durableBody)) {
-        savedWorkflows[tab.id] = toProjectDoc(durableBody)
-      }
-      else if (tab.promptId) {
-        const workflow = await fetchWorkflowFromHistory(tab.promptId)
-        savedWorkflows[tab.id] = toProjectDoc(workflow || makeBlankWorkflow())
-      }
-      else if (tab.workflowId) {
-        // Try to load from recent workflows API
-        try {
-          const res = await fetch(`/api/workflows/${tab.workflowId}`)
-          const data = await res.json()
-          savedWorkflows[tab.id] = toProjectDoc(data?.workflow || makeBlankWorkflow())
+      if (!docHasContent(body)) {
+        if (tab.promptId) {
+          body = await fetchWorkflowFromHistory(tab.promptId)
         }
-        catch { savedWorkflows[tab.id] = toProjectDoc(makeBlankWorkflow()) }
+        else if (tab.workflowId) {
+          // Try to load from recent workflows API
+          try {
+            const res = await fetch(`/api/workflows/${tab.workflowId}`)
+            const data = await res.json()
+            body = data?.workflow || null
+          }
+          catch { body = null }
+        }
       }
-      else {
-        savedWorkflows[tab.id] = toProjectDoc(makeBlankWorkflow())
+      // Swap the real content in only if the placeholder is still what's
+      // stored — if something already replaced it (community template,
+      // canvas snapshot), that state is newer than what we fetched. toRaw:
+      // savedWorkflows is reactive, so reading back yields a proxy.
+      if (docHasContent(body) && toRaw(savedWorkflows[tab.id]) === placeholder) {
+        savedWorkflows[tab.id] = toProjectDoc(body)
       }
     }
   }
@@ -2176,7 +2198,10 @@ watch(activeTabId, async (newId, oldId) => {
     if (vueNodesEnabled.value) {
       snapshotActiveCanvasIntoDoc(oldTab.id)
     }
-    else if (sharedIframeReady) {
+    else if (sharedIframeReady && currentProjectTabId === oldTab.id) {
+      // Same guard as the Vue path: if this tab's workflow never finished
+      // loading, the iframe still shows the PREVIOUS tab's graph — saving it
+      // here would duplicate that graph into this tab's doc.
       const workflow = await getWorkflowFromIframe()
       if (workflow && (workflow.nodes?.length ?? 0) > 0) {
         const doc = toProjectDoc(savedWorkflows[oldTab.id])

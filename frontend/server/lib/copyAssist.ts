@@ -16,6 +16,9 @@ export interface CopyAssistRequest {
   brief?: string
   languages?: string[]
   count?: number
+  /** Variations-only: an explicit rewrite direction (e.g. "make it shorter").
+   *  Takes priority over the length rule so nudges like Shorter actually shrink. */
+  instruction?: string
   context?: CopyAssistContext
 }
 
@@ -80,15 +83,16 @@ ${ALWAYS_RULES}
   }
 
   // variations (default)
+  const instruction = req.instruction?.trim()
   return `You are a copywriter generating ad copy variations for a design layout slot.
 
 Original copy: "${req.text}"
 ${contextLines(req.context)}
-Write ${count} variations of this copy.
+Write ${count} variations of this copy.${instruction ? `\n\nDirection — apply to every option, and let it take priority over the length guidance below: ${instruction}` : ''}
 
 Rules:
 ${ALWAYS_RULES}
-- Preserve the original's intent and tone, but vary the hook/angle across options.`
+- Preserve the original's intent${instruction ? ' while following the direction above' : ' and tone'}, but vary the hook/angle across options.`
 }
 
 /** Structured-output JSON schema. `language` is required per-option only in

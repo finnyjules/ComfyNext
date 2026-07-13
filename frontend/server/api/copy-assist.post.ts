@@ -20,9 +20,14 @@ export default defineEventHandler(async (event) => {
   let text: string | undefined
   let brief: string | undefined
   let languages: string[] | undefined
+  let instruction: string | undefined
 
   if (mode === 'variations' || mode === 'translate') {
     text = requireString(body?.text, 'text', MAX_PHRASE_CHARS)
+  }
+  // Variations-only rewrite direction (Shorter / Punchier). Optional.
+  if (mode === 'variations' && typeof body?.instruction === 'string' && body.instruction.trim()) {
+    instruction = requireString(body.instruction, 'instruction', MAX_PHRASE_CHARS)
   }
   if (mode === 'brief') {
     brief = requireString(body?.brief, 'brief', MAX_PHRASE_CHARS)
@@ -44,6 +49,7 @@ export default defineEventHandler(async (event) => {
     text: text || '',
     brief,
     languages,
+    instruction,
     count: typeof body?.count === 'number' ? body.count : undefined,
     context: body?.context && typeof body.context === 'object' ? body.context : undefined,
   }

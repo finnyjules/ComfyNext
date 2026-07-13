@@ -22,6 +22,7 @@ export interface CopyAssistPayload {
   brief?: string
   languages?: string[]
   count?: number
+  instruction?: string
   context?: CopyAssistContext
 }
 

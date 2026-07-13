@@ -151,7 +151,7 @@ const hasResult = computed(() => busy.value || reviewing.value || hasProposal.va
         </div>
         <!-- Run→look→fix: looking at the result before any fixes are surfaced. -->
         <div v-if="reviewing && !hasProposal" class="flex items-center gap-1.5 text-[11.5px] text-white/55">
-          <span class="text-white/75">✦</span> Looking at the result<span class="animate-pulse">…</span>
+          <span class="text-white/75">✦</span> Analyzing the result for imperfections<span class="animate-pulse">…</span>
         </div>
         <AgentProposal
           v-if="hasProposal"

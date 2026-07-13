@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isStudioNode, isArtifactNode, planStudioCascade, planStudioUpstream,
+  planStudiosToBakeForRun,
   type WalkNode, type WalkEdge,
 } from '~/lib/studio/cascade'
 
@@ -75,5 +76,28 @@ describe('planStudioUpstream', () => {
   })
   it('a chain head has only itself', () => {
     expect(planStudioUpstream('S1', baseNodes, baseEdges)).toEqual(['S1'])
+  })
+})
+
+describe('planStudiosToBakeForRun', () => {
+  // The reported bug: a run targeting an image node fed by a studio must bake
+  // that studio first (the run strips it), else the image node runs null-input.
+  it('bakes the studio upstream of a targeted image node', () => {
+    expect(planStudiosToBakeForRun(['A1'], baseNodes, baseEdges)).toEqual(['S1'])
+  })
+  it('bakes a studio→studio chain head-first for a downstream target', () => {
+    expect(planStudiosToBakeForRun(['A2'], baseNodes, baseEdges)).toEqual(['S1', 'S2'])
+  })
+  it('includes a target that is itself a studio', () => {
+    expect(planStudiosToBakeForRun(['S2'], baseNodes, baseEdges)).toEqual(['S1', 'S2'])
+  })
+  it('dedupes studios shared across multiple targets', () => {
+    expect(planStudiosToBakeForRun(['A1', 'A2'], baseNodes, baseEdges)).toEqual(['S1', 'S2'])
+  })
+  it('no targets → every studio, upstream-first', () => {
+    expect(planStudiosToBakeForRun(undefined, baseNodes, baseEdges)).toEqual(['S1', 'S2'])
+  })
+  it('a target with no upstream studio bakes nothing', () => {
+    expect(planStudiosToBakeForRun(['L'], baseNodes, baseEdges)).toEqual([])
   })
 })

@@ -38,6 +38,28 @@ describe('useCharacters', () => {
     expect(characters.value).toEqual([])
   })
 
+  it('surfaces fetch failures via error, and clears it when a retry succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, error, refresh } = useCharacters()
+    await refresh()
+    expect(error.value).toBeTruthy()
+    await refresh()
+    expect(error.value).toBe('')
+    expect(characters.value).toHaveLength(1)
+  })
+
+  it('surfaces a non-ok response status via error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { error, refresh } = useCharacters()
+    await refresh()
+    expect(error.value).toContain('500')
+  })
+
   it('resolveVariantRefs picks the named variant and falls back to default for unknown ids', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
     vi.stubGlobal('fetch', fetchMock)

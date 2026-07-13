@@ -54,7 +54,7 @@ import { buildDressPrompt, DRESS_COST_USD, type DressMode } from '~/lib/wardrobe
 
 defineEmits<{ close: [] }>()
 
-const { characters, loading, coverUrl, refresh } = useCharacters()
+const { characters, loading, error: charactersError, coverUrl, refresh } = useCharacters()
 const { jobs, setPolling } = useTrainingJobs()
 const { openTab } = useTabs()
 
@@ -620,6 +620,17 @@ function tileColor(seed: string): string {
 
         <!-- Loading -->
         <div v-if="loading && !characters.length" class="py-6 text-center text-xs text-white/40">Loading…</div>
+
+        <!-- Fetch failed: say so instead of a false "None yet" (stale list, if any, stays) -->
+        <div v-else-if="charactersError" class="py-3 text-center text-xs text-amber-400/90">
+          {{ charactersError }}
+          <button
+            class="block mx-auto mt-2 text-white/70 hover:text-white underline underline-offset-2 cursor-pointer"
+            @click="refresh()"
+          >
+            Retry
+          </button>
+        </div>
 
         <!-- Empty -->
         <p v-else-if="!characters.length" class="text-[11px] text-white/30">

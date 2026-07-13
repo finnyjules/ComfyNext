@@ -18,9 +18,9 @@
 // ticks at img-fx's global frame-rate cap (default 10fps — gentle by design).
 import {
   createInstance, createReveal, createCycle, destroyInstance,
-  updateInstanceSize, setInstanceVisible, PRESETS,
+  updateInstanceSize, setInstanceVisible, setInstancePaused, setInstancePreset, PRESETS,
   type Instance, type RevealState, type Cycle, type CyclePhase,
-  type PresetName, type PresetTheme,
+  type PresetMode, type PresetName, type PresetTheme,
 } from 'img-fx'
 
 export interface ImgFxMountOptions {
@@ -51,10 +51,19 @@ export function useImgFx() {
   // colour behind it — the caller paints it behind the shader canvas so the
   // dither reads as a full-opaque field (not a translucent wash).
   let cardBgColor = '#0f0f0f'
+  // The preset's normal reveal (nice dissolve for RESULTS) and a near-instant
+  // variant used only to "seed" a boil: the existing image is already on screen,
+  // so we hold it almost immediately (no visible re-assemble) and then boil it
+  // OUT into the churn — instead of waiting ~3s to assemble first (which a fast
+  // re-roll would interrupt, so the old image never appeared to dissolve).
+  let normalMode: PresetMode | null = null
+  let boilSeedMode: PresetMode | null = null
 
   // Pending-action bookkeeping so we can react to phase transitions we can't
   // trigger synchronously (the reveal loads its image on a microtask).
   let boilOnVisible = false
+  let boilOnHeld: (() => void) | null = null   // fires when the old image is held, JUST before it boils
+  let boilTimer: ReturnType<typeof setTimeout> | undefined
   let revealWaiters: Array<() => void> = []
 
   function flushRevealWaiters() {
@@ -68,7 +77,14 @@ export function useImgFx() {
     if (phase === 'visible') {
       if (boilOnVisible) {
         boilOnVisible = false
-        cycle?.triggerBoil()          // held image → dissolves into the churn
+        // The old image is now HELD (seeded invisibly). Reveal the fx canvases
+        // so it appears (seamlessly over the node's <img>), let it sit a beat,
+        // THEN boil it — so the user sees the previous image break apart rather
+        // than a churn flash. If the result lands first, revealResult() boils it.
+        boilOnHeld?.(); boilOnHeld = null
+        if (inst && normalMode) setInstancePreset(inst, normalMode)   // restore slow reveal for the result
+        if (boilTimer) clearTimeout(boilTimer)
+        boilTimer = setTimeout(() => { boilTimer = undefined; if (!disposed) cycle?.triggerBoil() }, 320)
       } else {
         flushRevealWaiters()          // a revealResult() completed
       }
@@ -83,11 +99,14 @@ export function useImgFx() {
   /** Create the engine on the two canvases. `frameEl` drives sizing (its box is
    *  observed; both canvases follow it). Idempotent — a second mount is ignored. */
   function mount(shaderCanvas: HTMLCanvasElement, revealCanvas: HTMLCanvasElement, frameEl: HTMLElement, opts: ImgFxMountOptions = {}) {
-    if (inst || disposed) return
+    if (inst) return
+    disposed = false   // reusable across generations — a prior dispose() must NOT latch us off
     const name = opts.preset ?? DEFAULT_PRESET
     const theme: PresetTheme = opts.theme ?? 'dark'
     const mode = PRESETS[name].modes[theme]
     cardBgColor = mode.cardBg
+    normalMode = mode
+    boilSeedMode = { ...mode, revealConfig: { ...mode.revealConfig, duration: 0.12, pixDuration: 0.12 } }
     const { w, h } = sizeOf(frameEl)
 
     try {
@@ -125,18 +144,49 @@ export function useImgFx() {
 
   const isMounted = () => !!inst
 
-  /** Shader-only churn (the loading field). Safe to call repeatedly. */
-  function churn() {
-    if (inst) setInstanceVisible(inst, true)
+  /** Return a REUSED instance to a clean idle churn — clears any held/boiling
+   *  reveal and resolves stale waiters, so the next boilFrom()/revealResult()
+   *  starts from a known 'idle' state (otherwise a reused fx keeps showing the
+   *  previous result and boilFrom() no-ops on a non-idle phase). */
+  function reset() {
+    if (!cycle) return
+    boilOnVisible = false
+    boilOnHeld = null
+    if (boilTimer) { clearTimeout(boilTimer); boilTimer = undefined }
+    flushRevealWaiters()
+    cycle.stop()   // → phase 'idle', clears the reveal overlay
+    phase = 'idle'
+    // Undo any leftover boil-seed (fast reveal) so the next result dissolves nicely.
+    if (inst && normalMode) setInstancePreset(inst, normalMode)
   }
 
-  /** Dissolve an existing image INTO the churn (the "regenerating" boil). Only
-   *  meaningful from an idle/churn state; resolves once the boil has started. */
-  async function boilFrom(url: string): Promise<void> {
+  /** Shader-only churn (the loading field). Safe to call repeatedly. Also
+   *  UNPAUSES — the instance is kept alive (paused) between generations. */
+  function churn() {
+    if (inst) { setInstancePaused(inst, false); setInstanceVisible(inst, true) }
+  }
+
+  /** Idle the effect WITHOUT destroying it. img-fx tears down its shared WebGL
+   *  renderer when the LAST instance is disposed, so disposing per generation
+   *  churns/kills the renderer (the effect then stops appearing on re-roll).
+   *  Instead we pause + clear the reveal and keep the instance mounted; dispose()
+   *  is only for teardown when the node itself unmounts. */
+  function idle() {
+    if (!inst) return
+    reset()
+    setInstancePaused(inst, true)
+  }
+
+  /** Dissolve an EXISTING image into the churn (the "regenerating" boil).
+   *  `onHeld` fires the moment the image is held (before it boils) — the caller
+   *  uses it to reveal the fx canvases only then, so the churn never flashes
+   *  before the old image. Seeds the hold with a near-instant reveal (the image
+   *  is already on screen) done INVISIBLY, so there's no visible re-assemble. */
+  function boilFrom(url: string, onHeld?: () => void): void {
     if (!cycle || disposed) return
-    // triggerBoil needs a currently-held image, so reveal `url` first (holds it),
-    // then boil on the 'visible' transition (see onPhase).
     if (phase !== 'idle') return
+    if (inst && boilSeedMode) setInstancePreset(inst, boilSeedMode)
+    boilOnHeld = onHeld ?? null
     boilOnVisible = true
     cycle.setImages([url])
     cycle.triggerOnce({ hold: 'manual' })
@@ -161,6 +211,8 @@ export function useImgFx() {
       // (which left fxRevealing stuck → churn never torn down). Clearing it is
       // the root-cause fix for "the dither keeps going after generation".
       boilOnVisible = false
+      boilOnHeld = null
+      if (boilTimer) { clearTimeout(boilTimer); boilTimer = undefined }
       revealWaiters.push(done)
       const fire = () => {
         cycle!.setImages([url])
@@ -179,6 +231,8 @@ export function useImgFx() {
   function dispose() {
     disposed = true
     boilOnVisible = false
+    boilOnHeld = null
+    if (boilTimer) { clearTimeout(boilTimer); boilTimer = undefined }
     ro?.disconnect(); ro = null
     cycle?.dispose(); cycle = null
     reveal?.dispose(); reveal = null
@@ -190,7 +244,7 @@ export function useImgFx() {
    *  canvas so the mosaic reads as a full-opaque field. */
   const cardBg = () => cardBgColor
 
-  return { mount, isMounted, churn, boilFrom, revealResult, dispose, cardBg }
+  return { mount, isMounted, reset, idle, churn, boilFrom, revealResult, dispose, cardBg }
 }
 
 export type ImgFxController = ReturnType<typeof useImgFx>
