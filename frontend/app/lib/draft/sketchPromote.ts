@@ -27,3 +27,29 @@ export function sketchPromoteOverridesFor(take: Take): {
 
   return { widgetOverrides, propertyOverrides }
 }
+
+/** Sketch-PAD-card promote (spec 2026-07-10-copy-assistant-declunk-design.md,
+ *  Task 9): the pad is transient and has no persistent source node to resolve
+ *  a take from, so promote builds straight from the CARD's own provenance
+ *  properties (`sketchPrompt`/`sketchSeed`, stamped by `materializeSketchCardsAt`)
+ *  instead of `sketchPromoteOverridesFor`'s take-based lookup. Same return
+ *  shape and the same rule: `model` is never copied. */
+export function sketchPromoteOverridesFromProps(props: {
+  sketchPrompt?: string
+  sketchSeed?: number
+  aspect_ratio?: string
+}): {
+  widgetOverrides: Record<string, unknown>
+  propertyOverrides: Record<string, unknown>
+} | null {
+  const prompt = props.sketchPrompt?.trim()
+  if (!prompt) return null
+  const widgetOverrides: Record<string, unknown> = { prompt }
+  if (props.aspect_ratio) widgetOverrides.aspect_ratio = props.aspect_ratio
+  const propertyOverrides: Record<string, unknown> = {}
+  if (typeof props.sketchSeed === 'number') {
+    widgetOverrides.seed = props.sketchSeed
+    propertyOverrides.seedLocks = { seed: true }
+  }
+  return { widgetOverrides, propertyOverrides }
+}

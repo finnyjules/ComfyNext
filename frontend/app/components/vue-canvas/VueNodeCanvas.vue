@@ -42,13 +42,13 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
-import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta, resolveActiveTake } from '~/composables/useTakes'
+import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { planSketchCardsAt, SKETCH_PAD_ID, CARD_SIZE as SKETCH_CARD_SIZE, GAP as SKETCH_CARD_GAP } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
-import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
+import { sketchPromoteOverridesFromProps } from '~/lib/draft/sketchPromote'
 import { stripSketchProperties, vacateSketchSlot } from '~/lib/draft/keepSketchCard'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
@@ -3148,7 +3148,16 @@ function materializeSketchCardsAt(
       existing.data = {
         ...existing.data,
         images: plan.image ? [plan.image] : existing.data.images,
-        properties: { ...existing.data.properties, sketchLoading: !!opts.loading },
+        properties: {
+          ...existing.data.properties,
+          // Refresh card-local provenance on every re-sketch of this slot —
+          // Promote (handlePromoteSketchOutput) reads sketchPrompt/sketchSeed
+          // straight off the card, so a reused slot must never carry a STALE
+          // prompt/seed from a prior sketch. Mirrors the create branch below.
+          sketchPrompt: sketchPad.prompt,
+          sketchSeed: sketchPad.seed,
+          sketchLoading: !!opts.loading,
+        },
       }
       if (imageWidgetValue) patchImageWidget(existing, imageWidgetValue)
       continue
@@ -3250,27 +3259,27 @@ async function warmSketch(): Promise<void> {
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [warmPadNodeId], direction: 'self', skipCostConfirm: true } }))
 }
 
-// Sketch-output card "Promote" (spec 2026-07-08-sketch-node-refinement.md,
-// Change 4): re-render the SOURCE sketch's idea at full quality, rather than
-// enhancing the specific card image. All 4 cards share one source, so which
-// card was clicked doesn't matter — this always looks up the sketch node by
-// `sketchSourceId` and reuses its active take's prompt/seed/aspect
-// (sketchPromoteOverridesFor), then spawns via the same sailor:spawnBeside
+// Sketch-output card "Promote" (spec 2026-07-10-copy-assistant-declunk-design.md,
+// Task 9): re-render the CLICKED CARD's idea at full quality. The pad is
+// transient/hidden (no persistent source node to resolve an active take
+// from — a pad card's `sketchSourceId` is the constant SKETCH_PAD_ID, not a
+// real node id), so this builds overrides straight from the card's OWN
+// provenance properties (`sketchPrompt`/`sketchSeed`, stamped by
+// `materializeSketchCardsAt` on both the create and reuse branches) via
+// sketchPromoteOverridesFromProps, then spawns via the same sailor:spawnBeside
 // path handleSpawnBeside already serves (focused, no run, no edge — model is
 // left at the finisher default, never copied from the sketch's Schnell lock).
 function handlePromoteSketchOutput(e: Event) {
-  const detail = (e as CustomEvent<{ sketchSourceId?: string }>).detail
-  const sourceId = detail?.sketchSourceId
-  if (!sourceId) return
-  const source = (nodes.value as any[]).find((n) => n.id === sourceId)
-  if (!source) return
-  const take = resolveActiveTake(source.data)
-  if (!take) return
-  const built = sketchPromoteOverridesFor(take)
+  const detail = (e as CustomEvent<{ cardId?: string }>).detail
+  const cardId = detail?.cardId
+  if (!cardId) return
+  const card = (nodes.value as any[]).find((n) => n.id === cardId)
+  if (!card) return
+  const built = sketchPromoteOverridesFromProps(card.data?.properties ?? {})
   if (!built) return
   window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
     detail: {
-      sourceNodeId: source.id,
+      sourceNodeId: card.id,
       nodeType: 'GenerateImageNode',
       widgetOverrides: built.widgetOverrides,
       propertyOverrides: built.propertyOverrides,

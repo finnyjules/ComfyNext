@@ -441,15 +441,17 @@ function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch:
 // EnhanceDetailNode's "Creative" combo value — see ENHANCE_ENGINES in
 // comfy_api_nodes/replicate_refs.py) so "make this exact image real" always
 // resolves to the super-res path, regardless of EnhanceDetailNode's own
-// schema default. Promote is handled by VueNodeCanvas (it needs the sketch
-// source's take, not just this card), so this only dispatches the event.
+// schema default. Promote is handled by VueNodeCanvas — the pad is transient
+// (no persistent source node to resolve a take from), so VueNodeCanvas builds
+// overrides from THIS card's own provenance props (sketchPrompt/sketchSeed);
+// this only dispatches the event with the clicked card's id.
 const isSketchOutput = computed(() => !!(props.data.properties as any)?.sketchOutput)
 function spawnEnhanceClarity() {
   spliceEffect('EnhanceDetailNode', { focus: true, branch: true }, { model: 'Creative' })
 }
 function promoteSketchOutput() {
   window.dispatchEvent(new CustomEvent('sailor:promoteSketchOutput', {
-    detail: { sketchSourceId: (props.data.properties as any)?.sketchSourceId },
+    detail: { cardId: props.id },
   }))
 }
 // Keep: pin this option — VueNodeCanvas strips its sketch identity so it
