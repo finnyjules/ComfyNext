@@ -40,23 +40,11 @@ export interface SyntheticNodeEntry {
 }
 
 /** Frontend-only presets surfaced in node search alongside real node types. */
-export const SYNTHETIC_NODE_ENTRIES: SyntheticNodeEntry[] = [
-  {
-    name: 'Sketch',
-    displayName: 'Sketch',
-    description: 'Fast, cheap draft images (~10× faster) — iterate here, promote the winner to full quality.',
-    keywords: ['draft', 'fast', 'cheap', 'sketch', 'idea', 'schnell'],
-    addAs: {
-      nodeType: 'GenerateImageNode',
-      widgetOverrides: { model: 'flux-schnell', model_options: '{"megapixels":"0.25","num_outputs":4}' },
-      propertyOverrides: { sketch: true },
-      dataOverrides: { title: 'Sketch' },
-    },
-  },
-]
+export const SYNTHETIC_NODE_ENTRIES: SyntheticNodeEntry[] = []
 
 // Ranking keyword map = real-node keywords + synthetic preset keywords, so
-// `Sketch` etc. surface in `searchNodes` alongside object_info-backed nodes.
+// any future synthetic entries surface in `searchNodes` alongside
+// object_info-backed nodes.
 const mergedNodeKeywords: Record<string, string[]> = {
   ...NODE_KEYWORDS,
   ...Object.fromEntries(SYNTHETIC_NODE_ENTRIES.map(e => [e.name, e.keywords])),

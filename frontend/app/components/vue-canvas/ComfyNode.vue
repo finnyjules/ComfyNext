@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Layers, Loader2, Lock, LockOpen, PencilLine, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Layers, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
@@ -10,7 +10,6 @@ import { getGeneratorIcon } from '~/data/generator-icons'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
 import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
-import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import { toast } from 'vue-sonner'
 
@@ -118,9 +117,6 @@ const priceLabel = computed(() => {
 
 const isMuted = computed(() => props.data.mode === 2)
 const isBypassed = computed(() => props.data.mode === 4)
-// Sketch preset (Task 1): a plain generator dropped as a rough placeholder —
-// skinned with a dashed outline + header chip so it reads as "not final" at a glance.
-const isSketch = computed(() => !!(props.data?.properties as any)?.sketch)
 
 // Per-node Run button surfaces on:
 //   1. Generator nodes (costly API calls — Replicate, BFL, OpenAI, …).
@@ -226,22 +222,6 @@ function discardTake(id: string) {
     const fallback = takes.find((t) => t.pinned) || takes[takes.length - 1] || null
     Object.assign(props.data, projectTake(props.data, fallback))
   }
-}
-
-// Sketch node "Promote": takes land on the GenerateImageNode card itself (this
-// component), so no upstream walk is needed — this node IS the sketch. Spawn
-// the full-quality generator beside it, seeded from the take's prompt/seed/
-// aspect (never its model — the spawned node keeps the schema default/finisher
-// model). No edge, no auto-run: the user aims the finisher, then runs it.
-function promoteTake(takeId: string) {
-  if (!isSketch.value || props.data.nodeType !== 'GenerateImageNode') return
-  const take = (props.data.takes ?? []).find((t: any) => t.id === takeId)
-  if (!take) return
-  const built = sketchPromoteOverridesFor(take)
-  if (!built) return
-  window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
-    detail: { sourceNodeId: props.id, nodeType: 'GenerateImageNode', ...built },
-  }))
 }
 
 // Light Table: takes land on this generator card, so the compare modal is
@@ -1284,7 +1264,6 @@ watch(previewImages, (urls) => {
       'ring-2 ring-red-500': data.error,
       'border-white/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
-      'comfy-node--sketch': isSketch,
     }"
     :data-running="data.running || undefined"
     :data-mode="data.mode || 0"
@@ -1331,9 +1310,6 @@ watch(previewImages, (urls) => {
       <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
       <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || displayTitle }}</span>
-      <span v-if="isSketch" class="ml-1.5 inline-flex items-center gap-1 rounded-[3px] border border-dashed border-white/50 bg-black/40 px-1 py-px text-[9px] text-white/70">
-        <PencilLine class="size-2.5" /> sketch
-      </span>
       <!-- Seed lock: fix the seed so every run keeps the same options. Shares
            state with the inspector's seed widget. -->
       <button
@@ -1482,7 +1458,6 @@ watch(previewImages, (urls) => {
           :is-fixed="isSeedFixed(widget, i)"
           :scale-def="loraScaleDef(widget.name)"
           :scale-value="loraScaleValue(widget.name)"
-          :model-picker-locked="isSketch && widget.name === 'model'"
           @update:model-value="data.widgetsValues[i] = $event"
           @update:is-fixed="setSeedFixed(widget, i, $event)"
           @update:scale="setLoraScale(widget.name, $event)"
@@ -1840,11 +1815,9 @@ watch(previewImages, (urls) => {
       v-if="(data.takes?.length ?? 0) >= 1"
       :takes="data.takes!"
       :active-take-id="data.activeTakeId"
-      :sketch="isSketch && data.nodeType === 'GenerateImageNode'"
       @select="selectTake"
       @pin="pinTake"
       @discard="discardTake"
-      @promote="promoteTake"
       @expand="lightTableOpen = true"
     />
 
@@ -1853,12 +1826,10 @@ watch(previewImages, (urls) => {
       :takes="data.takes ?? []"
       :active-take-id="data.activeTakeId"
       :title="data.title || 'Takes'"
-      :sketch="isSketch && data.nodeType === 'GenerateImageNode'"
       :promote-usd-label="null"
       @select="selectTake"
       @pin="pinTake"
       @discard="discardTake"
-      @promote="promoteTake"
       @branch="branchFromTake"
       @discard-others="onDiscardOthers"
       @close="lightTableOpen = false"
@@ -2011,12 +1982,5 @@ watch(previewImages, (urls) => {
     transparent 6px,
     transparent 14px
   );
-}
-
-/* Sketch preset: a rough placeholder generator — dashed outline reads as
-   "not final" without shifting layout (outline, not border/ring). */
-.comfy-node--sketch {
-  outline: 1.5px dashed rgba(255, 255, 255, 0.45);
-  outline-offset: 2px;
 }
 </style>

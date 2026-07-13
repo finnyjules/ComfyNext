@@ -24,11 +24,6 @@ const props = defineProps<{
   // existing GenerateImageNode wiring. Video node passes 'video', the text
   // effect node passes 'text_effect'.
   kind?: 'image' | 'video' | 'text_effect' | 'shot_preset'
-  // Sketch nodes (data.properties.sketch === true) pin the model to Flux
-  // Schnell — the model IS the node's identity there, so the picker renders
-  // as a static label: no chevron, no click, no gallery. Non-sketch callers
-  // never pass this (default false) and are unaffected.
-  locked?: boolean
 }>()
 
 // The widget framework still expects update:modelValue even though we don't
@@ -88,44 +83,7 @@ function openGallery() {
 </script>
 
 <template>
-  <!-- Sketch nodes pin the model: same visual (icon + label + brand), but a
-       plain non-interactive row — no chevron, no click, no hover affordance. -->
-  <div
-    v-if="locked"
-    class="w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] text-left"
-    :title="model ? `${model.label} — locked on sketch nodes` : 'Locked'"
-  >
-    <span
-      class="size-5 rounded-md shrink-0 flex items-center justify-center text-[9px] font-semibold leading-none text-white/70 bg-white/[0.06] overflow-hidden relative"
-    >
-      <span
-        v-if="brandIcon"
-        :class="[
-          brandIcon.cssClass,
-          brandIcon.style === 'mono' ? 'bg-white/85' : '',
-        ]"
-        class="size-3.5"
-      />
-      <img
-        v-else-if="cachedCoverUrl"
-        :src="cachedCoverUrl"
-        class="absolute inset-0 w-full h-full object-cover"
-        loading="lazy"
-        referrerpolicy="no-referrer"
-      />
-      <span v-else>{{ model?.brand?.[0] ?? '?' }}</span>
-    </span>
-    <span class="flex flex-col min-w-0 flex-1">
-      <span class="text-[11px] font-medium text-white/90 truncate leading-tight">
-        {{ model?.label ?? modelValue ?? 'Pick a model' }}
-      </span>
-      <span v-if="model?.brand" class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
-        {{ model.brand }}
-      </span>
-    </span>
-  </div>
   <button
-    v-else
     class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-[transform,background-color,border-color] active:scale-[0.98] cursor-pointer text-left group"
     :title="model
       ? `${model.label} — click to change ${kind === 'shot_preset' ? 'shot' : 'model'}`

@@ -22,9 +22,6 @@ const props = defineProps<{
   // Forwarded to widgets that dispatch global open-modal events (model_picker).
   // The modal mount point reads detail.nodeId to know which node it's editing.
   nodeId?: string
-  // Sketch nodes (ComfyNode.vue's isSketch) pin the model_picker to a static
-  // label — no chevron, no click, no gallery. Ignored by every other widget.
-  modelPickerLocked?: boolean
   // Lock state for seed widgets. When true, the pre-Run randomizer leaves
   // this seed alone. The parent (ComfyNode.vue) decides where the boolean
   // lives — widgets_values[i+1] for Comfy-standard seeds (control_after_generate)
@@ -426,7 +423,6 @@ function formatLabel(name: string): string {
         :model-value="modelValue"
         :node-id="nodeId"
         :kind="widgetDef.sailor_widget === 'video_model_picker' ? 'video' : widgetDef.sailor_widget === 'text_effect_picker' ? 'text_effect' : widgetDef.sailor_widget === 'shot_preset_picker' ? 'shot_preset' : 'image'"
-        :locked="modelPickerLocked"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>

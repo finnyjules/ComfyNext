@@ -46,7 +46,6 @@ import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta, resolveActiv
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
-import { planSketchCards } from '~/lib/sketch/planSketchCards'
 import { planSketchCardsAt, SKETCH_PAD_ID, CARD_SIZE as SKETCH_CARD_SIZE, GAP as SKETCH_CARD_GAP } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
@@ -2633,12 +2632,6 @@ function handleBridgeMessage(event: MessageEvent) {
             materializeSketchCardsAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton
             return
           }
-          // Sketch node (Change 3, spec 2026-07-08-sketch-node-refinement.md):
-          // a batch of >1 images means one run's worth of options to spread as
-          // cards, not a single wired sink — materializeSketchCards owns that.
-          if (target.data?.properties?.sketch && tagged.images && tagged.images.length > 1) {
-            materializeSketchCards(target, tagged.images)
-          }
         }
       }
     }
@@ -3112,59 +3105,9 @@ function handleSpawnBeside(e: Event) {
   nextTick(() => fitView({ nodes: [node.id], padding: 0.5, duration: 250 }))
 }
 
-// Sketch node "spread as 4 cards" (Change 3, spec 2026-07-08-sketch-node-
-// refinement.md): a sketch run's batch of images becomes N Image cards in a
-// 2×2 grid to the right of the sketch node, instead of one wired auto-sink
-// (see materializeAutoImageSinks's sketch gate). Re-running the same sketch
-// REUSES the same cards (stable ids stashed on the source's
-// `properties.sketchOutputCardIds`) rather than piling up new ones — all the
-// grid/id math lives in the pure `planSketchCards`; this only does the
-// impure node create/update/push. No edges: sketch outputs are unwired, like
-// handleSpawnBeside's finisher spawn.
-function materializeSketchCards(source: { id: string, data?: any, position?: { x: number, y: number } }, images: string[]) {
-  const existingCardIds = Array.isArray(source.data?.properties?.sketchOutputCardIds)
-    ? source.data.properties.sketchOutputCardIds as string[]
-    : []
-  const plans = planSketchCards(
-    {
-      id: String(source.id),
-      position: { x: source.position?.x ?? 0, y: source.position?.y ?? 0 },
-      width: source.data?.size?.[0] ?? 220,
-    },
-    images,
-    existingCardIds,
-  )
-
-  const cardIds: string[] = []
-  for (const plan of plans) {
-    cardIds[plan.slot] = plan.id
-    const imageWidgetValue = annotatedImageValueFromViewUrl(plan.image)
-    if (plan.reuse) {
-      const existing = (nodes.value as any[]).find((n) => n.id === plan.id)
-      if (existing) {
-        existing.data = { ...existing.data, images: [plan.image] }
-        if (imageWidgetValue) patchImageWidget(existing, imageWidgetValue)
-        continue
-      }
-      // Registry pointed at an id that no longer exists on the canvas (e.g.
-      // the user deleted the card) — fall through and recreate it fresh.
-    }
-    const node = createNodeData('Image', plan.position, imageWidgetValue ? { image: imageWidgetValue } : undefined, {
-      sketchOutput: true,
-      sketchSourceId: String(source.id),
-      sketchSlot: plan.slot,
-    })
-    node.id = plan.id
-    node.data = { ...node.data, images: [plan.image] }
-    nodes.value.push(node)
-  }
-
-  source.data = { ...source.data, properties: { ...(source.data?.properties ?? {}), sketchOutputCardIds: cardIds } }
-}
-
 /** Write an image-widget value onto an Image card node in-place. Shared by the
- *  node-spawned (`materializeSketchCards`) and prompt-bar (`materializeSketchCardsAt`)
- *  materializers so the widget-patch logic stays in one place. */
+ *  prompt-bar (`materializeSketchCardsAt`) materializer so the widget-patch
+ *  logic stays in one place. */
 function patchImageWidget(node: any, value: unknown) {
   const wi = node.data?.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
   if (wi < 0) return
@@ -6408,14 +6351,13 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     const src = snapshot.find((n: any) => n.id === id)
     if (!src) continue
     if (artifactNodeTypes.has(src.data?.nodeType)) continue
-    // Sketch node (Change 3): its batch result is spread into 4 reused cards
-    // by materializeSketchCards at the executed handler, not a single wired
-    // auto-sink — skip it here so a sketch run doesn't ALSO grow an extra
-    // Image sink wired to output-0. The transient prompt-bar sketch pad
-    // (`sketchPad`) is materialized the same way — never give it an auto-sink.
-    // The speculative-warm throwaway (`sketchWarm`, Task 7) is discarded
-    // outright — it must never grow a sink either, or a warm-on-focus would
-    // silently drop a visible card onto the canvas.
+    // `sketch` (Task 8: retired user-facing node, kept here only so a legacy
+    // saved doc's old sketch node doesn't grow a stray auto-sink on load).
+    // The transient prompt-bar sketch pad (`sketchPad`) is materialized
+    // separately — never give it an auto-sink. The speculative-warm
+    // throwaway (`sketchWarm`, Task 7) is discarded outright — it must never
+    // grow a sink either, or a warm-on-focus would silently drop a visible
+    // card onto the canvas.
     if (src.data?.properties?.sketch || src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm) continue
 
     const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
