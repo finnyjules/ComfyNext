@@ -14,6 +14,7 @@ import { useCanvasAgent } from '~/composables/useCanvasAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useAiStatus } from '~/composables/useAiStatus'
 import { paidProducerFor } from '~/lib/artifact/nextSteps'
+import { looksLikeImageIdea } from '~/lib/sketch/sketchIntent'
 
 const props = defineProps<{ vueCanvas?: any }>()
 const { getLocalSetting } = useLocalSettings()
@@ -28,6 +29,12 @@ const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function
 // the top of every new submission — see `go()`.
 const lastSketchPhrase = ref('')
 const lastSubmitted = ref('')
+// Fast-path dedupe (Task 7, spec §6 lever 1): the text `go()` fast-pathed
+// straight to `startSketch` THIS submit tick. If the classifier later resolves
+// the same phrase to `sketchIdea`, that's the guard the fast-path already
+// covered it — skip firing a second pad dispatch. Cleared at the top of every
+// `go()` so a later, genuine re-sketch of the identical words still fires.
+const fastPathPrompt = ref('')
 
 const {
   busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
@@ -56,7 +63,13 @@ const {
   // A typed image idea → the model emits `sketch` and the pad renders 4 options.
   // Remember the phrase so a misfire chip can offer "edit the canvas instead?"
   // (the sketch response never sets `answer`, so this is the only trace of it).
-  sketchIdea: (prompt: string) => { if (ready.value) { props.vueCanvas.startSketch?.(prompt); lastSketchPhrase.value = prompt } },
+  // Dedupe against the fast-path: if `go()` already fired `startSketch` for this
+  // exact text this submit tick (fastPathPrompt), don't dispatch it again — just
+  // (re-)arm the misfire chip.
+  sketchIdea: (prompt: string) => {
+    if (ready.value && prompt !== fastPathPrompt.value) props.vueCanvas.startSketch?.(prompt)
+    lastSketchPhrase.value = prompt
+  },
 })
 
 // Web-image-search picker (opened by the agent's searchImages command).
@@ -108,6 +121,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('sailor:critiqueNode', onCritiqueNode)
   window.removeEventListener('sailor:autoReview', onAutoReview)
   for (const t of autoReviewTimers.values()) clearTimeout(t)
+  if (warmFocusTimer) clearTimeout(warmFocusTimer)
 })
 
 // Drive the dot-grid "thinking" animation off the agent's busy state. (The white
@@ -137,6 +151,18 @@ function go() {
   if (!p || busy.value) return
   lastSketchPhrase.value = '' // a fresh ask supersedes any pending sketch-misfire chip
   lastSubmitted.value = p
+  fastPathPrompt.value = '' // clear the fast-path dedupe guard for this new submit
+  // Fast-path (Task 7, spec §6 lever 1): a high-confidence image idea fires
+  // the sketch pad IMMEDIATELY, without waiting for the LLM classifier. The
+  // classifier still runs below — its result only arms the "edit instead?"
+  // misfire chip (the sketchIdea handler dedupes against fastPathPrompt so a
+  // same-text classifier `sketch` doesn't double-dispatch).
+  const graphEmpty = (props.vueCanvas?.getNodes?.() ?? []).length === 0
+  if (ready.value && looksLikeImageIdea(p, graphEmpty)) {
+    lastSketchPhrase.value = p
+    fastPathPrompt.value = p
+    props.vueCanvas.startSketch?.(p)
+  }
   ask(p)
   phrase.value = ''
 }
@@ -156,6 +182,23 @@ function forceEdit() {
 function sketchInstead() {
   if (ready.value && lastSubmitted.value) props.vueCanvas.startSketch?.(lastSubmitted.value)
   dismiss()
+}
+
+// Speculative warm (Task 7, spec §6 lever 2): on prompt-bar focus, ask the
+// canvas to warm the Replicate flux-schnell endpoint with a throwaway
+// single-output dispatch, so a real sketch submit right after doesn't eat a
+// cold boot. Debounced (focus can fire repeatedly on tab/click churn) —
+// VueNodeCanvas.warmSketch also self-gates on a 3-min cooldown.
+// OFF BY DEFAULT: this spends a small real amount per warm
+// (~$0.003), so it only fires when the user has opted in via this local
+// setting (Settings has no toggle for it yet — set it from devtools:
+// `localStorage.setItem('sailor:Sailor.Sketch.WarmEnabled', 'true')`).
+const WARM_SETTING_KEY = 'Sailor.Sketch.WarmEnabled'
+let warmFocusTimer: ReturnType<typeof setTimeout> | null = null
+function onPromptFocus() {
+  if (getLocalSetting(WARM_SETTING_KEY) !== 'true') return
+  if (warmFocusTimer) clearTimeout(warmFocusTimer)
+  warmFocusTimer = setTimeout(() => { props.vueCanvas?.warmSketch?.() }, 400)
 }
 </script>
 
@@ -226,7 +269,7 @@ function sketchInstead() {
         v-model="phrase" :disabled="busy" type="text"
         placeholder="Ask about the graph, or tell me to change a node…"
         class="min-w-0 flex-1 bg-transparent text-[13px] text-white/90 placeholder:text-white/30 outline-none"
-        @keydown.enter="go"
+        @keydown.enter="go" @focus="onPromptFocus"
       >
       <button
         class="grid size-7 place-items-center rounded-[8px] bg-white text-neutral-900 transition hover:bg-white/90 disabled:opacity-40"

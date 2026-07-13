@@ -2618,6 +2618,11 @@ function handleBridgeMessage(event: MessageEvent) {
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
           const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
           target.data = appendTake({ ...target.data }, tagged)
+          // Speculative warm (Task 7): a throwaway single-output dispatch used
+          // only to keep the endpoint hot. Discard outright — return BEFORE the
+          // sketchPad/sketch routing below even looks at it, so it robustly
+          // never materializes cards regardless of images.length.
+          if (target?.data?.properties?.sketchWarm === true) return
           // Prompt-bar sketch pad: the transient hidden pad's batch is spread to
           // the 4 anchor cards (replacing the optimistic skeleton) via the
           // source-node-decoupled materializer. Routed by the pad's
@@ -3257,6 +3262,49 @@ async function startSketch(prompt: string): Promise<void> {
   // Scoped run of just the pad node (never the whole graph). skipCostConfirm:
   // sketches are the cheap tier; the meter still bills normally.
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [sketchPad.padNodeId], direction: 'self', skipCostConfirm: true } }))
+}
+
+// Speculative warm (Task 7, spec §6 lever 2): a throwaway single-output
+// Schnell dispatch fired on prompt-bar focus so the Replicate endpoint isn't
+// cold when the user actually submits an idea. Cooldown-gated to at most once
+// per 3 minutes, and reuses ONE dedicated hidden node across calls (never
+// accumulates). Its result is discarded outright — see the `sketchWarm`
+// property check in the `executed` handler (never materializes cards) and the
+// matching exclusions in materializeAutoImageSinks (never wires an auto-sink)
+// and getWorkflow (never rides a full-canvas Run or a saved doc). The
+// call site (CanvasPromptBar) gates this behind a local setting that
+// defaults OFF, so this cooldown is the only thing stopping a caller from
+// re-firing it — it does NOT re-check that setting itself.
+let warmPadNodeId: string | number | null = null
+let lastWarm = 0
+async function warmSketch(): Promise<void> {
+  const now = performance.now()
+  if (now - lastWarm < 180_000) return // cooldown: at most once per 3 min
+  lastWarm = now
+  const seed = Math.floor(Math.random() * 2_147_483_647)
+  const widgetOverrides = {
+    model: 'flux-schnell',
+    prompt: 'warm', // throwaway — content is irrelevant, the result is always discarded
+    seed,
+    model_options: JSON.stringify({ megapixels: '0.25', num_outputs: 1, output_format: 'webp' }),
+  }
+  // Off-canvas position: harmless either way since the node is hidden:true and
+  // never rendered, but keeps it out from underfoot of sketchPadAnchor's
+  // collision nudging for the real (visible) pad.
+  const anchor = { x: -100_000, y: -100_000 }
+  let pad = warmPadNodeId != null
+    ? (nodes.value as any[]).find((n: any) => n.id === warmPadNodeId) as any
+    : null
+  if (!pad) {
+    pad = createNodeData('GenerateImageNode', anchor, widgetOverrides, { sketchWarm: true })
+    pad.hidden = true // VueFlow: kept out of the rendered graph
+    ;(nodes.value as any[]).push(pad)
+    warmPadNodeId = pad.id
+  } else {
+    applyWidgetOverridesTo(pad, widgetOverrides)
+  }
+  await nextTick()
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [warmPadNodeId], direction: 'self', skipCostConfirm: true } }))
 }
 
 // Sketch-output card "Promote" (spec 2026-07-08-sketch-node-refinement.md,
@@ -6365,7 +6413,10 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     // auto-sink — skip it here so a sketch run doesn't ALSO grow an extra
     // Image sink wired to output-0. The transient prompt-bar sketch pad
     // (`sketchPad`) is materialized the same way — never give it an auto-sink.
-    if (src.data?.properties?.sketch || src.data?.properties?.sketchPad) continue
+    // The speculative-warm throwaway (`sketchWarm`, Task 7) is discarded
+    // outright — it must never grow a sink either, or a warm-on-focus would
+    // silently drop a visible card onto the canvas.
+    if (src.data?.properties?.sketch || src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm) continue
 
     const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
     const srcW = (src.data?.size?.[0] ?? 220) as number
@@ -6627,9 +6678,11 @@ defineExpose({
     // scoped startSketch dispatch) and must stay out of persisted docs — it is
     // disposable plumbing. The scoped runFiltered([SKETCH_PAD_ID]) path uses
     // getFilteredWorkflow, so this full-graph-only filter never strips a targeted
-    // pad run. (Unwired, so removing it orphans no links.)
+    // pad run. (Unwired, so removing it orphans no links.) The speculative-warm
+    // node (`sketchWarm`, Task 7) is the same kind of disposable plumbing —
+    // strip it too so it never persists into a saved doc or rides a full Run.
     if (Array.isArray((wf as any).nodes)) {
-      ;(wf as any).nodes = ((wf as any).nodes as any[]).filter((n: any) => !n?.properties?.sketchPad)
+      ;(wf as any).nodes = ((wf as any).nodes as any[]).filter((n: any) => !n?.properties?.sketchPad && !n?.properties?.sketchWarm)
     }
     // VARS links (Collection → Smart Layout) are intentionally kept here —
     // getWorkflow output must be persistence-safe (snapshotActiveCanvasIntoDoc
@@ -6676,6 +6729,7 @@ defineExpose({
   agentNodeIntent,
   isApplyingWorkflow: () => applyingWorkflow.value,
   startSketch,
+  warmSketch,
   keepSketchCard,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
