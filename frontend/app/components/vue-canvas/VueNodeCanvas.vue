@@ -47,10 +47,10 @@ import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { planSketchCards } from '~/lib/sketch/planSketchCards'
-import { planSketchCardsAt, SKETCH_PAD_ID } from '~/lib/sketch/planSketchCardsAt'
+import { planSketchCardsAt, SKETCH_PAD_ID, CARD_SIZE as SKETCH_CARD_SIZE, GAP as SKETCH_CARD_GAP } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { sketchPromoteOverridesFor } from '~/lib/draft/sketchPromote'
-import { stripSketchProperties } from '~/lib/draft/keepSketchCard'
+import { stripSketchProperties, vacateSketchSlot } from '~/lib/draft/keepSketchCard'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -986,8 +986,12 @@ const {
 // pipeline serializes node ids through Number() when building a workflow, so a
 // string id like SKETCH_PAD_ID would come out NaN and be dropped. SKETCH_PAD_ID
 // stays reserved for the (string-id, never-run) leaf card namespace only.
-const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: string[], seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null }>(
-  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null, padNodeId: null },
+// keptCount: how many pad cards have been "kept" (lifted out above the grid,
+// see keepSketchCard) since the pad's anchor was last (re-)established. Reset
+// alongside the anchor so a fresh session's kept cards start back at the
+// anchor's x-origin instead of drifting rightward forever.
+const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: (string | null)[], seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null, keptCount: number }>(
+  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null, padNodeId: null, keptCount: 0 },
 )
 
 /** Viewport center in graph coords, nudged to the nearest clear spot so the pad
@@ -3223,7 +3227,10 @@ async function startSketch(prompt: string): Promise<void> {
   if (!clean) return
   sketchPad.prompt = clean
   sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
-  if (!sketchPad.anchor) sketchPad.anchor = sketchPadAnchor()
+  if (!sketchPad.anchor) {
+    sketchPad.anchor = sketchPadAnchor()
+    sketchPad.keptCount = 0
+  }
 
   // Lever 1 — optimistic skeleton: 4 shimmer cards appear immediately.
   materializeSketchCardsAt(sketchPad.anchor, [], { loading: true })
@@ -3282,16 +3289,55 @@ function handlePromoteSketchOutput(e: Event) {
 
 /** "Keep" a pad card: it becomes an ordinary Image card and drops out of the
  *  pad's refresh set, freeing its slot for the next sketch. Pad cards are
- *  unwired leaf nodes, so no edge fix-up is needed — just strip the sketch
- *  identity and mint a fresh id (mintNodeId, the same minter every other node
- *  creation path uses) so a later refresh's reused slot id can never collide
- *  with the now-independent card. */
+ *  unwired leaf nodes, so no edge fix-up is needed. Three correctness
+ *  requirements (spec 2026-07-10-copy-assistant-declunk-design.md, Task 5):
+ *   1. Vacate the slot as a HOLE (cardIds[slot] = null via vacateSketchSlot),
+ *      never reindex by filtering the id out of cardIds — filtering shifts
+ *      every LATER slot's id down by one, breaking planSketchCardsAt's
+ *      positional slot→id mapping.
+ *   2. Shed the deterministic `sketch-out-sketch-pad-<slot>` id so a later
+ *      re-sketch's fresh card for the freed slot can never collide with this
+ *      now-independent card — re-minted via VueFlow's remove+add path (never
+ *      mutate a mounted node's `id` in place; that desyncs VueFlow's internal
+ *      node lookup). createNodeData mints the fresh id (mintNodeId, the same
+ *      minter every other node-creation path uses).
+ *   3. Lift the kept card OUT of the pad grid — a row directly above the
+ *      anchor, marching rightward per keep (sketchPad.keptCount) — so it
+ *      never collides with the next sketch's fresh card at the same slot
+ *      position. Uses the pad's own CARD_SIZE/GAP geometry so the kept card's
+ *      footprint matches the grid exactly. */
 function keepSketchCard(cardId: string): void {
   const card = (nodes.value as any[]).find((n: any) => n.id === cardId) as any
-  if (!card) return
-  card.data = { ...card.data, properties: stripSketchProperties(card.data?.properties) }
-  card.id = mintNodeId()
-  sketchPad.cardIds = sketchPad.cardIds.filter((id) => id !== cardId)
+  if (!card || !sketchPad.anchor) return
+  const slot = card.data?.properties?.sketchSlot
+  const strippedProps = stripSketchProperties(card.data?.properties)
+
+  if (typeof slot === 'number') {
+    sketchPad.cardIds = vacateSketchSlot(sketchPad.cardIds, slot, cardId)
+  }
+
+  const step = SKETCH_CARD_SIZE + SKETCH_CARD_GAP
+  const position = {
+    x: sketchPad.anchor.x + sketchPad.keptCount * step,
+    y: sketchPad.anchor.y - (SKETCH_CARD_SIZE + SKETCH_CARD_GAP + 40),
+  }
+  sketchPad.keptCount++
+
+  // Capture the image payload before the old node is removed.
+  const wi = card.data?.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
+  const imageWidgetValue = wi >= 0 ? card.data?.widgetsValues?.[wi] : undefined
+  const images = card.data?.images
+
+  removeNodes([cardId])
+
+  const kept = createNodeData(
+    'Image',
+    position,
+    imageWidgetValue != null ? { image: imageWidgetValue } : undefined,
+    strippedProps,
+  )
+  kept.data = { ...kept.data, images: images ? [...images] : [] }
+  ;(nodes.value as any[]).push(kept)
 }
 function handleKeepSketchCard(e: Event) {
   const cardId = (e as CustomEvent<{ cardId?: string }>).detail?.cardId

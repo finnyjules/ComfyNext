@@ -11,8 +11,10 @@ export type { SketchCardPlan } from './planSketchCards'
 
 export const SKETCH_PAD_ID = 'sketch-pad'
 
-const CARD_SIZE = 200
-const GAP = 24
+// Exported so callers (e.g. the "Keep" lift-out placement in VueNodeCanvas)
+// share the exact same grid geometry instead of a hand-copied, driftable pair.
+export const CARD_SIZE = 200
+export const GAP = 24
 const MAX_CARDS = 4
 
 /** Stable id for a pad slot — reused across re-sketches so refresh overwrites
@@ -24,7 +26,10 @@ export function sketchPadCardId(slot: number): string {
 export function planSketchCardsAt(
   anchor: { x: number, y: number },
   images: string[],
-  existingCardIds: string[],
+  // A slot can be `null` — a "hole" left by keepSketchCard vacating a kept
+  // card's slot (see VueNodeCanvas.keepSketchCard). A hole is falsy, so it
+  // takes the same `reuse = false` branch as "never had a card here".
+  existingCardIds: (string | null)[],
 ): SketchCardPlan[] {
   const step = CARD_SIZE + GAP
   return images.slice(0, MAX_CARDS).map((image, slot) => {
