@@ -2612,16 +2612,17 @@ function handleBridgeMessage(event: MessageEvent) {
         // are preserved for compare/switch.
         const take = takeFromExecutedEvent(event)
         if (take) {
+          // Speculative warm (Task 7): a throwaway single-output dispatch used
+          // only to keep the endpoint hot. Discard outright — return BEFORE
+          // appendTake even runs, so the reused hidden warm node accumulates
+          // no take (and, in turn, never reaches the sketchPad/sketch routing
+          // below) regardless of images.length.
+          if (target?.data?.properties?.sketchWarm === true) return
           // Provenance: remember HOW this result was made (prompt/seed/model/…) so
           // a later "breed from this take" can perturb around it. (Direction Loop.)
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
           const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
           target.data = appendTake({ ...target.data }, tagged)
-          // Speculative warm (Task 7): a throwaway single-output dispatch used
-          // only to keep the endpoint hot. Discard outright — return BEFORE the
-          // sketchPad/sketch routing below even looks at it, so it robustly
-          // never materializes cards regardless of images.length.
-          if (target?.data?.properties?.sketchWarm === true) return
           // Prompt-bar sketch pad: the transient hidden pad's batch is spread to
           // the 4 anchor cards (replacing the optimistic skeleton) via the
           // source-node-decoupled materializer. Routed by the pad's

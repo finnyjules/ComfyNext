@@ -29,12 +29,15 @@ const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function
 // the top of every new submission — see `go()`.
 const lastSketchPhrase = ref('')
 const lastSubmitted = ref('')
-// Fast-path dedupe (Task 7, spec §6 lever 1): the text `go()` fast-pathed
+// Fast-path dedupe (Task 7, spec §6 lever 1): true when `go()` fast-pathed
 // straight to `startSketch` THIS submit tick. If the classifier later resolves
-// the same phrase to `sketchIdea`, that's the guard the fast-path already
-// covered it — skip firing a second pad dispatch. Cleared at the top of every
-// `go()` so a later, genuine re-sketch of the identical words still fires.
-const fastPathPrompt = ref('')
+// to `sketchIdea` too, that's the fast-path's own render finishing its round
+// trip — consume the latch and skip a second pad dispatch. A plain prompt
+// equality check doesn't work here: the `sketch` command hint tells the model
+// to DISTILL a clean prompt, so for verbose input the classifier's prompt
+// legitimately differs from the raw text while still being the same request.
+// Cleared at the top of every `go()` so a later, genuine sketch still fires.
+const fastPathFired = ref(false)
 
 const {
   busy, error, reasoning, answer, changes, issues, review, reviewing, hasProposal, hovered,
@@ -63,11 +66,18 @@ const {
   // A typed image idea → the model emits `sketch` and the pad renders 4 options.
   // Remember the phrase so a misfire chip can offer "edit the canvas instead?"
   // (the sketch response never sets `answer`, so this is the only trace of it).
-  // Dedupe against the fast-path: if `go()` already fired `startSketch` for this
-  // exact text this submit tick (fastPathPrompt), don't dispatch it again — just
+  // Dedupe against the fast-path via the `fastPathFired` latch (not a prompt
+  // equality check — the classifier's distilled prompt can legitimately differ
+  // from the raw text it fast-pathed): if the fast-path already fired this
+  // submit tick, consume the latch and skip the redundant dispatch — just
   // (re-)arm the misfire chip.
   sketchIdea: (prompt: string) => {
-    if (ready.value && prompt !== fastPathPrompt.value) props.vueCanvas.startSketch?.(prompt)
+    if (fastPathFired.value) {
+      fastPathFired.value = false
+      lastSketchPhrase.value = prompt
+      return
+    }
+    if (ready.value) props.vueCanvas.startSketch?.(prompt)
     lastSketchPhrase.value = prompt
   },
 })
@@ -151,16 +161,16 @@ function go() {
   if (!p || busy.value) return
   lastSketchPhrase.value = '' // a fresh ask supersedes any pending sketch-misfire chip
   lastSubmitted.value = p
-  fastPathPrompt.value = '' // clear the fast-path dedupe guard for this new submit
+  fastPathFired.value = false // clear the fast-path dedupe latch for this new submit
   // Fast-path (Task 7, spec §6 lever 1): a high-confidence image idea fires
   // the sketch pad IMMEDIATELY, without waiting for the LLM classifier. The
   // classifier still runs below — its result only arms the "edit instead?"
-  // misfire chip (the sketchIdea handler dedupes against fastPathPrompt so a
-  // same-text classifier `sketch` doesn't double-dispatch).
+  // misfire chip (the sketchIdea handler consumes fastPathFired so a
+  // classifier `sketch` for the same submit doesn't double-dispatch).
   const graphEmpty = (props.vueCanvas?.getNodes?.() ?? []).length === 0
   if (ready.value && looksLikeImageIdea(p, graphEmpty)) {
     lastSketchPhrase.value = p
-    fastPathPrompt.value = p
+    fastPathFired.value = true
     props.vueCanvas.startSketch?.(p)
   }
   ask(p)
