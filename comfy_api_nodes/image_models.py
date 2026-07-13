@@ -322,12 +322,32 @@ def _b_seedream_45(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    size = _opt_str(adv, "size", "2K")
+    if size not in ("1K", "2K"):
+        size = "2K"
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
-        "size": _opt_str(adv, "size", "2K"),
+        "size": size,  # 1K | 2K
     }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    size = _opt_str(adv, "size", "2K")
+    if size not in ("2K", "3K"):
+        size = "2K"  # old stored entries used 1K/2K — clamp to the real 5.0 set
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
+        "size": size,  # 2K | 3K
+    }
+    # Batch: "auto" lets the model return a set of related images (max_images cap).
+    if _opt_str(adv, "sequential_image_generation", "disabled") == "auto":
+        inp["sequential_image_generation"] = "auto"
+        inp["max_images"] = max(1, min(15, _opt_int(adv, "max_images", 1)))
     _maybe_set_seed(inp, seed)
     return inp
 
@@ -633,8 +653,9 @@ MODELS: list[ImageModel] = [
     ImageModel("ideogram-v2a-turbo",   "Ideogram V2A Turbo",   "Ideogram", "ideogram-ai/ideogram-v2a-turbo",   sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
 
     # ByteDance ---------------------------------------------------------------
-    ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45),
+    ImageModel("seedream-5-pro",     "Seedream 5 Pro",      "ByteDance", "bytedance/seedream-5-pro",        sorted(_SEEDREAM_AR), _b_seedream_5_pro),
     ImageModel("seedream-5-lite",    "Seedream 5 Lite",     "ByteDance", "bytedance/seedream-5-lite",       sorted(_SEEDREAM_AR), _b_seedream_5_lite),
+    ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45),
     ImageModel("seedream-4",         "Seedream 4",          "ByteDance", "bytedance/seedream-4",            sorted(_SEEDREAM_AR), _b_seedream_4),
     ImageModel("seedream-3",         "Seedream 3",          "ByteDance", "bytedance/seedream-3",            sorted(_SEEDREAM_AR), _b_seedream_3),
 

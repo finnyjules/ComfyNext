@@ -30,6 +30,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   GenerateEmojiNode:     { useCase: 'Generate an emoji',              model: 'Flux Kontext + Emoji LoRA',                intent: 'create' },
   ConsistentFaceNode:    { useCase: 'Generate a consistent face',     model: 'Ideogram Character',                       intent: 'create' },
   SketchToImageNode:     { useCase: 'Sketch to image',                model: 'Nano Banana',                              intent: 'create' },
+  GenerateFromReferencesNode: { useCase: 'Generate from references',  model: 'Seedream 5 Pro/Lite · Nano Banana 2',       intent: 'create', source: 'image' },
   FluxMultiLoRARemoteNode: { useCase: 'Generate with two LoRAs',      model: 'Flux Dev + 2 LoRAs',                       intent: 'create' },
   TextEffectNode:        { useCase: 'Render a text effect',           model: 'Typographic art gallery',                  intent: 'create' },
   // -- Image · edit -----------------------------------------------------------

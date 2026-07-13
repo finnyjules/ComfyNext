@@ -2236,6 +2236,69 @@ class EditImageNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Generate from references — compose a new image from up to 6
+# reference images + a prompt. Backed by the image_edit_models dispatcher
+# (REFERENCE_MODEL_IDS), so adding a multi-reference model is one catalog entry.
+# =============================================================================
+
+_REFERENCE_ASPECT_RATIOS = [
+    "match_input_image", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9",
+]
+
+
+class GenerateFromReferencesNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="GenerateFromReferencesNode",
+            display_name="Generate from references",
+            category="api node/image/Replicate",
+            description=(
+                "Compose a new image from up to 6 reference images plus a prompt. "
+                "Seedream 5 Pro/Lite (design-aware reasoning, up to 10 refs) or "
+                "Nano Banana 2. Wire references into image_1…image_6. "
+                "~$0.04–0.09 per image."
+            ),
+            inputs=[
+                IO.Combo.Input("model", options=_REFERENCE_MODEL_IDS,
+                               default=_DEFAULT_REFERENCE_MODEL_ID),
+                IO.Image.Input("image_1", tooltip="Primary reference image (required)."),
+                IO.Image.Input("image_2", optional=True, tooltip="Reference image 2."),
+                IO.Image.Input("image_3", optional=True, tooltip="Reference image 3."),
+                IO.Image.Input("image_4", optional=True, tooltip="Reference image 4."),
+                IO.Image.Input("image_5", optional=True, tooltip="Reference image 5."),
+                IO.Image.Input("image_6", optional=True, tooltip="Reference image 6."),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="What to generate from the references."),
+                IO.Combo.Input("aspect_ratio", options=_REFERENCE_ASPECT_RATIOS,
+                               default="match_input_image",
+                               tooltip="Output aspect ratio. 'match_input_image' follows the first reference."),
+                IO.Combo.Input("size", options=["1K", "2K", "3K"], default="2K", advanced=True,
+                               tooltip="Output resolution. Each model clamps to what it supports "
+                                       "(Pro 1K/2K · Lite 2K/3K · Nano Banana 1K/2K/4K)."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF,
+                             control_after_generate=True, tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.06,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, model, image_1, image_2=None, image_3=None, image_4=None,
+                      image_5=None, image_6=None, prompt="", aspect_ratio="match_input_image",
+                      size="2K", seed=0):
+        refs = [t for t in (image_1, image_2, image_3, image_4, image_5, image_6) if t is not None]
+        image_urls = [_image_tensor_to_data_url(t) for t in refs]
+
+        spec = _IMAGE_EDIT_MODELS_BY_ID[model]
+        adv = {"size": size, "aspect_ratio": aspect_ratio}
+        input_dict = spec.build_input(prompt, image_urls, int(seed or 0), adv)
+        pred = await _run_prediction(spec.replicate_slug, input_dict)
+        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "generate_from_references"))
+
+
+# =============================================================================
 # Use case: Blend Scene — harmonize a composite into one cohesive photo
 # =============================================================================
 
@@ -2786,6 +2849,8 @@ class ProductShotNode(IO.ComfyNode):
 from comfy_api_nodes.image_edit_models import (
     IMAGE_EDIT_MODELS_BY_ID as _IMAGE_EDIT_MODELS_BY_ID,
     DEFAULT_CAMERA_MODEL_ID as _CAMERA_DEFAULT_MODEL_ID,
+    REFERENCE_MODEL_IDS as _REFERENCE_MODEL_IDS,
+    DEFAULT_REFERENCE_MODEL_ID as _DEFAULT_REFERENCE_MODEL_ID,
 )
 
 
@@ -2915,7 +2980,7 @@ class RotateCameraNode(IO.ComfyNode):
 
         spec = _IMAGE_EDIT_MODELS_BY_ID[_CAMERA_DEFAULT_MODEL_ID]
         image_url = _image_tensor_to_data_url(image)
-        input_dict = spec.build_input(phrase, image_url, int(seed or 0), {})
+        input_dict = spec.build_input(phrase, [image_url], int(seed or 0), {})
         print(
             f"[RotateCamera] yaw={yaw:.1f} pitch={pitch:.1f} roll={roll:.1f} "
             f"phrase={phrase!r} slug={spec.replicate_slug!r}",
@@ -5390,6 +5455,7 @@ class ReplicateExtension(ComfyExtension):
             ConsistentFaceNode,         # Generate a consistent face · Ideogram Character
             SketchToImageNode,          # Sketch to image · Nano Banana
             # Image — manipulation
+            GenerateFromReferencesNode, # Generate from references · Seedream 5 Pro/Lite / Nano Banana 2
             EditImageNode,              # Edit an image · Flux Kontext
             BlendSceneNode,             # Blend Scene · Flux Kontext / Nano Banana
             RestyleFromImageNode,       # Restyle from Image · Nano Banana / IP-Adapter
