@@ -71,6 +71,7 @@ const CANVAS_COMMANDS: CommandSpec[] = [
   { op: 'deleteNode', hint: 'Delete a node from the graph. target = node id. Edges touching it are removed too.' },
   { op: 'tuneNode', hint: 'Adjust the INTERNALS of an existing STUDIO node in place — its own knobs, NOT the graph. Works on these node types: "Compositor" (a Frame — background colour/gradient, layer fill/colour/stroke, text content + style, add/remove/move layers), "GradientStudio" (gradient colours, layout feel, liquid/grain/blur amounts…), "ShaderStudio" (effect + duotone/adjust/blur/glow amounts), "TextureStudio" (pattern colours, scale, motif knobs), and "SmartLayout" (background, layout elements). target = that node id; args: { request: a plain-language instruction for that studio, e.g. "make the background blue", "orange to pink, more liquid and grainy", "add a centred white headline SALE" }. IMPORTANT: right after you addNode one of these studios, emit a tuneNode targeting that same new node (use its "$newN" placeholder id) with the user\'s descriptive request, so the studio is CONFIGURED to match — do not leave it on defaults. STRONGLY prefer tuneNode over adding another node when the user wants to change what is INSIDE an existing studio (a solid background colour is a frame background, not a new node).' },
   { op: 'searchImages', hint: 'Search the WEB for existing images and open a picker so the user can choose which to import onto the canvas. args: { query: a concise image-search query you write from the request }. Use this when the user asks to FIND / search for / look up / import a picture or photo of something that already EXISTS in the world — a real person or celebrity, a team, a product, a landmark, existing artwork, reference photos ("find me a full picture of X", "search for photos of Y"). Rewrite their phrasing into a good search query (subject + the qualifiers that matter, e.g. "full body", "in a french jersey"). Do NOT use it when they want an image CREATED — that is GenerateImageNode. Emit ONE searchImages per request and no generator alongside it; the user picks from the results themselves.' },
+  { op: 'sketch', hint: 'Create a NEW image from scratch that the user described (a subject, scene, or mood) — NOT an edit to existing nodes and NOT a question about the graph. args: { prompt: a clean image-generation prompt you distill from the request }. Use this when the user names something to see/draw/generate ("a lighthouse at dusk", "moody cyberpunk alley") rather than instructing a change. Emit ONE sketch and no generator/edit alongside it; the sketch pad renders 4 fast options.' },
   { op: 'restore', hint: 'internal — undo support.' },
 ]
 
@@ -183,6 +184,15 @@ export function searchImageRequests(commands: Command[]): string[] {
     if (q && !out.includes(q)) out.push(q)
   }
   return out
+}
+
+/** Pull the image-idea prompts out of sketch commands (intercept-only, mirrors
+ *  searchImageRequests). The sketch flow renders these; they never touch the graph. */
+export function sketchRequests(commands: Command[]): string[] {
+  return commands
+    .filter(c => c.op === 'sketch')
+    .map(c => (c.args?.prompt != null ? String(c.args.prompt).trim() : ''))
+    .filter(Boolean)
 }
 
 /** Trained styles/characters whose TRIGGER WORD (preferred) or display name appears

@@ -13,7 +13,7 @@ import { computed, ref } from 'vue'
 import { $fetch } from 'ofetch'
 import type { Command } from '~/lib/agent/commandSurface'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
-import { applyCanvasCommand, describeCanvas, scopeSnapshotToUpstream, searchImageRequests, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
+import { applyCanvasCommand, describeCanvas, scopeSnapshotToUpstream, searchImageRequests, sketchRequests, summarizeCanvasChange, verifyCanvas, type CanvasSnapshot } from '~/lib/agent/surfaces/canvas'
 import { buildAgentPrompt, buildCommandSchema, buildResultReviewPrompt, buildReviewSchema, parseAgentResponse, parseReviewResponse, RESULT_REVIEW_SYSTEM } from '~/lib/agent/protocol'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
@@ -54,6 +54,9 @@ export function useCanvasAgent(opts: {
   /** Open the web-image-search picker for a `searchImages` command's query. The
    *  picker owns the rest (search → user picks → import as Image nodes). */
   searchImages?: (query: string) => void
+  /** Fire the sketch pad for a `sketch` command's image idea. Intercept-only —
+   *  never becomes a proposal card, never touches the graph. */
+  sketchIdea?: (prompt: string) => void
   apiKey: () => string
   tier?: string
 }) {
@@ -128,6 +131,7 @@ export function useCanvasAgent(opts: {
       let probe = clone(original)
       commands.forEach((cmd, i) => {
         if (cmd.op === 'searchImages') return // intercepted below — opens the picker, never a proposal card
+        if (cmd.op === 'sketch') return // intercepted below — fires the sketch pad, never a proposal card
         if (cmd.op === 'tuneNode') {
           const req = typeof cmd.args?.request === 'string' ? cmd.args.request : ''
           if (cmd.target && req) tuneInputs.push({ target: cmd.target, request: req })
@@ -183,9 +187,14 @@ export function useCanvasAgent(opts: {
       // hint tells the model to emit a single searchImages).
       const searchQueries = searchImageRequests(commands)
       if (searchQueries.length && opts.searchImages) opts.searchImages(searchQueries[0]!)
+      // Sketch pad: hand the idea to the sketch renderer (one idea per ask, like
+      // searchImages — the hint tells the model to emit a single sketch).
+      const sketchIdeas = sketchRequests(commands)
+      if (sketchIdeas.length && opts.sketchIdea) opts.sketchIdea(sketchIdeas[0]!)
       const built = [...graphBuilt, ...tuneBuilt]
       if (!built.length) {
         if (searchQueries.length && opts.searchImages) { answer.value = tuneNotice || message; return } // the picker is the response
+        if (sketchIdeas.length && opts.sketchIdea) { answer.value = ''; return } // the pad is the response
         answer.value = tuneNotice || message || (commands.length ? 'I couldn’t apply those edits to this graph.' : 'No changes for that — try rephrasing.')
         return
       }
