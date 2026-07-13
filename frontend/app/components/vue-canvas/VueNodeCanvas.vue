@@ -980,8 +980,13 @@ const {
 
 // Sketch pad (prompt-bar sketching): one disposable 2×2 pad per canvas. Anchor
 // + card ids persist across re-sketches so refresh overwrites the same slots.
-const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: string[], seed: number, prompt: string, promptId: string | null }>(
-  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null },
+// padNodeId is the transient GENERATOR node's NATURAL numeric id (minted by
+// createNodeData, same convention as every other runnable node) — the run
+// pipeline serializes node ids through Number() when building a workflow, so a
+// string id like SKETCH_PAD_ID would come out NaN and be dropped. SKETCH_PAD_ID
+// stays reserved for the (string-id, never-run) leaf card namespace only.
+const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: string[], seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null }>(
+  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null, padNodeId: null },
 )
 
 /** Viewport center in graph coords, nudged to the nearest clear spot so the pad
@@ -2610,9 +2615,11 @@ function handleBridgeMessage(event: MessageEvent) {
           target.data = appendTake({ ...target.data }, tagged)
           // Prompt-bar sketch pad: the transient hidden pad's batch is spread to
           // the 4 anchor cards (replacing the optimistic skeleton) via the
-          // source-node-decoupled materializer. Routed by pad id BEFORE the
-          // legacy sketch-node fan-out below (Task 8 retires that branch).
-          if (String(nodeId) === SKETCH_PAD_ID && tagged.images && tagged.images.length > 1 && sketchPad.anchor) {
+          // source-node-decoupled materializer. Routed by the pad's
+          // properties.sketchPad marker (id-agnostic — the pad's numeric id is
+          // minted per-canvas, not the SKETCH_PAD_ID string) BEFORE the legacy
+          // sketch-node fan-out below (Task 8 retires that branch).
+          if (target?.data?.properties?.sketchPad === true && tagged.images && tagged.images.length > 1 && sketchPad.anchor) {
             materializeSketchCardsAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton
             return
           }
@@ -3220,14 +3227,20 @@ async function startSketch(prompt: string): Promise<void> {
   // Lever 1 — optimistic skeleton: 4 shimmer cards appear immediately.
   materializeSketchCardsAt(sketchPad.anchor, [], { loading: true })
 
-  // Transient hidden pad node drives the proven dispatch pipeline.
+  // Transient hidden pad node drives the proven dispatch pipeline. Reused by
+  // its stored NUMERIC id (sketchPad.padNodeId), not by the SKETCH_PAD_ID
+  // string constant — that constant is reserved for the leaf card namespace.
   const { widgetOverrides, propertyOverrides } = sketchPadPromptOverrides(clean, sketchPad.seed)
-  let pad = (nodes.value as any[]).find((n: any) => n.id === SKETCH_PAD_ID) as any
+  let pad = sketchPad.padNodeId != null
+    ? (nodes.value as any[]).find((n: any) => n.id === sketchPad.padNodeId) as any
+    : null
   if (!pad) {
     pad = createNodeData('GenerateImageNode', sketchPad.anchor, widgetOverrides, propertyOverrides)
-    pad.id = SKETCH_PAD_ID
+    // Keep the natural numeric id createNodeData/mintNodeId assigned — do NOT
+    // force a string id here (would serialize to NaN and drop from the run).
     pad.hidden = true // VueFlow: kept out of the rendered graph
     ;(nodes.value as any[]).push(pad)
+    sketchPad.padNodeId = pad.id
   } else {
     applyWidgetOverridesTo(pad, widgetOverrides)
     pad.position = sketchPad.anchor
@@ -3235,7 +3248,7 @@ async function startSketch(prompt: string): Promise<void> {
   await nextTick()
   // Scoped run of just the pad node (never the whole graph). skipCostConfirm:
   // sketches are the cheap tier; the meter still bills normally.
-  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [SKETCH_PAD_ID], direction: 'self', skipCostConfirm: true } }))
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [sketchPad.padNodeId], direction: 'self', skipCostConfirm: true } }))
 }
 
 // Sketch-output card "Promote" (spec 2026-07-08-sketch-node-refinement.md,
