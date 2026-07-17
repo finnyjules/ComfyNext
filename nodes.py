@@ -2588,6 +2588,7 @@ async def init_builtin_extra_nodes():
         "nodes_smart_layout.py",
         "nodes_compositor.py",
         "nodes_pose_mannequin.py",
+        "nodes_scene3d.py",
         "nodes_person_swap.py",
         "nodes_relight.py",
         "nodes_swap_product.py",
