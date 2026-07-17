@@ -58,6 +58,12 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   const prevOverride = scene.overrideMaterial
   const prevGrid = engine.grid.visible
   engine.grid.visible = false
+  // Editor-only helpers (the TransformControls gizmo) live in the same scene;
+  // hide them so an active selection's gizmo never bleeds into the baked passes
+  // — otherwise its arrows show in beauty and register as fake geometry in the
+  // depth/normal ControlNet maps.
+  const helpers = engine.scene.children.filter((c) => c.userData.isGizmoHelper && c.visible)
+  for (const h of helpers) h.visible = false
   let dmat: THREE.ShaderMaterial | null = null
   let nmat: THREE.MeshNormalMaterial | null = null
   try {
@@ -90,6 +96,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     scene.overrideMaterial = prevOverride
     scene.background = prevBg
     engine.grid.visible = prevGrid
+    for (const h of helpers) h.visible = true
     dmat?.dispose()
     nmat?.dispose()
     renderer.dispose()

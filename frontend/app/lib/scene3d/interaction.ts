@@ -45,7 +45,12 @@ export class SceneInteraction {
     this.gizmo.addEventListener('objectChange', () => this.emitTransform())
     // three 0.171 TransformControls extends Controls (not Object3D); its visual
     // representation is the helper root returned by getHelper().
-    this.engine.scene.add(this.gizmo.getHelper())
+    // Tag it so the bake (renderPasses) can hide it — the gizmo shares
+    // engine.scene, so an attached gizmo would otherwise bleed into every
+    // baked pass (visible arrows in beauty, and false geometry in depth/normal).
+    const helper = this.gizmo.getHelper()
+    helper.userData.isGizmoHelper = true
+    this.engine.scene.add(helper)
     domElement.addEventListener('pointerdown', this.onDown)
     domElement.addEventListener('pointerup', this.onUp)
   }
