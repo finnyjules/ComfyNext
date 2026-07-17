@@ -57,12 +57,17 @@ const baking = ref(false)
 const glbError = reactive<Record<string, boolean>>({})
 const webglOk = ref(true)
 
-// Wired glb_url (from a Model3D node), if any — offered as an import shortcut.
+// Wired glb_url (from a Model3D / Text node), if any — offered as an import
+// shortcut. glb_url is a STRING *widget*, so it never appears in data.inputs
+// (the link-slot list); the node card renders its wiring handle at the fallback
+// index 0 (Scene3DStudioNode.glbInIdx). Mirror that fallback here so an upstream
+// URL edge — anchored to `input-0` — is actually detected. Ids are coerced with
+// String() because edge/node ids can be numbers or strings depending on source.
 const wiredGlbUrl = computed<string>(() => {
-  const idx = node.value?.data?.inputs?.findIndex((i: any) => i.name === 'glb_url') ?? -1
-  if (idx < 0) return ''
-  const edge = props.edges.find((e: any) => e.target === props.nodeId && e.targetHandle === `input-${idx}`)
-  const src = edge ? props.nodes.find((n: any) => n.id === edge.source) : null
+  const found = node.value?.data?.inputs?.findIndex((i: any) => i.name === 'glb_url') ?? -1
+  const idx = found >= 0 ? found : 0
+  const edge = props.edges.find((e: any) => String(e.target) === String(props.nodeId) && e.targetHandle === `input-${idx}`)
+  const src = edge ? props.nodes.find((n: any) => String(n.id) === String(edge.source)) : null
   const t = src?.data?.text
   return typeof t === 'string' && /^https?:|\.glb/i.test(t) ? t : ''
 })
