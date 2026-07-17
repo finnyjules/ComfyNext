@@ -411,8 +411,13 @@ async function onClose() {
         <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
           WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
-        <!-- Overlay toolbar: gizmo mode · snap · set camera -->
-        <div v-if="webglOk" class="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur">
+        <!-- Overlay toolbar: gizmo mode · snap · set camera.
+             @pointerdown.stop: these overlays sit inside the viewport element that
+             OrbitControls binds to. Without this, a press on a button bubbles to
+             OrbitControls, which setPointerCapture()s the pointer on the viewport —
+             retargeting pointerup/click to the viewport so the button's @click never
+             fires (and a stray orbit-drag starts). Stop it at the overlay boundary. -->
+        <div v-if="webglOk" class="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur" @pointerdown.stop>
           <div class="flex overflow-hidden rounded bg-white/10 text-xs text-white">
             <button v-for="m in (['translate', 'rotate', 'scale'] as const)" :key="m" type="button"
               class="px-2 py-1 capitalize" :class="gizmoMode === m ? 'bg-white/25' : 'hover:bg-white/15'"
@@ -426,7 +431,7 @@ async function onClose() {
         </div>
 
         <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB -->
-        <div v-if="webglOk" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu>
+        <div v-if="webglOk" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu @pointerdown.stop>
           <p v-if="uploadError" class="mb-2 text-center text-[11px] text-red-400/90">{{ uploadError }}</p>
           <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
             <button
