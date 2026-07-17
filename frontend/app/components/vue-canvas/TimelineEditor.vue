@@ -1319,6 +1319,14 @@ function formatTime(sec: number): string {
   return `${m}:${s.padStart(4, '0')}`
 }
 
+// Seconds at the DISPLAY EDGE only — the model stays in frames.
+function fToS(frames: number): string {
+  return (frames / store.fps.value).toFixed(2)
+}
+function sToF(raw: string): number {
+  return Math.max(0, Math.round((parseFloat(raw) || 0) * store.fps.value))
+}
+
 // -- AI ports (graph wiring) ---------------------------------------------------
 // Walk the edges to find what's connected to this Timeline node's clip ports.
 // Each becomes a "WorkflowClip" candidate the user can drop on the timeline —
@@ -1689,24 +1697,33 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <div class="grid grid-cols-2 gap-2">
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Start</div>
-                <input type="number" :value="selectedClipData.start_frame"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                  @change="store.updateClip(selectedClipData!.id, { start_frame: parseInt(($event.target as HTMLInputElement).value) || 0 })" />
+                <div class="flex items-center gap-1.5">
+                  <input type="number" step="0.1" min="0" :value="fToS(selectedClipData.start_frame)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { start_frame: sToF(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-[9px] text-white/30 tabular-nums shrink-0">{{ selectedClipData.start_frame }}f</span>
+                </div>
               </div>
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Length</div>
-                <input type="number" min="1" :value="selectedClipData.length"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                  @change="store.updateClip(selectedClipData!.id, { length: Math.max(1, parseInt(($event.target as HTMLInputElement).value) || 1) })" />
+                <div class="flex items-center gap-1.5">
+                  <input type="number" step="0.1" min="0" :value="fToS(selectedClipData.length)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { length: Math.max(1, sToF(($event.target as HTMLInputElement).value)) })" />
+                  <span class="text-[9px] text-white/30 tabular-nums shrink-0">{{ selectedClipData.length }}f</span>
+                </div>
               </div>
             </div>
 
             <div class="grid grid-cols-2 gap-2">
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">In point</div>
-                <input type="number" min="0" :value="selectedClipData.in_frame"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                  @change="store.updateClip(selectedClipData!.id, { in_frame: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+                <div class="flex items-center gap-1.5">
+                  <input type="number" step="0.1" min="0" :value="fToS(selectedClipData.in_frame)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { in_frame: sToF(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-[9px] text-white/30 tabular-nums shrink-0">{{ selectedClipData.in_frame }}f</span>
+                </div>
               </div>
               <div />
             </div>
@@ -1817,15 +1834,21 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Fade in</div>
-                <input type="number" min="0" :value="selectedClipData.fade_in ?? 0"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                  @change="store.updateClip(selectedClipData!.id, { fade_in: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+                <div class="flex items-center gap-1.5">
+                  <input type="number" step="0.1" min="0" :value="fToS(selectedClipData.fade_in ?? 0)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { fade_in: sToF(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-[9px] text-white/30 tabular-nums shrink-0">{{ selectedClipData.fade_in ?? 0 }}f</span>
+                </div>
               </div>
               <div>
                 <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1">Fade out</div>
-                <input type="number" min="0" :value="selectedClipData.fade_out ?? 0"
-                  class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
-                  @change="store.updateClip(selectedClipData!.id, { fade_out: Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0) })" />
+                <div class="flex items-center gap-1.5">
+                  <input type="number" step="0.1" min="0" :value="fToS(selectedClipData.fade_out ?? 0)"
+                    class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-white/90 outline-none tabular-nums"
+                    @change="store.updateClip(selectedClipData!.id, { fade_out: sToF(($event.target as HTMLInputElement).value) })" />
+                  <span class="text-[9px] text-white/30 tabular-nums shrink-0">{{ selectedClipData.fade_out ?? 0 }}f</span>
+                </div>
               </div>
             </div>
 
@@ -2085,10 +2108,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 <!-- Tint overlay so the label stays legible -->
                 <div class="absolute inset-0 bg-gradient-to-b from-black/0 via-black/0 to-black/20 pointer-events-none rounded" />
                 <!-- Label -->
-                <div class="absolute top-0 left-0 right-0 px-2 py-0.5 flex items-center text-[10px] text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] font-medium select-none pointer-events-none truncate z-[1]">
+                <div class="absolute top-0 left-0 right-0 px-2 py-0.5 flex items-center text-[10px] text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] font-medium select-none pointer-events-none truncate z-[1]"
+                  :title="clip.length + 'f'">
                   <component :is="clipIcon(clip.kind)" class="size-2.5 mr-1 opacity-80" />
                   <span class="truncate">{{ clip.kind === 'workflow' ? `Port ${(clip as any).port_index}` : ((clip as any).asset_id ? (assetsList.find(a => a.id === (clip as any).asset_id)?.name ?? clip.kind) : clip.kind) }}</span>
-                  <span class="ml-auto text-white/70 tabular-nums shrink-0">{{ clip.length }}f</span>
+                  <span class="ml-auto text-white/70 tabular-nums shrink-0">{{ (clip.length / store.fps.value).toFixed(1) }}s</span>
                 </div>
                 <!-- Left resize handle -->
                 <div
