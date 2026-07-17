@@ -404,7 +404,7 @@ async function onClose() {
 </script>
 
 <template>
-  <StudioModalShell title="3D Studio" @close="onClose">
+  <StudioModalShell title="3D Studio" wide @close="onClose">
     <template #preview>
       <div ref="viewportEl" class="relative h-full w-full min-h-0">
         <canvas v-if="webglOk" ref="canvasEl" class="h-full w-full" />
@@ -480,31 +480,40 @@ async function onClose() {
       </div>
     </template>
 
-    <template #controls>
-      <StudioSection title="Objects">
-        <div v-if="!doc.objects.length" class="text-xs text-white/40">
-          Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.
+    <!-- Object list: its own dedicated panel (like Smart Layout / Frame), separate
+         from the inspector column at right. -->
+    <template #aside>
+      <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
+        <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
+        <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+          <div v-if="!doc.objects.length" class="px-1 text-xs leading-relaxed text-white/40">
+            Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.
+          </div>
+          <div v-for="o in doc.objects" :key="o.id"
+            class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
+            :class="o.id === selectedId ? 'bg-white/15' : 'hover:bg-white/5'"
+            @click="selectedId = o.id">
+            <Box class="h-3.5 w-3.5 shrink-0 opacity-60" />
+            <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
+            <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
+              title="Load failed — retry" @click.stop="retryGlb(o.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
+            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="o.visible = !o.visible">
+              <component :is="o.visible ? Eye : EyeOff" class="h-3.5 w-3.5" />
+            </button>
+            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="duplicateObject(o.id)"><Copy class="h-3.5 w-3.5" /></button>
+            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="removeObject(o.id)"><Trash2 class="h-3.5 w-3.5" /></button>
+          </div>
         </div>
-        <div v-for="o in doc.objects" :key="o.id"
-          class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
-          :class="o.id === selectedId ? 'bg-white/15' : 'hover:bg-white/5'"
-          @click="selectedId = o.id">
-          <Box class="h-3.5 w-3.5 shrink-0 opacity-60" />
-          <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
-          <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
-            title="Load failed — retry" @click.stop="retryGlb(o.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
-          <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="o.visible = !o.visible">
-            <component :is="o.visible ? Eye : EyeOff" class="h-3.5 w-3.5" />
-          </button>
-          <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="duplicateObject(o.id)"><Copy class="h-3.5 w-3.5" /></button>
-          <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="removeObject(o.id)"><Trash2 class="h-3.5 w-3.5" /></button>
+        <div v-if="wiredGlbUrl" class="shrink-0 border-t border-white/[0.08] p-2">
+          <StudioButton @click="addGlb(wiredGlbUrl)">
+            <span class="flex items-center gap-1.5"><Plus class="h-3.5 w-3.5" /> Import wired model</span>
+          </StudioButton>
         </div>
-        <StudioButton v-if="wiredGlbUrl" @click="addGlb(wiredGlbUrl)">
-          <span class="flex items-center gap-1.5"><Plus class="h-3.5 w-3.5" /> Import wired model</span>
-        </StudioButton>
         <input ref="glbFileInput" type="file" accept=".glb,model/gltf-binary" class="hidden" @change="onGlbFilePicked" />
-      </StudioSection>
+      </div>
+    </template>
 
+    <template #controls>
       <StudioSection v-if="selected" title="Selection">
         <div v-if="selectedIsPrimitive" class="flex items-center justify-between">
           <span class="text-[11px] text-white/55">Color</span>

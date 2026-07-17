@@ -15,7 +15,10 @@ import AgentProposal from '~/components/agent/AgentProposal.vue'
 // provided, the shell renders a bare prompt docked under the preview and lets the
 // agent's progress / proposal take over the controls column — the same layout the
 // Compositor uses, so every studio behaves consistently.
-const props = defineProps<{ title?: string; breadcrumb?: string; agent?: any; agentPlaceholder?: string }>()
+// `wide` opts a studio into a larger modal + a dedicated aside panel column
+// (used by 3D Studio for its object list). Other studios omit it and render at
+// the original size with no aside, byte-for-byte unchanged.
+const props = defineProps<{ title?: string; breadcrumb?: string; agent?: any; agentPlaceholder?: string; wide?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const agentActive = computed(() => {
@@ -49,7 +52,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
     <div ref="rootEl" tabindex="-1" role="dialog" aria-modal="true"
-         class="flex h-[640px] max-h-[92vh] w-[1080px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none">
+         class="flex max-h-[92vh] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none"
+         :class="wide ? 'h-[820px] w-[1400px]' : 'h-[640px] w-[1080px]'">
       <div class="flex shrink-0 items-center gap-2 px-4 pt-3 pb-1">
         <span class="text-[13px] font-medium tracking-[-0.01em] text-white/90">{{ title }}</span>
         <template v-if="breadcrumb">
@@ -75,6 +79,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
+        <!-- Optional dedicated panel column (e.g. 3D Studio's object list), sitting
+             between the preview and the controls/inspector column. -->
+        <div v-if="$slots.aside" class="flex w-56 shrink-0 min-h-0"><slot name="aside" /></div>
         <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
           <!-- Assistant takeover: the agent's progress / proposal replace the controls
                while it's working, then hand back the controls when done. -->
