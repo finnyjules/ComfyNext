@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc,
+  defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS,
 } from '~/lib/scene3d/config'
 
 describe('scene3d config', () => {
@@ -32,5 +32,24 @@ describe('scene3d config', () => {
     delete raw.lighting.ambient
     const back = parseDoc(JSON.stringify(raw))
     expect(back.lighting.ambient).toBe(defaultDoc().lighting.ambient)
+  })
+
+  it('round-trips a document containing every primitive kind', () => {
+    const doc = defaultDoc()
+    for (const kind of PRIMITIVE_KINDS) doc.objects.push(createPrimitive(kind, doc.objects))
+    expect(PRIMITIVE_KINDS).toHaveLength(14)
+    const back = parseDoc(serializeDoc(doc))
+    expect(back).toEqual(doc)
+    expect(back.objects.map((o) => (o as any).primitive)).toEqual([...PRIMITIVE_KINDS])
+  })
+
+  it('drops objects with an unknown primitive kind instead of erroring', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.objects.push({ ...raw.objects[0], id: 'obj_bad', primitive: 'blob' })
+    const back = parseDoc(JSON.stringify(raw))
+    expect(back.objects).toHaveLength(1)
+    expect((back.objects[0] as any).primitive).toBe('box')
   })
 })

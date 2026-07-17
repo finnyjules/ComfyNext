@@ -2,7 +2,11 @@
 // the editor mutates a SceneDoc, the engine renders from it, and serializeDoc's
 // output is what the Scene3DStudio node stores in its `scene_state` widget.
 
-export type PrimitiveKind = 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
+export type PrimitiveKind =
+  | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
+  | 'capsule' | 'pyramid' | 'prism'
+  | 'icosahedron' | 'octahedron' | 'dodecahedron'
+  | 'torusKnot' | 'ring'
 export type Vec3 = [number, number, number]
 
 export interface SceneMaterial { color: string; roughness: number; metalness: number }
@@ -39,7 +43,12 @@ export interface SceneDoc {
   output: { width: number; height: number }
 }
 
-export const PRIMITIVE_KINDS: PrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'torus', 'plane']
+export const PRIMITIVE_KINDS: PrimitiveKind[] = [
+  'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
+  'capsule', 'pyramid', 'prism',
+  'icosahedron', 'octahedron', 'dodecahedron',
+  'torusKnot', 'ring',
+]
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 
 const DEFAULT_MATERIAL: SceneMaterial = { color: '#9aa3af', roughness: 0.6, metalness: 0.0 }

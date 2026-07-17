@@ -22,6 +22,15 @@ function geometryFor(kind: PrimitiveKind): THREE.BufferGeometry {
     case 'cone': return new THREE.ConeGeometry(0.5, 1, 48)
     case 'torus': return new THREE.TorusGeometry(0.5, 0.18, 24, 64)
     case 'plane': return new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)
+    case 'capsule': return new THREE.CapsuleGeometry(0.35, 0.5, 8, 24)
+    // 4-sided cone = pyramid; rotated so the square footprint is axis-aligned.
+    case 'pyramid': return new THREE.ConeGeometry(0.55, 1, 4, 1).rotateY(Math.PI / 4)
+    case 'prism': return new THREE.CylinderGeometry(0.5, 0.5, 1, 3)
+    case 'icosahedron': return new THREE.IcosahedronGeometry(0.55)
+    case 'octahedron': return new THREE.OctahedronGeometry(0.55)
+    case 'dodecahedron': return new THREE.DodecahedronGeometry(0.55)
+    case 'torusKnot': return new THREE.TorusKnotGeometry(0.4, 0.12, 128, 16)
+    case 'ring': return new THREE.RingGeometry(0.22, 0.5, 48).rotateX(-Math.PI / 2)
   }
 }
 
@@ -120,7 +129,11 @@ export class SceneEngine {
     }
     if (!root) {
       if (obj.kind === 'primitive') {
-        const mesh = new THREE.Mesh(geometryFor(obj.primitive), new THREE.MeshStandardMaterial())
+        const mat = new THREE.MeshStandardMaterial()
+        // Flat shapes must be visible from both sides (plane was previously
+        // invisible from below; ring inherits the fix).
+        if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
+        const mesh = new THREE.Mesh(geometryFor(obj.primitive), mat)
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
       } else {
