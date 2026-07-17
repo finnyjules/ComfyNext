@@ -12,10 +12,12 @@ export function fitNearFar(bounds: THREE.Box3, camPos: THREE.Vector3): { near: n
   if (bounds.isEmpty()) return { near: 0.1, far: 100 }
   const sphere = bounds.getBoundingSphere(new THREE.Sphere())
   const dist = camPos.distanceTo(sphere.center)
-  return {
-    near: Math.max(0.05, dist - sphere.radius * 1.05),
-    far: Math.max(0.2, dist + sphere.radius * 1.05),
-  }
+  const near = Math.max(0.05, dist - sphere.radius * 1.05)
+  let far = Math.max(0.2, dist + sphere.radius * 1.05)
+  // Degenerate (zero-radius) bounds would give near === far → divide-by-zero
+  // in the depth ramp shader. Keep a minimum spread.
+  if (far - near < 1e-3) far = near + 1
+  return { near, far }
 }
 
 const depthMaterial = () => new THREE.ShaderMaterial({
@@ -53,8 +55,11 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
 
   const scene = engine.scene
   const prevBg = scene.background
+  const prevOverride = scene.overrideMaterial
   const prevGrid = engine.grid.visible
   engine.grid.visible = false
+  let dmat: THREE.ShaderMaterial | null = null
+  let nmat: THREE.MeshNormalMaterial | null = null
   try {
     // Beauty — scene as styled. Transparent background stays transparent (alpha).
     scene.background = doc.background === 'transparent' ? null : new THREE.Color(doc.background)
@@ -65,7 +70,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     const bounds = new THREE.Box3()
     for (const root of engine.objectRoots.values()) if (root.visible) bounds.expandByObject(root)
     const { near, far } = fitNearFar(bounds, camera.position)
-    const dmat = depthMaterial()
+    dmat = depthMaterial()
     dmat.uniforms.uNear!.value = near
     dmat.uniforms.uFar!.value = far
     scene.background = new THREE.Color(0x000000)
@@ -74,16 +79,22 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     const depth = canvas.toDataURL('image/png')
 
     // Normal — three's built-in view-space normal material, neutral background.
+    nmat = new THREE.MeshNormalMaterial()
     scene.background = new THREE.Color('#8080ff')
-    scene.overrideMaterial = new THREE.MeshNormalMaterial()
+    scene.overrideMaterial = nmat
     renderer.render(scene, camera)
     const normal = canvas.toDataURL('image/png')
 
     return { beauty, depth, normal }
   } finally {
-    scene.overrideMaterial = null
+    scene.overrideMaterial = prevOverride
     scene.background = prevBg
     engine.grid.visible = prevGrid
+    dmat?.dispose()
+    nmat?.dispose()
     renderer.dispose()
+    // dispose() alone never releases the GL context; without this, repeated
+    // bakes on fresh detached canvases exhaust the browser's context cap.
+    renderer.forceContextLoss()
   }
 }

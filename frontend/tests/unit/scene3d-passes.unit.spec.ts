@@ -15,4 +15,9 @@ describe('scene3d depth range fitting', () => {
     expect(near).toBeGreaterThan(0)
     expect(far).toBeGreaterThan(near)
   })
+  it('keeps far > near for a zero-extent (point) bounds', () => {
+    const p = new THREE.Vector3(0, 0, 0)
+    const { near, far } = fitNearFar(new THREE.Box3(p.clone(), p.clone()), new THREE.Vector3(0, 0, 5))
+    expect(far).toBeGreaterThan(near)
+  })
 })
