@@ -11,7 +11,7 @@
 // live in surrounding markup (mirrors ShapeStudioSurface.vue). Enum-union fields go
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2 } from 'lucide-vue-next'
+import { Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
   PRIMITIVE_KINDS, LIGHTING_PRESETS,
@@ -19,7 +19,7 @@ import {
 } from '~/lib/scene3d/config'
 import { SceneEngine } from '~/lib/scene3d/engine'
 import { SceneInteraction, type GizmoMode } from '~/lib/scene3d/interaction'
-import { loadGlb } from '~/lib/scene3d/glb'
+import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
@@ -54,8 +54,12 @@ const gizmoMode = ref<GizmoMode>('translate')
 const snap = ref(false)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
+const bakeError = ref('')       // last bake failure message (inline "retry")
 const glbError = reactive<Record<string, boolean>>({})
 const webglOk = ref(true)
+const uploading = ref(false)    // GLB file upload in flight
+const uploadError = ref('')     // inline error for the Upload GLB control
+const glbFileInput = ref<HTMLInputElement | null>(null)
 
 // Wired glb_url (from a Model3D / Text node), if any — offered as an import
 // shortcut. glb_url is a STRING *widget*, so it never appears in data.inputs
@@ -69,7 +73,10 @@ const wiredGlbUrl = computed<string>(() => {
   const edge = props.edges.find((e: any) => String(e.target) === String(props.nodeId) && e.targetHandle === `input-${idx}`)
   const src = edge ? props.nodes.find((n: any) => String(n.id) === String(edge.source)) : null
   const t = src?.data?.text
-  return typeof t === 'string' && /^https?:|\.glb/i.test(t) ? t : ''
+  // Only accept strings that actually reference a .glb file (optionally followed by
+  // a query/hash) — no bare "any http URL" acceptance, which would offer to import
+  // non-model links wired into the slot.
+  return typeof t === 'string' && /\.glb(\?|#|$)/i.test(t) ? t : ''
 })
 
 // ── Enum / composite field proxies (StudioSegmented/StudioSelect models are string) ─────
@@ -103,7 +110,40 @@ const bgColorProxy = computed<string>({
 const matColor = computed<string>({ get: () => selected.value?.material.color ?? '#9aa3af', set: (v) => { if (selected.value) selected.value.material.color = v } })
 const matRoughness = computed<number>({ get: () => selected.value?.material.roughness ?? 0.6, set: (v) => { if (selected.value) selected.value.material.roughness = v } })
 const matMetalness = computed<number>({ get: () => selected.value?.material.metalness ?? 0, set: (v) => { if (selected.value) selected.value.material.metalness = v } })
-const selScale = computed<number>({ get: () => selected.value?.scale[0] ?? 1, set: (v) => { if (selected.value) selected.value.scale = [v, v, v] } })
+
+// Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
+// stored in radians but edited in degrees. Setters replace the whole array so the
+// deep doc watcher fires (engine syncs); gizmo drags mutate the same arrays, so the
+// computed getters re-read and the inputs update — two-way, no extra wiring.
+const RAD2DEG = 180 / Math.PI
+const DEG2RAD = Math.PI / 180
+function axisField(prop: 'position' | 'scale', axis: 0 | 1 | 2) {
+  return computed<number>({
+    get: () => selected.value?.[prop][axis] ?? (prop === 'scale' ? 1 : 0),
+    set: (v) => {
+      const s = selected.value
+      if (!s || !Number.isFinite(v)) return
+      const next = [...s[prop]] as [number, number, number]
+      next[axis] = v
+      s[prop] = next
+    },
+  })
+}
+function rotField(axis: 0 | 1 | 2) {
+  return computed<number>({
+    get: () => (selected.value ? selected.value.rotation[axis] * RAD2DEG : 0),
+    set: (v) => {
+      const s = selected.value
+      if (!s || !Number.isFinite(v)) return
+      const next = [...s.rotation] as [number, number, number]
+      next[axis] = v * DEG2RAD
+      s.rotation = next
+    },
+  })
+}
+const posX = axisField('position', 0), posY = axisField('position', 1), posZ = axisField('position', 2)
+const rotX = rotField(0), rotY = rotField(1), rotZ = rotField(2)
+const sclX = axisField('scale', 0), sclY = axisField('scale', 1), sclZ = axisField('scale', 2)
 
 // ── Engine lifecycle ──────────────────────────────────────────────────────────
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -128,6 +168,12 @@ onMounted(() => {
   })
   interaction.orbit.target.set(...doc.camera.target)
   engine.syncFromDoc(doc)
+  // Warm-up every restored GLB so a scene loaded from scene_state surfaces load
+  // failures in the list too (the engine's own load leaves an empty group silently;
+  // addGlb/duplicateObject only warm the ones created this session).
+  for (const o of doc.objects) {
+    if (o.kind === 'glb') loadGlb(o.url).catch(() => { glbError[o.id] = true })
+  }
   const loop = () => {
     interaction?.orbit.update()
     engine?.render()
@@ -156,17 +202,23 @@ onBeforeUnmount(() => {
   engine?.dispose()
 })
 
-watch(doc, () => { dirty.value = true; engine?.syncFromDoc(doc) }, { deep: true })
+// Any edit re-dirties and clears a stale bake failure so the amber "unbaked
+// changes" indicator isn't masked by an old red "Bake failed — retry".
+watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc) }, { deep: true })
 watch(selectedId, (id) => interaction?.select(id))
 watch(gizmoMode, (m) => interaction?.setMode(m))
 watch(snap, (s) => interaction?.setSnap(s))
 
 function onKey(e: KeyboardEvent) {
+  // Never hijack modified chords (Cmd+R reload, Ctrl/Alt combos) into gizmo shortcuts.
+  if (e.metaKey || e.ctrlKey || e.altKey) return
   const tag = (e.target as HTMLElement)?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
-  if (e.key === 'w') gizmoMode.value = 'translate'
-  else if (e.key === 'e') gizmoMode.value = 'rotate'
-  else if (e.key === 'r') gizmoMode.value = 'scale'
+  // Case-insensitive so CapsLock / Shift still trigger W/E/R.
+  const k = e.key.toLowerCase()
+  if (k === 'w') gizmoMode.value = 'translate'
+  else if (k === 'e') gizmoMode.value = 'rotate'
+  else if (k === 'r') gizmoMode.value = 'scale'
   else if (e.key === 'Escape') {
     // An open StudioColor popover owns Escape (its own capture listener closes
     // it); it registered after us so we'd fire first — yield to it.
@@ -220,6 +272,57 @@ function duplicateObject(id: string) {
   if (copy.kind === 'glb') loadGlb(copy.url).catch(() => { glbError[copy.id] = true })
 }
 
+// Retry an errored GLB: clear the flag, then recreate the object with the same
+// fields but a fresh id so the engine (which diffs syncFromDoc by id) treats it as
+// a new source and actually reloads — reusing the id would be a no-op. loadGlb never
+// caches failures, so the re-fetch genuinely retries.
+function retryGlb(id: string) {
+  const idx = doc.objects.findIndex((o) => o.id === id)
+  const o = doc.objects[idx]
+  if (!o || o.kind !== 'glb') return
+  delete glbError[id]
+  const fresh = createGlbObject(o.url, doc.objects.filter((x) => x.id !== id))
+  Object.assign(fresh, {
+    name: o.name, visible: o.visible,
+    position: [...o.position], rotation: [...o.rotation], scale: [...o.scale],
+    material: { ...o.material },
+  })
+  doc.objects.splice(idx, 1, fresh)
+  if (selectedId.value === id) selectedId.value = fresh.id
+  loadGlb(fresh.url).catch(() => { glbError[fresh.id] = true })
+}
+
+// Upload a local .glb into ComfyUI's input dir, then add it as a scene object. The
+// server's /upload/image endpoint accepts arbitrary files; the returned filename is
+// served back same-origin via /view (so loadGlb's fetch works without CORS).
+function triggerGlbUpload() { glbFileInput.value?.click() }
+async function onGlbFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // reset so re-picking the same file re-fires change
+  if (!file) return
+  uploadError.value = ''
+  if (file.size > GLB_SIZE_CAP_BYTES) {
+    uploadError.value = `File too large — ${Math.round(GLB_SIZE_CAP_BYTES / (1024 * 1024))}MB max.`
+    return
+  }
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('image', file, file.name) // ComfyUI's field name is "image" for any file
+    fd.append('overwrite', 'true')
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error(`upload ${res.status}`)
+    const filename = (await res.json())?.name || file.name
+    addGlb(`/view?${new URLSearchParams({ filename, type: 'input' }).toString()}`)
+  } catch (err) {
+    console.error('[scene3d-studio] glb upload failed', err)
+    uploadError.value = 'Upload failed — try again.'
+  } finally {
+    uploading.value = false
+  }
+}
+
 function setCameraFromView() {
   if (!engine || !interaction) return
   doc.camera.position = engine.camera.position.toArray() as [number, number, number]
@@ -228,7 +331,6 @@ function setCameraFromView() {
 
 // ── Bake ──────────────────────────────────────────────────────────────────────
 const inpaint = useInpaint()
-const bakeError = ref('')
 async function bake(): Promise<void> {
   if (!engine || baking.value) return
   baking.value = true
@@ -259,9 +361,16 @@ async function bake(): Promise<void> {
 
 async function onClose() {
   setWidget('scene_state', serializeDoc(doc)) // scene always persists, baked or not
-  // bake() never throws (errors land in bakeError), so close always proceeds —
-  // a failed auto-bake loses nothing since scene_state is already written.
-  if (dirty.value && doc.objects.length && engine) await bake()
+  // A bake already failed and its inline "Bake failed — retry" is showing: this
+  // second close attempt (Esc/X) is the user's explicit escape hatch — leave without
+  // re-baking so a persistently failing bake can't trap them (scene_state is saved).
+  if (bakeError.value) { emit('close'); return }
+  if (dirty.value && doc.objects.length && engine) {
+    await bake()
+    // Auto-bake failed: keep the surface open so the inline error is visible; the
+    // user can retry Bake or close again to force-exit (handled above).
+    if (bakeError.value) return
+  }
   emit('close')
 }
 </script>
@@ -301,7 +410,7 @@ async function onClose() {
     <template #controls>
       <StudioSection title="Objects">
         <div v-if="!doc.objects.length" class="text-xs text-white/40">
-          Empty scene — add a primitive from the viewport toolbar<span v-if="wiredGlbUrl"> or import the wired model below</span>.
+          Empty scene — add a primitive from the viewport toolbar, upload a GLB<span v-if="wiredGlbUrl">, or import the wired model</span> below.
         </div>
         <div v-for="o in doc.objects" :key="o.id"
           class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
@@ -309,6 +418,8 @@ async function onClose() {
           @click="selectedId = o.id">
           <Box class="h-3.5 w-3.5 shrink-0 opacity-60" />
           <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
+          <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
+            title="Load failed — retry" @click.stop="retryGlb(o.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
           <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="o.visible = !o.visible">
             <component :is="o.visible ? Eye : EyeOff" class="h-3.5 w-3.5" />
           </button>
@@ -318,6 +429,15 @@ async function onClose() {
         <StudioButton v-if="wiredGlbUrl" @click="addGlb(wiredGlbUrl)">
           <span class="flex items-center gap-1.5"><Plus class="h-3.5 w-3.5" /> Import wired model</span>
         </StudioButton>
+        <input ref="glbFileInput" type="file" accept=".glb,model/gltf-binary" class="hidden" @change="onGlbFilePicked" />
+        <StudioButton :disabled="uploading" @click="triggerGlbUpload">
+          <span class="flex items-center gap-1.5">
+            <Loader2 v-if="uploading" class="h-3.5 w-3.5 animate-spin" />
+            <Upload v-else class="h-3.5 w-3.5" />
+            {{ uploading ? 'Uploading…' : 'Upload GLB' }}
+          </span>
+        </StudioButton>
+        <p v-if="uploadError" class="text-[11px] text-red-400/90">{{ uploadError }}</p>
       </StudioSection>
 
       <StudioSection v-if="selected" title="Selection">
@@ -327,7 +447,30 @@ async function onClose() {
         </div>
         <StudioSlider v-if="selectedIsPrimitive" v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
         <StudioSlider v-if="selectedIsPrimitive" v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
-        <StudioSlider v-model="selScale" label="Scale" :min="0.05" :max="8" :step="0.05" />
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Position</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
+            <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
+            <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
+          </div>
+        </div>
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
+            <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
+            <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
+          </div>
+        </div>
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Scale</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="sclX" type="number" step="0.05" aria-label="Scale X" class="studio-num" />
+            <input v-model.number="sclY" type="number" step="0.05" aria-label="Scale Y" class="studio-num" />
+            <input v-model.number="sclZ" type="number" step="0.05" aria-label="Scale Z" class="studio-num" />
+          </div>
+        </div>
       </StudioSection>
 
       <StudioSection title="Camera">
@@ -373,3 +516,27 @@ async function onClose() {
     </template>
   </StudioModalShell>
 </template>
+
+<style scoped>
+/* Compact numeric transform input — matches the studio kit's mono/muted language. */
+.studio-num {
+  width: 100%;
+  border-radius: 0.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.25rem 0.375rem;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  outline: none;
+  -moz-appearance: textfield;
+}
+.studio-num:focus {
+  background: rgba(255, 255, 255, 0.1);
+}
+.studio-num::-webkit-outer-spin-button,
+.studio-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+</style>
