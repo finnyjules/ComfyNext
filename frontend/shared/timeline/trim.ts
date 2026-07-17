@@ -19,8 +19,11 @@ export function computeLeftTrim(base: TrimBase, rawNewStart: number, anchored: b
   }
 }
 
-/** Cap a right-trim length at the source's remaining frames (null = unknown). */
-export function clampLengthToSource(length: number, inFrame: number, sourceFrames: number | null): number {
+/** Cap a right-trim length at the source's remaining frames (null = unknown).
+ *  `speed` converts the source budget into timeline frames: at 2× a clip
+ *  consumes source twice as fast, so half as many timeline frames fit. */
+export function clampLengthToSource(length: number, inFrame: number, sourceFrames: number | null, speed = 1): number {
   if (sourceFrames == null) return Math.max(1, length)
-  return Math.max(1, Math.min(length, sourceFrames - inFrame))
+  const budget = Math.floor((sourceFrames - inFrame) / Math.max(0.1, speed))
+  return Math.max(1, Math.min(length, budget))
 }

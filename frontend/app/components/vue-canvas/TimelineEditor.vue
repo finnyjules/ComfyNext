@@ -798,7 +798,7 @@ function onPointerMove(e: PointerEvent) {
     const rawEnd = drag.value.startStart + Math.max(1, drag.value.startLength + dframes)
     const snapped = snapFrame(rawEnd, drag.value.clipId)
     let newLen = Math.max(1, snapped - drag.value.startStart)
-    if (clip) newLen = clampLengthToSource(newLen, clip.in_frame, clipSourceFrames(clip))
+    if (clip) newLen = clampLengthToSource(newLen, clip.in_frame, clipSourceFrames(clip), clip.speed ?? 1)
     store.updateClip(drag.value.clipId, { length: newLen })
     showTrimHud(e, newLen, newLen - drag.value.startLength)
   } else if (drag.value.mode === 'resize-left') {
@@ -1215,6 +1215,25 @@ function handleKeydown(e: KeyboardEvent) {
     }
     return
   }
+}
+
+// -- Speed (video/audio clips) -----------------------------------------------
+//
+// CapCut semantics: changing speed rescales the clip's timeline length so the
+// covered SOURCE range stays the same (2× ⇒ half as long). One update_clip
+// dispatch patches both fields ⇒ one undo step. Keyframes are clip-local
+// OUTPUT frames — they intentionally don't move (tooltip says so).
+
+const SPEED_PRESETS = [0.5, 1, 1.5, 2]
+
+function setClipSpeed(clip: Clip, rawSpeed: number) {
+  const next = Math.max(0.1, Math.min(5, rawSpeed || 1))
+  const prev = clip.speed ?? 1
+  if (next === prev) return
+  store.updateClip(clip.id, {
+    speed: next,
+    length: Math.max(1, Math.round(clip.length * (prev / next))),
+  })
 }
 
 // Delete everything selected as ONE undo step.
@@ -1852,6 +1871,28 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   @input="store.updateClip(selectedClipData!.id, { volume: parseFloat(($event.target as HTMLInputElement).value) })" />
                 <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((selectedClipData.volume ?? 1) * 100) }}%</span>
               </div>
+            </div>
+
+            <div v-if="selectedClipData.kind === 'video' || selectedClipData.kind === 'audio'" class="pt-2 border-t border-white/5">
+              <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5"
+                title="Keyframes are timed to the clip's output frames — they don't move when speed changes.">Speed</div>
+              <div class="flex items-center gap-1">
+                <button
+                  v-for="p in SPEED_PRESETS"
+                  :key="p"
+                  class="px-1.5 py-1 rounded text-[10px] tabular-nums transition-colors"
+                  :class="(selectedClipData.speed ?? 1) === p ? 'bg-white/20 text-white' : 'bg-white/5 hover:bg-white/10 text-white/60'"
+                  @click="setClipSpeed(selectedClipData!, p)"
+                >{{ p }}×</button>
+                <input type="number" min="0.1" max="5" step="0.1" :value="selectedClipData.speed ?? 1"
+                  class="w-14 ml-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none tabular-nums text-[11px]"
+                  @change="setClipSpeed(selectedClipData!, parseFloat(($event.target as HTMLInputElement).value))" />
+              </div>
+              <label class="flex items-center gap-1.5 mt-2 text-[11px] text-white/70 cursor-pointer select-none">
+                <input type="checkbox" :checked="!!selectedClipData.reverse"
+                  @change="store.updateClip(selectedClipData!.id, { reverse: ($event.target as HTMLInputElement).checked })" />
+                Reverse
+              </label>
             </div>
 
             <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">

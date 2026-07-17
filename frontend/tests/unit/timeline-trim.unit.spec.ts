@@ -36,4 +36,13 @@ describe('clampLengthToSource', () => {
   it('floors at 1', () => {
     expect(clampLengthToSource(5, 89, 90)).toBe(1)
   })
+  it('speed scales the budget: 2× halves the timeline frames available', () => {
+    expect(clampLengthToSource(100, 30, 90, 2)).toBe(30)   // 60 source frames / 2
+  })
+  it('speed 0.5 doubles the timeline frames available', () => {
+    expect(clampLengthToSource(300, 30, 90, 0.5)).toBe(120) // 60 source frames / 0.5
+  })
+  it('length under the budget passes through untouched at any speed', () => {
+    expect(clampLengthToSource(10, 0, 90, 2)).toBe(10)
+  })
 })
