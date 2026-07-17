@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import type { EditState, Track, Clip, Asset, Keyframe, MotionClip } from '~~/shared/timeline/types'
+// (Track is used by the clipboard's kind-based paste routing.)
 import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
 import type { ClipTransform } from '~~/shared/timeline/interpolate'
 import { applyCommand, type TimelineCommand } from '~~/shared/timeline/commands'
@@ -20,6 +21,12 @@ const selectedAxisKeyframeT = ref<number | null>(null)
 let _nodeId: string | null = null
 let _getValue: ((name: string) => any) | null = null
 let _setValue: ((name: string, v: any) => void) | null = null
+
+// Clip clipboard — module-level so it survives editor close/reopen. Entries
+// are deep snapshots (not references): copying then deleting the source still
+// pastes fine.
+interface ClipboardEntry { clip: Clip; track_id: string; track_kind: Track['kind'] }
+const clipboard = ref<ClipboardEntry[]>([])
 
 // One undo step per pointer gesture: beginGesture() snapshots once and
 // suppresses per-dispatch snapshots until endGesture(), which pushes the
@@ -199,6 +206,73 @@ export function useTimelineStore() {
     dispatch({ type: 'set_canvas', patch })
   }
 
+  // -- Clipboard --
+
+  function copyClips(clipIds: Iterable<string>): number {
+    const ids = new Set(clipIds)
+    const out: ClipboardEntry[] = []
+    for (const track of state.value.tracks) {
+      for (const clip of track.clips) {
+        if (!ids.has(clip.id)) continue
+        out.push({ clip: JSON.parse(JSON.stringify(clip)), track_id: track.id, track_kind: track.kind })
+      }
+    }
+    if (out.length) clipboard.value = out
+    return out.length
+  }
+
+  /** Paste at `atFrame`: earliest clip lands there, relative offsets preserved.
+   *  Routing: original track if it still exists and is unlocked → first unlocked
+   *  track of the same kind → a freshly created track of that kind. */
+  function pasteClips(atFrame: number): string[] {
+    const entries = clipboard.value
+    if (!entries.length) return []
+    const minStart = Math.min(...entries.map(e => e.clip.start_frame))
+    const newIds: string[] = []
+    mutate(s => {
+      for (const e of entries) {
+        let track = s.tracks.find(t => t.id === e.track_id && !t.locked)
+        if (!track) track = s.tracks.find(t => t.kind === e.track_kind && !t.locked)
+        if (!track) {
+          const count = s.tracks.filter(t => t.kind === e.track_kind).length
+          track = {
+            id: crypto.randomUUID(), kind: e.track_kind,
+            name: `${e.track_kind === 'audio' ? 'Audio' : 'Video'} ${count + 1}`,
+            muted: false, locked: false, clips: [],
+          }
+          s.tracks.push(track)
+        }
+        const clone: Clip = JSON.parse(JSON.stringify(e.clip))
+        clone.id = crypto.randomUUID()
+        clone.start_frame = Math.max(0, atFrame + (e.clip.start_frame - minStart))
+        track.clips.push(clone)
+        newIds.push(clone.id)
+      }
+    })
+    return newIds
+  }
+
+  /** Clone each clip in place, appended right after its source (start = source
+   *  end) on the same track. Does not touch the clipboard. */
+  function duplicateClips(clipIds: Iterable<string>): string[] {
+    const ids = new Set(clipIds)
+    if (!ids.size) return []
+    const newIds: string[] = []
+    mutate(s => {
+      for (const track of s.tracks) {
+        for (const clip of [...track.clips]) {
+          if (!ids.has(clip.id)) continue
+          const clone: Clip = JSON.parse(JSON.stringify(clip))
+          clone.id = crypto.randomUUID()
+          clone.start_frame = clip.start_frame + clip.length
+          track.clips.push(clone)
+          newIds.push(clone.id)
+        }
+      }
+    })
+    return newIds
+  }
+
   // -- Keyframes --
 
   // Playhead position within a clip, in clip-local frames (clamped to the clip).
@@ -325,6 +399,11 @@ export function useTimelineStore() {
     redo,
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
+
+    copyClips,
+    pasteClips,
+    duplicateClips,
+    hasClipboard: computed(() => clipboard.value.length > 0),
 
     addTrack,
     removeTrack,

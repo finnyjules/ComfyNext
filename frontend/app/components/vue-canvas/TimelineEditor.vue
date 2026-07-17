@@ -1028,6 +1028,33 @@ function handleKeydown(e: KeyboardEvent) {
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); store.redo(); return }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+    e.preventDefault()
+    if (selectedClipIds.value.size) store.copyClips(selectedClipIds.value)
+    return
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+    e.preventDefault()
+    pasteAndSelect(store.playheadFrame.value)
+    return
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
+    e.preventDefault()
+    if (selectedClipIds.value.size) {
+      const ids = store.duplicateClips(selectedClipIds.value)
+      selectedClipIds.value = new Set(ids)
+      store.selectedClipId.value = ids[ids.length - 1] ?? null
+    }
+    return
+  }
+}
+
+function pasteAndSelect(frame: number) {
+  const ids = store.pasteClips(frame)
+  if (ids.length) {
+    selectedClipIds.value = new Set(ids)
+    store.selectedClipId.value = ids[ids.length - 1]!
+  }
 }
 
 // -- Helpers --
