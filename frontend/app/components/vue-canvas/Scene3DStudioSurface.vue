@@ -10,11 +10,15 @@
 // carries a `label` prop — the others take just `options`/nothing, so their labels
 // live in surrounding markup (mirrors ShapeStudioSurface.vue). Enum-union fields go
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
+import {
+  Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw,
+  Circle, Cylinder, Cone, Torus, Square, Pill, Pyramid, Triangle, Gem, Diamond,
+  Hexagon, CircleDashed, Infinity as InfinityIcon,
+} from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
-  PRIMITIVE_KINDS, LIGHTING_PRESETS,
+  LIGHTING_PRESETS,
   type SceneDoc, type SceneObject, type PrimitiveKind,
 } from '~/lib/scene3d/config'
 import { SceneEngine } from '~/lib/scene3d/engine'
@@ -60,6 +64,51 @@ const webglOk = ref(true)
 const uploading = ref(false)    // GLB file upload in flight
 const uploadError = ref('')     // inline error for the Upload GLB control
 const glbFileInput = ref<HTMLInputElement | null>(null)
+
+// ── Add-primitive menu ──────────────────────────────────────────────────────
+const primMenuOpen = ref(false)
+
+// Menu groups (spec order). Icons are real lucide glyphs where they exist,
+// nearest-match otherwise — all names verified against the installed
+// lucide-vue-next export list.
+const PRIM_GROUPS: { label: string; kinds: { kind: PrimitiveKind; label: string; icon: Component }[] }[] = [
+  { label: 'Basics', kinds: [
+    { kind: 'box', label: 'Box', icon: Box },
+    { kind: 'sphere', label: 'Sphere', icon: Circle },
+    { kind: 'cylinder', label: 'Cylinder', icon: Cylinder },
+    { kind: 'cone', label: 'Cone', icon: Cone },
+    { kind: 'torus', label: 'Torus', icon: Torus },
+    { kind: 'plane', label: 'Plane', icon: Square },
+  ] },
+  { label: 'Solids', kinds: [
+    { kind: 'capsule', label: 'Capsule', icon: Pill },
+    { kind: 'pyramid', label: 'Pyramid', icon: Pyramid },
+    { kind: 'prism', label: 'Prism', icon: Triangle },
+  ] },
+  { label: 'Polyhedra', kinds: [
+    { kind: 'icosahedron', label: 'Icosahedron', icon: Gem },
+    { kind: 'octahedron', label: 'Octahedron', icon: Diamond },
+    { kind: 'dodecahedron', label: 'Dodecahedron', icon: Hexagon },
+  ] },
+  { label: 'Decorative', kinds: [
+    { kind: 'torusKnot', label: 'Torus knot', icon: InfinityIcon },
+    { kind: 'ring', label: 'Ring', icon: CircleDashed },
+  ] },
+]
+
+function pickPrimitive(kind: PrimitiveKind) {
+  addPrimitive(kind)
+  primMenuOpen.value = false
+}
+
+// Outside click closes the menu (registered only while open).
+function onPrimMenuOutside(e: PointerEvent) {
+  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) primMenuOpen.value = false
+}
+watch(primMenuOpen, (open) => {
+  if (open) window.addEventListener('pointerdown', onPrimMenuOutside, true)
+  else window.removeEventListener('pointerdown', onPrimMenuOutside, true)
+})
 
 // Wired glb_url (from a Model3D / Text node), if any — offered as an import
 // shortcut. glb_url is a STRING *widget*, so it never appears in data.inputs
@@ -196,6 +245,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey, true)
+  window.removeEventListener('pointerdown', onPrimMenuOutside, true)
   cancelAnimationFrame(raf)
   ro?.disconnect()
   interaction?.dispose()
@@ -220,6 +270,13 @@ function onKey(e: KeyboardEvent) {
   else if (k === 'e') gizmoMode.value = 'rotate'
   else if (k === 'r') gizmoMode.value = 'scale'
   else if (e.key === 'Escape') {
+    // Open primitive menu owns Esc: close it, never the modal.
+    if (primMenuOpen.value) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      primMenuOpen.value = false
+      return
+    }
     // An open StudioColor popover owns Escape (its own capture listener closes
     // it); it registered after us so we'd fire first — yield to it.
     if (document.querySelector('[data-studio-color-pop]')) return
@@ -383,16 +440,8 @@ async function onClose() {
         <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
           WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
-        <!-- Overlay toolbar: add-object · gizmo mode · snap · set camera -->
+        <!-- Overlay toolbar: gizmo mode · snap · set camera -->
         <div v-if="webglOk" class="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur">
-          <select
-            class="rounded bg-white/10 px-2 py-1 text-xs text-white"
-            :value="''"
-            @change="addPrimitive(($event.target as HTMLSelectElement).value as PrimitiveKind); ($event.target as HTMLSelectElement).value = ''"
-          >
-            <option value="" disabled>+ Add</option>
-            <option v-for="k in PRIMITIVE_KINDS" :key="k" :value="k" class="bg-neutral-900">{{ k }}</option>
-          </select>
           <div class="flex overflow-hidden rounded bg-white/10 text-xs text-white">
             <button v-for="m in (['translate', 'rotate', 'scale'] as const)" :key="m" type="button"
               class="px-2 py-1 capitalize" :class="gizmoMode === m ? 'bg-white/25' : 'hover:bg-white/15'"
@@ -404,13 +453,61 @@ async function onClose() {
           <button type="button" class="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs text-white hover:bg-white/15"
             @click="setCameraFromView"><Camera class="h-3.5 w-3.5" /> Set camera</button>
         </div>
+
+        <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB -->
+        <div v-if="webglOk" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu>
+          <p v-if="uploadError" class="mb-2 text-center text-[11px] text-red-400/90">{{ uploadError }}</p>
+          <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
+            <button
+              type="button"
+              class="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] transition-colors cursor-pointer"
+              :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+              @click="primMenuOpen = !primMenuOpen"
+            >
+              <Plus class="size-4" /> Primitive
+            </button>
+            <div class="mx-0.5 h-5 w-px bg-white/10" />
+            <button
+              type="button"
+              :disabled="uploading"
+              class="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer disabled:opacity-50"
+              @click="triggerGlbUpload"
+            >
+              <Loader2 v-if="uploading" class="size-4 animate-spin" />
+              <Upload v-else class="size-4" />
+              {{ uploading ? 'Uploading…' : 'Upload GLB' }}
+            </button>
+
+            <!-- Primitive menu: popup card above the button (Brand-panel mechanic) -->
+            <div
+              v-if="primMenuOpen"
+              class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+            >
+              <div v-for="group in PRIM_GROUPS" :key="group.label" class="mb-1.5 last:mb-0">
+                <p class="mb-1 px-1 text-[10px] uppercase tracking-[0.12em] text-white/35">{{ group.label }}</p>
+                <div class="grid grid-cols-2 gap-0.5">
+                  <button
+                    v-for="p in group.kinds"
+                    :key="p.kind"
+                    type="button"
+                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    @click="pickPrimitive(p.kind)"
+                  >
+                    <component :is="p.icon" class="size-4 shrink-0 opacity-70" />
+                    {{ p.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </template>
 
     <template #controls>
       <StudioSection title="Objects">
         <div v-if="!doc.objects.length" class="text-xs text-white/40">
-          Empty scene — add a primitive from the viewport toolbar, upload a GLB<span v-if="wiredGlbUrl">, or import the wired model</span> below.
+          Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.
         </div>
         <div v-for="o in doc.objects" :key="o.id"
           class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
@@ -430,14 +527,6 @@ async function onClose() {
           <span class="flex items-center gap-1.5"><Plus class="h-3.5 w-3.5" /> Import wired model</span>
         </StudioButton>
         <input ref="glbFileInput" type="file" accept=".glb,model/gltf-binary" class="hidden" @change="onGlbFilePicked" />
-        <StudioButton :disabled="uploading" @click="triggerGlbUpload">
-          <span class="flex items-center gap-1.5">
-            <Loader2 v-if="uploading" class="h-3.5 w-3.5 animate-spin" />
-            <Upload v-else class="h-3.5 w-3.5" />
-            {{ uploading ? 'Uploading…' : 'Upload GLB' }}
-          </span>
-        </StudioButton>
-        <p v-if="uploadError" class="text-[11px] text-red-400/90">{{ uploadError }}</p>
       </StudioSection>
 
       <StudioSection v-if="selected" title="Selection">
