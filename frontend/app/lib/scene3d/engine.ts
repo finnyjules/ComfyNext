@@ -106,7 +106,18 @@ export class SceneEngine {
   }
 
   private syncObject(obj: SceneObject): void {
+    // Source signature: if a doc mutation retyped this id in place (kind,
+    // primitive shape, or GLB url), tear down the old asset and rebuild —
+    // otherwise the diff would keep rendering the stale one.
+    const sourceKey = obj.kind === 'primitive' ? `primitive:${obj.primitive}` : `glb:${obj.url}`
     let root = this.objectRoots.get(obj.id)
+    if (root && root.userData.sourceKey !== sourceKey) {
+      this.scene.remove(root)
+      disposeTree(root)
+      this.objectRoots.delete(obj.id)
+      this.glbTokens.delete(obj.id)
+      root = undefined
+    }
     if (!root) {
       if (obj.kind === 'primitive') {
         const mesh = new THREE.Mesh(geometryFor(obj.primitive), new THREE.MeshStandardMaterial())
@@ -123,6 +134,7 @@ export class SceneEngine {
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
       }
       root.userData.sceneId = obj.id
+      root.userData.sourceKey = sourceKey
       this.scene.add(root)
       this.objectRoots.set(obj.id, root)
     }
@@ -143,8 +155,15 @@ export class SceneEngine {
   }
 
   dispose(): void {
+    // Invalidate pending GLB loads first: their .then() checks glbTokens, so
+    // clearing makes any in-flight load bail instead of attaching to a
+    // disposed root.
+    this.glbTokens.clear()
     for (const root of this.objectRoots.values()) disposeTree(root)
     this.objectRoots.clear()
+    this.grid.geometry.dispose()
+    const gridMats = Array.isArray(this.grid.material) ? this.grid.material : [this.grid.material]
+    gridMats.forEach((m) => m.dispose())
     this.envTarget?.dispose()
     this.renderer.dispose()
   }
@@ -156,7 +175,15 @@ function disposeTree(root: THREE.Object3D): void {
     if (m.isMesh) {
       m.geometry?.dispose()
       const mats = Array.isArray(m.material) ? m.material : [m.material]
-      mats.forEach((x) => x?.dispose())
+      mats.forEach((x) => {
+        if (!x) return
+        // GLB materials own GPU textures (map, normalMap, roughnessMap, ...).
+        // Dispose every texture-valued property before the material itself.
+        for (const value of Object.values(x)) {
+          if (value instanceof THREE.Texture) value.dispose()
+        }
+        x.dispose()
+      })
     }
   })
 }
