@@ -1,22 +1,21 @@
 import { test, expect } from '@playwright/test'
 import { openBlankWorkflow, openTimelineEditor, timelineEditorOverlay, waitForBackend } from './_helpers'
 
-// Flag-on smoke: with sailor:Engine.WebGLPreview set, the timeline editor
-// boots the WebGL engine (canvas tagged data-engine="webgl"), renders without
-// fallback warnings, and draws real pixels when a clip is added.
-// The default-flag path is covered by timeline.spec.ts (Canvas2D, unchanged).
+// WebGL is the DEFAULT engine (Slice 0 promotion): with no flag set, the
+// timeline editor boots the WebGL engine (canvas tagged data-engine="webgl"),
+// renders without fallback warnings, and draws real pixels when a clip is
+// added. Setting sailor:Engine.WebGLPreview = 'false' is the escape hatch
+// that forces the legacy Canvas2D engine.
 
-test.describe('Timeline editor — WebGL engine flag', () => {
-  test('boots the GL engine and renders a clip', async ({ page }) => {
+test.describe('Timeline editor — WebGL engine default', () => {
+  test('boots the GL engine by default and renders a clip', async ({ page }) => {
     const problems: string[] = []
     page.on('console', (msg) => {
       const text = msg.text()
       if (msg.type() === 'warning' && text.includes('Canvas2D fallback')) problems.push(text)
       if (msg.type() === 'error' && (text.includes('usePlaybackEngineGL') || text.includes('WebGLPreviewRenderer'))) problems.push(text)
     })
-    await page.addInitScript(() => {
-      try { localStorage.setItem('sailor:Engine.WebGLPreview', 'true') } catch {}
-    })
+    // No init script: the default path IS the GL path now.
 
     await waitForBackend(page)
     await openBlankWorkflow(page)
@@ -60,5 +59,21 @@ test.describe('Timeline editor — WebGL engine flag', () => {
     }, { timeout: 15_000, message: 'sampled pixels stay background-black' }).toBeGreaterThan(0)
 
     expect(problems, `engine problems: ${problems.join(' | ')}`).toEqual([])
+  })
+
+  test("flag 'false' forces the legacy Canvas2D engine", async ({ page }) => {
+    await page.addInitScript(() => {
+      try { localStorage.setItem('sailor:Engine.WebGLPreview', 'false') } catch {}
+    })
+
+    await waitForBackend(page)
+    await openBlankWorkflow(page)
+    await openTimelineEditor(page)
+    const editor = timelineEditorOverlay(page)
+
+    // Editor is up (transport bar visible) but the canvas must NOT be GL-tagged.
+    await expect(editor.getByText('Timeline Editor')).toBeVisible()
+    await expect(editor.locator('canvas').first()).toBeVisible({ timeout: 10_000 })
+    await expect(editor.locator('canvas[data-engine="webgl"]')).toHaveCount(0)
   })
 })

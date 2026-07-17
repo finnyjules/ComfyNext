@@ -209,13 +209,13 @@ function inputFilenameFromUrl(url: string): string | null {
   return (!/[?#]/.test(url) && !/^https?:/i.test(url)) ? url : null
 }
 
-// WebGL preview engine (Phase 1 M3): opt-in via
-//   localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
-// Falls back to the Canvas2D engine when WebGL2 is unavailable.
+// WebGL preview engine — DEFAULT when WebGL2 is available (Slice 0 promotion).
+// Escape hatch: localStorage.setItem('sailor:Engine.WebGLPreview', 'false')
+// forces the legacy Canvas2D engine.
 const { getLocalSetting, setLocalSetting } = useLocalSettings()
-const wantGl = getLocalSetting('Engine.WebGLPreview') === 'true'
+const wantGl = getLocalSetting('Engine.WebGLPreview') !== 'false'
 const useGl = wantGl && webglPreviewSupported()
-if (wantGl && !useGl) console.warn('TimelineEditor: WebGL preview flag set but WebGL2 unavailable — Canvas2D fallback')
+if (wantGl && !useGl) console.warn('TimelineEditor: WebGL2 unavailable — Canvas2D fallback')
 const engine = useGl
   ? usePlaybackEngineGL(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview, resolveAudioUrl)
   : usePlaybackEngine(canvasRef, store.state, store.playhead, store.isPlaying, resolveClipPreview)
