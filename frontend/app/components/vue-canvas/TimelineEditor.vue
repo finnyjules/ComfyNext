@@ -17,6 +17,7 @@ import type { Clip, Track, BlendMode, MotionClip } from '~~/shared/timeline/type
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
+import { computeLeftTrim, clampLengthToSource } from '~~/shared/timeline/trim'
 import MotionClipInspector from '~/components/vue-canvas/timeline/MotionClipInspector.vue'
 import KeyframeDock from '~/components/vue-canvas/timeline/KeyframeDock.vue'
 
@@ -534,6 +535,7 @@ const drag = ref<null | {
   startMouseX: number
   startStart: number
   startLength: number
+  startIn: number
 }>(null)
 
 // Active snap target visualised as a vertical guideline during drag.
@@ -590,6 +592,26 @@ function trackIndexAtY(clientY: number): number | null {
 // Highlight for the lane a dragged clip would land on.
 const moveTargetTrackId = ref<string | null>(null)
 
+// Known source length in frames for asset-backed clips (null = unbounded).
+function clipSourceFrames(clip: Clip): number | null {
+  if (clip.kind !== 'video' && clip.kind !== 'audio') return null
+  const asset = getAsset((clip as any).asset_id)
+  if (!asset?.duration_sec) return null
+  return Math.max(1, Math.round(asset.duration_sec * store.fps.value))
+}
+
+// Floating duration readout while trimming.
+const trimHud = ref<null | { x: number; y: number; text: string }>(null)
+
+function showTrimHud(e: PointerEvent, lengthFrames: number, deltaFrames: number) {
+  const fps = store.fps.value
+  const sign = deltaFrames > 0 ? '+' : ''
+  trimHud.value = {
+    x: e.clientX + 12, y: e.clientY - 28,
+    text: `${(lengthFrames / fps).toFixed(2)}s · ${lengthFrames}f  (${sign}${(deltaFrames / fps).toFixed(2)}s)`,
+  }
+}
+
 function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resize-right' | 'resize-left', e: PointerEvent) {
   e.stopPropagation()
   e.preventDefault()
@@ -609,6 +631,7 @@ function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resi
     startMouseX: e.clientX,
     startStart: clip.start_frame,
     startLength: clip.length,
+    startIn: clip.in_frame,
   }
   // Snapshot starts of all selected clips for bulk move.
   if (mode === 'move' && selectedClipIds.value.size > 1) {
@@ -626,7 +649,7 @@ function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resi
 
 function onPlayheadPointerDown(e: PointerEvent) {
   e.preventDefault()
-  drag.value = { clipId: '', trackId: '', mode: 'playhead', startMouseX: e.clientX, startStart: 0, startLength: 0 }
+  drag.value = { clipId: '', trackId: '', mode: 'playhead', startMouseX: e.clientX, startStart: 0, startLength: 0, startIn: 0 }
   const rect = stripRef.value!.getBoundingClientRect()
   const frame = Math.round(pxToFrames(e.clientX - rect.left))
   store.seekFrame(frame)
@@ -701,16 +724,24 @@ function onPointerMove(e: PointerEvent) {
       if (!movedTrack) store.updateClip(drag.value.clipId, { start_frame: Math.max(0, finalStart) })
     }
   } else if (drag.value.mode === 'resize-right') {
+    const clip = findClip(drag.value.clipId)
     const rawEnd = drag.value.startStart + Math.max(1, drag.value.startLength + dframes)
     const snapped = snapFrame(rawEnd, drag.value.clipId)
-    const newLen = Math.max(1, snapped - drag.value.startStart)
+    let newLen = Math.max(1, snapped - drag.value.startStart)
+    if (clip) newLen = clampLengthToSource(newLen, clip.in_frame, clipSourceFrames(clip))
     store.updateClip(drag.value.clipId, { length: newLen })
+    showTrimHud(e, newLen, newLen - drag.value.startLength)
   } else if (drag.value.mode === 'resize-left') {
+    const clip = findClip(drag.value.clipId)
+    // Anchored kinds trim INTO the source: in_frame moves with the edge.
+    const anchored = clip?.kind === 'video' || clip?.kind === 'audio'
     const rawStart = drag.value.startStart + dframes
     const snapped = snapFrame(rawStart, drag.value.clipId)
-    const newLen = Math.max(1, drag.value.startLength - (snapped - drag.value.startStart))
-    const newStart = drag.value.startStart + drag.value.startLength - newLen
-    store.updateClip(drag.value.clipId, { start_frame: Math.max(0, newStart), length: newLen })
+    const t = computeLeftTrim(
+      { start_frame: drag.value.startStart, in_frame: drag.value.startIn, length: drag.value.startLength },
+      snapped, anchored)
+    store.updateClip(drag.value.clipId, t)
+    showTrimHud(e, t.length, t.length - drag.value.startLength)
   } else if (drag.value.mode === 'playhead') {
     const rect = stripRef.value!.getBoundingClientRect()
     const frame = Math.round(pxToFrames(e.clientX - rect.left))
@@ -733,6 +764,7 @@ function onPointerUp() {
   snapGuideFrame.value = null
   dragGroupStarts = null
   moveTargetTrackId.value = null
+  trimHud.value = null
   store.endGesture()
 }
 
@@ -1937,6 +1969,10 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⇧+scroll</kbd> pan</span>
         </div>
       </div>
+
+      <!-- Trim HUD bubble -->
+      <div v-if="trimHud" class="fixed z-[140] px-2 py-1 rounded bg-black/85 border border-white/15 text-[10px] text-white/90 tabular-nums pointer-events-none"
+        :style="{ left: trimHud.x + 'px', top: trimHud.y + 'px' }">{{ trimHud.text }}</div>
     </div>
   </div>
 </template>
