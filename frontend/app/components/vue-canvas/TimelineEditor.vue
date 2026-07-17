@@ -410,6 +410,7 @@ function onTrackResizeStart(trackId: string, e: PointerEvent) {
   e.stopPropagation()
   const track = store.state.value.tracks.find(t => t.id === trackId)
   if (!track) return
+  store.beginGesture()
   resizingTrackId.value = trackId
   resizeStartY = e.clientY
   resizeStartHeight = trackHeight(track)
@@ -441,6 +442,7 @@ function onTrackReorderStart(trackId: string, e: PointerEvent) {
   const target = e.target as HTMLElement
   if (target?.dataset?.role === 'resize') return
   e.preventDefault()
+  store.beginGesture()
   reorderingTrackId.value = trackId
   reorderStartY = e.clientY
   reorderStartIndex = store.state.value.tracks.findIndex(t => t.id === trackId)
@@ -478,6 +480,7 @@ function onGlobalPointerMove(e: PointerEvent) {
 function onGlobalPointerUp() {
   if (resizingTrackId.value) onTrackResizeEnd()
   if (reorderingTrackId.value) onTrackReorderEnd()
+  store.endGesture()
 }
 
 // -- Multi-select (clip selection set) --
@@ -582,6 +585,7 @@ function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resi
   }
   const clip = findClip(clipId)
   if (!clip) return
+  store.beginGesture()
   drag.value = {
     clipId, trackId, mode,
     startMouseX: e.clientX,
@@ -690,11 +694,13 @@ function onPointerUp() {
       if (clip) seekToKeyframe(clip, kfDrag.value.fromFrame)
     }
     kfDrag.value = null
+    store.endGesture()
     return
   }
   drag.value = null
   snapGuideFrame.value = null
   dragGroupStarts = null
+  store.endGesture()
 }
 
 // -- Keyframe diamonds (selected clip) -------------------------------------
@@ -714,6 +720,7 @@ const kfDrag = ref<null | {
 function onKeyframePointerDown(clipId: string, frame: number, e: PointerEvent) {
   e.stopPropagation()
   e.preventDefault()
+  store.beginGesture()
   kfDrag.value = { clipId, fromFrame: frame, startMouseX: e.clientX, startFrame: frame, moved: false }
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
@@ -1474,6 +1481,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 <div class="flex items-center gap-2">
                   <input type="range" min="0" max="1" step="0.01" :value="displayTransform?.opacity ?? 1"
                     class="flex-1"
+                    @pointerdown="store.beginGesture()"
                     @input="store.updateClipTransform(selectedClipData!.id, { opacity: parseFloat(($event.target as HTMLInputElement).value) })" />
                   <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((displayTransform?.opacity ?? 1) * 100) }}%</span>
                 </div>
@@ -1534,6 +1542,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               <div class="flex items-center gap-2">
                 <input type="range" min="0" max="2" step="0.01" :value="selectedClipData.volume ?? 1"
                   class="flex-1"
+                  @pointerdown="store.beginGesture()"
                   @input="store.updateClip(selectedClipData!.id, { volume: parseFloat(($event.target as HTMLInputElement).value) })" />
                 <span class="text-white/60 w-10 text-right tabular-nums">{{ Math.round((selectedClipData.volume ?? 1) * 100) }}%</span>
               </div>

@@ -21,10 +21,17 @@ let _nodeId: string | null = null
 let _getValue: ((name: string) => any) | null = null
 let _setValue: ((name: string, v: any) => void) | null = null
 
-function pushUndo() {
+// One undo step per pointer gesture: beginGesture() snapshots once and
+// suppresses per-dispatch snapshots until endGesture(), which pushes the
+// single base snapshot iff anything actually changed.
+let gestureBase: string | null = null
+
+function pushUndo(): boolean {
+  if (gestureBase !== null) return false
   undoStack.value.push(JSON.stringify(state.value))
   if (undoStack.value.length > MAX_UNDO) undoStack.value.shift()
   redoStack.value = []
+  return true
 }
 
 function syncToWidget() {
@@ -98,14 +105,31 @@ export function useTimelineStore() {
   // Single entry point for state mutations: snapshot → apply → sync. A command
   // that can't apply (unknown id, invalid cut) leaves state AND undo untouched.
   function dispatch(cmd: TimelineCommand) {
-    pushUndo()
+    const pushed = pushUndo()
     let changed = false
     try {
       changed = applyCommand(state.value, cmd)
     } finally {
-      if (!changed) undoStack.value.pop()
+      // Only pop what WE pushed — inside a gesture pushUndo is suppressed and
+      // popping would eat a pre-existing history entry.
+      if (!changed && pushed) undoStack.value.pop()
     }
     if (changed) syncToWidget()
+  }
+
+  function beginGesture() {
+    if (gestureBase !== null) return
+    gestureBase = JSON.stringify(state.value)
+  }
+
+  function endGesture() {
+    if (gestureBase === null) return
+    const base = gestureBase
+    gestureBase = null
+    if (base === JSON.stringify(state.value)) return
+    undoStack.value.push(base)
+    if (undoStack.value.length > MAX_UNDO) undoStack.value.shift()
+    redoStack.value = []
   }
 
   function undo() {
@@ -295,6 +319,8 @@ export function useTimelineStore() {
     unbind,
     mutate,
     dispatch,
+    beginGesture,
+    endGesture,
     undo,
     redo,
     canUndo: computed(() => undoStack.value.length > 0),
