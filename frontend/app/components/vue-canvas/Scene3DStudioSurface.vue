@@ -10,17 +10,16 @@
 // carries a `label` prop — the others take just `options`/nothing, so their labels
 // live in surrounding markup (mirrors ShapeStudioSurface.vue). Enum-union fields go
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw,
-  Circle, Cylinder, Cone, Torus, Square, Pill, Pyramid, Triangle, Gem, Diamond,
-  Hexagon, CircleDashed, Infinity as InfinityIcon,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
   LIGHTING_PRESETS,
   type SceneDoc, type SceneObject, type PrimitiveKind,
 } from '~/lib/scene3d/config'
+import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine } from '~/lib/scene3d/engine'
 import { SceneInteraction, type GizmoMode } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
@@ -67,34 +66,6 @@ const glbFileInput = ref<HTMLInputElement | null>(null)
 
 // ── Add-primitive menu ──────────────────────────────────────────────────────
 const primMenuOpen = ref(false)
-
-// Menu groups (spec order). Icons are real lucide glyphs where they exist,
-// nearest-match otherwise — all names verified against the installed
-// lucide-vue-next export list.
-const PRIM_GROUPS: { label: string; kinds: { kind: PrimitiveKind; label: string; icon: Component }[] }[] = [
-  { label: 'Basics', kinds: [
-    { kind: 'box', label: 'Box', icon: Box },
-    { kind: 'sphere', label: 'Sphere', icon: Circle },
-    { kind: 'cylinder', label: 'Cylinder', icon: Cylinder },
-    { kind: 'cone', label: 'Cone', icon: Cone },
-    { kind: 'torus', label: 'Torus', icon: Torus },
-    { kind: 'plane', label: 'Plane', icon: Square },
-  ] },
-  { label: 'Solids', kinds: [
-    { kind: 'capsule', label: 'Capsule', icon: Pill },
-    { kind: 'pyramid', label: 'Pyramid', icon: Pyramid },
-    { kind: 'prism', label: 'Prism', icon: Triangle },
-  ] },
-  { label: 'Polyhedra', kinds: [
-    { kind: 'icosahedron', label: 'Icosahedron', icon: Gem },
-    { kind: 'octahedron', label: 'Octahedron', icon: Diamond },
-    { kind: 'dodecahedron', label: 'Dodecahedron', icon: Hexagon },
-  ] },
-  { label: 'Decorative', kinds: [
-    { kind: 'torusKnot', label: 'Torus knot', icon: InfinityIcon },
-    { kind: 'ring', label: 'Ring', icon: CircleDashed },
-  ] },
-]
 
 function pickPrimitive(kind: PrimitiveKind) {
   addPrimitive(kind)

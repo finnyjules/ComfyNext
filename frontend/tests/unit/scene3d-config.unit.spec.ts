@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS,
 } from '~/lib/scene3d/config'
+import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 
 describe('scene3d config', () => {
   it('round-trips a document through serialize/parse', () => {
@@ -51,5 +52,10 @@ describe('scene3d config', () => {
     const back = parseDoc(JSON.stringify(raw))
     expect(back.objects).toHaveLength(1)
     expect((back.objects[0] as any).primitive).toBe('box')
+  })
+
+  it('menu groups cover every primitive kind exactly once, in canonical order', () => {
+    const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
+    expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
   })
 })
