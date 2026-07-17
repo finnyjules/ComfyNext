@@ -399,11 +399,19 @@ function saveScene() {
   savedTimer = setTimeout(() => { savedFlash.value = false }, 1500)
 }
 
-// Export to Canvas: bake the three passes onto the node's outputs, then return
-// to the canvas. Stays open on failure so the inline error is visible.
+// Export to Canvas: bake the three passes onto the node's outputs, drop the
+// beauty render onto the canvas as an Image node (wired from the beauty output,
+// like the other studios' "generate" flow), then return to the canvas. Stays
+// open on failure so the inline error is visible.
 async function exportToCanvas() {
   await bake()
   if (bakeError.value) return
+  const beauty = widgetStr('beauty_image')
+  if (beauty) {
+    window.dispatchEvent(new CustomEvent('sailor:scene3dStudioOutput', {
+      detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: beauty } },
+    }))
+  }
   emit('close')
 }
 

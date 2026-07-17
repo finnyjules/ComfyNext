@@ -4217,7 +4217,9 @@ onMounted(() => {
   window.addEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   // Shape Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
-  // Scene3D Studio is a real backend node — no generic output event; the surface bakes into widgets.
+  // 3D Studio "Export to Canvas": beauty render dropped as an Image node, wired
+  // from the node's beauty output (output-0) — generic, reuse the same handler.
+  window.addEventListener('sailor:scene3dStudioOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openScene3DStudio', handleOpenScene3DStudio)
   window.addEventListener('sailor:openShotDirector', handleOpenShotDirector)
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
@@ -4280,6 +4282,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   window.removeEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:scene3dStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openScene3DStudio', handleOpenScene3DStudio)
   window.removeEventListener('sailor:openShotDirector', handleOpenShotDirector)
   window.removeEventListener('sailor:shotDirectorOutput', handleSpaceTypeOutput)
