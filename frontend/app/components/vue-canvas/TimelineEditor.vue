@@ -572,6 +572,24 @@ function snapFrame(rawFrame: number, excludeClipId: string | null): number {
 // Snapshot of clip start-frames at drag-start for bulk-move support.
 let dragGroupStarts: Map<string, number> | null = null
 
+// Which track lane is under this clientY? (null = ruler or below the lanes)
+function trackIndexAtY(clientY: number): number | null {
+  const rect = stripRef.value?.getBoundingClientRect()
+  if (!rect) return null
+  let y = clientY - rect.top - RULER_HEIGHT
+  if (y < 0) return null
+  const tracks = store.state.value.tracks
+  for (let i = 0; i < tracks.length; i++) {
+    const h = trackHeight(tracks[i]!)
+    if (y < h) return i
+    y -= h
+  }
+  return null
+}
+
+// Highlight for the lane a dragged clip would land on.
+const moveTargetTrackId = ref<string | null>(null)
+
 function onClipPointerDown(clipId: string, trackId: string, mode: 'move' | 'resize-right' | 'resize-left', e: PointerEvent) {
   e.stopPropagation()
   e.preventDefault()
@@ -666,7 +684,21 @@ function onPointerMove(e: PointerEvent) {
         }
       })
     } else {
-      store.updateClip(drag.value.clipId, { start_frame: Math.max(0, finalStart) })
+      // Vertical: retarget to another unlocked track of the same kind.
+      const idx = trackIndexAtY(e.clientY)
+      const clip = findClip(drag.value.clipId)
+      let movedTrack = false
+      if (idx != null && clip) {
+        const target = store.state.value.tracks[idx]!
+        const wantKind = clip.kind === 'audio' ? 'audio' : 'video'
+        if (target.id !== drag.value.trackId && target.kind === wantKind && !target.locked) {
+          store.moveClip(drag.value.clipId, target.id, Math.max(0, finalStart))
+          drag.value.trackId = target.id
+          moveTargetTrackId.value = target.id
+          movedTrack = true
+        }
+      }
+      if (!movedTrack) store.updateClip(drag.value.clipId, { start_frame: Math.max(0, finalStart) })
     }
   } else if (drag.value.mode === 'resize-right') {
     const rawEnd = drag.value.startStart + Math.max(1, drag.value.startLength + dframes)
@@ -700,6 +732,7 @@ function onPointerUp() {
   drag.value = null
   snapGuideFrame.value = null
   dragGroupStarts = null
+  moveTargetTrackId.value = null
   store.endGesture()
 }
 
@@ -1776,7 +1809,10 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               v-for="(track, tIdx) in store.state.value.tracks"
               :key="track.id"
               class="relative border-b border-white/5"
-              :class="dragTargetTrackId === track.id ? 'bg-white/[0.04]' : ''"
+              :class="[
+                dragTargetTrackId === track.id ? 'bg-white/[0.04]' : '',
+                moveTargetTrackId === track.id ? 'bg-white/[0.06]' : '',
+              ]"
               :style="{ height: trackHeight(track) + 'px' }"
               @dragover="(e) => onTrackDragOver(track.id, e)"
               @dragleave="onTrackDragLeave"
