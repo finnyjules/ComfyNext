@@ -705,6 +705,17 @@ function onPointerMove(e: PointerEvent) {
     applyMarqueeSelection()
     return
   }
+  if (fadeDrag.value) {
+    const clip = findClip(fadeDrag.value.clipId)
+    if (!clip) return
+    const dx = e.clientX - fadeDrag.value.startMouseX
+    const df = Math.round(dx / pxPerFrame.value)
+    // fade-in grows rightward, fade-out grows leftward
+    const raw = fadeDrag.value.side === 'in' ? fadeDrag.value.startFade + df : fadeDrag.value.startFade - df
+    const v = Math.max(0, Math.min(raw, clip.length))
+    store.updateClip(clip.id, fadeDrag.value.side === 'in' ? { fade_in: v } : { fade_out: v })
+    return
+  }
   if (kfDrag.value) {
     const clip = findClip(kfDrag.value.clipId)
     if (!clip) return
@@ -800,6 +811,11 @@ function onPointerUp() {
     marquee.value = null
     return
   }
+  if (fadeDrag.value) {
+    fadeDrag.value = null
+    store.endGesture()
+    return
+  }
   if (kfDrag.value) {
     // A click (no drag) parks the playhead on the keyframe.
     if (!kfDrag.value.moved) {
@@ -816,6 +832,22 @@ function onPointerUp() {
   moveTargetTrackId.value = null
   trimHud.value = null
   store.endGesture()
+}
+
+// -- Fade handles (selected clip) --------------------------------------------
+//
+// Round handles at the clip's top corners; horizontal drag sets fade_in /
+// fade_out in frames. Release is handled by the window pointerup (endGesture).
+
+const fadeDrag = ref<null | { clipId: string; side: 'in' | 'out'; startMouseX: number; startFade: number }>(null)
+
+function onFadePointerDown(clipId: string, side: 'in' | 'out', e: PointerEvent) {
+  e.stopPropagation(); e.preventDefault()
+  const clip = findClip(clipId)
+  if (!clip) return
+  store.beginGesture()
+  fadeDrag.value = { clipId, side, startMouseX: e.clientX, startFade: (side === 'in' ? clip.fade_in : clip.fade_out) ?? 0 }
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
 
 // -- Keyframe diamonds (selected clip) -------------------------------------
@@ -2070,6 +2102,26 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   :class="trackColor(tIdx).edge"
                   @pointerdown.stop="(e) => onClipPointerDown(clip.id, track.id, 'resize-right', e)"
                 />
+                <!-- Fade ramps -->
+                <svg v-if="(clip.fade_in ?? 0) > 0" class="absolute left-0 top-0 bottom-0 pointer-events-none z-[1]"
+                  :width="Math.min(clip.length, clip.fade_in ?? 0) * pxPerFrame" :height="trackHeight(track) - 8" preserveAspectRatio="none">
+                  <polygon :points="`0,${trackHeight(track) - 8} ${Math.min(clip.length, clip.fade_in ?? 0) * pxPerFrame},0 0,0`" fill="rgba(0,0,0,0.45)" />
+                </svg>
+                <svg v-if="(clip.fade_out ?? 0) > 0" class="absolute right-0 top-0 bottom-0 pointer-events-none z-[1]"
+                  :width="Math.min(clip.length, clip.fade_out ?? 0) * pxPerFrame" :height="trackHeight(track) - 8" preserveAspectRatio="none">
+                  <polygon :points="`${Math.min(clip.length, clip.fade_out ?? 0) * pxPerFrame},${trackHeight(track) - 8} 0,0 ${Math.min(clip.length, clip.fade_out ?? 0) * pxPerFrame},0`" fill="rgba(0,0,0,0.45)" />
+                </svg>
+                <!-- Fade handles (selected clip) -->
+                <template v-if="selectedClipIds.has(clip.id)">
+                  <div class="absolute top-0 size-2.5 rounded-full bg-white/90 border border-black/60 cursor-ew-resize z-20 -translate-y-1/2"
+                    :style="{ left: ((clip.fade_in ?? 0) * pxPerFrame - 5) + 'px' }"
+                    title="Fade in — drag"
+                    @pointerdown="(e) => onFadePointerDown(clip.id, 'in', e)" />
+                  <div class="absolute top-0 size-2.5 rounded-full bg-white/90 border border-black/60 cursor-ew-resize z-20 -translate-y-1/2"
+                    :style="{ right: ((clip.fade_out ?? 0) * pxPerFrame - 5) + 'px' }"
+                    title="Fade out — drag"
+                    @pointerdown="(e) => onFadePointerDown(clip.id, 'out', e)" />
+                </template>
                 <!-- Keyframe diamonds (selected clip) — click to seek, drag to retime -->
                 <div
                   v-if="selectedClipIds.has(clip.id) && clip.keyframes?.length"
