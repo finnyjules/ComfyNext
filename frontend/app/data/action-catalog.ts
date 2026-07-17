@@ -39,6 +39,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   RestyleWithLoRANode:   { useCase: 'Restyle with your style',        model: 'Moondream + Flux LoRA + Nano Banana 2',    intent: 'edit' },
   PersonSwap:            { useCase: 'Swap a person',                  model: 'Nano Banana 2',                            intent: 'edit' },
   PoseMannequin:         { useCase: 'Re-pose a character',            model: 'Nano Banana 2',                            intent: 'edit' },
+  Scene3DStudio:         { useCase: 'Stage a 3D scene for control renders', model: 'Local (Three.js)',                    intent: 'create' },
   RelightNode:           { useCase: 'Relight a photo',                model: 'Nano Banana 2',                            intent: 'edit' },
   ProductShotNode:       { useCase: 'Make a product shot',            model: 'SDXL Ad-Inpaint',                          intent: 'edit' },
   RemoveBackgroundNode:  { useCase: 'Remove background',              model: '851-labs/bg-remover',                      intent: 'edit' },

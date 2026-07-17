@@ -181,6 +181,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Shape Studio: client-side Three.js faceted flat-shape generator. Frontend-only
   // config node (no backend class_type) — like Gradient Studio, reopen to re-edit.
   ShapeStudio: 'shape-studio',
+  // Scene3D Studio: real backend node (Scene3DStudio) — stages a Three.js scene
+  // and bakes beauty/depth/normal control renders back into its widgets.
+  Scene3DStudio: 'scene3d-studio',
   // Shot Director: frontend-only config node for driving video models (Seedance etc.)
   // via a guardrailed shot-sheet UI — no backend class_type, reopen to re-edit.
   ShotDirector: 'shot-director',

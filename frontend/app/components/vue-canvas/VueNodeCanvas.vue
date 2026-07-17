@@ -69,6 +69,7 @@ import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
 import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShapeStudioNode from '~/components/vue-canvas/ShapeStudioNode.vue'
+import Scene3DStudioNode from '~/components/vue-canvas/Scene3DStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
 import LipSyncStudioNode from '~/components/vue-canvas/LipSyncStudioNode.vue'
@@ -235,6 +236,7 @@ const nodeTypes = {
   'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
   'texture-studio': markRaw(TextureStudioNode), 'shape-studio': markRaw(ShapeStudioNode),
+  'scene3d-studio': markRaw(Scene3DStudioNode),
   'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
   'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
@@ -2796,6 +2798,13 @@ function handleOpenShapeStudio(e: Event) {
   if (detail?.nodeId) shapeStudioOpenForId.value = String(detail.nodeId)
 }
 
+// Scene3D Studio editor open-state (same pattern as Shape Studio).
+const scene3dStudioOpenForId = ref<string | null>(null)
+function handleOpenScene3DStudio(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) scene3dStudioOpenForId.value = String(detail.nodeId)
+}
+
 // Shader Studio editor open-state (same pattern as Gradient Studio).
 const shaderStudioOpenForId = ref<string | null>(null)
 const shaderStudioWiredUrl = ref<string | null>(null)
@@ -4043,6 +4052,7 @@ const anyEditorModalOpen = computed(() => !!(
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
   voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
   shaderStudioOpenForId.value || textureStudioOpenForId.value || shapeStudioOpenForId.value ||
+  scene3dStudioOpenForId.value ||
   shotDirectorOpenForId.value || !!collectionDrawerForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
@@ -4207,6 +4217,8 @@ onMounted(() => {
   window.addEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   // Shape Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  // Scene3D Studio is a real backend node — no generic output event; the surface bakes into widgets.
+  window.addEventListener('sailor:openScene3DStudio', handleOpenScene3DStudio)
   window.addEventListener('sailor:openShotDirector', handleOpenShotDirector)
   // Shot Director output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:shotDirectorOutput', handleSpaceTypeOutput)
@@ -4268,6 +4280,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   window.removeEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openScene3DStudio', handleOpenScene3DStudio)
   window.removeEventListener('sailor:openShotDirector', handleOpenShotDirector)
   window.removeEventListener('sailor:shotDirectorOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
@@ -7037,6 +7050,17 @@ defineExpose({
         :node-id="shapeStudioOpenForId"
         :nodes="nodes as any[]"
         @close="shapeStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Scene3D Studio editor modal (real backend node — bakes into widgets) -->
+    <Teleport to="body">
+      <VueCanvasScene3DStudioSurface
+        v-if="scene3dStudioOpenForId"
+        :node-id="scene3dStudioOpenForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="scene3dStudioOpenForId = null"
       />
     </Teleport>
 
