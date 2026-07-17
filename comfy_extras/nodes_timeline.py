@@ -94,23 +94,42 @@ def _check_decode_budget(v, clip_name: str,
             "GetVideoComponents with a downscale before the Timeline.")
 
 
+def _source_frame_at(clip: dict, local_f: int) -> int:
+    """Timeline→source frame mapping — the Python twin of
+    frontend/shared/timeline/sourceFrame.ts (formulas pinned in types.ts):
+        src = in_frame + floor(max(0, eff) * speed)
+    where eff mirrors the local frame when reverse is set. The two files must
+    change together — the golden gate enforces the pairing."""
+    speed = float(clip.get("speed") or 1.0)
+    in_frame = int(clip.get("in_frame", 0) or 0)
+    length = max(1, int(clip.get("length", 1) or 1))
+    eff = max(0, length - 1 - local_f) if clip.get("reverse") else local_f
+    return in_frame + int(max(0.0, float(eff)) * speed)
+
+
+def _max_source_frames(clip: dict) -> int:
+    """Highest source index a clip can touch, +1 (a decode bound). Same for
+    forward and reverse: both cover in_frame .. in_frame + floor((length-1)*speed)."""
+    length = max(1, int(clip.get("length", 30) or 30))
+    speed = float(clip.get("speed") or 1.0)
+    in_frame = int(clip.get("in_frame", 0) or 0)
+    return in_frame + int(max(0.0, (length - 1) * speed)) + 1
+
+
 def _needed_source_frames(kwargs: dict, state: dict | None, port_idx: int) -> int | None:
     """How many leading source frames the timeline can possibly use from clip
-    port `port_idx`. Edit-state clips index `(local + in_frame) % src_T`, so a
-    clip needs the first `in_frame + length` frames (wrap ⇒ everything, which
-    the caller caps at the source frame count). Legacy widget path: the first
-    `clip{i}_length` frames. None ⇒ unknown (decode everything under budget).
-
-    NOTE: assumes in_frame ≥ 0 and ignores speed/reverse (the render path
-    ignores them too — when Phase 2 implements reverse, this bound must
-    account for tail frames)."""
+    port `port_idx`. Edit-state clips index `_source_frame_at(...) % src_T`,
+    so a clip needs the first `_max_source_frames` frames (wrap ⇒ everything,
+    which the caller caps at the source frame count). Legacy widget path: the
+    first `clip{i}_length` frames. None ⇒ unknown (decode everything under
+    budget). Assumes in_frame ≥ 0."""
     if state is not None:
         needed = 0
         for track in state.get("tracks", []):
             for clip in track.get("clips", []):
                 if clip.get("kind") == "workflow" and int(clip.get("port_index", -1) or -1) == port_idx:
                     # default must match _execute_edit_state's clip length default (30)
-                    needed = max(needed, int(clip.get("in_frame", 0) or 0) + max(1, int(clip.get("length", 30) or 30)))
+                    needed = max(needed, _max_source_frames(clip))
         return needed or None
     length = kwargs.get(f"clip{port_idx}_length")
     if length is None:
@@ -504,7 +523,7 @@ class TimelineNode(IO.ComfyNode):
         preview = output[pf:pf + 1]
         # legacy widget path has no fps; 30 matches the editor default
         return IO.NodeOutput(output, _frames_to_video(output, 30),
-                             ui=save_live_preview(preview, str(cls.hidden.unique_id)))
+                             ui=save_live_preview(preview, str(cls.hidden.unique_id), unique=True))
 
     @classmethod
     def _execute_edit_state(cls, kwargs: dict, state: dict) -> IO.NodeOutput:
@@ -566,6 +585,8 @@ class TimelineNode(IO.ComfyNode):
                     "start":     int(clip.get("start_frame", 0)),
                     "length":    max(1, int(clip.get("length", 30))),
                     "in_frame":  int(clip.get("in_frame", 0)),
+                    "speed":     float(clip.get("speed") or 1.0),
+                    "reverse":   bool(clip.get("reverse")),
                     "blend":     str(clip.get("blend", "normal")),
                     "fade_in":   int(clip.get("fade_in", 0)),
                     "fade_out":  int(clip.get("fade_out", 0)),
@@ -597,7 +618,7 @@ class TimelineNode(IO.ComfyNode):
             fi, fo = L["fade_in"], L["fade_out"]
             for gt in range(gt_start, gt_end):
                 local_t = gt - start
-                ct = (local_t + L["in_frame"]) % src_T
+                ct = _source_frame_at(L, local_t) % src_T
 
                 tf = _interp_transform(L["static"], L["keyframes"], local_t)
 
@@ -624,7 +645,7 @@ class TimelineNode(IO.ComfyNode):
         output = output.clamp(0.0, 1.0)
         pf = total // 2
         return IO.NodeOutput(output, _frames_to_video(output, fps),
-                             ui=save_live_preview(output[pf:pf + 1], str(cls.hidden.unique_id)))
+                             ui=save_live_preview(output[pf:pf + 1], str(cls.hidden.unique_id), unique=True))
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +806,8 @@ def _adapt_edit_state(state: dict) -> dict:
                 "start_frame": int(clip.get("start_frame", 0)),
                 "length":      int(clip.get("length", 30)),
                 "in_frame":    int(clip.get("in_frame", 0)),
+                "speed":       float(clip.get("speed") or 1.0),
+                "reverse":     bool(clip.get("reverse")),
                 "x":           float(clip.get("x", 0)),
                 "y":           float(clip.get("y", 0)),
                 "rotation":    float(clip.get("rotation", 0)),
@@ -819,6 +842,8 @@ def _prepare_render_clips(state: dict) -> list[dict]:
             "start":    int(c.get("start_frame", 0)),
             "length":   int(c.get("length", 30)),
             "in_frame": int(c.get("in_frame", 0)),
+            "speed":    float(c.get("speed") or 1.0),
+            "reverse":  bool(c.get("reverse")),
             "x":        float(c.get("x", 0)),
             "y":        float(c.get("y", 0)),
             "rot":      float(c.get("rotation", 0)),
@@ -932,12 +957,11 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         else:  # video
             vs = L["stream"]
             container = L["container"]
-            local_sec = (local_f + L.get("in_frame", 0)) / fps
+            # speed/reverse-aware source frame (twin of the WebGL compositor).
+            src_sec = _source_frame_at(L, local_f) / fps
             clip_dur = L.get("duration")
             if clip_dur is not None and clip_dur > 0:
-                src_sec = local_sec % clip_dur
-            else:
-                src_sec = local_sec
+                src_sec = src_sec % clip_dur
             try:
                 frame = _decoded_frame_at(container, vs, src_sec)
             except Exception:

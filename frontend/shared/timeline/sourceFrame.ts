@@ -1,6 +1,7 @@
 // Timeline→source frame mapping — the formulas pinned in types.ts (BaseClip
-// speed/reverse doc comments). Phase 2 adds the Python twin; until then this
-// is exercised by the engine playback specs against the frame-indexed video.
+// speed/reverse doc comments). Python twin: _source_frame_at in
+// comfy_extras/nodes_timeline.py — change the two together (mirrored unit
+// tests + the 04-speed-reverse golden fixture enforce the pairing).
 export interface SourceFrameClip {
   in_frame?: number
   length: number
