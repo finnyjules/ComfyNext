@@ -1,5 +1,5 @@
 import { ref, computed, watch } from 'vue'
-import type { EditState, Track, Clip, Asset, Keyframe, MotionClip } from '~~/shared/timeline/types'
+import type { EditState, Track, Clip, Asset, Keyframe, MotionClip, Transition } from '~~/shared/timeline/types'
 // (Track is used by the clipboard's kind-based paste routing.)
 import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
 import type { ClipTransform } from '~~/shared/timeline/interpolate'
@@ -206,6 +206,20 @@ export function useTimelineStore() {
     dispatch({ type: 'set_canvas', patch })
   }
 
+  // -- Transitions (junction) --
+
+  function addTransition(tr: Transition) {
+    dispatch({ type: 'add_transition', transition: tr })
+  }
+
+  function updateTransition(id: string, patch: Partial<Pick<Transition, 'kind' | 'duration' | 'params'>>) {
+    dispatch({ type: 'update_transition', transition_id: id, patch })
+  }
+
+  function removeTransition(id: string) {
+    dispatch({ type: 'remove_transition', transition_id: id })
+  }
+
   // -- Clipboard --
 
   function copyClips(clipIds: Iterable<string>): number {
@@ -399,6 +413,10 @@ export function useTimelineStore() {
     redo,
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
+
+    addTransition,
+    updateTransition,
+    removeTransition,
 
     copyClips,
     pasteClips,

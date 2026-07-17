@@ -23,6 +23,15 @@ uniform vec2  u_size;       // layer size (pre-rotation), px
 uniform float u_rotation;   // radians; sign verified against goldens (Task 7)
 uniform float u_alpha;      // opacity * fade
 uniform int   u_mode;       // BLEND_MODE_INDEX
+uniform int   u_wipeMode;   // 0 none, 1 left (show x<w), 2 right (show x>1-w)
+uniform float u_wipeW;      // transition weight 0..1
+// ClipFilters — 1:1 port of shared/timeline/filters.ts applyFiltersRGB
+// (order + clamps + constants pinned there; Python twin _apply_filters_np).
+uniform float u_brightness; // additive, -1..1 (0 = identity)
+uniform float u_contrast;   // multiplier around 0.5 (1 = identity)
+uniform float u_saturation; // multiplier (1 = identity)
+uniform float u_hue;        // radians (0 = identity)
+uniform float u_temperature;// -1..1 (0 = identity)
 
 in vec2 v_uv;
 out vec4 outColor;
@@ -49,6 +58,29 @@ vec3 blendMode(vec3 a, vec3 b, int m) {
   return b;
 }
 
+vec3 applyFilters(vec3 c) {
+  c = clamp(c + vec3(u_brightness), 0.0, 1.0);
+  c = clamp((c - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+  float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = clamp(vec3(luma) + (c - vec3(luma)) * u_saturation, 0.0, 1.0);
+  if (u_hue != 0.0) {
+    float hc = cos(u_hue);
+    float hs = sin(u_hue);
+    // SVG feColorMatrix hueRotate (luma consts 0.213/0.715/0.072)
+    mat3 m = mat3(
+      0.213 + hc * 0.787 - hs * 0.213, 0.213 - hc * 0.213 + hs * 0.143, 0.213 - hc * 0.213 - hs * 0.787,
+      0.715 - hc * 0.715 - hs * 0.715, 0.715 + hc * 0.285 + hs * 0.140, 0.715 - hc * 0.715 + hs * 0.715,
+      0.072 - hc * 0.072 + hs * 0.928, 0.072 - hc * 0.072 - hs * 0.283, 0.072 + hc * 0.928 + hs * 0.072
+    );
+    c = clamp(m * c, 0.0, 1.0);
+  }
+  if (u_temperature != 0.0) {
+    c.r = clamp(c.r * (1.0 + 0.2 * u_temperature), 0.0, 1.0);
+    c.b = clamp(c.b * (1.0 - 0.2 * u_temperature), 0.0, 1.0);
+  }
+  return c;
+}
+
 void main() {
   vec3 base = texture(u_base, v_uv).rgb;
 
@@ -62,12 +94,18 @@ void main() {
 
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
   vec4 srcTex = texture(u_src, clamp(uv, 0.0, 1.0));
-  vec3 src = srcTex.rgb;
+  vec3 src = applyFilters(srcTex.rgb);
+
+  // Wipe transitions reveal the incoming layer by canvas column. Python twin
+  // masks alpha columns at floor(w*W + 0.5) — pixel centers, same boundary.
+  float wipeMask = 1.0;
+  if (u_wipeMode == 1) wipeMask = v_uv.x < u_wipeW ? 1.0 : 0.0;
+  else if (u_wipeMode == 2) wipeMask = v_uv.x > (1.0 - u_wipeW) ? 1.0 : 0.0;
 
   // Python: result = base*(1-a) + blend(base, src)*a  (a = 0 outside the layer;
   // src alpha modulates coverage — opaque media uploads with alpha=1 so this is
   // a no-op for image/video layers and only bites for rasterized text).
-  float a = u_alpha * inside * srcTex.a;
+  float a = u_alpha * inside * srcTex.a * wipeMask;
   outColor = vec4(mix(base, blendMode(base, src, u_mode), a), 1.0);
 }
 `

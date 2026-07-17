@@ -1,6 +1,8 @@
 import type { EditState, Clip, BlendMode } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { sourceFrameAt } from '~~/shared/timeline/sourceFrame'
+import { resolveTransitionWindows, indexTransitionWindows, transitionModAt } from '~~/shared/timeline/transitions'
+import { isIdentityFilters } from '~~/shared/timeline/filters'
 
 // Pure draw-list derivation for the WebGL engine — the TS twin of the per-frame
 // logic in comfy_extras/nodes_timeline.py::render_frame_np + _transform_and_alpha.
@@ -33,6 +35,11 @@ export interface DrawEntry {
   /** Clip-local SOURCE frame (in_frame/speed/reverse applied — sourceFrameAt).
    *  Image layers ignore it; video/sequence sources index by it. */
   sourceFrame: number
+  /** Horizontal wipe reveal for an incoming transition clip (null = none).
+   *  Visible where normalized canvas x < w (left) / > 1-w (right). */
+  wipe: { mode: 'left' | 'right'; w: number } | null
+  /** Per-clip color adjust (null = identity). Semantics: shared/timeline/filters.ts. */
+  filters: import('~~/shared/timeline/types').ClipFilters | null
 }
 
 /** Python round(): banker's rounding (half-to-even). The Python renderer uses
@@ -94,6 +101,8 @@ export function buildDrawList(
   const W = Math.max(1, Math.trunc(state.canvas.width))
   const H = Math.max(1, Math.trunc(state.canvas.height))
   const out: DrawEntry[] = []
+  const drawAfterOf = new Map<string, string>()
+  const transitionIdx = indexTransitionWindows(resolveTransitionWindows(state))
 
   for (const track of state.tracks) {
     if (track.muted || track.kind === 'audio') continue // Audio TRACKS skipped wholesale (Python skips audio CLIPS; an image clip hand-edited onto an audio track would render there — unreachable via the editor, divergence accepted).
@@ -105,25 +114,42 @@ export function buildDrawList(
 
       const length = Math.max(1, clip.length)
       const start = clip.start_frame
-      if (frame < start || frame >= start + length) continue
-      const localF = frame - start
+      const naturallyVisible = frame >= start && frame < start + length
+      const mod = transitionModAt(transitionIdx, clip, frame, naturallyVisible)
+      if (!mod.visible) continue
+      const localF = mod.localFrame
 
       const tf = interpolateClipAt(clip, localF)
       const fade = fadeAt(localF, length, clip.fade_in ?? 0, clip.fade_out ?? 0)
       const [dw, dh] = fittedSize(dims.w, dims.h, W, H, tf.scale)
 
-      out.push({
+      const entry: DrawEntry = {
         clipId: clip.id,
         url,
         widthPx: dw,
         heightPx: dh,
         centerX: Math.floor(W / 2) + pyRound(tf.x * W),
-        centerY: Math.floor(H / 2) + pyRound(tf.y * H),
+        centerY: Math.floor(H / 2) + pyRound((tf.y + mod.dy) * H),
         rotationDeg: tf.rotation,
-        alpha: Math.max(0, Math.min(1, tf.opacity * fade)),
+        alpha: Math.max(0, Math.min(1, tf.opacity * fade * mod.alphaMul)),
         blend: clip.blend ?? 'normal',
         sourceFrame: sourceFrameAt(clip, localF),
-      })
+        wipe: mod.wipe,
+        filters: isIdentityFilters(clip.filters) ? null : clip.filters!,
+      }
+      if (mod.drawAfter) drawAfterOf.set(clip.id, mod.drawAfter)
+      out.push(entry)
+    }
+  }
+  // Incoming transition clips must paint AFTER their outgoing partner,
+  // regardless of clip array order: move each incoming entry to just after
+  // its partner when it currently precedes it.
+  for (const [clipId, partnerId] of drawAfterOf) {
+    const i = out.findIndex(e => e.clipId === clipId)
+    const p = out.findIndex(e => e.clipId === partnerId)
+    if (i >= 0 && p >= 0 && i < p) {
+      const [entry] = out.splice(i, 1)
+      out.splice(p, 0, entry!) // p shifted left by the removal → lands just after partner
     }
   }
   return out

@@ -81,6 +81,8 @@ export class GlRenderer {
       Object.fromEntries(names.map(n => [n, gl.getUniformLocation(prog, n)])) as any
     this.layerU = cacheUniforms(this.layerProg, [
       'u_base', 'u_src', 'u_canvas', 'u_center', 'u_size', 'u_rotation', 'u_alpha', 'u_mode',
+      'u_wipeMode', 'u_wipeW',
+      'u_brightness', 'u_contrast', 'u_saturation', 'u_hue', 'u_temperature',
     ])
     this.presentU = cacheUniforms(this.presentProg, ['u_tex', 'u_flipY'])
 
@@ -173,6 +175,13 @@ export class GlRenderer {
       gl.uniform1f(this.layerU.u_rotation, (e.rotationDeg * Math.PI) / 180)
       gl.uniform1f(this.layerU.u_alpha, e.alpha)
       gl.uniform1i(this.layerU.u_mode, BLEND_MODE_INDEX[e.blend])
+      gl.uniform1i(this.layerU.u_wipeMode, e.wipe ? (e.wipe.mode === 'left' ? 1 : 2) : 0)
+      gl.uniform1f(this.layerU.u_wipeW, e.wipe?.w ?? 0)
+      gl.uniform1f(this.layerU.u_brightness, e.filters?.brightness ?? 0)
+      gl.uniform1f(this.layerU.u_contrast, e.filters?.contrast ?? 1)
+      gl.uniform1f(this.layerU.u_saturation, e.filters?.saturation ?? 1)
+      gl.uniform1f(this.layerU.u_hue, ((e.filters?.hue ?? 0) * Math.PI) / 180)
+      gl.uniform1f(this.layerU.u_temperature, e.filters?.temperature ?? 0)
 
       gl.drawArrays(gl.TRIANGLES, 0, 3)
       read = write

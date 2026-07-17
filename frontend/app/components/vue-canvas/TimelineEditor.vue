@@ -13,7 +13,7 @@ import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
 import { ensureMotionBake } from '~/lib/engine/motionClipBake'
 import { ensureMotionFonts } from '~/composables/useTemplateFonts'
-import type { Clip, Track, BlendMode, MotionClip } from '~~/shared/timeline/types'
+import type { Clip, Track, BlendMode, MotionClip, Transition, TransitionKind } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
@@ -1217,6 +1217,131 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// -- Transitions (junction chips) ----------------------------------------------
+//
+// A chip sits on every exact junction (from.end == to.start) of a video track.
+// Click → popover with kind + duration; writes go through the command layer
+// (add/update/remove_transition). Rendering happens in the engines/export via
+// shared/timeline/transitions.ts and its Python twin.
+
+interface Junction {
+  trackId: string
+  fromId: string
+  toId: string
+  frame: number
+  transition: Transition | null
+}
+
+const TRANSITION_KINDS: { kind: TransitionKind; label: string }[] = [
+  { kind: 'crossfade', label: 'Crossfade' },
+  { kind: 'wipe_left', label: 'Wipe ←' },
+  { kind: 'wipe_right', label: 'Wipe →' },
+  { kind: 'slide_up', label: 'Slide ↑' },
+  { kind: 'slide_down', label: 'Slide ↓' },
+]
+
+function junctionsFor(track: Track): Junction[] {
+  if (track.kind !== 'video') return []
+  const sorted = [...track.clips].sort((a, b) => a.start_frame - b.start_frame)
+  const out: Junction[] = []
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]!
+    const b = sorted[i + 1]!
+    if (a.start_frame + a.length !== b.start_frame) continue
+    out.push({
+      trackId: track.id,
+      fromId: a.id,
+      toId: b.id,
+      frame: b.start_frame,
+      transition: (store.state.value.transitions ?? []).find(
+        t => t.from_clip_id === a.id && t.to_clip_id === b.id) ?? null,
+    })
+  }
+  return out
+}
+
+const trPopover = ref<null | { x: number; y: number; junction: Junction }>(null)
+
+function windowWidth(): number {
+  return typeof window === 'undefined' ? 1600 : window.innerWidth
+}
+
+function openTransitionPopover(j: Junction, e: MouseEvent) {
+  trPopover.value = { x: e.clientX, y: e.clientY, junction: j }
+}
+
+function setJunctionKind(kind: TransitionKind | null) {
+  const p = trPopover.value
+  if (!p) return
+  const existing = p.junction.transition
+  if (kind === null) {
+    if (existing) store.removeTransition(existing.id)
+    trPopover.value = null
+    return
+  }
+  if (existing) {
+    store.updateTransition(existing.id, { kind })
+  } else {
+    store.addTransition({
+      id: crypto.randomUUID(),
+      track_id: p.junction.trackId,
+      from_clip_id: p.junction.fromId,
+      to_clip_id: p.junction.toId,
+      kind,
+      duration: Math.max(2, Math.round(0.5 * store.fps.value)),
+    })
+  }
+  // Re-resolve so the popover reflects the new state.
+  const track = store.state.value.tracks.find(t => t.id === p.junction.trackId)
+  if (track) {
+    const fresh = junctionsFor(track).find(j => j.fromId === p.junction.fromId && j.toId === p.junction.toId)
+    if (fresh) trPopover.value = { ...p, junction: fresh }
+  }
+}
+
+function setJunctionDuration(rawSec: string) {
+  const p = trPopover.value
+  if (!p?.junction.transition) return
+  const frames = Math.max(2, Math.round((parseFloat(rawSec) || 0.5) * store.fps.value))
+  store.updateTransition(p.junction.transition.id, { duration: frames })
+  setJunctionKind(p.junction.transition.kind) // refresh popover junction snapshot
+}
+
+// -- Filters / color adjust (visual clips) ------------------------------------
+//
+// Writes prune identity values so untouched clips stay clean in the schema.
+// Semantics live in shared/timeline/filters.ts (+ Python twin).
+
+const FILTER_DEFS = [
+  { key: 'brightness', label: 'Brightness', min: -1, max: 1, step: 0.01, def: 0 },
+  { key: 'contrast', label: 'Contrast', min: 0, max: 3, step: 0.01, def: 1 },
+  { key: 'saturation', label: 'Saturation', min: 0, max: 3, step: 0.01, def: 1 },
+  { key: 'hue', label: 'Hue', min: -180, max: 180, step: 1, def: 0 },
+  { key: 'temperature', label: 'Temperature', min: -1, max: 1, step: 0.01, def: 0 },
+] as const
+
+type FilterKey = typeof FILTER_DEFS[number]['key']
+
+function filterValue(clip: Clip, key: FilterKey): number {
+  const def = FILTER_DEFS.find(d => d.key === key)!
+  return (clip.filters as any)?.[key] ?? def.def
+}
+
+function setFilterValue(clip: Clip, key: FilterKey, raw: number) {
+  const next: Record<string, number> = { ...(clip.filters ?? {}) }
+  const def = FILTER_DEFS.find(d => d.key === key)!
+  const v = Math.max(def.min, Math.min(def.max, raw))
+  if (v === def.def) delete next[key]
+  else next[key] = v
+  store.updateClip(clip.id, { filters: Object.keys(next).length ? next : undefined })
+}
+
+function resetFilters(clip: Clip) {
+  if (clip.filters) store.updateClip(clip.id, { filters: undefined })
+}
+
+const FILTERABLE_KINDS = new Set(['video', 'image', 'workflow'])
+
 // -- Speed (video/audio clips) -----------------------------------------------
 //
 // CapCut semantics: changing speed rescales the clip's timeline length so the
@@ -1873,6 +1998,28 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               </div>
             </div>
 
+            <div v-if="FILTERABLE_KINDS.has(selectedClipData.kind)" class="pt-2 border-t border-white/5">
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="text-[10px] uppercase tracking-[0.12em] text-white/40">Adjust</div>
+                <button
+                  v-if="selectedClipData.filters"
+                  class="px-1.5 py-0.5 rounded text-[10px] bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80"
+                  @click="resetFilters(selectedClipData!)"
+                >Reset</button>
+              </div>
+              <div v-for="fd in FILTER_DEFS" :key="fd.key" class="flex items-center gap-2 mb-1">
+                <span class="w-20 text-[10px] text-white/50">{{ fd.label }}</span>
+                <input type="range" :min="fd.min" :max="fd.max" :step="fd.step"
+                  :value="filterValue(selectedClipData, fd.key)"
+                  class="flex-1"
+                  @pointerdown="store.beginGesture()"
+                  @input="setFilterValue(selectedClipData!, fd.key, parseFloat(($event.target as HTMLInputElement).value))" />
+                <span class="w-10 text-right text-[10px] text-white/60 tabular-nums">
+                  {{ fd.key === 'hue' ? filterValue(selectedClipData, fd.key) + '°' : filterValue(selectedClipData, fd.key).toFixed(2) }}
+                </span>
+              </div>
+            </div>
+
             <div v-if="selectedClipData.kind === 'video' || selectedClipData.kind === 'audio'" class="pt-2 border-t border-white/5">
               <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5"
                 title="Keyframes are timed to the clip's output frames — they don't move when speed changes.">Speed</div>
@@ -2240,6 +2387,20 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   />
                 </div>
               </div>
+
+              <!-- Transition chips at exact junctions -->
+              <button
+                v-for="j in junctionsFor(track)"
+                :key="`jx-${j.fromId}-${j.toId}`"
+                class="absolute z-[6] size-4 rounded-sm border flex items-center justify-center text-[9px] leading-none transition-colors"
+                :class="j.transition
+                  ? 'bg-fuchsia-500/80 border-fuchsia-200/80 text-white'
+                  : 'bg-black/70 border-white/25 text-white/40 hover:border-white/60 hover:text-white/80'"
+                :style="{ left: (framesToPx(j.frame) - 8) + 'px', top: '50%', marginTop: '-8px' }"
+                :title="j.transition ? `${j.transition.kind} · ${(j.transition.duration / store.fps.value).toFixed(1)}s` : 'Add transition'"
+                @pointerdown.stop
+                @click.stop="openTransitionPopover(j, $event)"
+              >◈</button>
             </div>
 
             <!-- Marquee selection rectangle -->
@@ -2299,6 +2460,41 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
 
       <!-- Context menu -->
       <TimelineContextMenu v-if="ctxMenu" v-bind="ctxMenu" @close="ctxMenu = null" />
+
+      <!-- Transition popover -->
+      <div v-if="trPopover" class="fixed inset-0 z-[132]" @pointerdown.self="trPopover = null">
+        <div
+          class="absolute w-52 bg-[#161616] border border-white/10 rounded-lg shadow-2xl p-2.5 text-xs"
+          :style="{
+            left: Math.max(8, Math.min(trPopover.x - 104, windowWidth() - 220)) + 'px',
+            top: Math.max(8, trPopover.y - 170) + 'px',
+          }"
+        >
+          <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mb-1.5">Transition</div>
+          <div class="grid grid-cols-2 gap-1">
+            <button
+              class="px-2 py-1.5 rounded text-[11px] text-left transition-colors"
+              :class="!trPopover.junction.transition ? 'bg-white/15 text-white' : 'bg-white/5 hover:bg-white/10 text-white/60'"
+              @click="setJunctionKind(null)"
+            >None</button>
+            <button
+              v-for="k in TRANSITION_KINDS"
+              :key="k.kind"
+              class="px-2 py-1.5 rounded text-[11px] text-left transition-colors"
+              :class="trPopover.junction.transition?.kind === k.kind ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 hover:bg-white/10 text-white/60'"
+              @click="setJunctionKind(k.kind)"
+            >{{ k.label }}</button>
+          </div>
+          <div v-if="trPopover.junction.transition" class="flex items-center gap-2 mt-2 pt-2 border-t border-white/5">
+            <span class="text-[10px] uppercase tracking-[0.12em] text-white/40">Duration</span>
+            <input type="number" min="0.1" max="5" step="0.1"
+              :value="(trPopover.junction.transition.duration / store.fps.value).toFixed(1)"
+              class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none tabular-nums text-[11px]"
+              @change="setJunctionDuration(($event.target as HTMLInputElement).value)" />
+            <span class="text-white/40 text-[10px]">s</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

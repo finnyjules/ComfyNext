@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "_golden": { "frames": [4, 9, 12, 15] },
+  "canvas": { "width": 640, "height": 360, "fps": 30, "bg_color": "#181818" },
+  "total_frames": 24,
+  "transitions": [
+    { "id": "tx-cross", "track_id": "t1", "from_clip_id": "c1a", "to_clip_id": "c1b",
+      "kind": "crossfade", "duration": 8 },
+    { "id": "tx-wipe", "track_id": "t2", "from_clip_id": "c2a", "to_clip_id": "c2b",
+      "kind": "wipe_left", "duration": 8 },
+    { "id": "tx-slide", "track_id": "t3", "from_clip_id": "c3a", "to_clip_id": "c3b",
+      "kind": "slide_up", "duration": 8 }
+  ],
+  "tracks": [
+    {
+      "id": "t1", "kind": "video", "name": "Crossfade", "muted": false, "locked": false,
+      "clips": [
+        { "id": "c1a", "kind": "image", "asset_id": "gradient_a", "path": "assets/gradient_a.png",
+          "start_frame": 0, "in_frame": 0, "length": 12,
+          "x": -0.3, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" },
+        { "id": "c1b", "kind": "image", "asset_id": "checker", "path": "assets/checker.png",
+          "start_frame": 12, "in_frame": 0, "length": 12,
+          "x": -0.3, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" }
+      ]
+    },
+    {
+      "id": "t2", "kind": "video", "name": "Wipe", "muted": false, "locked": false,
+      "clips": [
+        { "id": "c2a", "kind": "image", "asset_id": "gradient_b", "path": "assets/gradient_b.png",
+          "start_frame": 0, "in_frame": 0, "length": 12,
+          "x": 0, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" },
+        { "id": "c2b", "kind": "image", "asset_id": "solid_orange", "path": "assets/solid_orange.png",
+          "start_frame": 12, "in_frame": 0, "length": 12,
+          "x": 0, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" }
+      ]
+    },
+    {
+      "id": "t3", "kind": "video", "name": "Slide", "muted": false, "locked": false,
+      "clips": [
+        { "id": "c3a", "kind": "image", "asset_id": "checker", "path": "assets/checker.png",
+          "start_frame": 0, "in_frame": 0, "length": 12,
+          "x": 0.3, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" },
+        { "id": "c3b", "kind": "image", "asset_id": "gradient_a", "path": "assets/gradient_a.png",
+          "start_frame": 12, "in_frame": 0, "length": 12,
+          "x": 0.3, "y": 0, "rotation": 0, "scale": 0.4, "opacity": 1, "blend": "normal" }
+      ]
+    }
+  ]
+}

@@ -137,6 +137,192 @@ def _needed_source_frames(kwargs: dict, state: dict | None, port_idx: int) -> in
     return max(1, int(length))
 
 
+def _transition_windows(state: dict) -> list[dict]:
+    """EditState transitions[] → concrete frame windows. Twin of
+    shared/timeline/transitions.ts::resolveTransitionWindows — formulas are
+    pinned there (and by the 05-transitions golden fixture); change together.
+
+    Window: d frames centered on the cut (pre = d//2 before, d-pre after),
+    head clamped to the outgoing clip's start, tail clamped to the incoming
+    clip's end. Stale transitions (clips missing / no longer adjacent) drop."""
+    out = []
+    tracks = {t.get("id"): t for t in state.get("tracks", [])}
+    for tr in state.get("transitions", []) or []:
+        track = tracks.get(tr.get("track_id"))
+        if not track:
+            continue
+        clips = {c.get("id"): c for c in track.get("clips", [])}
+        frm = clips.get(tr.get("from_clip_id"))
+        to = clips.get(tr.get("to_clip_id"))
+        if not frm or not to:
+            continue
+        cut = int(to.get("start_frame", 0))
+        if int(frm.get("start_frame", 0)) + int(frm.get("length", 0)) != cut:
+            continue
+        d = max(1, int(round(float(tr.get("duration", 0) or 0))))
+        pre = d // 2
+        start_f = max(cut - pre, int(frm.get("start_frame", 0)))
+        end_f = min(cut + (d - pre), cut + max(1, int(to.get("length", 0))))
+        if end_f <= start_f:
+            continue
+        out.append({"kind": str(tr.get("kind", "crossfade")), "cut": cut,
+                    "start_f": start_f, "end_f": end_f,
+                    "from_id": frm.get("id"), "to_id": to.get("id")})
+    return out
+
+
+def _index_transition_windows(windows: list[dict]) -> dict:
+    by_clip: dict = {}
+    for w in windows or []:
+        for cid in (w["from_id"], w["to_id"]):
+            by_clip.setdefault(cid, []).append(w)
+    return by_clip
+
+
+def _transition_mod(by_clip: dict, clip_id, start: int, length: int, g: int,
+                    naturally_visible: bool) -> dict:
+    """Per-frame transition modulation — twin of transitions.ts::transitionModAt.
+    Weight w = (g - start_f + 1) / (window_len + 1); incoming clip draws on top
+    with the kind's modulation, outgoing keeps rendering with a clamped tail."""
+    length = max(1, length)
+    local_nat = max(0, min(g - start, length - 1))
+    identity = {"visible": naturally_visible, "local": local_nat,
+                "alpha_mul": 1.0, "dy": 0.0, "wipe": None, "draw_after": None}
+    wins = by_clip.get(clip_id)
+    if not wins:
+        return identity
+    for win in wins:
+        if g < win["start_f"] or g >= win["end_f"]:
+            continue
+        w = (g - win["start_f"] + 1) / (win["end_f"] - win["start_f"] + 1)
+        if clip_id == win["to_id"]:
+            kind = win["kind"]
+            return {
+                "visible": True,
+                "local": max(0, g - start),
+                "alpha_mul": w if kind == "crossfade" else 1.0,
+                "dy": (1.0 - w) if kind == "slide_up" else (-(1.0 - w) if kind == "slide_down" else 0.0),
+                "wipe": ("left", w) if kind == "wipe_left" else (("right", w) if kind == "wipe_right" else None),
+                "draw_after": win["from_id"],
+            }
+        return {"visible": True, "local": min(length - 1, g - start),
+                "alpha_mul": 1.0, "dy": 0.0, "wipe": None, "draw_after": None}
+    return identity
+
+
+def _apply_wipe_np(alpha: "np.ndarray", wipe, W: int) -> "np.ndarray":
+    """Zero the incoming layer's alpha outside the wipe reveal. Boundary at
+    floor(w*W + 0.5) columns — matches the GL shader's pixel-center rule."""
+    if not wipe:
+        return alpha
+    mode, w = wipe
+    boundary = int(np.floor(w * W + 0.5))
+    out = alpha.copy()
+    if mode == "left":
+        out[:, boundary:, :] = 0.0
+    else:  # right: show x > 1-w → zero the leftmost W-boundary columns
+        out[:, :W - boundary, :] = 0.0
+    return out
+
+
+def _order_for_transitions(items: list, get_id, windows: list[dict]) -> list:
+    """Ensure each window's incoming item paints AFTER its outgoing partner,
+    regardless of clip array order (twin of the compositor's post-pass)."""
+    order = list(items)
+    for win in windows or []:
+        ids = [get_id(x) for x in order]
+        try:
+            i = ids.index(win["to_id"])
+            p = ids.index(win["from_id"])
+        except ValueError:
+            continue
+        if i < p:
+            entry = order.pop(i)
+            order.insert(p, entry)  # p shifted left by the pop → lands after partner
+    return order
+
+
+_FILTER_IDENTITY = {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0, "hue": 0.0, "temperature": 0.0}
+
+
+def _filters_or_none(f) -> dict | None:
+    """Normalize a ClipFilters dict; None when absent/identity."""
+    if not isinstance(f, dict):
+        return None
+    vals = {k: float(f.get(k, d)) for k, d in _FILTER_IDENTITY.items()}
+    if all(vals[k] == d for k, d in _FILTER_IDENTITY.items()):
+        return None
+    return vals
+
+
+def _hue_rotate_matrix(rad: float) -> "np.ndarray":
+    """SVG feColorMatrix hueRotate (luma consts 0.213/0.715/0.072) — twin of
+    shared/timeline/filters.ts hueRotateMatrix. Row-major, applied to [r,g,b]."""
+    c = float(np.cos(rad))
+    s = float(np.sin(rad))
+    return np.array([
+        [0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928],
+        [0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283],
+        [0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072],
+    ], dtype=np.float32)
+
+
+def _apply_filters_np(rgb: "np.ndarray", filters: dict | None) -> "np.ndarray":
+    """Per-clip color adjust on an [..., 3] float32 sRGB array — the Python
+    twin of shared/timeline/filters.ts applyFiltersRGB (order, clamps and
+    constants pinned there; the 06-filters golden fixture gates parity)."""
+    if not filters:
+        return rgb
+    out = rgb
+    b = filters["brightness"]
+    if b != 0.0:
+        out = np.clip(out + b, 0.0, 1.0)
+    k = filters["contrast"]
+    if k != 1.0:
+        out = np.clip((out - 0.5) * k + 0.5, 0.0, 1.0)
+    s = filters["saturation"]
+    if s != 1.0:
+        luma = out[..., 0:1] * 0.2126 + out[..., 1:2] * 0.7152 + out[..., 2:3] * 0.0722
+        out = np.clip(luma + (out - luma) * s, 0.0, 1.0)
+    hue = filters["hue"]
+    if hue != 0.0:
+        m = _hue_rotate_matrix(float(np.deg2rad(hue)))
+        out = np.clip(out @ m.T, 0.0, 1.0)
+    t = filters["temperature"]
+    if t != 0.0:
+        out = out.copy()
+        out[..., 0] = np.clip(out[..., 0] * (1.0 + 0.2 * t), 0.0, 1.0)
+        out[..., 2] = np.clip(out[..., 2] * (1.0 - 0.2 * t), 0.0, 1.0)
+    return out.astype(np.float32, copy=False)
+
+
+def _apply_filters_torch(rgb, filters: dict | None):
+    """Torch twin of _apply_filters_np for the graph composite path ([1,3,H,W])."""
+    if not filters:
+        return rgb
+    out = rgb
+    b = filters["brightness"]
+    if b != 0.0:
+        out = (out + b).clamp(0.0, 1.0)
+    k = filters["contrast"]
+    if k != 1.0:
+        out = ((out - 0.5) * k + 0.5).clamp(0.0, 1.0)
+    s = filters["saturation"]
+    if s != 1.0:
+        luma = out[:, 0:1] * 0.2126 + out[:, 1:2] * 0.7152 + out[:, 2:3] * 0.0722
+        out = (luma + (out - luma) * s).clamp(0.0, 1.0)
+    hue = filters["hue"]
+    if hue != 0.0:
+        m = torch.tensor(_hue_rotate_matrix(float(np.deg2rad(hue))), device=out.device, dtype=out.dtype)
+        out = torch.einsum("ij,bjhw->bihw", m, out).clamp(0.0, 1.0)
+    t = filters["temperature"]
+    if t != 0.0:
+        out = out.clone()
+        out[:, 0] = (out[:, 0] * (1.0 + 0.2 * t)).clamp(0.0, 1.0)
+        out[:, 2] = (out[:, 2] * (1.0 - 0.2 * t)).clamp(0.0, 1.0)
+    return out
+
+
 def _is_untrimmed_stream_source(video) -> bool:
     """Stream-decode only when the raw container equals what get_components()
     would return: the class overrides get_stream_source (the base impl ENCODES
@@ -581,12 +767,14 @@ class TimelineNode(IO.ComfyNode):
                     skipped += 1
                     continue
                 layers.append({
+                    "id":        clip.get("id"),
                     "src":       src,
                     "start":     int(clip.get("start_frame", 0)),
                     "length":    max(1, int(clip.get("length", 30))),
                     "in_frame":  int(clip.get("in_frame", 0)),
                     "speed":     float(clip.get("speed") or 1.0),
                     "reverse":   bool(clip.get("reverse")),
+                    "filters":   _filters_or_none(clip.get("filters")),
                     "blend":     str(clip.get("blend", "normal")),
                     "fade_in":   int(clip.get("fade_in", 0)),
                     "fade_out":  int(clip.get("fade_out", 0)),
@@ -607,24 +795,49 @@ class TimelineNode(IO.ComfyNode):
         bg = torch.tensor(bg_rgb, device=device, dtype=dtype).view(1, 1, 1, 3)
         output = bg.expand(total, ch, cw, 3).clone()  # [T, H, W, 3]
 
+        # Junction transitions: same shared window/mod math as the export path.
+        tr_windows = _transition_windows(state)
+        tr_by_clip = _index_transition_windows(tr_windows)
+        layers = _order_for_transitions(layers, lambda l: l.get("id"), tr_windows)
+
         for L in layers:
             src = L["src"]
             src_T = max(1, src.shape[0])
             length, start = L["length"], L["start"]
-            gt_start = max(0, start)
-            gt_end = min(total, start + length)
+            # Transition windows extend visibility beyond the clip's own range.
+            lo, hi = start, start + length
+            for win in tr_by_clip.get(L.get("id"), []):
+                if L.get("id") == win["from_id"]:
+                    hi = max(hi, win["end_f"])
+                else:
+                    lo = min(lo, win["start_f"])
+            gt_start = max(0, lo)
+            gt_end = min(total, hi)
             if gt_end <= gt_start:
                 continue
             fi, fo = L["fade_in"], L["fade_out"]
             for gt in range(gt_start, gt_end):
-                local_t = gt - start
+                naturally_visible = start <= gt < start + length
+                mod = _transition_mod(tr_by_clip, L.get("id"), start, length, gt, naturally_visible)
+                if not mod["visible"]:
+                    continue
+                local_t = mod["local"]
                 ct = _source_frame_at(L, local_t) % src_T
 
                 tf = _interp_transform(L["static"], L["keyframes"], local_t)
 
                 frame = src[ct:ct + 1].permute(0, 3, 1, 2)
                 frame = _fit_to_canvas(frame, ch, cw)
-                rgb, alpha = _transform(frame, tf["x"], tf["y"], tf["rotation"], tf["scale"])
+                rgb, alpha = _transform(frame, tf["x"], tf["y"] + mod["dy"], tf["rotation"], tf["scale"])
+                rgb = _apply_filters_torch(rgb, L.get("filters"))
+                if mod["wipe"]:
+                    mode, w = mod["wipe"]
+                    boundary = int(np.floor(w * cw + 0.5))
+                    alpha = alpha.clone()
+                    if mode == "left":
+                        alpha[..., boundary:] = 0.0
+                    else:
+                        alpha[..., :cw - boundary] = 0.0
 
                 # Fade math matches the editor preview + FFmpeg export exactly
                 # (not the legacy clip{i}_* path's off-by-one), so all three
@@ -636,7 +849,7 @@ class TimelineNode(IO.ComfyNode):
                     fade *= (length - local_t) / fo
                 fade = max(0.0, min(1.0, fade))
 
-                a = (alpha * tf["opacity"] * fade).clamp(0.0, 1.0)
+                a = (alpha * tf["opacity"] * fade * mod["alpha_mul"]).clamp(0.0, 1.0)
                 base = output[gt:gt + 1].permute(0, 3, 1, 2)
                 blended = _blend(base, rgb, L["blend"])
                 result = base * (1.0 - a) + blended * a
@@ -805,6 +1018,7 @@ def _adapt_edit_state(state: dict) -> dict:
                 # v2 captions have no export rendering yet (Phase 3 adds it).
                 continue
             out["clips"].append({
+                "id":          clip.get("id"),
                 "kind":        kind,
                 "path":        clip.get("path") or clip.get("asset_path"),
                 "start_frame": int(clip.get("start_frame", 0)),
@@ -812,6 +1026,7 @@ def _adapt_edit_state(state: dict) -> dict:
                 "in_frame":    int(clip.get("in_frame", 0)),
                 "speed":       float(clip.get("speed") or 1.0),
                 "reverse":     bool(clip.get("reverse")),
+                "filters":     clip.get("filters"),
                 "x":           float(clip.get("x", 0)),
                 "y":           float(clip.get("y", 0)),
                 "rotation":    float(clip.get("rotation", 0)),
@@ -831,6 +1046,14 @@ def _adapt_edit_state(state: dict) -> dict:
             out["audio_speed"] = audio_speed
         if audio_reverse:
             out["audio_reverse"] = True
+
+    # Junction transitions: resolve to concrete windows while the track
+    # structure is still available, and order the flat clips so each window's
+    # incoming clip composites after its outgoing partner.
+    windows = _transition_windows(state)
+    if windows:
+        out["transition_windows"] = windows
+        out["clips"] = _order_for_transitions(out["clips"], lambda c: c.get("id"), windows)
     return out
 
 
@@ -846,12 +1069,14 @@ def _prepare_render_clips(state: dict) -> list[dict]:
     for c in state.get("clips", []):
         kind = str(c.get("kind") or ("image" if c.get("is_image") else "video"))
         entry = {
+            "id":       c.get("id"),
             "kind":     kind,
             "start":    int(c.get("start_frame", 0)),
             "length":   int(c.get("length", 30)),
             "in_frame": int(c.get("in_frame", 0)),
             "speed":    float(c.get("speed") or 1.0),
             "reverse":  bool(c.get("reverse")),
+            "filters":  _filters_or_none(c.get("filters")),
             "x":        float(c.get("x", 0)),
             "y":        float(c.get("y", 0)),
             "rot":      float(c.get("rotation", 0)),
@@ -939,12 +1164,15 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
     bg_rgb = _hex_rgb_safe(state.get("bg_color"), (0.0, 0.0, 0.0))
     bg = np.array(bg_rgb, dtype=np.float32).reshape(1, 1, 3)
     canvas = np.broadcast_to(bg, (H, W, 3)).copy()
+    tw_by_clip = _index_transition_windows(state.get("transition_windows") or [])
 
     for L in clips:
         start, length = L["start"], max(1, L["length"])
-        if f < start or f >= start + length:
+        naturally_visible = start <= f < start + length
+        mod = _transition_mod(tw_by_clip, L.get("id"), start, length, f, naturally_visible)
+        if not mod["visible"]:
             continue
-        local_f = f - start
+        local_f = mod["local"]
 
         # Fade alpha
         fade = 1.0
@@ -982,10 +1210,12 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         static = {"x": L["x"], "y": L["y"], "rotation": L["rot"], "scale": L["scl"], "opacity": L["op"]}
         tf = _interp_transform(static, L.get("keyframes"), local_f)
         rgb, alpha = _transform_and_alpha(
-            src_pil, W, H, tf["x"], tf["y"], tf["rotation"], tf["scale"],
+            src_pil, W, H, tf["x"], tf["y"] + mod["dy"], tf["rotation"], tf["scale"],
             preserve_alpha=(L["kind"] == "motion"),
         )
-        a = alpha * tf["opacity"] * fade
+        rgb = _apply_filters_np(rgb, L.get("filters"))
+        alpha = _apply_wipe_np(alpha, mod["wipe"], W)
+        a = alpha * tf["opacity"] * fade * mod["alpha_mul"]
         blended = _blend_np(canvas, rgb, L["blend"])
         canvas = canvas * (1.0 - a) + blended * a
 
