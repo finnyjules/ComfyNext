@@ -783,6 +783,8 @@ def _adapt_edit_state(state: dict) -> dict:
     }
 
     audio_path = state.get("audio_path")
+    audio_speed = 1.0
+    audio_reverse = False
     for track in state.get("tracks", []):
         if track.get("muted"):
             continue
@@ -796,6 +798,8 @@ def _adapt_edit_state(state: dict) -> dict:
             if kind == "audio":
                 if not audio_path:
                     audio_path = clip.get("path") or clip.get("asset_path")
+                    audio_speed = float(clip.get("speed") or 1.0)
+                    audio_reverse = bool(clip.get("reverse"))
                 continue
             if kind == "caption":
                 # v2 captions have no export rendering yet (Phase 3 adds it).
@@ -823,6 +827,10 @@ def _adapt_edit_state(state: dict) -> dict:
 
     if audio_path:
         out["audio_path"] = audio_path
+        if audio_speed != 1.0:
+            out["audio_speed"] = audio_speed
+        if audio_reverse:
+            out["audio_reverse"] = True
     return out
 
 
@@ -984,6 +992,46 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
     return np.clip(canvas, 0.0, 1.0)
 
 
+def _atempo_factors(speed: float) -> list[float]:
+    """Split a tempo factor into a chain of factors each within atempo's
+    supported [0.5, 2.0] range (e.g. 4.0 → [2.0, 2.0]; 0.2 → [0.5, 0.4])."""
+    s = max(0.1, min(5.0, float(speed)))
+    out: list[float] = []
+    while s > 2.0:
+        out.append(2.0)
+        s /= 2.0
+    while s < 0.5:
+        out.append(0.5)
+        s /= 0.5
+    if abs(s - 1.0) > 1e-6:
+        out.append(round(s, 6))
+    return out
+
+
+def _build_audio_filter_graph(in_stream, speed: float, reverse: bool):
+    """abuffer → [areverse] → atempo chain → abuffersink. Returns the
+    configured Graph — drive it with graph.push()/graph.pull() ONLY (the
+    per-node context push segfaults in PyAV 17). areverse buffers the whole
+    stream before emitting — acceptable for timeline-length audio; the caller
+    falls back to unfiltered on failure."""
+    import av
+    graph = av.filter.Graph()
+    src = graph.add_abuffer(template=in_stream)
+    node = src
+    if reverse:
+        rev = graph.add("areverse")
+        node.link_to(rev)
+        node = rev
+    for f in _atempo_factors(speed):
+        t = graph.add("atempo", str(f))
+        node.link_to(t)
+        node = t
+    sink = graph.add("abuffersink")
+    node.link_to(sink)
+    graph.configure()
+    return graph
+
+
 def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict:
     """Render the edit `state` to a video file in `output_dir`. Returns metadata.
 
@@ -1071,17 +1119,62 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
     for packet in out_stream.encode():
         out.mux(packet)
 
-    # Mux audio (length-clamped to the video duration).
+    # Mux audio (length-clamped to the video duration). When the muxed audio
+    # clip carries speed/reverse, run frames through an FFmpeg filter graph
+    # (areverse + chained atempo); any filter failure falls back to the
+    # unfiltered mux — audio must never fail the render.
     if audio_in_container is not None and audio_out_stream is not None:
         try:
             target_dur = total_frames / float(fps)
-            for frame in audio_in_container.decode(audio_in_stream):
-                if frame.time is not None and frame.time > target_dur:
-                    break
-                # Encode
+            speed = float(state.get("audio_speed") or 1.0)
+            reverse = bool(state.get("audio_reverse"))
+            graph = None
+            if speed != 1.0 or reverse:
+                try:
+                    graph = _build_audio_filter_graph(audio_in_stream, speed, reverse)
+                except Exception:
+                    logging.warning("timeline: audio filter graph (speed=%s reverse=%s) failed — muxing unfiltered",
+                                    speed, reverse, exc_info=True)
+                    graph = None
+
+            rate = int(audio_in_stream.rate or 44100)
+            encoded_sec = 0.0
+
+            def _encode_audio(frame) -> bool:
+                """Encode one frame; False once the video duration is filled."""
+                nonlocal encoded_sec
+                if encoded_sec > target_dur:
+                    return False
+                encoded_sec += frame.samples / float(frame.sample_rate or rate)
                 frame.pts = None
                 for packet in audio_out_stream.encode(frame):
                     out.mux(packet)
+                return True
+
+            def _drain(g) -> bool:
+                """Pull every ready frame from the graph sink. False = clamp hit."""
+                while True:
+                    try:
+                        f = g.pull()
+                    except (BlockingIOError, EOFError):  # need more input / flushed
+                        return True
+                    if not _encode_audio(f):
+                        return False
+
+            if graph is None:
+                for frame in audio_in_container.decode(audio_in_stream):
+                    if not _encode_audio(frame):
+                        break
+            else:
+                clamped = False
+                for frame in audio_in_container.decode(audio_in_stream):
+                    graph.push(frame)
+                    if not _drain(graph):
+                        clamped = True
+                        break
+                if not clamped:
+                    graph.push(None)  # EOF — areverse emits its buffer here
+                    _drain(graph)
             for packet in audio_out_stream.encode():
                 out.mux(packet)
         except Exception:
