@@ -66,6 +66,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 class="text-white/45 transition-colors hover:text-white/80">✕</button>
       </div>
       <div class="flex min-h-0 flex-1 gap-4 p-4">
+        <!-- Optional dedicated panel column (e.g. 3D Studio's object list), on the
+             left of the preview — mirrors the Smart Layout / Frame layers panel. -->
+        <div v-if="$slots.aside" class="flex w-56 shrink-0 min-h-0"><slot name="aside" /></div>
         <div class="flex min-h-0 flex-1 flex-col">
           <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
           <!-- Agent prompt: bare (no container), docked under the preview — mirrors
@@ -79,9 +82,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
-        <!-- Optional dedicated panel column (e.g. 3D Studio's object list), sitting
-             between the preview and the controls/inspector column. -->
-        <div v-if="$slots.aside" class="flex w-56 shrink-0 min-h-0"><slot name="aside" /></div>
         <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
           <!-- Assistant takeover: the agent's progress / proposal replace the controls
                while it's working, then hand back the controls when done. -->
