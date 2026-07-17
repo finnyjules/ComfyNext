@@ -3,7 +3,7 @@
 // the start modal's "Craft it by hand" row — they must never drift.
 // pastel = the studio bills AI credits when run.
 import type { Component } from 'vue'
-import { Blend, Aperture, Grid3x3, Gem, CaseSensitive, Clapperboard, AudioWaveform } from 'lucide-vue-next'
+import { Blend, Aperture, Grid3x3, Gem, Box, CaseSensitive, Clapperboard, AudioWaveform } from 'lucide-vue-next'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 
@@ -21,6 +21,7 @@ export const STUDIO_OPTIONS: StudioOption[] = [
   { label: 'Shader', icon: Aperture, nodeType: 'ShaderStudio' },
   { label: 'Pattern', icon: Grid3x3, nodeType: 'TextureStudio' },
   { label: 'Shape', icon: Gem, nodeType: 'ShapeStudio' },
+  { label: '3D', icon: Box, nodeType: 'Scene3DStudio' },
   ...(KINETIC_ENABLED ? [{ label: 'Slate', icon: Clapperboard, special: 'slate-gallery' }] : []),
   { label: 'Shot Director', icon: Clapperboard, nodeType: 'ShotDirector', pastel: true },
   { label: 'Lip-Sync', icon: AudioWaveform, nodeType: 'LipSyncStudio', pastel: true },
