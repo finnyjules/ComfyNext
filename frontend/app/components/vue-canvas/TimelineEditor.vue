@@ -1173,22 +1173,16 @@ function handleKeydown(e: KeyboardEvent) {
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault()
-    if (selectedClipIds.value.size > 1) {
-      // Bulk delete via a single mutation so undo restores everything at once.
-      const ids = new Set(selectedClipIds.value)
-      store.mutate(s => {
-        for (const track of s.tracks) {
-          track.clips = track.clips.filter(c => !ids.has(c.id))
-        }
-      })
+    if (selectedClipIds.value.size <= 1 && store.selectedClipId.value && (e.metaKey || e.ctrlKey)) {
+      store.rippleDelete(store.selectedClipId.value)
       clearSelection()
-    } else if (store.selectedClipId.value) {
-      if (e.metaKey || e.ctrlKey) store.rippleDelete(store.selectedClipId.value)
-      else store.removeClip(store.selectedClipId.value)
-      clearSelection()
+    } else {
+      deleteSelection()
     }
     return
   }
+  if (e.key === 'Home') { e.preventDefault(); store.seek(0); return }
+  if (e.key === 'End') { e.preventDefault(); store.seek(store.totalSec.value); return }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); store.redo(); return }
   if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -1221,6 +1215,19 @@ function handleKeydown(e: KeyboardEvent) {
     }
     return
   }
+}
+
+// Delete everything selected as ONE undo step.
+function deleteSelection() {
+  if (selectedClipIds.value.size > 1) {
+    const ids = new Set(selectedClipIds.value)
+    store.mutate(s => {
+      for (const track of s.tracks) track.clips = track.clips.filter(c => !ids.has(c.id))
+    })
+  } else if (store.selectedClipId.value) {
+    store.removeClip(store.selectedClipId.value)
+  }
+  clearSelection()
 }
 
 function pasteAndSelect(frame: number) {
@@ -1968,6 +1975,16 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               @click="toggleSnap"><Magnet class="size-3.5" /></button>
           </div>
 
+          <!-- Edit actions -->
+          <div class="flex items-center gap-0.5 ml-3 border-l border-white/10 pl-3">
+            <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/60 hover:text-white disabled:opacity-30"
+              :disabled="!store.selectedClipId.value" title="Split at playhead (S)"
+              @click="store.selectedClipId.value && store.splitAtPlayhead(store.selectedClipId.value)"><Scissors class="size-3.5" /></button>
+            <button class="size-6 flex items-center justify-center rounded hover:bg-red-500/20 text-white/60 hover:text-red-300 disabled:opacity-30"
+              :disabled="!selectedClipIds.size" title="Delete selected (⌫)"
+              @click="deleteSelection()"><Trash2 class="size-3.5" /></button>
+          </div>
+
           <div class="ml-auto flex items-center gap-2">
             <button
               class="flex items-center gap-1 px-2 h-6 rounded text-[10px] bg-white/5 hover:bg-white/10 transition-colors"
@@ -2194,10 +2211,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 height: Math.abs(marquee.y1 - marquee.y0) + 'px',
               }" />
 
-            <!-- Snap guideline (during clip drag) -->
+            <!-- Snap guideline (during clip drag) — fuchsia so it reads against
+                 the white clip bars (and matches timeline.spec.ts). -->
             <div
               v-if="snapGuideFrame !== null"
-              class="absolute pointer-events-none z-[3] w-px bg-white/80 shadow-[0_0_4px_rgba(255,255,255,0.5)]"
+              class="absolute pointer-events-none z-[3] w-px bg-fuchsia-400/80 shadow-[0_0_4px_rgba(232,121,249,0.6)]"
               :style="{ top: 0, bottom: 0, left: framesToPx(snapGuideFrame) + 'px' }"
             />
 
@@ -2224,9 +2242,12 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
         <div class="flex items-center gap-3 px-4 h-6 border-t border-white/5 text-[9px] text-white/35 tabular-nums shrink-0">
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">Space</kbd> play</span>
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">S</kbd> split</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘C/V/D</kbd> copy·paste·dup</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘A</kbd> all</span>
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌫</kbd> delete</span>
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘Z</kbd> undo</span>
-          <span class="ml-auto"><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘+scroll</kbd> zoom</span>
+          <span class="ml-auto"><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌥</kbd> free-drag</span>
+          <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⌘+scroll</kbd> zoom</span>
           <span><kbd class="px-1 py-px rounded bg-white/5 border border-white/10">⇧+scroll</kbd> pan</span>
         </div>
       </div>
