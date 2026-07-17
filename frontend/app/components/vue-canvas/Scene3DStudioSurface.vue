@@ -57,7 +57,9 @@ const gizmoMode = ref<GizmoMode>('translate')
 const snap = ref(false)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
-const bakeError = ref('')       // last bake failure message (inline "retry")
+const bakeError = ref('')       // last export failure message (inline "retry")
+const savedFlash = ref(false)   // transient "Saved ✓" confirmation after Save
+let savedTimer: ReturnType<typeof setTimeout> | null = null
 const glbError = reactive<Record<string, boolean>>({})
 const webglOk = ref(true)
 const uploading = ref(false)    // GLB file upload in flight
@@ -387,18 +389,28 @@ async function bake(): Promise<void> {
   }
 }
 
-async function onClose() {
-  setWidget('scene_state', serializeDoc(doc)) // scene always persists, baked or not
-  // A bake already failed and its inline "Bake failed — retry" is showing: this
-  // second close attempt (Esc/X) is the user's explicit escape hatch — leave without
-  // re-baking so a persistently failing bake can't trap them (scene_state is saved).
-  if (bakeError.value) { emit('close'); return }
-  if (dirty.value && doc.objects.length && engine) {
-    await bake()
-    // Auto-bake failed: keep the surface open so the inline error is visible; the
-    // user can retry Bake or close again to force-exit (handled above).
-    if (bakeError.value) return
-  }
+// Save: persist the scene document only (no render/upload). Lets the user
+// checkpoint work and keep editing; the node's output images are unchanged
+// until an explicit Export.
+function saveScene() {
+  setWidget('scene_state', serializeDoc(doc))
+  savedFlash.value = true
+  if (savedTimer) clearTimeout(savedTimer)
+  savedTimer = setTimeout(() => { savedFlash.value = false }, 1500)
+}
+
+// Export to Canvas: bake the three passes onto the node's outputs, then return
+// to the canvas. Stays open on failure so the inline error is visible.
+async function exportToCanvas() {
+  await bake()
+  if (bakeError.value) return
+  emit('close')
+}
+
+// Esc / ✕: persist the scene (implicit save) and leave — export is explicit now,
+// so closing never re-renders.
+function onClose() {
+  setWidget('scene_state', serializeDoc(doc))
   emit('close')
 }
 </script>
@@ -576,17 +588,24 @@ async function onClose() {
           <StudioColor v-model="bgColorProxy" />
         </div>
       </StudioSection>
-    </template>
 
-    <template #actions>
-      <StudioButton variant="primary" :disabled="baking || !doc.objects.length" @click="bake">
-        <span class="flex items-center gap-1.5">
-          <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
-          {{ baking ? 'Baking…' : 'Bake' }}
-        </span>
-      </StudioButton>
-      <span v-if="bakeError && !baking" class="text-xs text-red-400/90">{{ bakeError }}</span>
-      <span v-else-if="dirty && !baking" class="text-xs text-amber-400/80">unbaked changes</span>
+      <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
+           inspector column. mt-auto pins it to the bottom when the column is short;
+           sticky bottom-0 keeps it visible once the inspector scrolls. -->
+      <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2">
+        <p v-if="bakeError && !baking" class="mb-1.5 text-right text-xs text-red-400/90">{{ bakeError }}</p>
+        <p v-else-if="savedFlash" class="mb-1.5 text-right text-xs text-emerald-400/80">Saved ✓</p>
+        <p v-else-if="dirty && !baking" class="mb-1.5 text-right text-xs text-amber-400/70">Not exported to canvas</p>
+        <div class="flex items-center justify-end gap-2">
+          <StudioButton variant="secondary" :disabled="baking" @click="saveScene">Save</StudioButton>
+          <StudioButton variant="primary" :disabled="baking || !doc.objects.length" @click="exportToCanvas">
+            <span class="flex items-center gap-1.5">
+              <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
+              {{ baking ? 'Exporting…' : 'Export to Canvas' }}
+            </span>
+          </StudioButton>
+        </div>
+      </div>
     </template>
   </StudioModalShell>
 </template>
